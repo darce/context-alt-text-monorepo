@@ -4,9 +4,9 @@
   "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
   "goals": [
     "Operator can always see Description Service state, effective intent, activity and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).",
-    "Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, blocked) is visible (HAI-04 activate–operate–override).",
+    "Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, deferred until idle) is visible (HAI-04 activate–operate–override).",
     "Cost is disclosed before commitment; the user is never surprised by an hourly charge (INT-07, CARD-15, COST-10).",
-    "Stop intent can be requested while busy and shutdown is deferred until idle. Stale or unknown telemetry blocks Start; unavailable with operator STOP is distinct from unknown (INT-10, FLOW-08, A11Y-18, PERC-02)."
+    "Stop stays available while load.has_work; confirm asks Stop after the current run finishes? and the pending indicator is Stopping after the current work finishes until idle. Stale or unknown telemetry hides Start/Stop and offers tertiary Refresh; degraded copy is Service unavailable. Start service to retry. gpu_state is unknown|stopped|starting|warming|ready|degraded (INT-10, FLOW-08, A11Y-18, PERC-02)."
   ],
   "jobs": [
     { "id": "job-prewarm-gpu", "label": "Pre-warm Description Service before a demo so the first describe run is fast" },
@@ -18,7 +18,7 @@
       "id": "settings-burst-gpu",
       "kind": "screen",
       "title": "Settings › Description Service",
-      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic controls. Domain vocabulary behind the canonical states: stopped and ready = default; starting and warming = loading; snapshot missing = empty; service unreachable or unavailable (operator STOP) = error; lifecycle degraded or intent blocked = degraded. Primary copy uses Service: stopped / starting / warming / ready / unavailable; ETA and Retry-After are data, not extra states.",
+      "purpose": "Card on the Settings page showing Description Service state, intent, activity and load, with Start / Stop / Return to automatic / Refresh controls. Domain vocabulary: stopped and ready = default; starting and warming = loading; snapshot missing or stale = empty; service unreachable = error; lifecycle degraded or intent pending = degraded. gpu_state is unknown|stopped|starting|warming|ready|degraded. Seven sketches: stopped → [PRIMARY] Start service; stopped by operator (intent STOP) → Stopped by operator · auto-start paused, [PRIMARY] Start service, [secondary] Return to automatic; starting/warming with eta_seconds → Warming up, about {eta} left and [secondary] Stop service; starting/warming without eta → Warming up, this can take a few minutes; ready → Service: ready · idle|N in flight and [secondary] Stop service; unknown/stale → Status unavailable, last seen {age} with [tertiary] Refresh, Start/Stop hidden; degraded → Service unavailable. Start service to retry. [PRIMARY] Start service. Typed description_service_unavailable is copy on degraded/unknown, not a gpu_state. Warm-up ETA comes from the load/status payload or is omitted; never invent a retry countdown.",
       "route": "#/settings",
       "job_entry": true,
       "deep_link": true,
@@ -26,14 +26,14 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
       "primary_action_id": "act-gpu-start",
       "states": ["default", "loading", "empty", "error", "degraded"],
-      "action_states": ["stopped", "unknown", "starting", "warming", "ready", "degraded", "unavailable"],
+      "action_states": ["stopped", "unknown", "starting", "warming", "ready", "degraded"],
       "zones": [
-        { "id": "z-gpu-state-chip", "label": "Service status chip — Service: not reported / stopped / starting / warming / ready / degraded / unavailable with snapshot age (icon + text)", "role": "status", "evidence_linked": true, "states": ["default", "loading", "empty", "error", "degraded"] },
-        { "id": "z-gpu-intent", "label": "Effective intent and expiry — automatic / start until HH:MM / stop (pending, blocked: describe run in flight)", "role": "status", "states": ["default", "loading", "degraded"] },
+        { "id": "z-gpu-state-chip", "label": "Service status chip — Service: not reported / stopped / starting / warming / ready / degraded with snapshot age (icon + text)", "role": "status", "evidence_linked": true, "states": ["default", "loading", "empty", "error", "degraded"] },
+        { "id": "z-gpu-intent", "label": "Effective intent and expiry — automatic / start until HH:MM / stop (pending: Stopping after the current work finishes until idle)", "role": "status", "states": ["default", "loading", "degraded"] },
         { "id": "z-gpu-lease", "label": "Service activity — idle or running since, auto-stops by HH:MM (run limit); never show lease ids", "role": "status", "states": ["default", "empty"] },
         { "id": "z-gpu-load", "label": "Describe load — work in flight yes/no with load snapshot freshness", "role": "status", "states": ["default", "empty", "degraded"] },
         { "id": "z-gpu-cost", "label": "Cost disclosure — hourly rate and warm-up time before Start, not in the headline", "role": "content", "states": ["default"] },
-        { "id": "z-gpu-controls", "label": "Start service / Stop service / Return to automatic", "role": "form", "states": ["default", "loading", "error", "degraded"] }
+        { "id": "z-gpu-controls", "label": "Start service / Stop service / Return to automatic / Refresh status", "role": "form", "states": ["default", "loading", "error", "degraded"] }
       ]
     },
     {
@@ -55,14 +55,14 @@
       "id": "gpu-stop-confirm",
       "kind": "overlay",
       "title": "Confirm Stop",
-      "purpose": "Inline confirm strip: explains that a stop is honoured only when no describe run is in flight, otherwise it is deferred and shown as pending.",
+      "purpose": "Inline confirm strip: Stop service stays available while load.has_work. Confirm copy is Stop after the current run finishes? After confirm, the pending-intent indicator is Stopping after the current work finishes until idle, then the service stops. Never a disabled control.",
       "route": "#/settings (inline strip; no dedicated route)",
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
       "primary_action_id": "act-gpu-confirm-stop",
       "states": ["default", "loading", "error", "degraded"],
       "zones": [
-        { "id": "z-stop-preview", "label": "Stop preview — immediate when idle, deferred while a describe run is in flight", "role": "content", "states": ["default", "degraded"] },
+        { "id": "z-stop-preview", "label": "Stop preview — Stop after the current run finishes? then Stopping after the current work finishes until idle", "role": "content", "states": ["default", "degraded"] },
         { "id": "z-stop-actions", "label": "Confirm stop / Cancel", "role": "form", "states": ["default", "loading", "error"] }
       ]
     },
@@ -81,7 +81,7 @@
     }
   ],
   "actions": [
-    { "id": "act-gpu-start", "verb": "Start service", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["stopped", "degraded", "unavailable"] },
+    { "id": "act-gpu-start", "verb": "Start service", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["stopped", "degraded"] },
     { "id": "act-gpu-confirm-start", "verb": "Confirm start", "target": "POST recognition/gpu/intent {action: start}", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
     { "id": "act-gpu-stop", "verb": "Stop service", "target": "gpu-stop-confirm", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["starting", "warming", "ready", "degraded"] },
     { "id": "act-gpu-confirm-stop", "verb": "Confirm stop", "target": "POST recognition/gpu/intent {action: stop}", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-stop-confirm" },
@@ -107,10 +107,9 @@
       "job": "job-stop-gpu",
       "label": "Stop while a describe run is in flight",
       "steps": [
-        { "screen_id": "settings-burst-gpu", "branch_label": "state ready, load.has_work → Stop service disabled with reason" },
-        { "screen_id": "settings-burst-gpu", "branch_label": "run finishes → Stop service enabled" },
-        { "screen_id": "gpu-stop-confirm", "branch_label": "Confirm stop (202)" },
-        { "screen_id": "settings-burst-gpu", "branch_label": "intent stop (pending) → stopped; reason operator" }
+        { "screen_id": "settings-burst-gpu", "branch_label": "state ready, load.has_work → Stop service available (deferred intent)" },
+        { "screen_id": "gpu-stop-confirm", "branch_label": "Stop after the current run finishes? → Confirm stop (202)" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "Stopping after the current work finishes until idle → service stops" }
       ]
     },
     {
@@ -131,6 +130,8 @@
     "No modal dialog; confirmation is an inline strip (consistent with describe-gpu-tier not_doing).",
     "No per-poll toasts; useGpuStateToasts already covers transitions. Suppress toasts while a warming progress surface is mounted (GPUUX-1, PERC-07).",
     "No direct OCI calls from PHP or the SPA; every field is pass-through from gpu-state.json and the intent file (rg-015).",
-    "Primary copy never names leases, lease ids, or demand-lease internals; those stay on the wire (UXSCRE-M-08)."
+    "Primary copy never names leases, lease ids, or demand-lease internals; those stay on the wire (UXSCRE-M-08).",
+    "gpu_state has no unavailable member; operator STOP is a reason. Typed description_service_unavailable is copy on degraded/unknown Settings screens, not a new state or action. Retry-After belongs only to description_service_starting.",
+    "Identity and suggestion copy never claims proof of identity; a representative is a proposal to review, not proof."
   ]
 }

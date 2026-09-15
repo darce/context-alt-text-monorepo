@@ -28,6 +28,7 @@ recognition multipart/auth/object-store transport.
     (`cpu|gpu`). `tier=gpu` routes the request to the server-side GPU profile;
     otherwise the configured default adapter is used.
   - `image_<media_id>` — exactly one image part (`image/jpeg|png|webp`).
+- `operation_id` — optional multipart form field, opaque nonempty string (at most 128 characters); see GPUFLOW-1 below.
 - **Upload cap**: `/scene/describe/multipart` is registered with the body-size
   middleware (413 on oversize).
 
@@ -127,7 +128,7 @@ unsuppressable), and a minimum face-detection confidence (0.8).
 | 503 | description adapter unavailable (deferred/stub profile, hosted profile without `ACX_HOSTED_PROVIDER_OPTIN=1`, missing `[vlm]` extra, `tier=gpu` with unset/non-private `ACX_GPU_ENDPOINT_URL`, or explicit `tier=cpu` when no CPU adapter can be resolved) |
 | 504 | description generation exceeded the configured timeout |
 
-Error shapes match the recognition routes: 5xx/503 use the `{error, trace_id, path}` envelope (via the shared exception handlers); 4xx validation errors use FastAPI's default `{detail}` shape.
+GPUFLOW-1 operation errors use the typed nested detail envelope below. Other errors retain their existing transport shapes, including FastAPI validation detail; they are outside the typed operation schema.
 
 ## Backend async route — `POST /scene/describe/async`
 
@@ -264,3 +265,61 @@ Candidate/exclusion row fields: `media_id`, `filename`, `title`, `mime_type`,
 `current_alt_text`, `reason`.
 
 `reason` ∈ `{missing_alt, has_alt_text, unsupported_mime}`.
+
+## GPUFLOW-1 operation responses and measured timing
+
+Canonical multipart response schema:
+[scene-describe-multipart.schema.json](../../../packages/shared-contracts/schemas/scene-describe-multipart.schema.json).
+Success retains the 17 core fields and carries top-level `operation_id`,
+`startup_id`, and `timing`. IDs are opaque strings, not UUID-constrained;
+`startup_id` is nullable. Older responses may omit timing entirely.
+
+| HTTP status | detail.code | meaning |
+| --- | --- | --- |
+| 503 | description_service_starting | actual GPU compute, known policy-permitted startup |
+| 503 | description_service_unavailable | STOP, max-lease, stopping, unavailable or stale/unknown state |
+| 502 | description_service_error | GPU adapter failure after ready |
+| 409 | operation_mismatch | retry id bound to another tenant/request digest |
+| 410 | operation_expired | operation expired; begin a new operation |
+
+Typed errors have `detail: {code, message, operation_id, startup_id, timing}`.
+Only starting may also carry `warmup_eta_seconds` (nonnegative or null when
+unknown). Unavailable, mismatch, expired and adapter-failure errors omit ETA.
+`Retry-After` is an HTTP header, never JSON. PHP and SPA preserve status, header
+and detail nesting verbatim (rg-015); these errors must bypass generic 5xx
+envelope rewriting.
+
+First acceptance omits the optional multipart `operation_id` form field; the
+service mints and returns it. Retry the same multipart body plus that field.
+Mismatch and expiry require a new operation without the field. No header or
+query transport is supported. See [GPU lifecycle](gpu-lifecycle.md#operation-transport-and-durable-control)
+for persistence, renewal, STOP precedence and the finite lease state machine.
+
+Multipart `timing` contains `queue_ms`, `ramp_up_ms`, `processing_ms`,
+`startup_ms`, and `server_elapsed_ms`. Every value is nonnegative milliseconds
+or null for unknown/untimed; never invent zeroes. Warm/cache readiness wait is
+zero, has no startup association, and cache processing is zero.
+`ramp_up_ms` measures this operation's readiness wait, using retained first-ready
+observations on retries. `startup_ms` measures the shared startup only when its
+start was observed, otherwise null. Cross-process durations use stored UTC
+observations with nonnegative validation. Actual adapter attempts use local
+monotonic clocks, excluding naming lookup, preview and retry backoff.
+Server elapsed measures server wall elapsed and excludes client rendering.
+
+[Run schema](../../../packages/shared-contracts/schemas/scene-describe-run.schema.json)
+retains run status at its root. It adds optional correlation IDs and `timing`:
+`queue_ms`, `ramp_up_ms`, `processing_ms_p50`, `processing_ms_max`,
+`items_timed`, `startup_ms`, `server_elapsed_ms`. Queue is captured once at
+worker pickup. p50/max count measured items only; with no measurements they are
+null and a known measured-item count is zero. Unknown count is null.
+Never use summed parallel processing as wall elapsed.
+`#/definitions/item` describes an item, including nullable `processing_ms`
+(the sum of measured attempts), and `#/definitions/items` describes the
+tenant/run/items wrapper. Failed, skipped and items in cancelled runs preserve
+persisted timing; untimed items remain null. Existing item status vocabulary
+remains queued/running/completed/failed/skipped (sr-007).
+
+Wave 1 validates documents and hand-written examples only. Response-models owns
+strict Python models; svc-cold-gpu and svc-run-timing own actual builder/database
+round-trip verification before PHP/SPA integration. Deployed lease bounds remain
+a prerequisite, as recorded in the lifecycle contract.

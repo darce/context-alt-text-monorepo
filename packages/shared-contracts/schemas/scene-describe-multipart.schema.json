@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/scene-describe-multipart.schema.json",
+  "title": "Scene describe multipart success and typed operation error",
+  "description": "POST /scene/describe/multipart response body. 200 success; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field, never a header or query parameter.",
+  "oneOf": [
+    {
+      "allOf": [
+        {
+          "$ref": "image-description-response.schema.json"
+        },
+        {
+          "required": [
+            "operation_id",
+            "startup_id"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "description_service_starting",
+                "description_service_unavailable",
+                "description_service_error",
+                "operation_mismatch",
+                "operation_expired"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Opaque service-minted id bound to tenant and request digest."
+            },
+            "startup_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Opaque shared startup id; null for warm/cache work."
+            },
+            "warmup_eta_seconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "timing": {
+              "$ref": "image-description-response.schema.json#/properties/timing"
+            }
+          },
+          "required": [
+            "code",
+            "message",
+            "operation_id",
+            "startup_id"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "const": "description_service_starting"
+                  }
+                }
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "warmup_eta_seconds"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "detail"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "retryFields": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Opaque service-minted id bound to tenant and request digest."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "leaseState": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "expired",
+        "rejected"
+      ],
+      "description": "Internal durable demand control state, not a response field. Expiry, startup_id and first_ready_at are stored separately. See gpu-lifecycle.md for admitted transitions."
+    }
+  }
+}

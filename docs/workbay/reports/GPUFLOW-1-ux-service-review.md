@@ -40,3 +40,64 @@ The two canonical map sources reflect the Description Service rename and remain 
 - **Evidence:** The ux-service handoff requires six state sketches, but the delta supplies only one generic Settings sketch with action rows. It says ETA and Retry-After are data at line 27 without a state-specific inventory for starting-with-ETA, starting-without-ETA, ready, unknown/stale, or unavailable/operator-STOP copy and recovery. A long warm-up needs visible progress and a predictable next action (`[INT-08]`), while distinct critical states need distinct cues (`[PERC-02]`).
 - **Impact:** The canonical map remains too underspecified for downstream QA to verify A3's warming ETA/no-ETA behavior and the unknown-versus-operator-STOP distinction; a generic action table can pass parity while missing the required operator copy.
 - **Fix:** Add the six canonical state sketches (or an equivalent machine-readable state matrix plus Markdown projection), including the wire-backed ETA/Retry-After behavior, explicit no-ETA unavailable copy, stale/unknown refresh recovery, and the action available in each state.
+
+## Re-review r4 (7e848307b..5655adc8f)
+
+VERIFIED: {"GPUFLOW-1-UXSERVICE-R-02":"fixed","GPUFLOW-1-UXSERVICE-R-03":"fixed","GPUFLOW-1-UXSERVICE-R-04":"partially_fixed"}
+FINDINGS: [{"id":"GPUFLOW-1-UXSERVICE-R-05","severity":"high","file_path":"apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md","line":10,"summary":"The fix maps Retry-After onto description_service_unavailable on degraded/unknown Settings states even though the typed API contract forbids that header on unavailable errors.","evidence":"The fix adds 'degraded copy may include typed description_service_unavailable Retry-After' at gpu-operator-control.md:10 and repeats it at :27 and :337; image-description-api.md:287-296 says Retry-After is required only for description_service_starting and must be absent on every other typed error, including description_service_unavailable."},{"id":"GPUFLOW-1-UXSERVICE-R-06","severity":"medium","file_path":"apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md","line":10,"summary":"The deferred-stop map promises a pending count that the GPU load wire contract and current card do not carry.","evidence":"The fix requires 'Stopping after current work (N items left)' at gpu-operator-control.md:10,34,203,207,282-287 and gpu-operator-control.uxmap.json:32,111-113, but GpuLoadSnapshot exposes only has_work/written_at/fresh at gpuApi.ts:66-70 and intentLabel renders only a boolean-work message at GpuControlCard.tsx:86-105; no N is available to render without inventing metadata (rg-015)."},{"id":"GPUFLOW-1-UXSERVICE-R-07","severity":"medium","file_path":"apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.uxmap.json","line":89,"summary":"The fix splits Refresh into a primary unknown-state action and a tertiary live-state action, but the SPA still renders one unconditional tertiary Refresh button.","evidence":"The changed action rows gpu-operator-control.uxmap.json:89-90 assign primary to unknown and tertiary to other states; GpuControlCard.tsx:311-313 always renders one Refresh button with acx-button--tertiary and no state-specific hierarchy, so the new action matrix is not implementable/parity-verifiable."},{"id":"GPUFLOW-1-UXSERVICE-R-08","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx","line":50,"summary":"The deferred-stop fix is not covered by the representative card test: its helper still disables Stop during work and the test asserts the superseded behavior.","evidence":"The fix says Stop stays available and never disabled in gpu-operator-control.md:203-208 and gpu-operator-control.uxmap.json:58-65, but the existing test helper sets canStop to false when load.has_work at GpuControlCard.test.tsx:50-56 and the test at :179-188 asserts aria-disabled=true. The test therefore bypasses the production hook's deferred-stop behavior and cannot protect the fixed map contract."}]
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-UXSERVICE-R-02 | fixed | The JSON hunk removes `unavailable` from `action_states` and from `act-gpu-start.when` (`gpu-operator-control.uxmap.json:29,84`); the Markdown hunk also states that `gpu_state` has no unavailable member and treats the typed error as copy, not a state (`gpu-operator-control.md:337`). |
+| GPUFLOW-1-UXSERVICE-R-03 | fixed | The goal, stop confirmation, flow, and JSON steps now keep Stop available during `load.has_work` and describe a deferred intent (`gpu-operator-control.md:10,203-207,282-287`; `.uxmap.json:111-113`), removing the old disabled/wait-for-run branch. |
+| GPUFLOW-1-UXSERVICE-R-04 | partially_fixed | The fix adds six sketches (`gpu-operator-control.md:84-173`) covering stopped, ETA/no-ETA startup, ready, unknown/stale, and degraded, but it supplies no state-specific unavailable/operator-STOP sketch; it only says operator STOP is a reason (`:337`). The new unavailable/Retry-After wording is also invalid as recorded in R-05. |
+
+### FINDINGS
+
+#### GPUFLOW-1-UXSERVICE-R-05 — high
+
+- **File:line:** `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md:10,27,337` (JSON source: `gpu-operator-control.uxmap.json:9,21,135`)
+- **Evidence:** The fix says degraded/unknown Settings copy may include typed `description_service_unavailable` plus `Retry-After`, and the degraded sketch says “retry in 15s.” The shared API contract says `Retry-After` is required only on `description_service_starting` and must be absent on all other typed errors, including `description_service_unavailable` (`docs/workbay/contracts/image-description-api.md:287-296`).
+- **Impact:** The canonical map now teaches the SPA to consume a header the unavailable contract explicitly forbids, creating a release-facing error-contract break and an impossible recovery branch (`rg-015`).
+- **Fix:** Keep `description_service_unavailable` copy separate from Retry-After; reserve the header/countdown for `description_service_starting` and document operator-STOP/stale recovery without inventing a retry value.
+
+#### GPUFLOW-1-UXSERVICE-R-06 — medium
+
+- **File:line:** `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md:10,34,203,207,282-287` (JSON source: `gpu-operator-control.uxmap.json:32,111-113`)
+- **Evidence:** The new deferred-stop copy promises `Stopping after current work (N items left)`. The read-only GPU load contract contains only `has_work`, `written_at`, and `fresh` (`js/admin/api/gpuApi.ts:66-70`), while `intentLabel` can only render the generic boolean-work message (`GpuControlCard.tsx:86-105`).
+- **Impact:** The map requires a count that cannot arrive from the wire, so a downstream UI must either omit required copy or fabricate metadata, violating `rg-015`.
+- **Fix:** Use the available boolean copy (“stops after the current work finishes”) or add and contract-test an upstream count before mapping it.
+
+#### GPUFLOW-1-UXSERVICE-R-07 — medium
+
+- **File:line:** `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.uxmap.json:89-90` (Markdown projection: `gpu-operator-control.md:257-258`)
+- **Evidence:** The fix introduces `act-gpu-refresh` as a primary action for `unknown` and `act-gpu-refresh-live` as a tertiary action for live states. The SPA still renders one unconditional tertiary Refresh button (`js/admin/pages/settings/GpuControlCard.tsx:311-313`) with no state-dependent hierarchy.
+- **Impact:** The new action matrix is not represented by the implementation; parity can pass while the unknown recovery is not the promised primary action.
+- **Fix:** Either document one shared Refresh hierarchy or implement/test the unknown-versus-live hierarchy before retaining two action IDs.
+
+#### GPUFLOW-1-UXSERVICE-R-08 — medium
+
+- **File:line:** `apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/GpuControlCard.test.tsx:50-56,179-188`
+- **Evidence:** The fix explicitly says Stop remains available while work is in flight and is never disabled (`gpu-operator-control.md:203-208`; `.uxmap.json:58-65`). The card test helper still computes `canStop` as false when `load.has_work`, and its test asserts `aria-disabled=true`, bypassing the production hook's deferred-stop behavior.
+- **Impact:** The existing representative test encodes the superseded blocked-stop UX, so it cannot detect regression to the fixed deferred intent and may force downstream implementations back to the old behavior.
+- **Fix:** Drive the card test through the real hook or update its fixture to keep Stop actionable and assert the deferred/pending copy after confirmation.
+
+Verdict: fail
+
+## Re-review r5 (5655adc8f..64b8ce929)
+
+VERIFIED: {"GPUFLOW-1-UXSERVICE-R-04":"fixed","GPUFLOW-1-UXSERVICE-R-05":"fixed","GPUFLOW-1-UXSERVICE-R-06":"fixed","GPUFLOW-1-UXSERVICE-R-07":"fixed"}
+FINDINGS: []
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-UXSERVICE-R-04 | fixed | The Markdown purpose hunk expands the inventory to seven sketches and the added `stopped by operator` block is followed by the existing starting-with-ETA, starting-without-ETA, ready, unknown/stale, and degraded sketches (`gpu-operator-control.md:27,100-185`); the JSON purpose hunk mirrors the same state-specific inventory (`gpu-operator-control.uxmap.json:21`). This supplies the explicit long-wait and state-cue surfaces required by `[INT-08]` and `[PERC-02]`. |
+| GPUFLOW-1-UXSERVICE-R-05 | fixed | The fix removes the degraded/unknown `Retry-After` wording and the invented retry countdown, replacing it with `Service unavailable. Start service to retry.` (`gpu-operator-control.md:10,27,173-185`; JSON `:9,21`). The closing contract note now reserves `Retry-After` for `description_service_starting` (`gpu-operator-control.md:348`; JSON `:134`), so the map no longer teaches the forbidden unavailable-error header. |
+| GPUFLOW-1-UXSERVICE-R-06 | fixed | Every deferred-stop phrase in the Markdown and JSON hunks drops `N items left` and now says `Stopping after the current work finishes until idle` (`gpu-operator-control.md:10,34,203-207,293-298,330,337`; JSON `:9,32,58,111-113`). The map therefore asks only for the boolean work signal available on the wire, rather than inventing a count (`[INT-10]`). |
+| GPUFLOW-1-UXSERVICE-R-07 | fixed | The JSON hunk removes the separate live Refresh action and makes one `act-gpu-refresh` tertiary action apply always (`gpu-operator-control.uxmap.json:89-90`); the Markdown action table and parity index make the same one-action change (`gpu-operator-control.md:269,325`). This matches the SPA's single unconditional tertiary Refresh control (`GpuControlCard.tsx:311-313`) and removes the prior split-action parity mismatch (`[INT-10]`). |
+
+### FINDINGS
+
+No new findings in this fix delta after excluding the already-open generated-registry, stale/unknown action, operator-STOP presentation, ETA wire, and test-coverage items from the handoff context.
+
+Verdict: pass

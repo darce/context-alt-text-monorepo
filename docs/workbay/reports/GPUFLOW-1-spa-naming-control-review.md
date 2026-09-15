@@ -26,3 +26,16 @@ The repository lock check passed. The declared Vitest command could not be trust
 - **Evidence:** The delta deletes the previous `not.toHaveAttribute('aria-activedescendant')` assertion while adding listbox/option absence checks. `NameFaceControl.tsx:502-504` still derives and emits this attribute, and the remaining assertions at `NameFaceControl.test.tsx:128-138` cover only the open state.
 - **Impact:** A regression that leaves a stale active descendant on a focused closed combobox can pass the lane's new mount test, weakening the APG closed-state contract and the required C1 proof.
 - **Fix:** Keep the new listbox/option assertions and restore an explicit `expect(input).not.toHaveAttribute('aria-activedescendant')` assertion for the closed mount state.
+
+## Re-review r2 (1c0336408..b879db1f1)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `GPUFLOW-1-SPANAMINGCONTROL-R-01` | fixed | The fix removes the unconsumed `selectGroupPreviewSource` implementation and its selector-only unit test from `buildNamingOptions.ts` and `buildNamingOptions.test.ts` (`.review/CHANGE.diff:326-399`), then renders the production `ClusterPreview` directly with the fixture cases and asserts the selected URL/bbox or placeholder (`.review/CHANGE.diff:162-230`). |
+| `GPUFLOW-1-SPANAMINGCONTROL-R-02` | fixed | The closed-on-mount test now explicitly asserts that the focused combobox has no `aria-activedescendant` (`.review/CHANGE.diff:197-205`), alongside the closed listbox/option assertions. |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

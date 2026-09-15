@@ -9,6 +9,7 @@ use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use WP_REST_Request;
 use WP_REST_Response;
 use WP_Error;
@@ -911,7 +912,7 @@ PHP;
         global $wpdb;
 
         $harness    = $this->makeUiReadHarness();
-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
+        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
 
         // Snapshot the failure-counter transient at the moment GET_LOCK and
         // RELEASE_LOCK are issued. set_transient never touches $wpdb, so this is
@@ -983,7 +984,7 @@ PHP;
         $wpdb->mockVar = '1'; // GET_LOCK(...) acquired.
 
         $harness = $this->makeUiReadHarness();
-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
 
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
@@ -1020,8 +1021,8 @@ PHP;
         $wpdb->mockVar = '0'; // GET_LOCK(...) timed out -> lock not acquired.
 
         $harness    = $this->makeUiReadHarness();
-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
+        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
 
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
@@ -1070,8 +1071,8 @@ PHP;
     public function testUiReadCounterStillIncrementsWhenWpdbUnavailable(): void
     {
         $harness    = $this->makeUiReadHarness();
-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($harness->resolvedBaseUrl());
-        $circuitKey = RecognitionCircuitKeys::for_base_url($harness->resolvedBaseUrl());
+        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
+        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
 
         $savedWpdb = $GLOBALS['wpdb'] ?? null;
         // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb so acquire_named_lock bails to the unguarded path.
@@ -1289,8 +1290,8 @@ PHP;
 
         $harness = $this->makeUiReadHarness();
         $baseUrl = $harness->resolvedBaseUrl();
-        $failureKey = RecognitionCircuitKeys::failure_key_for_base_url($baseUrl);
-        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        $failureKey = $this->familyFailureKey($baseUrl);
+        $circuitKey = $this->familyCircuitKey($baseUrl);
 
         for ($i = 0; $i < 2; $i++) {
             $this->queueHttpResponse([
@@ -1436,6 +1437,477 @@ PHP;
             $classifier->classify($transport),
             'WP_Error must not be classified as endpoint error'
         );
+    }
+
+    public function testDescribeWarmingDoesNotOpenCircuitAndPreservesTypedEnvelope(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $baseUrl = $harness->resolvedBaseUrl();
+        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
+        $describeFailures = $this->familyFailureKey($baseUrl, 'describe');
+        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
+
+        $starting = $this->validatedWarmingHttp();
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->queueHttpResponse($starting);
+            $result = $harness->call('POST', '/scene/describe/multipart', 'description');
+            $this->assertInstanceOf(WP_REST_Response::class, $result);
+            $this->assertSame(503, $result->get_status());
+            $this->assertSame('5', $result->get_headers()['Retry-After'] ?? null);
+            $this->assertSame(
+                'description_service_starting',
+                $result->get_data()['detail']['code'] ?? null
+            );
+            $this->assertSame(5, $result->get_data()['detail']['warmup_eta_seconds'] ?? null);
+        }
+
+        $this->assertFalse(get_transient($describeCircuit), 'validated warming must not open describe');
+        $this->assertFalse(get_transient($describeFailures), 'validated warming must not increment describe');
+        $this->assertFalse(get_transient($uiReadCircuit), 'warming must not open ui_read');
+        $this->assertCount(3, $this->getHttpCalls());
+    }
+
+    public function testDescribeFailuresOpenOnlyDescribeFamily(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $baseUrl = $harness->resolvedBaseUrl();
+        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
+        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
+        $controlCircuit = $this->familyCircuitKey($baseUrl, 'control');
+
+        $error = [
+            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_error',
+                    'message' => 'adapter failed',
+                    'operation_id' => 'op-retry-opaque',
+                    'startup_id' => null,
+                ],
+            ]),
+        ];
+        $this->queueHttpResponse($error);
+        $this->queueHttpResponse($error);
+
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'real describe 502 must open describe');
+        $this->assertFalse(get_transient($uiReadCircuit), 'describe failures must not open ui_read');
+        $this->assertFalse(get_transient($controlCircuit), 'describe failures must not open control');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"ok":true}',
+        ]);
+        $open = $harness->call('POST', '/scene/describe/multipart', 'description');
+        $this->assertInstanceOf(WP_REST_Response::class, $open);
+        $this->assertSame(503, $open->get_status());
+        $this->assertSame(
+            'description_service_unavailable',
+            $open->get_data()['detail']['code'] ?? null
+        );
+        $this->assertArrayNotHasKey('Retry-After', $open->get_headers());
+        $this->assertCount(2, $this->getHttpCalls(), 'open describe breaker must not dispatch');
+        $this->assertTypedUnavailableOpenCircuit($open->get_data());
+    }
+
+    public function testUiReadSuccessDoesNotResetDescribeBreaker(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $baseUrl = $harness->resolvedBaseUrl();
+        $describeCircuit = $this->familyCircuitKey($baseUrl, 'describe');
+        $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
+
+        $error = [
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"boom"}',
+        ];
+        $this->queueHttpResponse($error);
+        $this->queueHttpResponse($error);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $this->assertNotFalse(get_transient($describeCircuit));
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"ok":true}',
+        ]);
+        $harness->call('GET', '/ping', 'ui_read');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'ui_read success must not reset describe');
+        $this->assertFalse(get_transient($uiReadCircuit));
+    }
+
+    public function testMalformedWarmingStillCountsTowardDescribeBreaker(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+
+        $malformed = [
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '5'],
+            'body' => '{"error":"backend_overloaded"}',
+        ];
+        $this->queueHttpResponse($malformed);
+        $this->queueHttpResponse($malformed);
+
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'malformed warming must still open describe');
+    }
+
+    /**
+     * @dataProvider malformedWarmingProvider
+     * @param array<string, mixed> $http
+     */
+    #[DataProvider('malformedWarmingProvider')]
+    public function testIncompleteWarmingEnvelopeCountsTowardDescribeBreaker(array $http): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+
+        $this->queueHttpResponse($http);
+        $this->queueHttpResponse($http);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'incomplete warming must still open describe');
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>}>
+     */
+    public static function malformedWarmingProvider(): array
+    {
+        $validDetail = [
+            'code' => 'description_service_starting',
+            'message' => 'Description service is starting.',
+            'operation_id' => 'op-retry-opaque',
+            'startup_id' => 'startup-opaque',
+            'warmup_eta_seconds' => 5,
+            'timing' => [
+                'queue_ms' => 0,
+                'ramp_up_ms' => 40,
+                'processing_ms' => null,
+                'startup_ms' => null,
+                'server_elapsed_ms' => 40,
+            ],
+        ];
+
+        $missingEta = $validDetail;
+        unset($missingEta['warmup_eta_seconds']);
+
+        $wrongCode = $validDetail;
+        $wrongCode['code'] = 'description_service_error';
+
+        $emptyTiming = $validDetail;
+        $emptyTiming['timing'] = [];
+
+        $bogusTiming = $validDetail;
+        $bogusTiming['timing'] = array_merge($validDetail['timing'], ['bogus_ms' => 1]);
+
+        $overlongId = $validDetail;
+        $overlongId['operation_id'] = str_repeat('a', 129);
+
+        $negativeEta = $validDetail;
+        $negativeEta['warmup_eta_seconds'] = -1;
+
+        $extraDetail = $validDetail;
+        $extraDetail['hint'] = 'not-in-schema';
+
+        $validJson = json_encode(['detail' => $validDetail]);
+
+        return [
+            'missing_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $missingEta]),
+            ]],
+            'missing_retry_after' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => [],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'wrong_code' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $wrongCode]),
+            ]],
+            'empty_timing' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $emptyTiming]),
+            ]],
+            'bogus_timing_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $bogusTiming]),
+            ]],
+            'overlong_id' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $overlongId]),
+            ]],
+            'null_operation_id' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => array_merge($validDetail, ['operation_id' => null])]),
+            ]],
+            'retry_after_zero' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '0'],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'retry_after_121' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '121'],
+                'body' => json_encode(['detail' => $validDetail]),
+            ]],
+            'negative_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $negativeEta]),
+            ]],
+            'extra_top_level_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $validDetail, 'unexpected' => true]),
+            ]],
+            'extra_detail_key' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => json_encode(['detail' => $extraDetail]),
+            ]],
+            'inf_eta' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => str_replace('"warmup_eta_seconds":5', '"warmup_eta_seconds":1e400', (string) $validJson),
+            ]],
+            'inf_timing' => [[
+                'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+                'headers' => ['Retry-After' => '5'],
+                'body' => str_replace('"queue_ms":0', '"queue_ms":1e400', (string) $validJson),
+            ]],
+        ];
+    }
+
+    public function testNullWarmupEtaDoesNotCountTowardDescribeBreaker(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
+
+        $starting = $this->validatedWarmingHttp();
+        $body = json_decode((string) $starting['body'], true);
+        $this->assertIsArray($body);
+        $body['detail']['warmup_eta_seconds'] = null;
+        $starting['body'] = json_encode($body);
+
+        $this->queueHttpResponse($starting);
+        $this->queueHttpResponse($starting);
+        $first = $harness->call('POST', '/scene/describe/multipart', 'description');
+        $second = $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertInstanceOf(WP_REST_Response::class, $first);
+        $this->assertSame(503, $first->get_status());
+        $this->assertArrayHasKey('warmup_eta_seconds', $first->get_data()['detail']);
+        $this->assertNull($first->get_data()['detail']['warmup_eta_seconds']);
+        $this->assertInstanceOf(WP_REST_Response::class, $second);
+        $this->assertFalse(get_transient($describeCircuit), 'null warmup_eta_seconds is contract-valid warming');
+        $this->assertFalse(get_transient($describeFailures), 'null ETA warming must not increment describe');
+    }
+
+    public function testNullOperationIdStartingEnvelopeIsNotWarmingExempt(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $harness = $this->makeFamilyHarness();
+        $describeCircuit = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+        $describeFailures = $this->familyFailureKey($harness->resolvedBaseUrl(), 'describe');
+
+        $valid = $this->validatedWarmingHttp();
+        $this->queueHttpResponse($valid);
+        $this->queueHttpResponse($valid);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $this->assertFalse(get_transient($describeCircuit), 'valid operation_id warming remains exempt');
+        $this->assertFalse(get_transient($describeFailures), 'valid operation_id warming must not increment describe');
+
+        $nullId = $valid;
+        $body = json_decode((string) $valid['body'], true);
+        $this->assertIsArray($body);
+        $body['detail']['operation_id'] = null;
+        $nullId['body'] = json_encode($body);
+
+        $this->queueHttpResponse($nullId);
+        $this->queueHttpResponse($nullId);
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+        $harness->call('POST', '/scene/describe/multipart', 'description');
+
+        $this->assertNotFalse(get_transient($describeCircuit), 'null operation_id starting envelope must open describe');
+        $this->assertNotFalse(get_transient($describeFailures), 'null operation_id must increment describe failures');
+    }
+
+    /**
+     * @dataProvider typedOperationErrorProvider
+     */
+    #[DataProvider('typedOperationErrorProvider')]
+    public function testTypedOperationErrorsPassThroughUnchanged(string $case, int $status, ?string $retryAfter): void
+    {
+        $fixture = $this->describeWireFixture($case);
+        $harness = $this->makeFamilyHarness();
+        $headers = [];
+        if (is_string($retryAfter)) {
+            $headers['Retry-After'] = $retryAfter;
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => $status, 'message' => 'Error'],
+            'headers' => $headers,
+            'body' => json_encode($fixture['response']['body']),
+        ]);
+
+        $result = $harness->call('POST', '/scene/describe/multipart', 'description');
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame($status, $result->get_status());
+        $this->assertSame($fixture['response']['body'], $result->get_data());
+        if (is_string($retryAfter)) {
+            $this->assertSame($retryAfter, $result->get_headers()['Retry-After'] ?? null);
+        } else {
+            $this->assertArrayNotHasKey('Retry-After', $result->get_headers());
+        }
+        $this->assertCount(1, $this->getHttpCalls());
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: int, 2: ?string}>
+     */
+    public static function typedOperationErrorProvider(): array
+    {
+        return [
+            'starting' => ['starting', 503, '5'],
+            'unavailable' => ['unavailable', 503, null],
+            'service_error' => ['service_error', 502, null],
+            'operation_mismatch' => ['operation_mismatch', 409, null],
+            'operation_expired' => ['operation_expired', 410, null],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function describeWireFixture(string $case): array
+    {
+        $path = __DIR__ . '/../../src/api/tests/fixtures/gpuflow-describe-wire.json';
+        $decoded = json_decode((string) file_get_contents($path), true);
+        $this->assertIsArray($decoded);
+        $this->assertArrayHasKey($case, $decoded);
+        return $decoded[$case];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validatedWarmingHttp(): array
+    {
+        $fixture = $this->describeWireFixture('starting');
+        $headers = [];
+        foreach (($fixture['response']['headers'] ?? []) as $name => $value) {
+            $headers[$name] = $value;
+        }
+
+        return [
+            'response' => ['code' => $fixture['response']['status'], 'message' => 'Service Unavailable'],
+            'headers' => $headers,
+            'body' => json_encode($fixture['response']['body']),
+        ];
+    }
+
+    /**
+     * Structural check of scene-describe-multipart.schema.json error branch
+     * for a locally generated open-circuit envelope (operation_id is null
+     * because no durable operation was accepted).
+     *
+     * @param mixed $body
+     */
+    private function assertTypedUnavailableOpenCircuit(mixed $body): void
+    {
+        $this->assertIsArray($body);
+        $this->assertSame(['detail'], array_keys($body));
+        $detail = $body['detail'];
+        $this->assertIsArray($detail);
+        $this->assertSame('description_service_unavailable', $detail['code'] ?? null);
+        $this->assertIsString($detail['message'] ?? null);
+        $this->assertNotSame('', $detail['message']);
+        $this->assertArrayHasKey('operation_id', $detail);
+        $this->assertNull($detail['operation_id']);
+        $this->assertArrayHasKey('startup_id', $detail);
+        $this->assertNull($detail['startup_id']);
+        $this->assertArrayNotHasKey('warmup_eta_seconds', $detail);
+        $timing = $detail['timing'] ?? null;
+        $this->assertIsArray($timing);
+        $this->assertEqualsCanonicalizing(
+            ['queue_ms', 'ramp_up_ms', 'processing_ms', 'startup_ms', 'server_elapsed_ms'],
+            array_keys($timing)
+        );
+        $this->assertNull($timing['queue_ms']);
+        $this->assertNull($timing['ramp_up_ms']);
+        $this->assertNull($timing['processing_ms']);
+        $this->assertNull($timing['startup_ms']);
+        $this->assertNull($timing['server_elapsed_ms']);
+        $this->assertEqualsCanonicalizing(
+            ['code', 'message', 'operation_id', 'startup_id', 'timing'],
+            array_keys($detail)
+        );
+    }
+
+    private function familyCircuitKey(string $baseUrl, string $family = 'ui_read'): string
+    {
+        return RecognitionCircuitKeys::for_base_url($baseUrl) . '_' . $family;
+    }
+
+    private function familyFailureKey(string $baseUrl, string $family = 'ui_read'): string
+    {
+        return RecognitionCircuitKeys::failure_key_for_base_url($baseUrl) . '_' . $family;
+    }
+
+    private function makeFamilyHarness(): object
+    {
+        return new class() extends AnalysisJobsController {
+            /**
+             * @return \WP_REST_Response|\WP_Error
+             */
+            public function call(string $method, string $path, string $requestClass)
+            {
+                return $this->proxy_request($method, $path, [], [], $requestClass);
+            }
+
+            public function resolvedBaseUrl(): string
+            {
+                return \untrailingslashit($this->get_recognition_base_url());
+            }
+        };
     }
 
     private function makeUiReadHarness(): object

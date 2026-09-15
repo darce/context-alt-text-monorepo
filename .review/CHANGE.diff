@@ -1,0 +1,730 @@
+diff --git a/apps/prototype-description-service/scene/application/describe_load.py b/apps/prototype-description-service/scene/application/describe_load.py
+--- a/apps/prototype-description-service/scene/application/describe_load.py
++++ b/apps/prototype-description-service/scene/application/describe_load.py
+@@ -16,16 +16,24 @@ import math
+ import os
+ import tempfile
+ import threading
+-import time
++from datetime import UTC, datetime
+ from pathlib import Path
+ from typing import Any
+ 
+ from sqlalchemy import func, select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from db.models.scene import DescribeRun, DescribeRunItem
++from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun, DescribeRunItem
+ from recognition.shared.db.dialect import is_sqlite
+-from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus, RunKind
++from scene.application.describe_operation_repository import DescribeOperationRepository
++from scene.domain.describe_run import (
++    DemandLeaseState,
++    DescribeItemStatus,
++    DescribeRunStatus,
++    RunKind,
++    as_utc,
++    utc_observation,
++)
+ 
+ _logger = logging.getLogger(__name__)
+ 
+@@ -50,6 +58,11 @@ MAX_LOAD_REFRESH_SECONDS = min(
+ # additionally keeps their replacements ordered and prevents needless overlap.
+ _LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
+ 
++# Counting-only repository construction; lease lifetime is stored on each row.
++_COUNTING_LEASE_SECONDS = 1.0
++_SNAPSHOT_REVISION_TABLE = "describe_load_snapshot_revisions"
++_MAX_LEASE_REASON = "lease_cap"
++
+ # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
+ # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
+ # the GPU open, instead of silently pinning an A10 forever [sr-007].
+@@ -125,6 +138,103 @@ async def _require_rls_bypass(session: AsyncSession) -> None:
+         )
+ 
+ 
++async def _allocate_snapshot_revision(session: AsyncSession) -> int:
++    """Allocate the next publication revision under the demand-read transaction.
++
++    A singleton row lock serializes allocation with the subsequent demand read
++    so an older database view cannot receive a newer revision. The table is the
++    publication sequence; it is created on first use so sqlite tests and a
++    postgres deploy share one writer path without a second lifecycle store.
++    """
++    await session.execute(
++        text(
++            f"CREATE TABLE IF NOT EXISTS {_SNAPSHOT_REVISION_TABLE} ("
++            "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
++            "revision INTEGER NOT NULL)"
++        )
++    )
++    if is_sqlite(session):
++        await session.execute(
++            text(f"INSERT OR IGNORE INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0)")
++        )
++    else:
++        await session.execute(
++            text(
++                f"INSERT INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0) "
++                "ON CONFLICT (singleton) DO NOTHING"
++            )
++        )
++    result = await session.execute(
++        text(f"UPDATE {_SNAPSHOT_REVISION_TABLE} SET revision = revision + 1 WHERE singleton = 1 RETURNING revision")
++    )
++    revision = result.scalar()
++    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
++        raise RuntimeError("failed to allocate load snapshot revision")
++    return revision
++
++
++def _published_revision(payload: object) -> int:
++    """Return the currently published revision; missing files are revision 0."""
++    if not isinstance(payload, dict):
++        raise RuntimeError("published load snapshot is not an object")
++    revision = payload.get("revision", 0)
++    if revision is None:
++        revision = 0
++    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
++        raise RuntimeError("malformed published load snapshot revision")
++    return revision
++
++
++def _max_lease_reached() -> bool:
++    from scene.application.gpu_state import resolve_gpu_state_path
++
++    path = Path(resolve_gpu_state_path())
++    try:
++        payload = json.loads(path.read_text(encoding="utf-8"))
++    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
++        return False
++    if not isinstance(payload, dict):
++        return False
++    return payload.get("last_transition_reason") == _MAX_LEASE_REASON
++
++
++def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
++    from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
++
++    stop_requested = False
++    intent = read_gpu_intent(resolve_gpu_intent_path())
++    if intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now:
++        stop_requested = True
++    return stop_requested, _max_lease_reached()
++
++
++async def _persist_first_ready(session: AsyncSession, *, now: datetime) -> None:
++    from scene.application.gpu_state import GpuState, read_gpu_state
++
++    if read_gpu_state(now=now.timestamp()) is not GpuState.READY:
++        return
++    rows = (
++        await session.execute(
++            select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
++            .join(
++                DescribeDemandLease,
++                (DescribeDemandLease.tenant_id == DescribeOperation.tenant_id)
++                & (DescribeDemandLease.operation_id == DescribeOperation.operation_id),
++            )
++            .where(
++                DescribeDemandLease.state == DemandLeaseState.ACTIVE,
++                DescribeDemandLease.expires_at > now,
++                DescribeOperation.first_ready_at.is_(None),
++            )
++        )
++    ).all()
++    if not rows:
++        return
++    repo = DescribeOperationRepository(session, lease_seconds=_COUNTING_LEASE_SECONDS)
++    for tenant_id, operation_id in rows:
++        await repo.observe_ready(tenant_id=tenant_id, operation_id=operation_id, now=now)
++
++
+ async def batch_in_progress(session: AsyncSession) -> bool:
+     """True while any tenant holds a non-terminal ``run_kind=bulk`` run (GPUW-1).
+ 
+@@ -150,16 +260,34 @@ async def batch_in_progress(session: AsyncSession) -> bool:
+     return int(result.scalar() or 0) > 0
+ 
+ 
+-async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
++async def load_snapshot(
++    session: AsyncSession,
++    *,
++    now: datetime | None = None,
++    stop_requested: bool = False,
++    max_lease_reached: bool = False,
++) -> dict[str, int | float | bool]:
+     """Count non-terminal work for the GPU lifecycle controller.
+ 
+     ``queue_depth`` = single-run items with status ``queued``; ``in_flight`` =
+     status ``running`` (includes provisional, which stays ``running`` until
+-    final). Bulk-run *items* stay excluded from both counts -- the wire meaning
+-    of those two keys is unchanged -- and bulk work is reported separately as
+-    ``batch_in_progress`` (GPUW-1). Callers must use a bypass session [DIAG-02].
++    final) plus eligible demand leases. Bulk-run *items* stay excluded from
++    both counts -- the wire meaning of those two keys is unchanged -- and bulk
++    work is reported separately as ``batch_in_progress`` (GPUW-1). Eligible
++    leases are also reported as additive ``lease_demand``. Callers must use a
++    bypass session [DIAG-02].
+     """
+     await _require_rls_bypass(session)
++    observed_at = as_utc(now or datetime.now(UTC))
++    revision = await _allocate_snapshot_revision(session)
++    await _persist_first_ready(session, now=observed_at)
++    lease_demand = await DescribeOperationRepository(
++        session, lease_seconds=_COUNTING_LEASE_SECONDS
++    ).active_demand_count(
++        now=observed_at,
++        stop_requested=stop_requested,
++        max_lease_reached=max_lease_reached,
++    )
+     result = await session.execute(
+         select(DescribeRunItem.status, func.count())
+         .join(DescribeRun, DescribeRun.id == DescribeRunItem.run_id)
+@@ -170,18 +298,35 @@ async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
+         .group_by(DescribeRunItem.status)
+     )
+     counts: dict[str, int] = {str(status): int(n) for status, n in result.all()}
++    running = counts.get(DescribeItemStatus.RUNNING, 0)
+     return {
+         "queue_depth": counts.get(DescribeItemStatus.QUEUED, 0),
+-        "in_flight": counts.get(DescribeItemStatus.RUNNING, 0),
++        "in_flight": running + lease_demand,
+         "batch_in_progress": await batch_in_progress(session),
+-        "written_at": time.time(),
++        "lease_demand": lease_demand,
++        "revision": revision,
++        "written_at": observed_at.timestamp(),
+     }
+ 
+ 
+ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+-    """Atomically dump load while holding the reaper's process fence."""
++    """Atomically dump load while holding the reaper's process fence.
++
++    Snapshots that carry ``revision`` use write-if-newer: equal or older
++    candidates are dropped without refreshing ``written_at``. Payloads without
++    ``revision`` keep the legacy unconditional replace used by unit writers.
++    Unreadable or malformed published revisions fail closed and never bypass
++    the fence.
++    """
+     target = Path(path)
+     target.parent.mkdir(parents=True, exist_ok=True)
++    write_if_newer = "revision" in snapshot
++    candidate_revision: int | None = None
++    if write_if_newer:
++        raw_revision = snapshot["revision"]
++        if isinstance(raw_revision, bool) or not isinstance(raw_revision, int) or raw_revision < 1:
++            raise RuntimeError("load snapshot revision must be a positive integer")
++        candidate_revision = raw_revision
+     payload = json.dumps(snapshot, separators=(",", ":"))
+ 
+     with _LOAD_SNAPSHOT_WRITE_LOCK:
+@@ -190,6 +335,15 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
+         tmp: Path | None = None
+         try:
+             fcntl.flock(lock_fd, fcntl.LOCK_EX)
++            if write_if_newer:
++                published = 0
++                if target.exists():
++                    try:
++                        published = _published_revision(json.loads(target.read_text(encoding="utf-8")))
++                    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
++                        raise RuntimeError("unreadable published load snapshot") from exc
++                if candidate_revision is not None and candidate_revision <= published:
++                    return
+             fd, tmp_name = tempfile.mkstemp(
+                 dir=target.parent,
+                 prefix=f".{target.name}.",
+@@ -219,6 +373,9 @@ async def dump_load_snapshot(
+     path: str | Path | None = None,
+     *,
+     raise_on_error: bool = False,
++    now: datetime | None = None,
++    stop_requested: bool | None = None,
++    max_lease_reached: bool | None = None,
+ ) -> None:
+     """Best-effort load write on a dedicated RLS-bypassed session (GPUW-1).
+ 
+@@ -230,7 +387,8 @@ async def dump_load_snapshot(
+     snapshot must not fail the describe operation that triggered it. The
+     periodic refresher opts into ``raise_on_error`` so its cycle-level warning
+     and timeout supervision can observe failures instead of silently treating
+-    them as successful refreshes.
++    them as successful refreshes. The demand transaction commits before the
++    write-if-newer publication.
+     """
+     from db.tenant_context import enable_rls_bypass
+ 
+@@ -239,10 +397,19 @@ async def dump_load_snapshot(
+             raise RuntimeError("describe load snapshot session factory is unavailable")
+         return
+     target = path or resolve_load_path()
++    observed_at = as_utc(now or datetime.now(UTC))
+     try:
++        policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
++        blocked_by_stop = policy_stop if stop_requested is None else stop_requested
++        blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
+         async with session_factory() as session:
+             await enable_rls_bypass(session)
+-            snap = await load_snapshot(session)
++            snap = await load_snapshot(
++                session,
++                now=observed_at,
++                stop_requested=blocked_by_stop,
++                max_lease_reached=blocked_by_max_lease,
++            )
+             await session.commit()
+         write_load_snapshot(snap, target)
+     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_load.py b/apps/prototype-description-service/scene/tests/test_describe_load.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_load.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_load.py
+@@ -14,6 +14,7 @@ import tempfile
+ import threading
+ import uuid
+ from concurrent.futures import ThreadPoolExecutor
++from datetime import UTC, datetime, timedelta
+ from pathlib import Path
+ from typing import cast
+ 
+@@ -23,7 +24,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ import scene.application.describe_load as load_mod
+ from db.models.base_imports import Base
+-from db.models.scene import DescribeRun, DescribeRunItem
++from db.models.scene import (
++    DescribeDemandLease,
++    DescribeOperation,
++    DescribeRun,
++    DescribeRunItem,
++    DescribeStartup,
++)
+ from scene.application.describe_load import (
+     batch_in_progress,
+     dump_load_snapshot,
+@@ -34,11 +41,30 @@ from scene.application.describe_load import (
+     run_startup_load_snapshot,
+     write_load_snapshot,
+ )
++from scene.application.describe_operation_repository import DescribeOperationRepository
+ from scene.application.describe_run_repository import (
+     DescribeRunRepository,
+     run_startup_retention_purge,
+ )
+-from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
++from scene.domain.describe_run import (
++    DemandLeaseState,
++    DescribeItemStatus,
++    DescribeRunStatus,
++    OperationExpiredError,
++)
++
++_LOAD_SNAPSHOT_KEYS = {
++    "queue_depth",
++    "in_flight",
++    "batch_in_progress",
++    "written_at",
++    "lease_demand",
++    "revision",
++}
++_PUBLIC_RETRY_AFTER_CEILING = 120
++_DIGEST_A = "a" * 64
++_DIGEST_B = "b" * 64
++_DIGEST_C = "c" * 64
+ 
+ 
+ async def _sessionmaker():
+@@ -46,11 +72,24 @@ async def _sessionmaker():
+     async with engine.begin() as conn:
+         await conn.run_sync(
+             Base.metadata.create_all,
+-            tables=cast(list[Table], [DescribeRun.__table__, DescribeRunItem.__table__]),
++            tables=cast(
++                list[Table],
++                [
++                    DescribeStartup.__table__,
++                    DescribeOperation.__table__,
++                    DescribeDemandLease.__table__,
++                    DescribeRun.__table__,
++                    DescribeRunItem.__table__,
++                ],
++            ),
+         )
+     return engine, async_sessionmaker(engine, expire_on_commit=False)
+ 
+ 
++def _has_work(snapshot: dict) -> bool:
++    return ((snapshot["queue_depth"] + snapshot["in_flight"]) > 0) or bool(snapshot["batch_in_progress"])
++
++
+ def test_write_load_snapshot_keys_and_atomic_replace(tmp_path: Path):
+     target = tmp_path / "describe-load.json"
+     payload = {"queue_depth": 2, "in_flight": 1, "written_at": 1_700_000_000.0}
+@@ -97,19 +136,17 @@ def test_load_snapshot_counts_single_runs_only_across_tenants():
+ 
+         async with sf() as s:
+             snap = await load_snapshot(s)
+-            assert set(snap) == {
+-                "queue_depth",
+-                "in_flight",
+-                "batch_in_progress",
+-                "written_at",
+-            }
++            assert set(snap) == _LOAD_SNAPSHOT_KEYS
+             assert snap["queue_depth"] == 2
+             assert snap["in_flight"] == 1
++            assert snap["lease_demand"] == 0
++            assert snap["revision"] == 1
+             # The bulk run above is still non-terminal: excluded from the item
+             # counts, but it must surface on its own key (GPUW-1).
+             assert snap["batch_in_progress"] is True
+             assert isinstance(snap["written_at"], float)
+             assert snap["written_at"] > 0
++            assert _has_work(snap) is True
+ 
+         await engine.dispose()
+ 
+@@ -226,14 +263,11 @@ def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
+ 
+         assert target.is_file()
+         loaded = json.loads(target.read_text())
+-        assert set(loaded) == {
+-            "queue_depth",
+-            "in_flight",
+-            "batch_in_progress",
+-            "written_at",
+-        }
++        assert set(loaded) == _LOAD_SNAPSHOT_KEYS
+         assert loaded["queue_depth"] == 1
+         assert loaded["in_flight"] == 1
++        assert loaded["lease_demand"] == 0
++        assert loaded["revision"] == 1
+         # Only single runs above, so the batch flag must read False (GPUW-1).
+         assert loaded["batch_in_progress"] is False
+         assert isinstance(loaded["written_at"], (int, float))
+@@ -256,14 +290,11 @@ def test_run_startup_load_snapshot_resolves_env_path_when_path_none(tmp_path: Pa
+ 
+         assert target.is_file()
+         loaded = json.loads(target.read_text())
+-        assert set(loaded) == {
+-            "queue_depth",
+-            "in_flight",
+-            "batch_in_progress",
+-            "written_at",
+-        }
++        assert set(loaded) == _LOAD_SNAPSHOT_KEYS
+         assert loaded["queue_depth"] == 0
+         assert loaded["in_flight"] == 0
++        assert loaded["lease_demand"] == 0
++        assert loaded["revision"] == 1
+         assert loaded["batch_in_progress"] is False
+         await engine.dispose()
+ 
+@@ -558,3 +589,303 @@ def test_lifespan_supervisor_rearms_refresher_and_propagates_cancel(monkeypatch)
+         assert starts == 3
+ 
+     asyncio.run(body())
++
++
++def test_load_snapshot_counts_cross_tenant_leases_as_in_flight():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant_a = uuid.uuid4()
++        tenant_b = uuid.uuid4()
++        async with sf() as session:
++            repo = DescribeOperationRepository(session, lease_seconds=180)
++            await repo.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
++            await repo.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
++            await session.commit()
++        async with sf() as session:
++            snap = await load_snapshot(session, now=start)
++            assert set(snap) == _LOAD_SNAPSHOT_KEYS
++            assert snap["queue_depth"] == 0
++            assert snap["in_flight"] == 2
++            assert snap["lease_demand"] == 2
++            assert snap["batch_in_progress"] is False
++            assert snap["revision"] == 1
++            assert _has_work(snap) is True
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant_a = uuid.uuid4()
++        tenant_b = uuid.uuid4()
++        async with sf() as session:
++            repo = DescribeOperationRepository(session, lease_seconds=180)
++            first = await repo.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
++            second = await repo.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
++            await session.commit()
++            first_id, second_id = first.operation_id, second.operation_id
++        async with sf() as session:
++            one_blocked = await load_snapshot(session, now=start, stop_requested=True)
++            assert one_blocked["in_flight"] == 0
++            assert one_blocked["lease_demand"] == 0
++            assert _has_work(one_blocked) is False
++            both_blocked = await load_snapshot(session, now=start, max_lease_reached=True)
++            assert both_blocked["in_flight"] == 0
++            assert both_blocked["lease_demand"] == 0
++            first_lease = await session.get(DescribeDemandLease, (tenant_a, first_id))
++            second_lease = await session.get(DescribeDemandLease, (tenant_b, second_id))
++            assert first_lease is not None and first_lease.state == DemandLeaseState.ACTIVE
++            assert second_lease is not None and second_lease.state == DemandLeaseState.ACTIVE
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_load_snapshot_drops_expired_lease_and_keeps_the_other():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant_a = uuid.uuid4()
++        tenant_b = uuid.uuid4()
++        async with sf() as session:
++            short = DescribeOperationRepository(session, lease_seconds=30)
++            long = DescribeOperationRepository(session, lease_seconds=180)
++            await short.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
++            await long.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
++            await session.commit()
++        later = start + timedelta(seconds=60)
++        async with sf() as session:
++            snap = await load_snapshot(session, now=later)
++            assert snap["queue_depth"] == 0
++            assert snap["in_flight"] == 1
++            assert snap["lease_demand"] == 1
++            assert _has_work(snap) is True
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_load_snapshot_does_not_double_count_lease_and_async_work():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant = uuid.uuid4()
++        async with sf() as session:
++            await DescribeOperationRepository(session, lease_seconds=180).accept(
++                tenant_id=tenant, request_digest=_DIGEST_A, now=start
++            )
++            runs = DescribeRunRepository(session)
++            await runs.create_single_run(tenant_id=tenant, media_id=1, image_bytes=b"q")
++            running = await runs.create_single_run(tenant_id=tenant, media_id=2, image_bytes=b"r")
++            await runs.mark_item(
++                tenant_id=tenant,
++                run_id=running,
++                media_id=2,
++                status=DescribeItemStatus.RUNNING,
++            )
++            await session.commit()
++        async with sf() as session:
++            snap = await load_snapshot(session, now=start)
++            assert snap["queue_depth"] == 1
++            assert snap["lease_demand"] == 1
++            assert snap["in_flight"] == 2
++            assert _has_work(snap) is True
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_fake_clock_retry_after_ceiling_retains_warming_demand():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant = uuid.uuid4()
++        async with sf() as session:
++            await DescribeOperationRepository(session, lease_seconds=_PUBLIC_RETRY_AFTER_CEILING + 1).accept(
++                tenant_id=tenant, request_digest=_DIGEST_A, now=start
++            )
++            await session.commit()
++        retry_at = start + timedelta(seconds=_PUBLIC_RETRY_AFTER_CEILING)
++        async with sf() as session:
++            snap = await load_snapshot(session, now=retry_at)
++            assert snap["lease_demand"] == 1
++            assert snap["in_flight"] == 1
++            assert _has_work(snap) is True
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_write_load_snapshot_drops_older_and_equal_revisions(tmp_path: Path):
++    target = tmp_path / "describe-load.json"
++    newer = {
++        "queue_depth": 0,
++        "in_flight": 2,
++        "lease_demand": 2,
++        "revision": 11,
++        "written_at": 100.0,
++    }
++    write_load_snapshot(newer, target)
++    assert json.loads(target.read_text())["written_at"] == 100.0
++    write_load_snapshot({**newer, "revision": 10, "written_at": 200.0, "in_flight": 0}, target)
++    loaded = json.loads(target.read_text())
++    assert loaded["revision"] == 11
++    assert loaded["in_flight"] == 2
++    assert loaded["written_at"] == 100.0
++    write_load_snapshot({**newer, "revision": 11, "written_at": 300.0}, target)
++    assert json.loads(target.read_text())["written_at"] == 100.0
++    write_load_snapshot({**newer, "revision": 12, "written_at": 400.0, "in_flight": 3}, target)
++    updated = json.loads(target.read_text())
++    assert updated["revision"] == 12
++    assert updated["in_flight"] == 3
++    assert updated["written_at"] == 400.0
++
++
++def test_write_load_snapshot_fails_closed_on_malformed_published_revision(tmp_path: Path):
++    target = tmp_path / "describe-load.json"
++    target.write_text("{not-json", encoding="utf-8")
++    with pytest.raises(RuntimeError, match="unreadable published load snapshot"):
++        write_load_snapshot({"revision": 1, "written_at": 1.0}, target)
++    target.write_text(json.dumps({"revision": "11"}), encoding="utf-8")
++    with pytest.raises(RuntimeError, match="malformed published load snapshot revision"):
++        write_load_snapshot({"revision": 12, "written_at": 2.0}, target)
++    assert json.loads(target.read_text()) == {"revision": "11"}
++
++
++def test_dump_load_snapshot_commits_before_stale_publication_is_dropped(tmp_path: Path):
++    async def body():
++        engine, sf = await _sessionmaker()
++        target = tmp_path / "describe-load.json"
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant = uuid.uuid4()
++        async with sf() as session:
++            repo = DescribeOperationRepository(session, lease_seconds=180)
++            await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
++            await repo.accept(tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start)
++            await session.commit()
++        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
++        first = json.loads(target.read_text())
++        assert first["revision"] == 1
++        assert first["lease_demand"] == 2
++        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
++        published = json.loads(target.read_text())
++        assert published["revision"] == 2
++        write_load_snapshot({**first, "written_at": 9_999.0, "lease_demand": 0, "in_flight": 0}, target)
++        dropped = json.loads(target.read_text())
++        assert dropped["revision"] == 2
++        assert dropped["lease_demand"] == 2
++        assert dropped["written_at"] == published["written_at"]
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_dump_load_snapshot_observes_stop_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
++    from scene.application.gpu_intent import IntentAction, write_gpu_intent
++
++    intent_path = tmp_path / "gpu-intent.json"
++    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
++    start = datetime(2026, 1, 1, tzinfo=UTC)
++    write_gpu_intent(
++        intent_path,
++        action=IntentAction.STOP,
++        ttl_seconds=1800,
++        requested_by="operator",
++        now=start,
++    )
++
++    async def body():
++        engine, sf = await _sessionmaker()
++        target = tmp_path / "describe-load.json"
++        async with sf() as session:
++            await DescribeOperationRepository(session, lease_seconds=180).accept(
++                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
++            )
++            await session.commit()
++        await dump_load_snapshot(sf, path=target, now=start, raise_on_error=True)
++        loaded = json.loads(target.read_text())
++        assert loaded["lease_demand"] == 0
++        assert loaded["in_flight"] == 0
++        assert _has_work(loaded) is False
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_periodic_pass_persists_first_ready_while_gpu_is_ready(monkeypatch: pytest.MonkeyPatch):
++    from scene.application.gpu_state import GpuState
++
++    monkeypatch.setattr(
++        "scene.application.gpu_state.read_gpu_state",
++        lambda **_kwargs: GpuState.READY,
++    )
++    start = datetime(2026, 1, 1, tzinfo=UTC)
++    ready_at = start + timedelta(seconds=8)
++
++    async def body():
++        engine, sf = await _sessionmaker()
++        tenant = uuid.uuid4()
++        async with sf() as session:
++            repo = DescribeOperationRepository(session, lease_seconds=180)
++            op = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
++            await repo.associate_startup(
++                tenant_id=tenant,
++                operation_id=op.operation_id,
++                startup_id="boot",
++                started_at=start,
++                now=start,
++            )
++            token = op.operation_id
++            await session.commit()
++        async with sf() as session:
++            snap = await load_snapshot(session, now=ready_at)
++            assert snap["lease_demand"] == 1
++            stored = await session.get(DescribeOperation, (tenant, token))
++            startup = await session.get(DescribeStartup, "boot")
++            assert stored is not None and stored.first_ready_at is not None
++            assert startup is not None and startup.first_ready_at is not None
++        await engine.dispose()
++
++    asyncio.run(body())
++
++
++def test_completed_and_rejected_leases_do_not_count():
++    async def body():
++        engine, sf = await _sessionmaker()
++        start = datetime(2026, 1, 1, tzinfo=UTC)
++        tenant = uuid.uuid4()
++        async with sf() as session:
++            repo = DescribeOperationRepository(session, lease_seconds=60)
++            completed = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_A, now=start)
++            await repo.observe_ready(
++                tenant_id=tenant, operation_id=completed.operation_id, now=start + timedelta(seconds=1)
++            )
++            await repo.complete(
++                tenant_id=tenant,
++                operation_id=completed.operation_id,
++                processing_ms=1,
++                server_elapsed_ms=2,
++                now=start + timedelta(seconds=2),
++            )
++            expired = await repo.accept(tenant_id=tenant, request_digest=_DIGEST_B, now=start)
++            await repo.active_demand_count(now=start + timedelta(seconds=60))
++            with pytest.raises(OperationExpiredError):
++                await repo.accept(
++                    tenant_id=tenant,
++                    request_digest=_DIGEST_B,
++                    operation_id=expired.operation_id,
++                    now=start + timedelta(seconds=61),
++                )
++            await repo.accept(tenant_id=uuid.uuid4(), request_digest=_DIGEST_C, now=start + timedelta(seconds=2))
++            await session.commit()
++        async with sf() as session:
++            snap = await load_snapshot(session, now=start + timedelta(seconds=2))
++            assert snap["lease_demand"] == 1
++            assert snap["in_flight"] == 1
++        await engine.dispose()
++
++    asyncio.run(body())

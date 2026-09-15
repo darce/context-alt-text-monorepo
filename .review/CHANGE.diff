@@ -1,905 +1,257 @@
-diff --git a/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py b/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
---- a/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
-+++ b/apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py
-@@ -141,6 +141,40 @@ def test_identity_schema_refresh_status_constraint_matches_enum(monkeypatch) ->
-     assert str(refresh_constraint.sqltext) == f"refresh_status IN ({expected_values})"
- 
- 
-+def test_identity_schema_upgrade_creates_describe_load_snapshot_revisions(monkeypatch) -> None:
-+    import sqlalchemy as sa
-+
-+    recorder = _RecordingOp()
-+    monkeypatch.setattr(identity_schema, "op", recorder)
-+
-+    identity_schema.upgrade()
-+
-+    assert "describe_load_snapshot_revisions" in recorder.created_tables
-+    args = recorder.created_table_args["describe_load_snapshot_revisions"]
-+    columns = {column.name: column for column in args if isinstance(column, sa.Column)}
-+    assert set(columns) == {"singleton", "revision"}
-+    assert columns["singleton"].primary_key is True
-+    assert columns["revision"].nullable is False
-+    checks = [item for item in args if isinstance(item, CheckConstraint)]
-+    assert len(checks) == 1
-+    assert checks[0].name == "ck_describe_load_snapshot_revisions_singleton"
-+    assert "singleton = 1" in str(checks[0].sqltext)
-+
-+
-+def test_identity_schema_downgrade_drops_describe_load_snapshot_revisions_first(monkeypatch) -> None:
-+    recorder = _RecordingOp()
-+    monkeypatch.setattr(identity_schema, "op", recorder)
-+
-+    identity_schema.downgrade()
-+
-+    assert identity_schema.DOWNGRADE_TABLE_ORDER[0] == "describe_load_snapshot_revisions"
-+    dropped = recorder.dropped_tables
-+    assert "describe_load_snapshot_revisions" in dropped
-+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_demand_leases")
-+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_operations")
-+    assert dropped.index("describe_load_snapshot_revisions") < dropped.index("describe_startups")
-+
-+
- def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) -> None:
-     recorder = _RecordingOp()
-     monkeypatch.setattr(identity_schema, "op", recorder)
 diff --git a/apps/prototype-description-service/scene/application/describe_load.py b/apps/prototype-description-service/scene/application/describe_load.py
 --- a/apps/prototype-description-service/scene/application/describe_load.py
 +++ b/apps/prototype-description-service/scene/application/describe_load.py
-@@ -16,6 +16,7 @@ import math
- import os
- import tempfile
- import threading
-+from dataclasses import dataclass
- from datetime import UTC, datetime
- from pathlib import Path
- from typing import Any
-@@ -27,6 +28,7 @@ from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun,
+@@ -28,12 +28,12 @@ from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun,
  from recognition.shared.db.dialect import is_sqlite
  from scene.application.describe_operation_repository import DescribeOperationRepository
  from scene.domain.describe_run import (
-+    DEFAULT_ASYNC_JOB_RETENTION_HOURS,
+-    DEFAULT_ASYNC_JOB_RETENTION_HOURS,
      DemandLeaseState,
      DescribeItemStatus,
      DescribeRunStatus,
-@@ -62,6 +64,27 @@ _LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
- _COUNTING_LEASE_SECONDS = 1.0
- _SNAPSHOT_REVISION_TABLE = "describe_load_snapshot_revisions"
- _MAX_LEASE_REASON = "lease_cap"
-+# Deployed demand-lease lifetime L. accept() callers must use this same bound.
-+DEMAND_LEASE_SECONDS = 180.0
-+# acx-gpu-start.timer default OnUnitActiveSec (START_INTERVAL=30s).
-+CONTROLLER_POLL_PERIOD_SECONDS = 30.0
-+# Bounded worst-case timer drift; no other in-process jitter source.
-+SCHEDULING_JITTER_SECONDS = 15.0
-+PUBLICATION_DELAY_SECONDS = LOAD_REFRESH_TIMEOUT_SECONDS
-+PUBLIC_RETRY_AFTER_CEILING_SECONDS = 120.0
-+# Bounded extra client delay after honouring Retry-After.
-+CLIENT_RETRY_GAP_SECONDS = 15.0
-+_DEMAND_BOUND_NAMES = (
-+    "lease_seconds",
-+    "poll_period_seconds",
-+    "jitter_seconds",
-+    "publication_delay_seconds",
-+    "retry_after_seconds",
-+    "client_retry_gap_seconds",
-+    "refresh_seconds",
-+    "freshness_seconds",
-+    "retention_seconds",
-+)
+     RunKind,
+     as_utc,
++    async_job_retention_hours,
+     utc_observation,
+ )
  
- # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
- # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
-@@ -69,6 +92,74 @@ _MAX_LEASE_REASON = "lease_cap"
- _ACTIVE_BULK_RUN_STATUSES = (DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING)
+@@ -149,7 +149,7 @@ def deployed_demand_lease_bounds() -> DemandLeaseBounds:
+         client_retry_gap_seconds=CLIENT_RETRY_GAP_SECONDS,
+         refresh_seconds=resolve_load_refresh_seconds(),
+         freshness_seconds=LOAD_SNAPSHOT_STALE_SECONDS,
+-        retention_seconds=float(DEFAULT_ASYNC_JOB_RETENTION_HOURS * 3600),
++        retention_seconds=float(async_job_retention_hours() * 3600),
+     )
  
  
-+@dataclass(frozen=True)
-+class DemandLeaseBounds:
-+    """Fail-closed deployment bounds for demand-lease publication (rg-008)."""
-+
-+    lease_seconds: float
-+    poll_period_seconds: float
-+    jitter_seconds: float
-+    publication_delay_seconds: float
-+    retry_after_seconds: float
-+    client_retry_gap_seconds: float
-+    refresh_seconds: float
-+    freshness_seconds: float
-+    retention_seconds: float
-+
-+    def validate(self) -> None:
-+        """Raise ValueError when any bound is missing, non-finite, or illegal."""
-+        for name in _DEMAND_BOUND_NAMES:
-+            value = getattr(self, name)
-+            if (
-+                value is None
-+                or isinstance(value, bool)
-+                or not isinstance(value, (int, float))
-+                or not math.isfinite(value)
-+            ):
-+                raise ValueError(f"demand lease bound {name} must be a finite number; got {value!r}")
-+            if value < 0:
-+                raise ValueError(f"demand lease bound {name} must be non-negative; got {value!r}")
-+        poll_budget = self.poll_period_seconds + self.jitter_seconds + self.publication_delay_seconds
-+        if self.lease_seconds <= poll_budget:
-+            raise ValueError(f"demand lease L must exceed P+J+D ({self.lease_seconds} <= {poll_budget})")
-+        retry_budget = self.retry_after_seconds + self.client_retry_gap_seconds
-+        if self.lease_seconds <= retry_budget:
-+            raise ValueError(
-+                f"demand lease L must exceed Retry-After + client retry gap ({self.lease_seconds} <= {retry_budget})"
-+            )
-+        refresh_span = self.refresh_seconds + self.publication_delay_seconds
-+        if refresh_span >= self.freshness_seconds:
-+            raise ValueError(
-+                f"demand refresh R+D must stay below freshness F ({refresh_span} >= {self.freshness_seconds})"
-+            )
-+        if self.lease_seconds > self.retention_seconds:
-+            raise ValueError(
-+                f"demand lease L must fit within async retention ({self.lease_seconds} > {self.retention_seconds})"
-+            )
-+
-+
-+def deployed_demand_lease_bounds() -> DemandLeaseBounds:
-+    """Build bounds from in-process constants and the live refresh cadence."""
-+    return DemandLeaseBounds(
-+        lease_seconds=DEMAND_LEASE_SECONDS,
-+        poll_period_seconds=CONTROLLER_POLL_PERIOD_SECONDS,
-+        jitter_seconds=SCHEDULING_JITTER_SECONDS,
-+        publication_delay_seconds=PUBLICATION_DELAY_SECONDS,
-+        retry_after_seconds=PUBLIC_RETRY_AFTER_CEILING_SECONDS,
-+        client_retry_gap_seconds=CLIENT_RETRY_GAP_SECONDS,
-+        refresh_seconds=resolve_load_refresh_seconds(),
-+        freshness_seconds=LOAD_SNAPSHOT_STALE_SECONDS,
-+        retention_seconds=float(DEFAULT_ASYNC_JOB_RETENTION_HOURS * 3600),
-+    )
-+
-+
-+def validate_demand_lease_bounds(bounds: DemandLeaseBounds | None = None) -> DemandLeaseBounds:
-+    """Fail closed on illegal demand-lease bounds before any publication."""
-+    resolved = deployed_demand_lease_bounds() if bounds is None else bounds
-+    resolved.validate()
-+    return resolved
-+
-+
- def _open_load_snapshot_fence(target: Path) -> int:
-     """Open the persistent lock coordinated with the lifecycle reaper."""
-     lock_path = target.with_name(f"{target.name}.lock")
-@@ -167,13 +258,17 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
+@@ -194,24 +194,29 @@ def resolve_load_path() -> str:
  
  
- def _published_revision(payload: object) -> int:
--    """Return the currently published revision; a missing key is revision 0."""
-+    """Return the currently published revision; a missing key is revision 0.
+ def resolve_load_refresh_seconds() -> float:
+-    """Return a safe refresh cadence below the reaper's 120s stale guard."""
++    """Return a safe refresh cadence below the reaper's 120s stale guard.
 +
-+    An explicit ``0`` is malformed: missing files are revision 0, but allocated
-+    revisions start at 1.
++    An unset variable uses the documented default. An explicit value must be a
++    finite number strictly inside ``(0, MAX_LOAD_REFRESH_SECONDS)``; malformed
++    configuration fails closed instead of silently changing cadence [rg-008].
 +    """
-     if not isinstance(payload, dict):
-         raise RuntimeError("published load snapshot is not an object")
-     if "revision" not in payload:
-         return 0
-     revision = payload["revision"]
--    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
-+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
-         raise RuntimeError("malformed published load snapshot revision")
+     raw = os.environ.get(LOAD_REFRESH_SECONDS_ENV)
+     if raw is None:
+         return DEFAULT_LOAD_REFRESH_SECONDS
+     try:
+         seconds = float(raw)
+-    except ValueError:
+-        seconds = 0.0
++    except ValueError as exc:
++        raise ValueError(
++            f"{LOAD_REFRESH_SECONDS_ENV} must be a finite number in the range "
++            f"0 < seconds < {MAX_LOAD_REFRESH_SECONDS}; got {raw!r}"
++        ) from exc
+     # Leave room for a second refresh attempt inside the stale-file window. A
+     # value merely below 120s is not sufficient once failures/latency occur.
+     if not math.isfinite(seconds) or seconds <= 0 or seconds >= MAX_LOAD_REFRESH_SECONDS:
+-        _logger.warning(
+-            "invalid %s=%r; using default %.0fs",
+-            LOAD_REFRESH_SECONDS_ENV,
+-            raw,
+-            DEFAULT_LOAD_REFRESH_SECONDS,
++        raise ValueError(
++            f"{LOAD_REFRESH_SECONDS_ENV} must be a finite number in the range "
++            f"0 < seconds < {MAX_LOAD_REFRESH_SECONDS}; got {raw!r}"
+         )
+-        return DEFAULT_LOAD_REFRESH_SECONDS
+     return seconds
+ 
+ 
+@@ -273,40 +278,50 @@ def _published_revision(payload: object) -> int:
      return revision
  
-@@ -185,12 +280,25 @@ def _max_lease_reached() -> bool:
+ 
+-def _max_lease_reached() -> bool:
++def _read_gpu_lifecycle_payload() -> dict[str, Any] | None:
++    """Read gpu-state.json once. None means missing, unreadable, or non-object."""
+     from scene.application.gpu_state import resolve_gpu_state_path
+ 
+     path = Path(resolve_gpu_state_path())
      try:
          payload = json.loads(path.read_text(encoding="utf-8"))
      except (OSError, UnicodeDecodeError, json.JSONDecodeError):
--        return False
-+        return True
+-        return True
++        return None
      if not isinstance(payload, dict):
--        return False
-+        return True
-     return payload.get("last_transition_reason") == _MAX_LEASE_REASON
+-        return True
+-    return payload.get("last_transition_reason") == _MAX_LEASE_REASON
+-
+-
+-def _gpu_excludes_lease_demand(*, now: datetime) -> bool:
+-    from scene.application.gpu_state import GpuState, read_gpu_state
+-
+-    state = read_gpu_state(now=now.timestamp())
+-    return state not in {
++        return None
++    return payload
++
++
++def _gpu_lifecycle_blocks(*, now: datetime) -> tuple[bool, bool]:
++    """Lease-cap and allow-list from one payload (fail closed if unreadable)."""
++    from scene.application.gpu_state import GpuState, _log_transition, _state_from_payload
++
++    payload = _read_gpu_lifecycle_payload()
++    if payload is None:
++        _log_transition(GpuState.UNKNOWN)
++        return True, True
++    state = _state_from_payload(payload, now=now.timestamp())
++    _log_transition(state)
++    max_lease = payload.get("last_transition_reason") == _MAX_LEASE_REASON
++    gpu_excludes = state not in {
+         GpuState.STOPPED,
+         GpuState.STARTING,
+         GpuState.WARMING,
+         GpuState.READY,
+         GpuState.DEGRADED,
+     }
++    return max_lease, gpu_excludes
  
  
-+def _gpu_excludes_lease_demand(*, now: datetime) -> bool:
-+    from scene.application.gpu_state import GpuState, read_gpu_state
-+
-+    state = read_gpu_state(now=now.timestamp())
-+    return state not in {
-+        GpuState.STOPPED,
-+        GpuState.STARTING,
-+        GpuState.WARMING,
-+        GpuState.READY,
-+        GpuState.DEGRADED,
-+    }
-+
-+
- def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
+-def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
++def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool, bool]:
      from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
  
-@@ -201,6 +309,19 @@ def _demand_policy_flags(*, now: datetime) -> tuple[bool, bool]:
-     return stop_requested, _max_lease_reached()
+     stop_requested = False
+     intent = read_gpu_intent(resolve_gpu_intent_path())
+     if intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now:
+         stop_requested = True
+-    return stop_requested, _max_lease_reached()
++    max_lease, gpu_excludes = _gpu_lifecycle_blocks(now=now)
++    return stop_requested, max_lease, gpu_excludes
  
  
-+def _lease_demand_blocked(
-+    *,
-+    now: datetime,
-+    stop_requested: bool | None,
-+    max_lease_reached: bool | None,
-+) -> bool:
-+    """Live STOP / lease-cap always win; explicit True only adds a block."""
-+    policy_stop, policy_max_lease = _demand_policy_flags(now=now)
-+    blocked_by_stop = policy_stop or bool(stop_requested)
-+    blocked_by_max_lease = policy_max_lease or bool(max_lease_reached)
-+    return blocked_by_stop or blocked_by_max_lease or _gpu_excludes_lease_demand(now=now)
-+
-+
+ def _lease_demand_blocked(
+@@ -316,10 +331,10 @@ def _lease_demand_blocked(
+     max_lease_reached: bool | None,
+ ) -> bool:
+     """Live STOP / lease-cap always win; explicit True only adds a block."""
+-    policy_stop, policy_max_lease = _demand_policy_flags(now=now)
++    policy_stop, policy_max_lease, gpu_excludes = _demand_policy_flags(now=now)
+     blocked_by_stop = policy_stop or bool(stop_requested)
+     blocked_by_max_lease = policy_max_lease or bool(max_lease_reached)
+-    return blocked_by_stop or blocked_by_max_lease or _gpu_excludes_lease_demand(now=now)
++    return blocked_by_stop or blocked_by_max_lease or gpu_excludes
+ 
+ 
  async def _persist_first_ready(session: AsyncSession, *, now: datetime) -> None:
-     from scene.application.gpu_state import GpuState, read_gpu_state
- 
-@@ -271,23 +392,26 @@ async def load_snapshot(
-     bypass session [DIAG-02].
- 
-     STOP and lease-cap are resolved from the same policy files the periodic
--    publisher uses unless a caller passes an explicit override. The demand
--    transaction (revision allocation, expiry, first-ready) commits before this
--    returns so a later file write cannot publish an undurable revision.
-+    publisher uses. An explicit True override can only add a block; False never
-+    disables live policy. The demand transaction (revision allocation, expiry,
-+    first-ready) commits before this returns so a later file write cannot
-+    publish an undurable revision.
-     """
-     await _require_rls_bypass(session)
-     observed_at = as_utc(now or datetime.now(UTC))
--    policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
--    blocked_by_stop = policy_stop if stop_requested is None else stop_requested
--    blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
-+    demand_blocked = _lease_demand_blocked(
-+        now=observed_at,
-+        stop_requested=stop_requested,
-+        max_lease_reached=max_lease_reached,
-+    )
-     revision = await _allocate_snapshot_revision(session)
-     await _persist_first_ready(session, now=observed_at)
-     lease_demand = await DescribeOperationRepository(
-         session, lease_seconds=_COUNTING_LEASE_SECONDS
-     ).active_demand_count(
-         now=observed_at,
--        stop_requested=blocked_by_stop,
--        max_lease_reached=blocked_by_max_lease,
-+        stop_requested=demand_blocked,
-+        max_lease_reached=False,
-     )
-     result = await session.execute(
-         select(DescribeRunItem.status, func.count())
-@@ -415,7 +539,7 @@ async def dump_load_snapshot(
-     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
-         if raise_on_error:
-             raise
--        _logger.debug("describe load snapshot write failed path=%s", target, exc_info=True)
-+        _logger.warning("describe load snapshot write failed path=%s", target, exc_info=True)
- 
- 
- async def refresh_load_snapshot_loop(
-@@ -458,5 +582,7 @@ async def run_startup_load_snapshot(session_factory, path: str | Path | None = N
- 
-     Opens a dedicated short-lived RLS-bypassed session (never tenant-scoped).
-     Best-effort from the lifespan caller; raises on failure for that try/except.
-+    Fail-closed bound checks run before the first publication.
-     """
-+    validate_demand_lease_bounds()
-     await dump_load_snapshot(session_factory, path, raise_on_error=True)
+@@ -549,7 +564,8 @@ async def refresh_load_snapshot_loop(
+     timeout_seconds: float = LOAD_REFRESH_TIMEOUT_SECONDS,
+ ) -> None:
+     """Keep the reaper snapshot fresh for as long as the API is running."""
+-    interval = refresh_seconds if refresh_seconds is not None else resolve_load_refresh_seconds()
++    bounds = validate_demand_lease_bounds()
++    interval = refresh_seconds if refresh_seconds is not None else bounds.refresh_seconds
+     loop = asyncio.get_running_loop()
+     next_refresh_at = loop.time() + interval
+     while True:
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_load.py b/apps/prototype-description-service/scene/tests/test_describe_load.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_load.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_load.py
-@@ -9,11 +9,14 @@ from __future__ import annotations
- import asyncio
- import fcntl
- import json
-+import logging
-+import math
- import os
- import tempfile
- import threading
- import uuid
- from concurrent.futures import ThreadPoolExecutor
-+from dataclasses import replace
- from datetime import UTC, datetime, timedelta
- from pathlib import Path
- from typing import cast
-@@ -32,6 +35,7 @@ from db.models.scene import (
-     DescribeStartup,
- )
- from scene.application.describe_load import (
-+    DemandLeaseBounds,
-     batch_in_progress,
-     dump_load_snapshot,
-     load_snapshot,
-@@ -39,6 +43,7 @@ from scene.application.describe_load import (
-     resolve_load_path,
-     resolve_load_refresh_seconds,
-     run_startup_load_snapshot,
-+    validate_demand_lease_bounds,
-     write_load_snapshot,
- )
- from scene.application.describe_operation_repository import DescribeOperationRepository
-@@ -97,6 +102,41 @@ def _has_work(snapshot: dict) -> bool:
-     return ((snapshot["queue_depth"] + snapshot["in_flight"]) > 0) or bool(snapshot["batch_in_progress"])
+@@ -537,7 +537,10 @@ def test_describe_load_refresh_seconds_defaults_and_stays_inside_stale_guard(mon
+ 
+     for invalid in ("invalid", "0", "-1", "60", "90", "119", "120", "nan", "inf"):
+         monkeypatch.setenv(env_name, invalid)
+-        assert resolve_load_refresh_seconds() == 45.0
++        with pytest.raises(ValueError, match=env_name):
++            resolve_load_refresh_seconds()
++        with pytest.raises(ValueError, match=env_name):
++            validate_demand_lease_bounds()
  
  
-+def _publish_gpu_state(
-+    tmp_path: Path,
-+    monkeypatch: pytest.MonkeyPatch,
-+    *,
-+    now: datetime,
-+    state: str = "stopped",
-+    last_transition_reason: str | None = None,
-+    written_at: float | None = None,
-+    raw: str | bytes | None = None,
-+    reason: str | None = None,
-+) -> Path:
-+    path = tmp_path / "gpu-state.json"
-+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
-+    if raw is not None:
-+        if isinstance(raw, bytes):
-+            path.write_bytes(raw)
-+        else:
-+            path.write_text(raw, encoding="utf-8")
-+        return path
-+    payload: dict[str, object] = {
-+        "state": state,
-+        "instance_id": "ocid1.gpu",
-+        "written_at": now.timestamp() if written_at is None else written_at,
-+        "reason": "readiness_timeout" if state == "degraded" and reason is None else reason,
-+    }
-+    if last_transition_reason is not None:
-+        payload["last_transition_reason"] = last_transition_reason
-+    path.write_text(json.dumps(payload), encoding="utf-8")
-+    return path
+ def test_dump_load_snapshot_can_make_failures_visible_to_supervisor(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+@@ -1166,6 +1169,18 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
+         assert loaded["revision"] == 2
+         assert loaded["lease_demand"] == 2
+         assert loaded["in_flight"] == 2
++        equal = {**loaded, "written_at": loaded["written_at"] + 50, "lease_demand": 0, "in_flight": 0}
 +
++        async def equal_revision_load(session, **kwargs):
++            return equal
 +
-+def _legal_bounds(**overrides: float) -> DemandLeaseBounds:
-+    return replace(load_mod.deployed_demand_lease_bounds(), **overrides)
-+
-+
- def test_write_load_snapshot_keys_and_atomic_replace(tmp_path: Path):
-     target = tmp_path / "describe-load.json"
-     payload = {"queue_depth": 2, "in_flight": 1, "written_at": 1_700_000_000.0}
-@@ -176,6 +216,53 @@ def test_load_snapshot_requires_rls_bypass_on_non_sqlite(monkeypatch):
-         asyncio.run(load_snapshot(_NotBypassedSession()))  # type: ignore[arg-type]
- 
- 
-+def test_require_rls_bypass_fails_closed_unless_pg_setting_is_truthy(monkeypatch):
-+    """Fail closed on tenant-scoped aggregation; sqlite skip is not the proof."""
-+
-+    class _Result:
-+        def __init__(self, value: object):
-+            self._value = value
-+
-+        def scalar(self):
-+            return self._value
-+
-+    class _Session:
-+        def __init__(self, value: object):
-+            self._value = value
-+
-+        async def execute(self, *_args, **_kwargs):
-+            return _Result(self._value)
-+
-+    monkeypatch.setattr(load_mod, "is_sqlite", lambda _session: False)
-+    for value in (None, "", "off", "false", "0", "no"):
-+        with pytest.raises(RuntimeError, match="RLS-bypassed"):
-+            asyncio.run(load_mod._require_rls_bypass(_Session(value)))  # type: ignore[arg-type]
-+    for value in ("true", "on", "1", "yes", "TRUE", "On"):
-+        asyncio.run(load_mod._require_rls_bypass(_Session(value)))  # type: ignore[arg-type]
-+
-+
-+def test_dump_load_snapshot_enables_rls_bypass_before_counting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-+    async def body():
-+        engine, sf = await _sessionmaker()
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-+        bypass_sessions: list[object] = []
-+        import db.tenant_context as tenant_context
-+
-+        real_bypass = tenant_context.enable_rls_bypass
-+
-+        async def spy_bypass(session):
-+            bypass_sessions.append(session)
-+            return await real_bypass(session)
-+
-+        monkeypatch.setattr(tenant_context, "enable_rls_bypass", spy_bypass)
-+        await dump_load_snapshot(sf, path=tmp_path / "describe-load.json", now=start, raise_on_error=True)
-+        assert bypass_sessions
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
- def test_write_load_snapshot_creates_parent_dirs():
-     with tempfile.TemporaryDirectory() as tmp:
-         target = Path(tmp) / "nested" / "run" / "describe-load.json"
-@@ -453,19 +540,22 @@ def test_describe_load_refresh_seconds_defaults_and_stays_inside_stale_guard(mon
-         assert resolve_load_refresh_seconds() == 45.0
- 
- 
--def test_dump_load_snapshot_can_make_failures_visible_to_supervisor():
-+def test_dump_load_snapshot_can_make_failures_visible_to_supervisor(tmp_path: Path, caplog: pytest.LogCaptureFixture):
-     class BrokenSessionFactory:
-         def __call__(self):
-             raise RuntimeError("database unavailable")
- 
-     async def body():
-         factory = BrokenSessionFactory()
--        # Describe request/worker call sites remain failure-isolated.
--        await dump_load_snapshot(factory)
--        # The refresher's strict mode must be able to see and report the same
--        # failure; otherwise its cycle-level warning is dead code.
-+        target = tmp_path / "describe-load.json"
-+        with caplog.at_level(logging.WARNING, logger="scene.application.describe_load"):
-+            await dump_load_snapshot(factory, path=target)
-+        assert not target.exists()
-+        assert any(record.levelno == logging.WARNING for record in caplog.records)
-+        assert "describe load snapshot write failed" in caplog.text
-+        assert str(target) in caplog.text
-         with pytest.raises(RuntimeError, match="database unavailable"):
--            await dump_load_snapshot(factory, raise_on_error=True)
-+            await dump_load_snapshot(factory, path=target, raise_on_error=True)
++        monkeypatch.setattr(describe_router, "load_snapshot", equal_revision_load)
++        await describe_router._maybe_dump_describe_load(sf)
++        replayed = json.loads(target.read_text())
++        assert replayed["revision"] == 2
++        assert replayed["lease_demand"] == 2
++        assert replayed["in_flight"] == 2
++        assert replayed["written_at"] == loaded["written_at"]
+         await engine.dispose()
  
      asyncio.run(body())
- 
-@@ -598,10 +688,11 @@ def test_lifespan_supervisor_rearms_refresher_and_propagates_cancel(monkeypatch)
-     asyncio.run(body())
- 
- 
--def test_load_snapshot_counts_cross_tenant_leases_as_in_flight():
-+def test_load_snapshot_counts_cross_tenant_leases_as_in_flight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     async def body():
-         engine, sf = await _sessionmaker()
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-         tenant_a = uuid.uuid4()
-         tenant_b = uuid.uuid4()
-         async with sf() as session:
-@@ -623,10 +714,13 @@ def test_load_snapshot_counts_cross_tenant_leases_as_in_flight():
-     asyncio.run(body())
- 
- 
--def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting():
-+def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-     async def body():
-         engine, sf = await _sessionmaker()
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-         tenant_a = uuid.uuid4()
-         tenant_b = uuid.uuid4()
-         async with sf() as session:
-@@ -636,10 +730,14 @@ def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting():
-             await session.commit()
-             first_id, second_id = first.operation_id, second.operation_id
-         async with sf() as session:
--            one_blocked = await load_snapshot(session, now=start, stop_requested=True)
--            assert one_blocked["in_flight"] == 0
--            assert one_blocked["lease_demand"] == 0
--            assert _has_work(one_blocked) is False
-+            counted = await load_snapshot(session, now=start)
-+            assert counted["in_flight"] == 2
-+            assert counted["lease_demand"] == 2
-+            assert _has_work(counted) is True
-+            global_stop = await load_snapshot(session, now=start, stop_requested=True)
-+            assert global_stop["in_flight"] == 0
-+            assert global_stop["lease_demand"] == 0
-+            assert _has_work(global_stop) is False
-             both_blocked = await load_snapshot(session, now=start, max_lease_reached=True)
-             assert both_blocked["in_flight"] == 0
-             assert both_blocked["lease_demand"] == 0
-@@ -652,10 +750,12 @@ def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting():
-     asyncio.run(body())
- 
- 
--def test_load_snapshot_drops_expired_lease_and_keeps_the_other():
-+def test_load_snapshot_drops_expired_lease_and_keeps_the_other(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     async def body():
-         engine, sf = await _sessionmaker()
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        later = start + timedelta(seconds=60)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=later, state="stopped")
-         tenant_a = uuid.uuid4()
-         tenant_b = uuid.uuid4()
-         async with sf() as session:
-@@ -664,7 +764,6 @@ def test_load_snapshot_drops_expired_lease_and_keeps_the_other():
-             await short.accept(tenant_id=tenant_a, request_digest=_DIGEST_A, now=start)
-             await long.accept(tenant_id=tenant_b, request_digest=_DIGEST_B, now=start)
-             await session.commit()
--        later = start + timedelta(seconds=60)
-         async with sf() as session:
-             snap = await load_snapshot(session, now=later)
-             assert snap["queue_depth"] == 0
-@@ -676,10 +775,11 @@ def test_load_snapshot_drops_expired_lease_and_keeps_the_other():
-     asyncio.run(body())
- 
- 
--def test_load_snapshot_does_not_double_count_lease_and_async_work():
-+def test_load_snapshot_does_not_double_count_lease_and_async_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     async def body():
-         engine, sf = await _sessionmaker()
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="ready")
-         tenant = uuid.uuid4()
-         async with sf() as session:
-             await DescribeOperationRepository(session, lease_seconds=180).accept(
-@@ -706,17 +806,18 @@ def test_load_snapshot_does_not_double_count_lease_and_async_work():
-     asyncio.run(body())
- 
- 
--def test_fake_clock_retry_after_ceiling_retains_warming_demand():
-+def test_fake_clock_retry_after_ceiling_retains_warming_demand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     async def body():
-         engine, sf = await _sessionmaker()
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        retry_at = start + timedelta(seconds=_PUBLIC_RETRY_AFTER_CEILING)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=retry_at, state="warming")
-         tenant = uuid.uuid4()
-         async with sf() as session:
-             await DescribeOperationRepository(session, lease_seconds=_PUBLIC_RETRY_AFTER_CEILING + 1).accept(
-                 tenant_id=tenant, request_digest=_DIGEST_A, now=start
-             )
-             await session.commit()
--        retry_at = start + timedelta(seconds=_PUBLIC_RETRY_AFTER_CEILING)
-         async with sf() as session:
-             snap = await load_snapshot(session, now=retry_at)
-             assert snap["lease_demand"] == 1
-@@ -757,7 +858,7 @@ def test_write_load_snapshot_fails_closed_on_malformed_published_revision(tmp_pa
-     target.write_text("{not-json", encoding="utf-8")
-     with pytest.raises(RuntimeError, match="unreadable published load snapshot"):
-         write_load_snapshot({"revision": 1, "written_at": 1.0}, target)
--    for malformed in ("11", None, True, False, [11], {"nested": 1}, -1):
-+    for malformed in ("11", None, True, False, [11], {"nested": 1}, -1, 0):
-         target.write_text(json.dumps({"revision": malformed}), encoding="utf-8")
-         with pytest.raises(RuntimeError, match="malformed published load snapshot revision"):
-             write_load_snapshot({"revision": 12, "written_at": 2.0}, target)
-@@ -773,11 +874,14 @@ def test_write_load_snapshot_treats_missing_revision_key_as_initial_file(tmp_pat
-     assert loaded["written_at"] == 2.0
- 
- 
--def test_dump_load_snapshot_commits_before_stale_publication_is_dropped(tmp_path: Path):
-+def test_dump_load_snapshot_commits_before_stale_publication_is_dropped(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-     async def body():
-         engine, sf = await _sessionmaker()
-         target = tmp_path / "describe-load.json"
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-         tenant = uuid.uuid4()
-         async with sf() as session:
-             repo = DescribeOperationRepository(session, lease_seconds=180)
-@@ -833,15 +937,10 @@ def test_dump_load_snapshot_observes_stop_intent(tmp_path: Path, monkeypatch: py
-     asyncio.run(body())
- 
- 
--def test_periodic_pass_persists_first_ready_while_gpu_is_ready(monkeypatch: pytest.MonkeyPatch):
--    from scene.application.gpu_state import GpuState
--
--    monkeypatch.setattr(
--        "scene.application.gpu_state.read_gpu_state",
--        lambda **_kwargs: GpuState.READY,
--    )
-+def test_periodic_pass_persists_first_ready_while_gpu_is_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     start = datetime(2026, 1, 1, tzinfo=UTC)
-     ready_at = start + timedelta(seconds=8)
-+    _publish_gpu_state(tmp_path, monkeypatch, now=ready_at, state="ready")
- 
-     async def body():
-         engine, sf = await _sessionmaker()
-@@ -944,6 +1043,7 @@ def test_sync_style_caller_lease_cap_excludes_demand_without_deleting(tmp_path:
- 
- def test_load_snapshot_commit_failure_leaves_file_untouched_and_next_revision_publishes(
-     tmp_path: Path,
-+    monkeypatch: pytest.MonkeyPatch,
- ):
-     async def body():
-         engine, sf = await _sessionmaker()
-@@ -951,6 +1051,7 @@ def test_load_snapshot_commit_failure_leaves_file_untouched_and_next_revision_pu
-         seed = {"queue_depth": 9, "in_flight": 0, "written_at": 1.0}
-         target.write_text(json.dumps(seed), encoding="utf-8")
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-         async with sf() as session:
-             await DescribeOperationRepository(session, lease_seconds=180).accept(
-                 tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
-@@ -975,11 +1076,12 @@ def test_load_snapshot_commit_failure_leaves_file_untouched_and_next_revision_pu
-     asyncio.run(body())
- 
- 
--def test_older_publisher_write_is_dropped_after_newer_publish(tmp_path: Path):
-+def test_older_publisher_write_is_dropped_after_newer_publish(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-     async def body():
-         engine, sf = await _sessionmaker()
-         target = tmp_path / "describe-load.json"
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-         async with sf() as session:
-             await DescribeOperationRepository(session, lease_seconds=180).accept(
-                 tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
-@@ -1012,10 +1114,124 @@ def test_older_publisher_write_is_dropped_after_newer_publish(tmp_path: Path):
-     asyncio.run(body())
- 
- 
--def test_completed_and_rejected_leases_do_not_count():
-+def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-+    """Sync publisher path: older read is dropped after newer demand publishes."""
-+    from scene.interface_adapters.http.routers import describe as describe_router
-+
-     async def body():
-         engine, sf = await _sessionmaker()
-+        target = tmp_path / "describe-load.json"
-+        monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(target))
-         start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-+        async with sf() as session:
-+            await DescribeOperationRepository(session, lease_seconds=180).accept(
-+                tenant_id=uuid.uuid4(), request_digest=_DIGEST_A, now=start
-+            )
-+            await session.commit()
-+        a_read = asyncio.Event()
-+        b_published = asyncio.Event()
-+        real_load = describe_router.load_snapshot
-+        calls = 0
-+
-+        async def gated_load(session, **kwargs):
-+            nonlocal calls
-+            kwargs.setdefault("now", start)
-+            snap = await real_load(session, **kwargs)
-+            calls += 1
-+            if calls == 1:
-+                a_read.set()
-+                await b_published.wait()
-+            return snap
-+
-+        monkeypatch.setattr(describe_router, "load_snapshot", gated_load)
-+
-+        async def publisher_a() -> None:
-+            await describe_router._maybe_dump_describe_load(sf)
-+
-+        async def publisher_b() -> None:
-+            await a_read.wait()
-+            async with sf() as session:
-+                await DescribeOperationRepository(session, lease_seconds=180).accept(
-+                    tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start
-+                )
-+                await session.commit()
-+            await describe_router._maybe_dump_describe_load(sf)
-+            b_published.set()
-+
-+        await asyncio.wait_for(asyncio.gather(publisher_a(), publisher_b()), timeout=5)
-+        loaded = json.loads(target.read_text())
-+        assert loaded["revision"] == 2
-+        assert loaded["lease_demand"] == 2
-+        assert loaded["in_flight"] == 2
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_live_stop_cannot_be_disabled_by_false_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-+    from scene.application.gpu_intent import IntentAction, write_gpu_intent
-+
-+    intent_path = tmp_path / "gpu-intent.json"
-+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
-+    start = datetime(2026, 1, 1, tzinfo=UTC)
-+    _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped")
-+    write_gpu_intent(
-+        intent_path,
-+        action=IntentAction.STOP,
-+        ttl_seconds=1800,
-+        requested_by="operator",
-+        now=start,
-+    )
-+
-+    async def body():
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start, stop_requested=False)
-+            assert snap["lease_demand"] == 0
-+            assert snap["in_flight"] == 0
-+            assert _has_work(snap) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_live_lease_cap_cannot_be_disabled_by_false_override(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-+    start = datetime(2026, 1, 1, tzinfo=UTC)
-+    _publish_gpu_state(
-+        tmp_path,
-+        monkeypatch,
-+        now=start,
-+        state="stopped",
-+        last_transition_reason="lease_cap",
-+    )
-+
-+    async def body():
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start, max_lease_reached=False)
-+            assert snap["lease_demand"] == 0
-+            assert snap["in_flight"] == 0
-+            assert _has_work(snap) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_completed_and_rejected_leases_do_not_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-+    async def body():
-+        engine, sf = await _sessionmaker()
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        observed = start + timedelta(seconds=2)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=observed, state="stopped")
-         tenant = uuid.uuid4()
-         async with sf() as session:
-             repo = DescribeOperationRepository(session, lease_seconds=60)
-@@ -1048,3 +1264,157 @@ def test_completed_and_rejected_leases_do_not_count():
+@@ -1418,3 +1433,70 @@ def test_run_startup_load_snapshot_rejects_illegal_bounds_before_publish(
          await engine.dispose()
  
      asyncio.run(body())
 +
 +
-+async def _one_active_lease(now: datetime):
-+    engine, sf = await _sessionmaker()
-+    tenant = uuid.uuid4()
-+    async with sf() as session:
-+        op = await DescribeOperationRepository(session, lease_seconds=180).accept(
-+            tenant_id=tenant, request_digest=_DIGEST_A, now=now
-+        )
-+        token = op.operation_id
-+        await session.commit()
-+    return engine, sf, tenant, token
++def test_deployed_bounds_use_repository_retention_env(monkeypatch: pytest.MonkeyPatch):
++    monkeypatch.setenv("ACX_ASYNC_JOB_RETENTION_HOURS", "12")
++    bounds = load_mod.deployed_demand_lease_bounds()
++    assert bounds.retention_seconds == 12 * 3600
 +
 +
-+def test_load_snapshot_unknown_gpu_state_excludes_demand_without_deleting(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-+    async def body():
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        monkeypatch.setenv("ACX_GPU_STATE_PATH", str(tmp_path / "missing-gpu-state.json"))
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start)
-+            assert snap["lease_demand"] == 0
-+            assert snap["in_flight"] == 0
-+            assert _has_work(snap) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_stale_gpu_state_excludes_demand_without_deleting(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-+    async def body():
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(
-+            tmp_path,
-+            monkeypatch,
-+            now=start,
-+            state="stopped",
-+            written_at=start.timestamp() - 181.0,
-+        )
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start)
-+            assert snap["lease_demand"] == 0
-+            assert snap["in_flight"] == 0
-+            assert _has_work(snap) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_unreadable_gpu_state_excludes_demand_without_deleting(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
-+    async def body():
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, raw="{not-json")
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start)
-+            assert snap["lease_demand"] == 0
-+            assert snap["in_flight"] == 0
-+            assert _has_work(snap) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_lease_cap_then_unknown_still_excludes_demand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-+    async def body():
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        path = _publish_gpu_state(
-+            tmp_path,
-+            monkeypatch,
-+            now=start,
-+            state="stopped",
-+            last_transition_reason="lease_cap",
-+        )
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            capped = await load_snapshot(session, now=start)
-+            assert capped["lease_demand"] == 0
-+            assert _has_work(capped) is False
-+        path.write_text(json.dumps({"written_at": start.timestamp()}), encoding="utf-8")
-+        async with sf() as session:
-+            unknown = await load_snapshot(session, now=start)
-+            assert unknown["lease_demand"] == 0
-+            assert unknown["in_flight"] == 0
-+            assert _has_work(unknown) is False
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_load_snapshot_stopped_auto_counts_active_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-+    async def body():
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        _publish_gpu_state(tmp_path, monkeypatch, now=start, state="stopped", last_transition_reason="work")
-+        engine, sf, tenant, token = await _one_active_lease(start)
-+        async with sf() as session:
-+            snap = await load_snapshot(session, now=start)
-+            assert snap["lease_demand"] == 1
-+            assert snap["in_flight"] == 1
-+            assert _has_work(snap) is True
-+            lease = await session.get(DescribeDemandLease, (tenant, token))
-+            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+def test_demand_lease_bounds_accept_legal_deployed_defaults():
-+    bounds = validate_demand_lease_bounds()
-+    assert bounds.lease_seconds == 180.0
-+    assert bounds.refresh_seconds + bounds.publication_delay_seconds < bounds.freshness_seconds
-+
-+
-+def test_demand_lease_bounds_reject_lease_not_exceeding_poll_budget():
-+    with pytest.raises(ValueError, match=r"P\+J\+D"):
-+        _legal_bounds(lease_seconds=75.0).validate()
-+
-+
-+def test_demand_lease_bounds_reject_non_finite_values():
-+    with pytest.raises(ValueError, match="finite"):
-+        _legal_bounds(lease_seconds=math.nan).validate()
-+    with pytest.raises(ValueError, match="finite"):
-+        _legal_bounds(refresh_seconds=math.inf).validate()
-+
-+
-+def test_run_startup_load_snapshot_rejects_illegal_bounds_before_publish(
-+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+):
++def test_refresh_loop_refuses_to_start_on_illegal_bounds(monkeypatch: pytest.MonkeyPatch):
 +    monkeypatch.setattr(load_mod, "DEMAND_LEASE_SECONDS", 1.0)
++    dumped = False
++
++    async def fake_dump(_factory, *, raise_on_error=False):
++        nonlocal dumped
++        dumped = True
++
++    monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
 +
 +    async def body():
-+        engine, sf = await _sessionmaker()
-+        target = tmp_path / "describe-load.json"
 +        with pytest.raises(ValueError, match=r"P\+J\+D"):
-+            await run_startup_load_snapshot(sf, path=target)
-+        assert not target.exists()
++            await refresh_load_snapshot_loop(object(), refresh_seconds=0)
++        assert dumped is False
++
++    asyncio.run(body())
++
++
++def test_load_snapshot_reads_gpu_state_once_for_lease_cap_and_allowlist(monkeypatch: pytest.MonkeyPatch):
++    start = datetime(2026, 1, 1, tzinfo=UTC)
++    generations = [
++        {
++            "state": "stopped",
++            "instance_id": "ocid1.gpu",
++            "written_at": start.timestamp(),
++            "reason": None,
++            "last_transition_reason": "lease_cap",
++        },
++        {
++            "state": "stopped",
++            "instance_id": "ocid1.gpu",
++            "written_at": start.timestamp(),
++            "reason": None,
++            "last_transition_reason": "work",
++        },
++    ]
++    reads = 0
++
++    def fake_reader() -> dict[str, object]:
++        nonlocal reads
++        payload = generations[min(reads, len(generations) - 1)]
++        reads += 1
++        return payload
++
++    monkeypatch.setattr(load_mod, "_read_gpu_lifecycle_payload", fake_reader)
++
++    async def body():
++        engine, sf, tenant, token = await _one_active_lease(start)
++        async with sf() as session:
++            snap = await load_snapshot(session, now=start)
++            assert snap["lease_demand"] == 0
++            assert snap["in_flight"] == 0
++            assert _has_work(snap) is False
++            lease = await session.get(DescribeDemandLease, (tenant, token))
++            assert lease is not None and lease.state == DemandLeaseState.ACTIVE
++        assert reads == 1
 +        await engine.dispose()
 +
 +    asyncio.run(body())

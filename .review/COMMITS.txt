@@ -1,2 +1,1 @@
-973fc1028394 offload: Landed Fix-3 demand-publication gates: monotonic
-9410653efe9f offload: svc-demand fail-closes unknown GPU demand, validates lease
+03083687b667 offload: Fix-4 landed: one GPU-state read, fail-closed refresh bounds,

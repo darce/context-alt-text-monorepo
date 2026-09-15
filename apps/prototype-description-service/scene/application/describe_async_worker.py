@@ -210,6 +210,8 @@ async def run_async_describe_job(
                     await session.commit()
                     return
                 image_bytes = item.image_bytes
+                await repo.record_pickup(tenant_id=tenant_id, run_id=run_id)
+                await repo.record_readiness(tenant_id=tenant_id, run_id=run_id)
                 await session.commit()
 
             if media_id is None:
@@ -241,6 +243,12 @@ async def run_async_describe_job(
                     run_id=run_id,
                     media_id=media_id,
                     visual_facts=provisional_envelope,
+                )
+                await repo.record_item_processing(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=media_id,
+                    processing_ms=float(cpu_duration_ms),
                 )
                 await session.commit()
             provisional_set = True
@@ -291,6 +299,12 @@ async def run_async_describe_job(
                     # the cache and the durable item row cannot diverge
                     # (VLM5-S2A-BR-02, VLM5-S1A-BR-02) [DATA-14].
                     await cache_repo.insert_or_get_existing(_envelope_to_cache_row(final_envelope, result=gpu_result))
+                    await repo.record_item_processing(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=media_id,
+                        processing_ms=float(cpu_duration_ms + gpu_duration_ms),
+                    )
                 await session.commit()
             if audit_sink is not None:
                 with contextlib.suppress(Exception):

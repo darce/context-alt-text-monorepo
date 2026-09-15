@@ -375,6 +375,71 @@ def test_status_route_returns_run_snapshot(monkeypatch):
         assert body["run_id"] == run_id
         assert body["status"] == DescribeRunStatus.PENDING
         assert "eta_seconds" in body
+        assert "timing" not in body
+        assert "operation_id" not in body
+        assert "startup_id" not in body
+
+
+def test_submit_omits_unobserved_timing_and_operation_ids(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, _):
+        body = _submit(client, [70]).json()
+        assert "timing" not in body
+        assert "operation_id" not in body
+        assert "startup_id" not in body
+
+
+def test_status_returns_persisted_timing_from_repository(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            start = datetime(2026, 1, 1, tzinfo=UTC)
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                run = await repo.get_run(tenant_id=TENANT_ID, run_id=rid)
+                run.created_at = start
+                await repo.record_pickup(tenant_id=TENANT_ID, run_id=rid, now=start + timedelta(seconds=2))
+                await repo.record_readiness(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    now=start + timedelta(seconds=2),
+                    operation_id="opaque-operation",
+                )
+                await repo.record_item_processing(tenant_id=TENANT_ID, run_id=rid, media_id=70, processing_ms=12.5)
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["operation_id"] == "opaque-operation"
+        assert body["startup_id"] is None
+        assert body["timing"]["queue_ms"] == 2000
+        assert body["timing"]["ramp_up_ms"] == 0
+        assert body["timing"]["processing_ms_p50"] == 12.5
+        assert body["timing"]["processing_ms_max"] == 12.5
+        assert body["timing"]["items_timed"] == 1
+        assert body["timing"]["startup_ms"] is None
+
+
+def test_create_run_publishes_demand_without_stop_flags(monkeypatch):
+    calls: list[object] = []
+
+    async def fake_publish(session_factory):
+        calls.append(session_factory)
+
+    async def _noop(**_):
+        return None
+
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _noop)
+    monkeypatch.setattr(describe_run_mod, "publish_demand_snapshot", fake_publish)
+    with _client() as (client, _):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+    assert len(calls) == 1
 
 
 def test_status_route_404_for_unknown_run(monkeypatch):

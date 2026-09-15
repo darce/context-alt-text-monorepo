@@ -54,3 +54,42 @@ This review is limited to the inlined `1743d1c7c..88832950b` delta. The two chan
 - Repository lock test: passed (`1 passed`).
 - Import-origin check: `scene` resolves to this lane worktree at `apps/prototype-description-service/scene/__init__.py`.
 - Lane test: blocked in this sandbox. Collection succeeds, but the declared `test_describe_load.py` invocation hangs while opening the `sqlite+aiosqlite` in-memory fixture before the first test body; it was bounded and interrupted. No implementation files were changed by verification.
+
+## Re-review r2b (88832950b..cd3d66908)
+
+VERIFIED: {"GPUFLOW-1-SVCDEMAND-R-01":"fixed","GPUFLOW-1-SVCDEMAND-R-02":"fixed","GPUFLOW-1-SVCDEMAND-R-03":"fixed","GPUFLOW-1-SVCDEMAND-R-04":"fixed","GPUFLOW-1-SVCDEMAND-R-05":"partially_fixed"}
+FINDINGS: [{"id":"GPUFLOW-1-SVCDEMAND-R-06","severity":"high","file_path":"apps/prototype-description-service/scene/application/describe_load.py","line":281,"summary":"Explicit false policy arguments still bypass authoritative STOP and max-lease blocks.","evidence":"The fix resolves policy only when stop_requested or max_lease_reached is None; an explicit False is forwarded to active_demand_count(), so a caller can publish eligible demand while STOP or lease_cap is live. The A1 contract requires those policies to remain authoritative. [RES-10]"},{"id":"GPUFLOW-1-SVCDEMAND-R-07","severity":"medium","file_path":"apps/prototype-description-service/scene/application/describe_load.py","line":176,"summary":"An explicit published revision of zero is still accepted as a current revision.","evidence":"The new validator rejects negative values but accepts revision == 0, although the contract reserves zero for a missing initial file and starts allocated revisions at one; a positive candidate can overwrite {revision:0}. The malformed regression loop omits zero. [TEST-15]"},{"id":"GPUFLOW-1-SVCDEMAND-R-08","severity":"medium","file_path":"apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py","line":90,"summary":"The schema fix is not protected by a local upgrade/heal/downgrade regression assertion.","evidence":"The changed migration test only adds the table name to EXPECTED_SCHEMA_TABLES, while the scene fixture creates the revision table directly with SQL. Removing the new ensure_tables call could therefore pass the changed non-Postgres assertions; the managed schema path is left to optional PG tests. [TEST-15]"}]
+Verdict: fail
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCDEMAND-R-01 | fixed | `.review/CHANGE.diff:102-144` makes `load_snapshot()` commit before returning; the existing sync caller writes only after awaiting it (`describe.py:464-466`), and `.review/CHANGE.diff:294-325` adds a commit-failure/file-preservation regression. |
+| GPUFLOW-1-SVCDEMAND-R-02 | fixed | `.review/CHANGE.diff:91-127` changes the defaults to `None` and resolves `_demand_policy_flags()` inside `load_snapshot()`, so the unchanged sync caller no longer defaults both policy bits to false; `.review/CHANGE.diff:222-291` covers STOP and lease-cap default-policy snapshots. The explicit-false escape hatch is a separate new R-06. |
+| GPUFLOW-1-SVCDEMAND-R-03 | fixed | `.review/CHANGE.diff:4-37` registers `describe_load_snapshot_revisions` in migration truth and downgrade order, `.review/CHANGE.diff:27-37` declares it in `ensure_tables()`, and `.review/CHANGE.diff:55-73` removes runtime `CREATE TABLE`. |
+| GPUFLOW-1-SVCDEMAND-R-04 | fixed | `.review/CHANGE.diff:77-90` distinguishes a missing key from an explicit value and rejects null/bool/non-integer/negative revisions; `.review/CHANGE.diff:193-215` adds null, bool, list, object, and negative cases plus the missing-key case. Explicit zero remains a new R-07 gap. |
+| GPUFLOW-1-SVCDEMAND-R-05 | partially_fixed | `.review/CHANGE.diff:327-361` now barriers publisher A after its read, lets B publish a higher revision, and verifies A is dropped; `.review/CHANGE.diff:222-325` adds sync-shaped STOP/lease-cap and commit-failure checks. It does not change the test to invoke `_maybe_dump_describe_load()`, does not alter demand between A and B, and does not repeat the fence across separate processes as required by the contract. [CON-05] [TEST-15] |
+
+### FINDINGS
+
+#### GPUFLOW-1-SVCDEMAND-R-06 — high
+
+- **File:line:** `apps/prototype-description-service/scene/application/describe_load.py:260-282`; `.review/CHANGE.diff:91-127`.
+- **Evidence:** The fix computes `policy_stop, policy_max_lease`, but then chooses `policy_stop if stop_requested is None else stop_requested` and the analogous max-lease expression. `dump_load_snapshot()` forwards its explicit arguments at `describe_load.py:407-411`. A caller passing `False` can therefore count and publish active leases while an unexpired STOP intent or lifecycle lease cap is active. The contract says STOP/max-lease remain authoritative and blocked leases contribute zero (`gpu-lifecycle.md:333-336,364,374-378`). This is a stale-authority write path covered by `[RES-10]`.
+- **Impact:** An explicit false override can reintroduce `has_work` after the operator has requested STOP or the controller has reached its max lease, allowing the lifecycle controller to act on demand that must be excluded.
+- **Fix:** Make policy blocks monotonic (`policy_stop or bool(stop_requested)` and `policy_max_lease or bool(max_lease_reached)`) or remove the override from the publisher API; keep only a test seam that cannot disable live policy.
+
+#### GPUFLOW-1-SVCDEMAND-R-07 — medium
+
+- **File:line:** `apps/prototype-description-service/scene/application/describe_load.py:169-178`; `.review/CHANGE.diff:77-90,193-205`.
+- **Evidence:** `_published_revision()` now rejects explicit `None`, booleans, non-integers, and negatives, but the condition is `revision < 0`, so an explicit JSON `{"revision": 0}` is accepted as the published revision. The lifecycle contract says a missing initial file has revision zero and allocated revisions start at one (`gpu-lifecycle.md:390-400`). The added malformed loop covers strings, null, booleans, list/object, and `-1`, but not `0`, so a malformed zero file can still be overwritten instead of failing closed. `[TEST-15]` applies.
+- **Impact:** A corrupt or legacy-reset file carrying an explicit zero can pass the write fence and be replaced by a positive candidate, weakening the fail-closed publication boundary.
+- **Fix:** Treat explicit zero as malformed (or distinguish a validated legacy format explicitly) and add a zero regression that asserts the target remains untouched.
+
+#### GPUFLOW-1-SVCDEMAND-R-08 — medium
+
+- **File:line:** `apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py:90-128`; `apps/prototype-description-service/scene/tests/test_describe_load.py:70-93`; `.review/CHANGE.diff:41-51,179-190`.
+- **Evidence:** The changed migration test only updates the expected-table list. The changed scene fixture independently executes `CREATE TABLE describe_load_snapshot_revisions`, so the lane tests do not prove that `upgrade()`/`heal()` actually create the table or that `downgrade()` removes it. A regression removing the new `ensure_tables()` call can pass these local assertions; only optional Postgres tests exercise the managed DDL path. This is a missing-green-to-red guard under `[TEST-15]`.
+- **Impact:** A schema declaration can drift from the application fixture while SQLite/local verification remains green, leaving first publication to fail on a deployment that skipped or partially applied the migration.
+- **Fix:** Add a migration recorder assertion for the revision table's columns/check constraint and downgrade position, plus a non-Postgres test that runs the migration helper against a scratch schema or explicitly include this table in an always-on migration regression.
+
+Verdict: fail

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type { DescribeRunResponse } from '../describeApi';
+import type { DescribeRunResponse, DescribeRunTiming } from '../describeApi';
 
 /**
  * The GATE referenced by the WBUX6-MRG-03 comment on DescribeRunResponse. That
@@ -35,7 +35,12 @@ interface DescribeRunSchema {
  * silent fall-through to whatever local default that consumer invented
  * (rg-005, rg-015).
  */
-const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = ['deadline_seconds'] as const;
+const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
+  'deadline_seconds',
+  'operation_id',
+  'startup_id',
+  'timing',
+] as const;
 
 /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
 const DESCRIBE_RUN_RESPONSE_KEYS = [
@@ -114,12 +119,18 @@ describe('DescribeRunResponse contract', () => {
     // Optional AND nullable on the wire, so the TS field has to admit both.
     expect(schema.properties?.deadline_seconds?.type).toEqual(['number', 'null']);
     expectTypeOf<DescribeRunResponse['deadline_seconds']>().toEqualTypeOf<number | null | undefined>();
+    expect(schema.properties?.operation_id?.type).toBe('string');
+    expectTypeOf<DescribeRunResponse['operation_id']>().toEqualTypeOf<string | undefined>();
+    expect(schema.properties?.startup_id?.type).toEqual(['string', 'null']);
+    expectTypeOf<DescribeRunResponse['startup_id']>().toEqualTypeOf<string | null | undefined>();
+    expect(schema.properties?.timing?.type).toBe('object');
+    expectTypeOf<DescribeRunResponse['timing']>().toEqualTypeOf<DescribeRunTiming | undefined>();
 
     // The envelope is still exactly required + the optional keys, so a new
     // schema property added without a TS field fails here rather than silently.
-    expect([...declared].sort()).toEqual(
-      [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS].sort(),
-    );
+    const expectedKeys = [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS];
+    expect(expectedKeys).toHaveLength(16);
+    expect([...declared].sort()).toEqual(expectedKeys.sort());
   });
 
   it('accepts a disclosed budget without disturbing the required envelope', () => {

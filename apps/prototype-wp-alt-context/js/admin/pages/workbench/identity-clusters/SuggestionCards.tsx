@@ -249,6 +249,7 @@ export const SuggestionCard = ({
               bbox={representativeFace.bbox}
               alt={storedReferenceAlt}
               onOpen={onOpenOriginal}
+              mediaId={suggestion.enrichment?.representativeMediaId ?? undefined}
             />
           ) : representativeThumbUrl ? (
             <Avatar

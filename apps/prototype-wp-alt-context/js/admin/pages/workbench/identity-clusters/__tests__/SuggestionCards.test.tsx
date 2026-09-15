@@ -341,6 +341,98 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
     });
     expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
   });
+
+  it('passes representative media id when opening the stored-face original', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          enrichment: {
+            ...preview.representative,
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: preview.representative.representativeMediaUrl,
+      bbox: preview.representative.representativeBbox,
+      label: 'Alex stored face, position 1 of 3',
+      mediaId: preview.representative.representativeMediaId,
+    });
+  });
+
+  it('does not reuse the candidate media id for the representative crop', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          enrichment: {
+            ...preview.candidate,
+            ...preview.representative,
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(imageSrcCount(preview.candidate.identityMediaUrl)).toBe(1);
+    expect(imageSrcCount(preview.representative.representativeMediaUrl)).toBe(1);
+
+    const cropControls = screen.getAllByRole('button', { name: 'View original photo' });
+    expect(cropControls).toHaveLength(2);
+    await user.click(cropControls[1]);
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: preview.representative.representativeMediaUrl,
+      bbox: preview.representative.representativeBbox,
+      label: 'Alex stored face, position 1 of 3',
+      mediaId: preview.representative.representativeMediaId,
+    });
+    expect(onOpenOriginal.mock.calls[0][0].mediaId).not.toBe(preview.candidate.identityMediaId);
+  });
+
+  it('omits mediaId when the representative media id is missing so the lightbox does not fetch', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          enrichment: {
+            representativeMediaUrl: preview.representative.representativeMediaUrl,
+            representativeBbox: preview.representative.representativeBbox,
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: preview.representative.representativeMediaUrl,
+      bbox: preview.representative.representativeBbox,
+      label: 'Alex stored face, position 1 of 3',
+    });
+    expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
+  });
 });
 
 describe('SuggestionCard UXC-02 stored-reference disclosure', () => {

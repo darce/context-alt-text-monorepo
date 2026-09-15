@@ -186,7 +186,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const startupId = run?.startup_id ?? null;
   // Phase is the run's warmup signal; gpu_state is process-wide and would mark
   // queued/describing runs as warming (R-03).
-  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING
+  const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING;
   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;

@@ -54,3 +54,39 @@ Fix: Use an omitted `timing` key for the absent case and a valid timing object w
 - Changed-path audit: 5 paths from `.review/CHANGE.diff`; all match the declared `spa-bulk-timing` owned paths.
 - Required lane test: `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — 1 passed.
 - Requested Vitest command was attempted from `apps/prototype-wp-alt-context`; this sandbox has no local `node_modules/.bin/vitest`, and `npx` did not resolve an executable within the timeout, so its result is not trusted.
+
+## Re-review r2 (6192796d5..bef8a8ee0)
+
+VERIFIED: {"GPUFLOW-1-SPABULKTIMING-R-02":"fixed","GPUFLOW-1-SPABULKTIMING-R-03":"partially_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SPABULKTIMING-R-02 | fixed | The formatter no longer reads `server_elapsed_ms` or gates the announcement on it; it always emits the count and independently appends `ramp_up_ms` as `Waited for service`, `startup_ms` as `Started in`, and `queue_ms` (`.review/CHANGE.diff:150-198`). The added cases cover zero ramp-up, independent nullable fields, and a null server elapsed value (`.review/CHANGE.diff:324-397`). The separate prior R-01 gap for median/slowest processing remains open and is not duplicated here. |
+| GPUFLOW-1-SPABULKTIMING-R-03 | partially_fixed | `isWarming` now derives from nonterminal `run.phase === warming` rather than global `gpu_state`/ETA, with queued and phase-warming regressions (`.review/CHANGE.diff:52-107,121-140`). However the new `formatWarmingGpuLabel()` still renders `eta_seconds`—the remaining-run ETA—as warming duration and retains the hard-coded `about 2 min, first run only` fallback (`.review/CHANGE.diff:146-156`). The phase classification is fixed, but the no-fabricated warmup-copy requirement remains unmet ([rg-015] [INT-08]). |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-1-SPABULKTIMING-R-05","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts","line":189,"summary":"lint(prettier): the changed isWarming assignment omits the required semicolon","evidence":"The fix hunk ends the new `const isWarming = ...` statement without `;` (`.review/CHANGE.diff:132-140`), while the app's Prettier configuration requires semicolons (`apps/prototype-wp-alt-context/.prettierrc:5`). The configured format check is therefore expected to reject this changed file."}]
+
+#### GPUFLOW-1-SPABULKTIMING-R-05 — low
+
+- **File:** `apps/prototype-wp-alt-context/js/admin/hooks/useDescribeRunProgress.ts:189`
+- **Evidence:** The new `const isWarming = !isTerminal && run?.phase === DESCRIBE_RUN_PHASE.WARMING` statement has no terminating semicolon (`.review/CHANGE.diff:132-140`), but `apps/prototype-wp-alt-context/.prettierrc:5` sets `semi` to `true`.
+- **Impact:** The behavioral fix is valid JavaScript, but the configured Prettier gate can fail the lane on this changed file.
+- **Fix:** Add the semicolon and rerun the app's format check.
+
+Verdict: pass_with_findings
+
+## Re-review r3 (bef8a8ee0..95066e81f)
+
+VERIFIED: {"GPUFLOW-1-SPABULKTIMING-R-03":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SPABULKTIMING-R-03 | fixed | The phase-based warmup gate remains tied to the nonterminal run phase (`run?.phase === DESCRIBE_RUN_PHASE.WARMING`) in the changed hunk (`.review/CHANGE.diff:4-12`), while the remaining false-duration behavior is removed: `formatWarmingGpuLabel` no longer accepts or reads an ETA and returns duration-free copy (`.review/CHANGE.diff:16-26`), and both warming branches call it without an ETA (`.review/CHANGE.diff:30-45`). The updated tests assert no hard-coded `about 2 min` or wire `eta_seconds`/`remaining` text (`.review/CHANGE.diff:76-112`). This closes the prior partial fix; the duration-free unknown state follows `[INT-08]` and the no-fabricated-value guard `[CAL-02]`. |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass

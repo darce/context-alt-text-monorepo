@@ -4,13 +4,21 @@
  * - debounced so keystroke fetch churn does not re-announce [B-01]
  * - never carries per-correction success copy (row owns that) [B-02]
  */
+import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
-import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
-import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../../api/describeApi';
+import {
+  DESCRIBE_RUN_PHASE,
+  DESCRIBE_RUN_STATUS,
+  GPU_STATE,
+  isDescribeRunTerminal,
+  isGpuState,
+  type DescribeRunResponse,
+  type DescribeRunTiming,
+} from '../../../api/describeApi';
 import { BulkDescribeProgress, MediaSelection } from '../MediaSelection';
 import { MARK_DECORATIVE_SUCCESS_MESSAGE } from '../MediaAltSuggest';
 import gpuflowBulkTiming from './fixtures/gpuflow-bulk-timing.json';
@@ -333,8 +341,6 @@ describe('MediaSelection toolbar status announcement [WBUX-5-D-02][B-01][B-02]',
   });
 });
 
-const TERMINAL_STATUSES = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
-
 const GPUFLOW_TIMING: DescribeRunTiming = {
   queue_ms: gpuflowBulkTiming.run.timing.queue_ms,
   ramp_up_ms: gpuflowBulkTiming.run.timing.ramp_up_ms,
@@ -345,11 +351,21 @@ const GPUFLOW_TIMING: DescribeRunTiming = {
   items_timed: gpuflowBulkTiming.run.timing.items_timed,
 };
 
+const NULL_TIMING: DescribeRunTiming = {
+  queue_ms: null,
+  ramp_up_ms: null,
+  processing_ms_p50: null,
+  processing_ms_max: null,
+  startup_ms: null,
+  server_elapsed_ms: null,
+  items_timed: null,
+};
+
 const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: gpuflowBulkTiming.run.tenant_id,
   run_id: gpuflowBulkTiming.run.run_id,
-  status: 'completed_with_errors',
-  phase: 'complete',
+  status: DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
+  phase: DESCRIBE_RUN_PHASE.COMPLETE,
   completed: gpuflowBulkTiming.run.completed,
   failed: gpuflowBulkTiming.run.failed,
   skipped: gpuflowBulkTiming.run.skipped,
@@ -371,10 +387,10 @@ const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
   return run;
 };
 
-const gpuflowWarmingRun = (): DescribeRunResponse => {
+const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
   const run = gpuflowRun({
-    status: 'running',
-    phase: 'describing',
+    status: DESCRIBE_RUN_STATUS.RUNNING,
+    phase: DESCRIBE_RUN_PHASE.WARMING,
     completed: gpuflowBulkTiming.run_warming.completed,
     failed: gpuflowBulkTiming.run_warming.failed,
     skipped: gpuflowBulkTiming.run_warming.skipped,
@@ -383,8 +399,11 @@ const gpuflowWarmingRun = (): DescribeRunResponse => {
     eta_seconds: gpuflowBulkTiming.run_warming.eta_seconds,
     operation_id: gpuflowBulkTiming.run_warming.operation_id,
     startup_id: gpuflowBulkTiming.run_warming.startup_id,
+    ...overrides,
   });
-  Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
+  if (!Object.hasOwn(overrides, 'timing')) {
+    Object.assign(run, { timing: gpuflowBulkTiming.run_warming.timing });
+  }
   return run;
 };
 
@@ -396,10 +415,10 @@ const progressFromRun = (
   status: run.status,
   progressFraction: run.total > 0 ? (run.completed + run.failed + run.skipped) / run.total : 0,
   etaSeconds: run.eta_seconds,
-  gpuState: typeof run.gpu_state === 'string' ? (run.gpu_state as DescribeRunProgress['gpuState']) : null,
-  isTerminal: TERMINAL_STATUSES.has(run.status),
+  gpuState: isGpuState(run.gpu_state) ? run.gpu_state : null,
+  isTerminal: isDescribeRunTerminal(run.status),
   stalledForSeconds: null,
-  isPolling: !TERMINAL_STATUSES.has(run.status),
+  isPolling: !isDescribeRunTerminal(run.status),
   isFrozen: false,
   isError: false,
   error: null,
@@ -411,30 +430,68 @@ const progressFromRun = (
 });
 
 describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () => {
-  it('announces measured elapsed time on a terminal run without fabricating startup', () => {
+  it('announces ramp-up and queue from the fixture without rendering server elapsed as described-in', () => {
     const run = gpuflowRun();
     render(<BulkDescribeProgress progress={progressFromRun(run)} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('1 described, 1 failed in 0.04 s');
+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0 s. Queue 0.01 s');
+    expect(live).not.toHaveTextContent('described in');
     expect(live).not.toHaveTextContent('GPU startup');
+    expect(live).not.toHaveTextContent('in 0.04 s');
     expect(screen.getAllByRole('status')).toHaveLength(1);
     const visual = document.querySelector('.acx-media-selection__bulk-describe-status--success');
     expect(visual).toHaveAttribute('aria-hidden', 'true');
     expect(visual).toHaveTextContent('✔ 1 draft ready to review · 1 failed');
   });
 
-  it('appends GPU startup seconds only when startup_ms is non-null', () => {
-    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, startup_ms: 2500 };
+  it('announces Waited for service when only ramp_up_ms is present', () => {
+    const timing: DescribeRunTiming = { ...NULL_TIMING, ramp_up_ms: 800 };
     const run = gpuflowRun({ timing });
+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0.8 s');
+    expect(live).not.toHaveTextContent('Started in');
+    expect(live).not.toHaveTextContent('Queue');
+    expect(live).not.toHaveTextContent('described in');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('announces Started in plus Waited for service when both startup_ms and ramp_up_ms are present', () => {
+    const timing: DescribeRunTiming = { ...NULL_TIMING, ramp_up_ms: 800, startup_ms: 2500 };
+    const run = gpuflowRun({ timing });
+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '1 described, 1 failed. Waited for service 0.8 s. Started in 2.5 s',
+    );
+    expect(screen.getByRole('status')).not.toHaveTextContent('GPU startup');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('announces ramp-up when server_elapsed_ms is null rather than returning no summary', () => {
+    const timing: DescribeRunTiming = { ...GPUFLOW_TIMING, server_elapsed_ms: null };
+    const run = gpuflowRun({ timing });
+    render(<BulkDescribeProgress progress={progressFromRun(run, { timing })} onRetry={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('1 described, 1 failed. Waited for service 0 s. Queue 0.01 s');
+    expect(live).not.toHaveTextContent('described in');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+  });
+
+  it('announces the count-only line when every timing field is null', () => {
+    const run = gpuflowRun({ timing: NULL_TIMING });
     render(
-      <BulkDescribeProgress
-        progress={progressFromRun({ ...run, timing }, { timing })}
-        onRetry={vi.fn()}
-      />,
+      <BulkDescribeProgress progress={progressFromRun(run, { timing: NULL_TIMING })} onRetry={vi.fn()} />,
     );
 
-    expect(screen.getByRole('status')).toHaveTextContent('1 described, 1 failed in 0.04 s (GPU startup 2.5 s)');
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('1 described, 1 failed');
+    expect(live).not.toHaveTextContent('Waited for service');
+    expect(live).not.toHaveTextContent('Started in');
+    expect(live).not.toHaveTextContent('Queue');
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
@@ -448,21 +505,39 @@ describe('MediaSelection bulk-describe timing announcement [GPUFLOW-1 B2]', () =
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
-  it('announces Description service is starting once while isWarming, with no fabricated ETA', () => {
+  it('announces Warming GPU (first run only) while isWarming and never fabricates a duration', () => {
     const run = gpuflowWarmingRun();
     const warming = progressFromRun(run, { isWarming: true, isTerminal: false, isPolling: true });
     const { rerender } = render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
 
     const live = screen.getByRole('status');
-    expect(live).toHaveTextContent('Description service is starting');
-    expect(live).not.toHaveTextContent('2 min');
+    expect(live).toHaveTextContent('Warming GPU (first run only)…');
     expect(live).not.toHaveTextContent('remaining');
     expect(live).not.toHaveTextContent('calculating');
+    expect(live).not.toHaveTextContent('about 2 min');
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getAllByRole('status')).toHaveLength(1);
 
     rerender(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Description service is starting');
+    expect(screen.getByRole('status')).toHaveTextContent('Warming GPU (first run only)…');
+  });
+
+  it('does not render eta_seconds in the warming label', () => {
+    const run = gpuflowWarmingRun({ eta_seconds: 12 });
+    const warming = progressFromRun(run, {
+      isWarming: true,
+      isTerminal: false,
+      isPolling: true,
+      etaSeconds: 12,
+    });
+    render(<BulkDescribeProgress progress={warming} onRetry={vi.fn()} />);
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('Warming GPU (first run only)…');
+    expect(live).not.toHaveTextContent('about 2 min');
+    expect(live).not.toHaveTextContent('~12s remaining');
+    expect(live).not.toHaveTextContent('remaining');
+    expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 });

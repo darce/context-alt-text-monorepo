@@ -13,7 +13,13 @@ import {
   useDescribeRunProgress,
 } from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
-import { GPU_STATE, type DescribeRunResponse, type DescribeRunTiming } from '../../api/describeApi';
+import {
+  DESCRIBE_RUN_PHASE,
+  DESCRIBE_RUN_STATUS,
+  GPU_STATE,
+  type DescribeRunResponse,
+  type DescribeRunTiming,
+} from '../../api/describeApi';
 import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
 import gpuflowBulkTiming from '../../pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json';
 
@@ -34,8 +40,8 @@ const gpuUxMap = JSON.parse(readFileSync(join(appRoot, 'docs', 'ux-maps', 'descr
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',
   run_id: 'run-1',
-  status: 'running',
-  phase: 'describing',
+  status: DESCRIBE_RUN_STATUS.RUNNING,
+  phase: DESCRIBE_RUN_PHASE.DESCRIBING,
   completed: 0,
   failed: 0,
   skipped: 0,
@@ -62,8 +68,8 @@ const gpuflowRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunRe
   runResponse({
     tenant_id: gpuflowBulkTiming.run.tenant_id,
     run_id: gpuflowBulkTiming.run.run_id,
-    status: 'completed_with_errors',
-    phase: 'complete',
+    status: DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS,
+    phase: DESCRIBE_RUN_PHASE.COMPLETE,
     completed: gpuflowBulkTiming.run.completed,
     failed: gpuflowBulkTiming.run.failed,
     skipped: gpuflowBulkTiming.run.skipped,
@@ -87,8 +93,8 @@ const gpuflowRunWithoutTiming = (): DescribeRunResponse => {
 
 const gpuflowWarmingRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => {
   const run = gpuflowRun({
-    status: 'running',
-    phase: 'describing',
+    status: DESCRIBE_RUN_STATUS.RUNNING,
+    phase: DESCRIBE_RUN_PHASE.WARMING,
     completed: gpuflowBulkTiming.run_warming.completed,
     failed: gpuflowBulkTiming.run_warming.failed,
     skipped: gpuflowBulkTiming.run_warming.skipped,
@@ -609,28 +615,49 @@ describe('useDescribeRunProgress GPUFLOW timing passthrough', () => {
     expect(result.current.startupId).toBeNull();
   });
 
-  it('sets isWarming when gpu_state is starting and the run has no eta', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
+  it('does not set isWarming for a queued run when gpu_state is starting', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        status: DESCRIBE_RUN_STATUS.PENDING,
+        phase: DESCRIBE_RUN_PHASE.QUEUED,
+        gpu_state: GPU_STATE.STARTING,
+        eta_seconds: null,
+      }),
+    );
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
-    await waitFor(() => expect(result.current.status).toBe('running'));
+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.PENDING));
     expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
     expect(result.current.etaSeconds).toBeNull();
+    expect(result.current.isWarming).toBe(false);
+  });
+
+  it('sets isWarming when run.phase is warming regardless of gpu_state', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      gpuflowWarmingRun({ gpu_state: GPU_STATE.READY, eta_seconds: 12 }),
+    );
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.RUNNING));
+    expect(result.current.gpuState).toBe(GPU_STATE.READY);
+    expect(result.current.etaSeconds).toBe(12);
     expect(result.current.isWarming).toBe(true);
     expect(result.current.isTerminal).toBe(false);
     expect(result.current.isPolling).toBe(true);
     expect(result.current.stalledForSeconds).toBeNull();
   });
 
-  it('does not set isWarming when a starting GPU already reports an eta', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun({ eta_seconds: 12 }));
+  it('sets isWarming from the fixture warming run even when gpu_state is starting', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(gpuflowWarmingRun());
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
-    await waitFor(() => expect(result.current.status).toBe('running'));
-    expect(result.current.etaSeconds).toBe(12);
-    expect(result.current.isWarming).toBe(false);
+    await waitFor(() => expect(result.current.status).toBe(DESCRIBE_RUN_STATUS.RUNNING));
+    expect(result.current.gpuState).toBe(GPU_STATE.STARTING);
+    expect(result.current.etaSeconds).toBeNull();
+    expect(result.current.isWarming).toBe(true);
   });
 
   it('passes a non-null startupId through unchanged', async () => {

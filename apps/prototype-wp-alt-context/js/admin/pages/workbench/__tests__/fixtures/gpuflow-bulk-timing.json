@@ -71,7 +71,7 @@
     "tenant_id": "00000000-0000-0000-0000-000000000001",
     "run_id": "00000000-0000-0000-0000-000000000002",
     "status": "running",
-    "phase": "describing",
+    "phase": "warming",
     "completed": 0,
     "failed": 0,
     "skipped": 0,

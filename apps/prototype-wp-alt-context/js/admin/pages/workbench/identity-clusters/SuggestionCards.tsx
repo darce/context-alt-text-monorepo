@@ -3,7 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import { isPositiveMediaId } from '../../../../components/ui/faceGeometry';
+import { isCroppableBbox, isPositiveMediaId } from '../../../../components/ui/faceGeometry';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
@@ -144,11 +144,11 @@ export const SuggestionCard = ({
   const matchPercent = Math.round(suggestion.similarity * 100);
   const isLowConfidence = suggestion.similarity < lowConfidenceThreshold;
   const identityFace =
-    suggestion.enrichment?.identityMediaUrl && suggestion.enrichment?.identityBbox
+    suggestion.enrichment?.identityMediaUrl && isCroppableBbox(suggestion.enrichment?.identityBbox)
       ? { mediaUrl: suggestion.enrichment.identityMediaUrl, bbox: suggestion.enrichment.identityBbox }
       : null;
   const representativeFace =
-    suggestion.enrichment?.representativeMediaUrl && suggestion.enrichment?.representativeBbox
+    suggestion.enrichment?.representativeMediaUrl && isCroppableBbox(suggestion.enrichment?.representativeBbox)
       ? {
           mediaUrl: suggestion.enrichment.representativeMediaUrl,
           bbox: suggestion.enrichment.representativeBbox,

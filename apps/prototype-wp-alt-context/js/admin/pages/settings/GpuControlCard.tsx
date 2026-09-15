@@ -6,7 +6,6 @@ import { toWorkbench } from '../../navigation/appLinks';
 import {
   GPU_STATE_ICON,
   GPU_STATE_TONE,
-  GPU_STATE_VOCABULARY,
   gpuStatePresentation,
 } from '../workbench/gpuStatePresentation';
 import { getGpuControlPollInterval, useGpuControl } from './useGpuControl';
@@ -87,7 +86,7 @@ const formatWarmupEta = (data: GpuStatusResponse): string => {
 const intentLabel = (data: GpuStatusResponse): string => {
   const { intent, intent_status: intentStatus } = data.gpu_state;
   if (intentStatus === GpuIntentStatus.BLOCKED_WORK_IN_FLIGHT) {
-    return 'Stop pending — a describe run is in flight; the GPU stops when it ends.';
+    return 'Stop pending — a describe run is in flight; the service stops when it ends.';
   }
   if (intent === GpuIntentAction.AUTO) {
     return data.snapshot_fresh
@@ -170,12 +169,15 @@ export const GpuControlCard = (): React.JSX.Element => {
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
-  const pendingReason = isIntentPending ? __('a GPU request is already in flight', 'alt-context') : null;
+  const pendingReason = isIntentPending ? __('a service request is already in flight', 'alt-context') : null;
   const startReason = startHeld
     ? pendingReason ||
-      startBlockedReason ||
+      startBlockedReason
+        ?.replace(/GPU/g, 'service')
+        .replace('service state is unknown', 'Service state is unknown')
+        .replace('Lifecycle telemetry is stale', 'Service status is out of date') ||
       (data && startDisabledReason(data)) ||
-      __('GPU start is unavailable', 'alt-context')
+      __('Service start is unavailable', 'alt-context')
     : null;
   const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
@@ -191,7 +193,7 @@ export const GpuControlCard = (): React.JSX.Element => {
   return (
     <section className="acx-target-card acx-gpu-control" aria-labelledby="acx-gpu-control-title">
       <h3 id="acx-gpu-control-title" className="acx-settings__section-title">
-        {__('Settings › Burst GPU', 'alt-context')}
+        {__('Settings › Description Service', 'alt-context')}
       </h3>
 
       <div
@@ -202,7 +204,7 @@ export const GpuControlCard = (): React.JSX.Element => {
         aria-live="polite"
         aria-atomic="true"
       >
-        {isLoading && !data ? <span>{__('Loading GPU status…', 'alt-context')}</span> : null}
+        {isLoading && !data ? <span>{__('Loading service status…', 'alt-context')}</span> : null}
         {isError ? <span className="notice-error">{errorCopy(error)}</span> : null}
         {data
           ? (() => {
@@ -220,7 +222,7 @@ export const GpuControlCard = (): React.JSX.Element => {
                   <span aria-hidden="true" className="acx-gpu-control__state-icon">
                     {GPU_STATE_GLYPHS[presentation.icon]}
                   </span>{' '}
-                  <span>{`${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`}</span>
+                  <span>{`${__('Service:', 'alt-context')} ${presentation.label}`}</span>
                   {` · ${snapshotText}`}
                 </span>
               );
@@ -242,13 +244,13 @@ export const GpuControlCard = (): React.JSX.Element => {
             ({loadAgeLabel(data)})
           </div>
           <div id="z-gpu-cost" data-testid="z-gpu-cost" className="acx-gpu-control__row">
-            {__('Cost: ≈$2.00 / GPU-hour · warm-up ≈2 min · never runs longer than the 60 min cap', 'alt-context')}
+            {__('Cost: ≈$2.00 / service-hour · warm-up ≈2 min · never runs longer than the 60 min cap', 'alt-context')}
           </div>
 
           {!data.snapshot_fresh ? (
             <p className="notice inline notice-warning" data-testid="gpu-stale-notice">
               {__(
-                'Lifecycle telemetry is stale. Refresh before starting the GPU. Stop and automatic requests may be delayed.',
+                'Service status is out of date. Refresh before starting the service. Stop and automatic requests may be delayed.',
                 'alt-context',
               )}
             </p>
@@ -270,7 +272,7 @@ export const GpuControlCard = (): React.JSX.Element => {
               aria-disabled={startHeld ? true : undefined}
               aria-describedby={startReason ? 'z-gpu-start-reason' : undefined}
             >
-              <span aria-hidden="true">▶</span> {__('Start GPU', 'alt-context')}
+              <span aria-hidden="true">▶</span> {__('Start service', 'alt-context')}
             </button>
             {startReason ? <span id="z-gpu-start-reason">disabled: {startReason}</span> : null}
 
@@ -285,7 +287,7 @@ export const GpuControlCard = (): React.JSX.Element => {
               aria-disabled={stopHeld ? true : undefined}
               aria-describedby={stopReason ? 'z-gpu-stop-reason' : undefined}
             >
-              <span aria-hidden="true">■</span> {__('Stop GPU', 'alt-context')}
+              <span aria-hidden="true">■</span> {__('Stop service', 'alt-context')}
             </button>
             {stopReason ? <span id="z-gpu-stop-reason">disabled: {stopReason}</span> : null}
 
@@ -315,7 +317,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-start-preview" data-testid="z-start-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Starts the A10 now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60 min lease cap still applies.',
+                  'Starts the description service now (≈$2.00/h). Ready in about 2 min. Returns to automatic after 30 min unless work keeps it busy; the 60 min lease cap still applies.',
                   'alt-context',
                 )}
               </p>
@@ -344,7 +346,7 @@ export const GpuControlCard = (): React.JSX.Element => {
             <div id="z-stop-preview" data-testid="z-stop-preview" className="notice inline notice-warning">
               <p>
                 {__(
-                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The separate lease cap can still stop the GPU to limit costs.',
+                  'Requests shutdown when idle. If a describe run is in flight, shutdown is deferred. The separate lease cap can still stop the service to limit costs.',
                   'alt-context',
                 )}
               </p>

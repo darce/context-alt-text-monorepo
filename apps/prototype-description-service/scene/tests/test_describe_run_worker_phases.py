@@ -5,24 +5,25 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import httpx
+import pytest
 from jsonschema import Draft7Validator, FormatChecker
 from referencing import Registry, Resource
 from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
-from db.models.scene import DescribeStartup
+from db.models.scene import DescribeOperation, DescribeStartup
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
 from scene.application.gpu_state import GpuState
 from scene.domain.describe_run import (
-    TERMINAL_ITEM_STATUSES,
     DescribeItemStatus,
     DescribeRunPhase,
     DescribeRunStatus,
@@ -325,8 +326,26 @@ async def _ensure_startup_table(engine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(
             Base.metadata.create_all,
-            tables=cast(list[Table], [DescribeStartup.__table__]),
+            tables=cast(list[Table], [DescribeStartup.__table__, DescribeOperation.__table__]),
         )
+
+
+def _operation(
+    *,
+    operation_id: str,
+    startup_id: str,
+    accepted_at: datetime,
+    retain_until: datetime,
+) -> DescribeOperation:
+    return DescribeOperation(
+        tenant_id=TENANT_ID,
+        operation_id=operation_id,
+        request_digest="ab" * 32,
+        accepted_at=accepted_at,
+        expires_at=accepted_at + timedelta(minutes=30),
+        retain_until=retain_until,
+        startup_id=startup_id,
+    )
 
 
 def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
@@ -345,18 +364,39 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
         engine = create_async_engine(url)
         await _ensure_startup_table(engine)
         sf = async_sessionmaker(engine, expire_on_commit=False)
+        retain_until = datetime.now(UTC) + timedelta(hours=1)
+        newer_started = started_at + timedelta(seconds=60)
         async with sf() as s:
             run_id = await DescribeRunRepository(s).create_run(
                 tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
             )
             s.add(
                 DescribeStartup(
-                    startup_id="shared-boot",
+                    startup_id="older-boot",
                     started_at=started_at,
                     first_ready_at=first_ready_at,
-                    retain_until=datetime.now(UTC) + timedelta(hours=1),
+                    retain_until=retain_until,
                 )
             )
+            s.add(
+                DescribeStartup(
+                    startup_id="newer-boot",
+                    started_at=newer_started,
+                    first_ready_at=newer_started + timedelta(seconds=3),
+                    retain_until=retain_until,
+                )
+            )
+            s.add(
+                _operation(
+                    operation_id="op-older",
+                    startup_id="older-boot",
+                    accepted_at=started_at,
+                    retain_until=retain_until,
+                )
+            )
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.operation_id = "op-older"
             await s.commit()
 
         async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
@@ -376,7 +416,7 @@ def test_gpu_wait_records_cold_ramp_up_after_pickup(monkeypatch):
         assert run is not None
         assert run.queue_ms is not None
         assert run.ramp_up_ms is not None and run.ramp_up_ms >= 0
-        assert run.startup_id == "shared-boot"
+        assert run.startup_id == "older-boot"
         assert run.startup_ms == elapsed_ms(started_at, first_ready_at)
         assert run.startup_ms != run.ramp_up_ms
         assert run.items_timed == 1
@@ -419,6 +459,7 @@ def test_cold_gpu_wait_without_startup_observation_leaves_ids_null(monkeypatch):
         assert run is not None
         assert run.startup_id is None
         assert run.startup_ms is None
+        assert run.ramp_up_ms is not None and run.ramp_up_ms > 0
         await engine.dispose()
         os.unlink(path)
 
@@ -510,14 +551,21 @@ def test_worker_publishes_demand_snapshot_without_stop_flags(monkeypatch):
 def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
     import scene.application.describe_run_worker as wmod
 
+    clock = {"t": 100.0}
+    attempt_s = 0.042
+
+    def fake_monotonic() -> float:
+        return clock["t"]
+
+    monkeypatch.setattr(wmod.time, "monotonic", fake_monotonic)
+
     attempts = {"n": 0}
 
     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         attempts["n"] += 1
         if attempts["n"] == 1:
-            exc = httpx.ConnectError("transient")
-            exc.processing_ms = 42
-            raise exc
+            clock["t"] += attempt_s
+            raise httpx.ConnectError("transient")
         raise AssertionError("retry must not dispatch after cancel")
 
     async def already_ready(**kwargs):
@@ -566,25 +614,14 @@ def test_cancel_during_retry_backoff_keeps_measured_attempt_ms(monkeypatch):
             items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
         assert attempts["n"] == 1
         assert items[0].status == DescribeItemStatus.SKIPPED
-        assert items[0].processing_ms == 42
+        assert items[0].processing_ms == pytest.approx(attempt_s * 1000)
         await engine.dispose()
         os.unlink(path)
 
     asyncio.run(body())
 
 
-def test_three_noop_terminal_transitions_abort_run(monkeypatch):
-    import scene.application.describe_run_worker as wmod
-
-    original = DescribeRunRepository.mark_item
-
-    async def no_op_terminal(self, *args, **kwargs):
-        status = kwargs.get("status")
-        if status in TERMINAL_ITEM_STATUSES:
-            return False
-        return await original(self, *args, **kwargs)
-
-    monkeypatch.setattr(DescribeRunRepository, "mark_item", no_op_terminal)
+def test_three_noop_terminal_transitions_abort_run():
     described: list[int] = []
 
     async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
@@ -596,11 +633,19 @@ def test_three_noop_terminal_transitions_abort_run(monkeypatch):
         engine = create_async_engine(url)
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:
-            run_id = await DescribeRunRepository(s).create_run(
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(
                 tenant_id=TENANT_ID,
                 media_ids=[1, 2, 3, 4],
                 images={1: (b"a", "image/png"), 2: (b"b", "image/png"), 3: (b"c", "image/png"), 4: (b"d", "image/png")},
             )
+            for media_id in (1, 2, 3):
+                await repo.mark_item(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    media_id=media_id,
+                    status=DescribeItemStatus.COMPLETED,
+                )
             await s.commit()
         await run_describe_job(
             tenant_id=TENANT_ID,
@@ -653,5 +698,64 @@ def test_async_adapter_timing_excludes_thread_queue_delay(monkeypatch):
     async def body():
         _result, ms = await amod._describe_adapter(InstantAdapter(), image_bytes=b"x", context=None)
         assert ms < 25
+
+    asyncio.run(body())
+
+
+def test_async_adapter_failure_persists_dispatch_ms_excluding_queue(monkeypatch):
+    import scene.application.describe_async_worker as amod
+    from scene.domain.description import DescriptionAdapterKind
+
+    class SlowFailAdapter:
+        kind = DescriptionAdapterKind.SEEDED
+        model_id = "seeded"
+        model_version = "1"
+        prompt_or_task_version = "1"
+
+        def describe(self, *, image_bytes, context):
+            time.sleep(0.03)
+            raise RuntimeError("adapter boom")
+
+    class UnusedGpu:
+        kind = DescriptionAdapterKind.GPU
+        model_id = "gpu"
+        model_version = "1"
+        prompt_or_task_version = "1"
+
+        def describe(self, *, image_bytes, context):
+            raise AssertionError("gpu must not run after cpu failure")
+
+    real_to_thread = asyncio.to_thread
+
+    async def queued_to_thread(func, /, *args, **kwargs):
+        await asyncio.sleep(0.05)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(amod.asyncio, "to_thread", queued_to_thread)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_single_run(
+                tenant_id=TENANT_ID, media_id=7, image_bytes=b"image"
+            )
+            await s.commit()
+        await amod.run_async_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            cpu_adapter=SlowFailAdapter(),
+            gpu_adapter=UnusedGpu(),
+        )
+        async with sf() as s:
+            item = await DescribeRunRepository(s).get_single_run_item(tenant_id=TENANT_ID, run_id=run_id)
+        assert item is not None
+        assert item.status == DescribeItemStatus.FAILED
+        assert item.processing_ms is not None
+        assert 20 <= item.processing_ms < 70
+        await engine.dispose()
+        os.unlink(path)
 
     asyncio.run(body())

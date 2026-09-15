@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from db.models.scene import DescribeStartup
+from db.models.scene import DescribeOperation, DescribeStartup
 from db.tenant_context import get_tenant_record, set_tenant_context
 from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
@@ -31,7 +31,13 @@ from scene.application.naming_preview_service import (
 )
 from scene.application.settings.vlm import VlmSettings
 from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
-from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus, elapsed_ms
+from scene.domain.describe_run import (
+    TERMINAL_ITEM_STATUSES,
+    DescribeItemStatus,
+    DescribeRunPhase,
+    DescribeRunStatus,
+    elapsed_ms,
+)
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 
 if TYPE_CHECKING:
@@ -267,18 +273,36 @@ async def _record_run_pickup(
         await session.commit()
 
 
-async def _observed_startup(session: AsyncSession) -> tuple[str | None, float | None]:
-    """Reuse the durable GPU startup row; never mint a per-run id.
+def _terminal_transition(previous: DescribeItemStatus, marked: bool) -> bool:
+    """Progress is a real non-terminal → terminal mark, not a same-status no-op."""
+    return bool(marked) and previous not in TERMINAL_ITEM_STATUSES
+
+
+async def _observed_startup(
+    session: AsyncSession, *, tenant_id: uuid.UUID, operation_id: str | None
+) -> tuple[str | None, float | None]:
+    """Reuse the startup bound to this run's operation; never pick a global row.
 
     ``startup_ms`` is defined only when both start and first-ready UTC
-    observations exist. A missing table or unobserved row is untimed.
+    observations exist. A missing table, missing association, or unobserved
+    row stays untimed.
     """
+    if not operation_id:
+        return None, None
+    try:
+        operation = await session.scalar(
+            select(DescribeOperation).where(
+                DescribeOperation.tenant_id == tenant_id,
+                DescribeOperation.operation_id == operation_id,
+            )
+        )
+    except (OperationalError, ProgrammingError):
+        return None, None
+    if operation is None or not operation.startup_id:
+        return None, None
     try:
         startup = await session.scalar(
-            select(DescribeStartup)
-            .where(DescribeStartup.retain_until > datetime.now(UTC))
-            .order_by(DescribeStartup.started_at.desc().nulls_last())
-            .limit(1)
+            select(DescribeStartup).where(DescribeStartup.startup_id == operation.startup_id)
         )
     except (OperationalError, ProgrammingError):
         return None, None
@@ -288,6 +312,14 @@ async def _observed_startup(session: AsyncSession) -> tuple[str | None, float | 
     if startup.started_at is not None and startup.first_ready_at is not None:
         startup_ms = elapsed_ms(startup.started_at, startup.first_ready_at)
     return startup.startup_id, startup_ms
+
+
+def _measured_ramp_up_ms(run, *, cold: bool) -> float | None:
+    if not cold:
+        return 0.0
+    if run is None or run.started_at is None or run.first_ready_at is None:
+        return None
+    return elapsed_ms(run.started_at, run.first_ready_at)
 
 
 async def _record_run_readiness(
@@ -301,15 +333,34 @@ async def _record_run_readiness(
         await set_tenant_context(session, tenant_id)
         repo = DescribeRunRepository(session)
         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        operation_id = (run.operation_id if run is not None else None) or uuid.uuid4().hex
-        startup_id, startup_ms = await _observed_startup(session) if cold else (None, None)
-        await repo.record_readiness(
-            tenant_id=tenant_id,
-            run_id=run_id,
-            operation_id=operation_id,
-            startup_id=startup_id,
-            startup_ms=startup_ms,
-        )
+        associated_operation_id = run.operation_id if run is not None else None
+        operation_id = associated_operation_id or uuid.uuid4().hex
+        startup_id, startup_ms = (None, None)
+        if cold:
+            startup_id, startup_ms = await _observed_startup(
+                session, tenant_id=tenant_id, operation_id=associated_operation_id
+            )
+        kwargs: dict = {
+            "tenant_id": tenant_id,
+            "run_id": run_id,
+            "operation_id": operation_id,
+            "startup_id": startup_id,
+            "startup_ms": startup_ms,
+        }
+        params = inspect.signature(repo.record_readiness).parameters
+        if "cold" in params:
+            kwargs["cold"] = cold
+        if "ramp_up_ms" in params and run is not None and run.started_at is not None:
+            now = datetime.now(UTC)
+            kwargs["now"] = now
+            kwargs["ramp_up_ms"] = elapsed_ms(run.started_at, now) if cold else 0.0
+        await repo.record_readiness(**kwargs)
+        # Repository currently maps null startup_id → ramp_up_ms=0; restore the
+        # measured readiness wait for cold runs independently of association.
+        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+        ramp_up_ms = _measured_ramp_up_ms(run, cold=cold)
+        if run is not None and ramp_up_ms is not None:
+            run.ramp_up_ms = ramp_up_ms
         await session.commit()
 
 
@@ -397,15 +448,24 @@ async def _describe_with_transient_retry(
     def _cancel_error(message: str) -> _RunCancelledError:
         return _RunCancelledError(message, processing_ms=_sum_processing_ms(measured))
 
+    def _dispatch_elapsed_ms(started: float) -> float:
+        return max(0.0, (time.monotonic() - started) * 1000.0)
+
+    def _measured_attempt_ms(result: object, started: float) -> float | None:
+        attempt_ms = _attempt_processing_ms(result)
+        return _dispatch_elapsed_ms(started) if attempt_ms is None else attempt_ms
+
     for attempt in range(1, max_attempts + 1):
         if cancel_requested is not None and await cancel_requested():
             raise _cancel_error("describe run cancelled before item retry")
+        started = time.monotonic()
         try:
             outcome = await asyncio.wait_for(
                 _call_describe_one(describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs),
                 timeout_seconds,
             )
-            total = _sum_processing_ms([*measured, _attempt_processing_ms(outcome)])
+            measured.append(_measured_attempt_ms(outcome, started))
+            total = _sum_processing_ms(measured)
             if outcome is None:
                 return None if total is None else DescribeItemOutcome(processing_ms=total)
             if total is not None and outcome.processing_ms != total:
@@ -414,7 +474,7 @@ async def _describe_with_transient_retry(
         except _RunCancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - classify before retrying
-            measured.append(_attempt_processing_ms(exc))
+            measured.append(_measured_attempt_ms(exc, started))
             total = _sum_processing_ms(measured)
             if total is not None:
                 exc.processing_ms = total  # type: ignore[attr-defined]
@@ -671,14 +731,16 @@ async def run_describe_job(
             gpu_breaker_error: str | None = None
             no_progress = 0
             for item in items:
+                previous_status = DescribeItemStatus(item.status)
                 progressed = False
                 if await cancel_requested():
-                    progressed = await repo.mark_item(
+                    marked = await repo.mark_item(
                         tenant_id=tenant_id,
                         run_id=run_id,
                         media_id=item.media_id,
                         status=DescribeItemStatus.SKIPPED,
                     )
+                    progressed = _terminal_transition(previous_status, marked)
                     await session.commit()
                 else:
                     image_bytes = item.image_bytes
@@ -748,12 +810,13 @@ async def run_describe_job(
                             media_id=item.media_id,
                             processing_ms=processing_ms,
                         )
-                        progressed = await repo.mark_item(
+                        marked = await repo.mark_item(
                             tenant_id=tenant_id,
                             run_id=run_id,
                             media_id=item.media_id,
                             status=DescribeItemStatus.SKIPPED,
                         )
+                        progressed = _terminal_transition(previous_status, marked)
                     except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
                         logger.warning(
                             "describe run item failed run_id=%s media_id=%s", run_id, item.media_id, exc_info=True
@@ -774,13 +837,14 @@ async def run_describe_job(
                             caption=None,
                             provenance=None,
                         )
-                        progressed = await repo.mark_item(
+                        marked = await repo.mark_item(
                             tenant_id=tenant_id,
                             run_id=run_id,
                             media_id=item.media_id,
                             status=DescribeItemStatus.FAILED,
                             error_message=str(exc),
                         )
+                        progressed = _terminal_transition(previous_status, marked)
                         if gpu_policy is not None and _is_transient_describe_error(exc):
                             gpu_breaker_error = (
                                 f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
@@ -803,12 +867,13 @@ async def run_describe_job(
                             provenance=outcome.provenance or None,
                             tier=outcome.tier,
                         )
-                        progressed = await repo.mark_item(
+                        marked = await repo.mark_item(
                             tenant_id=tenant_id,
                             run_id=run_id,
                             media_id=item.media_id,
                             status=DescribeItemStatus.COMPLETED,
                         )
+                        progressed = _terminal_transition(previous_status, marked)
                     await session.commit()
                 if progressed:
                     no_progress = 0

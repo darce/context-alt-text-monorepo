@@ -11,7 +11,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Table
+from sqlalchemy import Table, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import _DB_SETTINGS, Base
@@ -22,7 +22,14 @@ from db.models.identity import (
     MediaIdentity,
 )
 from db.models.observability import AuditEvent
-from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
+from db.models.scene import (
+    DescribeDemandLease,
+    DescribeOperation,
+    DescribeRun,
+    DescribeRunItem,
+    DescribeStartup,
+    ImageDescription,
+)
 from db.models.tenant import Tenant
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
@@ -87,8 +94,18 @@ def _make_db(naming_agreement_enabled=True):
                         IdentityNameSuppression.__table__,
                         DescribeRun.__table__,
                         DescribeRunItem.__table__,
+                        DescribeStartup.__table__,
+                        DescribeOperation.__table__,
+                        DescribeDemandLease.__table__,
                     ],
                 ),
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE describe_load_snapshot_revisions ("
+                    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+                    "revision INTEGER NOT NULL)"
+                )
             )
         sf = async_sessionmaker(engine, expire_on_commit=False)
         async with sf() as s:  # provision the tenant so require_tenant_record passes
@@ -141,11 +158,24 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
             os.unlink(path)
 
 
-def _post(client, tenant, *, media_id=42, image_key="image_42", content_type="image/jpeg", body=None):
+def _post(
+    client,
+    tenant,
+    *,
+    media_id=42,
+    image_key="image_42",
+    content_type="image/jpeg",
+    body=None,
+    extra_data=None,
+    request_body=None,
+):
     payload = body if body is not None else b"image-bytes-payload"
+    data = {"request": json.dumps(request_body or {"tenant_id": str(tenant), "media_id": media_id})}
+    if extra_data:
+        data.update(extra_data)
     return client.post(
         "/scene/describe/multipart",
-        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        data=data,
         files={image_key: ("x.jpg", payload, content_type)},
     )
 
@@ -165,8 +195,13 @@ def test_happy_path_returns_15_fields_then_cached():
         assert r1.status_code == 200, r1.text
         body = r1.json()
         # 17 core + 3 E19-4a preview + 1 E20-FUSION attachment_provenance
-        # + 1 ALTQ-1 alt_text_long
-        assert len(body) == 22
+        # + 1 ALTQ-1 alt_text_long + operation_id/startup_id/timing
+        assert len(body) == 25
+        assert body["operation_id"]
+        assert "startup_id" in body
+        assert body["startup_id"] is None
+        assert body["timing"]["ramp_up_ms"] == 0
+        assert body["timing"]["processing_ms"] is not None
 
         assert body["cached"] is False
         assert body["media_id"] == 42
@@ -174,7 +209,13 @@ def test_happy_path_returns_15_fields_then_cached():
         assert body["provider_disclosure"]["provider"] == "none"
         r2 = _post(client, tenant)
         assert r2.status_code == 200
-        assert r2.json()["cached"] is True
+        cached = r2.json()
+        assert cached["cached"] is True
+        assert cached["operation_id"]
+        assert cached["startup_id"] is None
+        assert cached["timing"]["ramp_up_ms"] == 0
+        assert cached["timing"]["processing_ms"] == 0
+        assert cached["timing"]["startup_ms"] is None
 
 
 def test_route_records_description_metrics():
@@ -909,3 +950,180 @@ def test_demo_quota_survives_post_consume_http_error():
         )
         assert bad.status_code == 415, bad.text
         assert _recognition_used(sf, slug) == 1
+
+
+class _GpuAdapter:
+    kind = DescriptionAdapterKind.GPU
+    model_id = "gpu-test"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def __init__(self, *, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    def describe(self, *, image_bytes, context):
+        self.calls += 1
+        if self.fail:
+            from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
+
+            raise GpuRemoteAdapterError("GPU endpoint call failed")
+        return AdapterResult(
+            caption="A GPU caption.",
+            objects=(),
+            ocr_text=None,
+            alt_text_draft="A GPU caption.",
+            context_sources=(),
+            context_applied=False,
+        )
+
+
+def _write_gpu_state(path, *, state, now, instance_id="ocid1.instance.test", reason=None, last_transition_reason=None):
+    payload = {
+        "state": state,
+        "instance_id": instance_id,
+        "written_at": now,
+        "reason": reason,
+        "since": now - 10,
+    }
+    if last_transition_reason is not None:
+        payload["last_transition_reason"] = last_transition_reason
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=None):
+    now = time.time()
+    state_path = tmp_path / "gpu-state.json"
+    load_path = tmp_path / "describe-load.json"
+    intent_path = tmp_path / "gpu-intent.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
+    monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(load_path))
+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    from scene.application import gpu_state as gpu_state_mod
+
+    monkeypatch.setattr(gpu_state_mod, "_GPU_STATE_SETTINGS", gpu_state_mod.GpuStateSettings(stale_seconds=240.0))
+    gpu_state_mod.reset_gpu_state_observation_for_tests()
+    if state is not None:
+        _write_gpu_state(
+            state_path,
+            state=state,
+            now=now,
+            last_transition_reason=last_transition_reason,
+        )
+    return state_path, load_path, intent_path, now
+
+
+def test_cpu_adapter_skips_gpu_readiness_when_gpu_is_stopped(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    with _client() as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["adapter"] == "seeded"
+        assert body["operation_id"]
+        assert body["startup_id"] is None
+        assert body["timing"]["ramp_up_ms"] == 0
+
+
+def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert response.headers.get("Retry-After")
+        retry_after = int(response.headers["Retry-After"])
+        assert 1 <= retry_after <= 120
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_starting"
+        assert detail["operation_id"]
+        assert "startup_id" in detail
+        assert "timing" in detail
+        assert "warmup_eta_seconds" in detail
+        assert adapter.calls == 0
+        retry = _post(client, TENANT_ID, extra_data={"operation_id": detail["operation_id"]})
+        assert retry.status_code == 503, retry.text
+        assert retry.json()["detail"]["operation_id"] == detail["operation_id"]
+        assert retry.headers.get("Retry-After")
+
+
+def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
+    _, _, intent_path, now = _gpu_env(monkeypatch, tmp_path, state="stopped")
+    from datetime import UTC, datetime
+
+    from scene.application.gpu_intent import IntentAction, write_gpu_intent
+
+    write_gpu_intent(
+        intent_path,
+        action=IntentAction.STOP,
+        ttl_seconds=1800,
+        requested_by="operator",
+        now=datetime.fromtimestamp(now, tz=UTC),
+    )
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert "warmup_eta_seconds" not in detail
+        assert adapter.calls == 0
+
+
+def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state=None)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert "Retry-After" not in response.headers
+        assert response.json()["detail"]["code"] == "description_service_unavailable"
+        assert adapter.calls == 0
+
+
+def test_gpu_ready_returns_real_operation_startup_and_timing(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["operation_id"]
+        assert body["startup_id"] == "ocid1.instance.test"
+        assert body["timing"]["ramp_up_ms"] is not None
+        assert body["timing"]["processing_ms"] is not None
+        assert body["timing"]["server_elapsed_ms"] is not None
+        assert adapter.calls == 1
+
+
+def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _GpuAdapter(fail=True)
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 502, response.text
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_error"
+        assert detail["operation_id"]
+        assert "warmup_eta_seconds" not in detail
+        assert adapter.calls == 1
+
+
+def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        first = _post(client, TENANT_ID)
+        assert first.status_code == 200, first.text
+        operation_id = first.json()["operation_id"]
+        mismatch = _post(
+            client,
+            TENANT_ID,
+            body=b"a-different-image-payload",
+            extra_data={"operation_id": operation_id},
+        )
+        assert mismatch.status_code == 409, mismatch.text
+        assert "Retry-After" not in mismatch.headers
+        assert mismatch.json()["detail"]["code"] == "operation_mismatch"

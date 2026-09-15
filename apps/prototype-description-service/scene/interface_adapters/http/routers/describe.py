@@ -9,12 +9,18 @@ ObjectStore staging, which is the S9 ``local_cpu`` async path. Mounted at
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
 import os
+import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from threading import Lock
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -34,8 +40,12 @@ from recognition.interface_adapters.http.middleware.metrics import get_default_m
 from recognition.shared.db.dialect import is_postgres
 from scene.application.describe_async_worker import run_async_describe_job
 from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
+from scene.application.describe_operation_repository import DescribeOperationRepository
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
+from scene.application.gpu_state import GpuState, read_gpu_state, resolve_gpu_state_path
+from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.application.naming_preview_service import (
     faces_for_naming_preview as _faces_for_naming_preview,
 )
@@ -50,12 +60,16 @@ from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
     DescribeJobStatus,
+    OperationExpiredError,
+    OperationMismatchError,
     RunKind,
     describe_job_error,
     describe_job_status,
+    utc_observation,
 )
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
+from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
 from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
 from scene.interface_adapters.http.deps import (
     get_async_gpu_description_adapter,
@@ -64,7 +78,11 @@ from scene.interface_adapters.http.deps import (
     get_gpu_description_adapter,
 )
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
-from scene.interface_adapters.http.schemas.responses import DescribeJobResult, VisualFactsResponse
+from scene.interface_adapters.http.schemas.responses import (
+    DescribeJobResult,
+    DescribeTiming,
+    MultipartDescribeResponse,
+)
 
 router = APIRouter(tags=["describe"])
 
@@ -74,6 +92,16 @@ _IMAGE_KEY_PREFIX = "image_"
 # Defaults match the former volatile store (256 MiB retained / 1000 jobs).
 _DEFAULT_MAX_PENDING_JOBS = 1000
 _DEFAULT_MAX_RETAINED_IMAGE_BYTES = 256 * 1024 * 1024
+_PUBLIC_RETRY_AFTER_CEILING = 120
+_DEFAULT_LEASE_SECONDS = 180.0
+_MAX_LEASE_REASON = "lease_cap"
+_UNTIMED = DescribeTiming(
+    queue_ms=None,
+    ramp_up_ms=None,
+    processing_ms=None,
+    startup_ms=None,
+    server_elapsed_ms=None,
+)
 
 
 class AsyncAdmissionGate:
@@ -147,6 +175,7 @@ class ValidatedDescribeMultipart:
     tenant_uuid: uuid.UUID
     image_bytes: bytes
     context: dict[str, Any] | None
+    operation_id: str | None
 
 
 class _DescriptionAuditSink:
@@ -228,6 +257,140 @@ def _generation_timeout_seconds(settings: DescriptionSettings, adapter) -> float
     return settings.generation_timeout_seconds
 
 
+def _lease_seconds() -> float:
+    raw = os.environ.get("ACX_DESCRIBE_LEASE_SECONDS")
+    if raw is None or raw == "":
+        seconds = _DEFAULT_LEASE_SECONDS
+    else:
+        try:
+            seconds = float(raw)
+        except ValueError as exc:
+            raise RuntimeError(f"ACX_DESCRIBE_LEASE_SECONDS={raw!r} is not a number") from exc
+    if not math.isfinite(seconds) or seconds <= _PUBLIC_RETRY_AFTER_CEILING:
+        raise RuntimeError(
+            "ACX_DESCRIBE_LEASE_SECONDS must be finite and greater than the "
+            f"{_PUBLIC_RETRY_AFTER_CEILING}s Retry-After ceiling"
+        )
+    return seconds
+
+
+def _optional_operation_id(form: FormData) -> str | None:
+    raw = form.get("operation_id")
+    if raw is None:
+        return None
+    if isinstance(raw, UploadFile):
+        body = raw.file.read()
+        text = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+    elif isinstance(raw, (bytes, bytearray)):
+        text = bytes(raw).decode("utf-8")
+    else:
+        text = str(raw)
+    stripped = text.strip()
+    return stripped or None
+
+
+def _multipart_request_digest(*, media_id: int, image_bytes: bytes, context: Mapping[str, Any] | None) -> str:
+    canonical = json.dumps(
+        {
+            "media_id": int(media_id),
+            "image_hash": compute_image_hash(image_bytes),
+            "context_hash": compute_context_hash(context),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _timing_payload(timing: DescribeTiming) -> dict[str, float | None]:
+    return timing.model_dump(mode="json")
+
+
+def _typed_describe_error(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    operation_id: str,
+    startup_id: str | None,
+    timing: DescribeTiming,
+    warmup_eta_seconds: float | None = None,
+    retry_after: int | None = None,
+) -> HTTPException:
+    detail: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "operation_id": operation_id,
+        "startup_id": startup_id,
+        "timing": _timing_payload(timing),
+    }
+    if code == "description_service_starting":
+        detail["warmup_eta_seconds"] = warmup_eta_seconds
+    headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
+    return HTTPException(status_code=status_code, detail=detail, headers=headers)
+
+
+def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
+    path = Path(resolve_gpu_state_path())
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    instance_id = payload.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id.strip() or len(instance_id) > 128:
+        instance_id = None
+    else:
+        instance_id = instance_id.strip()
+    since = payload.get("since")
+    if isinstance(since, bool) or not isinstance(since, (int, float)) or not math.isfinite(since):
+        since = None
+    return instance_id, since
+
+
+def _max_lease_reached() -> bool:
+    path = Path(resolve_gpu_state_path())
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("last_transition_reason") == _MAX_LEASE_REASON
+
+
+def _stop_requested(*, now: datetime) -> bool:
+    intent = read_gpu_intent(resolve_gpu_intent_path())
+    return intent is not None and intent.action is IntentAction.STOP and utc_observation(intent.expires_at) > now
+
+
+def _retry_after_seconds(eta: float | None) -> int:
+    if eta is None or not math.isfinite(eta) or eta <= 0:
+        return 15
+    return min(_PUBLIC_RETRY_AFTER_CEILING, max(1, int(math.ceil(eta))))
+
+
+def _warmup_eta_seconds(*, state: GpuState, since: float | None, now: float, warmup_timeout: float) -> float | None:
+    if state is GpuState.STOPPED:
+        return warmup_timeout
+    if state in (GpuState.STARTING, GpuState.WARMING) and since is not None:
+        return max(0.0, warmup_timeout - max(0.0, now - since))
+    return None
+
+
+def _untimed_with_elapsed(server_elapsed_ms: float | None) -> DescribeTiming:
+    return DescribeTiming(
+        queue_ms=None,
+        ramp_up_ms=None,
+        processing_ms=None,
+        startup_ms=None,
+        server_elapsed_ms=server_elapsed_ms,
+    )
+
+
+def _mint_operation_id() -> str:
+    return uuid.uuid4().hex
+
+
 async def _validated_describe_multipart_submission(
     *,
     form: FormData,
@@ -282,6 +445,7 @@ async def _validated_describe_multipart_submission(
         tenant_uuid=uuid.UUID(envelope.tenant_id),
         image_bytes=image_bytes,
         context=context,
+        operation_id=_optional_operation_id(form),
     )
 
 
@@ -328,9 +492,224 @@ _TERMINAL_POLL_STATUSES = frozenset(
 )
 
 
+async def _rescope(session: AsyncSession | None, tenant_uuid: uuid.UUID) -> None:
+    if session is not None:
+        await set_tenant_context(session, tenant_uuid)
+
+
+async def _commit_and_rescope(session: AsyncSession | None, tenant_uuid: uuid.UUID) -> None:
+    if session is None:
+        return
+    await session.commit()
+    await set_tenant_context(session, tenant_uuid)
+
+
+def _operation_repo(session: AsyncSession) -> DescribeOperationRepository:
+    return DescribeOperationRepository(session, lease_seconds=_lease_seconds())
+
+
+def _elapsed_ms(start: float) -> float:
+    return max(0.0, (time.perf_counter() - start) * 1000)
+
+
+def _timing_from_operation(*, op, processing_ms: float | None, server_elapsed_ms: float | None, cached: bool) -> DescribeTiming:
+    if cached:
+        return DescribeTiming(
+            queue_ms=None,
+            ramp_up_ms=0,
+            processing_ms=0,
+            startup_ms=None,
+            server_elapsed_ms=server_elapsed_ms,
+        )
+    ramp_up = 0 if op is None else op.ramp_up_ms
+    startup_ms = None if op is None else op.startup_ms
+    queue_ms = None if op is None else op.queue_ms
+    return DescribeTiming(
+        queue_ms=queue_ms,
+        ramp_up_ms=ramp_up,
+        processing_ms=processing_ms,
+        startup_ms=startup_ms,
+        server_elapsed_ms=server_elapsed_ms,
+    )
+
+
+async def _accept_operation(
+    *,
+    session: AsyncSession | None,
+    tenant_uuid: uuid.UUID,
+    digest: str,
+    operation_id: str | None,
+    gpu_compute: bool,
+    server_start: float,
+) -> tuple[Any, str]:
+    if session is None:
+        if gpu_compute:
+            minted = operation_id or _mint_operation_id()
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=minted,
+                startup_id=None,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+            )
+        return None, operation_id or _mint_operation_id()
+    repo = _operation_repo(session)
+    try:
+        op = await repo.accept(tenant_id=tenant_uuid, request_digest=digest, operation_id=operation_id)
+        if not gpu_compute:
+            await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id)
+            await repo.complete(tenant_id=tenant_uuid, operation_id=op.operation_id)
+        await _commit_and_rescope(session, tenant_uuid)
+        return op, op.operation_id
+    except OperationMismatchError as exc:
+        minted = operation_id or _mint_operation_id()
+        raise _typed_describe_error(
+            status_code=status.HTTP_409_CONFLICT,
+            code=OperationMismatchError.code,
+            message=str(exc) or "operation does not match this tenant and request",
+            operation_id=minted,
+            startup_id=None,
+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        ) from exc
+    except OperationExpiredError as exc:
+        minted = operation_id or _mint_operation_id()
+        raise _typed_describe_error(
+            status_code=status.HTTP_410_GONE,
+            code=OperationExpiredError.code,
+            message=str(exc) or "operation expired; start a new operation",
+            operation_id=minted,
+            startup_id=None,
+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        if session is not None:
+            await session.rollback()
+            await set_tenant_context(session, tenant_uuid)
+        if gpu_compute:
+            minted = operation_id or _mint_operation_id()
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=minted,
+                startup_id=None,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+            )
+        _logger.debug("non-GPU operation persistence skipped", exc_info=True)
+        return None, operation_id or _mint_operation_id()
+
+
+async def _ensure_gpu_ready(
+    *,
+    session: AsyncSession,
+    tenant_uuid: uuid.UUID,
+    op,
+    settings: DescriptionSettings,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    server_start: float,
+) -> None:
+    now = datetime.now(UTC)
+    state = read_gpu_state(now=now.timestamp())
+    instance_id, since = _gpu_snapshot_fields()
+    blocked = _stop_requested(now=now) or _max_lease_reached() or state in (
+        GpuState.UNKNOWN,
+        GpuState.DEGRADED,
+    )
+    repo = _operation_repo(session)
+    if instance_id is not None and not blocked:
+        started_at = datetime.fromtimestamp(since, tz=UTC) if since is not None else None
+        try:
+            await repo.associate_startup(
+                tenant_id=tenant_uuid,
+                operation_id=op.operation_id,
+                startup_id=instance_id,
+                started_at=started_at,
+                now=now,
+            )
+        except ValueError:
+            _logger.debug("startup association skipped", exc_info=True)
+        await _commit_and_rescope(session, tenant_uuid)
+    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
+    startup_id = op.startup_id
+    if blocked:
+        await _maybe_dump_describe_load(session_factory)
+        raise _typed_describe_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="description_service_unavailable",
+            message="Description service is unavailable",
+            operation_id=op.operation_id,
+            startup_id=startup_id,
+            timing=timing,
+        )
+    if state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING):
+        eta = _warmup_eta_seconds(
+            state=state,
+            since=since,
+            now=now.timestamp(),
+            warmup_timeout=settings.gpu_warmup_timeout_seconds,
+        )
+        await _maybe_dump_describe_load(session_factory)
+        raise _typed_describe_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="description_service_starting",
+            message="Description service is starting",
+            operation_id=op.operation_id,
+            startup_id=startup_id,
+            timing=timing,
+            warmup_eta_seconds=eta,
+            retry_after=_retry_after_seconds(eta),
+        )
+    if state is GpuState.READY:
+        await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id, now=now)
+        await _commit_and_rescope(session, tenant_uuid)
+        await _maybe_dump_describe_load(session_factory)
+        return
+    await _maybe_dump_describe_load(session_factory)
+    raise _typed_describe_error(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="description_service_unavailable",
+        message="Description service is unavailable",
+        operation_id=op.operation_id,
+        startup_id=startup_id,
+        timing=timing,
+    )
+
+
+async def _complete_operation(
+    *,
+    session: AsyncSession | None,
+    tenant_uuid: uuid.UUID,
+    op,
+    processing_ms: float | None,
+    server_elapsed_ms: float | None,
+    gpu_compute: bool,
+    cached: bool,
+) -> Any:
+    if session is None or op is None:
+        return op
+    repo = _operation_repo(session)
+    try:
+        if gpu_compute and not cached and op.first_ready_at is None:
+            await repo.observe_ready(tenant_id=tenant_uuid, operation_id=op.operation_id)
+        completed = await repo.complete(
+            tenant_id=tenant_uuid,
+            operation_id=op.operation_id,
+            processing_ms=0 if cached else processing_ms,
+            server_elapsed_ms=server_elapsed_ms,
+        )
+        await _commit_and_rescope(session, tenant_uuid)
+        return completed
+    except Exception:
+        _logger.debug("operation complete skipped", exc_info=True)
+        return op
+
+
 @router.post(
     "/describe/multipart",
-    response_model=VisualFactsResponse,
+    response_model=MultipartDescribeResponse,
     responses={204: {"description": "Decorative image skipped; no description generated."}},
 )
 async def describe_image_multipart(
@@ -338,7 +717,8 @@ async def describe_image_multipart(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     adapter=Depends(get_description_adapter),
-) -> VisualFactsResponse | Response:
+) -> MultipartDescribeResponse | Response:
+    server_start = time.perf_counter()
     form = await request.form()
     settings = DescriptionSettings()
     submission = await _validated_describe_multipart_submission(form=form, auth=auth, settings=settings)
@@ -377,6 +757,19 @@ async def describe_image_multipart(
         effective_adapter = get_cpu_description_adapter()
     else:
         effective_adapter = adapter
+    gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
+    digest = _multipart_request_digest(
+        media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context
+    )
+    op, operation_id = await _accept_operation(
+        session=session,
+        tenant_uuid=tenant_uuid,
+        digest=digest,
+        operation_id=submission.operation_id,
+        gpu_compute=gpu_compute,
+        server_start=server_start,
+    )
+    session_factory = worker_session_factory(session) if session is not None else None
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
     service = VisualFactsService(
         adapter=effective_adapter,
@@ -390,9 +783,28 @@ async def describe_image_multipart(
     async def _charge_demo_quota() -> None:
         # Durable consume at real-compute dispatch; cache hits never call this.
         await maybe_consume_demo_quota(auth, session, units=1)
-        if session is not None:
-            # Commit ends SET LOCAL tenant context; re-scope for cache/persist.
-            await set_tenant_context(session, tenant_uuid)
+        await _rescope(session, tenant_uuid)
+
+    async def _before_compute() -> None:
+        if gpu_compute:
+            if session is None or op is None:
+                raise _typed_describe_error(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    code="description_service_unavailable",
+                    message="Description service is unavailable",
+                    operation_id=operation_id,
+                    startup_id=None,
+                    timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                )
+            await _ensure_gpu_ready(
+                session=session,
+                tenant_uuid=tenant_uuid,
+                op=op,
+                settings=settings,
+                session_factory=session_factory,
+                server_start=server_start,
+            )
+        await _charge_demo_quota()
 
     try:
         response = await service.describe(
@@ -402,20 +814,44 @@ async def describe_image_multipart(
             context=submission.context,
             confirmed_faces=confirmed_faces,
             naming_policy=naming_policy,
-            before_compute=_charge_demo_quota,
+            before_compute=_before_compute,
         )
+    except HTTPException:
+        raise
     except TimeoutError as exc:
         raise HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             f"description generation exceeded {effective_timeout}s",
         ) from exc
-    except DescriptionAdapterUnavailableError as exc:
-        # A deferred/stub profile (florence_large, gpu_phi4) or a missing [vlm]
-        # extra: surface an actionable 503 instead of an opaque 500.
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-    except HostedProviderError as exc:
-        # Upstream hosted-provider fault (key missing, provider 5xx/timeout,
-        # malformed body): 502 keeps the fail-closed contract actionable.
+    except (GpuRemoteAdapterError, DescriptionAdapterUnavailableError, HostedProviderError) as exc:
+        processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
+        server_elapsed_ms = _elapsed_ms(server_start)
+        if gpu_compute:
+            completed = await _complete_operation(
+                session=session,
+                tenant_uuid=tenant_uuid,
+                op=op,
+                processing_ms=processing_ms,
+                server_elapsed_ms=server_elapsed_ms,
+                gpu_compute=True,
+                cached=False,
+            )
+            timing = _timing_from_operation(
+                op=completed,
+                processing_ms=processing_ms,
+                server_elapsed_ms=server_elapsed_ms,
+                cached=False,
+            )
+            raise _typed_describe_error(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                code="description_service_error",
+                message=str(exc),
+                operation_id=operation_id,
+                startup_id=None if completed is None else completed.startup_id,
+                timing=timing,
+            ) from exc
+        if isinstance(exc, DescriptionAdapterUnavailableError):
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     # HARM-02: derive positional naming from the Stage-2 decision — identities
     # whose fact was dropped must not be named by the fallback.
@@ -440,9 +876,39 @@ async def describe_image_multipart(
             "naming_provenance": naming_provenance,
         }
     )
+    server_elapsed_ms = _elapsed_ms(server_start)
+    processing_ms = response.attempt_timing.processing_ms
+    completed = await _complete_operation(
+        session=session,
+        tenant_uuid=tenant_uuid,
+        op=op,
+        processing_ms=processing_ms,
+        server_elapsed_ms=server_elapsed_ms,
+        gpu_compute=gpu_compute,
+        cached=response.cached,
+    )
     if session is not None:
         await session.commit()
-    return response
+    if completed is not None and completed.ramp_up_ms is not None:
+        service.record_readiness_wait(completed.ramp_up_ms)
+    elif not gpu_compute or response.cached:
+        service.record_readiness_wait(0)
+    startup_id = None if completed is None else completed.startup_id
+    if response.cached:
+        startup_id = None
+    timing = _timing_from_operation(
+        op=completed,
+        processing_ms=processing_ms,
+        server_elapsed_ms=server_elapsed_ms,
+        cached=response.cached,
+    )
+    dumped = response.model_dump(exclude={"operation_id", "startup_id", "timing", "attempt_timing"})
+    return MultipartDescribeResponse(
+        **dumped,
+        operation_id=operation_id,
+        startup_id=startup_id,
+        timing=timing,
+    )
 
 
 async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
@@ -460,12 +926,10 @@ async def _maybe_dump_describe_load(session_factory: async_sessionmaker[AsyncSes
         return
     path = resolve_load_path()
     try:
-
-        async def _write(session) -> None:
-            snap = await load_snapshot(session)
-            write_load_snapshot(snap, path)
-
-        await _with_bypass_session(session_factory, _write)
+        async with session_factory() as dump_session:
+            await enable_rls_bypass(dump_session)
+            payload = await load_snapshot(dump_session)
+        write_load_snapshot(payload, path)
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
         _logger.debug("describe load snapshot write failed path=%s", path, exc_info=True)
 

@@ -143,16 +143,9 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
 
     A singleton row lock serializes allocation with the subsequent demand read
     so an older database view cannot receive a newer revision. The table is the
-    publication sequence; it is created on first use so sqlite tests and a
-    postgres deploy share one writer path without a second lifecycle store.
+    publication sequence declared by the identity schema; this path never
+    creates it at runtime.
     """
-    await session.execute(
-        text(
-            f"CREATE TABLE IF NOT EXISTS {_SNAPSHOT_REVISION_TABLE} ("
-            "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
-            "revision INTEGER NOT NULL)"
-        )
-    )
     if is_sqlite(session):
         await session.execute(
             text(f"INSERT OR IGNORE INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0)")
@@ -174,12 +167,12 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
 
 
 def _published_revision(payload: object) -> int:
-    """Return the currently published revision; missing files are revision 0."""
+    """Return the currently published revision; a missing key is revision 0."""
     if not isinstance(payload, dict):
         raise RuntimeError("published load snapshot is not an object")
-    revision = payload.get("revision", 0)
-    if revision is None:
-        revision = 0
+    if "revision" not in payload:
+        return 0
+    revision = payload["revision"]
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
         raise RuntimeError("malformed published load snapshot revision")
     return revision
@@ -264,8 +257,8 @@ async def load_snapshot(
     session: AsyncSession,
     *,
     now: datetime | None = None,
-    stop_requested: bool = False,
-    max_lease_reached: bool = False,
+    stop_requested: bool | None = None,
+    max_lease_reached: bool | None = None,
 ) -> dict[str, int | float | bool]:
     """Count non-terminal work for the GPU lifecycle controller.
 
@@ -276,17 +269,25 @@ async def load_snapshot(
     work is reported separately as ``batch_in_progress`` (GPUW-1). Eligible
     leases are also reported as additive ``lease_demand``. Callers must use a
     bypass session [DIAG-02].
+
+    STOP and lease-cap are resolved from the same policy files the periodic
+    publisher uses unless a caller passes an explicit override. The demand
+    transaction (revision allocation, expiry, first-ready) commits before this
+    returns so a later file write cannot publish an undurable revision.
     """
     await _require_rls_bypass(session)
     observed_at = as_utc(now or datetime.now(UTC))
+    policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
+    blocked_by_stop = policy_stop if stop_requested is None else stop_requested
+    blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
     revision = await _allocate_snapshot_revision(session)
     await _persist_first_ready(session, now=observed_at)
     lease_demand = await DescribeOperationRepository(
         session, lease_seconds=_COUNTING_LEASE_SECONDS
     ).active_demand_count(
         now=observed_at,
-        stop_requested=stop_requested,
-        max_lease_reached=max_lease_reached,
+        stop_requested=blocked_by_stop,
+        max_lease_reached=blocked_by_max_lease,
     )
     result = await session.execute(
         select(DescribeRunItem.status, func.count())
@@ -299,7 +300,7 @@ async def load_snapshot(
     )
     counts: dict[str, int] = {str(status): int(n) for status, n in result.all()}
     running = counts.get(DescribeItemStatus.RUNNING, 0)
-    return {
+    snapshot: dict[str, int | float | bool] = {
         "queue_depth": counts.get(DescribeItemStatus.QUEUED, 0),
         "in_flight": running + lease_demand,
         "batch_in_progress": await batch_in_progress(session),
@@ -307,6 +308,8 @@ async def load_snapshot(
         "revision": revision,
         "written_at": observed_at.timestamp(),
     }
+    await session.commit()
+    return snapshot
 
 
 def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
@@ -399,16 +402,13 @@ async def dump_load_snapshot(
     target = path or resolve_load_path()
     observed_at = as_utc(now or datetime.now(UTC))
     try:
-        policy_stop, policy_max_lease = _demand_policy_flags(now=observed_at)
-        blocked_by_stop = policy_stop if stop_requested is None else stop_requested
-        blocked_by_max_lease = policy_max_lease if max_lease_reached is None else max_lease_reached
         async with session_factory() as session:
             await enable_rls_bypass(session)
             snap = await load_snapshot(
                 session,
                 now=observed_at,
-                stop_requested=blocked_by_stop,
-                max_lease_reached=blocked_by_max_lease,
+                stop_requested=stop_requested,
+                max_lease_reached=max_lease_reached,
             )
             await session.commit()
         write_load_snapshot(snap, target)

@@ -311,19 +311,21 @@ def _typed_describe_error(
     status_code: int,
     code: str,
     message: str,
-    operation_id: str,
-    startup_id: str | None,
     timing: DescribeTiming,
+    operation_id: str | None = None,
+    startup_id: str | None = None,
     warmup_eta_seconds: float | None = None,
     retry_after: int | None = None,
 ) -> HTTPException:
     detail: dict[str, Any] = {
         "code": code,
         "message": message,
-        "operation_id": operation_id,
-        "startup_id": startup_id,
         "timing": _timing_payload(timing),
     }
+    # Only emit ids that were persisted. No-session / accept-failure 503s omit both.
+    if operation_id is not None:
+        detail["operation_id"] = operation_id
+        detail["startup_id"] = startup_id
     if code == "description_service_starting":
         detail["warmup_eta_seconds"] = warmup_eta_seconds
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
@@ -535,6 +537,40 @@ def _timing_from_operation(
     )
 
 
+async def _cached_gpu_description_row(
+    *,
+    repository: ImageDescriptionRepository | None,
+    tenant_uuid: uuid.UUID,
+    image_bytes: bytes,
+    context: Mapping[str, Any] | None,
+    adapter,
+    server_start: float,
+):
+    """Look up the GPU description cache before accepting a demand lease."""
+    if repository is None:
+        return None
+    try:
+        return await repository.get_by_cache_key(
+            tenant_id=tenant_uuid,
+            image_hash=compute_image_hash(image_bytes),
+            adapter=adapter.kind.value,
+            model_id=adapter.model_id,
+            model_version=adapter.model_version,
+            prompt_or_task_version=adapter.prompt_or_task_version,
+            context_hash=compute_context_hash(context),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        _logger.error("gpu description cache lookup failed", exc_info=True)
+        raise _typed_describe_error(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="description_service_unavailable",
+            message="Description service is unavailable",
+            timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+        )
+
+
 async def _accept_operation(
     *,
     session: AsyncSession | None,
@@ -546,15 +582,11 @@ async def _accept_operation(
 ) -> tuple[Any, str]:
     if session is None:
         if gpu_compute:
-            minted = operation_id or _mint_operation_id()
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
                 message="Description service is unavailable",
-                operation_id=minted,
-                startup_id=None,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-                retry_after=_retry_after_seconds(None),
             )
         return None, operation_id or _mint_operation_id()
     repo = _operation_repo(session)
@@ -594,18 +626,18 @@ async def _accept_operation(
             await session.rollback()
             await set_tenant_context(session, tenant_uuid)
         if gpu_compute:
-            minted = operation_id or _mint_operation_id()
-            _logger.error("operation accept failed operation_id=%s", minted, exc_info=True)
+            _logger.error("operation accept failed", exc_info=True)
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
                 message="Description service is unavailable",
-                operation_id=minted,
-                startup_id=None,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-                retry_after=_retry_after_seconds(None),
             )
-        _logger.debug("non-GPU operation persistence skipped", exc_info=True)
+        # Non-GPU adapters stay usable without a demand lease (CPU/hosted/default).
+        _logger.warning(
+            "non-GPU operation persistence skipped; continuing without a durable operation",
+            exc_info=True,
+        )
         return None, operation_id or _mint_operation_id()
 
 
@@ -788,14 +820,28 @@ async def describe_image_multipart(
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
-    op, operation_id = await _accept_operation(
-        session=session,
-        tenant_uuid=tenant_uuid,
-        digest=digest,
-        operation_id=submission.operation_id,
-        gpu_compute=gpu_compute,
-        server_start=server_start,
-    )
+    cached_gpu = False
+    op = None
+    operation_id = submission.operation_id or _mint_operation_id()
+    if gpu_compute:
+        cached_row = await _cached_gpu_description_row(
+            repository=repository,
+            tenant_uuid=tenant_uuid,
+            image_bytes=image_bytes,
+            context=submission.context,
+            adapter=effective_adapter,
+            server_start=server_start,
+        )
+        cached_gpu = cached_row is not None
+    if not cached_gpu:
+        op, operation_id = await _accept_operation(
+            session=session,
+            tenant_uuid=tenant_uuid,
+            digest=digest,
+            operation_id=submission.operation_id,
+            gpu_compute=gpu_compute,
+            server_start=server_start,
+        )
     session_factory = worker_session_factory(session) if session is not None else None
     effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
     service = VisualFactsService(
@@ -819,8 +865,6 @@ async def describe_image_multipart(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     code="description_service_unavailable",
                     message="Description service is unavailable",
-                    operation_id=operation_id,
-                    startup_id=None,
                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
                 )
             await _ensure_gpu_ready(
@@ -859,7 +903,6 @@ async def describe_image_multipart(
                 operation_id=operation_id,
                 startup_id=None if op is None else op.startup_id,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-                retry_after=_retry_after_seconds(None),
             ) from exc
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except (GpuRemoteAdapterError, HostedProviderError) as exc:

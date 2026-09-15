@@ -128,3 +128,17 @@ Verdict: fail
 - **Fix:** Land the migration assertion in its owning lane or record an explicit cross-lane ownership handoff before merging this delta.
 
 Verdict: fail
+
+## Re-review r4b (973fc1028..03083687b)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-SVCDEMAND-R-09 | fixed | `.review/CHANGE.diff:66-139` replaces the two lifecycle accessors with `_read_gpu_lifecycle_payload()` plus `_gpu_lifecycle_blocks()`: the latter reads once (`:99`), derives the validated state (`:103`) and lease-cap reason (`:105`) from that same payload, and passes both results through `_lease_demand_blocked()` (`:129-139`). The regression at `.review/CHANGE.diff:217-257` supplies successive generations and asserts the lifecycle reader is called once, closing the check-then-act race ([CON-11] [RES-10]). |
+| SVCDEM-M-02 | partially_fixed | `.review/CHANGE.diff:18-24` aligns retention with `async_job_retention_hours()`, `:27-63` makes explicit refresh configuration fail closed, and `:143-149` validates bounds before the periodic loop; `:187-214` adds retention and pre-publication rejection checks. The delta still does not wire the validated `DEMAND_LEASE_SECONDS` into `DescribeOperationRepository` construction/lease creation or make the service's startup failure path fail closed, so the operation-repository contract remains only partially enforced. |
+| GPUFLOW-1-SVCDEMAND-R-05 | partially_fixed | The only new R-05 hunk (`.review/CHANGE.diff:168-186`) adds an equal-revision candidate to the existing sync-shaped publication test and verifies the older file remains unchanged. It adds no production synchronization and no pause-A/read-new-demand-B/resume-A barrier or separate-process repeat; the prior interleaving coverage therefore remains incomplete. A test-only addition cannot promote this to fixed under [CON-05] [TEST-15]. |
+
+### FINDINGS
+
+FINDINGS: []
+
+Verdict: pass_with_findings

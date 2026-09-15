@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
-import { fetchSettings, UrlRejectionReason, type SettingsResponse } from '../settingsApi';
+import {
+  fetchSettings,
+  isTestConnectionOutcome,
+  TestConnectionOutcome,
+  UrlRejectionReason,
+  type SettingsResponse,
+  type TestConnectionResponse,
+} from '../settingsApi';
 
 const mockConfig = {
   nonce: 'test-nonce',
@@ -156,5 +163,28 @@ describe('fetchSettings recognition_enabled parse', () => {
     fetchApiMock.mockResolvedValue({ ...validBody, recognition_enabled: false });
 
     await expect(fetchSettings()).resolves.toMatchObject({ recognition_enabled: false });
+  });
+});
+
+describe('test-connection starting outcome', () => {
+  it('accepts starting as a canonical probe outcome', () => {
+    expect(TestConnectionOutcome.STARTING).toBe('starting');
+    expect(isTestConnectionOutcome('starting')).toBe(true);
+    expect(isTestConnectionOutcome('not_a_real_outcome')).toBe(false);
+
+    const withEta: TestConnectionResponse = {
+      outcome: TestConnectionOutcome.STARTING,
+      warmup_eta_seconds: 90,
+      retry_after_seconds: 90,
+      probe_mode: 'service_auth',
+    };
+    const withoutEta: TestConnectionResponse = {
+      outcome: TestConnectionOutcome.STARTING,
+      probe_mode: 'service_auth',
+    };
+    expectTypeOf(withEta).toMatchTypeOf<TestConnectionResponse>();
+    expectTypeOf(withoutEta).toMatchTypeOf<TestConnectionResponse>();
+    expect(withEta.outcome).toBe('starting');
+    expect(withoutEta.warmup_eta_seconds).toBeUndefined();
   });
 });

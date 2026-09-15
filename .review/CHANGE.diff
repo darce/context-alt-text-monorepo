@@ -1,717 +1,378 @@
 diff --git a/apps/prototype-description-service/scene/application/describe_operation_repository.py b/apps/prototype-description-service/scene/application/describe_operation_repository.py
-new file mode 100644
---- /dev/null
+--- a/apps/prototype-description-service/scene/application/describe_operation_repository.py
 +++ b/apps/prototype-description-service/scene/application/describe_operation_repository.py
-@@ -0,0 +1,278 @@
-+"""Durable operation correlation and demand leases; caller owns the transaction.
-+
-+Callers must commit expired/rejected transitions even when mapping a typed error.
-+Lease deployment bounds are validated by the demand service before construction.
-+"""
-+
-+from __future__ import annotations
-+
-+import math
-+import uuid
-+from datetime import UTC, datetime, timedelta
-+
-+from sqlalchemy import delete, func, select, update
-+from sqlalchemy.ext.asyncio import AsyncSession
-+
-+from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeStartup
-+from recognition.shared.db.dialect import is_sqlite
-+from scene.application.describe_run_repository import DescribeRunRepository
-+from scene.domain.describe_run import (
-+    DemandLeaseState as State,
-+)
-+from scene.domain.describe_run import (
-+    OperationExpiredError,
-+    OperationMismatchError,
-+    async_job_retention_hours,
-+    elapsed_ms,
-+    utc_observation,
-+    validate_duration_ms,
-+)
-+
-+
-+class DescribeOperationRepository:
-+    def __init__(self, session: AsyncSession, *, lease_seconds: float, retention_hours: float | None = None):
-+        hours = async_job_retention_hours() if retention_hours is None else retention_hours
-+        if not math.isfinite(lease_seconds) or lease_seconds <= 0:
-+            raise ValueError("lease_seconds must be finite and positive")
-+        if not math.isfinite(hours) or hours <= 0:
-+            raise ValueError("retention_hours must be finite and positive")
-+        self.unadmitted_events = 0
-+        self._session = session
-+        self._lease = timedelta(seconds=lease_seconds)
-+        self._retention = timedelta(hours=hours)
-+
-+    async def get(self, *, tenant_id: uuid.UUID, operation_id: str) -> DescribeOperation | None:
-+        return await self._session.scalar(
-+            select(DescribeOperation)
-+            .where(
-+                DescribeOperation.tenant_id == tenant_id,
-+                DescribeOperation.operation_id == operation_id,
-+            )
-+            .with_for_update()
-+            .execution_options(populate_existing=True)
-+        )
-+
-+    async def _lease_for(self, op: DescribeOperation) -> DescribeDemandLease:
-+        lease = await self._session.get(
-+            DescribeDemandLease, (op.tenant_id, op.operation_id), populate_existing=True, with_for_update=True
-+        )
-+        if lease is None:
-+            raise RuntimeError("operation has no demand lease")
-+        return lease
-+
-+    async def accept(
-+        self, *, tenant_id: uuid.UUID, request_digest: str, operation_id: str | None = None, now: datetime | None = None
-+    ) -> DescribeOperation:
-+        now = utc_observation(now or datetime.now(UTC))
-+        if len(request_digest) != 64:
-+            raise ValueError("request_digest must be a SHA-256 digest")
-+        if operation_id is None:
-+            op = DescribeOperation(
-+                tenant_id=tenant_id,
-+                operation_id=uuid.uuid4().hex,
-+                request_digest=request_digest,
-+                accepted_at=now,
-+                retain_until=now + self._retention,
-+                expires_at=now + min(self._lease, self._retention),
-+            )
-+            self._session.add(op)
-+            await self._session.flush()
-+            self._session.add(
-+                DescribeDemandLease(
-+                    tenant_id=tenant_id,
-+                    operation_id=op.operation_id,
-+                    state=State.ACTIVE,
-+                    expires_at=op.expires_at,
-+                    retain_until=op.retain_until,
-+                )
-+            )
-+            await self._session.flush()
-+            return op
-+        if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128:
-+            raise OperationMismatchError("invalid operation id")
-+        op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
-+        if op is None or op.request_digest != request_digest:
-+            raise OperationMismatchError("operation does not match this tenant and request")
-+        lease = await self._lease_for(op)
-+        if utc_observation(op.retain_until) <= now:
-+            if lease.state == State.ACTIVE:
-+                lease.state = State.EXPIRED
-+            await self._session.flush()
-+            raise OperationExpiredError("operation retention expired")
-+        if lease.state == State.COMPLETED:
-+            self.unadmitted_events += 1
-+            return op
-+        if lease.state == State.ACTIVE and utc_observation(lease.expires_at) <= now:
-+            lease.state = State.EXPIRED
-+        if lease.state in (State.EXPIRED, State.REJECTED):
-+            lease.state = State.REJECTED
-+            await self._session.flush()
-+            raise OperationExpiredError("operation expired; start a new operation")
-+        elapsed_ms(op.accepted_at, now)
-+        lease.expires_at = op.expires_at = min(now + self._lease, utc_observation(op.retain_until))
-+        await self._session.flush()
-+        return op
-+
-+    async def _active(
-+        self, tenant_id: uuid.UUID, operation_id: str, now: datetime
-+    ) -> tuple[DescribeOperation, DescribeDemandLease]:
-+        op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
-+        if op is None:
-+            raise OperationMismatchError("unknown operation")
-+        lease = await self._lease_for(op)
-+        if lease.state == State.ACTIVE and utc_observation(lease.expires_at) <= now:
-+            lease.state = State.EXPIRED
-+            await self._session.flush()
-+        return op, lease
-+
-+    async def associate_startup(
-+        self,
-+        *,
-+        tenant_id: uuid.UUID,
-+        operation_id: str,
-+        startup_id: str,
-+        started_at: datetime | None = None,
-+        now: datetime | None = None,
-+    ) -> DescribeOperation:
-+        if not 1 <= len(startup_id) <= 128:
-+            raise ValueError("invalid startup id")
-+        op, lease = await self._active(tenant_id, operation_id, utc_observation(now or datetime.now(UTC)))
-+        if lease.state != State.ACTIVE or op.first_ready_at is not None:
-+            self.unadmitted_events += 1
-+            return op
-+        if op.startup_id is not None and op.startup_id != startup_id:
-+            raise ValueError("operation already associated with another startup")
-+        # Atomic upsert lets distinct operations join a startup concurrently.
-+        if is_sqlite(self._session):
-+            from sqlalchemy.dialects.sqlite import insert
-+        else:
-+            from sqlalchemy.dialects.postgresql import insert
-+        await self._session.execute(
-+            insert(DescribeStartup)
-+            .values(startup_id=startup_id, started_at=started_at, retain_until=op.retain_until)
-+            .on_conflict_do_nothing(index_elements=["startup_id"])
-+        )
-+        startup = await self._session.scalar(
-+            select(DescribeStartup)
-+            .where(DescribeStartup.startup_id == startup_id)
-+            .with_for_update()
-+            .execution_options(populate_existing=True)
-+        )
-+        if started_at is not None and startup.started_at is None:
-+            if startup.first_ready_at is not None:
-+                elapsed_ms(started_at, startup.first_ready_at)
-+            startup.started_at = started_at
-+        startup.retain_until = max(utc_observation(startup.retain_until), utc_observation(op.retain_until))
-+        op.startup_id = startup_id
-+        await self._session.flush()
-+        return op
-+
-+    async def observe_ready(
-+        self, *, tenant_id: uuid.UUID, operation_id: str, now: datetime | None = None
-+    ) -> DescribeOperation:
-+        now = utc_observation(now or datetime.now(UTC))
-+        op, lease = await self._active(tenant_id, operation_id, now)
-+        if lease.state != State.ACTIVE or op.first_ready_at is not None:
-+            self.unadmitted_events += 1
-+            return op
-+        wait = elapsed_ms(op.accepted_at, now)
-+        startup_ms = None
-+        if op.startup_id is not None:
-+            startup = await self._session.scalar(
-+                select(DescribeStartup)
-+                .where(DescribeStartup.startup_id == op.startup_id)
-+                .with_for_update()
-+                .execution_options(populate_existing=True)
-+            )
-+            ready = startup.first_ready_at or now
-+            if startup.started_at is not None:
-+                startup_ms = elapsed_ms(startup.started_at, ready)
-+            startup.first_ready_at = ready
-+        op.first_ready_at = now
-+        op.ramp_up_ms = wait if op.startup_id is not None else 0
-+        op.startup_ms = startup_ms
-+        await self._session.flush()
-+        return op
-+
-+    async def complete(
-+        self,
-+        *,
-+        tenant_id: uuid.UUID,
-+        operation_id: str,
-+        processing_ms: float | None = None,
-+        queue_ms: float | None = None,
-+        server_elapsed_ms: float | None = None,
-+        now: datetime | None = None,
-+    ) -> DescribeOperation:
-+        for value in (processing_ms, queue_ms, server_elapsed_ms):
-+            validate_duration_ms(value)
-+        now = utc_observation(now or datetime.now(UTC))
-+        op, lease = await self._active(tenant_id, operation_id, now)
-+        if lease.state != State.ACTIVE:
-+            self.unadmitted_events += 1
-+            return op
-+        if op.first_ready_at is None:
-+            raise ValueError("completion requires readiness observation")
-+        elapsed_ms(op.first_ready_at, now)
-+        op.completed_at = now
-+        op.processing_ms, op.queue_ms, op.server_elapsed_ms = processing_ms, queue_ms, server_elapsed_ms
-+        # Completion retention does not extend the active lifecycle lease.
-+        op.retain_until = lease.retain_until = now + self._retention
-+        lease.state = State.COMPLETED
-+        await self._session.flush()
-+        return op
-+
-+    async def active_demand_count(
-+        self, *, now: datetime | None = None, stop_requested: bool = False, max_lease_reached: bool = False
-+    ) -> int:
-+        await DescribeRunRepository(self._session)._require_rls_bypass()
-+        now = utc_observation(now or datetime.now(UTC))
-+        await self._session.execute(
-+            update(DescribeDemandLease)
-+            .where(
-+                DescribeDemandLease.state == State.ACTIVE,
-+                DescribeDemandLease.expires_at <= now,
-+            )
-+            .values(state=State.EXPIRED)
-+            .execution_options(synchronize_session="fetch")
-+        )
-+        if stop_requested or max_lease_reached:
-+            return 0
-+        return int(
-+            await self._session.scalar(
-+                select(func.count())
-+                .select_from(DescribeDemandLease)
-+                .where(
-+                    DescribeDemandLease.state == State.ACTIVE,
-+                    DescribeDemandLease.expires_at > now,
-+                )
-+            )
-+            or 0
-+        )
-+
-+    async def purge_expired(self, *, now: datetime | None = None) -> int:
-+        await DescribeRunRepository(self._session)._require_rls_bypass()
-+        now = utc_observation(now or datetime.now(UTC))
-+        # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
-+        await self._session.execute(
-+            delete(DescribeDemandLease)
-+            .where(DescribeDemandLease.retain_until <= now)
-+            .execution_options(synchronize_session="fetch")
-+        )
-+        result = await self._session.execute(
-+            delete(DescribeOperation)
+@@ -7,10 +7,11 @@ Lease deployment bounds are validated by the demand service before construction.
+ from __future__ import annotations
+ 
+ import math
++import re
+ import uuid
+ from datetime import UTC, datetime, timedelta
+ 
+-from sqlalchemy import delete, func, select, update
++from sqlalchemy import delete, func, select, tuple_, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeStartup
+@@ -22,6 +23,7 @@ from scene.domain.describe_run import (
+ from scene.domain.describe_run import (
+     OperationExpiredError,
+     OperationMismatchError,
++    as_utc,
+     async_job_retention_hours,
+     elapsed_ms,
+     utc_observation,
+@@ -58,13 +60,15 @@ class DescribeOperationRepository:
+         )
+         if lease is None:
+             raise RuntimeError("operation has no demand lease")
++        if utc_observation(lease.retain_until) > utc_observation(op.retain_until):
++            raise ValueError("lease retention exceeds operation retention")
+         return lease
+ 
+     async def accept(
+         self, *, tenant_id: uuid.UUID, request_digest: str, operation_id: str | None = None, now: datetime | None = None
+     ) -> DescribeOperation:
+-        now = utc_observation(now or datetime.now(UTC))
+-        if len(request_digest) != 64:
++        now = as_utc(now or datetime.now(UTC))
++        if not isinstance(request_digest, str) or re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
+             raise ValueError("request_digest must be a SHA-256 digest")
+         if operation_id is None:
+             op = DescribeOperation(
+@@ -109,6 +113,7 @@ class DescribeOperationRepository:
+             await self._session.flush()
+             raise OperationExpiredError("operation expired; start a new operation")
+         elapsed_ms(op.accepted_at, now)
++        lease.retain_until = op.retain_until = utc_observation(op.retain_until)
+         lease.expires_at = op.expires_at = min(now + self._lease, utc_observation(op.retain_until))
+         await self._session.flush()
+         return op
+@@ -134,9 +139,11 @@ class DescribeOperationRepository:
+         started_at: datetime | None = None,
+         now: datetime | None = None,
+     ) -> DescribeOperation:
++        if started_at is not None:
++            started_at = as_utc(started_at)
+         if not 1 <= len(startup_id) <= 128:
+             raise ValueError("invalid startup id")
+-        op, lease = await self._active(tenant_id, operation_id, utc_observation(now or datetime.now(UTC)))
++        op, lease = await self._active(tenant_id, operation_id, as_utc(now or datetime.now(UTC)))
+         if lease.state != State.ACTIVE or op.first_ready_at is not None:
+             self.unadmitted_events += 1
+             return op
+@@ -170,7 +177,7 @@ class DescribeOperationRepository:
+     async def observe_ready(
+         self, *, tenant_id: uuid.UUID, operation_id: str, now: datetime | None = None
+     ) -> DescribeOperation:
+-        now = utc_observation(now or datetime.now(UTC))
++        now = as_utc(now or datetime.now(UTC))
+         op, lease = await self._active(tenant_id, operation_id, now)
+         if lease.state != State.ACTIVE or op.first_ready_at is not None:
+             self.unadmitted_events += 1
+@@ -206,7 +213,7 @@ class DescribeOperationRepository:
+     ) -> DescribeOperation:
+         for value in (processing_ms, queue_ms, server_elapsed_ms):
+             validate_duration_ms(value)
+-        now = utc_observation(now or datetime.now(UTC))
++        now = as_utc(now or datetime.now(UTC))
+         op, lease = await self._active(tenant_id, operation_id, now)
+         if lease.state != State.ACTIVE:
+             self.unadmitted_events += 1
+@@ -226,7 +233,7 @@ class DescribeOperationRepository:
+         self, *, now: datetime | None = None, stop_requested: bool = False, max_lease_reached: bool = False
+     ) -> int:
+         await DescribeRunRepository(self._session)._require_rls_bypass()
+-        now = utc_observation(now or datetime.now(UTC))
++        now = as_utc(now or datetime.now(UTC))
+         await self._session.execute(
+             update(DescribeDemandLease)
+             .where(
+@@ -252,16 +259,23 @@ class DescribeOperationRepository:
+ 
+     async def purge_expired(self, *, now: datetime | None = None) -> int:
+         await DescribeRunRepository(self._session)._require_rls_bypass()
+-        now = utc_observation(now or datetime.now(UTC))
++        now = as_utc(now or datetime.now(UTC))
++        # Match renewal lock order: parent operation before demand lease.
++        candidates = (await self._session.execute(
++            select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
 +            .where(DescribeOperation.retain_until <= now)
-+            .execution_options(synchronize_session="fetch")
-+        )
-+        await self._session.execute(
-+            delete(DescribeStartup)
-+            .where(
-+                DescribeStartup.retain_until <= now,
-+                ~select(DescribeOperation.operation_id)
-+                .where(DescribeOperation.startup_id == DescribeStartup.startup_id)
-+                .exists(),
-+            )
-+            .execution_options(synchronize_session="fetch")
-+        )
-+        await self._session.flush()
-+        return result.rowcount
++            .with_for_update(skip_locked=True)
++        )).all()
++        identities = [(row.tenant_id, row.operation_id) for row in candidates]
+         # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
+         await self._session.execute(
+             delete(DescribeDemandLease)
+-            .where(DescribeDemandLease.retain_until <= now)
++            .where(tuple_(DescribeDemandLease.tenant_id, DescribeDemandLease.operation_id).in_(identities))
+             .execution_options(synchronize_session="fetch")
+         )
+         result = await self._session.execute(
+             delete(DescribeOperation)
+-            .where(DescribeOperation.retain_until <= now)
++            .where(tuple_(DescribeOperation.tenant_id, DescribeOperation.operation_id).in_(identities))
+             .execution_options(synchronize_session="fetch")
+         )
+         await self._session.execute(
 diff --git a/apps/prototype-description-service/scene/application/describe_run_repository.py b/apps/prototype-description-service/scene/application/describe_run_repository.py
 --- a/apps/prototype-description-service/scene/application/describe_run_repository.py
 +++ b/apps/prototype-description-service/scene/application/describe_run_repository.py
-@@ -7,6 +7,7 @@ import uuid
- from collections import Counter
- from collections.abc import Mapping, Sequence
- from datetime import UTC, datetime, timedelta
-+from statistics import median
- from typing import Any
- 
- from sqlalchemy import delete, or_, select, text, update
-@@ -25,8 +26,10 @@ from scene.domain.describe_run import (
+@@ -23,6 +23,7 @@ from scene.domain.describe_run import (
+     DescribeRunRequest,
+     DescribeRunStatus,
+     RunKind,
++    as_utc,
      async_job_retention_hours,
      compute_request_digest,
      describe_run_max_items,
-+    elapsed_ms,
-     phase_for_status,
-     terminal_run_status,
-+    validate_duration_ms,
- )
- from scene.domain.description import DescriptionResultTier
- 
-@@ -63,6 +66,87 @@ class DescribeRunRepository:
-         self._session = session
-         self._max_items = max_items or describe_run_max_items()
- 
-+    async def record_pickup(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, now: datetime | None = None) -> bool:
-+        """Capture queue once at actual worker pickup, before readiness checks."""
-+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
-+        if run is None:
-+            return False
-+        if run.queue_ms is None:
-+            now = now or datetime.now(UTC)
-+            run.queue_ms = elapsed_ms(run.created_at, now)
-+            run.started_at = run.started_at or now
-+            await self._session.flush()
-+        return True
-+
-+    async def record_readiness(
-+        self,
-+        *,
-+        tenant_id: uuid.UUID,
-+        run_id: uuid.UUID,
-+        now: datetime | None = None,
-+        operation_id: str | None = None,
-+        startup_id: str | None = None,
-+        startup_ms: float | None = None,
-+    ) -> bool:
-+        """Snapshot the first worker readiness observation; warm waits are zero."""
-+        validate_duration_ms(startup_ms)
-+        for token in (operation_id, startup_id):
-+            if token is not None and not 1 <= len(token) <= 128:
-+                raise ValueError("invalid correlation id")
-+        if startup_id is None and startup_ms is not None:
-+            raise ValueError("startup timing requires startup association")
-+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
-+        if run is None:
-+            return False
-+        if run.first_ready_at is None:
-+            now = now or datetime.now(UTC)
-+            if run.started_at is None:
-+                raise ValueError("readiness requires worker pickup")
-+            wait = elapsed_ms(run.started_at, now)
-+            run.first_ready_at = now
-+            run.operation_id, run.startup_id = operation_id, startup_id
-+            run.ramp_up_ms = wait if startup_id is not None else 0
-+            run.startup_ms = startup_ms
-+            await self._session.flush()
-+        return True
-+
-+    async def record_item_processing(
-+        self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, media_id: int, processing_ms: float
-+    ) -> bool:
-+        """Persist the caller's cumulative measured attempt total, never add a replay.
-+
-+        The adapter owns local monotonic attempt measurement and sums attempts;
-+        failed/skipped items may carry measured work, while untimed stays NULL.
-+        """
-+        validate_duration_ms(processing_ms)
-+        run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
-+        if run is None:
-+            return False
-+        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
-+        if item is None:
-+            return False
-+        if item.processing_ms is not None and processing_ms < item.processing_ms:
-+            raise ValueError("cumulative processing cannot decrease")
-+        item.processing_ms = processing_ms
-+        items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
-+        measured = [i.processing_ms for i in items if i.processing_ms is not None]
-+        run.items_timed = len(measured)
-+        run.processing_ms_p50 = median(measured) if measured else None
-+        run.processing_ms_max = max(measured) if measured else None
-+        await self._session.flush()
-+        return True
-+
-+    async def _locked_run(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
-+        return await self._session.scalar(
-+            select(DescribeRun)
-+            .where(
-+                DescribeRun.tenant_id == tenant_id,
-+                DescribeRun.id == run_id,
-+            )
-+            .with_for_update()
-+            .execution_options(populate_existing=True)
-+        )
-+
-     async def create_run(
-         self,
-         *,
-@@ -105,9 +189,7 @@ class DescribeRunRepository:
-             request_digest=(
-                 request_digest
-                 if request_digest is not None
--                else compute_request_digest(
--                    media_ids=media_ids, recognition_enabled=request.recognition_enabled
--                )
-+                else compute_request_digest(media_ids=media_ids, recognition_enabled=request.recognition_enabled)
-             ),
-             deadline_seconds=deadline_seconds,
+@@ -72,7 +73,7 @@ class DescribeRunRepository:
+         if run is None:
+             return False
+         if run.queue_ms is None:
+-            now = now or datetime.now(UTC)
++            now = as_utc(now or datetime.now(UTC))
+             run.queue_ms = elapsed_ms(run.created_at, now)
+             run.started_at = run.started_at or now
+             await self._session.flush()
+@@ -99,7 +100,7 @@ class DescribeRunRepository:
+         if run is None:
+             return False
+         if run.first_ready_at is None:
+-            now = now or datetime.now(UTC)
++            now = as_utc(now or datetime.now(UTC))
+             if run.started_at is None:
+                 raise ValueError("readiness requires worker pickup")
+             wait = elapsed_ms(run.started_at, now)
+@@ -180,6 +181,7 @@ class DescribeRunRepository:
+             completed_items=0,
+             failed_items=0,
+             skipped_items=0,
++            items_timed=0,
+             created_by_user_id=created_by_user_id,
+             recognition_enabled=request.recognition_enabled,
+             idempotency_key=idempotency_key,
+@@ -228,6 +230,7 @@ class DescribeRunRepository:
+             completed_items=0,
+             failed_items=0,
+             skipped_items=0,
++            items_timed=0,
+             created_by_user_id=created_by_user_id,
          )
-@@ -451,6 +533,7 @@ class DescribeRunRepository:
-         run.phase = DescribeRunPhase.FAILED
-         if run.completed_at is None:
-             run.completed_at = now
-+        run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
-         if error_message:
-             run.error_message = error_message
-         _release_idempotency_key_if_barren(run)
-@@ -507,6 +590,7 @@ class DescribeRunRepository:
-             run.status = DescribeRunStatus.CANCELLED
-             run.phase = DescribeRunPhase.CANCELLED
-             run.completed_at = datetime.now(tz=UTC)
-+            run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
-             _release_idempotency_key_if_barren(run)
-         await self._session.flush()
-         return True
-@@ -646,6 +730,7 @@ class DescribeRunRepository:
-             run.status = status
-             run.phase = phase_for_status(status)
-             run.completed_at = now
-+            run.server_elapsed_ms = elapsed_ms(run.created_at, now)
-             if status in {DescribeRunStatus.FAILED, DescribeRunStatus.COMPLETED_WITH_ERRORS}:
-                 run.error_message = run.error_message or _RECLAIM_INTERRUPT_ERROR
-             # [S06] A restart-orphaned run driven to FAILED/CANCELLED must not
-@@ -697,7 +782,8 @@ class DescribeRunRepository:
-             )
-             run.status = status
-             run.phase = phase_for_status(status)
--            run.completed_at = now
-+            run.completed_at = run.completed_at or now
-+            run.server_elapsed_ms = elapsed_ms(run.created_at, run.completed_at)
-             _release_idempotency_key_if_barren(run)
-         elif running:
-             run.status = DescribeRunStatus.RUNNING
+         run.items = [
+@@ -262,7 +265,7 @@ class DescribeRunRepository:
+         now: datetime | None = None,
+     ) -> bool:
+         """Persist CPU provisional envelope; keep image_bytes for GPU supersede."""
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+         if item is None:
+             return False
+@@ -297,7 +300,7 @@ class DescribeRunRepository:
+         False WITHOUT writing: the envelope is dropped, and callers must gate
+         the image_descriptions cache write on this return (VLM5-S1A-BR-02).
+         """
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+         if item is None:
+             return False
+@@ -335,7 +338,7 @@ class DescribeRunRepository:
+         facts-less item can never project DEGRADED with a null result payload
+         (VLM5-S1A-BR-03).
+         """
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+         if item is None:
+             return False
+@@ -392,7 +395,7 @@ class DescribeRunRepository:
+         :meth:`reclaim_interrupted_runs` [SEC-01], [RES-07].
+         """
+         await self._require_rls_bypass()
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         hours = retention_hours if retention_hours is not None else async_job_retention_hours()
+         cutoff = now - timedelta(hours=hours)
+         result = await self._session.execute(
+@@ -499,7 +502,7 @@ class DescribeRunRepository:
+             return False
+         if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+             return False
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id):
+             if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+                 continue
+@@ -605,7 +608,7 @@ class DescribeRunRepository:
+         error_message: str | None = None,
+         now: datetime | None = None,
+     ) -> bool:
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
+         if item is None:
+             return False
+@@ -679,7 +682,7 @@ class DescribeRunRepository:
+         assumption.
+         """
+         await self._require_rls_bypass()
+-        now = now or datetime.now(tz=UTC)
++        now = as_utc(now or datetime.now(tz=UTC))
+         result = await self._session.execute(
+             select(DescribeRun).where(DescribeRun.status.in_([DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING]))
+         )
+@@ -703,6 +706,7 @@ class DescribeRunRepository:
+                         item.completed_at = now
+                         item.last_error = item.last_error or _RECLAIM_INTERRUPT_ERROR
+                 item.image_bytes = None
++            run.items_timed = sum(item.processing_ms is not None for item in items)
+             statuses = Counter(item.status for item in items)
+             completed = statuses[DescribeItemStatus.COMPLETED]
+             failed = statuses[DescribeItemStatus.FAILED]
+@@ -760,7 +764,9 @@ class DescribeRunRepository:
+         if run is None:
+             return
+ 
+-        statuses = Counter(item.status for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id))
++        items = await self.list_run_items(tenant_id=tenant_id, run_id=run_id)
++        run.items_timed = sum(item.processing_ms is not None for item in items)
++        statuses = Counter(item.status for item in items)
+         completed = statuses[DescribeItemStatus.COMPLETED]
+         failed = statuses[DescribeItemStatus.FAILED]
+         skipped = statuses[DescribeItemStatus.SKIPPED]
 diff --git a/apps/prototype-description-service/scene/domain/describe_run.py b/apps/prototype-description-service/scene/domain/describe_run.py
 --- a/apps/prototype-description-service/scene/domain/describe_run.py
 +++ b/apps/prototype-description-service/scene/domain/describe_run.py
-@@ -293,3 +293,41 @@ def describe_job_error(item: Any) -> str | None:
+@@ -319,6 +319,13 @@ def utc_observation(value: datetime) -> datetime:
+     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
  
- def async_job_retention_hours() -> int:
-     return int(os.environ.get("ACX_ASYNC_JOB_RETENTION_HOURS", str(DEFAULT_ASYNC_JOB_RETENTION_HOURS)))
+ 
++def as_utc(value: datetime) -> datetime:
++    """Validate caller observations before persisting; database reads use utc_observation."""
++    if value.tzinfo is None or value.utcoffset() is None:
++        raise ValueError("observation must be timezone-aware")
++    return value.astimezone(UTC)
 +
 +
-+class DemandLeaseState(StrEnum):
-+    """Finite lease control; timestamps and correlation stay outside state (sr-007)."""
-+
-+    ACTIVE = "active"
-+    COMPLETED = "completed"
-+    EXPIRED = "expired"
-+    REJECTED = "rejected"
-+
-+
-+class OperationMismatchError(ValueError):
-+    code = "operation_mismatch"
-+    status_code = 409
-+
-+
-+class OperationExpiredError(ValueError):
-+    code = "operation_expired"
-+    status_code = 410
-+
-+
-+def utc_observation(value: datetime) -> datetime:
-+    """SQLite drops timezone metadata; stored naive observations are UTC."""
-+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-+
-+
-+def validate_duration_ms(value: float | None) -> float | None:
-+    import math
-+
-+    if value is not None and (not math.isfinite(value) or value < 0):
-+        raise ValueError("duration must be finite and nonnegative")
-+    return value
-+
-+
-+def elapsed_ms(start: datetime, end: datetime) -> float:
-+    value = (utc_observation(end) - utc_observation(start)).total_seconds() * 1000
-+    validate_duration_ms(value)
-+    return value
+ def validate_duration_ms(value: float | None) -> float | None:
+     import math
+ 
 diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_repository.py b/apps/prototype-description-service/scene/tests/test_describe_run_repository.py
 --- a/apps/prototype-description-service/scene/tests/test_describe_run_repository.py
 +++ b/apps/prototype-description-service/scene/tests/test_describe_run_repository.py
-@@ -257,3 +257,47 @@ def test_create_run_rejects_empty_and_oversize_lists():
+@@ -301,3 +301,39 @@ def test_timing_round_trip_counts_failed_and_cancelled_measured_items_only():
          await engine.dispose()
  
      asyncio.run(body())
 +
 +
-+def test_timing_round_trip_counts_failed_and_cancelled_measured_items_only():
-+    from datetime import UTC, datetime, timedelta
++def test_untimed_runs_and_non_utc_observations():
++    from datetime import UTC, datetime, timedelta, timezone
++    from scene.domain.describe_run import utc_observation
 +
 +    async def body():
 +        engine, sf = await _sessionmaker()
 +        tenant = uuid.uuid4()
 +        start = datetime(2026, 1, 1, tzinfo=UTC)
++        local = start.astimezone(timezone(timedelta(hours=-5)))
 +        async with sf() as session:
 +            repo = DescribeRunRepository(session)
-+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1, 2, 3])
++            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1, 2])
 +            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
++            assert run.items_timed == 0
 +            run.created_at = start
-+            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=2))
-+            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=9))
-+            await repo.record_readiness(tenant_id=tenant, run_id=run_id, now=start + timedelta(seconds=3))
-+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=1, processing_ms=10)
-+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=1, processing_ms=30)
-+            await repo.record_item_processing(tenant_id=tenant, run_id=run_id, media_id=2, processing_ms=0)
-+            for media_id, status in [
-+                (1, DescribeItemStatus.FAILED),
-+                (2, DescribeItemStatus.SKIPPED),
-+                (3, DescribeItemStatus.COMPLETED),
-+            ]:
-+                await repo.mark_item(
-+                    tenant_id=tenant, run_id=run_id, media_id=media_id, status=status, now=start + timedelta(seconds=4)
-+                )
++            for method in (repo.record_pickup, repo.record_readiness):
++                with pytest.raises(ValueError, match="timezone-aware"):
++                    await method(tenant_id=tenant, run_id=run_id, now=start.replace(tzinfo=None))
++            await repo.record_pickup(tenant_id=tenant, run_id=run_id, now=local + timedelta(seconds=1))
++            await repo.record_readiness(tenant_id=tenant, run_id=run_id, now=local + timedelta(seconds=2))
++            run.items_timed = None  # Legacy rows must be repaired by status recomputation.
++            for media_id, status in [(1, DescribeItemStatus.FAILED), (2, DescribeItemStatus.SKIPPED)]:
++                await repo.mark_item(tenant_id=tenant, run_id=run_id, media_id=media_id,
++                                     status=status, now=local + timedelta(seconds=3))
 +            await session.commit()
 +        async with sf() as session:
-+            repo = DescribeRunRepository(session)
-+            run = await repo.get_run(tenant_id=tenant, run_id=run_id)
-+            assert run.queue_ms == 2000
-+            assert run.ramp_up_ms == 0
-+            assert run.startup_id is None
-+            assert run.items_timed == 2
-+            assert run.processing_ms_p50 == 15
-+            assert run.processing_ms_max == 30
-+            assert run.server_elapsed_ms == 4000
-+            items = await repo.list_run_items(tenant_id=tenant, run_id=run_id)
-+            assert [item.processing_ms for item in items] == [30, 0, None]
++            run = await DescribeRunRepository(session).get_run(tenant_id=tenant, run_id=run_id)
++            assert run.items_timed == 0
++            assert utc_observation(run.started_at) == start + timedelta(seconds=1)
++            assert utc_observation(run.first_ready_at) == start + timedelta(seconds=2)
++            assert run.server_elapsed_ms == 3000
 +        await engine.dispose()
 +
 +    asyncio.run(body())
 diff --git a/apps/prototype-description-service/scene/tests/test_gpuflow_operation_repository.py b/apps/prototype-description-service/scene/tests/test_gpuflow_operation_repository.py
-new file mode 100644
---- /dev/null
+--- a/apps/prototype-description-service/scene/tests/test_gpuflow_operation_repository.py
 +++ b/apps/prototype-description-service/scene/tests/test_gpuflow_operation_repository.py
-@@ -0,0 +1,178 @@
-+"""Durable retry correlation and finite demand leases with UTC fake clocks."""
-+
-+from __future__ import annotations
-+
-+import asyncio
-+import uuid
-+from datetime import UTC, datetime, timedelta
-+
-+import pytest
-+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-+
-+from db.models.base_imports import Base
-+from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeStartup
-+from scene.application.describe_operation_repository import DescribeOperationRepository
-+from scene.domain.describe_run import OperationExpiredError, OperationMismatchError
+@@ -176,3 +176,70 @@ def test_utc_observations_validate_clock_order_without_fabricated_zero():
+     assert validate_duration_ms(0) == 0
+     with pytest.raises(ValueError):
+         elapsed_ms(start, start - timedelta(milliseconds=1))
 +
 +
-+def test_retry_restart_shared_startup_and_retained_timing():
++def test_write_guards_and_purge_lock_order():
++    from sqlalchemy import event
++    from scene.domain.describe_run import utc_observation
++
 +    async def body():
 +        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 +        async with engine.begin() as connection:
 +            await connection.run_sync(
 +                Base.metadata.create_all,
-+                tables=[
-+                    DescribeStartup.__table__,
-+                    DescribeOperation.__table__,
-+                    DescribeDemandLease.__table__,
-+                ],
++                tables=[DescribeStartup.__table__, DescribeOperation.__table__, DescribeDemandLease.__table__],
 +            )
 +        sf = async_sessionmaker(engine, expire_on_commit=False)
 +        tenant = uuid.uuid4()
 +        start = datetime(2026, 1, 1, tzinfo=UTC)
++        from datetime import timezone
++        local = start.astimezone(timezone(timedelta(hours=5)))
++        statements = []
++        event.listen(engine.sync_engine, "before_cursor_execute",
++                     lambda conn, cursor, statement, parameters, context, executemany: statements.append(statement))
 +        async with sf() as session:
 +            repo = DescribeOperationRepository(session, lease_seconds=60)
-+            first = await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=start)
-+            token = first.operation_id
-+            await repo.associate_startup(
-+                tenant_id=tenant, operation_id=token, startup_id="boot", started_at=start, now=start
-+            )
-+            second = await repo.accept(tenant_id=tenant, request_digest="b" * 64, now=start + timedelta(seconds=10))
-+            await repo.associate_startup(
-+                tenant_id=tenant, operation_id=second.operation_id, startup_id="boot", now=start + timedelta(seconds=10)
-+            )
++            for digest in ["A" * 64, "z" * 64, 123, None]:
++                with pytest.raises(ValueError, match="SHA-256"):
++                    await repo.accept(tenant_id=tenant, request_digest=digest, now=start)
++            with pytest.raises(ValueError, match="timezone-aware"):
++                await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=start.replace(tzinfo=None))
++            op = await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=local)
++            token = op.operation_id
++            with pytest.raises(ValueError, match="timezone-aware"):
++                await repo.associate_startup(tenant_id=tenant, operation_id=token, startup_id="boot",
++                                             started_at=start.replace(tzinfo=None), now=start)
++            await repo.associate_startup(tenant_id=tenant, operation_id=token, startup_id="boot",
++                                         started_at=local, now=local)
 +            await session.commit()
 +        async with sf() as session:
 +            repo = DescribeOperationRepository(session, lease_seconds=60)
-+            first = await repo.accept(
-+                tenant_id=tenant, request_digest="a" * 64, operation_id=token, now=start + timedelta(seconds=20)
-+            )
-+            await repo.observe_ready(tenant_id=tenant, operation_id=token, now=start + timedelta(seconds=30))
-+            await repo.observe_ready(
-+                tenant_id=tenant, operation_id=second.operation_id, now=start + timedelta(seconds=35)
-+            )
-+            await repo.observe_ready(tenant_id=tenant, operation_id=token, now=start + timedelta(seconds=40))
-+            assert first.ramp_up_ms == 30000
-+            other = await repo.get(tenant_id=tenant, operation_id=second.operation_id)
-+            assert other.ramp_up_ms == 25000
-+            assert other.startup_ms == first.startup_ms == 30000
-+            await repo.complete(
-+                tenant_id=tenant,
-+                operation_id=token,
-+                processing_ms=12,
-+                server_elapsed_ms=15,
-+                now=start + timedelta(seconds=45),
-+            )
-+            await session.commit()
-+        async with sf() as session:
-+            repo = DescribeOperationRepository(session, lease_seconds=60)
-+            replay = await repo.accept(
-+                tenant_id=tenant, request_digest="a" * 64, operation_id=token, now=start + timedelta(seconds=90)
-+            )
-+            assert replay.processing_ms == 12
-+            assert replay.server_elapsed_ms == 15
-+            with pytest.raises(OperationMismatchError):
-+                await repo.accept(tenant_id=tenant, request_digest="c" * 64, operation_id=token, now=start)
-+            with pytest.raises(OperationMismatchError):
-+                await repo.accept(tenant_id=uuid.uuid4(), request_digest="a" * 64, operation_id=token, now=start)
-+            with pytest.raises(OperationExpiredError):
-+                await repo.accept(
-+                    tenant_id=tenant,
-+                    request_digest="b" * 64,
-+                    operation_id=second.operation_id,
-+                    now=start + timedelta(seconds=90),
-+                )
-+            await session.commit()
++            startup = await session.get(DescribeStartup, "boot")
++            assert utc_observation(startup.started_at) == start
++            statements.clear()
++            op = await repo.accept(tenant_id=tenant, request_digest="a" * 64,
++                                   operation_id=token, now=start + timedelta(seconds=1))
++            renewal = list(statements)
++            lease = await session.get(DescribeDemandLease, (tenant, token))
++            assert utc_observation(op.accepted_at) == start
++            assert utc_observation(lease.expires_at) == utc_observation(op.expires_at)
++            assert utc_observation(lease.retain_until) == utc_observation(op.retain_until)
++            lease.retain_until = utc_observation(op.retain_until) + timedelta(seconds=1)
++            await session.flush()
++            with pytest.raises(ValueError, match="retention exceeds"):
++                await repo.accept(tenant_id=tenant, request_digest="a" * 64,
++                                  operation_id=token, now=start + timedelta(seconds=2))
++            lease.retain_until = op.retain_until
++            await session.flush()
++            statements.clear()
++            assert await repo.purge_expired(now=start + timedelta(days=2)) == 1
++            purge = list(statements)
++            operation_table = DescribeOperation.__tablename__
++            lease_table = DescribeDemandLease.__tablename__
++            assert operation_table in renewal[0] and lease_table in renewal[1]
++            assert purge[0].startswith("SELECT") and operation_table in purge[0]
++            deletes = [statement for statement in purge if statement.startswith("DELETE")]
++            assert lease_table in deletes[0] and operation_table in deletes[1]
 +        await engine.dispose()
 +
 +    asyncio.run(body())
-+
-+
-+def test_warm_cache_expiry_and_retention_bound():
-+    async def body():
-+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-+        async with engine.begin() as connection:
-+            await connection.run_sync(
-+                Base.metadata.create_all,
-+                tables=[
-+                    DescribeStartup.__table__,
-+                    DescribeOperation.__table__,
-+                    DescribeDemandLease.__table__,
-+                ],
-+            )
-+        sf = async_sessionmaker(engine, expire_on_commit=False)
-+        start = datetime(2026, 1, 1, tzinfo=UTC)
-+        tenant = uuid.uuid4()
-+        async with sf() as session:
-+            repo = DescribeOperationRepository(session, lease_seconds=60, retention_hours=1)
-+            op = await repo.accept(tenant_id=tenant, request_digest="a" * 64, now=start)
-+            await repo.observe_ready(tenant_id=tenant, operation_id=op.operation_id, now=start + timedelta(seconds=2))
-+            assert op.ramp_up_ms == 0
-+            assert op.startup_id is None
-+            assert op.startup_ms is None
-+            await repo.complete(
-+                tenant_id=tenant,
-+                operation_id=op.operation_id,
-+                processing_ms=0,
-+                server_elapsed_ms=2,
-+                now=start + timedelta(seconds=3),
-+            )
-+            assert op.processing_ms == 0
-+            expiring = await repo.accept(tenant_id=tenant, request_digest="b" * 64, now=start)
-+            # Retain the SQLite-loaded lease so bulk expiry must synchronize it.
-+            lease = await session.get(DescribeDemandLease, (tenant, expiring.operation_id))
-+            assert lease.expires_at.tzinfo is None
-+            assert await repo.active_demand_count(now=start, stop_requested=True) == 0
-+            assert await repo.active_demand_count(now=start) == 1
-+            assert await repo.active_demand_count(now=start + timedelta(seconds=60)) == 0
-+            assert lease.state == "expired"
-+            with pytest.raises(OperationExpiredError):
-+                await repo.accept(
-+                    tenant_id=tenant,
-+                    request_digest="b" * 64,
-+                    operation_id=expiring.operation_id,
-+                    now=start + timedelta(seconds=61),
-+                )
-+            lease = await session.get(DescribeDemandLease, (tenant, expiring.operation_id))
-+            assert lease.state == "rejected"
-+            bounded = await repo.accept(tenant_id=tenant, request_digest="c" * 64, now=start)
-+            for seconds in range(50, 3600, 50):
-+                bounded = await repo.accept(
-+                    tenant_id=tenant,
-+                    request_digest="c" * 64,
-+                    operation_id=bounded.operation_id,
-+                    now=start + timedelta(seconds=seconds),
-+                )
-+            from scene.domain.describe_run import utc_observation
-+
-+            assert utc_observation(bounded.expires_at) == start + timedelta(hours=1)
-+            assert utc_observation(bounded.retain_until) == start + timedelta(hours=1)
-+            assert await repo.purge_expired(now=start + timedelta(hours=1, seconds=4)) == 3
-+            assert lease not in session
-+            assert all(operation not in session for operation in (op, expiring, bounded))
-+            with pytest.raises(ValueError):
-+                await repo.complete(
-+                    tenant_id=tenant, operation_id=op.operation_id, processing_ms=float("nan"), now=start
-+                )
-+        await engine.dispose()
-+
-+    asyncio.run(body())
-+
-+
-+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), -float("inf")])
-+def test_duration_rejects_invalid_measurements(value):
-+    from scene.domain.describe_run import validate_duration_ms
-+
-+    with pytest.raises(ValueError, match="finite and nonnegative"):
-+        validate_duration_ms(value)
-+
-+
-+def test_utc_observations_validate_clock_order_without_fabricated_zero():
-+    from scene.domain.describe_run import elapsed_ms, validate_duration_ms
-+
-+    start = datetime(2026, 1, 1, tzinfo=UTC)
-+    assert elapsed_ms(start.replace(tzinfo=None), start + timedelta(milliseconds=12)) == 12
-+    assert validate_duration_ms(None) is None
-+    assert validate_duration_ms(0) == 0
-+    with pytest.raises(ValueError):
-+        elapsed_ms(start, start - timedelta(milliseconds=1))

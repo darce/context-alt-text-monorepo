@@ -1,1 +1,2 @@
-99cf1d247235 offload: Landed Fix-4 GPU control confirmation and Return-to-automatic
+b16198ec34a0 offload: GPUFLOW-1 spa-suggest-warming-timing landed warming lease,
+06469a0d7251 offload: Fix-1 landed: success operation_id rejects null, warmup ETA is

@@ -1,1 +1,1 @@
-983471fc1e36 offload: Closed R-12/R-13 warming validation and committed update
+773589b94e2f offload: Fix-4 landed: warming exemption requires a non-null opaque

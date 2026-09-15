@@ -99,7 +99,175 @@
       ],
       "exclusiveMinimum": 0,
       "description": "Additive optional. The server's own end-to-end GENERATION budget for this whole accepted run: the budget the worker actually enforces, summed across the run's items. It explicitly does NOT include GPU warm-up / cold-start - the client adds the warm-up leg itself. Derived at accept from the per-item generation timeout the worker is handed (which depends on the active adapter, not on ACX_DESCRIPTION_TIMEOUT_SECONDS alone) multiplied by the run's unique item count, and snapshotted per run: a later config change does not move an accepted run's deadline. Null only for runs not created through POST /scene/describe/run."
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque service-minted id bound to tenant and request digest."
+    },
+    "startup_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Opaque shared startup id; null for warm/cache work."
+    },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "queue_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ramp_up_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "processing_ms_p50": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "processing_ms_max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "startup_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "server_elapsed_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "items_timed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "queue_ms",
+        "ramp_up_ms",
+        "processing_ms_p50",
+        "processing_ms_max",
+        "startup_ms",
+        "server_elapsed_ms",
+        "items_timed"
+      ],
+      "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "definitions": {
+    "item": {
+      "type": "object",
+      "properties": {
+        "media_id": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "skipped"
+          ]
+        },
+        "alt_text_draft": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "tier": {
+          "enum": [
+            "provisional_cpu",
+            "final_gpu",
+            null
+          ]
+        },
+        "result_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "processing_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "media_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "run_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/item"
+          }
+        }
+      },
+      "required": [
+        "tenant_id",
+        "run_id",
+        "items"
+      ],
+      "additionalProperties": false
+    }
+  }
 }

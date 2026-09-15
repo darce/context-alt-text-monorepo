@@ -50,3 +50,28 @@ Reviewer: gpt-5.6-luna (max), codex-remote run `spa-description-service-review-m
 - Impact: lint(prettier) only.
 
 Verdict: pass_with_findings
+
+## Re-review r3 (2b38de112..883ff5d3d)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| `UXSERV-M-05` | `partially_fixed` | The delta removes the locally derived 120-second countdown and polling text (`.review/CHANGE.diff:17-22`) and replaces it with a localized no-countdown message (`.review/CHANGE.diff:56-59`); the new test explicitly rejects digits in that message (`.review/CHANGE.diff:214-244`). This closes the invented-ETA/no-ETA half, but the diff adds no `eta_seconds` field or rendering path, so a valid upstream ETA would still be ignored. |
+| `UXSERV-M-06` | `partially_fixed` | `useGpuControl` now gates `canStop` on the freshness-derived `effectiveState` (`.review/CHANGE.diff:388-398`), and the card hides the direct Start/Stop controls for stale or unknown display state (`.review/CHANGE.diff:76-153`), with tests for both cases (`.review/CHANGE.diff:264-307,352-385`). An already-open confirmation remains independent of that gate, so the stale/unknown action invariant is not complete. |
+
+### FINDINGS
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-05 — medium
+
+- **File:line:** `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:165-187,322-382`
+- **Evidence:** The fix wraps the direct controls in `displayedState !== GPU_STATE.UNKNOWN` (`.review/CHANGE.diff:76-153`) but does not clear `confirmation` when a fresh response becomes stale/unknown. The unchanged `confirm` function still submits whichever action is stored (`GpuControlCard.tsx:181-187`), and both confirmation strips render from that state alone (`GpuControlCard.tsx:322-382`). The new stale/unknown tests render without an already-open confirmation (`.review/CHANGE.diff:264-307`), so they cannot catch a fresh-to-stale transition ([TEST-15]).
+- **Impact:** A user can open Confirm start/stop on trusted telemetry, receive a stale/unknown update, and still submit the lifecycle intent from a confirmation that the safety gate intended to remove ([INT-10]).
+- **Fix:** Clear pending confirmation when freshness or state becomes unknown, or guard/disable `confirm` unless the relevant snapshot is still fresh and known; add a transition test for both actions.
+
+#### GPUFLOW-1-SPADESCRIPTIONSERVICE-R-06 — medium
+
+- **File:line:** `apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx:265-315`
+- **Evidence:** The new fragment places `Return to automatic` inside the same `displayedState !== GPU_STATE.UNKNOWN` branch as Start/Stop and the added unknown test expects it absent even with `canReturnToAuto: true` (`.review/CHANGE.diff:76-153,295-307`). The read-only UX map's unknown action sketch retains `[secondary] Return to automatic` (`apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md:58-60`), while `useGpuControl` continues to report that recovery action independently of freshness (`useGpuControl.ts:110-125`). A stale/unknown snapshot with a non-automatic intent therefore loses the documented way to clear that intent ([HAI-04]).
+- **Impact:** Manual Start/Stop intent can remain active with no in-card override until telemetry recovers; the implementation and map no longer agree on the recovery surface ([INT-10]).
+- **Fix:** Keep Return to automatic available as the safe recovery action when `canReturnToAuto` is true, or revise the map and provide an equivalent recovery path; test stale/unknown non-AUTO intents.
+
+Verdict: pass_with_findings

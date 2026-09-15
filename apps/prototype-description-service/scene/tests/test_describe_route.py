@@ -42,7 +42,7 @@ from scene.application.description_adapter import AdapterResult
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
-from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate
+from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate, _PreflightMissCacheRepository
 from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _recognition_used
 
@@ -222,6 +222,24 @@ def _active_lease_count(client) -> int:
                 )
             ).all()
             return len(leases)
+
+    return asyncio.run(_read())
+
+
+def _lease_rows(client) -> list[tuple[str, str]]:
+    async def _read():
+        async with client.app.state.session_factory() as session:
+            leases = (await session.scalars(select(DescribeDemandLease))).all()
+            return [(lease.operation_id, lease.state) for lease in leases]
+
+    return asyncio.run(_read())
+
+
+def _operation_first_ready_at(client, operation_id: str):
+    async def _read():
+        async with client.app.state.session_factory() as session:
+            operation = await session.get(DescribeOperation, (uuid.UUID(TENANT_ID), operation_id))
+            return None if operation is None else operation.first_ready_at
 
     return asyncio.run(_read())
 
@@ -1393,7 +1411,10 @@ def test_operation_id_mismatch_is_409(monkeypatch, tmp_path):
         )
         assert mismatch.status_code == 409, mismatch.text
         assert "Retry-After" not in mismatch.headers
-        assert mismatch.json()["detail"]["code"] == "operation_mismatch"
+        detail = mismatch.json()["detail"]
+        assert detail["code"] == "operation_mismatch"
+        assert detail["operation_id"] is None
+        assert "startup_id" in detail
 
 
 def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_path):
@@ -1509,7 +1530,7 @@ def test_gpu_cache_hit_mismatch_is_409(monkeypatch, tmp_path):
         assert mismatch.status_code == 409, mismatch.text
         detail = mismatch.json()["detail"]
         assert detail["code"] == "operation_mismatch"
-        assert detail["operation_id"]
+        assert detail["operation_id"] is None
         assert "startup_id" in detail
         assert "timing" in detail
         assert adapter.calls == 1
@@ -1555,6 +1576,7 @@ def test_gpu_service_exception_after_accept_terminalizes_operation(monkeypatch, 
         assert "timing" in detail
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "completed"
+        assert _operation_first_ready_at(client, detail["operation_id"]) is None
         assert _active_lease_count(client) == 0
 
 
@@ -1605,3 +1627,83 @@ def test_cpu_no_session_success_omits_durable_operation_id(monkeypatch):
         assert "startup_id" in body
         assert "timing" in body
         assert accepts == []
+
+
+def test_empty_operation_id_is_422():
+    with _client() as client:
+        response = _post(client, TENANT_ID, extra_data={"operation_id": "   "})
+        assert response.status_code == 422, response.text
+        assert _lease_rows(client) == []
+
+
+def test_oversized_operation_id_is_422():
+    with _client() as client:
+        response = _post(client, TENANT_ID, extra_data={"operation_id": "x" * 129})
+        assert response.status_code == 422, response.text
+        assert _lease_rows(client) == []
+
+
+def test_unknown_max_length_operation_id_is_409_with_null_id(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID, extra_data={"operation_id": "a" * 128})
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "operation_mismatch"
+        assert detail["operation_id"] is None
+        assert adapter.calls == 0
+
+
+def test_gpu_quota_http_exception_after_accept_releases_lease(monkeypatch, tmp_path):
+    from fastapi import HTTPException, status
+
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+
+    async def reject_quota(*args, **kwargs):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "demo_quota_exceeded",
+                "message": "demo recognition quota exceeded",
+                "quota_remaining": 0,
+            },
+        )
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_quota)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 429, response.text
+        assert response.json()["detail"] == {
+            "code": "demo_quota_exceeded",
+            "message": "demo recognition quota exceeded",
+            "quota_remaining": 0,
+        }
+        assert adapter.calls == 0
+        rows = _lease_rows(client)
+        assert rows
+        assert all(state == "completed" for _operation_id, state in rows)
+        assert _active_lease_count(client) == 0
+
+
+def test_preflight_miss_wrapper_delegates_after_first_lookup():
+    class _Inner:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        async def get_by_cache_key(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"hit": len(self.calls)}
+
+    inner = _Inner()
+    wrapped = _PreflightMissCacheRepository(inner)
+    first = asyncio.run(wrapped.get_by_cache_key(image_hash="a"))
+    second = asyncio.run(wrapped.get_by_cache_key(image_hash="b"))
+    third = asyncio.run(wrapped.get_by_cache_key(image_hash="c"))
+    assert first is None
+    assert inner.calls == [{"image_hash": "b"}, {"image_hash": "c"}]
+    assert second == {"hit": 1}
+    assert third == {"hit": 2}

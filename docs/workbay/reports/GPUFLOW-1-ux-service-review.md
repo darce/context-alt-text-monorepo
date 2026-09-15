@@ -83,3 +83,21 @@ FINDINGS: [{"id":"GPUFLOW-1-UXSERVICE-R-05","severity":"high","file_path":"apps/
 - **Fix:** Drive the card test through the real hook or update its fixture to keep Stop actionable and assert the deferred/pending copy after confirmation.
 
 Verdict: fail
+
+## Re-review r5 (5655adc8f..64b8ce929)
+
+VERIFIED: {"GPUFLOW-1-UXSERVICE-R-04":"fixed","GPUFLOW-1-UXSERVICE-R-05":"fixed","GPUFLOW-1-UXSERVICE-R-06":"fixed","GPUFLOW-1-UXSERVICE-R-07":"fixed"}
+FINDINGS: []
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-1-UXSERVICE-R-04 | fixed | The Markdown purpose hunk expands the inventory to seven sketches and the added `stopped by operator` block is followed by the existing starting-with-ETA, starting-without-ETA, ready, unknown/stale, and degraded sketches (`gpu-operator-control.md:27,100-185`); the JSON purpose hunk mirrors the same state-specific inventory (`gpu-operator-control.uxmap.json:21`). This supplies the explicit long-wait and state-cue surfaces required by `[INT-08]` and `[PERC-02]`. |
+| GPUFLOW-1-UXSERVICE-R-05 | fixed | The fix removes the degraded/unknown `Retry-After` wording and the invented retry countdown, replacing it with `Service unavailable. Start service to retry.` (`gpu-operator-control.md:10,27,173-185`; JSON `:9,21`). The closing contract note now reserves `Retry-After` for `description_service_starting` (`gpu-operator-control.md:348`; JSON `:134`), so the map no longer teaches the forbidden unavailable-error header. |
+| GPUFLOW-1-UXSERVICE-R-06 | fixed | Every deferred-stop phrase in the Markdown and JSON hunks drops `N items left` and now says `Stopping after the current work finishes until idle` (`gpu-operator-control.md:10,34,203-207,293-298,330,337`; JSON `:9,32,58,111-113`). The map therefore asks only for the boolean work signal available on the wire, rather than inventing a count (`[INT-10]`). |
+| GPUFLOW-1-UXSERVICE-R-07 | fixed | The JSON hunk removes the separate live Refresh action and makes one `act-gpu-refresh` tertiary action apply always (`gpu-operator-control.uxmap.json:89-90`); the Markdown action table and parity index make the same one-action change (`gpu-operator-control.md:269,325`). This matches the SPA's single unconditional tertiary Refresh control (`GpuControlCard.tsx:311-313`) and removes the prior split-action parity mismatch (`[INT-10]`). |
+
+### FINDINGS
+
+No new findings in this fix delta after excluding the already-open generated-registry, stale/unknown action, operator-STOP presentation, ETA wire, and test-coverage items from the handoff context.
+
+Verdict: pass

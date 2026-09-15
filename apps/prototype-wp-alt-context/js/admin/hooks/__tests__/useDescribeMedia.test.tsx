@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDescribeMedia } from '../useDescribeMedia';
@@ -92,7 +92,7 @@ describe('useDescribeMedia', () => {
   it('stores a starting lease and retry sends operation_id', async () => {
     describeMediaMock
       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-      .mockResolvedValueOnce(suggestStates.success_with_timing);
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
     result.current.mutate(42);
@@ -109,7 +109,9 @@ describe('useDescribeMedia', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
     expect(result.current.warming).toBeNull();
-    expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing);
+    expect(result.current.timing).toEqual(
+      (suggestStates.success_with_timing as VisualFactsResponse).timing,
+    );
   });
 
   it('stores a null ETA from the wire and a null operationId when the starting envelope omits it', async () => {
@@ -134,8 +136,12 @@ describe('useDescribeMedia', () => {
       warmupEtaSeconds: null,
     });
 
-    result.current.reset();
-    result.current.mutate(42);
+    act(() => {
+      result.current.reset();
+    });
+    act(() => {
+      result.current.mutate(42);
+    });
     await waitFor(() => expect(result.current.warming?.warmupEtaSeconds).toBe(12));
     expect(result.current.warming?.operationId).toBeNull();
   });
@@ -166,7 +172,7 @@ describe('useDescribeMedia', () => {
     describeMediaMock
       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
       .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.mismatch))
-      .mockResolvedValueOnce(suggestStates.success_no_timing);
+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
     result.current.mutate(42);
@@ -198,15 +204,21 @@ describe('useDescribeMedia', () => {
 
   it('exposes timing from the last success payload and null when the key is absent', async () => {
     describeMediaMock
-      .mockResolvedValueOnce(suggestStates.success_with_timing)
-      .mockResolvedValueOnce(suggestStates.success_no_timing);
+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse)
+      .mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
     result.current.mutate(42);
-    await waitFor(() => expect(result.current.timing).toEqual(suggestStates.success_with_timing.timing));
+    await waitFor(() =>
+      expect(result.current.timing).toEqual(
+        (suggestStates.success_with_timing as VisualFactsResponse).timing,
+      ),
+    );
 
     result.current.mutate(42);
-    await waitFor(() => expect(result.current.data).toEqual(suggestStates.success_no_timing));
+    await waitFor(() =>
+      expect(result.current.data).toEqual(suggestStates.success_no_timing as VisualFactsResponse),
+    );
     expect(result.current.timing).toBeNull();
   });
 });

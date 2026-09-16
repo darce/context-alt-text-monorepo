@@ -3,7 +3,7 @@
   "suite_id": "e16-7-tenant-selfserve-key-panel",
   "owner": "E16-7",
   "description": "PROVISIONAL until RED lane lands the named test files. Tenant self-serve API key panel MVP success criteria",
-  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/infra/test_caddyfile_admin_404.py -q",
+  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py -q",
   "threshold": {
     "kind": "max_failures",
     "max_failures": 0
@@ -50,6 +50,46 @@
       "id": "SC-7",
       "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/analyze` with a valid key still succeeds.",
       "test": "recognition/tests/api/test_portal_auth.py::test_clerk_jwks_outage_is_503_without_affecting_analyze"
+    },
+    {
+      "id": "SC-8",
+      "criterion": "Two concurrent rotate requests with the same Idempotency-Key and fingerprint produce exactly one new key and one revoked key; the loser receives the replay response (PostgreSQL-backed concurrent test).",
+      "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_rotate_requests_same_idempotency_key_are_single_mint"
+    },
+    {
+      "id": "SC-9",
+      "criterion": "Cross-tenant test: tenant B cannot read or replay tenant A's `portal_rotations` row, at both repository and RLS level.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_portal_rotations_are_tenant_scoped_at_repository_and_rls"
+    },
+    {
+      "id": "SC-10",
+      "criterion": "A portal request carrying `X-Tenant-ID` for another tenant is served strictly as the Clerk-resolved tenant; the header is ignored (test asserts no cross-tenant rows returned).",
+      "test": "recognition/tests/api/test_portal_auth.py::test_portal_ignores_request_tenant_header"
+    },
+    {
+      "id": "SC-11",
+      "criterion": "Direct `POST /portal/keys/{id}/revoke` (200 → `revoked_at` set + `audit_events` row; 404 for a foreign key id; 409 if already revoked).",
+      "test": "recognition/tests/api/test_portal_keys.py::test_direct_revoke_sets_revoked_at_and_audits"
+    },
+    {
+      "id": "SC-12",
+      "criterion": "`GET /portal/me` returns `{tenant_id, email, key_count}` for an eligible user and 403 `tenant_not_eligible` for an unmatched one, with a `portal_auth_events` row.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_portal_me_returns_summary_and_rejects_unmatched_email"
+    },
+    {
+      "id": "SC-13",
+      "criterion": "Missing `email` claim → 403 `claim_missing`, `email_verified=false` → 403 `email_unverified`, each with a `portal_auth_events` row.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_missing_or_unverified_email_claims_record_portal_auth_events"
+    },
+    {
+      "id": "SC-14",
+      "criterion": "The server-rendered page (`GET /portal/`) returns 200 HTML listing the tenant's keys with no `jinja2` in `sys.modules`.",
+      "test": "recognition/tests/api/test_portal_ui.py::test_portal_page_renders_without_jinja2"
+    },
+    {
+      "id": "SC-15",
+      "criterion": "If the `audit_events` insert fails inside rotate, the key mutation rolls back and no `portal_rotations` row survives.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_rolls_back_when_audit_insert_fails"
     }
   ]
 }

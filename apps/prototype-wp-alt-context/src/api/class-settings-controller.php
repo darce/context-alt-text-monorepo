@@ -73,6 +73,8 @@ class SettingsController {
 	public const SAVE_RESULT_ERROR   = 'error';
 
 	public const PROBE_OUTCOME_STARTING = 'starting';
+	/** Aggregate statuses from /health/detailed that count as connected. */
+	private const READY_HEALTH_STATUSES = array( 'ok', 'degraded' );
 
 	private RecognitionEndpointResolver $endpoint_resolver;
 
@@ -895,10 +897,15 @@ class SettingsController {
 	}
 
 	/**
+	 * /health/detailed reports the aggregate `status` (ok | degraded | unhealthy) from
+	 * recognition.application.health.aggregate_status; it has never carried a `ready`
+	 * flag, so keying on one showed every install as Unreachable (0.0.22).
+	 *
 	 * @param mixed $decoded JSON-decoded /health/detailed body.
 	 */
 	private function is_ready_health_body( mixed $decoded ): bool {
-		return is_array( $decoded ) && true === ( $decoded['ready'] ?? null );
+		return is_array( $decoded )
+			&& in_array( $decoded['status'] ?? null, self::READY_HEALTH_STATUSES, true );
 	}
 
 	private function is_tls_failure( string $message ): bool {

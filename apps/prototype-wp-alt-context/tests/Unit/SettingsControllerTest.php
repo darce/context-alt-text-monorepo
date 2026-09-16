@@ -1905,7 +1905,42 @@ class SettingsControllerTest extends TestCase
     {
         return [
             'response' => ['code' => 200, 'message' => 'OK'],
-            'body'     => '{"pool":"healthy","ready":true}',
+            'body'     => '{"status":"ok","breaker_state":"closed"}',
+        ];
+    }
+
+    /**
+     * HEALTHFIX-1: /health/detailed carries an aggregate `status`, never a `ready` flag.
+     * 0.0.22 keyed on `ready` and reported every install as Unreachable.
+     *
+     * @dataProvider healthDetailedStatusProvider
+     */
+    public function testProbeClassifiesHealthDetailedByAggregateStatus(string $body, string $expected): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => $body,
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame($expected, $data['outcome'] ?? null);
+    }
+
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function healthDetailedStatusProvider(): array
+    {
+        return [
+            'ok'                     => ['{"status":"ok"}', ProbeOutcome::CONNECTED],
+            'degraded'               => ['{"status":"degraded"}', ProbeOutcome::CONNECTED],
+            'unhealthy'              => ['{"status":"unhealthy"}', ProbeOutcome::SERVER_ERROR],
+            'legacy ready flag only' => ['{"pool":"healthy","ready":true}', ProbeOutcome::SERVER_ERROR],
+            'no status'              => ['{"pool":"healthy"}', ProbeOutcome::SERVER_ERROR],
         ];
     }
 

@@ -375,6 +375,24 @@ Planning constraint:
 
 ---
 
+### Deferred Follow-On: PostgreSQL 19 (skip 18)
+
+The co-located Postgres container stays on `pgvector/pgvector:pg17` for this epic; the next major is PG19 in one hop, per [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md) (2026-09-16).
+
+What the hop buys the self-hosted stack on the A1 box (4 OCPU / 24 GB, arm64):
+
+- **Online bloat reclaim** — `REPACK CONCURRENTLY` replaces the missing "VACUUM FULL = downtime" answer for `media_identities`, `image_descriptions`, `identity_scan_job_items`; pairs with the existing disk-usage healthcheck gate.
+- **Parallel autovacuum** + `pg_stat_autovacuum_scores` — keeps up with scan bursts on 4 cores and makes "is vacuum behind" a query, not a guess.
+- **I/O workers auto-scale** (`io_min_workers`/`io_max_workers`) — no per-host tuning for the burst/idle pattern.
+- **lz4 TOAST default** — every JSONB column (visual facts, provenance, audit events) on the fresh cluster.
+- **Lock observability on by default** — `log_lock_waits` on, `pg_stat_lock` for the advisory-lock admission paths.
+- **Online checksum enable** — turn on after the hop, no window.
+- **One-statement get-or-insert** (`ON CONFLICT DO SELECT`) on four repository sites; fewer round trips per scan/describe request.
+
+Gates before anything changes here: PG19 GA, an arm64 `pgvector/pgvector:pg19` image (absent as of 2026-09-16), and one product trigger. Until then: keep the `pg17` image at 17.11 (28 CVEs fixed in that minor), drop the unused `uuid-ossp` extension from both init SQL files, and set server-level `transaction_timeout`.
+
+---
+
 ### WordPress Demo Page Scope
 
 A publicly accessible WordPress instance running the ACX plugin for demonstration.

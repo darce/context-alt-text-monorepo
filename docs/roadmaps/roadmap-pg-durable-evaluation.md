@@ -47,7 +47,7 @@ The description service already implements a Postgres-backed job system — **~2
 3. **Language inversion.** The actual pipeline steps are Python — InsightFace embeddings, HDBSCAN clustering, Florence/Qwen VLM inference, ObjectStore I/O. pg_durable orchestrates **SQL steps**; the Python work would have to be exposed as HTTP endpoints and called via `df.http()`, moving orchestration logic into a SQL DSL that calls back into the service it came from. That is a rewrite of ~2,700 tested LOC into a less-expressive language for zero new capability the service needs, and it couples orchestration to the DB's lifecycle ([REF-15]: the engine would be a hard-coded dependency with no adapter seam; [ARCH-06]: the downside is structural, not incidental).
 4. **Orchestration complexity doesn't justify an engine.** [ARCH-04]: orchestrator utility rises with workflow complexity. The workflows here are shallow — scan items fan out flat, one auto-fanout edge (scan→clustering), no compensation chains, no human-signal waits, no cross-service sagas. The hard parts (claim atomicity, terminal guards, retry classification) are already solved and tested.
 5. **Unverified interactions.** pg_durable + pgvector coexistence is undocumented; interplay with `FORCE ROW LEVEL SECURITY` + `app.current_tenant` session GUCs (every table here is RLS-tenant-scoped) is unknown. The background worker executes steps outside the request session — tenant context propagation into `df.*` steps would need from-scratch validation.
-6. **No PG19 path.** pg_durable supports 17/18 only. If PG19-at-GA (~Sep/Oct 2026) is adopted per the [caption-context assessment §8](../assessments/current/caption-context-enrichment-assessment-2026-07-05.md) (`ON CONFLICT DO SELECT`, `REPACK CONCURRENTLY`), a vendored pg_durable would block the major-version upgrade until Microsoft ships support — an inverted dependency on a preview project's roadmap.
+6. **No PG19 path.** pg_durable supports 17/18 only. The PG upgrade target is now PG19 in one hop from 17 ([roadmap-pg19-upgrade.md](roadmap-pg19-upgrade.md), 2026-09-16: `ON CONFLICT DO SELECT`, `REPACK CONCURRENTLY`, parallel autovacuum); a vendored pg_durable would block that upgrade until Microsoft ships support — an inverted dependency on a preview project's roadmap.
 
 ### What pg_durable would genuinely buy
 
@@ -57,8 +57,8 @@ Honest accounting [ARCH-06]: deterministic replay + checkpointing would structur
 
 Independent decisions — bundling them adds nothing:
 
-- **PG18**: proceed per [roadmap-pg18-upgrade.md](roadmap-pg18-upgrade.md), unchanged. `pgvector/pgvector:pg18` images now exist (0.8.4-pg18), unblocking Phase 1. pg_durable neither requires nor accelerates any phase. `RETURNING OLD/NEW` (Phase 5) already improves the claim CTE without any engine.
-- **PG19**: beta-1 (2026-06-04, GA ~Sep 2026). Track, do not build — reaffirming the prior assessment. pg_durable's lack of PG19 support is an additional reason not to couple to it.
+- **PG18**: skipped as an intermediate hop as of 2026-09-16 — see [roadmap-pg19-upgrade.md](roadmap-pg19-upgrade.md) §0. pg_durable neither requires nor accelerates any phase. `RETURNING OLD/NEW` (kept as v0.2 Phase 5) already improves the claim CTE without any engine.
+- **PG19**: beta 3 (2026-08-13, GA undated). Track, do not build — gates and triggers in [roadmap-pg19-upgrade.md](roadmap-pg19-upgrade.md) §11. pg_durable's lack of PG19 support is an additional reason not to couple to it.
 
 ## Recommended alternative: close the gaps in place
 

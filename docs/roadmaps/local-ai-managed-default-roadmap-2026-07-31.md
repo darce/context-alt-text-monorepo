@@ -106,8 +106,8 @@ This section is the operational heart of the doc. Each row names **what to chang
 | Customer VPC / private server productization | Support economics unknown | Repeated enterprise RFPs + margin model |
 | Opportunistic GPU fleet as roadmap center (see assessments under `docs/assessments/current/*gpu*`) | Useful later as cost/latency tool; not identity | After metering + job routing exist |
 | Epic D sovereign sync evolution as near-term priority | Snapshot sync works; zero users; B&B crowding Pearl delivery | After demo + first paid conversion path |
-| PG18 upgrade, heavy SaaS ops beyond free-tier minimum | Infra for empty funnel | After Phase 0–1 GTM gates (demo funnel measured) |
-| Video / scene-description product epic | Still Oyster research | After still-image context caption proof |
+| PG major upgrade (17 → 19 in one hop, PG18 skipped; [roadmap-pg19-upgrade.md](roadmap-pg19-upgrade.md)), heavy SaaS ops beyond free-tier minimum | Infra for empty funnel; PG19 GA undated, no arm64 pgvector `pg19` image yet | After Phase 0–1 GTM gates **and** PG19 GA + pgvector image + one trigger from pg19 roadmap §11 (prod data, bloat trips disk gate, get-or-insert hot path, video epic opens). Take 17.11 minor now (28 CVEs) |
+| Video / scene-description product epic | Still Oyster research | After still-image context caption proof. When it opens, price its DB side from pg19 roadmap §5 (keyframe cache `ON CONFLICT DO SELECT`, `REPACK CONCURRENTLY` after per-scene purge, temporal track segments via `WITHOUT OVERLAPS` + `FOR PORTION OF`, lz4 TOAST for `visual_facts`) |
 | InsightFace buffalo in production after FIR | License risk | FIR gate: never re-introduce to prod |
 
 ### 4.3 REFRAME (keep the work, change the framing)

@@ -97,7 +97,7 @@ Two corrections to the aspiration as stated:
 | Item | Status today | Re-entry condition |
 |---|---|---|
 | Epic D sovereign sync / outbox evolution | Deferred | A second real site exists |
-| PG18 upgrade (`roadmap-pg18-upgrade.md`) | Phase 0 only | Any production data exists |
+| PG major upgrade (`roadmap-pg19-upgrade.md`, was PG18; retargeted 17 → 19 on 2026-09-16) | Phase 0 done; PG-independent "Now" items only | Any production data exists, plus PG19 GA + arm64 pgvector image (pg19 roadmap §11) |
 | SaaS billing implementation | Planning doc | Paying-user intent demonstrated |
 | Apple-pipeline recognition parity (multimodal, exemplar sets) | Insights doc | Clustering quality measurably blocks curation UX |
 | CI smoke envelope | Demoted to v0.4.1 | Demo shipped (correct as-is; resist re-promotion) |

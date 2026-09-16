@@ -5,6 +5,8 @@
 > **Parent**: [roadmap-saas-operations.md](../../roadmaps/roadmap-saas-operations.md) Phase 1
 > **Prerequisites**: E14 (self-hosting baseline deployed), E15-3 (plugin settings page — **not yet implemented**, must land before E16 success criteria can be verified)
 
+> **2026-09-16 planning amendment**: The draft [E16-7 key panel](../../tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md) uses the existing recognition identity database and in-house API-key service with purchased Clerk identity. Its [build/buy assessment](../../assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) keeps Polar subscription self-service and local entitlements in a later task. This is an explicit exception to the business-DB/key-service design below; reconcile the two authority models before implementing billing or migrating credentials. E16-7 is not yet allocated as an epic phase or approved for implementation.
+
 Build the business infrastructure layer — a separate business database, vendor-managed auth, API key self-service, usage metering, and observability — so that WordPress site owners can sign up, get an API key, and start using Alt Context without manual operator provisioning.
 
 ---

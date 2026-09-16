@@ -8,6 +8,7 @@ These docs can inform planning, but they are not themselves active epics or task
 
 ## Active Assessments
 
+- [E16-7 API Keys and Subscription Self-Service Build/Buy Assessment](current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) records the in-house key decision, bounded rotation and recovery requirements, and the separate billing/entitlement slice.
 - [Google Edge-AI Stack Evaluation vs FIR Face Pipeline](current/google-edge-ai-stack-evaluation-fir-2026-07-18.md) rejects LiteRT/MediaPipe/XNNPACK/WebNN/litert-lm for E22 (decision #2685); one open rider: `onnxruntime>=1.22` bump routed to FIR-4.
 - [Portfolio Quadrant & MVP Strategy Assessment](current/portfolio-quadrant-mvp-strategy-assessment-2026-06-11.md) is the strategy reference for quadrant placement (Cooper framework), MVP cut list, and non-code moat actions. Review when the demo URL is live or 2026-09-01.
 - [Public Demo WP Plugin Launch Assessment](public-demo-wp-plugin-launch-assessment-2026-04-30.md) is the primary product and hosting assessment for `demo.altcontext.com`.

@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "suite_id": "e16-7-tenant-selfserve-key-panel",
+  "owner": "E16-7",
+  "description": "PROVISIONAL until RED lane lands the named test files. E16-7 portal SC-1 through SC-31; SC-23 is a recorded operator restore drill (append-only portal_revocation_journal, not WAL/PITR). Start PostgreSQL with `make -C apps/prototype-description-service postgres-start`. The repository-root command deletes any prior e16-7-portal.xml, writes a fresh JUnit under .task-state/evals, captures pytest status, then check_eval_junit.py fails the gate when the XML is missing or has zero test cases, when failures+errors exceed max_failures 0 or skipped exceed max_skipped 0, appends one JSONL evidence row, and the command exits with the pytest status.",
+  "command": "mkdir -p .task-state/evals && rm -f .task-state/evals/e16-7-portal.xml && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); rc=$?; python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl && exit $rc",
+  "threshold": {
+    "kind": "junit_counts",
+    "max_failures": 0,
+    "max_skipped": 0
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "mirror_failures_to_handoff": true,
+  "tags": [
+    "security",
+    "tenancy",
+    "e16"
+  ],
+  "cases": [
+    {
+      "id": "SC-1",
+      "criterion": "Cross-tenant key access through the portal returns 404 or 403 and never exposes the other tenant's key.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_cross_tenant_key_is_not_visible"
+    },
+    {
+      "id": "SC-2",
+      "criterion": "An authenticated tenant sees full key history for the server-resolved tenant, including revoked rows with `revoked_at` set, plus `id`, `created_at`, `last_used_at`, and `expires_at`. Reads go through `TenantBoundApiKeyRepository` constructed with the server-resolved `tenant_id` (no caller-supplied tenant id; wraps `SqlAlchemyApiKeyRepository`) with `include_revoked=True`; a client-supplied tenant id cannot change the resolved tenant.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_list_returns_own_key_metadata_and_ignores_client_tenant_id"
+    },
+    {
+      "id": "SC-3",
+      "criterion": "Equal idempotency key and fingerprint mint one replacement with the old rate tier and a fresh lifetime derived from the original lifetime; replay returns metadata without a secret, and a different fingerprint returns 422. Handlers build a frozen `PortalMutationContext(tenant_id, idempotency_key, request_fingerprint, clerk_sub, email, sid)` plus `key_id`; the service owns the reservation insert, key mutation, and audit row with `{clerk_sub, email, sid}`.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once"
+    },
+    {
+      "id": "SC-4",
+      "criterion": "Rotation authorizes only an active key owned by the resolved tenant (404 foreign; 409 revoked, expired, or already rotated), keeps the old key active until the earlier original expiry or seven-day cutoff, and recognition classifies it expired afterward.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_old_key_expires_after_rotation_overlap"
+    },
+    {
+      "id": "SC-5",
+      "criterion": "The raw key is shown exactly once in the first successful rotate response, is not re-shown on an idempotent replay, and never appears in application logs, audit rows, or URLs.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_raw_key_is_not_logged_or_audited"
+    },
+    {
+      "id": "SC-6",
+      "criterion": "Every `/admin*` request on the `app.altcontext.com` vhost returns 404.",
+      "test": "recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404"
+    },
+    {
+      "id": "SC-7",
+      "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/recognition/analyze` with a valid key still succeeds. `apps/prototype-description-service/api/main.py::create_app` mounts the recognition router under `/recognition`; Caddy does not rewrite this path.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_clerk_jwks_outage_is_503_without_affecting_analyze"
+    },
+    {
+      "id": "SC-8",
+      "criterion": "Concurrent equal rotate requests produce one new key and one old-key cutoff; the loser replays under re-applied tenant context. Distinct idempotency keys against the same old key yield one winner and a 409 loser.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_rotate_requests_same_idempotency_key_are_single_mint"
+    },
+    {
+      "id": "SC-9",
+      "criterion": "Cross-tenant test: tenant B cannot read or replay tenant A's `portal_rotations` row, at both repository and RLS level.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_portal_rotations_are_tenant_scoped_at_repository_and_rls"
+    },
+    {
+      "id": "SC-10",
+      "criterion": "A portal request carrying `X-Tenant-ID` for another tenant is served strictly as the Clerk-resolved tenant; the header is ignored (test asserts no cross-tenant rows returned).",
+      "test": "recognition/tests/api/test_portal_auth.py::test_portal_ignores_request_tenant_header"
+    },
+    {
+      "id": "SC-11",
+      "criterion": "Direct `POST /portal/keys/{id}/revoke` uses one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`. A returned row yields 200 with `revoked_at` set and one `audit_events` row in the same transaction; zero rows re-read to 404 (foreign/missing) or 409 (already revoked) with no audit row. Handlers build `PortalMutationContext` plus `key_id`; the service owns the transaction. `/portal` maps `already_revoked` to 409 and `UnknownKeyError`/foreign key to 404.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_direct_revoke_sets_revoked_at_and_audits"
+    },
+    {
+      "id": "SC-12",
+      "criterion": "`GET /portal/me` returns exactly `{tenant_id, email, key_count}` for an eligible user and 403 `tenant_not_eligible` for an unmatched one, with a `portal_auth_events` row. The Clerk subject is not returned.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_portal_me_returns_summary_and_rejects_unmatched_email"
+    },
+    {
+      "id": "SC-13",
+      "criterion": "Missing `email` claim → 403 `claim_missing` with a `portal_auth_events` row whose `email_hash IS NULL`; `email_verified=false` → 403 `email_unverified` with a hashed email in its row.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_missing_or_unverified_email_claims_record_portal_auth_events"
+    },
+    {
+      "id": "SC-14",
+      "criterion": "The server-rendered page (`GET /portal/`) returns 200 HTML listing the tenant's keys with no `jinja2` in `sys.modules`.",
+      "test": "recognition/tests/api/test_portal_ui.py::test_portal_page_renders_without_jinja2"
+    },
+    {
+      "id": "SC-15",
+      "criterion": "If the `audit_events` insert fails inside rotate, the key mutation rolls back and no `portal_rotations` row survives.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_rolls_back_when_audit_insert_fails"
+    },
+    {
+      "id": "SC-16",
+      "criterion": "Unauthenticated `GET /portal/` redirects (302) to Clerk sign-in; unauthenticated `GET /portal/keys` returns 401 `invalid_session`; a valid `__session` cookie and a valid bearer token each authenticate identically when presented alone.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_browser_cookie_and_bearer_auth_transport"
+    },
+    {
+      "id": "SC-17",
+      "criterion": "A cross-site form POST to rotate/revoke with a valid `__session` cookie but missing/mismatched CSRF token or foreign Origin is rejected 403 `csrf_failed` and no key changes.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_cookie_mutations_require_csrf_and_same_origin"
+    },
+    {
+      "id": "SC-18",
+      "criterion": "Tokens with bad signature, wrong `iss`, wrong `azp`, disallowed `alg`, expired `exp`, or future `nbf` each return 401 `invalid_session` and write no `portal_auth_events` row.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_invalid_jwt_claims_and_signatures_are_rejected_without_auth_events"
+    },
+    {
+      "id": "SC-19",
+      "criterion": "Each 403 (`tenant_not_eligible`, `email_unverified`, `claim_missing`) leaves exactly one committed `portal_auth_events` row observable from a fresh connection after the response.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_rejected_portal_auth_commits_one_event_before_response"
+    },
+    {
+      "id": "SC-20",
+      "criterion": "Start PostgreSQL with `make -C apps/prototype-description-service postgres-start` before the eval command. With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, the portal DB tests FAIL (not skip).",
+      "test": "recognition/tests/api/test_portal_keys.py::test_require_postgres_fails_instead_of_skipping_when_unreachable"
+    },
+    {
+      "id": "SC-21",
+      "criterion": "A verified contact claims an unbound tenant once; later sessions resolve by unique issuer and subject after an email change, while a competing subject receives 403 and concurrent claims cannot create two bindings.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_verified_subject_binding_survives_email_change_and_rejects_competitor"
+    },
+    {
+      "id": "SC-22",
+      "criterion": "A lost first rotation response cannot reveal the secret on replay; the tenant can rotate the replacement with a new idempotency key, and a constant-provisioned install sees deployment guidance and cutoff.",
+      "test": "recognition/tests/api/test_portal_ui.py::test_lost_rotation_response_and_constant_install_guidance"
+    },
+    {
+      "id": "SC-23",
+      "criterion": "Operator restore drill (release gate, not a unit test): restore the latest off-host pg_dump, replay portal_revocation_journal JSONL objects newer than the dump with the idempotent conditional revoke UPDATE, then run a revoked-key probe before re-enabling traffic. Evidence names the dump timestamp, journal objects replayed, probe result, and measured RTO. Residual risk: revocations inside the last 5-minute shipping interval before total host loss are lost; the runbook requires notifying tenants to re-revoke keys rotated in that window. Durability is an independent OCI Object Storage copy (write-once retention; host credentials create-only).",
+      "test": "docs/runbooks/key-management.md::Tenant portal (app.altcontext.com)"
+    },
+    {
+      "id": "SC-24",
+      "criterion": "Injected `portal_auth_events` insert failure still returns the intended 403 reason, logs ERROR without email/token material, and does not reuse the request session. The insert uses its own short-lived session, never the request session.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_auth_event_write_failure_still_403_and_logs_error"
+    },
+    {
+      "id": "SC-25",
+      "criterion": "A request carrying both a `__session` cookie and an `Authorization: Bearer` header is rejected 401 `invalid_session` before any token is verified, regardless of either credential's validity, and writes no `portal_auth_events` row. Covers both-valid-different-principals and valid-cookie plus invalid-bearer.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_cookie_and_bearer_together_are_rejected"
+    },
+    {
+      "id": "SC-26",
+      "criterion": "Two concurrent direct revokes of one active key yield exactly one 200 and one 409, and exactly one audit row.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_direct_revoke_single_winner"
+    },
+    {
+      "id": "SC-27",
+      "criterion": "`/admin` revoke of an already-revoked key still returns 200 `already_revoked=true` with no second audit row after `recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic` and `RevokeOutcome(record, already_revoked)` are extracted into a tenant-aware service. `UnknownKeyError` stays the not-found signal.",
+      "test": "recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved"
+    },
+    {
+      "id": "SC-28",
+      "criterion": "Inserting a `portal_auth_events` row with an unsupported `outcome` and non-NULL `email_hash` fails the CHECK. `portal_auth_events.outcome` has its own CHECK `outcome IN ('tenant_not_eligible','email_unverified','claim_missing')`, separate from the existing NULL/hash CHECK, in `001_identity_schema.py`.",
+      "test": "recognition/tests/schema/test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome"
+    },
+    {
+      "id": "SC-29",
+      "criterion": "`apps/prototype-description-service/api/main.py::create_app` registers `/portal/*` routes, and app construction raises when `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, or `ACX_PORTAL_CSRF_SECRET` is missing.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_portal_routes_mounted_and_boot_fails_without_clerk_config"
+    },
+    {
+      "id": "SC-30",
+      "criterion": "`TenantBoundApiKeyRepository` bound to tenant A never returns tenant B rows for list/get/revoke, exercised without HTTP. The repository is constructed with the server-resolved `tenant_id` and exposes no method that accepts a caller-supplied tenant id; it wraps `SqlAlchemyApiKeyRepository`. Isolation is proven at repository level because `api_keys` is RLS-exempt.",
+      "test": "recognition/tests/test_tenant_bound_api_key_repository.py::test_repository_cannot_cross_tenants"
+    },
+    {
+      "id": "SC-31",
+      "criterion": "`apps/prototype-description-service/scripts/check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file, and non-zero for a missing file. It exits non-zero when failures+errors exceed max-failures or skipped exceed max-skipped, and appends one JSONL evidence row.",
+      "test": "recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate"
+    }
+  ]
+}

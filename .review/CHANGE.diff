@@ -1,745 +1,822 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeMedia.test.tsx
-@@ -1,12 +1,13 @@
- import React from 'react';
- import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
- import { act, renderHook, waitFor } from '@testing-library/react';
--import { beforeEach, describe, expect, it, vi } from 'vitest';
-+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+diff --git a/docs/assessments/README.md b/docs/assessments/README.md
+--- a/docs/assessments/README.md
++++ b/docs/assessments/README.md
+@@ -8,6 +8,7 @@ These docs can inform planning, but they are not themselves active epics or task
  
--import { useDescribeMedia } from '../useDescribeMedia';
-+import { SUGGEST_WARMING_CEILING_MS, useDescribeMedia } from '../useDescribeMedia';
- import * as describeApi from '../../api/describeApi';
- import type { VisualFactsResponse } from '../../api/describeApi';
- import suggestStates from '../../pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json';
-+import { HTTPError } from '../../utils/http';
+ ## Active Assessments
  
- vi.mock('../../api/describeApi', async (importOriginal) => {
-   const actual = await importOriginal<typeof describeApi>();
-@@ -222,3 +223,231 @@ describe('useDescribeMedia', () => {
-     expect(result.current.timing).toBeNull();
-   });
- });
++- [E16-7 API Keys and Subscription Self-Service Build/Buy Assessment](current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) records the in-house key decision, bounded rotation and recovery requirements, and the separate billing/entitlement slice.
+ - [Google Edge-AI Stack Evaluation vs FIR Face Pipeline](current/google-edge-ai-stack-evaluation-fir-2026-07-18.md) rejects LiteRT/MediaPipe/XNNPACK/WebNN/litert-lm for E22 (decision #2685); one open rider: `onnxruntime>=1.22` bump routed to FIR-4.
+ - [Portfolio Quadrant & MVP Strategy Assessment](current/portfolio-quadrant-mvp-strategy-assessment-2026-06-11.md) is the strategy reference for quadrant placement (Cooper framework), MVP cut list, and non-code moat actions. Review when the demo URL is live or 2026-09-01.
+ - [Public Demo WP Plugin Launch Assessment](public-demo-wp-plugin-launch-assessment-2026-04-30.md) is the primary product and hosting assessment for `demo.altcontext.com`.
+diff --git a/docs/assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md b/docs/assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md
+new file mode 100644
+--- /dev/null
++++ b/docs/assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md
+@@ -0,0 +1,39 @@
++# E16-7: API keys and subscription self-service — build/buy assessment
 +
-+const flushMicrotasks = async (): Promise<void> => {
-+  await act(async () => {
-+    await Promise.resolve();
-+    await Promise.resolve();
-+  });
-+};
++Date: 2026-09-16  
++Status: planning decision; E16-7 is still a draft, and billing is a later scope
 +
-+const startingHttpError = (
-+  fixture: { status: number; detail: object },
-+  retryAfterSeconds?: number,
-+): HTTPError =>
-+  new HTTPError({
-+    status: fixture.status,
-+    retryAfterSeconds,
-+    endpoint: '/wp-json/acx/v1/recognition/describe',
-+    bodyPreview: JSON.stringify({ detail: fixture.detail }),
-+    message: `Request to .../describe failed (${fixture.status}): ${JSON.stringify({
-+      detail: fixture.detail,
-+    })}`,
-+  });
++## Decision and boundary
 +
-+describe('useDescribeMedia warming auto-retry', () => {
-+  beforeEach(() => {
-+    vi.useFakeTimers();
-+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
-+    vi.clearAllMocks();
-+  });
++Keep recognition API-key storage, issuance, validation, and revocation in the existing Python service. Buy customer identity (Clerk, subject to the E16-7 verification spike) and subscription management (Polar, subject to the later billing plan). Build a small tenant portal to join these systems. The WordPress plugin continues to hold an installation's key; a portal cannot silently update a key provided by `wp-config.php` or a filter.
 +
-+  afterEach(() => {
-+    vi.useRealTimers();
-+  });
++The differentiating operation is tenant-scoped recognition. Delegating each request's key verification to a gateway would add a vendor dependency and a migration while the existing store already hashes random keys, records expiration and revocation, and supports multiple keys per tenant. This is a conditional decision, not an assertion that in-house code is free. Measure operator time, incidents, and required features against vendor cost before renewing it. Zuplo or Unkey becomes worth reconsidering if credential support and recovery exceed the cost of their integration and exit path.
 +
-+  it('pins the public warming ceiling at 120 s', () => {
-+    expect(SUGGEST_WARMING_CEILING_MS).toBe(120_000);
-+  });
++Clerk authenticates a person; it does not select a tenant from an untrusted request. Polar handles checkout, payment methods, invoices, cancellation, and plan changes. The service owns the tenant-to-identity and tenant-to-billing mappings and decides entitlement locally. The hosted [Polar customer portal](https://polar.sh/docs/features/customer-portal/introduction) already supplies the subscription UI; `app.altcontext.com` should link to it rather than duplicate payment forms. Polar provides [customer state](https://polar.sh/docs/integrate/customer-state) and [webhook validation and redelivery](https://polar.sh/docs/integrate/webhooks/delivery) for synchronization. Vendor capabilities and prices must be verified again when that later slice starts.
 +
-+  it('auto-retries after the warmup ETA with the stored operation_id', async () => {
-+    describeMediaMock
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++## Evidence and limits
 +
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    expect(result.current.warming).toEqual({
-+      operationId: 'op-lease-1',
-+      warmupEtaSeconds: 12,
-+    });
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
++- The existing `api_keys` repository can find active hashes, classify expired/revoked keys, list by tenant, create, revoke, and track last use. `api_key_admin_service.mint_api_key` creates a 43-character random token, hashes it, and leaves commit to its caller. See `apps/prototype-description-service/recognition/infrastructure/repositories/api_key_repository.py` and `recognition/application/services/api_key_admin_service.py`.
++- `docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md` and `docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md` cover operator-provisioned customers and keys. The existing scope accepted immediate revocation and downtime; this assessment changes routine rotation to bounded overlap.
++- `docs/epics/v0.3.1/saas-foundation-epic.md` still describes a new business database as owner of tenant and key records. E16-7 explicitly deviates toward the live recognition database. Reconcile this before implementing billing or moving the key authority; never run two writable sources of truth.
++- The prior demo key incident exposed operational fragility after a database reset. It does not by itself prove that outsourcing verification would fix restoration or WordPress configuration.
 +
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(11_999);
-+    });
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
++## E16-7 acceptance and resilience requirements
 +
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(1);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+    expect(result.current.isSuccess).toBe(true);
-+    expect(result.current.warming).toBeNull();
-+    expect(result.current.warmingTimedOut).toBe(false);
-+  });
++1. **Durable authority.** Back up tenants, key hashes, identity links, rotation records, and audit evidence off the service host. Test point-in-time recovery through the latest revocation using retained WAL, or replay an independently stored append-only revocation journal before accepting traffic. A plain older snapshot can re-enable a revoked credential and is insufficient by itself. Separate recognition-data reset privileges from customer credential authority. Record the recovery owner and measured recovery time.
++2. **Stable identity.** Use a verified primary-contact email once to claim an operator-provisioned tenant, then persist a unique `(issuer, subject) → tenant_id` binding. Subsequent sessions resolve by that binding. Email changes or account replacement use an audited operator recovery path; an email claim alone must not silently transfer control. Check ownership before every key read and mutation. `/admin*` remains inaccessible on public vhosts.
++3. **Routine rotation with overlap.** Lock and authorize the named active key. Reserve the idempotency key and old-key rotation in the database, mint the replacement, and shorten the old key's remaining validity to at most seven days, without extending an earlier expiry. Preserve its revocation field until the explicit revoke action. Show the new raw key once and show the old key's cutoff time. A replacement gets a fresh lifetime based on the old key's original lifetime policy; an unexpiring old key yields an unexpiring replacement. A retry replays metadata, never the secret. A customer who loses the one-time response can rotate the new active key again; the UI must say this plainly. Direct emergency revoke takes effect immediately. Test an old WordPress installation during overlap and after cutoff.
++4. **Atomic evidence.** Commit rotation, old-key cutoff, and audit evidence together. A failed audit insert rolls back the mutation. Make distinct concurrent requests against the same old key result in one winner and a clear conflict. Alert on repeated invalid credentials and failed portal actions without logging raw keys.
++5. **Customer handoff.** For a WordPress option, paste the replacement and run Test Connection before the old key's cutoff. For `wp-config.php` or filter provisioned installs, show deployment instructions and the deadline; the setting is correctly read-only. Warn before a direct revoke that would leave the tenant without a working key.
 +
-+  it('schedules again when a second starting response arrives inside the ceiling', async () => {
-+    describeMediaMock
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++## Separate subscription slice
 +
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
++E16-7 must remain a bounded key-panel task. A later task must define checkout, billing identity, entitlements, usage/quota enforcement, and account recovery. Key authentication should identify the tenant; a locally stored entitlement should decide plan and access, so subscription changes do not force key replacement. Define cancellation at period end, failed-payment grace, suspension, and reactivation as explicit state transitions. Suspended customers must retain billing recovery access.
 +
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(12_000);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+    expect(result.current.warming).not.toBeNull();
-+    expect(result.current.warmingTimedOut).toBe(false);
++Verify webhook signatures, persist and deduplicate events before acknowledging them, tolerate out-of-order delivery, and reconcile periodically with the billing provider. A checkout redirect alone cannot grant access. Keep provider calls off the recognition request path and specify bounded stale-state behavior. Keep customer contact and mappings exportable so a provider change has an executable exit.
 +
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(12_000);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenNthCalledWith(3, 42, { operationId: 'op-lease-1' });
-+    expect(result.current.isSuccess).toBe(true);
-+  });
++## Decision tests and reconsideration
 +
-+  it('enters timeout at the 120 s ceiling, clears the lease, and stops scheduling', async () => {
-+    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
++Before E16-7 release: restore customer identity/key state from backup in a drill; prove a revoked key does not become valid; exercise overlap, concurrent rotation, lost one-time response, WordPress option and constant installs, and a Clerk outage without stopping valid recognition calls. Before billing release: replay duplicate and out-of-order webhooks, then reconcile a missed event and verify cancellation and failed-payment recovery. Track median operator minutes per onboarding/rotation, credential incidents, restoration time, and key-management spend. Revisit the build decision if these stay materially worse than a vendor migration plus operation.
 +
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
-+    expect(result.current.warmingTimedOut).toBe(false);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await flushMicrotasks();
-+    expect(result.current.warmingTimedOut).toBe(true);
-+    expect(result.current.warming).toBeNull();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(2);
-+
-+    describeMediaMock.mockResolvedValueOnce(suggestStates.success_no_timing as VisualFactsResponse);
-+    await act(async () => {
-+      result.current.retry();
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenLastCalledWith(42);
-+    expect(result.current.warmingTimedOut).toBe(false);
-+  });
-+
-+  it('clears the auto-retry timer on unmount', async () => {
-+    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_with_eta));
-+    const { result, unmount } = renderHook(() => useDescribeMedia(), { wrapper });
-+
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
-+
-+    unmount();
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(12_000);
-+    });
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('uses the 5 s fallback when ETA and Retry-After are absent', async () => {
-+    describeMediaMock
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta))
-+      .mockResolvedValueOnce(sample);
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
-+
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(4_999);
-+    });
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(1);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+  });
-+
-+  it('uses parsed Retry-After when the warmup ETA is absent', async () => {
-+    describeMediaMock
-+      .mockRejectedValueOnce(startingHttpError(suggestStates.starting_no_eta, 8))
-+      .mockResolvedValueOnce(sample);
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
-+
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(7_999);
-+    });
-+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(1);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+  });
-+
-+  it('starts a fresh operation from timeout retry (no operation_id)', async () => {
-+    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
-+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
-+
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await flushMicrotasks();
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await flushMicrotasks();
-+    expect(result.current.warmingTimedOut).toBe(true);
-+
-+    describeMediaMock.mockResolvedValueOnce(sample);
-+    await act(async () => {
-+      result.current.mutate(42);
-+    });
-+    await flushMicrotasks();
-+    expect(describeMediaMock).toHaveBeenLastCalledWith(42);
-+    expect(result.current.isSuccess).toBe(true);
-+    expect(result.current.warmingTimedOut).toBe(false);
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
---- a/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts
-@@ -1,4 +1,4 @@
--import { useRef, useState } from 'react';
-+import { useEffect, useRef, useState } from 'react';
- import { useMutation, type MutateOptions } from '@tanstack/react-query';
++Canon applied: [STRAT-02](https://github.com/darce/heuristics-canon/blob/main/lexicons/business-marketing.md#strat-02) (disconfirmers), [STRAT-22](https://github.com/darce/heuristics-canon/blob/main/lexicons/business-marketing.md#strat-22) (weakest link), [DATA-13](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md#data-13) (idempotency), [WEB-08](https://github.com/darce/heuristics-canon/blob/main/lexicons/security.md#web-08) (object authorization), [SECD-02](https://github.com/darce/heuristics-canon/blob/main/lexicons/security.md#secd-02) (small trusted base), and [REF-15](https://github.com/darce/heuristics-canon/blob/main/lexicons/engineering.md#ref-15) (vendor adapter). These support Principles 2, 3, 8, 10, and 14; they are tests of this design, not evidence that the implementation already passes.
+diff --git a/docs/epics/v0.3.1/saas-foundation-epic.md b/docs/epics/v0.3.1/saas-foundation-epic.md
+--- a/docs/epics/v0.3.1/saas-foundation-epic.md
++++ b/docs/epics/v0.3.1/saas-foundation-epic.md
+@@ -5,6 +5,8 @@
+ > **Parent**: [roadmap-saas-operations.md](../../roadmaps/roadmap-saas-operations.md) Phase 1
+ > **Prerequisites**: E14 (self-hosting baseline deployed), E15-3 (plugin settings page — **not yet implemented**, must land before E16 success criteria can be verified)
  
- import {
-@@ -11,6 +11,7 @@ import {
-   type DescribeOperationTiming,
-   type VisualFactsResponse,
- } from '../api/describeApi';
-+import { clampRetryAfterMs } from '../utils/retryAfter';
++> **2026-09-16 planning amendment**: The draft [E16-7 key panel](../../tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md) uses the existing recognition identity database and in-house API-key service with purchased Clerk identity. Its [build/buy assessment](../../assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) keeps Polar subscription self-service and local entitlements in a later task. This is an explicit exception to the business-DB/key-service design below; reconcile the two authority models before implementing billing or migrating credentials. E16-7 is not yet allocated as an epic phase or approved for implementation.
++
+ Build the business infrastructure layer — a separate business database, vendor-managed auth, API key self-service, usage metering, and observability — so that WordPress site owners can sign up, get an API key, and start using Alt Context without manual operator provisioning.
  
- export type DescribeMediaMutationInput =
-   | number
-@@ -23,6 +24,18 @@ export type DescribeWarmingState = {
-   warmupEtaSeconds: number | null;
- };
- 
-+/**
-+ * Public Suggest warming retry ceiling. The SPA clears the pending lease on
-+ * terminal success, failure, or this ceiling (gpu-lifecycle.md:347); advertised
-+ * Retry-After must be at most 120 s (gpu-lifecycle.md:426).
-+ */
-+export const SUGGEST_WARMING_CEILING_MS = 120_000;
-+
-+/** Wait when a starting 503 has no warmup_eta_seconds and no parsed Retry-After. */
-+const SUGGEST_WARMING_FALLBACK_MS = 5_000;
-+
-+type DescribeMutateOptions = MutateOptions<VisualFactsResponse, Error, DescribeMediaMutationInput>;
-+
- const mediaIdOf = (input: DescribeMediaMutationInput): number =>
-   typeof input === 'number' ? input : input.mediaId;
- 
-@@ -32,6 +45,22 @@ const writeOptionsOf = (input: DescribeMediaMutationInput): DescribeMediaWriteOp
- const isMismatchOrExpired = (code: string | null): boolean =>
-   code === DESCRIBE_OPERATION_ERROR_CODE.MISMATCH || code === DESCRIBE_OPERATION_ERROR_CODE.EXPIRED;
- 
-+const retryAfterSecondsFromError = (error: unknown): number | undefined => {
-+  if (typeof error !== 'object' || error === null || !('retryAfterSeconds' in error)) {
-+    return undefined;
-+  }
-+  const value = error.retryAfterSeconds;
-+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-+    return undefined;
-+  }
-+  return value;
-+};
-+
-+const warmingRetryDelayMs = (error: unknown, warmupEtaSeconds: number | null): number => {
-+  const waitSeconds = warmupEtaSeconds ?? retryAfterSecondsFromError(error);
-+  return clampRetryAfterMs(waitSeconds ?? undefined, SUGGEST_WARMING_FALLBACK_MS);
-+};
-+
- const describeWithLease = (
-   input: DescribeMediaMutationInput,
-   operationId: string | null,
-@@ -50,19 +79,28 @@ const describeWithLease = (
-  * Describe a single attachment through the WP proxy (E19-1 S12). One-shot
-  * mutation: callers `mutate(mediaId)` or `mutate({ mediaId, writeAlt })`.
-  * GPUFLOW-1 lease: starting errors store operation_id for retry(); mismatch
-- * and expired drop the id and retry once without it.
-+ * and expired drop the id and retry once without it. Auto-retry honours the
-+ * warmup ETA (else Retry-After, else 5 s) until the 120 s public ceiling.
-  */
- export const useDescribeMedia = () => {
-   const lastInputRef = useRef<DescribeMediaMutationInput | null>(null);
-+  const lastMutateOptionsRef = useRef<DescribeMutateOptions | undefined>(undefined);
-   const leaseOperationIdRef = useRef<string | null>(null);
-   const mismatchRetriedRef = useRef(false);
-+  const warmingStartedAtRef = useRef<number | null>(null);
-+  const warmingRetryDelayMsRef = useRef(SUGGEST_WARMING_FALLBACK_MS);
-+  const mutateForRetryRef = useRef<() => void>(() => undefined);
-+  const enterWarmingTimeoutRef = useRef<() => void>(() => undefined);
-   const [warming, setWarming] = useState<DescribeWarmingState | null>(null);
-+  const [warmingTimedOut, setWarmingTimedOut] = useState(false);
-   const [timing, setTiming] = useState<DescribeOperationTiming | null>(null);
- 
-   const clearLease = (): void => {
-     leaseOperationIdRef.current = null;
-     mismatchRetriedRef.current = false;
-+    warmingStartedAtRef.current = null;
-     setWarming(null);
-+    setWarmingTimedOut(false);
-   };
- 
-   const mutation = useMutation<VisualFactsResponse, Error, DescribeMediaMutationInput>({
-@@ -91,6 +129,20 @@ export const useDescribeMedia = () => {
-         const warmupEtaSeconds = resolveDescribeErrorDetailNumberField(error, 'warmup_eta_seconds');
-         leaseOperationIdRef.current = operationId;
-         mismatchRetriedRef.current = false;
-+        warmingRetryDelayMsRef.current = warmingRetryDelayMs(error, warmupEtaSeconds);
-+        if (warmingStartedAtRef.current === null) {
-+          warmingStartedAtRef.current = Date.now();
-+        }
-+        if (Date.now() - warmingStartedAtRef.current >= SUGGEST_WARMING_CEILING_MS) {
-+          leaseOperationIdRef.current = null;
-+          mismatchRetriedRef.current = false;
-+          warmingStartedAtRef.current = null;
-+          setWarming(null);
-+          setWarmingTimedOut(true);
-+          setTiming(null);
-+          return;
-+        }
-+        setWarmingTimedOut(false);
-         setWarming({ operationId, warmupEtaSeconds });
-         setTiming(null);
-         return;
-@@ -100,22 +152,76 @@ export const useDescribeMedia = () => {
-     },
-   });
- 
--  const retry = (
--    options?: MutateOptions<VisualFactsResponse, Error, DescribeMediaMutationInput>,
-+  mutateForRetryRef.current = (): void => {
-+    const lastInput = lastInputRef.current;
-+    if (lastInput === null) {
-+      return;
-+    }
-+    mutation.mutate(lastInput, lastMutateOptionsRef.current);
-+  };
-+
-+  enterWarmingTimeoutRef.current = (): void => {
-+    leaseOperationIdRef.current = null;
-+    mismatchRetriedRef.current = false;
-+    warmingStartedAtRef.current = null;
-+    setWarming(null);
-+    setWarmingTimedOut(true);
-+  };
-+
-+  useEffect(() => {
-+    if (warming === null || mutation.isPending) {
-+      return undefined;
-+    }
-+    const startedAt = warmingStartedAtRef.current;
-+    if (startedAt === null) {
-+      return undefined;
-+    }
-+    const remaining = SUGGEST_WARMING_CEILING_MS - (Date.now() - startedAt);
-+    if (remaining <= 0) {
-+      enterWarmingTimeoutRef.current();
-+      return undefined;
-+    }
-+    const waitMs = Math.min(warmingRetryDelayMsRef.current, remaining);
-+    const timer = setTimeout(() => {
-+      if (Date.now() - startedAt >= SUGGEST_WARMING_CEILING_MS) {
-+        enterWarmingTimeoutRef.current();
-+        return;
-+      }
-+      mutateForRetryRef.current();
-+    }, waitMs);
-+    return () => {
-+      clearTimeout(timer);
-+    };
-+  }, [warming, mutation.isPending]);
-+
-+  const mutate = (
-+    input: DescribeMediaMutationInput,
-+    options?: DescribeMutateOptions,
-   ): void => {
-+    leaseOperationIdRef.current = null;
-+    warmingStartedAtRef.current = null;
-+    lastMutateOptionsRef.current = options;
-+    mutation.mutate(input, options);
-+  };
-+
-+  const retry = (options?: DescribeMutateOptions): void => {
-     const lastInput = lastInputRef.current;
-     if (lastInput === null) {
-       return;
-     }
--    mutation.mutate(lastInput, options);
-+    if (options !== undefined) {
-+      lastMutateOptionsRef.current = options;
-+    }
-+    mutation.mutate(lastInput, options ?? lastMutateOptionsRef.current);
-   };
- 
-   const reset = (): void => {
-     lastInputRef.current = null;
-+    lastMutateOptionsRef.current = undefined;
-     clearLease();
-     setTiming(null);
-     mutation.reset();
-   };
- 
--  return { ...mutation, reset, retry, warming, timing };
-+  return { ...mutation, mutate, reset, retry, warming, warmingTimedOut, timing };
- };
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAltSuggest.tsx
-@@ -278,7 +278,8 @@ export const MediaAltSuggest = ({
-   // [S7-BR-02]. Local flag only drives "Marking as decorative…" labels while
-   // isAccepting covers the shared in-flight disable + focus park [BR-13][BR-56].
-   const [isMarkingDecorative, setIsMarkingDecorative] = useState(false);
--  const { mutate, isPending, isError, error, data, reset, retry, warming, timing } = useDescribeMedia();
-+  const { mutate, isPending, isError, error, data, reset, retry, warming, warmingTimedOut, timing } =
-+    useDescribeMedia();
-   const {
-     mutate: acceptDraft,
-     isPending: isAccepting,
-@@ -421,7 +422,7 @@ export const MediaAltSuggest = ({
-     const active = document.activeElement;
-     const ownsFocus = !active || active === document.body || containerRef.current?.contains(active);
- 
--    if (warming || isError) {
-+    if (warming || warmingTimedOut || isError) {
-       if (ownsFocus) {
-         retryButtonRef.current?.focus();
-       }
-@@ -444,7 +445,7 @@ export const MediaAltSuggest = ({
-         suggestButtonRef.current?.focus();
-       }
-     }
--  }, [isError, data, warming]);
-+  }, [isError, data, warming, warmingTimedOut]);
- 
-   // Separate from the draft-landing focus effect: entering edit must not re-key
-   // that effect, and Cancel must land on Edit rather than Dismiss.
-@@ -599,7 +600,15 @@ export const MediaAltSuggest = ({
-     if (next instanceof Node && containerRef.current?.contains(next)) {
-       return;
-     }
--    if (!data && !isPending && !isAccepting && !isMarkingDecorative && !isError && !warming) {
-+    if (
-+      !data &&
-+      !isPending &&
-+      !isAccepting &&
-+      !isMarkingDecorative &&
-+      !isError &&
-+      !warming &&
-+      !warmingTimedOut
-+    ) {
-       clearStatus();
-     }
-   };
-@@ -620,52 +629,56 @@ export const MediaAltSuggest = ({
-   );
- 
-   const body = (() => {
--    if (isPending) {
--      // BR-38: explicit name + busy on the focus-park target. Without them an
--      // unnamed div derives its name from the disabled button text (and, before
--      // the live-region hoist, also from the status region) — SR users parked
--      // here heard a stuttered or empty label with no in-progress signal.
--      // role="group": a role-less div maps to generic, and ARIA 1.2 prohibits
--      // an author-supplied name on generic (axe aria-prohibited-attr). group
--      // is the in-repo precedent for a labelled composite host (ReviewQueue).
--      // Keep native `disabled` on the button (toBeDisabled() / BR-13).
-+    if (warming) {
-+      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
-       return (
-         <div
-           ref={containerRef}
-           className="acx-media-selection__media-alt-suggest"
-           role="group"
-           tabIndex={-1}
--          aria-label={__('Generating…', 'alt-context')}
--          aria-busy="true"
-+          aria-label={warmingText}
-           onBlur={handleContainerBlur}
-         >
--          <button type="button" className="button acx-media-selection__media-alt-suggest-trigger" disabled>
--            {__('Generating…', 'alt-context')}
-+          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
-+            <Loader2 aria-hidden="true" size={16} />
-+            {warmingText}
-+          </p>
-+          <button
-+            type="button"
-+            ref={retryButtonRef}
-+            className="button acx-media-selection__media-alt-suggest-retry"
-+            disabled={isPending}
-+            onClick={retryWarming}
-+          >
-+            {__('Retry', 'alt-context')}
-           </button>
-         </div>
-       );
-     }
- 
--    if (warming) {
--      const warmingText = formatWarmingStatus(warming.warmupEtaSeconds);
-+    if (warmingTimedOut && !isPending) {
-+      const timeoutText = __('Still starting — try again', 'alt-context');
-       return (
-         <div
-           ref={containerRef}
-           className="acx-media-selection__media-alt-suggest"
-           role="group"
-           tabIndex={-1}
--          aria-label={warmingText}
-+          aria-label={timeoutText}
-           onBlur={handleContainerBlur}
-         >
--          <p className="acx-media-selection__media-alt-warming" data-testid="media-alt-suggest-warming">
--            <Loader2 aria-hidden="true" size={16} />
--            {warmingText}
-+          <p
-+            className="acx-media-selection__media-alt-warming-timeout"
-+            data-testid="media-alt-suggest-warming-timeout"
-+          >
-+            {timeoutText}
-           </p>
-           <button
-             type="button"
-             ref={retryButtonRef}
-             className="button acx-media-selection__media-alt-suggest-retry"
--            onClick={retryWarming}
-+            onClick={generate}
-           >
-             {__('Retry', 'alt-context')}
-           </button>
-@@ -673,6 +686,32 @@ export const MediaAltSuggest = ({
-       );
-     }
- 
-+    if (isPending) {
-+      // BR-38: explicit name + busy on the focus-park target. Without them an
-+      // unnamed div derives its name from the disabled button text (and, before
-+      // the live-region hoist, also from the status region) — SR users parked
-+      // here heard a stuttered or empty label with no in-progress signal.
-+      // role="group": a role-less div maps to generic, and ARIA 1.2 prohibits
-+      // an author-supplied name on generic (axe aria-prohibited-attr). group
-+      // is the in-repo precedent for a labelled composite host (ReviewQueue).
-+      // Keep native `disabled` on the button (toBeDisabled() / BR-13).
-+      return (
-+        <div
-+          ref={containerRef}
-+          className="acx-media-selection__media-alt-suggest"
-+          role="group"
-+          tabIndex={-1}
-+          aria-label={__('Generating…', 'alt-context')}
-+          aria-busy="true"
-+          onBlur={handleContainerBlur}
-+        >
-+          <button type="button" className="button acx-media-selection__media-alt-suggest-trigger" disabled>
-+            {__('Generating…', 'alt-context')}
-+          </button>
-+        </div>
-+      );
-+    }
-+
-     if (isError) {
-       return (
-         <div
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx
-@@ -1,7 +1,7 @@
- import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
- import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
- import type { ReactElement } from 'react';
--import { beforeEach, describe, expect, it, vi } from 'vitest';
-+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
- 
- import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
- import {
-@@ -2876,3 +2876,113 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
-     expect(describeMock).toHaveBeenCalledTimes(3);
-   });
- });
-+
-+describe('MediaAltSuggest warming auto-retry and ceiling', () => {
-+  beforeEach(() => {
-+    vi.useFakeTimers();
-+    vi.setSystemTime(new Date('2026-09-15T12:00:00.000Z'));
-+    vi.resetAllMocks();
-+  });
-+
-+  afterEach(() => {
-+    vi.useRealTimers();
-+  });
-+
-+  it('auto-retries after the warmup ETA with the stored operation_id', async () => {
-+    describeMock
-+      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-+      .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
-+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
-+
-+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(screen.getByTestId('media-alt-suggest-warming')).toHaveTextContent(
-+      'Description service is starting (about 12 s)',
-+    );
-+    expect(describeMock).toHaveBeenCalledTimes(1);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(12_000);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(describeMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
-+    expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
-+  });
-+
-+  it('shows the warming timeout state at the 120 s ceiling with no further auto-retries', async () => {
-+    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
-+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
-+
-+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(describeMock).toHaveBeenCalledTimes(2);
-+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    const timeout = screen.getByTestId('media-alt-suggest-warming-timeout');
-+    expect(timeout).toHaveTextContent('Still starting — try again');
-+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
-+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeEnabled();
-+    expect(describeMock).toHaveBeenCalledTimes(2);
-+
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    expect(describeMock).toHaveBeenCalledTimes(2);
-+  });
-+
-+  it('manual retry from timeout starts a fresh operation without operation_id', async () => {
-+    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
-+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
-+
-+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(60_000);
-+    });
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(screen.getByTestId('media-alt-suggest-warming-timeout')).toBeInTheDocument();
-+    expect(describeMock).toHaveBeenCalledTimes(2);
-+
-+    describeMock.mockReset();
-+    describeMock.mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
-+    fireEvent.click(screen.getByRole('button', { name: /^retry$/i }));
-+    await act(async () => {
-+      await vi.advanceTimersByTimeAsync(0);
-+    });
-+    expect(describeMock).toHaveBeenCalledTimes(1);
-+    expect(describeMock).toHaveBeenCalledWith(42);
-+    expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
-+    expect(screen.queryByTestId('media-alt-suggest-warming-timeout')).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json
---- a/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json
-+++ b/apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json
-@@ -17,6 +17,15 @@
-       "warmup_eta_seconds": null
-     }
-   },
-+  "starting_eta_60": {
-+    "status": 503,
-+    "detail": {
-+      "code": "description_service_starting",
-+      "message": "Description service is starting.",
-+      "operation_id": "op-lease-1",
-+      "warmup_eta_seconds": 60
-+    }
+ ---
+diff --git a/docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json b/docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json
+new file mode 100644
+--- /dev/null
++++ b/docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json
+@@ -0,0 +1,171 @@
++{
++  "version": 1,
++  "suite_id": "e16-7-tenant-selfserve-key-panel",
++  "owner": "E16-7",
++  "description": "PROVISIONAL until RED lane lands the named test files. E16-7 portal SC-1 through SC-31; SC-23 is a recorded operator restore drill. Start PostgreSQL with `make -C apps/prototype-description-service postgres-start`. The repository-root command writes JUnit under .task-state/evals, then check_eval_junit.py fails the gate when failures+errors exceed max_failures 0 or skipped exceed max_skipped 0 and appends one JSONL evidence row.",
++  "command": "mkdir -p .task-state/evals && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl",
++  "threshold": {
++    "kind": "junit_counts",
++    "max_failures": 0,
++    "max_skipped": 0
 +  },
-   "unavailable": {
-     "status": 503,
-     "detail": {
++  "evidence_sink": ".task-state/evals/results.jsonl",
++  "mirror_failures_to_handoff": true,
++  "tags": [
++    "security",
++    "tenancy",
++    "e16"
++  ],
++  "cases": [
++    {
++      "id": "SC-1",
++      "criterion": "Cross-tenant key access through the portal returns 404 or 403 and never exposes the other tenant's key.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_cross_tenant_key_is_not_visible"
++    },
++    {
++      "id": "SC-2",
++      "criterion": "An authenticated tenant sees full key history for the server-resolved tenant, including revoked rows with `revoked_at` set, plus `id`, `created_at`, `last_used_at`, and `expires_at`. Reads go through `TenantBoundApiKeyRepository` constructed with the server-resolved `tenant_id` (no caller-supplied tenant id; wraps `SqlAlchemyApiKeyRepository`) with `include_revoked=True`; a client-supplied tenant id cannot change the resolved tenant.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_list_returns_own_key_metadata_and_ignores_client_tenant_id"
++    },
++    {
++      "id": "SC-3",
++      "criterion": "Equal idempotency key and fingerprint mint one replacement with the old rate tier and a fresh lifetime derived from the original lifetime; replay returns metadata without a secret, and a different fingerprint returns 422. Handlers build a frozen `PortalMutationContext(tenant_id, idempotency_key, request_fingerprint, clerk_sub, email, sid)` plus `key_id`; the service owns the reservation insert, key mutation, and audit row with `{clerk_sub, email, sid}`.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once"
++    },
++    {
++      "id": "SC-4",
++      "criterion": "Rotation authorizes only an active key owned by the resolved tenant (404 foreign; 409 revoked, expired, or already rotated), keeps the old key active until the earlier original expiry or seven-day cutoff, and recognition classifies it expired afterward.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_old_key_expires_after_rotation_overlap"
++    },
++    {
++      "id": "SC-5",
++      "criterion": "The raw key is shown exactly once in the first successful rotate response, is not re-shown on an idempotent replay, and never appears in application logs, audit rows, or URLs.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_raw_key_is_not_logged_or_audited"
++    },
++    {
++      "id": "SC-6",
++      "criterion": "Every `/admin*` request on the `app.altcontext.com` vhost returns 404.",
++      "test": "recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404"
++    },
++    {
++      "id": "SC-7",
++      "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/analyze` with a valid key still succeeds.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_clerk_jwks_outage_is_503_without_affecting_analyze"
++    },
++    {
++      "id": "SC-8",
++      "criterion": "Concurrent equal rotate requests produce one new key and one old-key cutoff; the loser replays under re-applied tenant context. Distinct idempotency keys against the same old key yield one winner and a 409 loser.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_rotate_requests_same_idempotency_key_are_single_mint"
++    },
++    {
++      "id": "SC-9",
++      "criterion": "Cross-tenant test: tenant B cannot read or replay tenant A's `portal_rotations` row, at both repository and RLS level.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_portal_rotations_are_tenant_scoped_at_repository_and_rls"
++    },
++    {
++      "id": "SC-10",
++      "criterion": "A portal request carrying `X-Tenant-ID` for another tenant is served strictly as the Clerk-resolved tenant; the header is ignored (test asserts no cross-tenant rows returned).",
++      "test": "recognition/tests/api/test_portal_auth.py::test_portal_ignores_request_tenant_header"
++    },
++    {
++      "id": "SC-11",
++      "criterion": "Direct `POST /portal/keys/{id}/revoke` uses one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`. A returned row yields 200 with `revoked_at` set and one `audit_events` row in the same transaction; zero rows re-read to 404 (foreign/missing) or 409 (already revoked) with no audit row. Handlers build `PortalMutationContext` plus `key_id`; the service owns the transaction. `/portal` maps `already_revoked` to 409 and `UnknownKeyError`/foreign key to 404.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_direct_revoke_sets_revoked_at_and_audits"
++    },
++    {
++      "id": "SC-12",
++      "criterion": "`GET /portal/me` returns exactly `{tenant_id, email, key_count}` for an eligible user and 403 `tenant_not_eligible` for an unmatched one, with a `portal_auth_events` row. The Clerk subject is not returned.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_portal_me_returns_summary_and_rejects_unmatched_email"
++    },
++    {
++      "id": "SC-13",
++      "criterion": "Missing `email` claim → 403 `claim_missing` with a `portal_auth_events` row whose `email_hash IS NULL`; `email_verified=false` → 403 `email_unverified` with a hashed email in its row.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_missing_or_unverified_email_claims_record_portal_auth_events"
++    },
++    {
++      "id": "SC-14",
++      "criterion": "The server-rendered page (`GET /portal/`) returns 200 HTML listing the tenant's keys with no `jinja2` in `sys.modules`.",
++      "test": "recognition/tests/api/test_portal_ui.py::test_portal_page_renders_without_jinja2"
++    },
++    {
++      "id": "SC-15",
++      "criterion": "If the `audit_events` insert fails inside rotate, the key mutation rolls back and no `portal_rotations` row survives.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_rolls_back_when_audit_insert_fails"
++    },
++    {
++      "id": "SC-16",
++      "criterion": "Unauthenticated `GET /portal/` redirects (302) to Clerk sign-in; unauthenticated `GET /portal/keys` returns 401 `invalid_session`; a valid `__session` cookie and a valid bearer token each authenticate identically when presented alone.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_browser_cookie_and_bearer_auth_transport"
++    },
++    {
++      "id": "SC-17",
++      "criterion": "A cross-site form POST to rotate/revoke with a valid `__session` cookie but missing/mismatched CSRF token or foreign Origin is rejected 403 `csrf_failed` and no key changes.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_cookie_mutations_require_csrf_and_same_origin"
++    },
++    {
++      "id": "SC-18",
++      "criterion": "Tokens with bad signature, wrong `iss`, wrong `azp`, disallowed `alg`, expired `exp`, or future `nbf` each return 401 `invalid_session` and write no `portal_auth_events` row.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_invalid_jwt_claims_and_signatures_are_rejected_without_auth_events"
++    },
++    {
++      "id": "SC-19",
++      "criterion": "Each 403 (`tenant_not_eligible`, `email_unverified`, `claim_missing`) leaves exactly one committed `portal_auth_events` row observable from a fresh connection after the response.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_rejected_portal_auth_commits_one_event_before_response"
++    },
++    {
++      "id": "SC-20",
++      "criterion": "Start PostgreSQL with `make -C apps/prototype-description-service postgres-start` before the eval command. With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, the portal DB tests FAIL (not skip).",
++      "test": "recognition/tests/api/test_portal_keys.py::test_require_postgres_fails_instead_of_skipping_when_unreachable"
++    },
++    {
++      "id": "SC-21",
++      "criterion": "A verified contact claims an unbound tenant once; later sessions resolve by unique issuer and subject after an email change, while a competing subject receives 403 and concurrent claims cannot create two bindings.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_verified_subject_binding_survives_email_change_and_rejects_competitor"
++    },
++    {
++      "id": "SC-22",
++      "criterion": "A lost first rotation response cannot reveal the secret on replay; the tenant can rotate the replacement with a new idempotency key, and a constant-provisioned install sees deployment guidance and cutoff.",
++      "test": "recognition/tests/api/test_portal_ui.py::test_lost_rotation_response_and_constant_install_guidance"
++    },
++    {
++      "id": "SC-24",
++      "criterion": "Injected `portal_auth_events` insert failure still returns the intended 403 reason, logs ERROR without email/token material, and does not reuse the request session. The insert uses its own short-lived session, never the request session.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_auth_event_write_failure_still_403_and_logs_error"
++    },
++    {
++      "id": "SC-25",
++      "criterion": "A request carrying both a `__session` cookie and an `Authorization: Bearer` header is rejected 401 `invalid_session` before any token is verified, regardless of either credential's validity, and writes no `portal_auth_events` row. Covers both-valid-different-principals and valid-cookie plus invalid-bearer.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_cookie_and_bearer_together_are_rejected"
++    },
++    {
++      "id": "SC-26",
++      "criterion": "Two concurrent direct revokes of one active key yield exactly one 200 and one 409, and exactly one audit row.",
++      "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_direct_revoke_single_winner"
++    },
++    {
++      "id": "SC-27",
++      "criterion": "`/admin` revoke of an already-revoked key still returns 200 `already_revoked=true` with no second audit row after `recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic` and `RevokeOutcome(record, already_revoked)` are extracted into a tenant-aware service. `UnknownKeyError` stays the not-found signal.",
++      "test": "recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved"
++    },
++    {
++      "id": "SC-28",
++      "criterion": "Inserting a `portal_auth_events` row with an unsupported `outcome` and non-NULL `email_hash` fails the CHECK. `portal_auth_events.outcome` has its own CHECK `outcome IN ('tenant_not_eligible','email_unverified','claim_missing')`, separate from the existing NULL/hash CHECK, in `001_identity_schema.py`.",
++      "test": "recognition/tests/schema/test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome"
++    },
++    {
++      "id": "SC-29",
++      "criterion": "`apps/prototype-description-service/api/main.py::create_app` registers `/portal/*` routes, and app construction raises when `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, or `ACX_PORTAL_CSRF_SECRET` is missing.",
++      "test": "recognition/tests/api/test_portal_auth.py::test_portal_routes_mounted_and_boot_fails_without_clerk_config"
++    },
++    {
++      "id": "SC-30",
++      "criterion": "`TenantBoundApiKeyRepository` bound to tenant A never returns tenant B rows for list/get/revoke, exercised without HTTP. The repository is constructed with the server-resolved `tenant_id` and exposes no method that accepts a caller-supplied tenant id; it wraps `SqlAlchemyApiKeyRepository`. Isolation is proven at repository level because `api_keys` is RLS-exempt.",
++      "test": "recognition/tests/test_tenant_bound_api_key_repository.py::test_repository_cannot_cross_tenants"
++    },
++    {
++      "id": "SC-31",
++      "criterion": "`apps/prototype-description-service/scripts/check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file. It exits non-zero when failures+errors exceed max-failures or skipped exceed max-skipped, and appends one JSONL evidence row.",
++      "test": "recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate"
++    }
++  ]
++}
+diff --git a/docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md b/docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md
+new file mode 100644
+--- /dev/null
++++ b/docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md
+@@ -0,0 +1,148 @@
++# E16-7. Tenant self-serve API key panel
++
++Status: scoped 2026-09-15, rev4 amendment 2026-09-16 — coordinator contract reconciled 2026-09-16
++Task: E16-7
++Epic: E16
++Source decisions: 11708, 11709
++Triage: review run e16-7-plan-draft-triage-20260915-16706136; decision 11713
++Build/buy and resilience assessment: `docs/assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md`
++
++## Problem
++
++- A production DB reset leaves operators manually ferrying raw keys back to the WordPress site, the failure mode recorded in decision 6437.
++- Tenants have no bounded self-serve path to see, rotate, or revoke their own recognition keys; the operator console is the wrong trust boundary for that workflow.
++- A portal must not broaden the existing operator `/admin` surface or trust a client-supplied tenant identifier.
++- Routine key rotation should allow a WordPress installation to switch keys before the old key stops working; lost one-time key display and customer-data restoration need explicit recovery paths.
++
++## MVP scope
++
++- Buy identity only: use Clerk; verify the Clerk session JWT server-side in FastAPI and require a verified primary email claim on every session. Lowercase + trim it before the first lookup via a new `SqlAlchemyTenantRepository.find_by_primary_contact_email(email)` method; `tenants.primary_contact_email` is nullable with a unique index. Atomically bind the verified `(issuer, subject)` to the operator-provisioned tenant. Resolve subsequent requests through that binding, never by a fresh email lookup or client-supplied tenant id; a changed verified email does not change the binding. A replacement Clerk account requires an audited operator recovery procedure; the spike confirms the exact verified-email claim. [SEC-01][WEB-08][CARD-10]
++- Browser sign-in happens on Clerk's hosted sign-in page (Clerk Account Portal) configured for `app.altcontext.com`; Clerk sets its standard `__session` cookie (the Clerk session JWT) on the app domain. Every portal request reads the JWT from `__session` (browser) or `Authorization: Bearer <jwt>` (API clients), using the same verifier, checking the cookie first and the bearer second. A request carrying both credentials is rejected with 401 `invalid_session` before either token is verified, regardless of either credential's validity, and writes no `portal_auth_events` row. An unauthenticated browser `GET /portal/` redirects with 302 to the Clerk sign-in URL with `redirect_url` back to `/portal/`; an unauthenticated API request returns 401 `invalid_session` JSON. No Clerk JS runs on the panel page itself; only the Clerk-hosted sign-in page runs Clerk's script. [SEC-01][WEB-16]
++- Require an operator-provisioned tenant with a non-NULL primary contact email before the first portal claim. Provision through `make -C apps/prototype-description-service provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]`, which double-hops over SSH to `/opt/acx-backend/prod` and executes `python -m scripts.provision_customer --env prod ...` inside the API container. The laptop-side `make provision-customer ENV=prod` remains refused by design because it cannot reach the production DB. No signup, billing, or tenant creation in this MVP. [CARD-10]
++- If no tenant matches the normalized email at first claim, if the tenant email is NULL, or if the tenant is already bound to another subject, return `403 tenant_not_eligible`, create no tenant, and write one row to the new pre-tenant `portal_auth_events` table: `id uuid pk`, `clerk_sub text not null`, `email_hash text nullable` (sha256 of the normalized email), `outcome text not null` in {`tenant_not_eligible`, `email_unverified`, `claim_missing`}, and `created_at timestamptz`. `email_hash` is NULL exactly for `claim_missing`. The table is pre-tenant and RLS-exempt. Add a separate `CHECK (outcome IN ('tenant_not_eligible', 'email_unverified', 'claim_missing'))`, independent of the NULL/hash CHECK. A separate `portal_identity_links` table stores unique `(issuer, subject)` and unique `tenant_id` bindings with a link timestamp; it is RLS-exempt for pre-tenant lookup and writable only through the portal claim/recovery service. [SEC-01][DATA-13][WEB-08]
++- A missing email claim returns `403 claim_missing`, and an unverified email claim returns `403 email_unverified`; each writes one `portal_auth_events` row with the corresponding outcome.
++- The verifier accepts only `RS256` (rejecting `alg=none` and `HS*`), requires `iss` equal to the configured Clerk frontend API issuer, requires `azp`/`aud` in the configured allow-list (`https://app.altcontext.com`), rejects passed `exp` and future `nbf`, and validates the signature against cached JWKS refreshed on an unknown `kid`. A failed token check returns 401 `invalid_session`, writes no `portal_auth_events` row because unverified claims are untrusted, and emits only a structured log. [SEC-01]
++- Each `403` `tenant_not_eligible`, `email_unverified`, or `claim_missing` event is written through a separate short-lived `get_portal_auth_event_session` with no tenant context against the RLS-exempt table and committed before the 403 is raised; this audit-write session is a resource bulkhead, and the request session is never used or reused. If that insert fails, the request still returns the intended 403 with its reason code, and the failure is logged at ERROR with the reason code but no email or token material. [DATA-13][RES-04][RES-13]
++- Ship the keys panel only: authenticated tenants can see their own full key history, including revoked rows with `revoked_at` set, and may rotate or revoke their own keys. [PG-02][ARCH-13]
++- Keep the existing hashed `api_keys` store and `api_key_admin_service`; `api_keys` and `tenants` are intentionally outside `TENANT_TABLES` because recognition auth must look up a key before a tenant is known. Construct `TenantBoundApiKeyRepository` with the server-resolved `tenant_id`; it wraps `SqlAlchemyApiKeyRepository`, exposes no method accepting a caller-supplied tenant id, and lists portal history with `include_revoked=True`. Use the tenant-bound repository for reads and a tenant-predicated, row-locked key lookup for every mutation. The portal never uses a tenant id supplied by the client. [ARCH-13][WEB-08]
++- Make routine rotation atomic with bounded overlap. Under an old-key row lock, authorize an active named key, INSERT the `portal_rotations` reservation FIRST, mint one `secrets.token_urlsafe(32)` replacement, and set the old key's `expires_at` to `min(existing expires_at, now + 7 days)` (or `now + 7 days` if no earlier expiry). Leave `revoked_at` NULL until explicit revoke. Derive the new key's fresh `expires_in_days` from the old key's original `created_at` to `expires_at` lifetime before shortening it; if the old key did not expire, neither does its replacement. Preserve `rate_limit_tier`. Commit mint, cutoff, reservation, and audit together; show the replacement once and the exact old-key cutoff. Enforce both `UNIQUE (tenant_id, idempotency_key)` and `UNIQUE (tenant_id, old_key_id)` so concurrent distinct requests cannot rotate the same old key twice. On the idempotency unique violation, roll back, open a NEW transaction, re-apply tenant context and safety timeouts, then re-read the committed winner: equal fingerprint replays metadata with `raw_key: null, replayed: true`; different fingerprint returns 422. An old-key conflict with a different idempotency key returns 409. Catch only these named constraint violations. Foreign keys return 404; revoked, expired, or already rotated keys return 409. A lost one-time response is recovered by rotating the new active key shown in metadata with a fresh idempotency key; no raw key is replayed. Multiple active keys remain allowed. [API-02][DATA-13][WEB-08][WEB-16]
++- Make revoke irreversible and concurrency-safe. The direct portal path uses one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`; when it returns no row, re-read the addressed key and map a missing or foreign key to 404 and an already-revoked key to 409. Insert the audit row only when the conditional update returned a row, in the same transaction, so two concurrent revokes produce one winner and one 409. Record the audit event with the Clerk subject and email. `audit_events.actor` is `varchar(100)`: for portal actions store `clerk:<sub>` (Clerk `sub` is ≤ 64 chars; truncate-with-hash if longer) and put `{ "clerk_sub": ..., "email": ..., "sid": ... }` in the existing `payload` JSONB; never widen the column. Dual control is judged excessive for self-serve; the audit trail is the compensating evidence. [WEB-08][SECD-04][CON-05][CON-11]
++- Preserve the existing SHA-256 hash behavior for the 43-character random token as a known, accepted risk; changing the hashing scheme is out of scope. [PHP-09]
++- Separate the portal router from the Tailscale-only operator router and its shared `X-Admin-Token`; the portal uses the same DB role with repository-level isolation and never reuses the admin dependency or token. [SECD-02][CARD-10]
++- Treat identity as a generic subdomain to buy (Clerk) and key issuance as supporting/core functionality to build (the thin tenant-scoped router). [DOM-01]
++- Read the recognition DB directly instead of the planned business DB from E16-1. This is an explicit greenfield deviation: there are no production users, so the existing hashed key store is the narrowest source of truth for this MVP. [DOM-01][SECD-02]
++- On Clerk JWKS failure, fail the portal loudly with a distinct 503 while keeping the recognition API path independent of Clerk; use bounded JWKS timeouts and cached verification keys. [CARD-07][RES-13]
++
++## Architecture sketch
++
++- Add a FastAPI `portal` router under `/portal` and mount it in `apps/prototype-description-service/api/main.py::create_app`. The app-construction path runs a portal settings validator and fails fast by raising if any of `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, or `ACX_PORTAL_CSRF_SECRET` is missing. The router MUST NOT depend on `get_session`/`get_optional_session` or take a request tenant id. A new `deps/portal_session.py` verifies the Clerk JWT, requires the verified email claim for first claim, and resolves `(iss, sub)` through `portal_identity_links` thereafter. A missing binding may claim only one unbound tenant matched by normalized verified primary-contact email; use a transaction and unique constraints to stop concurrent or competing claims. A changed email does not remap an existing binding. Set `app.current_tenant` to the resolved tenant id before tenant-scoped writes; no request header or body can override it. [RES-13]
++- Browser sign-in is the Clerk-hosted Clerk Account Portal configured for `app.altcontext.com`; Clerk sets the standard `__session` session JWT cookie on that app domain. The shared verifier reads `__session` first for browser requests or `Authorization: Bearer <jwt>` second for API clients. If both are present, it returns 401 `invalid_session` before verifying either token, regardless of validity, and does not write an auth event. Unauthenticated browser `GET /portal/` returns 302 to the Clerk sign-in URL with `redirect_url` back to `/portal/`; unauthenticated API requests return 401 `invalid_session` JSON. The panel page contains no Clerk JS; only the hosted sign-in page runs Clerk's script. [SEC-01][WEB-16]
++- Cookie-authenticated `rotate` and `revoke` mutations require BOTH a per-session CSRF token (HMAC of the verified Clerk `sid` claim with a server secret, rendered as a hidden form field or sent as `X-CSRF-Token`) and `Origin`/`Referer` matching `https://app.altcontext.com`. Bearer-authenticated requests skip CSRF because bearer credentials are not ambient. Any service-set cookie uses `Secure; HttpOnly; SameSite=Lax`. [WEB-08][SEC-01]
++- Endpoints:
++
++  | Endpoint | Behavior |
++  | --- | --- |
++  | `GET /portal/` | Render the authenticated keys panel; without browser auth, redirect 302 to Clerk sign-in with `redirect_url` back to `/portal/`. |
++  | `GET /portal/me` | Return exactly `{tenant_id, email, key_count}`; never return the Clerk subject. |
++  | `GET /portal/keys` | Return the full history for the resolved tenant, including revoked rows with `revoked_at` set, with metadata `id`, `created_at`, `last_used_at`, `expires_at`, and `revoked_at`; the tenant-bound repository call uses `include_revoked=True`. An unauthenticated API request returns 401 `invalid_session` JSON. |
++  | `POST /portal/keys/{id}/rotate` | Require `Idempotency-Key`; authorize an active named key for the resolved tenant (404 foreign; 409 revoked, expired, or already rotated), mint a fresh-lifetime replacement, shorten only the old key's expiry to at most seven days, and return the raw value only once plus the old cutoff. Cookie auth also requires CSRF and same origin; bearer auth skips CSRF. |
++  | `POST /portal/keys/{id}/revoke` | Use one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`; a returned row yields 200 and one audit row in the same transaction, while zero rows are re-read and map to 404 for missing/foreign or 409 for already revoked. Cookie auth requires the CSRF token and matching `Origin`/`Referer`; bearer auth skips CSRF. |
++
++- `api_key_admin_service.mint_api_key` only mints, hashes, and persists (it does not commit or audit). Extract `recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic`, its `RevokeOutcome(record, already_revoked)`, and `UnknownKeyError` into a tenant-aware service. The service owns the transaction and uses the conditional revoke update above; it inserts the audit row only for a returned row. The admin adapter keeps its shipped contract: an already-revoked result maps to 200 with `already_revoked=true` and no second audit row. The portal adapter maps `already_revoked` to 409 and maps `UnknownKeyError` or a foreign key to 404. The refactor verification runs `recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved`. For portal mutations, handlers build a frozen `@dataclass(frozen=True) PortalMutationContext(tenant_id: UUID, idempotency_key: str, request_fingerprint: str, clerk_sub: str, email: str, sid: str)` and pass it with `key_id: UUID`; the service owns the reservation insert, key mutation, and audit row containing `{ "clerk_sub": ..., "email": ..., "sid": ... }`. For portal rotate/revoke actions, `audit_events.actor` is `varchar(100)`, so store `clerk:<sub>` (Clerk `sub` is ≤ 64 chars; truncate-with-hash if longer) and never widen the column. Successful portal actions write `audit_events` with the resolved `tenant_id`; pre-tenant auth failures write `portal_auth_events` because `audit_events.tenant_id` is non-null. Reuse the existing auth outcome vocabulary (`invalid_key`, `expired`, `revoked`, `tenant_mismatch`) where the recognition API validates keys. The portal's Clerk dependency is separate from `_require_auth_impl`, and the portal router never imports the admin router module [SECD-02].
++- Use `TenantBoundApiKeyRepository(server_resolved_tenant_id)` for portal reads; it wraps `SqlAlchemyApiKeyRepository`, exposes no method that accepts a caller-supplied tenant id, and calls `list_for_tenant(..., include_revoked=True)` internally. Use a tenant-predicated ownership lookup under row lock for mutations. All `portal_rotations` access goes through new `TenantScopedRotationRepository(tenant_id)` methods with tenant predicates built in. `api_keys`, `tenants`, and pre-tenant `portal_identity_links` remain outside `TENANT_TABLES` (RLS-exempt); portal authorization must therefore enforce tenant ownership structurally before every read or write, with repository isolation proven independently because `api_keys` is RLS-exempt. [ARCH-13][WEB-08]
++- Add durable `portal_rotations` in `001_identity_schema.py`: `id`, `tenant_id`, `idempotency_key`, request fingerprint, old/new key IDs, and `created_at`, with unique `(tenant_id, idempotency_key)` and `(tenant_id, old_key_id)`. The reservation INSERT precedes mint and expiry shortening. `new_key_id` is nullable only until the same transaction records the minted key; committed rows must have it. Give rotations FORCE RLS. On an idempotency conflict, roll back and reapply tenant context in a new transaction before replay; metadata includes `old_expires_at`, never a raw key or `revoked_at` for routine rotation. Reuse the existing idempotency normalization pattern. [API-02][DATA-13]
++- Add `portal_auth_events` directly in `001_identity_schema.py` with `id uuid pk`, `clerk_sub text not null`, `email_hash text nullable` (sha256 of the normalized email, never the raw email), `outcome text not null` in {`tenant_not_eligible`, `email_unverified`, `claim_missing`}, and `created_at timestamptz`; enforce both a separate `CHECK (outcome IN ('tenant_not_eligible', 'email_unverified', 'claim_missing'))` and the existing independent `CHECK ((outcome = 'claim_missing') = (email_hash IS NULL))`. It is pre-tenant, not tenant-scoped, and RLS-exempt like `api_keys`; register it in `EXPECTED_SCHEMA_TABLES` and keep rows indefinitely because volume is negligible. Write it through separate short-lived `get_portal_auth_event_session` without tenant context and commit before each 403; if the insert fails, still return the intended 403 with its reason code, log at ERROR without email/token material, and never reuse the request session. [DATA-13][RES-13]
++- Add `portal_identity_links` as a third raw-SQL table with `tenant_id uuid fk tenants UNIQUE NOT NULL`, `issuer text NOT NULL`, `subject text NOT NULL`, `linked_at timestamptz NOT NULL`, and `UNIQUE (issuer, subject)`. Register all three new tables in `RAW_SQL_TABLES` and `EXPECTED_SCHEMA_TABLES`, only `portal_rotations` in `TENANT_TABLES`; create constraints, heal and downgrade behavior, and extend the four schema-truth surfaces. [DATA-13][WEB-08]
++- The implementation lane must update `docs/workbay/contracts/security.md` in the same slice with portal cookie + bearer auth transport, the CSRF rule, `/portal/*` request/response schemas including the replay envelope (`raw_key: null, replayed: true`), error codes and 404/409/422 semantics (404 for a foreign key, 409 for an already-revoked key, 422 for an idempotency-fingerprint conflict; `invalid_session`, `csrf_failed`, `tenant_not_eligible`, `email_unverified`, `claim_missing`), and `Idempotency-Key`/`X-CSRF-Token` headers. [DATA-13][SEC-01][WEB-08]
++- Serve a minimal server-rendered HTML page that reuses the escaped f-string pattern of `admin_console.py::render_console` — extract the shared HTML-escaping helpers into `recognition/interface_adapters/http/html_render.py` (Slice 0 refactor item) and build `portal_console.py::render_portal(...)` on them. No Jinja2, no StaticFiles, no htmx, no npm build; the existing `test_admin_mount.py` module ban stays in force and a twin assertion is added for the portal mount. The new page is served on the new `app.altcontext.com` Caddy vhost. The vhost needs an operator-created DNS A record, proxies portal requests to the service, and keeps `respond 404` for every `/admin*` path. Existing API vhosts retain their `/admin*` 404 behavior. [WEB-16][CARD-10]
++- Keep operator admin mutations Tailscale-only with the single shared `X-Admin-Token`; a portal principal can touch only its own tenant's keys. [SECD-02][CARD-10]
++- Clerk commitment is gated on a spike proving the JWT verification path, organization/email claim shape, and outage behavior before durable purchase or deployment evidence is accepted. [CARD-06]
++- Eval registration is not included here: `packages/workbay-system/config/evals/` does not exist in this checkout, so the eval test-file list and gate command are specified below beside this scope note.
++
++## Non-functional intake
++
++- Latency: propose p95 ≤ 500 ms for `GET /portal/keys` and `POST /portal/keys/{id}/rotate`; this is an assumption for plan-draft validation.
++- Idempotency: `POST /portal/keys/{id}/rotate` requires `Idempotency-Key`; a retry must not double-execute and must replay the prior rotation result. [API-02][DATA-13]
++- Clerk outage: use a timeout and cached JWKS; return a distinct 503 from portal auth when verification cannot proceed, while `/analyze` with a valid API key does not call Clerk and remains available. [CARD-07][RES-13]
++- Staleness: none expected for reads-after-writes; portal reads and writes use the same recognition DB.
++- Scale: target tens of tenants; no capacity claim is made for 10× growth in this MVP.
++
++## Success criteria
++
++The RED lane adds a `require_postgres` fixture that FAILS (not skips) when `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL is unreachable, applied to every DB-backed portal test. The eval gate fails on any skipped case.
++
++1. **SC-1** — Cross-tenant key access through the portal returns 404 or 403 and never exposes the other tenant's key.
++2. **SC-2** — An authenticated tenant sees its own full key history, including revoked rows with `revoked_at` set, with metadata `id`, `created_at`, `last_used_at`, `expires_at`, and `revoked_at`; a client-supplied tenant id cannot change the server-resolved tenant.
++3. **SC-3** — Equal idempotency key and fingerprint mint exactly one replacement with the old rate tier and a fresh lifetime based on its original lifetime; replay returns metadata with no secret, and a different fingerprint returns 422.
++4. **SC-4** — Rotation authorizes only an active key owned by the resolved tenant (404 foreign; 409 revoked, expired, or already rotated), keeps the old key valid only until `min(original expiry, now + 7 days)`, and does not set `revoked_at`; recognition accepts the old key before that cutoff and classifies it `expired` afterward.
++5. **SC-5** — The raw key is shown exactly once in the first successful rotate response, is not re-shown on an idempotent replay, and never appears in application logs, audit rows, or URLs.
++6. **SC-6** — Every `/admin*` request on the `app.altcontext.com` vhost returns 404.
++7. **SC-7** — When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/analyze` with a valid key still succeeds.
++8. **SC-8** — Two concurrent rotate requests with the same Idempotency-Key and fingerprint produce exactly one new key and one old-key expiry shortening; the loser receives replay under re-applied tenant context. Distinct idempotency keys against the same old key yield one winner and a 409 loser. [API-02][RES-13]
++9. **SC-9** — Cross-tenant test: tenant B cannot read or replay tenant A's `portal_rotations` row, at both repository and RLS level. [ARCH-13][SECD-04]
++10. **SC-10** — A portal request carrying `X-Tenant-ID` for another tenant is served strictly as the Clerk-resolved tenant; the header is ignored (test asserts no cross-tenant rows returned). [SECD-02][WEB-08]
++11. **SC-11** — Direct `POST /portal/keys/{id}/revoke` (200 → `revoked_at` set + `audit_events` row; 404 for a foreign key id; 409 if already revoked).
++12. **SC-12** — `GET /portal/me` returns `{tenant_id, email, key_count}` for an eligible user and 403 `tenant_not_eligible` for an unmatched one, with a `portal_auth_events` row.
++13. **SC-13** — Missing `email` claim → 403 `claim_missing` with a `portal_auth_events` row whose `email_hash IS NULL`; `email_verified=false` → 403 `email_unverified` with a hashed email in its row.
++14. **SC-14** — The server-rendered page (`GET /portal/`) returns 200 HTML listing the tenant's keys with no `jinja2` in `sys.modules`.
++15. **SC-15** — If the `audit_events` insert fails inside rotate, the key mutation rolls back and no `portal_rotations` row survives.
++16. **SC-16** — Unauthenticated `GET /portal/` redirects (302) to Clerk sign-in; unauthenticated `GET /portal/keys` returns 401 `invalid_session`; a valid `__session` cookie and a valid bearer token each authenticate identically. [SEC-01][WEB-16]
++17. **SC-17** — A cross-site form POST to rotate/revoke with a valid `__session` cookie but missing/mismatched CSRF token or foreign Origin is rejected 403 `csrf_failed` and no key changes. [WEB-08][SEC-01]
++18. **SC-18** — Tokens with bad signature, wrong `iss`, wrong `azp`, disallowed `alg`, expired `exp`, or future `nbf` each return 401 `invalid_session` and write no `portal_auth_events` row. [SEC-01]
++19. **SC-19** — Each 403 (`tenant_not_eligible`, `email_unverified`, `claim_missing`) leaves exactly one committed `portal_auth_events` row observable from a fresh connection after the response. [DATA-13]
++20. **SC-20** — With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, the portal DB tests FAIL (not skip).
++21. **SC-21** — A verified contact claims an unbound tenant once; subsequent sessions resolve by unique `(issuer, subject)` even after email changes, while a different subject claiming the same tenant receives 403. Concurrent claims cannot create two bindings.
++22. **SC-22** — A lost first rotation response cannot reveal the secret through replay; the tenant can rotate the new active key with a new idempotency key, and a constant-provisioned install sees deployment guidance and the old-key cutoff.
++23. **SC-23** — A customer-record restore drill confirms tenant/key/link/audit restoration and prevents a formerly revoked key from becoming valid; this is an operator release gate, not a unit-test-only claim.
++24. **SC-24** — Injected `portal_auth_events` insert failure still returns the intended 403 reason, logs ERROR without email/token material, and does not reuse the request session. Test: `recognition/tests/api/test_portal_auth.py::test_auth_event_write_failure_still_403_and_logs_error`.
++25. **SC-25** — Cookie plus bearer together returns 401 `invalid_session` before either token is verified, writes no auth-event row, and covers both-valid-different-principals plus valid-cookie/invalid-bearer. Test: `recognition/tests/api/test_portal_auth.py::test_cookie_and_bearer_together_are_rejected`.
++26. **SC-26** — Two concurrent direct revokes of one active key produce exactly one 200 and one 409, with exactly one audit row. Test: `recognition/tests/api/test_portal_keys.py::test_concurrent_direct_revoke_single_winner`.
++27. **SC-27** — `/admin` revoke of an already-revoked key preserves 200 `already_revoked=true` with no second audit row after service extraction. Test: `recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved`.
++28. **SC-28** — Inserting a `portal_auth_events` row with an unsupported `outcome` and non-NULL `email_hash` fails the outcome CHECK. Test: `recognition/tests/schema/test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome`.
++29. **SC-29** — `create_app` registers `/portal/*` routes, and app construction raises when any required Clerk/CSRF setting is missing. Test: `recognition/tests/api/test_portal_auth.py::test_portal_routes_mounted_and_boot_fails_without_clerk_config`.
++30. **SC-30** — `TenantBoundApiKeyRepository` bound to tenant A never returns tenant B rows for list/get/revoke, exercised without HTTP. Test: `recognition/tests/test_tenant_bound_api_key_repository.py::test_repository_cannot_cross_tenants`.
++31. **SC-31** — `check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file. Test: `recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate`.
++
++SC-1 through SC-31 map to named tests in the adjacent eval spec, except SC-23, which requires a recorded restore drill before production exposure. The eval test-file list adds `recognition/tests/api/test_admin_router.py`, `recognition/tests/schema/test_identity_schema_pg.py`, `recognition/tests/test_tenant_bound_api_key_repository.py`, and `recognition/tests/scripts/test_check_eval_junit.py` for SC-24 through SC-31 where those files are new.
++
++## Not-doing
++
++- Demo-host self-heal mint on 401 (decision 6437, track 2); operators paste the new key into wp-admin Settings and use Test Connection.
++- ADR-012 key metadata columns `label` and `created_by`; those are owned by CRM-1.
++- Plugin auto-adopt of a rotated key; keep paste plus Test Connection.
++- Usage or quota display.
++- Signup and billing; a separate subscription task will own checkout, hosted billing portal access, entitlements, quotas, and webhook reconciliation.
++- Any schema change beyond `portal_rotations`, `portal_auth_events`, and `portal_identity_links`, added directly in `001_identity_schema.py` per greenfield policy.
++- No `/admin` tenant-email update route in this MVP; `/admin` has no tenant-email field or email-update route.
++- CSRF exceptions for cookie-authenticated `rotate`/`revoke`; those mutations require the per-session token and matching `Origin`/`Referer` (bearer-authenticated requests have no ambient credential and skip CSRF).
++- Changes to the API-key auth section of `docs/workbay/contracts/security.md`; the implementation lane adds the portal contract in the same slice without changing that section.
++
++## Assumptions + open questions
++
++- Clerk plan and cost are acceptable; the `e16-7-spike` handoff settles the session JWT claim names (`sub`, `email`, `email_verified`, `azp`, `iss`, `sid`), uses a Clerk user rather than an organization for the MVP, and records JWKS-outage behavior. [CARD-06]
++- Every tenant already exists; `primary_contact_email` is nullable with a unique index. First claim requires a normalized verified Clerk email to match an unbound tenant; subsequent access uses the bound `(issuer, subject)`. A changed email never rebinds a tenant. An unmatched, NULL-email, or already-bound tenant is `tenant_not_eligible` (403). Operator provisioning and account recovery remain outside the portal.
++- The DNS A record for `app.altcontext.com` is an operator action.
++- The 500 ms p95 target is an intake assumption, not an existing SLO.
++- RLS extension to `api_keys` is explicitly deferred; revisit if the portal ever gets its own DB role.
++
++## Dispatch decomposition
++
++0. **Slice 0 refactor:** move `revoke_key_atomic`, `RevokeOutcome`, `UnknownKeyError`, and audit writes from `recognition/interface_adapters/http/routers/admin.py` into transactional `api_key_admin_service.py` operations. Extract shared HTML escaping and add the tenant-email lookup. Add `TenantBoundApiKeyRepository` and prove its list/get/revoke isolation without HTTP. Add all three raw-SQL portal tables to schema-truth, heal, downgrade, and constraint checks; only `portal_rotations` enters `TENANT_TABLES`. Preserve the existing `/admin` already-revoked 200 contract and run `recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved`. The portal router never imports the admin router module. [SECD-02][DATA-13]
++1. **`e16-7-spike` lane (runs first):** perform throwaway verification of a Clerk JWT against JWKS in FastAPI and write `docs/assessments/current/e16-7-clerk-claims-spike.md`. Record a handoff decision settling the session JWT claims `sub`, `email`, `email_verified`, `azp`, `iss`, and `sid`, user-versus-organization identity (MVP = user), and JWKS-outage behavior; discard the spike code. `e16-7-impl` and `e16-7-ops` depend on this handoff, while refactor and RED do not. [CARD-06]
++2. **RED lane:** tests only: `recognition/tests/api/test_portal_auth.py`, `recognition/tests/api/test_portal_keys.py`, `recognition/tests/api/test_portal_ui.py`, `recognition/tests/infra/test_caddyfile_admin_404.py`, `recognition/tests/api/test_admin_router.py`, `recognition/tests/schema/test_identity_schema_pg.py`, `recognition/tests/test_tenant_bound_api_key_repository.py`, and `recognition/tests/scripts/test_check_eval_junit.py`. Add a `require_postgres` fixture applied to every DB-backed portal test that FAILS (not skips) when `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL is unreachable; create `apps/prototype-description-service/scripts/check_eval_junit.py` with its own skipped-case test; add the SC-24–SC-31 tests named above; done when they collect and fail.
++3. **`e16-7-impl` implementation lane:** after the spike handoff, add the Clerk dependency, tenant-scoped portal router, `apps/prototype-description-service/api/main.py::create_app` mount and boot validator, app vhost, durable rotation idempotency, and key-panel behavior until the RED tests pass. Add `PyJWT[crypto]` as a direct runtime dependency in `apps/prototype-description-service/pyproject.toml`, update `uv.lock`, and verify the built image with `python -c "import jwt; jwt.PyJWKClient"`. Update `docs/workbay/contracts/security.md` in the same slice with the portal transport, CSRF, `/portal/*` schemas, replay envelope, errors and 404/409/422 semantics, and `Idempotency-Key`/`X-CSRF-Token` headers; preserve the existing `/admin*` 404 boundary and do not change the contract's API-key auth section.
++4. **`e16-7-ops` operations lane:** after the spike handoff, add `provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]` to the app Makefile, mirroring `admin-oci-mint` with an SSH double-hop to `/opt/acx-backend/prod` and `python -m scripts.provision_customer --env prod ...` inside the API container. Document it in `docs/runbooks/key-management.md` under `## Track 1` → `### Portal-eligible tenant (E16-7)` and add a `## Tenant portal (app.altcontext.com)` section covering Clerk origin/redirect/env, the DNS A record, and the restore drill. Keep laptop `make provision-customer ENV=prod` refused by design.
++
++## Eval gate
++
++Run the portal evals from the repository root. Before DB-backed tests, start PostgreSQL with `make -C apps/prototype-description-service postgres-start`.
++
++```sh
++mkdir -p .task-state/evals && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl
++```
++
++`check_eval_junit.py` exits non-zero when failures plus errors exceed `max_failures` or skipped cases exceed `max_skipped`, and appends one JSONL evidence row. The threshold object is `{"kind": "junit_counts", "max_failures": 0, "max_skipped": 0}`. The eval file list includes the SC-24–SC-31 additions: `recognition/tests/api/test_admin_router.py`, `recognition/tests/schema/test_identity_schema_pg.py`, `recognition/tests/test_tenant_bound_api_key_repository.py`, and `recognition/tests/scripts/test_check_eval_junit.py`.
++
++## Canon gaps
++
++- no rule for shown-once/unrecoverable secret display semantics; no rule for JWT-to-internal-identity re-derivation beyond SEC-01.
+diff --git a/docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md b/docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md
+new file mode 100644
+--- /dev/null
++++ b/docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md
+@@ -0,0 +1,421 @@
++# E16-7. Tenant self-serve API key panel
++
++- **Date**: 2026-09-16
++- **Author**: gpt-5.6-luna
++- **Owning Epic**: `docs/epics/v0.3.1/saas-foundation-epic.md`
++- **Epic Short ID**: `E16`
++- **Task ID**: `E16-7`
++- **Target Branch**: `feature/e16-7`
++- **Review Coverage Target**: 2
++
++> **Status**: Draft, amended 2026-09-16. The E16 epic lists phases E16-1..E16-6 only, and E16-7 is not yet allocated there. Identity binding, overlap, and restoration cases need review; this is not yet an implementation-ready `/incremental-implementation` input.
++
++## Objective
++
++Give an operator-provisioned tenant a bounded, server-rendered portal at `/portal` where an eligible Clerk-authenticated contact can inspect its own recognition-key metadata, rotate an active key with at most seven days of overlap and exactly once per idempotency key, and revoke a key immediately when needed. Persist a stable verified identity binding and give a lost-secret recovery path. Preserve the Tailscale-only `/admin` boundary and recognition API behavior while adding tenant isolation, pre-tenant auth-event evidence, and a runbook for provisioning, restoration, and Clerk configuration.
++
++## Intake
++
++- **Scope one-pager**: `docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md` (rev4 amendment, 2026-09-16). Sibling-owned; this task plan does not edit it.
++- **Build/buy assessment**: `docs/assessments/current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md`
++- **Eval specification**: `docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json` (SC-1 through SC-22 plus SC-24 through SC-31); SC-23 is an operator restore drill. Sibling-owned; this task plan does not edit it.
++- **Clerk claims spike**: `docs/assessments/current/e16-7-clerk-claims-spike.md` (new; lane `e16-7-spike`)
++- **Key Q&A decisions**: `decision #11708`, `decision #11709`, and triage decision `#11713`
++- **Not-Doing**: signup, billing, tenant creation, usage/quota display, plugin auto-adopt, demo-host self-heal mint, ADR-012 key metadata, `/admin` tenant-email updates, and changes to the existing API-key contract section. A separate task owns subscriptions and entitlements.
++
++## Problem Statement
++
++After a production database reset, operators must ferry raw recognition keys back to WordPress manually. Tenants have no self-serve way to inspect, rotate, or revoke their own keys, while the existing operator console is Tailscale-only and must not become the tenant trust boundary. A client-supplied tenant identifier or an unverified Clerk claim must never select a tenant, and pre-tenant rejection evidence needs a separate RLS-exempt audit surface.
++
++## Constraints
++
++- Use Clerk only for identity purchase: verify session JWTs server-side in FastAPI with `PyJWT[crypto]` (`jwt.PyJWKClient` + `jwt.decode`), accept only RS256 with configured issuer and authorized parties, require a verified primary email claim on each session (the spike confirms Clerk's exact shape), and do not ship Clerk JS on the panel. An email change does not change the already-bound tenant [SEC-01][CARD-06].
++- On first claim only, resolve an unbound tenant from lowercase-and-trimmed verified email through `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository.find_by_primary_contact_email (new)` and atomically bind unique `(issuer, subject)` to it. Resolve later sessions through that binding even if email changes. Ignore `X-Tenant-ID`, query tenant ids, and body tenant ids; account replacement uses audited operator recovery [SEC-01][WEB-08][CARD-10].
++- Require an operator-provisioned tenant in the production identity DB. Production provisioning is `make -C apps/prototype-description-service provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]`, which mirrors `admin-oci-mint` (ssh double-hop to `/opt/acx-backend/prod`, exec `python -m scripts.provision_customer --env prod ...` inside the api container). The laptop-side `make provision-customer ENV=prod` stays refused by design. There is no portal signup or tenant creation [CARD-10].
++- Portal dependencies must not call `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_session (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_optional_session (existing)`, or `apps/prototype-description-service/recognition/interface_adapters/http/deps/tenant_common.py::get_tenant_id_optional (existing)`. Those paths consume `X-Tenant-ID`; portal sessions are new and server-resolved.
++- Keep the recognition database as the source of truth for this greenfield portal; `api_keys`, `tenants`, `portal_auth_events`, and pre-tenant `portal_identity_links` remain RLS-exempt, while `portal_rotations` is tenant-scoped [DOM-01][SECD-02][PG-02][DATA-13]. Because `api_keys` is RLS-exempt, portal key access goes through `TenantBoundApiKeyRepository` constructed with the server-resolved `tenant_id`; it wraps `SqlAlchemyApiKeyRepository` and exposes no method that accepts a caller-supplied tenant id [ARCH-13][WEB-08].
++- Preserve SHA-256 hashing for the existing 43-character random token, do not widen `audit_events.actor` beyond `varchar(100)`, and never put a raw key in logs, audit payloads, or URLs [PHP-09][SECD-04].
++- Cookie-authenticated rotate/revoke requests require an HMAC of the verified Clerk `sid` with the per-session CSRF token and matching `Origin`/`Referer`; bearer-authenticated requests skip CSRF because bearer credentials are not ambient. Service-set cookies are `Secure; HttpOnly; SameSite=Lax` [WEB-08][SEC-01].
++- A request carrying both a `__session` cookie and an `Authorization: Bearer` header is rejected `401 invalid_session` before any token is verified, regardless of either credential's validity, and writes no `portal_auth_events` row.
++- Required-at-boot configuration must fail fast [rg-008] (Release It! fail-fast config): `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, and `ACX_PORTAL_CSRF_SECRET`. `apps/prototype-description-service/api/main.py::create_app` mounts the portal router and runs the portal settings validator at app construction. JWKS requests use bounded timeouts and cached keys; an unavailable verifier returns a distinct 503 without affecting `/analyze` [CARD-07][RES-13].
++- Auth-event writes are bulkheaded (Release It!): the `portal_auth_events` insert uses its own short-lived session, never the request session. If that insert fails, the response is still the intended 403 with its reason code, the failure is logged at ERROR with the reason code and no email/token material, and the request session is not reused.
++- The `ACX_PORTAL_TESTS_REQUIRE_PG=1` test mode must fail, not skip, when PostgreSQL is unreachable. The eval command must pass with zero failures and zero skips (`{"kind": "junit_counts", "max_failures": 0, "max_skipped": 0}`), and every `/admin*` path on the new app host must remain 404 [CARD-10].
++- This task-plan amendment owns only `docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md`. Scope and eval mapping remain independently owned sibling files and are not edited here. Implementation and runtime deployment remain downstream work.
++
++## Workflow Principles
++
++- Authenticate and validate claims before deriving tenant context; authorization is based on the resolved tenant, never on request input.
++- Keep untrusted-token failures (401), trusted-but-ineligible contacts (403), CSRF failures (403), and verifier outages (503) distinct and observable without leaking tenant existence [SEC-01][DATA-13].
++- Reserve rotation idempotency and old-key ownership first, then commit mint, old-key expiry shortening, and audit in one transaction. Replay metadata never includes the raw secret; direct revoke is separate [API-02][DATA-13].
++- Keep each slice independently reviewable as behavior plus proof. RED names the portal tests for SC-1 through SC-22 and SC-24, SC-25, SC-26, SC-29, SC-30, and SC-31. Slice 0 names SC-27 and SC-28. The ops lane records SC-23.
++- Preserve the existing `/admin` response mapping and auth contract while putting tenant behavior in a separate portal router; do not import the admin router into portal code [SECD-02].
++- Prefer narrow repository methods with structural tenant predicates over caller-provided tenant arguments [ARCH-13][WEB-08]. Portal key access binds the resolved tenant at construction (`TenantBoundApiKeyRepository`); it does not pass a caller-supplied tenant id into `SqlAlchemyApiKeyRepository.list_for_tenant`.
++
++## Terminology
++
++- **Resolved tenant**: the tenant selected from an existing `(issuer, subject)` link, or atomically claimed once from the normalized, verified Clerk email; it is the only tenant identity accepted by portal handlers.
++- **Portal auth event**: a committed pre-tenant row for `tenant_not_eligible`, `email_unverified`, or `claim_missing`; invalid JWTs do not create one [DATA-13].
++- **Rotation reservation**: a `portal_rotations` row inserted before mint and cutoff update; unique `(tenant_id, idempotency_key)` and `(tenant_id, old_key_id)` constrain retries and competing rotations.
++- **Rotation cutoff**: the old key remains active until the earlier of its original expiry and seven days after rotation; `revoked_at` stays NULL unless explicitly revoked.
++- **Replay envelope**: a successful retry response containing prior rotation metadata with `raw_key: null` and `replayed: true`.
++- **Ambient cookie**: the Clerk `__session` credential sent by a browser; unlike a bearer token, it requires CSRF and same-origin checks for mutations.
++- **Portal mutation context**: frozen dataclass `PortalMutationContext(tenant_id: UUID, idempotency_key: str, request_fingerprint: str, clerk_sub: str, email: str, sid: str)`. Service APIs take this plus `key_id: UUID`; handlers only build it.
++
++## Settled implementation contracts
++
++These contracts are binding for this plan and must agree with the sibling scope and eval files. Do not re-decide them in implementation lanes.
++
++- **`GET /portal/me`**: response is exactly `{tenant_id, email, key_count}`. The Clerk subject is not returned (privacy).
++- **`GET /portal/keys` history**: full history for the resolved tenant, including revoked rows with `revoked_at` set. Reads call `TenantBoundApiKeyRepository.list(include_revoked=True)` (no tenant argument; the bound `tenant_id` is applied internally). SC-2 names revoked rows explicitly.
++- **Tenant-bound repository**: `TenantBoundApiKeyRepository` is constructed with the server-resolved `tenant_id` and exposes no method that accepts a caller-supplied tenant id; it wraps `SqlAlchemyApiKeyRepository`. Isolation is proven at repository level (SC-30) because `api_keys` is RLS-exempt.
++- **Revoke concurrency**: direct revoke is one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id` (DDIA lost-update/write-skew; do not read-then-unconditionally-write). Zero rows → re-read → 404 (foreign/missing) or 409 (already revoked); audit row inserted only when a row was returned, in the same transaction.
++- **Shared revoke service**: extract `recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic` and its existing `RevokeOutcome(record, already_revoked)` into a tenant-aware service; `UnknownKeyError` stays the not-found signal. Adapters map independently: `/admin` keeps its shipped contract (200 with `already_revoked=true`, no second audit row); `/portal` maps `already_revoked` → 409 and `UnknownKeyError`/foreign key → 404.
++- **Dual credentials**: cookie+bearer together → 401 `invalid_session` before any token is verified, no `portal_auth_events` row, covering both-valid-different-principals and valid-cookie+invalid-bearer.
++- **Auth-event write failure**: short-lived session for the insert; intended 403 still returns; ERROR log with reason code and no email/token material; request session not reused.
++- **Auth-event outcome CHECK**: `portal_auth_events.outcome` gets its own CHECK `outcome IN ('tenant_not_eligible','email_unverified','claim_missing')`, separate from the existing NULL/hash CHECK, in `001_identity_schema.py` (greenfield: no new migration file).
++- **App mount + boot validation**: portal router mounted in `apps/prototype-description-service/api/main.py::create_app`; portal settings validator raises at construction when `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, or `ACX_PORTAL_CSRF_SECRET` is missing.
++- **JWT library**: `PyJWT[crypto]` as a direct runtime dependency in `apps/prototype-description-service/pyproject.toml` with a `uv.lock` update, landed by `e16-7-impl`; production import verified with `python -c "import jwt; jwt.PyJWKClient"` inside the built image.
++- **Clerk spike**: lane `e16-7-spike` runs first (before impl and ops) and writes `docs/assessments/current/e16-7-clerk-claims-spike.md`, settling session JWT claim names (`sub`, `email`, `email_verified`, `azp`, `iss`, `sid`), user-vs-organization identity (MVP = user), and JWKS-outage behavior. `e16-7-impl` and `e16-7-ops` depend on it; refactor and RED do not.
++- **Eval gate**: command runs from the repository root (see Verification Strategy). `apps/prototype-description-service/scripts/check_eval_junit.py` (RED lane) exits non-zero when failures+errors > max-failures or skipped > max-skipped, and appends one JSONL evidence row. Threshold: `{"kind": "junit_counts", "max_failures": 0, "max_skipped": 0}`.
++- **Prod provisioning**: `make -C apps/prototype-description-service provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]`. Laptop `make provision-customer ENV=prod` stays refused. Owned by `e16-7-ops`; documented in `docs/runbooks/key-management.md` under `## Track 1` → new `### Portal-eligible tenant (E16-7)` and a new `## Tenant portal (app.altcontext.com)` section.
++- **postgres-start**: always written `make -C apps/prototype-description-service postgres-start`.
++- **Portal mutation context**: service APIs take frozen `PortalMutationContext` plus `key_id: UUID`; the service owns the transaction (reservation insert, key mutation, audit row with `{clerk_sub, email, sid}`); handlers only build the context.
++
++## Current State Analysis
++
++- `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository (existing)` currently exposes `get`, `get_naming_agreement_enabled`, and `update_naming_agreement_enabled`, but not `find_by_primary_contact_email`. The normalized lookup pattern is `apps/prototype-description-service/recognition/application/services/customer_provision_service.py::provision_customer._reselect (existing)` (`select(Tenant).where(Tenant.primary_contact_email == normalized_email)`), against the unique `tenants.primary_contact_email` column; Slice 0 adds the repository method.
++- The earlier rev3 scope note named `TenantScopedApiKeyRepository` and `TenantRepository.find_by_primary_contact_email` as if they existed. Neither name is an implementation target. Slice 0 introduces `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_bound_api_key_repository.py::TenantBoundApiKeyRepository (new)`, constructed with the server-resolved `tenant_id`, wrapping `apps/prototype-description-service/recognition/infrastructure/repositories/api_key_repository.py::SqlAlchemyApiKeyRepository (existing)`. Portal reads call `list(include_revoked=True)` so `/portal/keys` returns full history including revoked rows. Mutations stay on the bound repository (no caller-supplied tenant id). Add `apps/prototype-description-service/recognition/infrastructure/repositories/portal_rotation_repository.py::TenantScopedRotationRepository (new)` for rotation rows.
++- `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::mint_api_key (existing)` mints, hashes, and persists without committing or auditing. `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::UnknownKeyError (existing)`, and `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::RevokeOutcome (existing)` currently own revoke and audit behavior with a racy read-then-write. Slice 0 moves the transactional domain operations behind a tenant-aware service using the conditional `UPDATE ... RETURNING` and frozen `PortalMutationContext` for portal callers, while retaining admin response mapping (`200 already_revoked=true`, no second audit row).
++- `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::_apply_postgres_session_safety_settings (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_session (existing)`, and `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_optional_session (existing)` use `SET LOCAL` and `X-Tenant-ID` through `apps/prototype-description-service/recognition/interface_adapters/http/deps/tenant_common.py::get_tenant_id_optional (existing)`. A portal request cannot reuse those dependencies; new portal sessions must establish context only after Clerk verification and tenant lookup.
++- `apps/prototype-description-service/recognition/interface_adapters/http/admin_console.py::render_console (existing)` emits escaped f-string HTML. `apps/prototype-description-service/recognition/tests/api/test_admin_mount.py::test_console_imports_no_template_engine (existing)` protects the no-Jinja2/no-StaticFiles/no-htmx boundary; Slice 0 extracts reusable escaping helpers and Slice 2 adds the portal twin assertion.
++- `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::TENANT_TABLES (existing)`, `RAW_SQL_TABLES (existing)`, `EXPECTED_SCHEMA_TABLES (existing)`, `_ensure_table_constraints (existing)`, `_ensure_table (existing)`, `ensure_rls (existing)`, `heal (existing)`, and `downgrade (existing)` do not cover `portal_rotations`, `portal_auth_events`, or `portal_identity_links`. All three raw-SQL tables must appear in schema-truth checks, with only rotations in `TENANT_TABLES`; keep `audit_events.actor` at `varchar(100)` and `payload` at `jsonb`. `portal_auth_events.outcome` needs its own CHECK `outcome IN ('tenant_not_eligible','email_unverified','claim_missing')`, separate from the existing NULL/hash CHECK.
++- `apps/prototype-description-service/recognition/tests/conftest.py::_pg_create_scratch_db (existing)` currently allows database-backed tests to skip when Postgres is unreachable. The RED lane adds `apps/prototype-description-service/recognition/tests/conftest.py::require_postgres (new)` and the named portal test files; `apps/prototype-description-service/recognition/tests/infra/` does not yet exist and is created by that lane. Start Postgres with `make -C apps/prototype-description-service postgres-start`.
++- `apps/prototype-description-service/api/main.py::create_app (existing)` mounts top-level routers (`recognition_router`, `roster_curation_router`, `scene_router`, `gpu_router`, conditional `admin_router`). The portal router is not mounted; implementing only `routers/portal.py` leaves `/portal/*` unreachable. Slice 2 mounts it here and runs portal settings validation at construction, following `apps/prototype-description-service/recognition/config/security.py::validate_admin_config (existing)` fail-fast precedent (`recognition/tests/api/test_admin_mount.py::_create_app`, `recognition/tests/unit/test_vault_boot_failfast.py::test_create_app_failfast_on_auth_failure`).
++- `apps/prototype-description-service/pyproject.toml` has no direct JWT/JWK runtime dependency. Slice 2 adds `PyJWT[crypto]` and updates `uv.lock`.
++- `apps/prototype-description-service/Caddyfile::@admin matcher and respond 404 directives on public vhosts (existing)` already protect `/admin` paths. The `app.altcontext.com` vhost is new and must proxy portal traffic while preserving 404 for every `/admin*` path.
++- `docs/workbay/contracts/security.md::API-key and X-Admin-Token sections (existing)` describe the current auth contract only. Slice 2 adds a portal section without modifying the API-key section.
++- `docs/runbooks/key-management.md` is the canonical tenant/key entry point (`## Track 1 — Mint a hosted-service key`, `### Key lifecycle`, `## Track 2 — Local fast loop`, `## Failure signature quick reference`). Slice 3 / `e16-7-ops` adds `### Portal-eligible tenant (E16-7)` under `## Track 1` and a new `## Tenant portal (app.altcontext.com)` section.
++
++## Target Outcome
++
++An eligible Clerk contact reaches a minimal HTML key panel at `GET /portal/` through the Clerk-hosted sign-in flow. The server verifies `__session` first or `Authorization: Bearer <jwt>` second, rejects a request carrying both with `401 invalid_session` before any token is verified (no `portal_auth_events` row), and resolves the tenant from a stable `(issuer, subject)` link. Only the first claim may use normalized verified email to bind an unbound provisioned tenant. The portal exposes only that tenant's key metadata (full history, including revoked rows), runs no Clerk JS, and never trusts a tenant id from a header, query, or body [SEC-01][WEB-08][WEB-16].
++
++The API surface is:
++
++- `GET /portal/`: authenticated HTML panel; unauthenticated browser requests return 302 to Clerk sign-in with `redirect_url=/portal/`.
++- `GET /portal/me`: exactly `{tenant_id, email, key_count}` for an eligible user. The Clerk subject is not returned.
++- `GET /portal/keys`: only `id`, `created_at`, `last_used_at`, `expires_at`, and `revoked_at` for the resolved tenant, including revoked rows (`TenantBoundApiKeyRepository.list(include_revoked=True)`).
++- `POST /portal/keys/{id}/rotate`: requires `Idempotency-Key`; 404 for a foreign key, 409 for revoked, expired, or already rotated key, and 422 for a fingerprint conflict. The first success returns one raw key and the old-key cutoff; an equal-fingerprint replay returns metadata with `raw_key: null, replayed: true` [API-02][WEB-08]. Handlers build `PortalMutationContext`; the service owns the transaction.
++- `POST /portal/keys/{id}/revoke`: one conditional `UPDATE ... RETURNING` bound to the resolved tenant; 404 for a foreign or missing key, 409 when already revoked, and a same-transaction audit event only when a row was returned.
++
++Invalid or missing verification returns API JSON 401 `invalid_session`; missing or unverified email on any session, unmatched verified email on first claim, or a competing subject claiming a bound tenant returns 403 with `claim_missing`, `email_unverified`, or `tenant_not_eligible` and commits exactly one corresponding `portal_auth_events` row (bulkheaded short-lived session; insert failure still returns that 403 and logs ERROR without email/token material). A JWKS outage returns 503 and leaves valid-key `/analyze` independent [DATA-13][CARD-07][RES-13]. Cookie mutations additionally require HMAC CSRF and same-origin evidence; bearer mutations do not.
++
++## Context Loading
++
++- Rules and structure: `docs/workbay/templates/TASK_PLAN.template.md`
++- Scope: `docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md` (sibling-owned)
++- Eval mapping: `docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json` (sibling-owned)
++- Clerk spike: `docs/assessments/current/e16-7-clerk-claims-spike.md` (lane `e16-7-spike`)
++- House style: `docs/tasks/16.0/E16-1-bounded-iteration-caps-task-plan.md::metadata and Draft status note (existing)`
++- Contracts: `docs/workbay/contracts/security.md::API-key auth section (existing)`
++- Operator runbook: `docs/runbooks/key-management.md::Track 1` and `docs/runbooks/key-management.md::Tenant portal (app.altcontext.com)`
++- Handoff/MCP state: task ref `E16-7`; open E16-7 findings in handoff (query `review_findings list status=open task_ref=E16-7`) are inputs to the RED lane; resolve by id.
++- App mount: `apps/prototype-description-service/api/main.py::create_app (existing)`
++- Refactor anchors: `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::mint_api_key (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::UnknownKeyError (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::RevokeOutcome (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/admin_console.py::render_console (existing)`, and `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository (existing)`.
++- Session and schema anchors: `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::_apply_postgres_session_safety_settings (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_session (existing)`, `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_optional_session (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::TENANT_TABLES (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::RAW_SQL_TABLES (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::EXPECTED_SCHEMA_TABLES (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::_ensure_table (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::_ensure_table_constraints (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::ensure_rls (existing)`, `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::heal (existing)`, and `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::downgrade (existing)`.
++- Verification surfaces: `apps/prototype-description-service/recognition/tests/api/test_admin_router.py::module-level regression suite (existing)`, `apps/prototype-description-service/recognition/tests/api/test_admin_auth.py::module-level regression suite (existing)`, `apps/prototype-description-service/recognition/tests/api/test_key_rotation.py::module-level regression suite (existing)`, `apps/prototype-description-service/recognition/tests/api/test_auth_audit.py::module-level regression suite (existing)`, `apps/prototype-description-service/recognition/tests/schema/test_schema_truth_consistency.py::module-level schema-truth checks (existing)`, `apps/prototype-description-service/recognition/tests/schema/test_identity_schema_heal_pg.py::module-level PostgreSQL heal checks (existing)`, `apps/prototype-description-service/recognition/tests/schema/test_identity_schema_pg.py::module-level PostgreSQL schema checks (existing)`, `apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py::module-level migration checks (existing)`, and `apps/prototype-description-service/scripts/verify_identity_schema.py::identity-schema verifier (existing)`.
++
++## Contract and Boundary Impact
++
++| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
++| --- | --- | --- | --- | --- | --- |
++| Clerk-hosted sign-in and `/portal/*` FastAPI requests | Clerk + recognition service | `docs/workbay/contracts/security.md::API-key auth section (existing)`; no portal transport | Add `__session` cookie-first or bearer-second JWT verification (`PyJWT[crypto]`), dual-credential `401 invalid_session` before verify, portal errors, and CSRF/idempotency headers in `docs/workbay/contracts/security.md::portal section (new)` | No for the greenfield portal; preserve `/admin` and API-key sections | `apps/prototype-description-service/recognition/tests/api/test_portal_auth.py::test_browser_cookie_and_bearer_auth_transport (new)`, `apps/prototype-description-service/recognition/tests/api/test_portal_auth.py::test_cookie_and_bearer_together_are_rejected (new)`, and `apps/prototype-description-service/recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once (new)` |
++| App construction and portal mount | recognition service | `apps/prototype-description-service/api/main.py::create_app (existing)` mounts recognition/roster/scene/admin only | Mount the portal router and raise at construction when any required Clerk/CSRF setting is missing | Yes; existing routers stay mounted | `apps/prototype-description-service/recognition/tests/api/test_portal_auth.py::test_portal_routes_mounted_and_boot_fails_without_clerk_config (new)` (SC-29) |
++| Verified identity to tenant/key repository | recognition service | Existing sessions use `X-Tenant-ID` through `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::get_session (existing)` and `get_optional_session (existing)`; `SqlAlchemyApiKeyRepository.list_for_tenant` accepts a caller-supplied tenant id and defaults `include_revoked=False` | Atomically bind a verified email to an unbound tenant once, then resolve `(issuer, subject)`; ignore request tenant ids; construct `TenantBoundApiKeyRepository` with the resolved tenant and list with `include_revoked=True` | No; portal must not reuse the tenant-input dependency | `test_portal_ignores_request_tenant_header`, `test_cross_tenant_key_is_not_visible`, `test_repository_cannot_cross_tenants` (SC-30), and SC-21's binding test |
++| `app.altcontext.com` to service | Caddy + recognition service | `apps/prototype-description-service/Caddyfile::@admin matcher (existing)` returns 404 on public vhosts | Add a portal proxy vhost while returning 404 for every `/admin*` path on that host and existing hosts | Yes, preserve the existing 404 boundary | `apps/prototype-description-service/recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404 (new)` |
++| Recognition identity schema and RLS | migration + schema verification surfaces | `TENANT_TABLES`, `RAW_SQL_TABLES`, and `EXPECTED_SCHEMA_TABLES` omit all portal tables; `portal_auth_events` has no outcome CHECK | Add raw-SQL `portal_rotations`, `portal_auth_events`, and `portal_identity_links`, constraints including the outcome CHECK, RLS policy/heal/downgrade behavior, and truth-surface coverage | Yes; existing key auth remains unchanged | Schema-truth and heal checks plus SC-21 and SC-28 |
++| Operator provisioning and Clerk deployment setup | `provision-customer-oci` + `docs/runbooks/key-management.md` | The runbook documents keys; laptop `make provision-customer ENV=prod` cannot reach the prod DB and stays refused | Add `make -C apps/prototype-description-service provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]` mirroring `admin-oci-mint`; document `### Portal-eligible tenant (E16-7)` under `## Track 1` and `## Tenant portal (app.altcontext.com)` (Clerk origin/redirect/env, DNS A record, restore drill) | Additive documentation and Make target only | Slice 3 runbook proof, SC-12, and SC-23 |
++
++## Proposed Solution
++
++Implement a separate `/portal` router and dependency stack around a server-side Clerk JWT verifier. The verifier is `PyJWT[crypto]` (`jwt.PyJWKClient` + `jwt.decode`): cookie-first/bearer-second transport, reject both credentials before verify, and validate RS256, issuer, authorized parties, `exp`, `nbf`, and cached JWKS. `apps/prototype-description-service/api/main.py::create_app` mounts the portal router and calls `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::validate_portal_settings (new)` so missing `ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUTHORIZED_PARTIES`, or `ACX_PORTAL_CSRF_SECRET` fails at boot. `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_session.py::get_portal_session (new)` resolves an existing `(issuer, subject)` identity link first. For an unlinked subject only, it verifies and normalizes the email, finds an unbound tenant through `SqlAlchemyTenantRepository.find_by_primary_contact_email (new)`, and inserts the link in one transaction under unique constraints. An existing link remains authoritative across email changes; a competing subject cannot claim it. `get_portal_auth_event_session (new)` writes trusted-claim rejection outcomes on a short-lived session that is never the request session. An operator recovery procedure owns account replacement and audits any link change.
++
++Keep key access structurally bound: portal handlers construct `TenantBoundApiKeyRepository` with the server-resolved `tenant_id`. The wrapper exposes no method that accepts a caller-supplied tenant id. Reads use `list(include_revoked=True)` so `/portal/keys` returns full history including revoked rows with `revoked_at` set. `TenantScopedRotationRepository (new)` owns tenant-predicated rotation operations. Add raw-SQL `portal_rotations`, `portal_auth_events`, and `portal_identity_links` in `001_identity_schema.py`; give only rotations FORCE RLS; add the outcome CHECK on `portal_auth_events`. Move transactional revoke/audit behavior into `api_key_admin_service.py` as a tenant-aware service extracted from `admin.py::revoke_key_atomic`, using frozen `PortalMutationContext` for portal callers. Extract escaped f-string helpers for dependency-light `portal_console.py::render_portal (new)`.
++
++Rotation locks and authorizes the active old key, inserts the reservation before mint, gives the replacement a fresh lifetime derived from the old key's original `created_at` to `expires_at` interval (or no expiry if the old key had none), and shortens only the old key's expiry to `min(original expiry, now + 7 days)`. It leaves `revoked_at` NULL, preserves `rate_limit_tier`, records `new_key_id` and audit evidence `{clerk_sub, email, sid}`, and commits them together. A failed audit insert rolls back all changes. An idempotency constraint violation rolls back; a new transaction reapplies tenant context and either replays metadata without the raw secret or returns 422 for a different fingerprint. A different idempotency key for the same old key returns 409 through a distinct old-key unique constraint.
++
++Direct revoke is one conditional `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`. Zero rows → re-read → 404 (foreign/missing) or 409 (already revoked). Audit row inserted only when a row was returned, in the same transaction. `/admin` maps `already_revoked` to 200 with no second audit row; `/portal` maps it to 409. A lost first rotate response can be recovered by rotating the replacement key listed in metadata with a new idempotency key [API-02][DATA-13][WEB-08][SECD-04].
++
++The rotation table is raw SQL with `id uuid` primary key, non-null tenant/old-key foreign keys, `idempotency_key`, SHA-256 `request_fingerprint`, nullable `new_key_id`, `created_at`, `UNIQUE (tenant_id, idempotency_key)`, and `UNIQUE (tenant_id, old_key_id)`. The auth-event table retains `id`, `clerk_sub`, nullable SHA-256 `email_hash`, constrained rejection outcome (`CHECK (outcome IN ('tenant_not_eligible','email_unverified','claim_missing'))` plus the existing `claim_missing`/NULL hash check), and `created_at`; never store a raw email. The identity-link table has `tenant_id uuid fk tenants UNIQUE NOT NULL`, `issuer text NOT NULL`, `subject text NOT NULL`, `linked_at timestamptz NOT NULL`, and `UNIQUE (issuer, subject)`. It is RLS-exempt for pre-tenant lookup. Recovery changes to it require an audited operator action [DATA-13][WEB-08].
++
++## Files and Surfaces to Change
++
++| Surface | File and symbol | Change |
++| --- | --- | --- |
++| service | `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::PortalMutationContext (new)`; `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::rotate_api_key (new)`; `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::revoke_api_key (new)`; shared outcomes `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::UnknownKeyError (new)` and `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::RevokeOutcome (new)` | Frozen `PortalMutationContext(tenant_id, idempotency_key, request_fingerprint, clerk_sub, email, sid)` plus `key_id: UUID`. Service owns reservation insert, conditional revoke `UPDATE ... RETURNING`, key mutation, and audit `{clerk_sub, email, sid}`. Handlers only build the context. Keep `mint_api_key (existing)` focused on mint/hash/persist. |
++| admin router | `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic (existing)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::UnknownKeyError (existing)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::RevokeOutcome (existing)` | Extract implementation into the tenant-aware service. `/admin` keeps 200 `already_revoked=true` with no second audit row. `UnknownKeyError` stays the not-found signal. |
++| HTML rendering | `apps/prototype-description-service/recognition/interface_adapters/http/html_render.py::shared HTML-escaping helpers (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/admin_console.py::render_console (existing)` | Extract and reuse escaped f-string rendering without Jinja2, StaticFiles, htmx, or npm. |
++| tenant repository | `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository.find_by_primary_contact_email (new)` | Add normalized primary-contact lookup using the existing unique column. |
++| tenant-bound API-key repository | `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_bound_api_key_repository.py::TenantBoundApiKeyRepository (new)` | Construct with server-resolved `tenant_id`; wrap `SqlAlchemyApiKeyRepository`; expose no caller-supplied tenant id; portal list is `list(include_revoked=True)`. |
++| rotation repository | `apps/prototype-description-service/recognition/infrastructure/repositories/portal_rotation_repository.py::TenantScopedRotationRepository (new)` | Add tenant-internal reads, reservation insert, fingerprint comparison, and committed replay lookup. |
++| identity schema | `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::TENANT_TABLES`, `RAW_SQL_TABLES`, `EXPECTED_SCHEMA_TABLES`, `_ensure_table`, `_ensure_table_constraints`, `ensure_rls`, `heal`, and `downgrade`; new `portal_rotations`, `portal_auth_events`, and `portal_identity_links` tables | Register and create all three raw-SQL tables; add unique/FK/CHECK constraints including the outcome CHECK, rotation RLS policy, downgrade, heal, and truth-registry parity. Only rotations enter `TENANT_TABLES`. No new migration file. |
++| schema truth | `apps/prototype-description-service/recognition/tests/schema/test_schema_truth_consistency.py`, `test_identity_schema_heal_pg.py`, `test_identity_schema_pg.py`, `recognition/tests/test_identity_schema_migration.py`, and `apps/prototype-description-service/scripts/verify_identity_schema.py` | Extend all five surfaces for all three tables, RLS classification, and the outcome CHECK (SC-28). |
++| RED tests | `recognition/tests/api/test_portal_auth.py`, `test_portal_keys.py`, `test_portal_ui.py`, `recognition/tests/infra/test_caddyfile_admin_404.py`, `recognition/tests/test_tenant_bound_api_key_repository.py`, `recognition/tests/scripts/test_check_eval_junit.py`, `apps/prototype-description-service/scripts/check_eval_junit.py`, and `recognition/tests/conftest.py::require_postgres` | Add eval files, fail-fast PostgreSQL fixture, JUnit gate script, and repository isolation test; map SC-1 through SC-22 and SC-24 through SC-31 to named tests in eval JSON (sibling-owned). |
++| app mount | `apps/prototype-description-service/api/main.py::create_app (existing)` | Mount the portal router at `/portal` and run `validate_portal_settings` at construction (SC-29). |
++| JWT dependency | `apps/prototype-description-service/pyproject.toml`; `apps/prototype-description-service/uv.lock` | Add `PyJWT[crypto]` as a direct runtime dependency and update the lockfile; verify `python -c "import jwt; jwt.PyJWKClient"` in the built image. |
++| portal auth | `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::verify_clerk_session_jwt (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::validate_portal_settings (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::load_clerk_settings (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_session.py::get_portal_session (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_session.py::get_portal_auth_event_session (new)` | Add server-side Clerk verification, cookie/bearer transport, dual-credential reject-before-verify, normalized tenant resolution, CSRF support, and bulkheaded pre-tenant event writes. |
++| portal HTTP/UI | `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::get_portal (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::get_portal_me (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::list_portal_keys (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::rotate_portal_key (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::revoke_portal_key (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/portal_console.py::render_portal (new)` | Add the five portal endpoints and server-rendered key panel with no Clerk JS. Handlers build `PortalMutationContext` only. |
++| proxy/contract | `apps/prototype-description-service/Caddyfile::app.altcontext.com vhost (new)`; `docs/workbay/contracts/security.md::portal auth and key-panel section (new)` | Proxy the new portal host, retain `/admin*` 404, and document portal transports, schemas, CSRF, replay envelope, errors, and headers without changing the API-key section. |
++| Clerk spike | `docs/assessments/current/e16-7-clerk-claims-spike.md (new)` | Settle session JWT claim names, MVP = user identity, and JWKS-outage behavior before impl and ops. |
++| operator docs and prod mint | `docs/runbooks/key-management.md` (`## Track 1` → `### Portal-eligible tenant (E16-7)`; new `## Tenant portal (app.altcontext.com)`); `apps/prototype-description-service/Makefile::provision-customer-oci (new)` | Document Clerk origin/redirect/env, DNS A record, restore drill, and the ssh double-hop prod provisioner. Laptop `make provision-customer ENV=prod` stays refused. |
++
++## Related Files
++
++| File and symbol | Note |
++| --- | --- |
++| `docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md::rev4 MVP scope and dispatch decomposition (existing)` | Behavioral source of truth for identity binding and routine rotation overlap. Sibling-owned; do not edit from this lane. |
++| `docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json::SC-1 through SC-22 and SC-24 through SC-31 cases (existing)` | Adjacent eval gate; each case maps to one named RED or Slice 0 test and the command fails on skips. SC-23 is a restore drill. Sibling-owned; do not edit from this lane. |
++| `docs/assessments/current/e16-7-clerk-claims-spike.md (new)` | Spike artifact owned by `e16-7-spike`. |
++| `apps/prototype-description-service/api/main.py::create_app (existing)` | Existing top-level router mount and fail-fast boot; portal mount and Clerk/CSRF validation land here. |
++| `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py::_apply_postgres_session_safety_settings (existing)` | Existing `SET LOCAL` safety behavior to preserve and reapply after a rotation-conflict rollback through the portal session context. |
++| `apps/prototype-description-service/recognition/tests/api/test_admin_mount.py::test_console_imports_no_template_engine (existing)` | Existing no-template/no-static-assets boundary; portal gets a twin assertion. |
++| `apps/prototype-description-service/recognition/tests/conftest.py::_pg_create_scratch_db (existing)` | Existing skip behavior that the RED fixture must override only for portal DB tests under the required-PG flag. |
++| `apps/prototype-description-service/Caddyfile::@admin matcher (existing)` | Existing public-vhost 404 boundary that must remain intact. |
++| `docs/workbay/contracts/security.md::API-key auth section (existing)` | Must remain unchanged; only the portal section is additive. |
++| `docs/runbooks/key-management.md::Track 1 (existing)` | Canonical tenant/key entry point; ops adds the portal-eligible subsection and tenant-portal section. |
++| `apps/prototype-description-service/Makefile::admin-oci-mint (existing)` | Pattern for `provision-customer-oci`. |
++| `apps/prototype-description-service/recognition/tests/api/test_admin_router.py::test_revoke_already_revoked_is_idempotent_no_second_audit (existing)` | Existing admin idempotency; Slice 0 adds `test_admin_revoke_already_revoked_contract_preserved` (SC-27) and keeps this suite green. |
++
++## Verification Strategy
++
++> Define the evidence bundle before implementation. The portal eval command is the authoritative acceptance gate and must produce zero failures and zero skips.
++
++Eval command (repository root):
++
++```sh
++mkdir -p .task-state/evals && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl
++```
++
++`apps/prototype-description-service/scripts/check_eval_junit.py` (created by the RED lane with `recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate`) exits non-zero when failures+errors exceed `--max-failures` or skipped exceeds `--max-skipped`, and appends one JSONL evidence row. Threshold object: `{"kind": "junit_counts", "max_failures": 0, "max_skipped": 0}`. Sibling eval JSON owns the stored `command` and `threshold` fields and must match this command.
++
++- Deterministic tests:
++  - `make -C apps/prototype-description-service test`
++  - The exact eval command above
++  - `python3 -m pytest scripts/test_check_lane_manifest_overlaps.py -q`
++- Runtime-parity / environment checks:
++  - `make -C apps/prototype-description-service postgres-start`
++  - `make -C apps/prototype-description-service provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]` (ssh double-hop to `/opt/acx-backend/prod`, exec `python -m scripts.provision_customer --env prod ...` inside the api container). Do not present laptop-side `make provision-customer ENV=prod` as a working prod path; that target stays refused.
++  - Verify configured Clerk JWKS outage returns portal 503 while `/analyze` with a valid API key remains available.
++  - Inside the built image: `python -c "import jwt; jwt.PyJWKClient"`.
++- Contract/fixture verification:
++  - Confirm SC-1 through SC-22 and SC-24 through SC-31 each map one-to-one to the named test in `docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json` and capture SC-23 restoration evidence before production exposure.
++  - Confirm `ACX_PORTAL_TESTS_REQUIRE_PG=1` produces a failure rather than a skip when PostgreSQL is unreachable.
++  - Confirm `apps/prototype-description-service/recognition/tests/api/test_admin_mount.py::test_console_imports_no_template_engine (existing)` and `apps/prototype-description-service/recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404 (new)` both preserve the no-template and `/admin*` boundaries.
++- Manual verification:
++  - Configure Clerk's allowed origin as `https://app.altcontext.com`, hosted sign-in redirect to `/portal/`, and the operator-created DNS A record; sign in through Clerk's hosted page and verify the panel contains no Clerk JS.
++  - Rotate once, paste the raw key into wp-admin Settings, and run Test Connection before the displayed old-key cutoff; verify old and new keys work during overlap, a replay cannot show the raw value, and a lost response can be recovered by rotating the replacement.
++
++## Slice Delivery
++
++### Spike: Clerk claims (`e16-7-spike`)
++
++**Goal**: Settle Clerk session JWT claims, user-vs-organization identity, and JWKS-outage behavior before implementation and operations.
++
++Changes:
++
++- Write `docs/assessments/current/e16-7-clerk-claims-spike.md`.
++- Record a handoff decision settling session JWT claim names (`sub`, `email`, `email_verified`, `azp`, `iss`, `sid`), user-vs-organization identity (MVP = user, not organization), and JWKS-outage behavior.
++
++Proof:
++
++- The spike document exists and the handoff decision is recorded. `e16-7-impl` and `e16-7-ops` do not start until this exits. `e16-7-refactor` and `e16-7-red` do not depend on it.
++
++### Slice 0: Refactor with no behavior change
++
++**Goal**: Move shared admin mutation/rendering/schema primitives into reusable surfaces while keeping existing admin responses and recognition behavior green.
++
++Changes:
++
++- Extract `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic (existing)`, `UnknownKeyError (existing)`, `RevokeOutcome (existing)`, and its audit insert into a tenant-aware service in `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py`. Direct revoke uses `UPDATE api_keys SET revoked_at=now() WHERE id=:id AND tenant_id=:tenant AND revoked_at IS NULL RETURNING id`; zero rows re-read to 404 or already-revoked; audit only when a row was returned, same transaction. Portal APIs are `rotate_api_key(session, *, key_id, context: PortalMutationContext)` and `revoke_api_key(session, *, key_id, context: PortalMutationContext)`. `/admin` continues mapping `already_revoked` to HTTP 200 with no second audit row.
++- Add `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_bound_api_key_repository.py::TenantBoundApiKeyRepository (new)` wrapping `SqlAlchemyApiKeyRepository`, bound at construction, no caller-supplied tenant id.
++- Extract escaped f-string helpers from `apps/prototype-description-service/recognition/interface_adapters/http/admin_console.py::render_console (existing)` into `apps/prototype-description-service/recognition/interface_adapters/http/html_render.py::shared HTML-escaping helpers (new)`.
++- Add `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository.find_by_primary_contact_email (new)` using the normalized unique primary-contact email lookup.
++- Add raw-SQL `portal_rotations`, `portal_auth_events`, and `portal_identity_links` to `RAW_SQL_TABLES` and `EXPECTED_SCHEMA_TABLES`; add only rotations to `TENANT_TABLES`. Cover creation, constraints (including `portal_auth_events.outcome IN ('tenant_not_eligible','email_unverified','claim_missing')` separate from the NULL/hash CHECK), FORCE RLS for rotations, heal, downgrade, and schema-truth surfaces. No new migration file.
++- Define `portal_rotations` with UUID id, tenant and old-key foreign keys, idempotency key, SHA-256 request fingerprint, nullable new-key foreign key, creation time, unique `(tenant_id, idempotency_key)`, and unique `(tenant_id, old_key_id)`. Define `portal_identity_links` with unique tenant id and unique `(issuer, subject)`, both non-null, plus `linked_at`; no link is changed by a fresh email claim [DATA-13][WEB-08].
++
++Proof:
++
++- Existing `apps/prototype-description-service/recognition/tests/api/test_admin_router.py::module-level regression suite (existing)` (including `test_revoke_already_revoked_is_idempotent_no_second_audit`) plus `test_admin_revoke_already_revoked_contract_preserved` (SC-27), `apps/prototype-description-service/recognition/tests/api/test_admin_auth.py::module-level regression suite (existing)`, `apps/prototype-description-service/recognition/tests/api/test_key_rotation.py::module-level regression suite (existing)`, and `apps/prototype-description-service/recognition/tests/api/test_auth_audit.py::module-level regression suite (existing)` remain green.
++- `test_schema_truth_consistency.py`, `test_identity_schema_heal_pg.py`, `test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome` (SC-28), `test_identity_schema_migration.py`, and `apps/prototype-description-service/scripts/verify_identity_schema.py` accept all three portal tables, their RLS classification, and the outcome CHECK.
++- `make -C apps/prototype-description-service test` passes with no portal HTTP behavior introduced in this slice.
++
++### Slice 1: RED portal contract
++
++**Goal**: Add executable failing tests for all portal behavior, the JUnit skip gate, and a fail-fast PostgreSQL fixture before implementation begins.
++
++Changes:
++
++- Add `apps/prototype-description-service/recognition/tests/api/test_portal_auth.py`, `test_portal_keys.py`, `test_portal_ui.py`, `recognition/tests/infra/test_caddyfile_admin_404.py`, `recognition/tests/test_tenant_bound_api_key_repository.py::test_repository_cannot_cross_tenants`, and the remaining named test symbols from the adjacent eval JSON, including `test_auth_event_write_failure_still_403_and_logs_error` (SC-24), `test_cookie_and_bearer_together_are_rejected` (SC-25), `test_concurrent_direct_revoke_single_winner` (SC-26), and `test_portal_routes_mounted_and_boot_fails_without_clerk_config` (SC-29).
++- Add `apps/prototype-description-service/scripts/check_eval_junit.py` and `apps/prototype-description-service/recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate` (SC-31): non-zero exit for a JUnit file with one skipped case and zero failures; zero exit for a clean file.
++- Add `apps/prototype-description-service/recognition/tests/conftest.py::require_postgres (new)`, applied to every DB-backed portal test; with `ACX_PORTAL_TESTS_REQUIRE_PG=1` and unreachable PostgreSQL, it must fail rather than skip.
++- Keep portal tests red against the pre-implementation state. SC-27 and SC-28 are Slice 0 proofs and stay green after refactor. SC-31 is green once the checker lands.
++
++Proof:
++
++- All eval files collect successfully.
++- The eval command runs from the repository root with `ACX_PORTAL_TESTS_REQUIRE_PG=1`; portal tests fail for missing implementation, PostgreSQL-unreachable mode fails rather than skips, and a skipped JUnit case fails the checker (SC-31).
++- The mapping table in `docs/scopes/e16-7-tenant-selfserve-key-panel-evals.json` remains the single named-test mapping (sibling-owned).
++
++### Slice 2: Tenant portal implementation
++
++**Goal**: Make the RED contract pass with a separate Clerk-authenticated, tenant-isolated portal and preserved admin boundary.
++
++Changes:
++
++- Add `PyJWT[crypto]` to `apps/prototype-description-service/pyproject.toml` and update `uv.lock`. Add `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::verify_clerk_session_jwt (new)`, `load_clerk_settings (new)`, and `validate_portal_settings (new)` for server-side RS256 verification, issuer/authorized-party checks, expiration/not-before checks, cached JWKS refresh on unknown `kid`, bounded outage handling, and required-at-boot environment validation.
++- Mount the portal router in `apps/prototype-description-service/api/main.py::create_app` and call `validate_portal_settings` at construction.
++- Add `get_portal_session (new)` and `get_portal_auth_event_session (new)`; read `__session` before bearer, reject both credentials with `401 invalid_session` before any token is verified and without an auth-event row, resolve an existing `(issuer, subject)` link or atomically claim an unbound tenant once from verified normalized email, ignore `X-Tenant-ID`, commit trusted 403 events through the short-lived no-tenant session (insert failure still returns that 403, logs ERROR without email/token material, does not reuse the request session), and apply HMAC-of-`sid` CSRF/same-origin checks for cookie mutations.
++- Add `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::get_portal (new)`, `get_portal_me (new)` (exactly `{tenant_id, email, key_count}`, no Clerk subject), `list_portal_keys (new)` (full history including revoked rows), `rotate_portal_key (new)`, and `revoke_portal_key (new)` with the documented 302/401/403/404/409/422/503 semantics. Handlers only build `PortalMutationContext`.
++- Add `apps/prototype-description-service/recognition/infrastructure/repositories/portal_rotation_repository.py::TenantScopedRotationRepository (new)` and use `TenantBoundApiKeyRepository` for keys; methods on both wrappers take no tenant argument, reservation INSERT is first, the winner row is reread only after a unique-violation rollback in a new transaction with tenant context reapplied, and only the unique-violation class is caught.
++- Add `apps/prototype-description-service/recognition/interface_adapters/http/portal_console.py::render_portal (new)` on the extracted helpers; render only key metadata and never the raw key except in the first successful rotate response.
++- Add the `app.altcontext.com` proxy in `apps/prototype-description-service/Caddyfile::app.altcontext.com vhost (new)`, preserving `apps/prototype-description-service/Caddyfile::@admin matcher (existing)` 404 behavior, and add the portal section to `docs/workbay/contracts/security.md::portal auth and key-panel section (new)` without changing `docs/workbay/contracts/security.md::API-key auth section (existing)`.
++
++Proof:
++
++- The exact eval command in Verification Strategy passes with zero failures and zero skips.
++- SC-1 through SC-22 and SC-24 through SC-31 each pass their named test; concurrent same-key rotation produces one mint and one old-key cutoff; concurrent direct revokes produce one 200 and one 409 with one audit row (SC-26); a replay under re-applied tenant context; failed mutation audit insertion rolls back the mutation and reservation; failed auth-event insert still 403s (SC-24).
++- Existing admin regression tests, SC-27, and `apps/prototype-description-service/recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404 (new)` remain green.
++- Built-image import `python -c "import jwt; jwt.PyJWKClient"` succeeds.
++
++### Slice 3: Provisioning and operator documentation
++
++**Goal**: Make the eligible-user path operationally reproducible without adding signup or tenant-management behavior to the portal.
++
++Changes:
++
++- Add `apps/prototype-description-service/Makefile::provision-customer-oci EMAIL=<e> [PLAN=] [LABEL=]` mirroring `admin-oci-mint` (ssh double-hop to `/opt/acx-backend/prod`, exec `python -m scripts.provision_customer --env prod ...` inside the api container). Laptop `make provision-customer ENV=prod` stays refused.
++- Amend `docs/runbooks/key-management.md` under `## Track 1` with new `### Portal-eligible tenant (E16-7)` documenting `provision-customer-oci`. Add new `## Tenant portal (app.altcontext.com)` covering Clerk allowed origin `https://app.altcontext.com`, hosted sign-in redirect to `/portal/`, required environment variables, JWKS outage expectation, operator-created DNS A record, and the restore drill.
++- Document the post-rotation handoff: paste the one-time raw key into wp-admin Settings and confirm Test Connection before the old-key cutoff. For constant/filter provisioned installs, deploy the replacement in code. Document lost-response recovery, immediate emergency revoke, and audited account-link replacement; do not add plugin auto-adopt [CARD-10].
++
++Proof:
++
++- `docs/runbooks/key-management.md` contains `### Portal-eligible tenant (E16-7)` and `## Tenant portal (app.altcontext.com)` with production provisioning, Clerk setup, identity-link recovery, backup/restore, and revocation reconciliation. Record an SC-23 restore drill before production exposure.
++- An operator-provisioned tenant exercises the eligible-user SC-12 path and observes `{tenant_id, email, key_count}` from `GET /portal/me` with no Clerk subject.
++
++## Lane Decomposition (Multi-Agent)
++
++### Lanes
++
++| Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
++| --- | --- | --- | --- |
++| `e16-7-spike` | `docs/assessments/current/e16-7-clerk-claims-spike.md` | None | Handoff decision settling claim names (`sub`, `email`, `email_verified`, `azp`, `iss`, `sid`), MVP = user, and JWKS-outage behavior |
++| `e16-7-refactor` | `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::PortalMutationContext (new)`; `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::rotate_api_key (new)`; `apps/prototype-description-service/recognition/application/services/api_key_admin_service.py::revoke_api_key (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/admin.py::revoke_key_atomic (existing)`; `apps/prototype-description-service/recognition/interface_adapters/http/html_render.py::shared HTML-escaping helpers (new)`; `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_repository.py::SqlAlchemyTenantRepository.find_by_primary_contact_email (new)`; `apps/prototype-description-service/recognition/infrastructure/repositories/tenant_bound_api_key_repository.py::TenantBoundApiKeyRepository (new)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::TENANT_TABLES (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::RAW_SQL_TABLES (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::EXPECTED_SCHEMA_TABLES (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::_ensure_table (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::_ensure_table_constraints (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::ensure_rls (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::heal (existing)`; `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py::downgrade (existing)`; `apps/prototype-description-service/recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved (new)`; `apps/prototype-description-service/recognition/tests/schema/test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome (new)`; the schema-truth surfaces | None | Existing admin tests, SC-27, SC-28, schema-truth tests, and `make -C apps/prototype-description-service test` |
++| `e16-7-red` | `apps/prototype-description-service/recognition/tests/api/test_portal_auth.py`; `apps/prototype-description-service/recognition/tests/api/test_portal_keys.py`; `apps/prototype-description-service/recognition/tests/api/test_portal_ui.py`; `apps/prototype-description-service/recognition/tests/infra/test_caddyfile_admin_404.py`; `apps/prototype-description-service/recognition/tests/test_tenant_bound_api_key_repository.py`; `apps/prototype-description-service/scripts/check_eval_junit.py`; `apps/prototype-description-service/recognition/tests/scripts/test_check_eval_junit.py`; `apps/prototype-description-service/recognition/tests/conftest.py::require_postgres (new)` | None | Eval files collect and portal cases remain intentionally red; required-PG mode fails rather than skips; SC-31 checker self-test is green |
++| `e16-7-impl` | `apps/prototype-description-service/api/main.py::create_app (existing)`; `apps/prototype-description-service/pyproject.toml`; `apps/prototype-description-service/uv.lock`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::verify_clerk_session_jwt (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/clerk_jwt.py::validate_portal_settings (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_session.py::get_portal_session (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/deps/portal_session.py::get_portal_auth_event_session (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::get_portal (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::get_portal_me (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::list_portal_keys (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::rotate_portal_key (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/routers/portal.py::revoke_portal_key (new)`; `apps/prototype-description-service/recognition/infrastructure/repositories/portal_rotation_repository.py::TenantScopedRotationRepository (new)`; `apps/prototype-description-service/recognition/interface_adapters/http/portal_console.py::render_portal (new)`; `apps/prototype-description-service/Caddyfile::app.altcontext.com vhost (new)`; `docs/workbay/contracts/security.md::portal section (new)` | `e16-7-spike`, `e16-7-refactor`, `e16-7-red` | Exact eval command with zero failures and zero skips; admin regressions; Caddy `/admin*` 404; `python -c "import jwt; jwt.PyJWKClient"` in the built image |
++| `e16-7-ops` | `docs/runbooks/key-management.md` (`## Track 1` → `### Portal-eligible tenant (E16-7)`; `## Tenant portal (app.altcontext.com)`); `apps/prototype-description-service/Makefile::provision-customer-oci (new)` | `e16-7-spike`, `e16-7-impl` | SC-12 exercised and SC-23 restore drill recorded before production exposure |
++
++### Merge Order
++
++`e16-7-spike` may run in parallel with `e16-7-refactor` → `e16-7-red`. Then `e16-7-impl` (after spike, refactor, and red) → `e16-7-ops`.
++
++### Manifest
++
++```bash
++make lane-manifest-init TASK=E16-7 LANE_IDS='e16-7-spike e16-7-refactor e16-7-red e16-7-impl e16-7-ops' TASK_PLAN=docs/tasks/16.0/E16-7-tenant-selfserve-key-panel-task-plan.md
++```
++
++### Orchestration Mode
++
++- **Codex subagent (preferred when available)**: Use MCP worker lifecycle tools with the declared lane ownership and verification boundaries.
++- **Shell fallback**: Use repo lane helpers or manual worktrees while preserving the same ownership and evidence requirements.
++
++## Consolidated Checklist
++
++> **Checklist scope rule:** Describe work being delivered, not finding status. Open E16-7 findings in handoff (query `review_findings list status=open task_ref=E16-7`) are inputs to the RED lane; resolve by id. Do not paste finding bodies or mutable finding counts into this plan.
++
++## Context and Ownership
++
++- [ ] Load the rev4 scope, adjacent eval specification, Clerk claims spike, assessment, security contract, and current handoff state before implementation.
++- [ ] Keep each future implementation lane within its declared paths. This task-plan file does not edit the sibling scope or eval files.
++- [ ] Record boundary ownership and compatibility expectations before touching the portal contract, Caddy vhost, or migration registries.
++- [ ] Bind portal key access through `TenantBoundApiKeyRepository` constructed with the server-resolved tenant; do not pass a caller-supplied tenant id to `SqlAlchemyApiKeyRepository.list_for_tenant`. Do not revive the nonexistent `TenantScopedApiKeyRepository` name.
++
++### Checklist for Spike: Clerk claims
++
++- [ ] Write `docs/assessments/current/e16-7-clerk-claims-spike.md` and record the claim-name, MVP-user, and JWKS-outage decision.
++- [ ] Block `e16-7-impl` and `e16-7-ops` until the spike exits.
++
++### Checklist for Slice 0: Refactor with no behavior change
++
++- [ ] Add service-owned `PortalMutationContext`, `rotate_api_key (new)`, and `revoke_api_key (new)` with conditional `UPDATE ... RETURNING`, shared outcomes, and same-transaction audit behavior.
++- [ ] Extract HTML escaping, add the normalized tenant-email repository lookup, add `TenantBoundApiKeyRepository`, and preserve `/admin` 200 `already_revoked=true` with no second audit row (SC-27).
++- [ ] Register all three raw-SQL tables with the correct RLS classification, add the outcome CHECK, and extend create/constraint/heal/downgrade/schema-truth surfaces (SC-28).
++- [ ] Capture existing admin, schema-truth, and service test evidence.
++
++### Checklist for Slice 1: RED portal contract
++
++- [ ] Add the eval test files, `check_eval_junit.py`, `test_tenant_bound_api_key_repository.py`, and `require_postgres (new)`; do not add implementation code.
++- [ ] Apply the fixture to every DB-backed portal test and prove required-PG mode fails rather than skips.
++- [ ] Confirm SC-1 through SC-22 and SC-24 through SC-31 each have the adjacent eval's named test path; SC-23 has a recorded restore drill.
++
++### Checklist for Slice 2: Tenant portal implementation
++
++- [ ] Add `PyJWT[crypto]`, mount the portal router in `create_app`, required-at-boot settings, cookie-first/bearer-second auth with dual-credential 401 before verify, claim outcomes, and bulkheaded event commits.
++- [ ] Add portal sessions, router endpoints (`/portal/me` without Clerk subject; `/portal/keys` full history including revoked rows), CSRF, tenant-bound key/rotation repositories, transactional idempotency via `PortalMutationContext`, audit rollback, and one-time raw-key response.
++- [ ] Add server-rendered portal HTML, the app vhost, and additive portal security contract while retaining no-Jinja2 and `/admin*` 404 boundaries.
++- [ ] Run the exact eval command with zero failures and zero skips, plus admin, Caddy, and built-image `jwt.PyJWKClient` evidence.
++
++### Checklist for Slice 3: Provisioning and operator documentation
++
++- [ ] Add `provision-customer-oci` and document it under `docs/runbooks/key-management.md` `## Track 1` → `### Portal-eligible tenant (E16-7)`, plus `## Tenant portal (app.altcontext.com)` for Clerk origin/redirect/env, DNS A-record, and restore drill.
++- [ ] Document paste-plus-Test-Connection before cutoff, constant/filter deployment, lost-response recovery, and absence of plugin auto-adopt.
++- [ ] Exercise the provisioned eligible-user `GET /portal/me` path and capture SC-12 evidence (`{tenant_id, email, key_count}`, no Clerk subject).
++- [ ] Record SC-23: restore tenant, key, identity-link, and audit state off-host and verify a key revoked after the backup remains invalid through replay of the revocation record.
++
++## Review Readiness
++
++- [ ] No boundary-touching implementation is left without matching contract, Caddy, migration, test, or operator evidence.
++- [ ] The plan names `TenantBoundApiKeyRepository` as the isolation boundary and does not treat the nonexistent `TenantScopedApiKeyRepository` as an implementation target.
++- [ ] Runtime-parity checks cover Clerk-hosted sign-in, JWKS outage behavior, PostgreSQL-required mode, `provision-customer-oci`, and the app-host `/admin*` 404 boundary.
++- [ ] Handoff records the changed task-plan path, verification commands, and contract implications; live finding status remains in the handoff DB.
++- [ ] Any later review cycle uses finding ids `E167PL-01..` and never reuses `E167SC-*` ids.
++
++## Stretch Goals
++
++- [ ] Revisit a dedicated DB role and RLS extension for `api_keys` only if future tenant scale or threat modeling makes the MVP's shared-role repository isolation insufficient [ARCH-13].
++
++## Success Criteria
++
++| Criterion | Observable outcome |
++| --- | --- |
++| **SC-1** | Cross-tenant portal key access returns 404 or 403 and never exposes the other tenant's key. |
++| **SC-2** | An authenticated tenant sees exactly its own key metadata including revoked rows with `revoked_at` set (`include_revoked=True`), and client tenant input cannot change the resolved tenant. |
++| **SC-3** | Equal-key/fingerprint rotation mints once with a fresh lifetime based on the original policy and replays metadata; a different fingerprint returns 422. |
++| **SC-4** | Rotation authorizes ownership, returns 404 for foreign keys and 409 for revoked/expired/rotated keys, and keeps the old key valid only until its earlier original expiry or seven-day cutoff. |
++| **SC-5** | The raw key appears only in the first successful response, never in replay, logs, audit rows, or URLs. |
++| **SC-6** | Every `/admin*` request on `app.altcontext.com` returns 404. |
++| **SC-7** | A Clerk JWKS outage returns portal 503 while `/analyze` with a valid key still succeeds. |
++| **SC-8** | Concurrent equal rotation requests produce one replacement and one old-key cutoff; equal requests replay and distinct requests against the same old key receive 409 [API-02][RES-13]. |
++| **SC-9** | Tenant B cannot read or replay tenant A's `portal_rotations` row at repository or RLS level [ARCH-13][SECD-04]. |
++| **SC-10** | A conflicting `X-Tenant-ID` is ignored and the request serves only the Clerk-resolved tenant [SECD-02][WEB-08]. |
++| **SC-11** | Direct revoke returns 200 with `revoked_at` and an audit row, 404 for a foreign key, and 409 when already revoked. |
++| **SC-12** | Eligible `GET /portal/me` returns exactly `{tenant_id, email, key_count}` with no Clerk subject; unmatched email returns 403 `tenant_not_eligible` plus an auth-event row. |
++| **SC-13** | Missing email returns 403 `claim_missing` with NULL `email_hash`; unverified email returns 403 `email_unverified` with a hashed email. |
++| **SC-14** | `GET /portal/` returns 200 HTML listing tenant keys without `jinja2` in `sys.modules`. |
++| **SC-15** | Audit insertion failure rolls back the rotate mutation and leaves no `portal_rotations` row. |
++| **SC-16** | Browser `/portal/` redirects unauthenticated users, API `/portal/keys` returns 401 `invalid_session`, and valid cookie/bearer transports authenticate equivalently when presented alone [SEC-01][WEB-16]. |
++| **SC-17** | Cookie rotate/revoke without valid CSRF and same-origin evidence returns 403 `csrf_failed` with no key changes [WEB-08][SEC-01]. |
++| **SC-18** | Bad signature, issuer, authorized party, algorithm, expiration, or not-before claims return 401 `invalid_session` and create no auth event [SEC-01]. |
++| **SC-19** | Each trusted 403 outcome leaves exactly one committed `portal_auth_events` row visible from a fresh connection [DATA-13]. |
++| **SC-20** | With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, portal DB tests fail rather than skip. |
++| **SC-21** | A verified contact claims an unbound tenant once; subsequent sessions resolve by unique `(issuer, subject)` after an email change, and a competing subject cannot claim that tenant. |
++| **SC-22** | Lost one-time response never reveals the raw key on replay; the replacement can be rotated again, and a constant-provisioned install gets deployment guidance and cutoff time. |
++| **SC-23** | An operator restore drill recovers tenant/key/link/audit state and confirms a formerly revoked key remains invalid. |
++| **SC-24** | Injected `portal_auth_events` insert failure still returns the intended 403 reason, logs ERROR without email/token material, and does not reuse the request session. Test: `recognition/tests/api/test_portal_auth.py::test_auth_event_write_failure_still_403_and_logs_error`. |
++| **SC-25** | Cookie+bearer together → 401 `invalid_session`, no auth-event row; covers both-valid-different-principals and valid-cookie+invalid-bearer. Test: `recognition/tests/api/test_portal_auth.py::test_cookie_and_bearer_together_are_rejected`. |
++| **SC-26** | Two concurrent direct revokes of one active key → exactly one 200 and one 409, exactly one audit row. Test: `recognition/tests/api/test_portal_keys.py::test_concurrent_direct_revoke_single_winner`. |
++| **SC-27** | `/admin` revoke of an already-revoked key still returns 200 `already_revoked=true` with no second audit row after the service extraction. Test: `recognition/tests/api/test_admin_router.py::test_admin_revoke_already_revoked_contract_preserved`. |
++| **SC-28** | Inserting a `portal_auth_events` row with an unsupported `outcome` and non-NULL `email_hash` fails the CHECK. Test: `recognition/tests/schema/test_identity_schema_pg.py::test_portal_auth_events_rejects_unknown_outcome`. |
++| **SC-29** | `create_app` registers `/portal/*` routes, and app construction raises when any required Clerk/CSRF setting is missing. Test: `recognition/tests/api/test_portal_auth.py::test_portal_routes_mounted_and_boot_fails_without_clerk_config`. |
++| **SC-30** | `TenantBoundApiKeyRepository` bound to tenant A never returns tenant B rows for list/get/revoke, exercised without HTTP. Test: `recognition/tests/test_tenant_bound_api_key_repository.py::test_repository_cannot_cross_tenants`. |
++| **SC-31** | `check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file. Test: `recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate`. |

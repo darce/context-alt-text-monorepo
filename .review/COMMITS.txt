@@ -1,1 +1,1 @@
-8cdd13fbeefc offload: Suggest warming now auto-retries to a 120s ceiling, then a
+1b04228e0e5f docs(pg19): retarget PostgreSQL upgrade evaluation to 17 -> 19 (skip 18)

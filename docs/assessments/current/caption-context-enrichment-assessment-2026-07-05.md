@@ -230,6 +230,8 @@ Context-complementarity principle (Williams): judge the alt text *jointly with* 
 
 **PG18 (GA 2025-09-25): adopt per [roadmap-pg18-upgrade.md](../../roadmaps/roadmap-pg18-upgrade.md) — unchanged, mildly strengthened by this work:** uuidv7 PKs for `brand_templates` + new rows; AIO (up to 3× storage reads) benefits pgvector bitmap-heap scans used by filtered similarity queries; skip scan helps `(tenant_id, …)` composite indexes; virtual generated columns for derived cache keys. pgvector 0.8.x provides PG18-compatible builds.
 
+> **Update 2026-09-16:** superseded by [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md) — PG18 is skipped; the target is PG19 in one hop from 17, gated on GA + arm64 pgvector image + a product trigger. The earmarks below are carried into that roadmap's §3/§5 unchanged.
+
 **PG19 (beta-1 2026-06-04): track, do not build.** Two features earmarked for the caption workload at GA: `INSERT … ON CONFLICT DO SELECT … RETURNING` collapses the describe-path cache get-or-insert to one round trip; `REPACK CONCURRENTLY` reclaims bloat on churny `media_identities`/description-cache tables without exclusive locks (today's answer is VACUUM FULL downtime). Also noteworthy at GA: autovacuum parallel workers, lz4 TOAST default (JSONB `visual_facts` blobs), SQL/PGQ property-graph queries (speculative fit for cluster/identity relationship queries). pgvector-on-19 compatibility unverified.
 
 ## 9. Paper sweep — verdict table (rev B)

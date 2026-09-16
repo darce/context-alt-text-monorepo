@@ -1,12 +1,1 @@
-d29f2bbbca33 Merge branch 'feature/e16-7-fix-scope' into feature/e16-7
-3daa8741e0b1 Merge branch 'feature/e16-7-fix-plan' into feature/e16-7
-64b3ed0ec2f9 offload: Reconciled the E16-7 scope with D1–D15 and committed it as
-464312dfedf6 Merge branch 'feature/e16-7-fix-evals' into feature/e16-7
-656b0a835ddc offload: Task plan now binds D1–D15 and SC-24..SC-31; two docs commits
-3755cbbeaafb offload: Evals spec now enforces a zero-skip JUnit gate and
-c52dd55c1097 docs(e16-7): rev4 build-buy amendment — Clerk identity, Polar later, rotation overlap, restore drill
-c1efc40e247a offload: Created and committed the E16-7 task plan draft.
-8f2f075e698f offload: Rev3 scope and eval docs are updated and committed as b6105e7.
-a09ac25c11e5 offload: Committed rev2 updates to both owned scope files.
-f2534a447de5 offload: Revised both E16-7 scope files in place and committed the rev1
-16706136a9c1 offload: Drafted and committed the E16-7 scope note and eval spec with
+1b04228e0e5f docs(pg19): retarget PostgreSQL upgrade evaluation to 17 -> 19 (skip 18)

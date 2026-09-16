@@ -1,7 +1,9 @@
- docs/assessments/README.md                         |   1 +
- ...-keys-and-subscriptions-build-buy-2026-09-16.md |  39 ++
- docs/epics/v0.3.1/saas-foundation-epic.md          |   2 +
- .../e16-7-tenant-selfserve-key-panel-evals.json    | 171 +++++++++
- .../e16-7-tenant-selfserve-key-panel-scope.md      | 148 ++++++++
- .../E16-7-tenant-selfserve-key-panel-task-plan.md  | 421 +++++++++++++++++++++
- 6 files changed, 782 insertions(+)
+ ...ion-context-enrichment-assessment-2026-07-05.md |   2 +
+ ...-quadrant-mvp-strategy-assessment-2026-06-11.md |   2 +-
+ docs/epics/v0.3.1/self-hosting-epic.md             |  18 +
+ docs/roadmaps/README.md                            |   3 +-
+ .../local-ai-managed-default-roadmap-2026-07-31.md |   4 +-
+ docs/roadmaps/roadmap-pg-durable-evaluation.md     |   6 +-
+ docs/roadmaps/roadmap-pg18-upgrade.md              | 534 +--------------------
+ docs/roadmaps/roadmap-pg19-upgrade.md              | 311 ++++++++++++
+ 8 files changed, 350 insertions(+), 530 deletions(-)

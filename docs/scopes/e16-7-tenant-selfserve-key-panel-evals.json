@@ -2,7 +2,7 @@
   "version": 1,
   "suite_id": "e16-7-tenant-selfserve-key-panel",
   "owner": "E16-7",
-  "description": "PROVISIONAL until RED lane lands the named test files. Tenant self-serve API key panel MVP success criteria; fails on any skipped case",
+  "description": "PROVISIONAL until RED lane lands the named test files. E16-7 portal SC-1 through SC-22; SC-23 is a recorded operator restore drill. Fails on any skipped case",
   "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py -q -rs --junitxml=.task-state/evals/e16-7-portal.xml",
   "threshold": {
     "kind": "max_failures",
@@ -28,13 +28,13 @@
     },
     {
       "id": "SC-3",
-      "criterion": "`POST /portal/keys/{id}/rotate` with the same `Idempotency-Key` and request fingerprint mints exactly one new key, preserves the old key's `rate_limit_tier` and `expires_at` policy, and replays rotation metadata without a second mint; a different fingerprint returns 422.",
+      "criterion": "Equal idempotency key and fingerprint mint one replacement with the old rate tier and a fresh lifetime derived from the original lifetime; replay returns metadata without a secret, and a different fingerprint returns 422.",
       "test": "recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once"
     },
     {
       "id": "SC-4",
-      "criterion": "`POST /portal/keys/{id}/rotate` authorizes only a key owned by the resolved tenant (404 otherwise, never 403), returns 409 for an already-revoked key, revokes exactly that key immediately in the same transaction, and the recognition API rejects it with a `revoked` outcome.",
-      "test": "recognition/tests/api/test_portal_keys.py::test_old_key_is_revoked_immediately_after_rotate"
+      "criterion": "Rotation authorizes only an active key owned by the resolved tenant (404 foreign; 409 revoked, expired, or already rotated), keeps the old key active until the earlier original expiry or seven-day cutoff, and recognition classifies it expired afterward.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_old_key_expires_after_rotation_overlap"
     },
     {
       "id": "SC-5",
@@ -53,7 +53,7 @@
     },
     {
       "id": "SC-8",
-      "criterion": "Two concurrent rotate requests with the same Idempotency-Key and fingerprint produce exactly one new key and one revoked key; the loser receives the replay response, and the loser's re-read runs under re-applied tenant context (asserted by RLS: the re-read returns the row).",
+      "criterion": "Concurrent equal rotate requests produce one new key and one old-key cutoff; the loser replays under re-applied tenant context. Distinct idempotency keys against the same old key yield one winner and a 409 loser.",
       "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_rotate_requests_same_idempotency_key_are_single_mint"
     },
     {
@@ -115,6 +115,16 @@
       "id": "SC-20",
       "criterion": "With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, the portal DB tests FAIL (not skip).",
       "test": "recognition/tests/api/test_portal_keys.py::test_require_postgres_fails_instead_of_skipping_when_unreachable"
+    },
+    {
+      "id": "SC-21",
+      "criterion": "A verified contact claims an unbound tenant once; later sessions resolve by unique issuer and subject after an email change, while a competing subject receives 403 and concurrent claims cannot create two bindings.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_verified_subject_binding_survives_email_change_and_rejects_competitor"
+    },
+    {
+      "id": "SC-22",
+      "criterion": "A lost first rotation response cannot reveal the secret on replay; the tenant can rotate the replacement with a new idempotency key, and a constant-provisioned install sees deployment guidance and cutoff.",
+      "test": "recognition/tests/api/test_portal_ui.py::test_lost_rotation_response_and_constant_install_guidance"
     }
   ]
 }

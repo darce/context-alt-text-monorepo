@@ -1,6 +1,7 @@
- .../hooks/__tests__/useDescribeMedia.test.tsx      | 233 ++++++++++++++++++++-
- .../js/admin/hooks/useDescribeMedia.ts             | 118 ++++++++++-
- .../js/admin/pages/workbench/MediaAltSuggest.tsx   |  87 +++++---
- .../workbench/__tests__/MediaAltSuggest.test.tsx   | 112 +++++++++-
- .../__tests__/fixtures/gpuflow-suggest-states.json |   9 +
- 5 files changed, 526 insertions(+), 33 deletions(-)
+ docs/assessments/README.md                         |   1 +
+ ...-keys-and-subscriptions-build-buy-2026-09-16.md |  39 ++
+ docs/epics/v0.3.1/saas-foundation-epic.md          |   2 +
+ .../e16-7-tenant-selfserve-key-panel-evals.json    | 171 +++++++++
+ .../e16-7-tenant-selfserve-key-panel-scope.md      | 148 ++++++++
+ .../E16-7-tenant-selfserve-key-panel-task-plan.md  | 421 +++++++++++++++++++++
+ 6 files changed, 782 insertions(+)

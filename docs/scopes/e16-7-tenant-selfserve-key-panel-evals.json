@@ -2,8 +2,8 @@
   "version": 1,
   "suite_id": "e16-7-tenant-selfserve-key-panel",
   "owner": "E16-7",
-  "description": "PROVISIONAL until RED lane lands the named test files. Tenant self-serve API key panel MVP success criteria",
-  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py -q",
+  "description": "PROVISIONAL until RED lane lands the named test files. Tenant self-serve API key panel MVP success criteria; fails on any skipped case",
+  "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py -q -rs --junitxml=.task-state/evals/e16-7-portal.xml",
   "threshold": {
     "kind": "max_failures",
     "max_failures": 0
@@ -53,7 +53,7 @@
     },
     {
       "id": "SC-8",
-      "criterion": "Two concurrent rotate requests with the same Idempotency-Key and fingerprint produce exactly one new key and one revoked key; the loser receives the replay response (PostgreSQL-backed concurrent test).",
+      "criterion": "Two concurrent rotate requests with the same Idempotency-Key and fingerprint produce exactly one new key and one revoked key; the loser receives the replay response, and the loser's re-read runs under re-applied tenant context (asserted by RLS: the re-read returns the row).",
       "test": "recognition/tests/api/test_portal_keys.py::test_concurrent_rotate_requests_same_idempotency_key_are_single_mint"
     },
     {
@@ -78,7 +78,7 @@
     },
     {
       "id": "SC-13",
-      "criterion": "Missing `email` claim → 403 `claim_missing`, `email_verified=false` → 403 `email_unverified`, each with a `portal_auth_events` row.",
+      "criterion": "Missing `email` claim → 403 `claim_missing` with a `portal_auth_events` row whose `email_hash IS NULL`; `email_verified=false` → 403 `email_unverified` with a hashed email in its row.",
       "test": "recognition/tests/api/test_portal_auth.py::test_missing_or_unverified_email_claims_record_portal_auth_events"
     },
     {
@@ -90,6 +90,31 @@
       "id": "SC-15",
       "criterion": "If the `audit_events` insert fails inside rotate, the key mutation rolls back and no `portal_rotations` row survives.",
       "test": "recognition/tests/api/test_portal_keys.py::test_rotate_rolls_back_when_audit_insert_fails"
+    },
+    {
+      "id": "SC-16",
+      "criterion": "Unauthenticated `GET /portal/` redirects (302) to Clerk sign-in; unauthenticated `GET /portal/keys` returns 401 `invalid_session`; a valid `__session` cookie and a valid bearer token each authenticate identically.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_browser_cookie_and_bearer_auth_transport"
+    },
+    {
+      "id": "SC-17",
+      "criterion": "A cross-site form POST to rotate/revoke with a valid `__session` cookie but missing/mismatched CSRF token or foreign Origin is rejected 403 `csrf_failed` and no key changes.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_cookie_mutations_require_csrf_and_same_origin"
+    },
+    {
+      "id": "SC-18",
+      "criterion": "Tokens with bad signature, wrong `iss`, wrong `azp`, disallowed `alg`, expired `exp`, or future `nbf` each return 401 `invalid_session` and write no `portal_auth_events` row.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_invalid_jwt_claims_and_signatures_are_rejected_without_auth_events"
+    },
+    {
+      "id": "SC-19",
+      "criterion": "Each 403 (`tenant_not_eligible`, `email_unverified`, `claim_missing`) leaves exactly one committed `portal_auth_events` row observable from a fresh connection after the response.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_rejected_portal_auth_commits_one_event_before_response"
+    },
+    {
+      "id": "SC-20",
+      "criterion": "With `ACX_PORTAL_TESTS_REQUIRE_PG=1` and PostgreSQL stopped, the portal DB tests FAIL (not skip).",
+      "test": "recognition/tests/api/test_portal_keys.py::test_require_postgres_fails_instead_of_skipping_when_unreachable"
     }
   ]
 }

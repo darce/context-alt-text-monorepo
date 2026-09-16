@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "suite_id": "e16-7-tenant-selfserve-key-panel",
+  "owner": "E16-7",
+  "description": "Tenant self-serve API key panel MVP success criteria",
+  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py -q",
+  "threshold": {
+    "kind": "max_failures",
+    "max_failures": 0
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "mirror_failures_to_handoff": true,
+  "tags": [
+    "security",
+    "tenancy",
+    "e16"
+  ],
+  "cases": [
+    {
+      "id": "SC-1",
+      "criterion": "Cross-tenant key access through the portal returns 404 or 403 and never exposes the other tenant's key.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_cross_tenant_key_is_not_visible"
+    },
+    {
+      "id": "SC-2",
+      "criterion": "An authenticated tenant sees its own key metadata—`id`, `created_at`, `last_used_at`, `expires_at`, and `revoked_at`—and a client-supplied tenant id cannot change the server-resolved tenant.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_list_returns_own_key_metadata_and_ignores_client_tenant_id"
+    },
+    {
+      "id": "SC-3",
+      "criterion": "Submitting Rotate twice with the same `Idempotency-Key` mints exactly one new key and replays the same result without a second mint.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once"
+    },
+    {
+      "id": "SC-4",
+      "criterion": "Immediately after rotation, the old key is rejected by the recognition API with a `revoked` outcome.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_old_key_is_revoked_immediately_after_rotate"
+    },
+    {
+      "id": "SC-5",
+      "criterion": "The raw key is shown exactly once in the first successful rotate response, is not re-shown on an idempotent replay, and never appears in application logs, audit rows, or URLs.",
+      "test": "recognition/tests/api/test_portal_keys.py::test_raw_key_is_not_logged_or_audited"
+    },
+    {
+      "id": "SC-6",
+      "criterion": "Every `/admin*` request on the `app.altcontext.com` vhost returns 404.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_app_vhost_admin_paths_return_404"
+    },
+    {
+      "id": "SC-7",
+      "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/analyze` with a valid key still succeeds.",
+      "test": "recognition/tests/api/test_portal_auth.py::test_clerk_jwks_outage_is_503_without_affecting_analyze"
+    }
+  ]
+}

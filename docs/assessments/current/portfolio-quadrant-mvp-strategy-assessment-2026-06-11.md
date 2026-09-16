@@ -3,6 +3,7 @@
 **Status:** Active strategy reference
 **Task:** MAINT-MVP-PORTFOLIO-ASSESSMENT-20260611
 **Framework source:** R.G. Cooper's R&D portfolio quadrants, via Pieraccini, ["Research Is Not Engineering at a Slower Speed"](https://voiceinthemachine.com/2026/06/10/research-is-not-engineering-at-a-slower-speed/) (2026-06-10)
+**PG upgrade:** Superseded 2026-09-16 by the PG17→19 evaluation. Rows below that said "PG18" in June 2026 keep that wording only as historical context — this assessment does not say to adopt PG18. Current target is PG19 per [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md) §11 (the only canonical timing/trigger policy).
 
 ## Purpose
 
@@ -25,7 +26,7 @@ Audited 2026-06-11: plugin source/build/test surface (v0.0.4, 93 PHP unit tests,
 | WP plugin chassis (admin SPA, REST proxy, packaging) | **Bread and Butter** | High — built, tested, shipped through Epics A–C | Low standalone | Generic "AI alt text" WP plugins are a commodity; any developer wires a VLM API key in a weekend, and falling dev cost accelerates this. The chassis differentiates nothing by itself. |
 | Identity-context layer (clustering + roster curation + person-aware context) | **Pearl** | High — InsightFace + HDBSCAN are proven tech; 1,400+ tests; pipeline works | High | The one thing commodity VLM plugins structurally cannot do: know who is in *your* photos. Hosted providers won't touch private-individual face recognition (policy, BIPA-class liability, EU AI Act climate). Compliance demand (EAA enforcement live since June 2025, WCAG/508) raises the value of *good* alt text, and identity/context is the main quality lever left once generic captioning is free. |
 | Video description via scene-change proxies | **Oyster** | Low/unknown — real epistemic risk (see below) | High | Human audio description costs tens of dollars per minute; automation is poor. If keyframe/scene-segmentation reduces video to "describe N stills + identity continuity," cost collapses. Whether that yields *acceptable* descriptions is unknown — that's the research question. |
-| Sync/outbox evolution, PG18, SaaS billing impl, CI envelope, Apple-parity recognition | **White Elephant risk** | Mixed | Low *now* (zero users) | Not worthless — mistimed. Infra polish for a user base of zero is the classic Bread-and-Butter-metastasizing-into-White-Elephant pattern. Each is justifiable alone; together they compete with the only milestone that matters. |
+| Sync/outbox evolution, PG major upgrade (June 2026 label: PG18; current: PG19), SaaS billing impl, CI envelope, Apple-parity recognition | **White Elephant risk** | Mixed | Low *now* (zero users) | Not worthless — mistimed. Infra polish for a user base of zero is the classic Bread-and-Butter-metastasizing-into-White-Elephant pattern. Each is justifiable alone; together they compete with the only milestone that matters. |
 
 ### Direct answer: where does the WP plugin sit?
 
@@ -58,7 +59,7 @@ On track: E15 Phases 1–2 (security, observability) shipped; backend live on OC
 
 ### Warning 1 — Bread and Butter is crowding the gate
 
-Epic D sync evolution, E15 Phase 6 audit closure, PG18 roadmap, pgcache refactor assessment, SaaS operations roadmap, an accumulating v0.4.1 backlog — all for zero production users (per the repo's own Greenfield Policy). Cooper's framework says Bread and Butter's danger is precisely that it always looks justified. The only milestone that matters is the public demo URL (E15 Phases 3–4). Everything not on that critical path is crowding it.
+Epic D sync evolution, E15 Phase 6 audit closure, PG major-upgrade roadmap (then PG18; now [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md)), pgcache refactor assessment, SaaS operations roadmap, an accumulating v0.4.1 backlog — all for zero production users (per the repo's own Greenfield Policy). Cooper's framework says Bread and Butter's danger is precisely that it always looks justified. The only milestone that matters is the public demo URL (E15 Phases 3–4). Everything not on that critical path is crowding it.
 
 ### Warning 2 — the Pearl hypothesis is unvalidated
 
@@ -79,7 +80,7 @@ Two corrections to the aspiration as stated:
 | Context-grounded description generation | R&D (Pearl validation) | Cheapest possible probe immediately at/after demo. |
 | Non-technical-user onboarding (no-CLI setup) | Engineering, post-demo | Required before any wp.org listing; not before demo. |
 | Video description via scene segmentation | Research (Oyster) | One-week timeboxed probe, post-demo. No epic until probe data exists. |
-| Multi-server sync, SaaS billing, PG18, Apple-parity recognition | Bread and Butter / White Elephant risk | Frozen until a user exists. |
+| Multi-server sync, SaaS billing, PG major upgrade (PG18 historically; PG19 now), Apple-parity recognition | Bread and Butter / White Elephant risk | Frozen until a user exists. Canonical timing: [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md) §11. Bloat, hot-path, video, and CVE-shaped triggers there do **not** bypass this freeze except a security fix unavailable on PG17, recorded as an explicit risk decision. |
 
 ## MVP cut list
 
@@ -97,7 +98,7 @@ Two corrections to the aspiration as stated:
 | Item | Status today | Re-entry condition |
 |---|---|---|
 | Epic D sovereign sync / outbox evolution | Deferred | A second real site exists |
-| PG18 upgrade (`roadmap-pg18-upgrade.md`) | Phase 0 only | Any production data exists |
+| PG major upgrade (`roadmap-pg19-upgrade.md`, was PG18; retargeted 17 → 19 on 2026-09-16) | Phase 0 done; PG-independent "Now" items only | Canonical timing: [roadmap-pg19-upgrade.md](../../roadmaps/roadmap-pg19-upgrade.md) §11. This freeze still holds: bloat, hot-path, video, and CVE-shaped triggers in §11 do **not** bypass the product freeze. Re-enter when production data exists **and** PG19 GA minor ≥ 19.1 with a pinned arm64 pgvector image digest that passed dump/restore rehearsal. The only freeze exception is a security fix unavailable on PG17, recorded as an explicit risk decision. |
 | SaaS billing implementation | Planning doc | Paying-user intent demonstrated |
 | Apple-pipeline recognition parity (multimodal, exemplar sets) | Insights doc | Clustering quality measurably blocks curation UX |
 | CI smoke envelope | Demoted to v0.4.1 | Demo shipped (correct as-is; resist re-promotion) |

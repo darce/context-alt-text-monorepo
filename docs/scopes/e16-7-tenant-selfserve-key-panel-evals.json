@@ -2,8 +2,8 @@
   "version": 1,
   "suite_id": "e16-7-tenant-selfserve-key-panel",
   "owner": "E16-7",
-  "description": "PROVISIONAL until RED lane lands the named test files. E16-7 portal SC-1 through SC-31; SC-23 is a recorded operator restore drill. Start PostgreSQL with `make -C apps/prototype-description-service postgres-start`. The repository-root command writes JUnit under .task-state/evals, then check_eval_junit.py fails the gate when failures+errors exceed max_failures 0 or skipped exceed max_skipped 0 and appends one JSONL evidence row.",
-  "command": "mkdir -p .task-state/evals && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl",
+  "description": "PROVISIONAL until RED lane lands the named test files. E16-7 portal SC-1 through SC-31; SC-23 is a recorded operator restore drill (append-only portal_revocation_journal, not WAL/PITR). Start PostgreSQL with `make -C apps/prototype-description-service postgres-start`. The repository-root command deletes any prior e16-7-portal.xml, writes a fresh JUnit under .task-state/evals, captures pytest status, then check_eval_junit.py fails the gate when the XML is missing or has zero test cases, when failures+errors exceed max_failures 0 or skipped exceed max_skipped 0, appends one JSONL evidence row, and the command exits with the pytest status.",
+  "command": "mkdir -p .task-state/evals && rm -f .task-state/evals/e16-7-portal.xml && (cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/api/test_portal_ui.py recognition/tests/infra/test_caddyfile_admin_404.py recognition/tests/api/test_admin_router.py recognition/tests/schema/test_identity_schema_pg.py recognition/tests/test_tenant_bound_api_key_repository.py recognition/tests/scripts/test_check_eval_junit.py -q -rs --junitxml=../../.task-state/evals/e16-7-portal.xml); rc=$?; python3 apps/prototype-description-service/scripts/check_eval_junit.py .task-state/evals/e16-7-portal.xml --suite e16-7-tenant-selfserve-key-panel --max-failures 0 --max-skipped 0 --append-jsonl .task-state/evals/results.jsonl && exit $rc",
   "threshold": {
     "kind": "junit_counts",
     "max_failures": 0,
@@ -49,7 +49,7 @@
     },
     {
       "id": "SC-7",
-      "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/analyze` with a valid key still succeeds.",
+      "criterion": "When Clerk JWKS is unreachable, the portal returns a distinct 503 while `/recognition/analyze` with a valid key still succeeds. `apps/prototype-description-service/api/main.py::create_app` mounts the recognition router under `/recognition`; Caddy does not rewrite this path.",
       "test": "recognition/tests/api/test_portal_auth.py::test_clerk_jwks_outage_is_503_without_affecting_analyze"
     },
     {
@@ -128,6 +128,11 @@
       "test": "recognition/tests/api/test_portal_ui.py::test_lost_rotation_response_and_constant_install_guidance"
     },
     {
+      "id": "SC-23",
+      "criterion": "Operator restore drill (release gate, not a unit test): restore the latest off-host pg_dump, replay portal_revocation_journal JSONL objects newer than the dump with the idempotent conditional revoke UPDATE, then run a revoked-key probe before re-enabling traffic. Evidence names the dump timestamp, journal objects replayed, probe result, and measured RTO. Residual risk: revocations inside the last 5-minute shipping interval before total host loss are lost; the runbook requires notifying tenants to re-revoke keys rotated in that window. Durability is an independent OCI Object Storage copy (write-once retention; host credentials create-only).",
+      "test": "docs/runbooks/key-management.md::Tenant portal (app.altcontext.com)"
+    },
+    {
       "id": "SC-24",
       "criterion": "Injected `portal_auth_events` insert failure still returns the intended 403 reason, logs ERROR without email/token material, and does not reuse the request session. The insert uses its own short-lived session, never the request session.",
       "test": "recognition/tests/api/test_portal_auth.py::test_auth_event_write_failure_still_403_and_logs_error"
@@ -164,7 +169,7 @@
     },
     {
       "id": "SC-31",
-      "criterion": "`apps/prototype-description-service/scripts/check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file. It exits non-zero when failures+errors exceed max-failures or skipped exceed max-skipped, and appends one JSONL evidence row.",
+      "criterion": "`apps/prototype-description-service/scripts/check_eval_junit.py` exits non-zero for a JUnit file with one skipped case and zero failures, and zero for a clean file, and non-zero for a missing file. It exits non-zero when failures+errors exceed max-failures or skipped exceed max-skipped, and appends one JSONL evidence row.",
       "test": "recognition/tests/scripts/test_check_eval_junit.py::test_skipped_case_fails_gate"
     }
   ]

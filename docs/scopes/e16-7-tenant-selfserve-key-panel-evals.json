@@ -2,8 +2,8 @@
   "version": 1,
   "suite_id": "e16-7-tenant-selfserve-key-panel",
   "owner": "E16-7",
-  "description": "Tenant self-serve API key panel MVP success criteria",
-  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py -q",
+  "description": "PROVISIONAL until RED lane lands the named test files. Tenant self-serve API key panel MVP success criteria",
+  "command": "cd apps/prototype-description-service && python3 -m pytest recognition/tests/api/test_portal_auth.py recognition/tests/api/test_portal_keys.py recognition/tests/infra/test_caddyfile_admin_404.py -q",
   "threshold": {
     "kind": "max_failures",
     "max_failures": 0
@@ -28,12 +28,12 @@
     },
     {
       "id": "SC-3",
-      "criterion": "Submitting Rotate twice with the same `Idempotency-Key` mints exactly one new key and replays the same result without a second mint.",
+      "criterion": "`POST /portal/keys/{id}/rotate` with the same `Idempotency-Key` and request fingerprint mints exactly one new key, preserves the old key's `rate_limit_tier` and `expires_at` policy, and replays rotation metadata without a second mint; a different fingerprint returns 422.",
       "test": "recognition/tests/api/test_portal_keys.py::test_rotate_idempotency_key_mints_once"
     },
     {
       "id": "SC-4",
-      "criterion": "Immediately after rotation, the old key is rejected by the recognition API with a `revoked` outcome.",
+      "criterion": "`POST /portal/keys/{id}/rotate` authorizes only a key owned by the resolved tenant (404 otherwise, never 403), returns 409 for an already-revoked key, revokes exactly that key immediately in the same transaction, and the recognition API rejects it with a `revoked` outcome.",
       "test": "recognition/tests/api/test_portal_keys.py::test_old_key_is_revoked_immediately_after_rotate"
     },
     {
@@ -44,7 +44,7 @@
     {
       "id": "SC-6",
       "criterion": "Every `/admin*` request on the `app.altcontext.com` vhost returns 404.",
-      "test": "recognition/tests/api/test_portal_auth.py::test_app_vhost_admin_paths_return_404"
+      "test": "recognition/tests/infra/test_caddyfile_admin_404.py::test_app_vhost_admin_paths_return_404"
     },
     {
       "id": "SC-7",

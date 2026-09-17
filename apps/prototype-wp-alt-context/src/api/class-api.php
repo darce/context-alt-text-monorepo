@@ -13,6 +13,7 @@ require_once __DIR__ . '/services/class-person-resolution-service.php';
 require_once __DIR__ . '/services/class-cluster-person-bind-service.php';
 require_once __DIR__ . '/services/class-person-merge-service.php';
 require_once __DIR__ . '/class-person-merge-controller.php';
+require_once __DIR__ . '/class-person-media-controller.php';
 require_once __DIR__ . '/../support/trait-runs-transactional.php';
 require_once __DIR__ . '/../sovereign/repositories/class-cluster-curation-writer.php';
 require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
@@ -244,6 +245,7 @@ class Api {
 		);
 
 		( new PersonMergeController() )->register_routes( array( $this, 'can_manage_roster' ) );
+		( new PersonMediaController() )->register_routes( array( $this, 'can_manage_roster' ) );
 
 		register_rest_route(
 			'acx/v1',

@@ -44,3 +44,34 @@ Verdict: pass_with_findings
 - `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — 1 passed.
 - `.venv/bin/python -m pytest apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py -q -p no:cacheprovider` — 15 passed.
 - Import-origin control was skipped because this lane owns only the report artifact, not an importable Python package.
+
+## Re-review r3c (0a19a3eed..106d5b743)
+
+VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-03":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-04":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-06":"not_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta carries `refreshed_at` and representative identity ids through `MergeSuggestionDetails` and `_to_details()` (`suggestion_details.py:53-67`; `merge_suggestion_repository.py:227-242`), then checks live counts and representative ids (`merge_candidates.py:207-241`). `_latest_mutation()` still reads only `created_at` plus `getattr(cluster, "updated_at", None)` (`merge_candidates.py:243-251`); the delta does not add or map `updated_at` on `IdentityCluster`, so same-count membership or centroid changes with an unchanged representative can still admit stale pending evidence. |
+| GPUFLOW-2-SVCMERGECANDIDATES-R-03 | fixed | The endpoint no longer applies a lower clamp: `display_similarity = min(1.0, float(similarity))` (`merge_candidates.py:143-155`). The new regression test expects `[-0.2, -1.0]` and the `none` band (`test_merge_candidates.py:453-469`), so valid negative cosine values are now returned and ordered distinctly. |
+| GPUFLOW-2-SVCMERGECANDIDATES-R2-04 | fixed | `_rank_candidates()` now uses the returned merged score as its primary key (`-row.candidate.similarity`) before raw cosine (`merge_candidates.py:116-123`), and the added test places a fresh pending `0.91` candidate ahead of a raw `0.80` candidate (`test_merge_candidates.py:208-251`). |
+| GPUFLOW-2-SVCMERGECANDIDATES-R2-06 | not_fixed | The supplied brief gives this identifier with no finding text or acceptance criterion. The fix delta therefore contains no evidence that can establish a behavioral change for this unspecified item; treating it as fixed would fabricate an acceptance claim ([AGT-02]). |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-07","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":116,"summary":"Equal returned scores are tie-broken by raw cosine and cluster ID before the required name ordering.","evidence":"The sort key is (-row.candidate.similarity, -row.raw_similarity, row.candidate.cluster_id) at lines 116-123, while B6 requires name ASC within a band. The changed test at lines 182-199 is renamed to cluster_id ordering and asserts UUID order, codifying the contract regression ([API-09])."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-08","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":406,"summary":"The post-mutation freshness test does not model a cluster mutation timestamp.","evidence":"The test declares mutation at lines 409-410 and puts refreshed_at after it at lines 438-442, but the _cluster fixture only adds representative_identity_id and never accepts or assigns updated_at at lines 27-49. The assertion therefore proves only that a newer refreshed suggestion is accepted; it cannot prove the intended cluster-mutation freshness behavior ([TEST-03])."}]
+
+#### GPUFLOW-2-SVCMERGECANDIDATES-R-07 — medium
+
+- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:116-123`; `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:182-199`.
+- **Evidence:** The fix sorts equal returned scores by raw cosine, then cluster ID, before considering name. B6 requires similarity descending with name ASC within a band. The changed test is explicitly renamed to `test_ranks_similarity_desc_then_cluster_id_asc` and asserts UUID order, making the wrong tie-break executable ([API-09]).
+- **Impact:** Two candidates with the same displayed similarity and band can appear in non-name order, changing the operator-visible result order and violating the merge-candidate response contract.
+- **Fix:** Keep merged similarity as the primary key, then sort by `name.casefold()` (and use cluster ID only as the final deterministic tie-break); do not place raw cosine ahead of name for equal returned scores.
+
+#### GPUFLOW-2-SVCMERGECANDIDATES-R-08 — low
+
+- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:27-49,406-450`.
+- **Evidence:** The test creates `mutation` and sets `refreshed_at` after it, but the `_cluster` helper has no `updated_at` parameter or assignment. It therefore verifies only that a refreshed suggestion newer than `created_at` is accepted; it does not exercise the cluster mutation timestamp that `_latest_mutation()` claims to use ([TEST-03]).
+- **Impact:** The regression suite can stay green while the intended stale-after-mutation gate is absent or wired to a field that production clusters do not expose.
+- **Fix:** Populate a real `updated_at`/centroid-refresh timestamp in the fixture, assert an older pending observation is rejected, and separately assert a refresh after that timestamp is accepted.
+
+Verdict: pass_with_findings

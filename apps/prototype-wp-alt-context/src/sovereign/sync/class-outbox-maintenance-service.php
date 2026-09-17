@@ -1022,7 +1022,13 @@ class OutboxMaintenanceService {
 			$format,
 			array( '%d', '%s', '%s' )
 		);
-		if ( ! is_int( $updated ) || $updated <= 0 ) {
+		if ( false === $updated ) {
+			return false;
+		}
+		if ( ! is_int( $updated ) ) {
+			return false;
+		}
+		if ( $updated <= 0 ) {
 			return 0;
 		}
 

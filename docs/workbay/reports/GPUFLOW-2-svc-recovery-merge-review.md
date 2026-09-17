@@ -165,3 +165,25 @@ File: `apps/prototype-description-service/recognition/application/orchestration/
 Evidence: The delta moves durable work into the new session-backed `_apply_recovery_receipt`, while `run_recovery_merge_on_clusters` is explicitly plan-only. The updated tests now assert the in-memory store remains empty and manually add the planned receipt, and the admitted-merge test inspects only the returned receipt; no added test invokes `run_recovery_merge` or verifies the lock/count/CAS/receipt ordering. The high-risk durable path can therefore regress while the targeted suite remains green ([TEST-03]).
 
 Verdict: fail
+
+## Re-review r3 (7092a36d8..050b20dc0)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCRECOVERYMERGE-R2-07 | fixed | `recovery_merge.py:222-231` and `:739-749` now purge when `reverted_at IS NOT NULL OR expires_at <= now`; the changed `test_expired_and_reverted_receipts_are_purged` expects both rows to be removed at `test_recovery_merge.py:809-897`. |
+| GPUFLOW-2-SVCRECOVERYMERGE-R2-08 | partially_fixed | The delta replaces mutable receipt-set/label matching with durable identity-to-survivor blocks (`recovery_merge.py:519-533,590-612,752-828`) and the added test keeps a block effective after adding a member (`test_recovery_merge.py:392-470`). However, the block is keyed only by each moved identity and the survivor; if a restored residual loses every moved identity and gains replacements, `active_block_pairs` has no matching member and the source cluster can still be reattached. |
+| GPUFLOW-2-SVCRECOVERYMERGE-R2-09 | fixed | The added tests call `run_recovery_merge` and drive `_apply_recovery_receipt` through lock, source count, exact move, remaining-count, destination update, source delete, receipt insertion, and CAS-miss paths (`test_recovery_merge.py:928-1087`), with a further durable block/purge ordering test at `:1090-1190`. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCRECOVERYMERGE-R-10 — medium
+
+File: `apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:798-817`
+
+Evidence: `_persist_reverted_receipt_blocks` selects any existing block for the moved identity/survivor pair without filtering expired or distinguishing its reason, then rewrites an existing row's `reason` to `merge_reverted` and `expires_at` to `None`. The shared `IdentityClusterBlock` table also stores manual blocks with their own reason and optional expiry, so an expired or manually authored block is silently converted into an indefinite recovery block and loses its original provenance. The new durable test covers only the no-existing-block insert path (`test_recovery_merge.py:1114-1125`).
+
+Impact: A temporary operator block can be resurrected permanently, and an existing manual constraint can have its audit semantics changed whenever a reverted receipt is materialized.
+
+Fix: Preserve an existing block's reason/provenance and active expiry; if an existing row is expired, remove/recreate it as a recovery block through an atomic upsert, while keeping concurrent materialization idempotent.
+
+Verdict: pass_with_findings

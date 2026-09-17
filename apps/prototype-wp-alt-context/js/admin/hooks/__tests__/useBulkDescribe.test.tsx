@@ -268,7 +268,7 @@ describe('useBulkDescribe', () => {
     expect(result.current.progress.isTerminal).toBe(false);
   });
 
-  it('clears persisted storage on terminal status while keeping runId for this mount', async () => {
+  it('clears persisted storage on terminal status while retaining only the terminal summary id', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-done', status: 'pending', startup_id: 'startup-done' }),
     );
@@ -280,10 +280,22 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([1, 2, 3, 4]);
 
     await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
-    expect(result.current.runId).toBe('run-done');
+    await waitFor(() => expect(result.current.runId).toBeNull());
+    expect(result.current.progress.run?.run_id).toBe('run-done');
     await waitFor(() =>
       expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull(),
     );
+
+    submitBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-fresh', status: 'pending', startup_id: 'startup-fresh' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-fresh', status: 'running', phase: 'describing' }),
+    );
+    result.current.submit.mutate([5, 6]);
+
+    await waitFor(() => expect(result.current.runId).toBe('run-fresh'));
+    expect(result.current.runId).not.toBe('run-done');
   });
 
   it('does not resume a completed run after remount once storage is cleared', async () => {

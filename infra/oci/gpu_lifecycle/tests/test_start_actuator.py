@@ -12,7 +12,7 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuLifecycleController,
     LifecycleAction,
 )
-from infra.oci.gpu_lifecycle.intent import DecisionLogStore
+from infra.oci.gpu_lifecycle.intent import DecisionLogStore, IntentStatus
 from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
@@ -284,10 +284,12 @@ def test_stop_intent_with_work_and_stopped_gpu_emits_operator_stop_fallback(
     assert fallback.instance_id == "ocid1.gpu"
     assert fallback.reason == "operator_stop_with_work"
     assert fallback.profile == "florence_small"
+    assert result.intent_status is IntentStatus.STOPPED_WITH_WORK
     assert result.last_transition_reason is LastTransitionReason.OPERATOR
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "degraded"
     assert snapshot["reason"] == "operator_stop_with_work"
+    assert snapshot["intent_status"] == "stopped_with_work"
     assert snapshot["last_transition_reason"] == "operator"
 
 
@@ -328,6 +330,7 @@ def test_stop_intent_with_work_and_starting_gpu_probes_readiness_and_fallbacks()
     assert fallback.instance_id == "ocid1.gpu"
     assert fallback.reason == "readiness_timeout"
     assert fallback.profile == "florence_small"
+    assert result.intent_status is not IntentStatus.STOPPED_WITH_WORK
 
 
 @pytest.mark.parametrize("state", ["UNKNOWN", "NOT_A_STATE"])

@@ -38,6 +38,7 @@ TENANT_TABLES = [
     "identity_scan_jobs",
     "identity_scan_job_items",
     "identity_cluster_representatives",
+    "cluster_merge_receipts",
     "identity_clustering_jobs",
     "identity_suggestions",
     "cluster_merge_suggestions",
@@ -70,6 +71,11 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_image_description_runs_idempotency_key",
         ("tenant_id", "idempotency_key"),
     ),
+    (
+        "cluster_merge_receipts",
+        "uq_cluster_merge_receipts_survivor_seq",
+        ("survivor_cluster_id", "sequence_no"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -95,6 +101,7 @@ EXPECTED_SCHEMA_TABLES = [
     "identity_members",
     "identity_name_suppressions",
     "identity_cluster_representatives",
+    "cluster_merge_receipts",
     "identity_scan_jobs",
     "identity_scan_job_items",
     "identity_clustering_jobs",
@@ -143,6 +150,7 @@ DOWNGRADE_TABLE_ORDER = [
     "identity_suggestions",
     "identity_scan_job_items",
     "recognition_runs",
+    "cluster_merge_receipts",
     "identity_cluster_representatives",
     "identity_name_suppressions",
     "identity_members",
@@ -741,6 +749,7 @@ def ensure_tables(op) -> None:
         sa.Column("pose_yaw", sa.Float(), nullable=True),
         sa.Column("pose_roll", sa.Float(), nullable=True),
         sa.Column("quality_score", sa.Float(), nullable=False),
+        sa.Column("quality_components", sa.dialects.postgresql.JSONB(), nullable=True),
         sa.Column("diversity_score", sa.Float(), nullable=True),
         sa.Column("is_user_selected", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_provisional", sa.Boolean(), nullable=False, server_default=sa.text("false")),
@@ -750,6 +759,46 @@ def ensure_tables(op) -> None:
         sa.CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
         sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="cluster_rep_embedding_unit_norm"),
         sa.UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
+    )
+
+    _ensure_table(
+        op,
+        "cluster_merge_receipts",
+        sa.Column("receipt_id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "survivor_cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("source_cluster_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("source_label", sa.String(length=255), nullable=True),
+        sa.Column(
+            "moved_identity_ids",
+            sa.ARRAY(sa.dialects.postgresql.UUID(as_uuid=True)),
+            nullable=False,
+        ),
+        sa.Column("rule_version", sa.Text(), nullable=False),
+        sa.Column("kind", sa.String(length=20), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("reverted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("sequence_no", sa.Integer(), nullable=False),
+        sa.CheckConstraint("kind IN ('auto', 'operator')", name="cluster_merge_receipt_valid_kind"),
+        sa.UniqueConstraint(
+            "survivor_cluster_id",
+            "sequence_no",
+            name="uq_cluster_merge_receipts_survivor_seq",
+        ),
+        heal_constraints=tuple(
+            name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "cluster_merge_receipts"
+        ),
     )
 
     _ensure_table(
@@ -1447,6 +1496,18 @@ def ensure_tables(op) -> None:
         "identity_cluster_representatives",
         ["cluster_id", "is_provisional"],
         postgresql_where=sa.text("is_provisional = true"),
+    )
+    _ensure_index(
+        op,
+        "idx_cluster_merge_receipts_tenant",
+        "cluster_merge_receipts",
+        ["tenant_id"],
+    )
+    _ensure_index(
+        op,
+        "idx_cluster_merge_receipts_survivor",
+        "cluster_merge_receipts",
+        ["survivor_cluster_id", "created_at"],
     )
     _ensure_index(
         op,
@@ -2783,6 +2844,8 @@ def downgrade() -> None:
     op.drop_index("idx_cluster_reps_diversity", table_name="identity_cluster_representatives")
     op.drop_index("idx_cluster_reps_cluster", table_name="identity_cluster_representatives")
     op.drop_index("idx_cluster_reps_tenant", table_name="identity_cluster_representatives")
+    op.drop_index("idx_cluster_merge_receipts_survivor", table_name="cluster_merge_receipts")
+    op.drop_index("idx_cluster_merge_receipts_tenant", table_name="cluster_merge_receipts")
     op.drop_index("idx_identity_suggestions_tenant_id", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_pending", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_cluster", table_name="identity_suggestions")

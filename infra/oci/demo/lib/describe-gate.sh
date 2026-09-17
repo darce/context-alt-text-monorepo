@@ -85,9 +85,10 @@ php_define_value() {
 # Returns description_adapter.profile from the top-level JSON readiness object
 # when HTTP is 2xx, the body is parseable, and description_adapter matches the
 # full descriptionAdapterReadiness shape. Empty on probe failure, non-2xx,
-# missing or invalid shape fields (including required, non-empty model identity
-# strings or null), unparseable body,
-# nested-only key, non-object value, or missing python3.
+# missing or invalid shape fields (including non-empty model identity strings
+# for trusted profiles), unparseable body,
+# nested-only key, non-object value, untrusted model identity, or missing
+# python3.
 # NEVER invents a fallback profile. python3 is required; fail closed if absent.
 extract_probed_description_adapter() {
     local code="$1"
@@ -110,6 +111,8 @@ try:
 except Exception:
     raise SystemExit(0)
 if not isinstance(data, dict):
+    raise SystemExit(0)
+if data.get("status") not in {"ok", "degraded"}:
     raise SystemExit(0)
 value = data.get("description_adapter")
 if not isinstance(value, dict):
@@ -153,8 +156,14 @@ if value["reason"] is not None and not isinstance(value["reason"], str):
 for key in ("model_id", "model_version"):
     if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
         raise SystemExit(0)
+trusted_profiles = set(sys.argv[1].split()) if len(sys.argv) > 1 else set()
+if profile in trusted_profiles and any(
+    not isinstance(value[key], str) or not value[key]
+    for key in ("model_id", "model_version")
+):
+    raise SystemExit(0)
 sys.stdout.write(profile)
-' 2>/dev/null) || value=""
+' "$ACX_TRUSTED_DESCRIBE_PROFILES" 2>/dev/null) || value=""
     printf '%s' "$value"
 }
 

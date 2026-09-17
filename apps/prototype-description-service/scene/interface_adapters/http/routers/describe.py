@@ -350,8 +350,7 @@ _MULTIPART_TYPED_ERROR_REQUIRED_KEYS = frozenset(
 _MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
     "description_service_starting": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
     | frozenset({"warmup_eta_seconds", "startup_budget_seconds"}),
-    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
-    | frozenset({"reason", "lifecycle_reason"}),
+    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS | frozenset({"reason", "lifecycle_reason"}),
     "description_service_error": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
     "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
     "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
@@ -477,17 +476,13 @@ def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
     except ValidationError:
         return True
     if code == "description_service_starting":
+        if detail.get("operation_id") is None:
+            return True
         budget = detail.get("startup_budget_seconds")
         return not (
-            isinstance(budget, (int, float))
-            and not isinstance(budget, bool)
-            and math.isfinite(budget)
-            and budget > 0
+            isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0
         )
-    if code == "description_service_unavailable":
-        if _coerce_unavailable_reason(detail.get("reason")) is None:
-            return True
-    return False
+    return code == "description_service_unavailable" and _coerce_unavailable_reason(detail.get("reason")) is None
 
 
 def _rebuild_post_accept_typed_error(
@@ -501,14 +496,21 @@ def _rebuild_post_accept_typed_error(
     code = _http_exception_code(detail)
     if code not in _MULTIPART_TYPED_ERROR_CODES:
         return exc
+    operation_id = getattr(op, "operation_id", None)
+    if not isinstance(operation_id, str) or not operation_id:
+        operation_id = None
+    startup_id = getattr(op, "startup_id", None)
+    if not isinstance(startup_id, str):
+        startup_id = None
     warmup_eta_seconds = None
     startup_budget_seconds = None
     reason = None
     lifecycle_reason = None
     retry_after = None
+    rebuilt_code = code
     if isinstance(detail, dict) and code == "description_service_starting":
         eta = detail.get("warmup_eta_seconds")
-        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
+        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta) and eta >= 0:
             warmup_eta_seconds = float(eta)
         budget = detail.get("startup_budget_seconds")
         if isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0:
@@ -519,25 +521,58 @@ def _rebuild_post_accept_typed_error(
             # invent a client-facing ceiling during normalization.
             startup_budget_seconds = settings.gpu_warmup_timeout_seconds
         retry_after = _retry_after_header(exc)
+        if operation_id is None:
+            rebuilt_code = "description_service_unavailable"
+            warmup_eta_seconds = None
+            startup_budget_seconds = None
+            reason = _DEFAULT_UNAVAILABLE_REASON
     elif isinstance(detail, dict) and code == "description_service_unavailable":
         reason = _coerce_unavailable_reason(detail.get("reason"))
+        if reason is None:
+            reason = _DEFAULT_UNAVAILABLE_REASON
         raw_lifecycle = detail.get("lifecycle_reason")
         if isinstance(raw_lifecycle, str) and raw_lifecycle.strip():
             lifecycle_reason = raw_lifecycle
-    return _typed_describe_error(
-        status_code=exc.status_code,
-        code=code,
-        message=_http_exception_message(detail, fallback="Description service error"),
-        operation_id=op.operation_id,
-        startup_id=op.startup_id,
-        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-        warmup_eta_seconds=warmup_eta_seconds,
-        startup_budget_seconds=startup_budget_seconds,
-        reason=reason,
-        lifecycle_reason=lifecycle_reason,
-        retry_after=retry_after,
-        preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
-    )
+
+    message = _http_exception_message(detail, fallback="Description service error")
+    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
+
+    def _build(code_to_emit: str, *, reason_to_emit: UnavailableReason | None = reason) -> HTTPException:
+        rebuilt = _typed_describe_error(
+            status_code=exc.status_code,
+            code=code_to_emit,
+            message=message,
+            operation_id=operation_id,
+            startup_id=startup_id,
+            timing=timing,
+            warmup_eta_seconds=warmup_eta_seconds,
+            startup_budget_seconds=startup_budget_seconds,
+            reason=reason_to_emit,
+            lifecycle_reason=lifecycle_reason,
+            retry_after=retry_after,
+            preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
+        )
+        if isinstance(rebuilt.detail, dict):
+            for optional_key in (
+                "warmup_eta_seconds",
+                "startup_budget_seconds",
+                "reason",
+                "lifecycle_reason",
+            ):
+                if rebuilt.detail.get(optional_key) is None:
+                    rebuilt.detail.pop(optional_key, None)
+        return rebuilt
+
+    try:
+        return _build(rebuilt_code)
+    except ValidationError:
+        warmup_eta_seconds = None
+        startup_budget_seconds = None
+        lifecycle_reason = None
+        return _build(
+            "description_service_unavailable",
+            reason_to_emit=_DEFAULT_UNAVAILABLE_REASON,
+        )
 
 
 def _load_gpu_snapshot_payload() -> dict[str, Any] | None:

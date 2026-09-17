@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
-from jsonschema import Draft7Validator
 import pytest
+from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 
 from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
@@ -108,6 +109,119 @@ def test_typed_error_envelopes_validate():
         {"detail": {k: value for k, value in starting["detail"].items() if k != "startup_budget_seconds"}}
     )
     assert not validator.is_valid({"detail": {k: value for k, value in unavailable["detail"].items() if k != "reason"}})
+
+
+def _rebuild_test_exception_detail(**overrides):
+    detail = {
+        "code": "description_service_starting",
+        "message": "dependency starting",
+        "operation_id": "upstream-operation",
+        "startup_id": "upstream-startup",
+        "warmup_eta_seconds": 45,
+        "startup_budget_seconds": 510,
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": None,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+    }
+    detail.update(overrides)
+    return detail
+
+
+@pytest.mark.parametrize("eta", [-1, float("nan"), float("inf"), "30", None])
+def test_post_accept_rebuild_drops_invalid_warmup_eta(eta):
+    from fastapi import HTTPException, status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    rebuilt = describe_module._rebuild_post_accept_typed_error(
+        HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_rebuild_test_exception_detail(warmup_eta_seconds=eta),
+        ),
+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
+        server_start=0,
+    )
+
+    _multipart_validator().validate({"detail": rebuilt.detail})
+    assert rebuilt.detail["code"] == "description_service_starting"
+    assert "warmup_eta_seconds" not in rebuilt.detail
+    assert rebuilt.detail["operation_id"] == "accepted-operation"
+
+
+def test_post_accept_starting_rebuild_falls_back_when_operation_id_unavailable():
+    from fastapi import HTTPException, status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    detail = _rebuild_test_exception_detail(operation_id=None)
+    rebuilt = describe_module._rebuild_post_accept_typed_error(
+        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
+        op=SimpleNamespace(operation_id=None, startup_id="accepted-startup"),
+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
+        server_start=0,
+    )
+
+    _multipart_validator().validate({"detail": rebuilt.detail})
+    assert rebuilt.detail["code"] == "description_service_unavailable"
+    assert rebuilt.detail["reason"] == "state_missing"
+    assert "warmup_eta_seconds" not in rebuilt.detail
+    assert "startup_budget_seconds" not in rebuilt.detail
+
+
+def test_post_accept_starting_rebuild_uses_accepted_operation_id_when_upstream_id_null():
+    from fastapi import HTTPException, status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    rebuilt = describe_module._rebuild_post_accept_typed_error(
+        HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_rebuild_test_exception_detail(operation_id=None),
+        ),
+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
+        server_start=0,
+    )
+
+    _multipart_validator().validate({"detail": rebuilt.detail})
+    assert rebuilt.detail["code"] == "description_service_starting"
+    assert rebuilt.detail["operation_id"] == "accepted-operation"
+
+
+def test_post_accept_unavailable_rebuild_uses_contract_reason_for_null_reason():
+    from fastapi import HTTPException, status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    detail = _rebuild_test_exception_detail(
+        code="description_service_unavailable",
+        operation_id="upstream-operation",
+        startup_id="upstream-startup",
+        warmup_eta_seconds=None,
+        startup_budget_seconds=None,
+        reason=None,
+    )
+    rebuilt = describe_module._rebuild_post_accept_typed_error(
+        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
+        server_start=0,
+    )
+
+    _multipart_validator().validate({"detail": rebuilt.detail})
+    assert rebuilt.detail["code"] == "description_service_unavailable"
+    assert rebuilt.detail["reason"] == "state_missing"
+    assert "warmup_eta_seconds" not in rebuilt.detail
+    assert "startup_budget_seconds" not in rebuilt.detail
 
 
 def test_gpuflow2_unavailable_fixture_round_trips():

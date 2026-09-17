@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from math import sqrt
+from typing import Final, Literal
 
 from recognition.application.settings import QualitySettings
 from recognition.domain.maturity import ClusterMaturityLevel
 
+logger = logging.getLogger(__name__)
+
 # Default settings instance for backward compatibility
 _default_settings = QualitySettings()
+
+RepresentativeQualityPolicy = Literal["legacy", "composite"]
+_LEGACY_REPRESENTATIVE_QUALITY_POLICY: Final[RepresentativeQualityPolicy] = "legacy"
+_COMPOSITE_REPRESENTATIVE_QUALITY_POLICY: Final[RepresentativeQualityPolicy] = "composite"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,9 +39,12 @@ class IdentityQualityInfo:
 
 @dataclass(frozen=True, slots=True)
 class RepresentativeQuality:
-    """C4 representative composite plus the components stored beside it.
+    """Selected representative score plus the components stored beside it.
 
     ``composite`` is the value written to the existing ``quality_score`` column.
+    It follows the legacy confidence×bbox path until the composite policy is
+    explicitly enabled in :class:`QualitySettings`. ``score_policy`` records
+    which path produced that value.
     ``components`` is the ``quality_components`` JSON payload (UXR-15):
     confidence, bbox_area, sharpness, occlusion_severity.
     """
@@ -42,19 +53,20 @@ class RepresentativeQuality:
     confidence: float
     bbox_term: float
     bbox_area: float
-    occlusion_severity: float
+    occlusion_severity: float | None
     occlusion_term: float
     sharpness: float | None
     sharpness_term: float
     k_occ: float
+    score_policy: RepresentativeQualityPolicy = _LEGACY_REPRESENTATIVE_QUALITY_POLICY
 
-    def components(self) -> dict[str, float]:
-        """Wire/storage payload; sharpness 0.0 when the signal is missing."""
+    def components(self) -> dict[str, float | None]:
+        """Return all four wire components, preserving missing signals as null."""
         return {
-            "confidence": self.confidence,
-            "bbox_area": self.bbox_area,
-            "sharpness": 0.0 if self.sharpness is None else float(self.sharpness),
-            "occlusion_severity": self.occlusion_severity,
+            "confidence": float(self.confidence),
+            "bbox_area": float(self.bbox_area),
+            "sharpness": None if self.sharpness is None else float(self.sharpness),
+            "occlusion_severity": (None if self.occlusion_severity is None else float(self.occlusion_severity)),
         }
 
 
@@ -119,12 +131,14 @@ def compute_representative_quality(
     occlusion_severity: float | None = None,
     settings: QualitySettings | None = None,
 ) -> RepresentativeQuality:
-    """C4 composite: geomean(confidence, bbox_term) × (1 − occ·k_occ) × sharpness.
+    """Select the legacy score or gated C4 composite for representative use.
 
     ``k_occ`` is ``QualitySettings.oact_coefficient`` (C1 policy alias; default
     0.0, not a promoted runtime rename). Unoccluded-first ranking is a separate
     lexicographic key in :func:`representative_sort_key` so an occluded face
-    loses to an unoccluded one even while ``k_occ`` stays 0.
+    loses to an unoccluded one even while ``k_occ`` stays 0. The C4 composite
+    is selected only when ``representative_quality_composite_enabled`` is true;
+    the default keeps the pre-composite confidence×bbox score.
     """
     s = settings or _default_settings
     conf = _clamp01(confidence)
@@ -132,10 +146,28 @@ def compute_representative_quality(
     k_occ = float(s.oact_coefficient)
     occ_term = _occlusion_term(occlusion_severity, k_occ)
     sharp_term = _sharpness_term(sharpness, s)
-    occ_sev = 0.0 if occlusion_severity is None else _clamp01(occlusion_severity)
-    composite = round(_clamp01(_geometric_mean(conf, bbox_term) * occ_term * sharp_term), 3)
+    occ_sev = None if occlusion_severity is None else _clamp01(occlusion_severity)
+    composite_score = round(
+        _clamp01(_geometric_mean(conf, bbox_term) * occ_term * sharp_term),
+        3,
+    )
+    legacy_score = compute_identity_quality(
+        confidence=confidence,
+        bbox_width=bbox_width,
+        bbox_height=bbox_height,
+        settings=s,
+    ).score
+    use_composite = s.representative_quality_composite_enabled
+    score_policy: RepresentativeQualityPolicy = (
+        _COMPOSITE_REPRESENTATIVE_QUALITY_POLICY if use_composite else _LEGACY_REPRESENTATIVE_QUALITY_POLICY
+    )
+    selected_score = composite_score if use_composite else legacy_score
+    logger.debug(
+        "representative quality score selected",
+        extra={"quality_score": selected_score, "score_policy": score_policy},
+    )
     return RepresentativeQuality(
-        composite=composite,
+        composite=selected_score,
         confidence=conf,
         bbox_term=round(bbox_term, 6),
         bbox_area=float(max(0, bbox_width) * max(0, bbox_height)),
@@ -144,6 +176,7 @@ def compute_representative_quality(
         sharpness=sharpness,
         sharpness_term=sharp_term,
         k_occ=k_occ,
+        score_policy=score_policy,
     )
 
 

@@ -67,6 +67,16 @@
             "minimum": 0,
             "description": "Number of identities currently assigned to this cluster."
           },
+          "representative_media_id": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "description": "Projected WP attachment ID of the cluster representative. Read from the projection column; never derived from representative_identity.media_id (rg-015). Null when the snapshot omitted it."
+          },
+          "undoable_merge_receipt_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Projected newest unreverted, unexpired cluster-merge receipt id. Read from the projection column; never computed in PHP (rg-015). Null when none is undoable."
+          },
           "representative_identity": {
             "type": ["object", "null"],
             "description": "Representative face evidence for the cluster when available.",
@@ -106,6 +116,39 @@
               "similarity_threshold": {
                 "type": ["number", "null"],
                 "description": "Threshold used for this projected evidence item when available."
+              },
+              "representative_quality": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Projected composite quality in [0,1]. Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
+              },
+              "quality_components": {
+                "type": ["object", "null"],
+                "description": "Projected parts of representative_quality (UXR-15). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
+                "additionalProperties": false,
+                "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
+                "properties": {
+                  "confidence": {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "bbox_area": {
+                    "type": ["number", "null"],
+                    "minimum": 0
+                  },
+                  "sharpness": {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "occlusion_severity": {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
               }
             }
           },

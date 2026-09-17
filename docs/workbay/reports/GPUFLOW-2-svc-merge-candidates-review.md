@@ -75,3 +75,41 @@ FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-07","severity":"medium","file_p
 - **Fix:** Populate a real `updated_at`/centroid-refresh timestamp in the fixture, assert an older pending observation is rejected, and separately assert a refresh after that timestamp is accepted.
 
 Verdict: pass_with_findings
+
+## Re-review r5b (10a3ec875..c9ce1ef83)
+
+VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-07":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-05":"not_fixed","SVCMER-ee943e85afad694a-H-f0701f57bc4831012d5c19cc":"partially_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta adds `IdentityCluster.updated_at` (`domain/cluster.py:76-78`), compares it with `created_at` in `_latest_mutation()` (`merge_candidates.py:243-250`), and maps `ClusterModel.updated_at` into the domain (`cluster_repository.py:1581-1599`). It does not map the materialized centroid's `refreshed_at`, and the production member-repository write paths remain unstamped, so same-count membership or centroid changes can still admit stale pending evidence. |
+| GPUFLOW-2-SVCMERGECANDIDATES-R-07 | fixed | The ranking key is now returned similarity, case-folded candidate name, then cluster id (`merge_candidates.py:117-122`), and the replacement test asserts `Best`, `Ada`, `Zed` order (`test_merge_candidates.py:184-201`). |
+| GPUFLOW-2-SVCMERGECANDIDATES-R2-05 | not_fixed | The supplied brief gives this identifier without a finding statement or acceptance criterion. No hunk in the fix delta can establish a behavioral change for it, so claiming fixed would fabricate evidence. |
+| SVCMER-ee943e85afad694a-H-f0701f57bc4831012d5c19cc | partially_fixed | The delta now carries a cluster `updated_at` through the domain and repository conversion (`domain/cluster.py:76-78`; `cluster_repository.py:1436-1443,1581-1599`), but the conversion still discards `centroid_data.refreshed_at` and membership writes in `member_repository.py` do not update the cluster timestamp. The repository-to-domain freshness contract therefore remains incomplete. |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-09","severity":"high","file_path":"apps/prototype-description-service/recognition/infrastructure/repositories/member_repository.py","line":61,"summary":"The new cluster freshness timestamp is not updated on the production membership repository path.","evidence":"The delta calls `_touch_cluster_updated_at()` from `cluster_repository.py:1388` and representative paths `1409-1433`, while `_to_domain()` consumes only `ClusterModel.updated_at` at `1581-1599`. The production `SqlAlchemyMemberRepository` used by assignment and merge writes membership through `add_member`, `add_member_if_not_exists`, both bulk-add variants, `move_members`, `remove_member`, and `remove_by_identity_id` (`member_repository.py:61-313`); none calls that helper. A same-count member replacement can therefore pass `_latest_mutation()` (`merge_candidates.py:243-250`) and still blend stale pending similarity."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-10","severity":"medium","file_path":"apps/prototype-description-service/recognition/domain/cluster.py","line":76,"summary":"The fix delta edits shared domain and persistence files outside the svc-merge-candidates lane plan.","evidence":"The lane plan names the merge-candidates router, `application/suggestions/merge_candidates.py`, and its unit test, but the delta additionally changes `domain/cluster.py:76-78` and `infrastructure/repositories/cluster_repository.py:1388-1443,1581-1599`. Those shared paths alter repository snapshot/version semantics and require ownership/routing review beyond the declared lane fence."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-11","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":291,"summary":"Freshness tests cover only in-memory fixtures and do not prove persistence or centroid-refresh propagation.","evidence":"The new tests set `updated_at` directly on `_cluster()` (`test_merge_candidates.py:31-54,291-322,407-451`) and exercise fake repositories; the delta adds no repository test that verifies membership writes stamp `ClusterModel.updated_at` or that `centroid_data.refreshed_at` reaches `IdentityCluster`. The suite can therefore pass while the production freshness sources remain disconnected."}]
+
+#### GPUFLOW-2-SVCMERGECANDIDATES-R-09 — high
+
+- **File:line:** `apps/prototype-description-service/recognition/infrastructure/repositories/member_repository.py:61-313`; freshness consumer `recognition/application/suggestions/merge_candidates.py:243-250`.
+- **Evidence:** The delta wires `_touch_cluster_updated_at()` into `cluster_repository.py:1388` and representative CRUD, but production assignment and merge use `SqlAlchemyMemberRepository` for all add, bulk-add, move, and removal operations. Those methods do not touch the cluster row, while `_to_domain()` reads only `ClusterModel.updated_at`.
+- **Impact:** A same-count membership replacement or move can leave the freshness timestamp unchanged, allowing an old high pending score to be blended into the live merge-candidate response.
+- **Fix:** Stamp every successful membership mutation (including bulk and move paths), or expose and compare the authoritative member/centroid refresh timestamp instead.
+
+#### GPUFLOW-2-SVCMERGECANDIDATES-R-10 — medium
+
+- **File:line:** `apps/prototype-description-service/recognition/domain/cluster.py:76-78`; `apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py:1388-1443,1581-1599`.
+- **Evidence:** The B6 lane row declares the router, merge-candidates application module, and unit test as its changed paths. The fix delta also changes the shared domain model and cluster repository, which are outside that declared ownership list and affect snapshot/version behavior.
+- **Impact:** The fix cannot be reviewed or merged under the stated lane fence without a shared-path ownership decision, and uncoordinated changes can conflict with the owning repository lane.
+- **Fix:** Route the shared model/repository changes through their owner or update the lane plan and add cross-lane integration proof.
+
+#### GPUFLOW-2-SVCMERGECANDIDATES-R-11 — low
+
+- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:31-54,291-322,407-451`.
+- **Evidence:** The added tests inject `updated_at` directly into in-memory `_cluster()` fixtures and use fake repositories. No test exercises the actual member repository writes or the materialized centroid refresh field that production conversion omits.
+- **Impact:** The targeted unit suite can stay green while the persistence wiring required for stale-evidence protection is absent.
+- **Fix:** Add repository-level coverage for each membership mutation path and a conversion test asserting centroid refresh timestamps reach the domain freshness check.
+
+Verdict: fail

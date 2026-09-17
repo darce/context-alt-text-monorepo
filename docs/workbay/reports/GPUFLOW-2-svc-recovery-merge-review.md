@@ -187,3 +187,22 @@ Impact: A temporary operator block can be resurrected permanently, and an existi
 Fix: Preserve an existing block's reason/provenance and active expiry; if an existing row is expired, remove/recreate it as a recovery block through an atomic upsert, while keeping concurrent materialization idempotent.
 
 Verdict: pass_with_findings
+
+## Re-review r4 (e98618b58..55ff78260)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SVCREC-e7658100c8bc8f0a-H-c93075cfff7bf48e3d702872 | fixed | `clustering.py:565-571` rejects a policy whose accepted apply mode has a non-accepted status, and `:766-773` requires both `status == accepted` and `apply_mode == accepted` before binding checks. The new tests cover both model validation and applicability. |
+| SVCREC-e7658100c8bc8f0a-H-f79459cbab02a228f5e3bbaf | not_fixed | The delta has no `discovery_pipeline.py` hunk that supplies a runtime binding. Instead `recovery_merge.py:1129-1141` now returns `skip_reason="runtime_binding_unavailable"` whenever the production caller passes `None`, so the accepted policy is still skipped on the actual singleton-HAC path. |
+| SVCREC-e7658100c8bc8f0a-M-67a7b468652ca18fba0b7cd2 | partially_fixed | The intended new guards at `recovery_merge.py:829-845` preserve an existing recovery block and active manual block, but the added `persisted += 1; continue` is dedented outside `if block is None` at `:816-828`; every existing block therefore skips those guards. Expired manual blocks are not replaced, and the added reconciliation tests fail. |
+| SVCREC-e7658100c8bc8f0a-M-dc9c0d33c745ec9d1124fe33 | fixed | `_apply_recovery_receipt` now performs the exact-row-count `MediaIdentityModel` update at `recovery_merge.py:1048-1065`, setting `moved_by_merge_id` to the receipt ID inside the same savepoint as the member move and receipt insertion. The durable test inspects the statement and bound receipt ID. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCRECOVERYMERGE-R-11 — high
+
+File: `apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:816-845`; `apps/prototype-description-service/recognition/tests/unit/test_recovery_merge.py:1287-1371`
+
+Evidence: In `_persist_reverted_receipt_blocks`, `persisted += 1` and `continue` are at the loop level immediately after the `block is None` insertion, so every existing block takes the `continue` before the new `reason` and `expires_at` checks. The three newly added tests fail: the active-manual and existing-recovery cases report `persisted == 1`, while the expired-manual case never records the expected delete/recreate. An expired manual block consequently remains without the indefinite recovery guard, allowing a reverted cluster to be reattached. This violates the no-silent-regression test contract ([TEST-03]) and the recovery exclusion invariant.
+
+Verdict: fail

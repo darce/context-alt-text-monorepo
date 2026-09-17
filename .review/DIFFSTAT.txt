@@ -1,9 +1,6 @@
- ...ion-context-enrichment-assessment-2026-07-05.md |   2 +
- ...-quadrant-mvp-strategy-assessment-2026-06-11.md |   2 +-
- docs/epics/v0.3.1/self-hosting-epic.md             |  18 +
- docs/roadmaps/README.md                            |   3 +-
- .../local-ai-managed-default-roadmap-2026-07-31.md |   4 +-
- docs/roadmaps/roadmap-pg-durable-evaluation.md     |   6 +-
- docs/roadmaps/roadmap-pg18-upgrade.md              | 534 +--------------------
- docs/roadmaps/roadmap-pg19-upgrade.md              | 311 ++++++++++++
- 8 files changed, 350 insertions(+), 530 deletions(-)
+ .../hooks/__tests__/describeOperationStore.test.ts |  19 +++
+ .../admin/hooks/__tests__/useBulkDescribe.test.tsx |  56 +++++++++
+ .../js/admin/hooks/describeOperationStore.ts       |  11 +-
+ .../js/admin/hooks/useBulkDescribe.ts              |  48 ++++++--
+ .../GPUFLOW-2-spa-operation-store-review.md        | 137 +++++++++++++++++++++
+ 5 files changed, 260 insertions(+), 11 deletions(-)

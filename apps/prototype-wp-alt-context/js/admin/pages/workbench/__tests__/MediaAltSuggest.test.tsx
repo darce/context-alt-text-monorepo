@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
+  DECORATIVE_TOGGLE_PRESSED_STYLE,
   DECORATIVE_TOGGLE_VISIBLE_LABEL,
   formatAltLengthAdvisory,
   formatMeasuredDuration,
@@ -2793,9 +2794,9 @@ describe('MediaAltSuggest', () => {
     expect(document.getElementById(describedBy ?? '')).toHaveTextContent(UNMARK_DECORATIVE_LABEL);
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     expect(toggle).toHaveClass('acx-media-selection__media-alt-suggest-decorative--pressed');
-    expect(toggle.getAttribute('style') ?? '').toContain('var(--acx-color-success-text)');
-    expect(toggle.getAttribute('style') ?? '').toContain('var(--acx-color-success-bg)');
-    expect(toggle.getAttribute('style') ?? '').toContain('var(--acx-color-success-border)');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.color).toBe('var(--acx-color-success-text)');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.backgroundColor).toBe('var(--acx-color-success-bg)');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.borderColor).toBe('var(--acx-color-success-border)');
     expect((toggle.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
       DECORATIVE_TOGGLE_VISIBLE_LABEL,
     );

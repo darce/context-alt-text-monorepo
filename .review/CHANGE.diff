@@ -1,370 +1,529 @@
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts
-@@ -338,6 +338,25 @@ describe('describeOperationStore', () => {
-     expect(getDescribeSuggestContext(42)?.id).toBe('op-alias');
-   });
- 
-+  it('does not treat a Suggest operation_id alias as a bulk run id', () => {
-+    const key = describeOperationRunStorageKey(TENANT);
-+    sessionStorage.setItem(
-+      key,
-+      JSON.stringify({
-+        version: 1,
-+        kind: 'run',
-+        operation_id: 'op-not-a-run',
-+        startup_id: null,
-+        started_at: 1_700_000_000_000,
-+        request: { writeAlt: false, force: false },
-+      }),
-+    );
-+    _resetDescribeOperationStoreForTests();
-+
-+    expect(getDescribeRunContext()).toBeNull();
-+    expect(sessionStorage.getItem(key)).toBeNull();
-+  });
-+
-   it('keeps an in-memory run when no tenant is configured so existing callers still work', () => {
-     resetConfigCache();
-     registerConfig({
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx
---- a/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx
-@@ -309,6 +309,62 @@ describe('useBulkDescribe', () => {
-     expect(result.current.runId).not.toBe('run-done');
-   });
- 
-+  it('does not expose or poll a terminal summary across tenant changes', async () => {
-+    submitBulkDescribeRunMock.mockResolvedValue(
-+      runResponse({ run_id: 'run-tenant-a', status: 'pending' }),
-+    );
-+    fetchBulkDescribeRunMock.mockResolvedValue(
-+      runResponse({ run_id: 'run-tenant-a', status: 'completed', completed: 2, total: 2 }),
-+    );
-+
-+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
-+    result.current.submit.mutate([1, 2]);
-+
-+    await waitFor(() => expect(result.current.runId).toBe('run-tenant-a'));
-+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
-+    expect(result.current.progress.run?.run_id).toBe('run-tenant-a');
-+    const callsBeforeTenantSwitch = fetchBulkDescribeRunMock.mock.calls.length;
-+
-+    registerConfig({
-+      nonce: 'test-nonce',
-+      ajaxUrl: '/wp-admin/admin-ajax.php',
-+      endpoints: {},
-+      tenant_id: 'tenant-b',
-+    });
-+    // Create and clear a transient B context to exercise the store's existing
-+    // subscription path while leaving tenant B with no active run.
-+    setActiveDescribeRunId('run-tenant-b');
-+    setActiveDescribeRunId(null);
-+
-+    await waitFor(() => {
-+      expect(result.current.runId).toBeNull();
-+      expect(result.current.activeRunId).toBeNull();
-+      expect(result.current.progress.isPolling).toBe(false);
-+    });
-+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
-+      'run-tenant-a',
-+    ]);
-+
-+    registerConfig({
-+      nonce: 'test-nonce',
-+      ajaxUrl: '/wp-admin/admin-ajax.php',
-+      endpoints: {},
-+      tenant_id: TENANT,
-+    });
-+    // Emit again after switching back. The terminal summary was cleared for B,
-+    // so returning to A must not resurrect it as an active run.
-+    setActiveDescribeRunId('run-tenant-a-new');
-+    setActiveDescribeRunId(null);
-+
-+    await waitFor(() => {
-+      expect(result.current.runId).toBeNull();
-+      expect(result.current.activeRunId).toBeNull();
-+    });
-+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
-+      'run-tenant-a',
-+    ]);
-+  });
-+
-   it('does not resume a completed run after remount once storage is cleared', async () => {
-     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-done', status: 'pending' }));
-     fetchBulkDescribeRunMock.mockResolvedValue(
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts b/apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts
---- a/apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts
-@@ -81,6 +81,8 @@ const resolveTenantId = (): string | null => {
-   }
- };
- 
-+export const resolveDescribeOperationTenantId = resolveTenantId;
-+
- const isDescribeOperationKind = (value: unknown): value is DescribeOperationKind =>
-   value === DESCRIBE_OPERATION_KIND.SUGGEST || value === DESCRIBE_OPERATION_KIND.RUN;
- 
-@@ -114,8 +116,15 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
-     return null;
-   }
-   const idFromId = typeof record.id === 'string' && record.id !== '' ? record.id : null;
-+  // `operation_id` is the service lease identifier used by Suggest. A bulk
-+  // run must resume by its `run_id`; accepting the alias for a run could make
-+  // a malformed persisted payload poll the wrong operation after reload.
-   const idFromOperationId =
--    typeof record.operation_id === 'string' && record.operation_id !== '' ? record.operation_id : null;
-+    record.kind === DESCRIBE_OPERATION_KIND.SUGGEST &&
-+    typeof record.operation_id === 'string' &&
-+    record.operation_id !== ''
-+      ? record.operation_id
-+      : null;
-   const id = idFromId ?? idFromOperationId;
-   if (id === null) {
-     return null;
-diff --git a/apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts b/apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts
---- a/apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts
-+++ b/apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts
-@@ -1,4 +1,4 @@
--import { useEffect, useRef, useState } from 'react';
-+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
- import { useMutation, useQueryClient } from '@tanstack/react-query';
- import { __, sprintf } from '@wordpress/i18n';
- 
-@@ -19,6 +19,8 @@ import {
-   DESCRIBE_OPERATION_CONTEXT_VERSION,
-   DESCRIBE_OPERATION_KIND,
-   putDescribeOperationContext,
-+  resolveDescribeOperationTenantId,
-+  subscribeDescribeOperationStore,
- } from './describeOperationStore';
- import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
- 
-@@ -43,6 +45,13 @@ export interface UseBulkDescribeResult {
- const SUBMIT_ERROR_FALLBACK = __('Could not start the describe run. Please try again.', 'alt-context');
- const CANCEL_ERROR_FALLBACK = __('Could not cancel the describe run. Please try again.', 'alt-context');
- 
-+type TerminalDescribeRun = {
-+  tenantId: string | null;
-+  runId: string;
-+};
-+
-+const emptyTenantSnapshot = (): string | null => null;
-+
- /**
-  * Build the operator-visible notice for a bulk-describe mutation failure.
-  * Never sets polling state — callers must not treat a run_id found only in an
-@@ -87,6 +96,11 @@ const persistRunContext = (response: DescribeRunResponse): void => {
- 
- export const useBulkDescribe = (): UseBulkDescribeResult => {
-   const queryClient = useQueryClient();
-+  const tenantId = useSyncExternalStore(
-+    subscribeDescribeOperationStore,
-+    resolveDescribeOperationTenantId,
-+    emptyTenantSnapshot,
-+  );
-   const { runId: storedRunId } = useActiveDescribeRun();
-   const submit = useMutation<DescribeRunResponse, Error, number[]>({
-     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
-@@ -101,23 +115,36 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
-   // while the latter keeps the finished response available for the terminal
-   // summary after the active store entry is cleared.
-   const activeRunIdRef = useRef<string | null>(null);
--  const lastTerminalRunIdRef = useRef<string | null>(null);
--  const [lastTerminalRunId, setLastTerminalRunId] = useState<string | null>(null);
-+  const lastTerminalRunRef = useRef<TerminalDescribeRun | null>(null);
-+  const [lastTerminalRun, setLastTerminalRun] = useState<TerminalDescribeRun | null>(null);
-   if (storedRunId !== activeRunIdRef.current) {
-     // The store is the source of truth for whether a run is active. A terminal
--    // summary may continue polling through lastTerminalRunIdRef, but it must
-+    // summary may continue polling through lastTerminalRunRef, but it must
-     // never keep the activeRunId alive after the store is cleared.
-     activeRunIdRef.current = storedRunId;
-     if (storedRunId !== null) {
--      lastTerminalRunIdRef.current = null;
-+      lastTerminalRunRef.current = null;
-     }
-   }
-   const activeRunId = activeRunIdRef.current;
--  const runId = activeRunId ?? lastTerminalRunId;
--  const progressRunId = activeRunId ?? lastTerminalRunIdRef.current;
-+  const currentTerminalRun =
-+    lastTerminalRun?.tenantId === tenantId ? lastTerminalRun : null;
-+  const currentTerminalRunRef =
-+    lastTerminalRunRef.current?.tenantId === tenantId ? lastTerminalRunRef.current : null;
-+  const runId = activeRunId ?? currentTerminalRun?.runId ?? null;
-+  const progressRunId = activeRunId ?? currentTerminalRunRef?.runId ?? null;
-   const progress = useDescribeRunProgress(progressRunId);
-   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
- 
-+  useEffect(() => {
-+    if (lastTerminalRun !== null && lastTerminalRun.tenantId !== tenantId) {
-+      setLastTerminalRun(null);
-+    }
-+    if (lastTerminalRunRef.current !== null && lastTerminalRunRef.current.tenantId !== tenantId) {
-+      lastTerminalRunRef.current = null;
-+    }
-+  }, [lastTerminalRun, tenantId]);
-+
-   useEffect(() => {
-     if (activeRunId === null || !progress.isTerminal) {
-       return;
-@@ -131,12 +158,13 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
- 
-   useEffect(() => {
-     if (activeRunId !== null && progress.isTerminal) {
--      lastTerminalRunIdRef.current = activeRunId;
--      setLastTerminalRunId(activeRunId);
-+      const terminalRun = { tenantId, runId: activeRunId };
-+      lastTerminalRunRef.current = terminalRun;
-+      setLastTerminalRun(terminalRun);
-       clearActiveDescribeRunId(activeRunId);
-       activeRunIdRef.current = null;
-     }
--  }, [activeRunId, progress.isTerminal]);
-+  }, [activeRunId, progress.isTerminal, tenantId]);
- 
-   const errorMessage = submit.error
-     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)
-diff --git a/docs/workbay/reports/GPUFLOW-2-spa-operation-store-review.md b/docs/workbay/reports/GPUFLOW-2-spa-operation-store-review.md
+diff --git a/docs/workbay/contracts/identity-merge.md b/docs/workbay/contracts/identity-merge.md
 new file mode 100644
 --- /dev/null
-+++ b/docs/workbay/reports/GPUFLOW-2-spa-operation-store-review.md
-@@ -0,0 +1,137 @@
-+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-01","severity":"high","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts","line":171,"summary":"Storage failures are swallowed while the caller reports a durable context","evidence":"writeStorageItem catches every sessionStorage.setItem exception and putDescribeOperationContext still replaces the in-memory snapshot and emits subscribers; a reload then has no persisted run to resume."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-02","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts","line":102,"summary":"Terminal runs retain a non-null active run id after the store is cleared","evidence":"retainedRunIdRef keeps the last store id for the mount, while the terminal effect clears only the store; the downstream MediaSelection currently treats any non-null runId as activity and run relevance."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-03","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts","line":46,"summary":"In-memory operation snapshots are not tenant-scoped","evidence":"runContext and suggestByMediaId are process-global, and their fast paths return cached contexts without recording or checking the tenant that populated them; changing configured tenant in the same SPA lifetime can expose the previous tenant context."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-04","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts","line":1,"summary":"The delta changes test paths outside the declared lane ownership","evidence":"The inlined delta changes both hooks/__tests__/describeOperationStore.test.ts and hooks/__tests__/useBulkDescribe.test.tsx, but the lane-owned list contains only describeOperationStore.ts, activeDescribeRun.ts, and useBulkDescribe.ts."}]
-+Verdict: fail
++++ b/docs/workbay/contracts/identity-merge.md
+@@ -0,0 +1,190 @@
++---
++title: Identity merge and cluster recovery
++boundary_owner: recognition
++status: draft (GPUFLOW-2)
++since: GPUFLOW-2
++---
 +
-+# GPUFLOW-2 spa-operation-store review
++# Identity merge and cluster recovery
 +
-+| Scope item | Value |
-+| --- | --- |
-+| Base | `284616c05` |
-+| Tip | `2bb8e1121` |
-+| Files | `js/admin/hooks/describeOperationStore.ts`, `js/admin/hooks/activeDescribeRun.ts`, `js/admin/hooks/useBulkDescribe.ts`, plus the two changed hook test paths |
++Recognition-side cluster merge receipts, pairwise recovery admission, LIFO
++revert, and the operator-merge audit field. Not the WordPress person-merge
++undo stack. Machine-readable companion schemas:
 +
-+## FINDINGS
++- [recognition-cluster-snapshot.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json)
++- [roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
++- [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
++- [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
 +
-+### GPUFLOW-2-SPAOPERATIONSTORE-R-01 — high
++## Two undo stacks, never conflated (INT-09)
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts:161-175,303-315`
-+- Evidence: `writeStorageItem` catches every `sessionStorage.setItem` failure and returns no status. `putDescribeOperationContext` then updates the in-memory context and notifies subscribers as though the `(state, context)` pair were durable. `readStorageItem` likewise converts read failures into an empty store. This conflicts with the A4 reload proof and the fail-closed/silence-is-not-success rule (`GRPH-29`, `rg-015`).
-+- Impact: A successful submit can poll in the current mount, but navigation or reload silently loses the run when storage is unavailable. If a replacement write fails, an old key can remain and a later reload can resume the wrong run. The accepted upstream run can therefore be orphaned or mis-associated without an operator-visible error.
-+- Fix: Make the storage adapter return an explicit success/failure result, and either reject/degrade the operation visibly when the durable write cannot be completed or provide an explicit non-durable mode. Do not claim durable resume after a swallowed write; add throwing-storage and stale-key tests.
++| Surface | Token | Reverts | Owner |
++| --- | --- | --- | --- |
++| Roster "Merged from N groups · Undo" | WP `PersonMergeService` `undo_token`, `UNDO_TOKEN_TTL_SECONDS` (24 h) | A WP person merge via `POST /roster/persons/merge/undo` | PHP person merge |
++| Workbench "Merged automatically · Undo" | `undoable_merge_receipt_id` from the cluster snapshot → projection | A recognition cluster merge via `POST /recognition/clusters/{id}/revert-merge` | Recognition receipts |
 +
-+### GPUFLOW-2-SPAOPERATIONSTORE-R-02 — medium
++Neither surface reads the other's token. No lane bridges them.
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:97-105,119-123`
-+- Evidence: `retainedRunIdRef` deliberately keeps the last run id after the terminal effect clears the operation store. The A4 contract says the hook derives `runId` from the store and clears it on terminal status. The current downstream `MediaSelection` uses a non-null `runId` for activity and `isRunRelevant`, so this retained value keeps a completed run looking active to consumers.
-+- Impact: After completion, the same mounted workbench can continue presenting the terminal run as relevant and prevent the idle-GPU consumer from returning to its no-run behavior. This also makes the effective active-run API differ from the cleared durable store until unmount.
-+- Fix: Keep terminal result data separate from the active/resumable run id. Return `null` from the active run source once terminal status is observed, and let the outcome panel read the already-fetched terminal progress independently.
++## `cluster_merge_receipts`
 +
-+### GPUFLOW-2-SPAOPERATIONSTORE-R-03 — medium
++One row per merge (automatic or operator). Greenfield table in
++`001_identity_schema.py` (C0). ORM: `IdentityCluster.merge_receipts` ordered
++by `created_at` desc.
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts:44-47,214-216,243-247,303-327`
-+- Evidence: `runContext` and `suggestByMediaId` are global process state with no tenant marker. `hydrateRunFromStorage` skips rehydration whenever the global run is non-null, and `liveSuggestContext` returns a cached media context without resolving the current tenant. A tenant-keyed storage key does not protect these in-memory fast paths after configuration changes within one SPA lifetime.
-+- Impact: A tenant switch or config replacement can make the next tenant poll or render the previous tenant's operation, violating the tenant-keyed boundary and potentially exposing cross-tenant operation identifiers.
-+- Fix: Associate every in-memory snapshot with the tenant that populated it and invalidate/re-hydrate when `getConfig().tenant_id` changes; ensure clears remove only the owning tenant slot and add a tenant-switch regression test.
-+
-+### GPUFLOW-2-SPAOPERATIONSTORE-R-04 — low
-+
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts:1`; `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:1`
-+- Evidence: Mechanical audit of the inlined delta finds these two changed paths outside the declared `spa-operation-store` owned list. The declared list contains only `describeOperationStore.ts`, `activeDescribeRun.ts`, and `useBulkDescribe.ts`.
-+- Impact: Sibling-owned test changes cross the lane boundary and can conflict with the test owners or obscure which lane is responsible for their review.
-+- Fix: Move those test changes to their owning lane, or update the task ownership manifest before merging.
-+
-+## VERIFICATION
-+
-+- Changed-path audit: the inlined delta contains five paths; the three production paths are owned and the two test paths are outside the declared owned list (R-04).
-+- Required lane test: `"$resolved_python" -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — `1 passed`.
-+- Assigned Vitest proof was attempted with `apps/prototype-wp-alt-context/node_modules/.bin/vitest`; this worktree has no local Vitest dependency, so no JavaScript test pass is claimed.
-+
-+## Re-review r5 (2bb8e1121..6b7f51450)
-+
-+VERIFIED: {"GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"not_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-02":"not_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-03":"fixed"}
-+
-+| finding | verdict | evidence |
++| Column | Type | Meaning |
 +| --- | --- | --- |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | not_fixed | The delta leaves `writeStorageItem` and `removeStorageItem` swallowing every storage exception (`describeOperationStore.ts:191-205`). `putDescribeOperationContext` still updates the tenant cache and emits before/without confirming the write (`:384-405`), so a run can still look durable only in memory. |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-02 | not_fixed | The fix delta has no `useBulkDescribe.ts` hunk. The hook still retains `storedRunId` in `retainedRunIdRef` and derives `runId` from that fallback (`useBulkDescribe.ts:97-105`), while terminal cleanup only clears the store (`:119-123`). |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-03 | fixed | Run and suggestion snapshots are now keyed by `TenantScope`; hydration and both live fast paths resolve the current tenant (`describeOperationStore.ts:243-317`), and put/clear operations address only that tenant (`:383-435`). The added tenant-switch test exercises both caches (`describeOperationStore.test.ts:122-145`). |
++| `receipt_id` | UUID PK | Stable receipt id; the undo handle |
++| `survivor_cluster_id` | UUID | Cluster that kept the members |
++| `source_cluster_id` | UUID | Cluster that was absorbed |
++| `source_label` | string \| null | Label to restore on revert |
++| `moved_identity_ids` | UUID[] | Exact membership moved; revert restores this set |
++| `rule_version` | string | Calibration / merge-rule version that admitted the merge |
++| `kind` | `auto` \| `operator` | Vocabulary is this enum only (sr-007) |
++| `created_at` | timestamptz | Receipt push time |
++| `expires_at` | timestamptz | `created_at + ACX_MERGE_UNDO_WINDOW_DAYS` |
++| `reverted_at` | timestamptz \| null | Set on successful revert; unreverted while null |
 +
-+### FINDINGS
++`ACX_MERGE_UNDO_WINDOW_DAYS` default **7**. Undo window is this setting, never
++a client constant.
 +
-+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-05","severity":"high","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts","line":356,"summary":"Transient storage read failure can delete a valid resumable run","evidence":"The new purgeInvalid branch treats readStoredContext(runKey)===null as malformed whenever a second read is non-null. readStoredContext returns null for any getItem exception because readStorageItem catches it, so a transient first-read failure followed by a successful second read removes the valid run key and silently destroys reload state."}]
++Receipts for a survivor form an ordered stack. Only the newest unreverted
++receipt is undoable (LIFO).
 +
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-05 — high
++## Pairwise admission rule (GRPH-22)
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts:349-359`
-+- Evidence: The fix adds a second `readStorageItem(runKey)` after `readStoredContext(runKey)` returned `null`. The latter also returns `null` when the first `sessionStorage.getItem` throws (`:184-188`), so an intermittent read failure followed by a successful read enters the new branch and calls `removeStorageItem(runKey)` on an otherwise valid resumable run.
-+- Impact: A transient storage read failure during subscription can silently delete durable operation state, so reload recovery is lost even though the stored payload was valid. This is a new data-loss path in the fix delta, distinct from the unchanged swallowed-write/removal path above.
-+- Fix: Preserve the distinction between “storage read failed” and “no value/invalid value”; only remove a key after a successful, validated read proves it is malformed or expired.
++Recovery merge runs after `run_singleton_hac_refinement`, gated by
++`ACX_RECOVERY_MERGE_ENABLED` (default `false` until the C1 policy block is
++accepted). For residual singleton/small cluster R and candidate destination D
++(by centroid cosine), admit **only if every clause holds for every moved
++member**:
 +
-+Verdict: fail
++1. Every member of R has cosine ≥ `τ_pair` to ≥ k destination exemplars from
++   k distinct source media.
++2. R is internally coherent (all intra-R pairs ≥ `τ_intra`).
++3. The runner-up destination's best pairwise score trails by ≥ δ for every
++   member (competing-identity margin).
++4. Neither R nor D is bound to a different named person.
++5. The member's quality stratum is not abstained.
 +
-+## Re-review r6 (6b7f51450..ad71a35cf)
++Any member failing any clause → the whole residual is abstained and a merge
++suggestion is emitted. There is no partial move. Never merge by best edge.
++Never use UMAP/t-SNE projections for merge decisions. Complete-link
++safeguards stay. Numbers (`τ_pair`, `τ_intra`, δ, k ≥ 2, per-stratum floors,
++suggestion-band cuts) come only from the accepted C1 calibration policy
++block; this contract does not invent them.
 +
-+VERIFIED: {"GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"partially_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-02":"fixed","GPUFLOW-2-SPAOPERATIONSTORE-R5-05":"fixed"}
++On admission the producer writes one `cluster_merge_receipts` row
++(`kind: auto`, `rule_version`, `expires_at = now + ACX_MERGE_UNDO_WINDOW_DAYS`).
 +
-+| finding | verdict | evidence |
++## Housekeeping purge (RES-07)
++
++The clustering run's last step purges receipts that are reverted
++(`reverted_at` set) or expired (`expires_at` in the past). Same-rate
++reclaimer: the writer of receipts is the writer of the purge. Clients never
++delete receipts.
++
++## LIFO revert
++
++`revert_merge(receipt_id)`:
++
++- Refuse `receipt_not_top` unless the receipt is the survivor's newest
++  unreverted one.
++- Refuse `receipt_expired` past `expires_at`.
++- Otherwise restore `moved_identity_ids` to a cluster labelled `source_label`
++  when that label is non-empty, else `"<name> (restored)"` where `<name>` is
++  the survivor's current display name (4.2.3 semantics). Set `reverted_at`.
++- Mirror `merge_cluster` step for step: move members, clear
++  `moved_by_merge_id` on them, `recompute_representatives` +
++  `recompute_centroid` for both clusters, best-effort `refresh_centroids_view`
++  (warn, never roll back), delete stale `ClusterMergeSuggestion` rows for
++  both clusters, set `identity_count` from a member count, broadcast
++  `cluster_merge_reverted`.
++
++Refusals are `409` problem-details with `code` (API-05). A second recovery
++run MUST NOT re-attach the restored cluster solely because it was previously
++merged.
++
++```json
++{
++  "type": "https://context-alt-text.dev/problems/receipt-not-top",
++  "title": "Receipt is not the top unreverted merge",
++  "status": 409,
++  "code": "receipt_not_top"
++}
++```
++
++```json
++{
++  "type": "https://context-alt-text.dev/problems/receipt-expired",
++  "title": "Merge receipt has expired",
++  "status": 409,
++  "code": "receipt_expired"
++}
++```
++
++## HTTP
++
++Recognition (mounted by `svc-route-registry`; `_tenant_id = Depends(get_tenant_id)`):
++
++- `GET /recognition/clusters/{cluster_id}/merge-candidates` →
++  [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
++- `POST /recognition/clusters/{id}/revert-merge` body `{ "receipt_id": "<uuid>" }`
++
++WordPress:
++
++- `GET acx/v1/roster/persons/{id}/merge-candidates` →
++  [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
++- `POST acx/v1/workbench/clusters/{id}/revert-merge` proxies the recognition
++  revert body `{ "receipt_id": "<uuid>" }`
++
++Band cuts are read from the accepted calibration policy block. No route
++embeds literal similarity thresholds.
++
++## Projection path for quality and undo (B2, rg-015)
++
++The snapshot `clusters[]` object is the only path by which quality and undo
++availability reach WordPress. Four fields, stored as-is, never derived:
++
++| Snapshot / projection column | Wire type | Source |
 +| --- | --- | --- |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | partially_fixed | `describeOperationStore.ts:199-240,442-461,485-505` now distinguishes read/write/remove outcomes, marks failed writes `memory_only`, and uses a tombstone to suppress a failed delete in the current process. The tombstone is only a module-local `Set` (`:66-69`), so a failed `removeItem` still leaves the old key to be rehydrated after a real page reload; the new persistence marker is also not consumed by the active-run/UI path. |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-02 | fixed | `useBulkDescribe.ts:97-114,128-134` separates `activeRunIdRef` from `lastTerminalRunIdRef`, clears the former after terminal progress, and returns only the active id. A terminal run therefore no longer remains a non-null active `runId`, although the downstream terminal-summary regression is reported below. |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R5-05 | fixed | `describeOperationStore.ts:199-211,243-271,417-425` preserves `error` versus `absent` versus validated `value`; `purgeInvalid` removes only an actually read invalid/expired value and no longer performs the destructive second read. The added one-shot read-error test exercises retry without removal (`describeOperationStore.test.ts:118-135`). |
++| `representative_quality` | number \| null | Representative row `quality_score`, renamed at export (API-10) |
++| `quality_components` | object \| null | Representative row `quality_components` (`confidence`, `bbox_area`, `sharpness`, `occlusion_severity`) |
++| `representative_media_id` | integer \| null | Persisted representative identity's WP attachment ID |
++| `undoable_merge_receipt_id` | uuid string \| null | Newest unreverted, unexpired receipt for that cluster |
 +
-+### FINDINGS
++Absent fields stay null. Re-running bootstrap/targeted sync on the same
++`snapshot_version` is a no-op (COR-1 / FLOW-06). Heal by reprocessing into a
++fresh version. No PHP backfill. Roster
++[roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
++reads those columns: `clusters[].representative_identity` carries
++`representative_quality` and `quality_components`; `clusters[]` carries
++`representative_media_id` and `undoable_merge_receipt_id`.
 +
-+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-06","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx","line":224,"summary":"Cancellation test removes terminal-cleanup coverage","evidence":"The fix changes the status returned by fetchBulkDescribeRunMock from cancelled to running while cancelBulkDescribeRunMock still returns cancelled, then asserts a non-null runId. The test no longer drives the terminal cancellation path that should clear the active run."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-07","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts","line":1,"summary":"The fix delta still changes paths outside the lane-owned list","evidence":"The current delta edits both hooks/__tests__/describeOperationStore.test.ts and hooks/__tests__/useBulkDescribe.test.tsx, while the spa-operation-store lane row owns only describeOperationStore.ts, activeDescribeRun.ts, and useBulkDescribe.ts. This repeats a current-delta ownership violation rather than being a change to an owned production path."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-08","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts","line":113,"summary":"Terminal summary identity is private, so the workbench hides terminal review UI","evidence":"The fix feeds lastTerminalRunIdRef only into useDescribeRunProgress and returns the active-only runId. Existing MediaSelection computes hasDescribeActivity/isPanelVisible from that runId and passes it to BulkDescribeReviewLink; after terminal cleanup it becomes null, so the terminal progress panel and failed/cancelled Review & apply drafts link disappear even though progress.run still contains the terminal result."}]
++Workbench "Merged automatically · Undo" shows only while projected
++`undoable_merge_receipt_id` is non-null, and submits that id.
 +
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-06 — medium
++The composite always ships with its parts (UXR-15). No tier recomputes
++quality. `representative_media_id` is the attachment integer, not a UUID and
++not parsed from `representative_thumb_path`.
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:220-232`
-+- Evidence: The fix changes `fetchBulkDescribeRunMock` from a `cancelled` response to `running`, while the cancel mutation still resolves `cancelled`. The assertion consequently continues to expect a non-null active `runId` and never exercises terminal cleanup for cancellation. This weakens the proof for the exact lifecycle changed by R4-02 (CARD-06).
-+- Fix: Keep the status poll terminal for this test and assert `runId` becomes null while the terminal summary remains available; add a separate non-terminal cancellation assertion if needed.
++## Operator merge audit (HAI-15)
 +
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-07 — low
++Person merge is two-step. Step 1 shows `#merge-survivor` as an unranked,
++score-free list in `name ASC`, filtered by `#merge-search` typeahead, and
++requires a pick. The pick is committed to dialog state and sent as
++`operator_initial_choice`. Step 2 (only after the pick) fetches merge
++candidates and re-renders `#merge-survivor` sorted by similarity desc (name
++asc within band). The merge request carries both `operator_initial_choice`
++and the final survivor.
 +
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts:1`; `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:1`
-+- Evidence: The fix delta changes both hook test paths, but the declared spa-operation-store lane list owns only the three production hook paths. The current fix therefore still crosses the lane boundary with test edits.
-+- Fix: Move the test changes to their owning lane or update the ownership manifest before merge.
++`POST acx/v1/roster/persons/merge` (commit) fields:
 +
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-08 — medium
-+
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:97-114,142`; downstream `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx:133-145,564,653-657,717-725`
-+- Evidence: The fix keeps `lastTerminalRunIdRef` private to progress polling and returns only the active `runId`. The existing workbench uses that returned id for `hasDescribeActivity`, terminal panel visibility, GPU relevance, and `BulkDescribeReviewLink`. Once the terminal effect clears the store, the returned id is null, so the panel and review link are suppressed even though the hook still has `progress.run` for the terminal summary.
-+- Impact: A completed/failed/cancelled run no longer drives active/GPU indicators as intended, but terminal outcome UI and review navigation are lost as a side effect.
-+- Fix: Expose a separate terminal-summary id/state to the workbench, or base panel/review rendering on the retained terminal progress while continuing to use active `runId` only for activity and GPU relevance.
-+
-+Verdict: pass_with_findings
-+
-+## Re-review r7 (377ee8b0b..eeee5074a)
-+
-+VERIFIED: {"SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5":"fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"not_fixed"}
-+
-+| finding | verdict | evidence |
++| Field | Type | Meaning |
 +| --- | --- | --- |
-+| SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5 | fixed | The `useBulkDescribe.ts` hunk adds a separate `activeRunId` and computes the public `runId` as `activeRunId ?? lastTerminalRunId` (`+102-117`); terminal cleanup stores the id for the summary before clearing the active store entry (`+132-139`). The terminal tests now assert `activeRunId` is null while `runId` and `progress.run` retain the terminal result (`useBulkDescribe.test.tsx:+235-239,+292-298`). |
-+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | not_fixed | The inlined delta has no `describeOperationStore.ts` hunk. The existing storage adapter still catches write/remove exceptions (`describeOperationStore.ts:213-231`), `putDescribeOperationContext` only labels a failed write `memory_only` while emitting the snapshot (`:448-461`), and `persistRunContext` still sets the active run without inspecting that outcome (`useBulkDescribe.ts:76-86`). A failed write/remove therefore remains silent and reload can still lose or resurrect state. |
++| `survivor_id` | integer | Final confirmed survivor (`acx_persons.id`) |
++| `loser_id` | integer | Absorbed person |
++| `operator_initial_choice` | integer | Step-1 pick (`acx_persons.id`). Audit only; never a ranking input |
 +
-+### FINDINGS
-+
-+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-09","severity":"high","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts","line":105,"summary":"Terminal summary state is not tenant-scoped","evidence":"The delta adds hook-instance React state `lastTerminalRunId` and falls back to it for `runId` (`useBulkDescribe.ts:105-117`) without recording the tenant. The operation store itself resolves and caches by tenant (`describeOperationStore.ts:57-80,318-335`), so switching a mounted workbench to a tenant with no active stored run leaves the previous tenant's terminal id and progress query visible, including its review link."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-10","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx","line":564,"summary":"The new activeRunId is not consumed by the workbench GPU relevance path","evidence":"The fix makes `runId` remain non-null for a terminal summary while adding `activeRunId` separately (`useBulkDescribe.ts:28-31,115-117`), but MediaSelection still assigns `activeDescribeRunId = bulkDescribe.runId` and passes `runId !== null` to `GpuTierStatus` (`MediaSelection.tsx:133,142-144,564`). A completed run therefore keeps the GPU status path relevant after active store cleanup; the newly added active id is unused by this downstream consumer."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-11","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx","line":1,"summary":"The fix delta edits a test path outside this lane's owned list","evidence":"The inlined delta changes `hooks/__tests__/useBulkDescribe.test.tsx`, while the lane-owned list contains only `describeOperationStore.ts`, `activeDescribeRun.ts`, and `useBulkDescribe.ts`. This repeats a cross-lane test ownership violation in the current fix commit."}]
-+
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-09 — high
-+
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:103-117`
-+- Evidence: The fix stores the terminal summary id in `useState` and uses it whenever the tenant-scoped active store returns null. No tenant identity is captured with that state or used to reset it. The store's own cache is tenant-scoped (`describeOperationStore.ts:57-80,318-335`), so a same-mount tenant switch to a tenant without an active run can display the previous tenant's terminal run and expose its id/result and review URL. This violates the tenant boundary and the A4 foreign-tenant isolation proof (`GRPH-29`).
-+- Fix: Pair the terminal summary with the resolved tenant and clear it when that tenant changes, or source terminal summaries from the tenant-scoped operation store; add a mounted tenant-switch regression test.
-+
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-10 — medium
-+
-+- File: `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx:133,142-144,564`; `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:28-31,115-117`
-+- Evidence: `runId` now intentionally remains the terminal summary id, while `activeRunId` is the cleared store-backed id. The existing workbench still treats `bulkDescribe.runId` as `activeDescribeRunId` and uses its non-null value for `GpuTierStatus.isRunRelevant`. Consequently a terminal run continues to drive the GPU relevance/status path after cleanup even though the fix introduced the correct active-id distinction. The terminal panel/review path should use the summary id, but activity/GPU paths need `activeRunId` (`rg-015`).
-+- Fix: Consume `bulkDescribe.activeRunId` for active/GPU relevance and expose/use a separate terminal-summary id for panel and review rendering.
-+
-+#### GPUFLOW-2-SPAOPERATIONSTORE-R-11 — low
-+
-+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:1`
-+- Evidence: The inlined r7 delta changes this test path, but the lane-owned list grants this lane only the three production hook paths. The test change must be reviewed/merged by its owning lane or the ownership manifest must be updated before merge.
-+- Fix: Move the test hunk to its owning lane, or explicitly assign the test path to this lane before landing it (`CARD-06`).
-+
-+Verdict: fail
++`operator_initial_choice` is stored on the WP merge record. It is not a
++recognition receipt field. PHP MUST persist the submitted value and MUST NOT
++replace it with the top ranked candidate.
+diff --git a/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
+new file mode 100644
+--- /dev/null
++++ b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
+@@ -0,0 +1,64 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-merge-candidates-response.schema.json",
++  "title": "Recognition Cluster Merge Candidates Response",
++  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Similarity is centroid cosine merged with pending ClusterMergeSuggestion similarity. band is cut from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Same shape family as GET /recognition/clusters/{cluster_id}/roster-candidates. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
++  "type": "object",
++  "required": ["cluster_id", "candidates"],
++  "additionalProperties": false,
++  "properties": {
++    "cluster_id": {
++      "type": "string",
++      "format": "uuid",
++      "description": "Probe cluster UUID from the request path."
++    },
++    "candidates": {
++      "type": "array",
++      "description": "Server-ranked other clusters. Similarity DESC, then name ASC within band. Browser/SPA clients must render in payload order.",
++      "items": {
++        "type": "object",
++        "required": ["cluster_id", "name", "similarity", "band"],
++        "additionalProperties": false,
++        "properties": {
++          "cluster_id": {
++            "type": "string",
++            "format": "uuid",
++            "description": "Candidate cluster UUID."
++          },
++          "name": {
++            "type": "string",
++            "description": "Cluster label used for display and within-band name ASC. Empty string when the cluster is unlabeled; never fabricated from another cluster."
++          },
++          "similarity": {
++            "type": "number",
++            "description": "Ranking cosine only; not a calibrated probability. May be negative (band none)."
++          },
++          "band": {
++            "type": "string",
++            "enum": ["strong", "possible", "none"],
++            "description": "Suggestion band from the accepted calibration policy block. Same vocabulary as roster-candidates-response. Unknown values MUST be treated as none."
++          }
++        }
++      }
++    }
++  },
++  "examples": [
++    {
++      "cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++      "candidates": [
++        {
++          "cluster_id": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
++          "name": "Alice Example",
++          "similarity": 0.87,
++          "band": "strong"
++        },
++        {
++          "cluster_id": "c0ffee00-0000-4000-8000-000000000001",
++          "name": "",
++          "similarity": 0.41,
++          "band": "none"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
+--- a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
++++ b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
+@@ -92,6 +92,53 @@
+             "type": ["string", "null"],
+             "format": "uuid",
+             "description": "Target cluster ID for a pending merge suggestion. Null when the source is not similar_cluster."
++          },
++          "representative_quality": {
++            "type": ["number", "null"],
++            "minimum": 0,
++            "maximum": 1,
++            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
++          },
++          "quality_components": {
++            "type": ["object", "null"],
++            "description": "Parts of representative_quality (UXR-15). Null when the snapshot omits them. When present, all four keys are required; a missing signal is null, never omitted. Consumers MUST NOT invent components.",
++            "additionalProperties": false,
++            "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
++            "properties": {
++              "confidence": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Detector confidence in [0,1]."
++              },
++              "bbox_area": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "description": "Face bounding-box area in pixel-squared units."
++              },
++              "sharpness": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Sharpness term in [0,1] when computed; null while the producer has no sharpness signal."
++              },
++              "occlusion_severity": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Occlusion severity in [0,1] (eye-patch activity deficit today). Cheap shortlist ranker, not a calibrated occluder measure."
++              }
++            }
++          },
++          "representative_media_id": {
++            "type": ["integer", "null"],
++            "minimum": 1,
++            "description": "WP attachment ID of the persisted representative identity. Integer on the wire (same grain as members[].attachment_id). Null when absent. Consumers MUST NOT parse it from representative_thumb_path (rg-015)."
++          },
++          "undoable_merge_receipt_id": {
++            "type": ["string", "null"],
++            "format": "uuid",
++            "description": "Receipt id of this cluster's newest unreverted, unexpired cluster_merge_receipts row. Null when none is undoable. This is the only path by which workbench undo availability reaches WordPress."
+           }
+         }
+       }
+@@ -149,5 +196,69 @@
+         }
+       }
+     }
+-  }
++  },
++  "examples": [
++    {
++      "tenant_id": "cc42f496-c7e1-5631-b3b5-cfa270c763f8",
++      "snapshot_version": 105,
++      "snapshot_generation_id": "70e7f684-7228-4b4d-9594-c3ca024478f6",
++      "source_job_id": "6e2b534b-c5f1-4d3d-a6d1-1f0b8d8ab7ec",
++      "generated_at": "2026-03-27T18:00:00Z",
++      "clusters": [
++        {
++          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "label": "Alice Example",
++          "curation_state": "confirmed",
++          "is_user_confirmed": true,
++          "identity_count": 2,
++          "representative_thumb_path": "acx://cluster/6c1a2e32-31b2-4d54-a4de-98b1a73d77a1/media/501",
++          "representative_id": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
++          "is_pinned": true,
++          "suggested_label": null,
++          "suggested_label_source": null,
++          "suggested_label_confidence": null,
++          "suggested_target_cluster_id": null,
++          "representative_quality": 0.82,
++          "quality_components": {
++            "confidence": 0.94,
++            "bbox_area": 7680,
++            "sharpness": 0.71,
++            "occlusion_severity": 0.12
++          },
++          "representative_media_id": 501,
++          "undoable_merge_receipt_id": "b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44"
++        },
++        {
++          "cluster_uuid": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
++          "label": null,
++          "curation_state": "active",
++          "is_user_confirmed": false,
++          "identity_count": 1,
++          "representative_thumb_path": "acx://cluster/28f91a5d-0a26-48cc-ab25-f1ad9ac74367/media/777",
++          "representative_id": null,
++          "is_pinned": false,
++          "suggested_label": "Alice Example",
++          "suggested_label_source": "similar_cluster",
++          "suggested_label_confidence": 0.91,
++          "suggested_target_cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "representative_quality": null,
++          "quality_components": null,
++          "representative_media_id": null,
++          "undoable_merge_receipt_id": null
++        }
++      ],
++      "members": [
++        {
++          "identity_uuid": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
++          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "attachment_id": 501,
++          "bbox": { "x": 12, "y": 20, "width": 80, "height": 96 },
++          "image_width": 1200,
++          "image_height": 1600,
++          "thumb_path": "acx://identity/4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb/thumb",
++          "similarity": 0.98
++        }
++      ]
++    }
++  ]
+ }
+diff --git a/packages/shared-contracts/schemas/roster-entry.schema.json b/packages/shared-contracts/schemas/roster-entry.schema.json
+--- a/packages/shared-contracts/schemas/roster-entry.schema.json
++++ b/packages/shared-contracts/schemas/roster-entry.schema.json
+@@ -67,6 +67,16 @@
+             "minimum": 0,
+             "description": "Number of identities currently assigned to this cluster."
+           },
++          "representative_media_id": {
++            "type": ["integer", "null"],
++            "minimum": 1,
++            "description": "Projected WP attachment ID of the cluster representative. Read from the projection column; never derived from representative_identity.media_id (rg-015). Null when the snapshot omitted it."
++          },
++          "undoable_merge_receipt_id": {
++            "type": ["string", "null"],
++            "format": "uuid",
++            "description": "Projected newest unreverted, unexpired cluster-merge receipt id. Read from the projection column; never computed in PHP (rg-015). Null when none is undoable."
++          },
+           "representative_identity": {
+             "type": ["object", "null"],
+             "description": "Representative face evidence for the cluster when available.",
+@@ -106,6 +116,39 @@
+               "similarity_threshold": {
+                 "type": ["number", "null"],
+                 "description": "Threshold used for this projected evidence item when available."
++              },
++              "representative_quality": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Projected composite quality in [0,1]. Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
++              },
++              "quality_components": {
++                "type": ["object", "null"],
++                "description": "Projected parts of representative_quality (UXR-15). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
++                "additionalProperties": false,
++                "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
++                "properties": {
++                  "confidence": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  },
++                  "bbox_area": {
++                    "type": ["number", "null"],
++                    "minimum": 0
++                  },
++                  "sharpness": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  },
++                  "occlusion_severity": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  }
++                }
+               }
+             }
+           },
+diff --git a/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
+new file mode 100644
+--- /dev/null
++++ b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
+@@ -0,0 +1,72 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://context-alt-text.dev/schemas/roster-merge-candidates-response.schema.json",
++  "title": "Roster Merge Candidates Response",
++  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. similarity is the max over pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
++  "type": "object",
++  "required": ["person_id", "candidates"],
++  "additionalProperties": false,
++  "properties": {
++    "person_id": {
++      "type": "integer",
++      "minimum": 1,
++      "description": "Loser roster person id from the request path (acx_persons.id)."
++    },
++    "candidates": {
++      "type": "array",
++      "description": "Ranked survivor persons. Similarity DESC, then name ASC within band. SPA step 2 renders this order; step 1 MUST NOT fetch or display it.",
++      "items": {
++        "type": "object",
++        "required": ["person_id", "name", "similarity", "band", "shared_media_count"],
++        "additionalProperties": false,
++        "properties": {
++          "person_id": {
++            "type": "integer",
++            "minimum": 1,
++            "description": "Survivor roster person id."
++          },
++          "name": {
++            "type": "string",
++            "minLength": 1,
++            "description": "Display name from the bound person row."
++          },
++          "similarity": {
++            "type": "number",
++            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters. Ranking cosine only; not a calibrated probability. May be negative (band none)."
++          },
++          "band": {
++            "type": "string",
++            "enum": ["strong", "possible", "none"],
++            "description": "Band of the max-similarity pair, copied from the service candidate. Same vocabulary as recognition-cluster-merge-candidates-response. Unknown values MUST be treated as none."
++          },
++          "shared_media_count": {
++            "type": "integer",
++            "minimum": 0,
++            "description": "Count of projected media rows shared between the loser and this survivor. From the projection, never count(payload) (rg-015)."
++          }
++        }
++      }
++    }
++  },
++  "examples": [
++    {
++      "person_id": 12,
++      "candidates": [
++        {
++          "person_id": 34,
++          "name": "Alice Example",
++          "similarity": 0.87,
++          "band": "strong",
++          "shared_media_count": 3
++        },
++        {
++          "person_id": 56,
++          "name": "Bob Example",
++          "similarity": 0.52,
++          "band": "possible",
++          "shared_media_count": 0
++        }
++      ]
++    }
++  ]
++}

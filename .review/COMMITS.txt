@@ -1,6 +1,1 @@
-ba81e17fecfd offload: Appended and committed the r7 review report at 5a2c082.
-bd0b477addfd offload: Appended and committed the r6 re-review report for the A4 fix
-6f3828462e03 offload: Appended and committed the r5 re-review report for the SPA
-26c6bc894d08 offload: Committed the A4 adversarial review report with a fail verdict
-99290c9019e4 offload: Committed tenant-scoped terminal summary isolation as 29a94d8.
-858c7f34d405 offload: Committed A4 operation-store hardening in 7b4f43a; focused
+5f05f3df99d1 offload: Landed GPUFLOW-2 contracts-roster B2/B6/C3 schemas and

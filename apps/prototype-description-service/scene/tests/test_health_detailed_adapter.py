@@ -229,7 +229,7 @@ def test_cpu_profile_has_no_gpu_endpoint_reason(tmp_path: Path, monkeypatch: pyt
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
-    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ())
+    monkeypatch.setattr("api.main.scene_http_deps._missing_vlm_dependencies", lambda: ())
     spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["profile"] == spec.profile.value
@@ -309,7 +309,7 @@ def test_health_detailed_does_not_read_secrets(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr("shared.secrets.get_secret_provider", _raise_provider)
     monkeypatch.setattr("scene.config.settings.get_secret_provider", _raise_provider)
-    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ())
+    monkeypatch.setattr("api.main.scene_http_deps._missing_vlm_dependencies", lambda: ())
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
     adapter = _get_adapter(_build_client(tmp_path))
@@ -406,7 +406,7 @@ def test_local_vlm_missing_dependencies_is_not_usable(tmp_path: Path, monkeypatc
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
-    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ("torch",))
+    monkeypatch.setattr("api.main.scene_http_deps._missing_vlm_dependencies", lambda: ("torch",))
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["usable"] is False
     assert adapter["reason"] == AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value

@@ -12,11 +12,9 @@ import pytest
 
 from recognition.application.clustering.centroid_utils import compute_centroid, compute_similarity
 from recognition.application.settings import ClusteringSettings
-from recognition.application.suggestions.merge_candidates import (
-    SUGGESTION_BAND_CUTS,
-    list_merge_candidates,
-)
-from recognition.application.suggestions.roster_candidates import SimilarityBand, band_for
+from recognition.application.suggestions import merge_candidates as merge_candidates_module
+from recognition.application.suggestions.merge_candidates import list_merge_candidates
+from recognition.application.suggestions.roster_candidates import SimilarityBand
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import MergeSuggestionCreateData, MergeSuggestionRepository
 from recognition.domain.suggestion import MergeSuggestion, SuggestionStatus
@@ -58,10 +56,17 @@ def _pending(
     cluster_b_id: str,
     similarity: float,
     created_at: datetime,
+    cluster_a_identity_count: int | None = None,
+    cluster_b_identity_count: int | None = None,
     status: str = SuggestionStatus.PENDING.value,
     expires_at: datetime | None = None,
 ) -> MergeSuggestionDetails:
-    left, right = sorted((cluster_a_id, cluster_b_id))
+    if cluster_a_id <= cluster_b_id:
+        left, right = cluster_a_id, cluster_b_id
+        left_count, right_count = cluster_a_identity_count, cluster_b_identity_count
+    else:
+        left, right = cluster_b_id, cluster_a_id
+        left_count, right_count = cluster_b_identity_count, cluster_a_identity_count
     return MergeSuggestionDetails(
         id=str(generate_id()),
         cluster_a_id=left,
@@ -70,6 +75,8 @@ def _pending(
         status=status,
         created_at=created_at,
         expires_at=expires_at,
+        cluster_a_identity_count=left_count,
+        cluster_b_identity_count=right_count,
     )
 
 
@@ -118,42 +125,41 @@ class _FakeMergeRepo(MergeSuggestionRepository):
         return 0
 
 
-def test_suggestion_band_cuts_use_calibration_policy_names() -> None:
-    assert set(SUGGESTION_BAND_CUTS) == {
-        "low_confidence_floor",
-        "suggestion_floor",
-        "suggestion_ceiling",
-    }
-    settings = ClusteringSettings(
-        suggestion_floor=SUGGESTION_BAND_CUTS["suggestion_floor"],
-        suggestion_ceiling=SUGGESTION_BAND_CUTS["suggestion_ceiling"],
-    )
-    assert band_for(SUGGESTION_BAND_CUTS["suggestion_ceiling"], settings) is SimilarityBand.STRONG
-    assert band_for(SUGGESTION_BAND_CUTS["suggestion_floor"], settings) is SimilarityBand.POSSIBLE
-    assert band_for(SUGGESTION_BAND_CUTS["suggestion_floor"] - 0.01, settings) is SimilarityBand.NONE
+def test_merge_candidates_has_no_static_band_cut_shim() -> None:
+    assert not hasattr(merge_candidates_module, "SUGGESTION_BAND_CUTS")
+    assert not hasattr(merge_candidates_module, "clustering_settings")
 
 
 @pytest.mark.asyncio
-async def test_bands_come_from_injected_settings_not_hardcoded() -> None:
+async def test_bands_follow_each_injected_setting_boundary() -> None:
     tenant_id = str(uuid4())
     probe = _cluster(tenant_id=tenant_id, label=None, embedding=_normalize(np.array([1.0, 0.0, 0.0])))
-    strong = _cluster(tenant_id=tenant_id, label="Ada", embedding=_normalize(np.array([1.0, 0.0, 0.0])))
-    possible = _cluster(tenant_id=tenant_id, label="Bea", embedding=_normalize(np.array([0.55, 0.835, 0.0])))
-    none = _cluster(tenant_id=tenant_id, label="Cyd", embedding=_normalize(np.array([0.0, 1.0, 0.0])))
-    settings = ClusteringSettings(suggestion_floor=0.40, suggestion_ceiling=0.80)
+    candidate = _cluster(tenant_id=tenant_id, label="Ada", embedding=_normalize(np.array([0.6, 0.8, 0.0])))
 
-    result = await list_merge_candidates(
-        tenant_id,
-        str(probe.id),
-        cluster_repository=_FakeClusterRepo([probe, strong, possible, none]),
-        merge_suggestion_repository=_FakeMergeRepo(),
-        settings=settings,
+    async def get_candidate(settings: ClusteringSettings):
+        result = await list_merge_candidates(
+            tenant_id,
+            str(probe.id),
+            cluster_repository=_FakeClusterRepo([probe, candidate]),
+            merge_suggestion_repository=_FakeMergeRepo(),
+            settings=settings,
+        )
+        assert len(result.candidates) == 1
+        assert result.candidates[0].cluster_id == str(candidate.id)
+        assert result.candidates[0].similarity == pytest.approx(0.6)
+        return result.candidates[0].band
+
+    assert (
+        await get_candidate(ClusteringSettings(suggestion_floor=0.40, suggestion_ceiling=0.80))
+        is SimilarityBand.POSSIBLE
     )
-
-    bands = {row.cluster_id: row.band for row in result.candidates}
-    assert bands[str(strong.id)] is SimilarityBand.STRONG
-    assert bands[str(possible.id)] is SimilarityBand.POSSIBLE
-    assert bands[str(none.id)] is SimilarityBand.NONE
+    assert (
+        await get_candidate(ClusteringSettings(suggestion_floor=0.70, suggestion_ceiling=0.80)) is SimilarityBand.NONE
+    )
+    assert (
+        await get_candidate(ClusteringSettings(suggestion_floor=0.40, suggestion_ceiling=0.55))
+        is SimilarityBand.STRONG
+    )
 
 
 @pytest.mark.asyncio
@@ -178,7 +184,7 @@ async def test_ranks_similarity_desc_then_name_asc() -> None:
 
 
 @pytest.mark.asyncio
-async def test_similarity_is_max_of_centroid_and_fresh_pending() -> None:
+async def test_similarity_uses_fresh_pending_with_matching_membership() -> None:
     tenant_id = str(uuid4())
     now = datetime.now(tz=UTC)
     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
@@ -199,6 +205,8 @@ async def test_similarity_is_max_of_centroid_and_fresh_pending() -> None:
                     cluster_b_id=str(probe.id),
                     similarity=0.91,
                     created_at=now + timedelta(seconds=1),
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
                 )
             ]
         ),
@@ -232,6 +240,8 @@ async def test_stale_pending_suggestion_is_ignored() -> None:
                     cluster_b_id=str(other.id),
                     similarity=0.99,
                     created_at=older,
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
                 )
             ]
         ),
@@ -241,6 +251,65 @@ async def test_stale_pending_suggestion_is_ignored() -> None:
     assert len(result.candidates) == 1
     assert result.candidates[0].similarity == pytest.approx(compute_similarity(probe_vec, other_vec))
     assert result.candidates[0].band is SimilarityBand.NONE
+
+
+@pytest.mark.asyncio
+async def test_fresh_timestamp_with_stale_membership_uses_live_centroid_only() -> None:
+    tenant_id = str(uuid4())
+    now = datetime.now(tz=UTC)
+    probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    other_vec = _normalize(np.array([0.0, 1.0, 0.0]))
+    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=now)
+    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=now)
+    centroid_sim = compute_similarity(probe_vec, other_vec)
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, other]),
+        merge_suggestion_repository=_FakeMergeRepo(
+            [
+                _pending(
+                    cluster_a_id=str(probe.id),
+                    cluster_b_id=str(other.id),
+                    similarity=0.99,
+                    created_at=now + timedelta(seconds=1),
+                    cluster_a_identity_count=2,
+                    cluster_b_identity_count=1,
+                )
+            ]
+        ),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
+    assert [row.cluster_id for row in result.candidates] == [str(other.id)]
+    assert result.candidates[0].similarity == pytest.approx(centroid_sim)
+    assert result.candidates[0].similarity == pytest.approx(0.0)
+    assert result.candidates[0].band is SimilarityBand.NONE
+
+
+@pytest.mark.asyncio
+async def test_negative_cosines_rank_by_raw_value_even_when_display_values_tie() -> None:
+    tenant_id = str(uuid4())
+    probe = _cluster(tenant_id=tenant_id, label=None, embedding=_normalize(np.array([1.0, 0.0, 0.0])))
+    more_negative = _cluster(tenant_id=tenant_id, label="Ada", embedding=_normalize(np.array([-1.0, 0.0, 0.0])))
+    less_negative = _cluster(
+        tenant_id=tenant_id,
+        label="Zed",
+        embedding=_normalize(np.array([-0.2, np.sqrt(0.96), 0.0])),
+    )
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, more_negative, less_negative]),
+        merge_suggestion_repository=_FakeMergeRepo(),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
+    assert [row.cluster_id for row in result.candidates] == [str(less_negative.id), str(more_negative.id)]
+    assert [row.similarity for row in result.candidates] == pytest.approx([0.0, 0.0])
+    assert [row.band for row in result.candidates] == [SimilarityBand.NONE, SimilarityBand.NONE]
 
 
 @pytest.mark.asyncio

@@ -460,7 +460,11 @@ def _unavailable_reason_from_adapter(adapter, *, settings: DescriptionSettings) 
     return UnavailableReason.ENDPOINT_NOT_PRIVATE
 
 
-def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
+def _typed_error_detail_needs_rebuild(
+    exc: HTTPException,
+    *,
+    accepted_operation_id: str | None = None,
+) -> bool:
     """True when a recognized typed error cannot satisfy the multipart schema."""
     detail = exc.detail
     code = _http_exception_code(detail)
@@ -472,8 +476,23 @@ def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
     if set(detail) - allowed_keys or _MULTIPART_TYPED_ERROR_REQUIRED_KEYS - set(detail):
         return True
     try:
-        DescribeOperationErrorDetail.model_validate(detail)
-    except ValidationError:
+        validated = DescribeOperationErrorDetail.model_validate_json(json.dumps(detail), strict=True)
+    except (TypeError, ValueError, ValidationError):
+        return True
+    # Validate the wire representation as well as the Python model. The model's
+    # serializer owns code-specific omission/nullability rules; checking every
+    # upstream key against that representation rejects a present null for a
+    # contract-non-nullable field without duplicating those rules here.
+    normalized = validated.model_dump(mode="json")
+    if any(key not in normalized or normalized[key] != value for key, value in detail.items()):
+        return True
+    if accepted_operation_id is not None and detail.get("operation_id") != accepted_operation_id:
+        _logger.warning(
+            "post-accept describe error operation_id mismatch accepted_operation_id=%s upstream_operation_id=%s code=%s",
+            accepted_operation_id,
+            detail.get("operation_id"),
+            code,
+        )
         return True
     if code == "description_service_starting":
         if detail.get("operation_id") is None:
@@ -1461,7 +1480,10 @@ async def describe_image_multipart(
     except HTTPException as exc:
         if not _preserves_demand_lease(exc):
             await _cleanup_accepted()
-        if op is not None and _typed_error_detail_needs_rebuild(exc):
+        if op is not None and _typed_error_detail_needs_rebuild(
+            exc,
+            accepted_operation_id=getattr(op, "operation_id", None),
+        ):
             raise _rebuild_post_accept_typed_error(
                 exc,
                 op=op,

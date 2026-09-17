@@ -135,3 +135,24 @@ FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-09","severity":"high","file_path
 - Fix: Move the test hunk to its owning lane, or explicitly assign the test path to this lane before landing it (`CARD-06`).
 
 Verdict: fail
+
+## Re-review r8 (eeee5074a..99290c901)
+
+VERIFIED: {"GPUFLOW-2-SPAOPERATIONSTORE-R-09":"fixed","SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SPAOPERATIONSTORE-R-09 | fixed | `useBulkDescribe.ts:48-51` pairs the terminal id with `tenantId`; `:130-146` only exposes/memoizes a terminal summary for the current tenant and clears both state and ref on a tenant mismatch; `:159-167` records the tenant at terminal cleanup. The added mounted tenant-switch test exercises the summary disappearing for tenant B (`useBulkDescribe.test.tsx:312-365`). |
+| SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5 | fixed | The hook now separates the store-backed `activeRunId` from the terminal summary and computes public `runId` as `activeRunId ?? currentTerminalRun?.runId` (`useBulkDescribe.ts:129-136`). Terminal handling saves the tenant-tagged summary before clearing the active store entry (`:159-167`), so the workbench can retain terminal progress/review identity while active state becomes null. |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-12","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts","line":341,"summary":"The current fix delta edits test paths outside the lane-owned list","evidence":"The inlined r8 delta changes hooks/__tests__/describeOperationStore.test.ts and hooks/__tests__/useBulkDescribe.test.tsx, while the declared spa-operation-store ownership contains only describeOperationStore.ts, activeDescribeRun.ts, and useBulkDescribe.ts. The new test hunks therefore cross the lane boundary and should be moved to their owning lane or ownership manifest."}]
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-12 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts:341-373`; `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:312-365`
+- Evidence: The fix delta edits both hook test paths, but the lane-owned list grants this lane only `describeOperationStore.ts`, `activeDescribeRun.ts`, and `useBulkDescribe.ts`. This is a current-delta ownership violation even though the tests exercise the intended tenant/alias behavior.
+- Fix: Move the test hunks to their owning lane, or explicitly assign these test paths to this lane before merge.
+
+Verdict: pass_with_findings

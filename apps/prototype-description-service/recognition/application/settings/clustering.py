@@ -351,6 +351,15 @@ class ClusteringSettings(BaseModel):
         ge=1,
         description="ACX_MERGE_UNDO_WINDOW_DAYS. Receipt undo window in days; never a client constant.",
     )
+    revert_block_retention_window_days: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "MLDATA-05 revert-derived cannot-link retention window in days. The 30-day default "
+            "outlives the receipt while covering a realistic operator review period without "
+            "turning one undo into a permanent global ban."
+        ),
+    )
     recovery_max_residual_size: int = Field(
         default=3,
         ge=1,

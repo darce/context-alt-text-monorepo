@@ -1,11 +1,12 @@
 {
   "map_ref": "workbench-identity-chips",
   "product": "prototype-wp-alt-context",
-  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx",
   "goals": [
     "Show one person chip per person in each media row; a person's face-group membership stays in the +N count instead of becoming duplicate chips.",
     "Render the store's representative face crop before the person label (HAI-01/HAI-17); use the current face only when representative evidence is unavailable.",
     "Keep optional person_id and representative_face absence unresolved and visible without fabricating a person or representative image (rg-015, DDIA).",
+    "Keep ungrouped residue in one Not yet grouped (N) section with every unresolved face; never render N Unnamed person cards or visually deduplicate faces (GPUFLOW-2 C5).",
     "Expose an N face groups badge when one person spans more than one face group, and let the chip expand into the existing face review panel.",
     "Let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09)."
   ],
@@ -24,13 +25,13 @@
       "id": "workbench-media-row-person-chips",
       "kind": "screen",
       "title": "Media row — person chips",
-      "purpose": "A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review.",
+      "purpose": "A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review in one Not yet grouped (N) section.",
       "route": "#/workbench?media=",
       "wp_page": "alt-context-workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": ["media"],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx",
       "primary_action_id": null,
       "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
@@ -46,6 +47,13 @@
           "role": "ai_review",
           "evidence_linked": true,
           "states": ["default", "loading", "empty", "error", "degraded"]
+        },
+        {
+          "id": "z-ungrouped-residue",
+          "label": "Not yet grouped section (every unresolved face, never N Unnamed person cards)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "error", "degraded"]
         },
         {
           "id": "z-representative-avatar",
@@ -341,6 +349,7 @@
     "Group media identities by optional person_id while preserving unresolved face groups",
     "Render representative face evidence, N face groups, and member +N chip states",
     "Render current-face fallback with canonical Representative image unavailable copy",
-    "Connect chip actions to face review and the person workspace"
+    "Connect chip actions to face review and the person workspace",
+    "Collapse ungrouped residue into one Not yet grouped (N) section without visually deduplicating faces"
   ]
 }

@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServiceTest extends TestCase
@@ -21,6 +22,10 @@ class OutboxMaintenanceServiceTest extends TestCase
             'failed' => 0,
             'conflicts' => 0,
         ]);
+        $wpdb->mockRow = array_merge(
+            $this->buildOutboxRow(9, $tenantId, 'failed'),
+            ['payload' => '{"source":"operator"}']
+        );
 
         $service = new OutboxMaintenanceService();
         $result = $service->retry_failed_operation(9, $tenantId);
@@ -36,6 +41,76 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertStringContainsString('pending_curation_operations = 1', $syncStateUpdate);
         $this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
         $this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+    }
+
+    public function testRetryFailedOperationRejectsStaleFingerprintWithoutMutatingNewerFailure(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $staleOperation = array_merge(
+            $this->buildOutboxRow(9, $tenantId, 'failed', 5),
+            ['payload' => '{"source":"stale"}']
+        );
+        $currentOperation = array_merge(
+            $this->buildOutboxRow(9, $tenantId, 'failed', 6),
+            ['payload' => '{"source":"newer"}']
+        );
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$currentOperation];
+
+        $repository = new class($staleOperation) extends OutboxQueryRepository {
+            /** @var array<string,mixed> */
+            private array $operation;
+
+            /** @param array<string,mixed> $operation */
+            public function __construct(array $operation)
+            {
+                $this->operation = $operation;
+            }
+
+            public function find_operation_by_id(int $outbox_id, string $tenant_id): ?array
+            {
+                return $this->operation;
+            }
+        };
+
+        $service = new OutboxMaintenanceService($repository);
+
+        $this->assertFalse($service->retry_failed_operation(9, $tenantId));
+        $this->assertSame(6, $wpdb->tableRows['wp_acx_sync_outbox'][0]['attempts']);
+        $this->assertSame('{"source":"newer"}', $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload']);
+
+        $updates = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_starts_with($query, 'UPDATE wp_acx_sync_outbox SET')
+        ));
+        $this->assertCount(1, $updates);
+        $this->assertStringContainsString('attempts = 6', $updates[0]);
+    }
+
+    public function testRetryFailedOperationReturnsFalseForMissingRowWithoutUpdate(): void
+    {
+        $service = new OutboxMaintenanceService();
+
+        $this->assertFalse($service->retry_failed_operation(9, 'tenant-test-123'));
+        $this->assertSame([], array_values(array_filter(
+            $GLOBALS['wpdb']->queries,
+            static fn (string $query): bool => str_starts_with($query, 'UPDATE')
+        )));
+    }
+
+    public function testRetryFailedOperationReturnsFalseForNonFailedRowWithoutUpdate(): void
+    {
+        global $wpdb;
+
+        $wpdb->mockRow = $this->buildOutboxRow(9, 'tenant-test-123', 'pending', 1);
+        $service = new OutboxMaintenanceService();
+
+        $this->assertFalse($service->retry_failed_operation(9, 'tenant-test-123'));
+        $this->assertSame([], array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_starts_with($query, 'UPDATE')
+        )));
     }
 
     public function testBulkRetryRequeuesOnlyFailedRowsForTenantWithCasGuard(): void

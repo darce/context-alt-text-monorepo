@@ -442,7 +442,7 @@ class OutboxQueryRepository {
 	 * precedence, while still returning first_failed_at for the API timeline.
 	 */
 	private function operation_select_sql(): string {
-		return 'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, payload, created_at, last_attempted_at, first_failed_at, acknowledged_at, '
+		return 'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, last_error_retryable, payload, created_at, last_attempted_at, first_failed_at, acknowledged_at, '
 			. 'GREATEST(0, TIMESTAMPDIFF(SECOND, COALESCE(first_failed_at, last_attempted_at, created_at), UTC_TIMESTAMP())) AS age_seconds '
 			. 'FROM %i';
 	}

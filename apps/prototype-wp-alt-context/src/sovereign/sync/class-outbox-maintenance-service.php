@@ -737,6 +737,10 @@ class OutboxMaintenanceService {
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
 		$operation = $this->query_repository->find_operation_by_id( $outbox_id, $tenant_id );
+		if ( ! is_array( $operation ) || OutboxStatus::FAILED !== ( $operation['status'] ?? null ) ) {
+			return false;
+		}
+
 		$payload = $this->decode_payload( is_array( $operation ) ? ( $operation['payload'] ?? null ) : null );
 		unset( $payload[ self::AUTO_ATTEMPT_PAYLOAD_KEY ] );
 		$payload_json = wp_json_encode( $payload );
@@ -761,7 +765,8 @@ class OutboxMaintenanceService {
 				'first_failed_at' => null,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			$this->failed_row_fingerprint( $operation )
 		);
 		if ( ! $updated ) {
 			return false;

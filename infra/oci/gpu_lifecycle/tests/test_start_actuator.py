@@ -11,6 +11,7 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuLifecycleController,
     LifecycleAction,
 )
+from infra.oci.gpu_lifecycle.state_snapshot import LastTransitionReason
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     OciCliStartActuator,
@@ -250,3 +251,47 @@ def test_run_start_cycle_is_quiet_when_no_work() -> None:
     assert result.decided == []
     assert result.actuated == []
     assert actuator.started == []
+
+
+def test_stop_intent_with_work_and_stopped_gpu_emits_operator_stop_fallback(
+    tmp_path: Path,
+) -> None:
+    gpu_state_path = tmp_path / "gpu-state.json"
+    actuator = RecordingStartActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        gpu_state_path=gpu_state_path,
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert actuator.started == []
+    assert len(result.fallbacks) == 1
+    fallback = result.fallbacks[0]
+    assert fallback.action is LifecycleAction.FALLBACK
+    assert fallback.instance_id == "ocid1.gpu"
+    assert fallback.reason == "operator_stop_with_work"
+    assert fallback.profile == "florence_small"
+    assert result.last_transition_reason is LastTransitionReason.OPERATOR
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "degraded"
+    assert snapshot["reason"] == "operator_stop_with_work"
+    assert snapshot["last_transition_reason"] == "operator"
+
+
+def test_stop_intent_with_work_does_not_fallback_while_gpu_is_live() -> None:
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert result.fallbacks == ()

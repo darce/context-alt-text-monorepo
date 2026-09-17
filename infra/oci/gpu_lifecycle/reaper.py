@@ -51,6 +51,7 @@ from typing import Protocol
 from infra.oci.gpu_lifecycle.controller import (
     FallbackDecision,
     GpuInstance,
+    GpuInstanceState,
     GpuLifecycleController,
     JobLoadSnapshot,
     LifecycleAction,
@@ -115,6 +116,13 @@ _MIN_DEFERRED_STOP_EXTENSION_SECONDS = 60
 _MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
+_OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
+_LIVE_GPU_INSTANCE_STATES = frozenset(
+    {
+        GpuInstanceState.RUNNING,
+        GpuInstanceState.STARTING,
+    }
+)
 
 
 def _acquire_flock_with_timeout(
@@ -2856,6 +2864,39 @@ def _start_blocking_errors(
     return errors
 
 
+def _instance_is_live(instance: GpuInstance) -> bool:
+    """True when the instance is already running or an in-flight boot."""
+    try:
+        return GpuInstanceState(instance.state) in _LIVE_GPU_INSTANCE_STATES
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_operator_stop_with_work(
+    *,
+    effective_intent: EffectiveIntent,
+    load: object,
+    instances: list[GpuInstance],
+) -> bool:
+    """True when a live stop would otherwise stall queued work on a dark GPU."""
+    if effective_intent.action is not IntentAction.STOP:
+        return False
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy or not load.has_work:
+        return False
+    return not any(_instance_is_live(instance) for instance in instances)
+
+
+def _operator_stop_with_work_fallbacks(
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+) -> list[FallbackDecision]:
+    """Route queued work to the CPU floor while operator stop keeps the GPU off."""
+    return controller.fallback_on_boot_failure(
+        [instance.instance_id for instance in instances],
+        reason=_OPERATOR_STOP_WITH_WORK_REASON,
+    )
+
+
 def _start_idle_intent_status(
     effective_intent: EffectiveIntent,
     honoured_ids: set[str],
@@ -2878,12 +2919,19 @@ def _start_pre_actuation(
     effective_intent: EffectiveIntent,
     probe: InstanceReadinessProbe | None,
     readiness_wait: WarmReadinessWait | None,
+    operator_stop_with_work: bool = False,
 ) -> _StartPreActuation:
     """Apply no-work and shared-endpoint guards before issuing START."""
     start_ids = [instance_id for action, instance_id in decision.decided if action == LifecycleAction.START]
     wait_ids = list(dict.fromkeys([*start_ids, *decision.waiting_ids, *decision.running_ids]))
     should_probe_running = probe is not None and readiness_wait is not None and bool(decision.running_ids)
-    if not decision.decided and not decision.waiting_ids and not errors and not should_probe_running:
+    if (
+        not decision.decided
+        and not decision.waiting_ids
+        and not errors
+        and not should_probe_running
+        and not operator_stop_with_work
+    ):
         return _StartPreActuation(
             result=StartCycleResult(
                 decided=[],
@@ -3113,6 +3161,10 @@ def _finalize_start_result(
         )
     if actuation.start_failed:
         last_transition_reason = LastTransitionReason.START_FAILED
+    if any(
+        fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in readiness.fallbacks
+    ):
+        last_transition_reason = LastTransitionReason.OPERATOR
     return StartCycleResult(
         decided=decision.decided,
         actuated=actuation.actuated,
@@ -3166,12 +3218,18 @@ def _run_start_cycle(
             effective_intent=effective_intent,
         )
     )
+    operator_stop_with_work = _is_operator_stop_with_work(
+        effective_intent=effective_intent,
+        load=decision.load,
+        instances=instances,
+    )
     pre_actuation = _start_pre_actuation(
         decision=decision,
         errors=errors,
         effective_intent=effective_intent,
         probe=probe,
         readiness_wait=readiness_wait,
+        operator_stop_with_work=operator_stop_with_work,
     )
     if pre_actuation.result is not None:
         return pre_actuation.result
@@ -3202,6 +3260,14 @@ def _run_start_cycle(
             errors=errors,
         )
     )
+    if operator_stop_with_work:
+        readiness = replace(
+            readiness,
+            fallbacks=[
+                *readiness.fallbacks,
+                *_operator_stop_with_work_fallbacks(controller, instances),
+            ],
+        )
     return _finalize_start_result(
         effective_intent=effective_intent,
         decision=decision,

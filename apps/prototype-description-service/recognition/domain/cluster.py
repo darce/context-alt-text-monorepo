@@ -76,6 +76,9 @@ class IdentityCluster:
     # Last membership or centroid mutation timestamp used for freshness checks.
     # Appended last for positional safety.
     updated_at: datetime | None = None
+    # Last refresh timestamp for the persisted centroid materialization.
+    # Appended last for positional safety.
+    centroid_refreshed_at: datetime | None = None
 
     @property
     def is_auto_label(self) -> bool:

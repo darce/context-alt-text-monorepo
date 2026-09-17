@@ -244,7 +244,7 @@ def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime
     stamps = [
         _as_utc(stamp)
         for cluster in (probe, other)
-        for stamp in (cluster.created_at, cluster.updated_at)
+        for stamp in (cluster.created_at, cluster.updated_at, cluster.centroid_refreshed_at)
         if isinstance(stamp, datetime)
     ]
     return max(stamps) if stamps else None

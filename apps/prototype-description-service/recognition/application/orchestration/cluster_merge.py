@@ -14,12 +14,15 @@ from datetime import UTC, datetime
 
 import numpy as np
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.models.identity import (
     ClusterMergeReceipt,
     ReceiptExpiredError,
+    ReceiptNotTopError,
     require_top_unreverted_receipt,
 )
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
@@ -483,10 +486,12 @@ async def _load_receipt(
 ) -> ClusterMergeReceipt | None:
     """Look up a receipt by (tenant_id, receipt_id) only (CALIBR-H-03)."""
     result = await session.execute(
-        select(ClusterMergeReceipt).where(
+        select(ClusterMergeReceipt)
+        .where(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.receipt_id == receipt_id,
         )
+        .with_for_update()
     )
     return result.scalar_one_or_none()
 
@@ -495,12 +500,28 @@ async def _load_sibling_receipts(
     session: AsyncSession, *, tenant_id: uuid.UUID, survivor_cluster_id: uuid.UUID
 ) -> list[ClusterMergeReceipt]:
     result = await session.execute(
-        select(ClusterMergeReceipt).where(
+        select(ClusterMergeReceipt)
+        .where(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.survivor_cluster_id == survivor_cluster_id,
         )
+        .with_for_update()
     )
     return list(result.scalars().all())
+
+
+async def _lock_survivor_cluster(
+    session: AsyncSession, *, tenant_id: uuid.UUID, survivor_cluster_id: uuid.UUID
+) -> None:
+    """Serialize receipt reverts for one survivor cluster."""
+    await session.execute(
+        select(IdentityClusterModel)
+        .where(
+            IdentityClusterModel.tenant_id == tenant_id,
+            IdentityClusterModel.id == survivor_cluster_id,
+        )
+        .with_for_update()
+    )
 
 
 async def revert_merge(
@@ -512,7 +533,8 @@ async def revert_merge(
     session: AsyncSession,
     merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
     now: datetime | None = None,
-) -> IdentityCluster:
+    return_event_payload: bool = False,
+) -> IdentityCluster | tuple[IdentityCluster, dict[str, object]]:
     """LIFO-revert a receipted merge into the stored source_cluster_id."""
     tenant_uuid = uuid.UUID(str(tenant_id))
     receipt_uuid = uuid.UUID(str(receipt_id))
@@ -526,17 +548,17 @@ async def revert_merge(
     if _norm_uuid_str(receipt.survivor_cluster_id) != path_id:
         raise MergeReceiptStaleError(receipt.receipt_id)
 
+    await _lock_survivor_cluster(
+        session,
+        tenant_id=tenant_uuid,
+        survivor_cluster_id=receipt.survivor_cluster_id,
+    )
+
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     member_repo: MemberRepository = assignment_writer.member_repository
 
     survivor = await cluster_repo.get_by_id(path_id)
     if survivor is None or _norm_uuid_str(survivor.tenant_id) != _norm_uuid_str(tenant_uuid):
-        raise MergeReceiptStaleError(receipt.receipt_id)
-
-    moved_uuids = [_norm_uuid_str(identity_id) for identity_id in receipt.moved_identity_ids]
-    survivor_members = await member_repo.get_by_cluster(path_id)
-    members_by_identity = {_norm_uuid_str(member.identity_id): member for member in survivor_members}
-    if any(identity_id not in members_by_identity for identity_id in moved_uuids):
         raise MergeReceiptStaleError(receipt.receipt_id)
 
     siblings = await _load_sibling_receipts(
@@ -556,18 +578,42 @@ async def revert_merge(
     if occupied is not None:
         raise MergeReceiptStaleError(receipt.receipt_id)
 
-    restored_label = _restored_cluster_label(receipt, survivor)
-    restored = await cluster_repo.save(
-        IdentityCluster(
-            id=source_cluster_id,
-            tenant_id=_norm_uuid_str(tenant_uuid),
-            label=restored_label,
-            is_labeled=bool(restored_label),
-            identity_count=0,
-            clustering_algorithm=survivor.clustering_algorithm or "graph",
-            user_confirmed=bool((receipt.source_label or "").strip()),
+    moved_uuids = [_norm_uuid_str(identity_id) for identity_id in receipt.moved_identity_ids]
+    survivor_members = await member_repo.get_by_cluster(path_id)
+    members_by_identity = {_norm_uuid_str(member.identity_id): member for member in survivor_members}
+    if any(identity_id not in members_by_identity for identity_id in moved_uuids):
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    claim_result = await session.execute(
+        update(ClusterMergeReceipt)
+        .where(
+            ClusterMergeReceipt.tenant_id == tenant_uuid,
+            ClusterMergeReceipt.receipt_id == receipt_uuid,
+            ClusterMergeReceipt.reverted_at.is_(None),
         )
+        .values(reverted_at=clock)
     )
+    if int(getattr(claim_result, "rowcount", 0) or 0) == 0:
+        raise ReceiptNotTopError(receipt.receipt_id)
+    receipt.reverted_at = clock
+
+    restored_label = _restored_cluster_label(receipt, survivor)
+    try:
+        restored = await cluster_repo.save(
+            IdentityCluster(
+                id=source_cluster_id,
+                tenant_id=_norm_uuid_str(tenant_uuid),
+                label=restored_label,
+                is_labeled=bool(restored_label),
+                identity_count=0,
+                clustering_algorithm=survivor.clustering_algorithm or "graph",
+                user_confirmed=bool((receipt.source_label or "").strip()),
+            )
+        )
+    except IntegrityError as exc:
+        await session.rollback()
+        receipt.reverted_at = None
+        raise ReceiptNotTopError(receipt.receipt_id) from exc
     if restored.id is None:
         raise MergeReceiptStaleError(receipt.receipt_id)
 
@@ -583,8 +629,6 @@ async def revert_merge(
             .values(moved_by_merge_id=None)
         )
         await session.flush()
-
-    receipt.reverted_at = clock
 
     await assignment_writer.recompute_representatives(restored.id)
     await assignment_writer.recompute_centroid(restored.id)
@@ -618,15 +662,11 @@ async def revert_merge(
     restored = await cluster_repo.update(restored)
     await cluster_repo.update(survivor)
 
-    broadcaster = get_event_broadcaster()
-    await broadcaster.broadcast(
-        "cluster_merge_reverted",
-        {
+    if return_event_payload:
+        return restored, {
             "source_cluster_id": restored.id,
             "survivor_cluster_id": path_id,
             "receipt_id": str(receipt.receipt_id),
             "moved_count": len(moved_uuids),
-        },
-        tenant_id=tenant_id,
-    )
+        }
     return restored

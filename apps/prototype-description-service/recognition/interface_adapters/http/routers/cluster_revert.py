@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db.models.identity import ReceiptExpiredError, ReceiptNotTopError, ReceiptStackUnavailableError
+from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.cluster_merge import (
     MergeReceiptNotFoundError,
     MergeReceiptStaleError,
@@ -61,15 +62,23 @@ async def revert_merge_cluster(
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> RevertMergeResponse | JSONResponse:
     """Revert the named receipt on the path survivor cluster (CONTRACTSROSTER-R-03)."""
-    cluster_service = await cluster_service_builder(tenant_id)
+    auth_tenant_id = getattr(_auth, "tenant_claim", None)
+    service_tenant_id = tenant_id
+    if auth_tenant_id:
+        if str(auth_tenant_id).lower() != str(tenant_id).lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+        service_tenant_id = str(auth_tenant_id)
+
+    cluster_service = await cluster_service_builder(service_tenant_id)
     try:
-        restored = await revert_merge(
-            tenant_id=tenant_id,
+        revert_result = await revert_merge(
+            tenant_id=service_tenant_id,
             receipt_id=str(body.receipt_id),
             path_cluster_id=str(cluster_id),
             assignment_writer=cluster_service.assignment_writer,
             session=session,
             merge_suggestion_service=cluster_service.merge_suggestion_service,
+            return_event_payload=True,
         )
     except MergeReceiptNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
@@ -98,6 +107,25 @@ async def revert_merge_cluster(
             type_slug="receipt-stack-unavailable",
         )
 
+    if isinstance(revert_result, tuple):
+        restored, event_payload = revert_result
+    else:
+        restored = revert_result
+        event_payload = {
+            "source_cluster_id": restored.id,
+            "survivor_cluster_id": str(cluster_id),
+            "receipt_id": str(body.receipt_id),
+            "moved_count": 0,
+        }
     if restored.id is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="internal server error")
+
+    await session.flush()
+    await session.commit()
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "cluster_merge_reverted",
+        event_payload,
+        tenant_id=service_tenant_id,
+    )
     return RevertMergeResponse(source_cluster_id=UUID(str(restored.id)))

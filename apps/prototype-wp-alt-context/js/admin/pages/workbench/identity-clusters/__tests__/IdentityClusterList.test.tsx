@@ -18,7 +18,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
@@ -272,6 +272,45 @@ describe('IdentityClusterList ungrouped residue (GPUFLOW-2 C5)', () => {
     expect(recognitionApi.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1);
     expect(recognitionApi.fetchIdentitiesSuggestions).toHaveBeenCalledWith(['watson-1', 'watson-2'], 5);
     expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(1);
+  });
+
+  it('opens the naming combobox for that residue face on Find similar / Name', async () => {
+    renderList([watsonFace('watson-1', 10), watsonFace('watson-2', 11)]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Not yet grouped (2)' })).toBeInTheDocument();
+    });
+
+    const residue = screen.getByRole('region', { name: 'Not yet grouped (2)' });
+    fireEvent.click(within(residue).getAllByRole('button', { name: 'Find similar / Name' })[0]);
+
+    const faces = within(residue).getAllByRole('listitem');
+    expect(within(faces[0]).getByRole('combobox', { name: 'Person name' })).toBeInTheDocument();
+    expect(within(faces[1]).queryByRole('combobox')).not.toBeInTheDocument();
+    expect(within(faces[1]).getByRole('button', { name: 'Find similar / Name' })).toBeInTheDocument();
+    expect(screen.queryByText('Unnamed person')).not.toBeInTheDocument();
+  });
+
+  it('opens the naming combobox for that residue face on No', async () => {
+    vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mockResolvedValue({
+      matches: {
+        'watson-1': [{ cluster_id: 'c-1', label: 'Emma Watson', similarity: 0.9, identity_count: 2 }],
+      },
+    });
+
+    renderList([watsonFace('watson-1', 10), watsonFace('watson-2', 11)]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Emma Watson')).toBeInTheDocument();
+    });
+
+    const residue = screen.getByRole('region', { name: 'Not yet grouped (2)' });
+    fireEvent.click(within(residue).getByRole('button', { name: 'No' }));
+
+    const faces = within(residue).getAllByRole('listitem');
+    expect(within(faces[0]).getByRole('combobox', { name: 'Person name' })).toBeInTheDocument();
+    expect(within(faces[1]).queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unnamed person')).not.toBeInTheDocument();
   });
 
   it('keeps unlabeled grouped anchors and residue members in the same batch id list', () => {

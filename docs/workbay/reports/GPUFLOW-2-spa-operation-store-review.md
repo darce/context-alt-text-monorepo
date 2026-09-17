@@ -102,3 +102,36 @@ FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-06","severity":"medium","file_pa
 - Fix: Expose a separate terminal-summary id/state to the workbench, or base panel/review rendering on the retained terminal progress while continuing to use active `runId` only for activity and GPU relevance.
 
 Verdict: pass_with_findings
+
+## Re-review r7 (377ee8b0b..eeee5074a)
+
+VERIFIED: {"SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5":"fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"not_fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SPAOPE-ca632d51fc35756f-H-51ac649ed6dc2e5929ce7ef5 | fixed | The `useBulkDescribe.ts` hunk adds a separate `activeRunId` and computes the public `runId` as `activeRunId ?? lastTerminalRunId` (`+102-117`); terminal cleanup stores the id for the summary before clearing the active store entry (`+132-139`). The terminal tests now assert `activeRunId` is null while `runId` and `progress.run` retain the terminal result (`useBulkDescribe.test.tsx:+235-239,+292-298`). |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | not_fixed | The inlined delta has no `describeOperationStore.ts` hunk. The existing storage adapter still catches write/remove exceptions (`describeOperationStore.ts:213-231`), `putDescribeOperationContext` only labels a failed write `memory_only` while emitting the snapshot (`:448-461`), and `persistRunContext` still sets the active run without inspecting that outcome (`useBulkDescribe.ts:76-86`). A failed write/remove therefore remains silent and reload can still lose or resurrect state. |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-09","severity":"high","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts","line":105,"summary":"Terminal summary state is not tenant-scoped","evidence":"The delta adds hook-instance React state `lastTerminalRunId` and falls back to it for `runId` (`useBulkDescribe.ts:105-117`) without recording the tenant. The operation store itself resolves and caches by tenant (`describeOperationStore.ts:57-80,318-335`), so switching a mounted workbench to a tenant with no active stored run leaves the previous tenant's terminal id and progress query visible, including its review link."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-10","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx","line":564,"summary":"The new activeRunId is not consumed by the workbench GPU relevance path","evidence":"The fix makes `runId` remain non-null for a terminal summary while adding `activeRunId` separately (`useBulkDescribe.ts:28-31,115-117`), but MediaSelection still assigns `activeDescribeRunId = bulkDescribe.runId` and passes `runId !== null` to `GpuTierStatus` (`MediaSelection.tsx:133,142-144,564`). A completed run therefore keeps the GPU status path relevant after active store cleanup; the newly added active id is unused by this downstream consumer."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-11","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx","line":1,"summary":"The fix delta edits a test path outside this lane's owned list","evidence":"The inlined delta changes `hooks/__tests__/useBulkDescribe.test.tsx`, while the lane-owned list contains only `describeOperationStore.ts`, `activeDescribeRun.ts`, and `useBulkDescribe.ts`. This repeats a cross-lane test ownership violation in the current fix commit."}]
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-09 — high
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:103-117`
+- Evidence: The fix stores the terminal summary id in `useState` and uses it whenever the tenant-scoped active store returns null. No tenant identity is captured with that state or used to reset it. The store's own cache is tenant-scoped (`describeOperationStore.ts:57-80,318-335`), so a same-mount tenant switch to a tenant without an active run can display the previous tenant's terminal run and expose its id/result and review URL. This violates the tenant boundary and the A4 foreign-tenant isolation proof (`GRPH-29`).
+- Fix: Pair the terminal summary with the resolved tenant and clear it when that tenant changes, or source terminal summaries from the tenant-scoped operation store; add a mounted tenant-switch regression test.
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-10 — medium
+
+- File: `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx:133,142-144,564`; `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:28-31,115-117`
+- Evidence: `runId` now intentionally remains the terminal summary id, while `activeRunId` is the cleared store-backed id. The existing workbench still treats `bulkDescribe.runId` as `activeDescribeRunId` and uses its non-null value for `GpuTierStatus.isRunRelevant`. Consequently a terminal run continues to drive the GPU relevance/status path after cleanup even though the fix introduced the correct active-id distinction. The terminal panel/review path should use the summary id, but activity/GPU paths need `activeRunId` (`rg-015`).
+- Fix: Consume `bulkDescribe.activeRunId` for active/GPU relevance and expose/use a separate terminal-summary id for panel and review rendering.
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-11 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:1`
+- Evidence: The inlined r7 delta changes this test path, but the lane-owned list grants this lane only the three production hook paths. The test change must be reviewed/merged by its owning lane or the ownership manifest must be updated before merge.
+- Fix: Move the test hunk to its owning lane, or explicitly assign the test path to this lane before landing it (`CARD-06`).
+
+Verdict: fail

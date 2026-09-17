@@ -60,6 +60,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
 from scene.config.settings import _parse_allowlist
 from scene.domain.description import DescriptionAdapterKind
@@ -98,6 +99,7 @@ class AdapterReadinessReason(StrEnum):
     """Machine-readable /health/detailed description_adapter.reason values (sr-007)."""
 
     PROFILE_UNAVAILABLE = "profile_unavailable"
+    VLM_DEPENDENCIES_MISSING = "vlm_dependencies_missing"
     ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
     ENDPOINT_INVALID_URL = "endpoint_invalid_url"
     ENDPOINT_NOT_ALLOWLISTED = "endpoint_not_allowlisted"
@@ -220,14 +222,26 @@ _endpoint_privacy_cache = EndpointPrivacyCache()
 
 
 def _endpoint_hostname(endpoint_url: str | None) -> str | None:
+    parsed = _parse_endpoint_url(endpoint_url)
+    return parsed.hostname if parsed is not None else None
+
+
+def _parse_endpoint_url(endpoint_url: str | None):
     if not endpoint_url:
         return None
-    return urlparse(endpoint_url).hostname
+    try:
+        parsed = urlparse(endpoint_url)
+        # Accessing ``port`` is validation: urllib.parse defers malformed-port
+        # errors until this property is read.
+        _ = parsed.port
+    except ValueError:
+        return None
+    return parsed
 
 
 def _gpu_endpoint_url_is_valid(endpoint_url: str) -> bool:
-    parsed = urlparse(endpoint_url)
-    return parsed.scheme in {"http", "https"} and parsed.hostname is not None
+    parsed = _parse_endpoint_url(endpoint_url)
+    return parsed is not None and parsed.scheme in {"http", "https"} and parsed.hostname is not None
 
 
 def _endpoint_is_allowlisted(host: str, allowlist: tuple[str, ...]) -> bool:
@@ -240,9 +254,18 @@ def _endpoint_is_allowlisted(host: str, allowlist: tuple[str, ...]) -> bool:
 
 def wire_model_id(spec: ProfileSpec) -> str | None:
     """Wire identity the GPU adapter stamps; otherwise the profile model_id."""
+    if spec.profile is DescriptionProfile.SEEDED:
+        return SeededDescriptionAdapter.model_id
     if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.model_revision:
         return f"{spec.hub_repo or spec.model_id}@{spec.model_revision}"
     return spec.model_id
+
+
+def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
+    """Return the version stamped by the active adapter without loading settings."""
+    if spec.profile is DescriptionProfile.SEEDED:
+        return os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1")
+    return None if model_id is None else spec.model_version
 
 
 async def _description_adapter_readiness() -> dict[str, object]:
@@ -265,10 +288,18 @@ async def _description_adapter_readiness() -> dict[str, object]:
     now = time.time()
     fresh = checked_at is not None and (now - checked_at) < EndpointPrivacyCache.TTL_SECONDS
     model_id = wire_model_id(spec)
-    model_version: str | None = None if model_id is None else spec.model_version
+    model_version = _wire_model_version(spec, model_id)
+    vlm_dependencies_missing = (
+        spec.available
+        and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU
+        and bool(http_deps._missing_vlm_dependencies())
+    )
     if not spec.available:
         usable = False
         reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value
+    elif vlm_dependencies_missing:
+        usable = False
+        reason = AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value
     elif spec.adapter_kind is not DescriptionAdapterKind.GPU:
         usable = True
         reason = None

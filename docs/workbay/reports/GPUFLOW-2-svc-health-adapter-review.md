@@ -31,3 +31,38 @@ The fix intends a `gaierror` to leave the prior result stale (`api/main.py:142-1
 The per-request call to `DescriptionSettings()` (`api/main.py:219-227`) is not configuration-only: its `gpu_endpoint_api_key` field calls `get_secret_provider().get_secret_optional()` (`scene/config/settings.py:105-110`). With the OCI backend, a cache miss performs synchronous Vault network calls (`shared/secrets.py:164-172,190-213`) and blocking retry sleeps on the event-loop thread. The fix bounds the DNS worker but leaves this new health-path I/O unbounded relative to the stated sub-second diagnostic behavior, violating `[CARD-09]`/`[RES-02]`; readiness should read only the needed non-secret config or isolate/bound secret access.
 
 Verdict: fail
+
+## Re-review r3 (63a79bcc3..b2f35ea73)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCHEALTHADAPTER-R-01 | fixed | `_gpu_endpoint_url_is_valid()` now requires an `http`/`https` scheme and a hostname (`apps/prototype-description-service/api/main.py:228-230`); the readiness path gates DNS and usability on `url_valid` and returns `endpoint_invalid_url` otherwise (`:253-254`, `:278-280`). The added parameterized test covers a bare hostname and `ftp://` and asserts DNS is skipped (`scene/tests/test_health_detailed_adapter.py:265-281`). |
+| GPUFLOW-2-SVCHEALTHADAPTER-R-02 | fixed | The new `not spec.available` branch precedes the non-GPU/GPU usability branches and returns `usable: false` with `profile_unavailable` (`apps/prototype-description-service/api/main.py:269-271`); the added test enumerates every unavailable registry profile (`scene/tests/test_health_detailed_adapter.py:246-262`). |
+| GPUFLOW-2-SVCHEALTHADAPTER-R-03 | fixed | `_resolve_blocking()` now owns the `socket.getaddrinfo()` call and returns on `socket.gaierror` before changing cached value or timestamp (`apps/prototype-description-service/api/main.py:143-149`), preserving stale/pending evidence. The new test patches that exact resolver (`scene/tests/test_health_detailed_adapter.py:284-299`). |
+| GPUFLOW-2-SVCHEALTHADAPTER-R-04 | fixed | `_description_adapter_readiness()` reads the profile, endpoint, and allowlist directly from environment/spec data without constructing `DescriptionSettings` (`apps/prototype-description-service/api/main.py:248-255`); the added test makes both secret-provider entry points raise and still exercises health successfully (`scene/tests/test_health_detailed_adapter.py:302-312`). |
+| DIAGNO-H-06 | partially_fixed | The delta adds `wire_model_id()` and emits `model_id`/`model_version` from the active profile (`apps/prototype-description-service/api/main.py:241-245`, `:267-304`), with schema/test coverage (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:210-221`, `scene/tests/test_health_detailed_adapter.py:116-126`). However, the task plan and GPU smoke/release comparison are not changed in this delta, so the newly available identity is not yet wired into the stated proof. |
+| DIAGNO-b54e2b152c2135f4-H-5aa9f6692d839e169eee66bb | not_fixed | The added identity fields make a correct comparison possible, but the delta does not change the release proof from the profile token to `description_adapter.model_id`/`model_version`; `profile` remains `gpu_qwen30b`-style vocabulary (`apps/prototype-description-service/api/main.py:293-304`, `packages/shared-contracts/schemas/scene-health-detailed.schema.json:306-317`). The hardcoded smoke/plan mismatch therefore remains. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-05 — high
+
+The schema fix makes `model_id` and `model_version` required (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:210-221`), but the existing shared-schema `HEALTH` fixture still contains only the old readiness keys (`apps/prototype-description-service/scene/tests/test_shared_schema_documents.py:75-85`). `test_health_detailed_adapter_readiness_document` consequently fails with `'model_id' is a required property`. This is a release-contract regression left by the fix delta.
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-06 — high
+
+`wire_model_id()` falls back to `ProfileSpec.model_id` for non-GPU profiles (`apps/prototype-description-service/api/main.py:241-245`); the seeded spec has `model_id=None` (`apps/prototype-description-service/scene/config/profiles.py:62-67`), and readiness then forces `model_version=None` when that identity is absent (`api/main.py:267-268`). The actual `SeededDescriptionAdapter` stamps `model_id="seeded-fixtures"` and a non-null configured model version (`apps/prototype-description-service/scene/application/seeded_adapter.py:39-45`). The new seeded test asserts the incorrect null identity (`scene/tests/test_health_detailed_adapter.py:381-392`), so health provenance cannot reliably match seeded responses.
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-07 — high
+
+The non-GPU branch still sets `usable=True` for every registry profile whose `available` flag is true (`apps/prototype-description-service/api/main.py:272-274`). `florence_small` is marked available, but its resolver explicitly raises when the optional VLM dependencies are missing (`apps/prototype-description-service/scene/interface_adapters/http/deps.py:122-132`) and converts that failure into `UnavailableDescriptionAdapter` (`:234-248`). The new CPU test only asserts the readiness boolean (`scene/tests/test_health_detailed_adapter.py:227-243`) and does not resolve the adapter, leaving a false release-readiness signal for an available-but-unresolvable deployment.
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-08 — high
+
+`_gpu_endpoint_url_is_valid()` calls `urlparse()` without handling parse errors and validates only scheme plus hostname (`apps/prototype-description-service/api/main.py:228-230`). An unmatched IPv6 authority such as `http://[` raises `ValueError` instead of returning `endpoint_invalid_url`, while `http://gpu.oraclevcn.com:bad` has a valid hostname and passes this predicate even though its port is malformed. The added invalid-URL test covers only a missing scheme and `ftp://` (`scene/tests/test_health_detailed_adapter.py:265-281`), so malformed endpoint configuration can still crash health or publish readiness for an unusable adapter.
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-09 — low
+
+The fix delta edits `packages/shared-contracts/schemas/scene-health-detailed.schema.json`, while the lane row assigns `api/main.py` and the new scene test to `svc-health-adapter` and assigns that schema to `contracts-service`. This crosses the declared lane ownership boundary and should be routed to the schema owner.
+
+Verdict: fail

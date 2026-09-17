@@ -72,7 +72,7 @@ describe('RosterEntriesSection queue filter [S4-BR-01]', () => {
 
     // Section must stay mounted (tree not unmounted by the error).
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'People' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Named people (0)' })).toBeInTheDocument();
 
     // Absent memberships means not in the hard-examples queue — filtered out.
     expect(screen.queryByText('Legacy Person')).not.toBeInTheDocument();

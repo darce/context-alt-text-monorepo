@@ -10,8 +10,17 @@ import {
 } from '../api/describeApi';
 import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
+import {
+  clearActiveDescribeRunId,
+  setActiveDescribeRunId,
+  useActiveDescribeRun,
+} from './activeDescribeRun';
+import {
+  DESCRIBE_OPERATION_CONTEXT_VERSION,
+  DESCRIBE_OPERATION_KIND,
+  putDescribeOperationContext,
+} from './describeOperationStore';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
-import { clearActiveDescribeRunId, setActiveDescribeRunId } from './activeDescribeRun';
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
@@ -62,19 +71,37 @@ export const formatBulkDescribeErrorMessage = (
   return message;
 };
 
+const persistRunContext = (response: DescribeRunResponse): void => {
+  putDescribeOperationContext({
+    version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+    kind: DESCRIBE_OPERATION_KIND.RUN,
+    id: response.run_id,
+    startup_id: response.startup_id ?? null,
+    started_at: Date.now(),
+    request: { writeAlt: false, force: false },
+  });
+  setActiveDescribeRunId(response.run_id);
+};
+
 export const useBulkDescribe = (): UseBulkDescribeResult => {
   const queryClient = useQueryClient();
+  const { runId: storedRunId } = useActiveDescribeRun();
   const submit = useMutation<DescribeRunResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
-    onSuccess: (response) => setActiveDescribeRunId(response.run_id),
+    onSuccess: persistRunContext,
   });
   const cancel = useMutation<DescribeRunResponse, Error, string>({
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
   });
 
-  // Only a successful submit/cancel response owns runId — never an error body
-  // that happens to carry data.run_id (BR-143 / [RLSE-04]).
-  const runId = submit.data?.run_id ?? cancel.data?.run_id ?? null;
+  // Store is the durable source (navigation/reload). Keep the last store id for
+  // this mount after terminal clear so the outcome panel can still poll the
+  // finished run (FE-01); remount hydrates only from sessionStorage.
+  const retainedRunIdRef = useRef<string | null>(null);
+  if (storedRunId !== null) {
+    retainedRunIdRef.current = storedRunId;
+  }
+  const runId = storedRunId ?? retainedRunIdRef.current;
   const progress = useDescribeRunProgress(runId);
   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
 

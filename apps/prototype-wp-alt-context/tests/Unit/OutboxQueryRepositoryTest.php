@@ -79,6 +79,7 @@ class OutboxQueryRepositoryTest extends TestCase
 
         $select = $this->findQueryContaining($wpdb->queries, 'SELECT id, tenant_id');
         $this->assertStringContainsString('first_failed_at', $select);
+        $this->assertStringContainsString('last_error_retryable', $select);
         $this->assertStringContainsString(
             'COALESCE(first_failed_at, last_attempted_at, created_at)',
             $select

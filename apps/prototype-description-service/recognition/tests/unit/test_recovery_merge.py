@@ -15,14 +15,15 @@ from pydantic import ValidationError
 from db.models.identity import ClusterMergeKind, ClusterMergeReceipt
 from recognition.application.orchestration.clustering.discovery_pipeline import run_singleton_hac_refinement
 from recognition.application.orchestration.clustering.recovery_merge import (
+    RECOVERY_REVERT_BLOCK_REASON,
     InMemoryReceiptStore,
     RecordingSuggestionEmitter,
     RecoveryAbstainClause,
     RecoveryCluster,
-    RecoveryMergeResult,
     RecoveryMember,
-    RECOVERY_REVERT_BLOCK_REASON,
+    RecoveryMergeResult,
     _clusters_from_identities,
+    _persist_reverted_receipt_blocks,
     evaluate_residual_admission,
     run_recovery_merge,
     run_recovery_merge_on_clusters,
@@ -31,6 +32,7 @@ from recognition.application.settings import HACSettings
 from recognition.application.settings.clustering import (
     CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK,
     CalibrationApplyMode,
+    CalibrationPolicyStatus,
     ClusteringSettings,
     EmbeddingSpaceBinding,
     calibration_policy_is_applicable,
@@ -186,10 +188,12 @@ class _RecordingSession:
     def __init__(self, responses: list[tuple[str, _FakeResult]]) -> None:
         self._responses = responses
         self.events: list[tuple[str, object]] = []
+        self.statements: list[tuple[str, object]] = []
 
-    async def execute(self, _statement: object) -> _FakeResult:
+    async def execute(self, statement: object) -> _FakeResult:
         label, result = self._responses.pop(0)
         self.events.append(("execute", label))
+        self.statements.append((label, statement))
         return result
 
     def begin_nested(self) -> _FakeNestedTransaction:
@@ -197,6 +201,9 @@ class _RecordingSession:
 
     def add(self, model: object) -> None:
         self.events.append(("add", model))
+
+    async def delete(self, model: object) -> None:
+        self.events.append(("delete", model))
 
     async def flush(self) -> None:
         self.events.append(("flush", None))
@@ -264,6 +271,27 @@ def test_default_policy_is_disabled_until_accepted() -> None:
     assert policy.tau_pair == 0.55
     assert policy.min_agreeing_exemplars == 2
     assert ClusteringSettings().recovery_merge_enabled is False
+
+
+def test_policy_rejects_accepted_apply_mode_without_accepted_status() -> None:
+    raw = copy.deepcopy(CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK)
+    raw["apply_mode"] = "accepted"
+    with pytest.raises(ValidationError):
+        load_cluster_recovery_calibration_policy(raw)
+
+
+def test_policy_allows_accepted_status_before_apply_mode() -> None:
+    raw = copy.deepcopy(CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK)
+    raw["status"] = "accepted"
+    policy = load_cluster_recovery_calibration_policy(raw)
+    assert policy.status is CalibrationPolicyStatus.ACCEPTED
+    assert policy.apply_mode is CalibrationApplyMode.DISABLED_UNTIL_ACCEPTED
+    assert calibration_policy_is_applicable(policy, _binding()) is False
+
+
+def test_policy_applicability_requires_accepted_status() -> None:
+    policy = _accepted_policy().model_copy(update={"status": CalibrationPolicyStatus.NEEDS_OPERATOR})
+    assert calibration_policy_is_applicable(policy, _binding()) is False
 
 
 def test_policy_loader_rejects_unknown_keys() -> None:
@@ -905,6 +933,32 @@ async def test_admitted_merge_writes_auto_receipt() -> None:
     assert receipt.rule_version == _accepted_policy().rule_version
 
 
+@pytest.mark.asyncio
+async def test_enabled_recovery_skips_without_runtime_binding(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tenant_id = str(uuid4())
+    cluster_repository = SimpleNamespace(get_by_tenant=AsyncMock())
+    assignment_writer = SimpleNamespace(cluster_repository=cluster_repository)
+    store = InMemoryReceiptStore()
+
+    with caplog.at_level("WARNING"):
+        result = await run_recovery_merge(
+            tenant_id=tenant_id,
+            assignment_writer=assignment_writer,
+            settings=_enabled_settings(),
+            receipt_store=store,
+            runtime_binding=None,
+        )
+
+    assert result.skip_reason == "runtime_binding_unavailable"
+    assert result.receipts == ()
+    assert result.purged_receipts == 0
+    assert store.receipts == []
+    cluster_repository.get_by_tenant.assert_not_awaited()
+    assert f"recovery_merge_skip reason=runtime_binding_unavailable tenant_id={tenant_id}" in caplog.text
+
+
 def _durable_apply_fixture(
     *,
     session: _RecordingSession,
@@ -955,6 +1009,7 @@ async def test_durable_apply_orders_lock_count_exact_move_and_receipt(
             ),
             ("source_count", _FakeResult(scalar=1)),
             ("move", _FakeResult(rowcount=1)),
+            ("moved_identity_stamp", _FakeResult(rowcount=1)),
             ("remaining", _FakeResult(scalar=0)),
             ("siblings", _FakeResult()),
             ("destination_update", _FakeResult(rowcount=1)),
@@ -1001,6 +1056,7 @@ async def test_durable_apply_orders_lock_count_exact_move_and_receipt(
         "lock",
         "source_count",
         "move",
+        "moved_identity_stamp",
         "remaining",
         "siblings",
         "destination_update",
@@ -1011,6 +1067,11 @@ async def test_durable_apply_orders_lock_count_exact_move_and_receipt(
     assert session.events.index(("execute", "lock")) < session.events.index(("execute", "source_count"))
     assert session.events.index(("execute", "source_count")) < move_index < receipt_add_index
     assert sum(kind == "add" for kind, _value in session.events) == 1
+    stamp_statement = next(
+        statement for label, statement in session.statements if label == "moved_identity_stamp"
+    )
+    assert "moved_by_merge_id" in str(stamp_statement)
+    assert receipt.receipt_id in stamp_statement.compile().params.values()
 
 
 @pytest.mark.asyncio
@@ -1190,6 +1251,124 @@ async def test_durable_run_materializes_revert_block_before_planning_and_purges_
     execute_labels = [value for kind, value in session.events if kind == "execute"]
     assert execute_labels[:3] == ["reverted_receipts", "identity_rows", "existing_blocks"]
     assert execute_labels[-1] == "purge"
+
+
+def _block_reconciliation_fixture(
+    *,
+    block: object,
+    tenant_id: str,
+    survivor_id: str,
+    identity_id: str,
+    now: datetime,
+) -> _RecordingSession:
+    receipt = ClusterMergeReceipt(
+        receipt_id=uuid4(),
+        tenant_id=UUID(tenant_id),
+        survivor_cluster_id=UUID(survivor_id),
+        source_cluster_id=uuid4(),
+        source_label=None,
+        moved_identity_ids=[UUID(identity_id)],
+        rule_version="accepted-v1",
+        kind=ClusterMergeKind.AUTO.value,
+        created_at=now - timedelta(hours=1),
+        expires_at=now + timedelta(days=6),
+        reverted_at=now - timedelta(minutes=1),
+        sequence_no=1,
+    )
+    return _RecordingSession(
+        [
+            ("reverted_receipts", _FakeResult(scalars=[receipt])),
+            ("identity_rows", _FakeResult(scalars=[UUID(identity_id)])),
+            ("existing_blocks", _FakeResult(scalars=[block])),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_reverted_receipt_does_not_overwrite_active_manual_block() -> None:
+    tenant_id = str(uuid4())
+    survivor_id = str(uuid4())
+    identity_id = str(uuid4())
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    expires_at = now + timedelta(hours=1)
+    block = SimpleNamespace(
+        identity_id=UUID(identity_id),
+        blocked_cluster_id=UUID(survivor_id),
+        reason="manual_review",
+        expires_at=expires_at,
+    )
+    session = _block_reconciliation_fixture(
+        block=block,
+        tenant_id=tenant_id,
+        survivor_id=survivor_id,
+        identity_id=identity_id,
+        now=now,
+    )
+
+    persisted = await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=now)
+
+    assert persisted == 0
+    assert block.reason == "manual_review"
+    assert block.expires_at == expires_at
+    assert not any(kind in {"add", "delete"} for kind, _value in session.events)
+
+
+@pytest.mark.asyncio
+async def test_reverted_receipt_replaces_expired_block_with_recovery_block() -> None:
+    tenant_id = str(uuid4())
+    survivor_id = str(uuid4())
+    identity_id = str(uuid4())
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    block = SimpleNamespace(
+        identity_id=UUID(identity_id),
+        blocked_cluster_id=UUID(survivor_id),
+        reason="manual_review",
+        expires_at=now - timedelta(seconds=1),
+    )
+    session = _block_reconciliation_fixture(
+        block=block,
+        tenant_id=tenant_id,
+        survivor_id=survivor_id,
+        identity_id=identity_id,
+        now=now,
+    )
+
+    persisted = await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=now)
+
+    assert persisted == 1
+    assert [model for kind, model in session.events if kind == "delete"] == [block]
+    added_blocks = [model for kind, model in session.events if kind == "add"]
+    assert len(added_blocks) == 1
+    assert added_blocks[0].reason == RECOVERY_REVERT_BLOCK_REASON
+    assert added_blocks[0].expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_reverted_receipt_keeps_existing_recovery_block_unchanged() -> None:
+    tenant_id = str(uuid4())
+    survivor_id = str(uuid4())
+    identity_id = str(uuid4())
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    block = SimpleNamespace(
+        identity_id=UUID(identity_id),
+        blocked_cluster_id=UUID(survivor_id),
+        reason=RECOVERY_REVERT_BLOCK_REASON,
+        expires_at=now - timedelta(seconds=1),
+    )
+    session = _block_reconciliation_fixture(
+        block=block,
+        tenant_id=tenant_id,
+        survivor_id=survivor_id,
+        identity_id=identity_id,
+        now=now,
+    )
+
+    persisted = await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=now)
+
+    assert persisted == 0
+    assert block.reason == RECOVERY_REVERT_BLOCK_REASON
+    assert block.expires_at == now - timedelta(seconds=1)
+    assert not any(kind in {"add", "delete"} for kind, _value in session.events)
 
 
 def test_evaluate_residual_names_intra_failing_member() -> None:

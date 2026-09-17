@@ -121,8 +121,8 @@ describe('describeOperationStore', () => {
     sessionStorage.setItem(key, JSON.stringify(context));
     _resetDescribeOperationStoreForTests();
 
-    const removeItem = vi.spyOn(sessionStorage, 'removeItem');
-    const getItem = vi.spyOn(sessionStorage, 'getItem').mockImplementationOnce(() => {
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementationOnce(() => {
       throw new Error('sessionStorage unavailable');
     });
     expect(getDescribeRunContext()).toBeNull();
@@ -135,7 +135,7 @@ describe('describeOperationStore', () => {
   });
 
   it('marks a snapshot memory_only when sessionStorage cannot write', () => {
-    const setItem = vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('quota exceeded');
     });
 
@@ -250,7 +250,7 @@ describe('describeOperationStore', () => {
   it('does not resurrect a cleared run when removeItem fails', () => {
     const context = runContext({ id: 'run-clear-failed' });
     putDescribeOperationContext(context);
-    const removeItem = vi.spyOn(sessionStorage, 'removeItem').mockImplementation(() => {
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
       throw new Error('sessionStorage unavailable');
     });
 

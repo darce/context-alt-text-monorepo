@@ -16,8 +16,21 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 import numpy as np
+from sqlalchemy import delete, func, select, update
 
-from db.models.identity import ClusterMergeKind, ClusterMergeReceipt
+from db.models.identity import (
+    ClusterMergeKind,
+    ClusterMergeReceipt,
+)
+from db.models.identity import (
+    IdentityCluster as IdentityClusterModel,
+)
+from db.models.identity import (
+    IdentityMember as IdentityMemberModel,
+)
+from db.models.identity import (
+    MediaIdentity as MediaIdentityModel,
+)
 from recognition.application.settings.clustering import (
     ClusteringSettings,
     ClusterRecoveryCalibrationPolicy,
@@ -34,6 +47,8 @@ from recognition.domain.repositories import MergeSuggestionCreateData
 
 logger = logging.getLogger(__name__)
 
+RECOVERY_UNKNOWN_OPERATING_CONDITION = "unknown"
+
 
 class RecoveryAbstainClause(StrEnum):
     """Why a residual was kept out of automatic merge (sr-007)."""
@@ -45,6 +60,8 @@ class RecoveryAbstainClause(StrEnum):
     NAMED_PERSON_CONFLICT = "named_person_conflict"
     QUALITY_STRATUM_ABSTAINED = "quality_stratum_abstained"
     MISSING_EVIDENCE = "missing_evidence"
+    EMBEDDING_SPACE_MISMATCH = "embedding_space_mismatch"
+    REVERTED_MERGE_EXCLUDED = "reverted_merge_excluded"
     NO_DESTINATION = "no_destination"
 
 
@@ -55,7 +72,7 @@ class RecoveryMember:
     embedding: np.ndarray
     media_id: str
     quality_score: float | None = None
-    operating_condition: str = "unknown"
+    operating_condition: str = RECOVERY_UNKNOWN_OPERATING_CONDITION
     embedding_model: str | None = None
 
 
@@ -146,8 +163,7 @@ class InMemoryReceiptStore:
         purged = 0
         for receipt in self.receipts:
             expired = receipt.expires_at <= now
-            reverted = receipt.reverted_at is not None
-            if expired or reverted:
+            if expired:
                 purged += 1
                 continue
             kept.append(receipt)
@@ -337,15 +353,88 @@ def _rank_destinations(
         dest_centroid = destination.centroid
         if dest_centroid is None:
             continue
-        if (
-            residual.embedding_model
-            and destination.embedding_model
-            and residual.embedding_model != destination.embedding_model
-        ):
-            continue
         ranked.append((pairwise_cosine(residual_centroid, dest_centroid), destination))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return ranked
+
+
+def _member_matches_runtime_binding(
+    member: RecoveryMember,
+    runtime_binding: EmbeddingSpaceBinding,
+) -> bool:
+    """Return whether a member can safely participate in runtime-space math."""
+    vector = np.asarray(member.embedding)
+    return bool(
+        member.embedding_model == runtime_binding.embedding_model_id
+        and vector.ndim == 1
+        and vector.shape[0] == runtime_binding.embedding_dimensionality
+    )
+
+
+def _prepare_runtime_space_clusters(
+    clusters: Sequence[RecoveryCluster],
+    runtime_binding: EmbeddingSpaceBinding,
+) -> tuple[dict[str, RecoveryCluster], dict[str, tuple[RecoveryMember, ...]], dict[str, int]]:
+    """Filter every cluster before any centroid or cosine calculation.
+
+    Destination clusters may retain their accepted-space members after foreign
+    rows are dropped. A residual containing even one rejected member is tracked
+    separately and is handled as a fail-closed abstention by the planner.
+    """
+    live: dict[str, RecoveryCluster] = {}
+    rejected_by_cluster: dict[str, tuple[RecoveryMember, ...]] = {}
+    original_counts: dict[str, int] = {}
+    for cluster in clusters:
+        original_counts[cluster.cluster_id] = len(cluster.members)
+        accepted: list[RecoveryMember] = []
+        rejected: list[RecoveryMember] = []
+        for member in cluster.members:
+            if _member_matches_runtime_binding(member, runtime_binding):
+                accepted.append(member)
+            else:
+                rejected.append(member)
+        cluster.members = accepted
+        if rejected:
+            rejected_by_cluster[cluster.cluster_id] = tuple(rejected)
+        if accepted:
+            live[cluster.cluster_id] = cluster
+    return live, rejected_by_cluster, original_counts
+
+
+def _reverted_receipt_exclusions(
+    sibling_cache: Mapping[str, Sequence[ClusterMergeReceipt]],
+    *,
+    now: datetime,
+) -> tuple[set[tuple[frozenset[str], str]], set[tuple[str, str]]]:
+    """Build active undo-window exclusions before evaluating any residual."""
+    identity_exclusions: set[tuple[frozenset[str], str]] = set()
+    label_exclusions: set[tuple[str, str]] = set()
+    for receipts in sibling_cache.values():
+        for receipt in receipts:
+            if receipt.reverted_at is None or receipt.expires_at <= now:
+                continue
+            survivor_id = str(receipt.survivor_cluster_id)
+            moved_ids = frozenset(str(identity_id) for identity_id in receipt.moved_identity_ids)
+            if moved_ids:
+                identity_exclusions.add((moved_ids, survivor_id))
+            if receipt.source_label:
+                label_exclusions.add((receipt.source_label.strip().lower(), survivor_id))
+    return identity_exclusions, label_exclusions
+
+
+def _residual_is_reverted_excluded(
+    residual: RecoveryCluster,
+    destination: RecoveryCluster,
+    *,
+    identity_exclusions: set[tuple[frozenset[str], str]],
+    label_exclusions: set[tuple[str, str]],
+) -> bool:
+    survivor_id = destination.cluster_id
+    identity_key = frozenset(member.identity_id for member in residual.members)
+    if (identity_key, survivor_id) in identity_exclusions:
+        return True
+    label = residual.label.strip().lower() if residual.label else None
+    return label is not None and (label, survivor_id) in label_exclusions
 
 
 def _new_receipt(
@@ -384,26 +473,37 @@ async def run_recovery_merge_on_clusters(
     suggestion_emitter: RecoverySuggestionEmitter | None = None,
     now: datetime | None = None,
 ) -> RecoveryMergeResult:
-    """Constrained pairwise recovery over an in-memory cluster snapshot."""
+    """Plan constrained pairwise recovery over an in-memory cluster snapshot.
+
+    This function deliberately does not persist receipts or membership changes;
+    the session-backed entry point applies the returned plans with a CAS guard.
+    """
     clock = now or datetime.now(tz=UTC)
     if not settings.recovery_merge_enabled:
         return RecoveryMergeResult()
-
-    purged = await receipt_store.purge_expired_or_reverted(now=clock)
 
     if not calibration_policy_is_applicable(policy, runtime_binding):
         logger.info(
             "[clustering] recovery_merge_skip reason=policy_not_applicable apply_mode=%s",
             policy.apply_mode.value,
         )
+        purged = await receipt_store.purge_expired_or_reverted(now=clock)
         return RecoveryMergeResult(purged_receipts=purged, applied=False)
 
-    live = {cluster.cluster_id: cluster for cluster in clusters if cluster.members}
+    sibling_cache = {cluster.cluster_id: list(await receipt_store.siblings(cluster.cluster_id)) for cluster in clusters}
+    identity_exclusions, label_exclusions = _reverted_receipt_exclusions(sibling_cache, now=clock)
+
+    live, rejected_by_cluster, original_counts = _prepare_runtime_space_clusters(clusters, runtime_binding)
     max_residual = settings.recovery_max_residual_size
-    residuals = [cluster for cluster in live.values() if cluster.identity_count <= max_residual]
+    residuals = [
+        cluster
+        for cluster in clusters
+        if 0 < original_counts.get(cluster.cluster_id, 0) <= max_residual
+        and (cluster.members or cluster.cluster_id in rejected_by_cluster)
+    ]
     residuals.sort(key=lambda cluster: (cluster.identity_count, cluster.cluster_id))
 
-    written: list[ClusterMergeReceipt] = []
+    planned: list[ClusterMergeReceipt] = []
     abstentions: list[ResidualAbstention] = []
     suggestions = 0
     merged = 0
@@ -411,6 +511,27 @@ async def run_recovery_merge_on_clusters(
 
     for residual in residuals:
         if residual.cluster_id in absorbed or residual.cluster_id not in live:
+            if residual.cluster_id in rejected_by_cluster and residual.cluster_id not in absorbed:
+                failing_member = rejected_by_cluster[residual.cluster_id][0]
+                abstentions.append(
+                    ResidualAbstention(
+                        residual_cluster_id=residual.cluster_id,
+                        destination_cluster_id=None,
+                        failing_member_id=failing_member.identity_id,
+                        failing_clause=RecoveryAbstainClause.EMBEDDING_SPACE_MISMATCH,
+                    )
+                )
+            continue
+        rejected = rejected_by_cluster.get(residual.cluster_id)
+        if rejected:
+            abstentions.append(
+                ResidualAbstention(
+                    residual_cluster_id=residual.cluster_id,
+                    destination_cluster_id=None,
+                    failing_member_id=rejected[0].identity_id,
+                    failing_clause=RecoveryAbstainClause.EMBEDDING_SPACE_MISMATCH,
+                )
+            )
             continue
         ranked = _rank_destinations(
             residual,
@@ -428,6 +549,31 @@ async def run_recovery_merge_on_clusters(
             continue
         dest_similarity, destination = ranked[0]
         runner_up = ranked[1][1] if len(ranked) > 1 else None
+        if _residual_is_reverted_excluded(
+            residual,
+            destination,
+            identity_exclusions=identity_exclusions,
+            label_exclusions=label_exclusions,
+        ):
+            abstention = ResidualAbstention(
+                residual_cluster_id=residual.cluster_id,
+                destination_cluster_id=destination.cluster_id,
+                failing_member_id=residual.members[0].identity_id if residual.members else None,
+                failing_clause=RecoveryAbstainClause.REVERTED_MERGE_EXCLUDED,
+                similarity=dest_similarity,
+            )
+            abstentions.append(abstention)
+            if suggestion_emitter is not None:
+                await suggestion_emitter.emit_pair(
+                    tenant_id,
+                    residual.cluster_id,
+                    destination.cluster_id,
+                    similarity=dest_similarity,
+                    failing_member_id=abstention.failing_member_id,
+                    failing_clause=abstention.failing_clause,
+                )
+                suggestions += 1
+            continue
         abstention = evaluate_residual_admission(residual, destination, runner_up, policy)
         if abstention is not None:
             filled = ResidualAbstention(
@@ -450,7 +596,7 @@ async def run_recovery_merge_on_clusters(
                 suggestions += 1
             continue
 
-        siblings = await receipt_store.siblings(destination.cluster_id)
+        siblings = sibling_cache.setdefault(destination.cluster_id, [])
         receipt = _new_receipt(
             tenant_id=tenant_id,
             residual=residual,
@@ -464,14 +610,15 @@ async def run_recovery_merge_on_clusters(
         residual.members = []
         live.pop(residual.cluster_id, None)
         absorbed.add(residual.cluster_id)
-        await receipt_store.add(receipt)
-        written.append(receipt)
+        siblings.append(receipt)
+        planned.append(receipt)
         merged += 1
 
+    purged = await receipt_store.purge_expired_or_reverted(now=clock)
     return RecoveryMergeResult(
         merged=merged,
-        receipt_ids=tuple(receipt.receipt_id for receipt in written),
-        receipts=tuple(written),
+        receipt_ids=tuple(receipt.receipt_id for receipt in planned),
+        receipts=tuple(planned),
         abstentions=tuple(abstentions),
         purged_receipts=purged,
         suggestions_emitted=suggestions,
@@ -530,61 +677,96 @@ class _SessionReceiptStore:
         return list(result.scalars().all())
 
     async def purge_expired_or_reverted(self, *, now: datetime) -> int:
-        from sqlalchemy import delete, or_
-
         result = await self._session.execute(
             delete(ClusterMergeReceipt).where(
                 ClusterMergeReceipt.tenant_id == self._tenant_id,
-                or_(
-                    ClusterMergeReceipt.reverted_at.is_not(None),
-                    ClusterMergeReceipt.expires_at <= now,
-                ),
+                ClusterMergeReceipt.expires_at <= now,
             )
         )
         return int(result.rowcount or 0)
 
 
-def _quality_score_from_identity(identity: MediaIdentity) -> float | None:
-    metadata = identity.metadata or {}
-    raw = metadata.get("quality_score")
-    if isinstance(raw, (int, float)):
-        return float(raw)
-    if identity.confidence is not None:
-        return float(identity.confidence)
-    return None
+_PersistedRecoveryFields = tuple[str, np.ndarray, str | None, float | None, str]
 
 
-def _operating_condition_from_identity(identity: MediaIdentity) -> str:
-    metadata = identity.metadata or {}
-    raw = metadata.get("operating_condition")
-    if isinstance(raw, str) and raw:
-        return raw
-    return "unknown"
+async def _load_persisted_recovery_fields(
+    *,
+    session: Any,
+    tenant_id: str,
+    cluster_ids: Sequence[str],
+) -> dict[str, _PersistedRecoveryFields]:
+    """Load the persisted recovery fields omitted by the domain member loader."""
+    if not cluster_ids:
+        return {}
+    tenant_uuid = uuid.UUID(str(tenant_id))
+    cluster_uuids = [uuid.UUID(str(cluster_id)) for cluster_id in cluster_ids]
+    stmt = (
+        select(
+            MediaIdentityModel.id,
+            IdentityMemberModel.cluster_id,
+            MediaIdentityModel.embedding,
+            MediaIdentityModel.embedding_model,
+            MediaIdentityModel.quality_score,
+            MediaIdentityModel.media_id,
+        )
+        .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentityModel.id)
+        .where(
+            MediaIdentityModel.tenant_id == tenant_uuid,
+            IdentityMemberModel.tenant_id == tenant_uuid,
+            IdentityMemberModel.cluster_id.in_(cluster_uuids),
+        )
+    )
+    result = await session.execute(stmt)
+    fields: dict[str, _PersistedRecoveryFields] = {}
+    for row in result.all():
+        if len(row) == 5:
+            identity_id, cluster_id, embedding, embedding_model, quality_score = row
+            media_id = identity_id
+        else:
+            identity_id, cluster_id, embedding, embedding_model, quality_score, media_id = row
+        if embedding is None:
+            continue
+        fields[str(identity_id)] = (
+            str(cluster_id),
+            np.asarray(embedding, dtype=np.float32),
+            str(embedding_model) if embedding_model is not None else None,
+            float(quality_score) if quality_score is not None else None,
+            str(media_id),
+        )
+    return fields
 
 
-def _clusters_from_identities(
+def _clusters_from_persisted_fields(
     clusters: Sequence[Any],
-    members_by_cluster: Mapping[str, Sequence[MediaIdentity]],
+    persisted_fields: Mapping[str, _PersistedRecoveryFields],
 ) -> list[RecoveryCluster]:
+    """Build recovery members directly from the narrow persisted-member query."""
     recovered: list[RecoveryCluster] = []
     for cluster in clusters:
         cluster_id = getattr(cluster, "id", None)
         if not cluster_id:
             continue
-        identities = members_by_cluster.get(str(cluster_id), ())
-        members = [
-            RecoveryMember(
-                identity_id=str(identity.id),
-                cluster_id=str(cluster_id),
-                embedding=np.asarray(identity.embedding, dtype=np.float32),
-                media_id=str(identity.media_id),
-                quality_score=_quality_score_from_identity(identity),
-                operating_condition=_operating_condition_from_identity(identity),
-                embedding_model=identity.embedding_model,
+        members: list[RecoveryMember] = []
+        for identity_id, (
+            persisted_cluster_id,
+            embedding,
+            embedding_model,
+            quality_score,
+            media_id,
+        ) in persisted_fields.items():
+            if persisted_cluster_id != str(cluster_id):
+                continue
+            members.append(
+                RecoveryMember(
+                    identity_id=identity_id,
+                    cluster_id=str(cluster_id),
+                    embedding=embedding,
+                    media_id=media_id,
+                    quality_score=quality_score,
+                    operating_condition=RECOVERY_UNKNOWN_OPERATING_CONDITION,
+                    embedding_model=embedding_model,
+                )
             )
-            for identity in identities
-            if identity.embedding is not None
-        ]
         if not members:
             continue
         recovered.append(
@@ -593,7 +775,59 @@ def _clusters_from_identities(
                 members=members,
                 label=getattr(cluster, "label", None),
                 user_confirmed=bool(getattr(cluster, "user_confirmed", False)),
-                embedding_model=getattr(cluster, "embedding_model", None) or members[0].embedding_model,
+                embedding_model=None,
+            )
+        )
+    return recovered
+
+
+def _clusters_from_identities(
+    clusters: Sequence[Any],
+    members_by_cluster: Mapping[str, Sequence[MediaIdentity]],
+    persisted_fields: Mapping[str, _PersistedRecoveryFields] | None = None,
+) -> list[RecoveryCluster]:
+    persisted = persisted_fields or {}
+    recovered: list[RecoveryCluster] = []
+    for cluster in clusters:
+        cluster_id = getattr(cluster, "id", None)
+        if not cluster_id:
+            continue
+        identities = members_by_cluster.get(str(cluster_id), ())
+        members: list[RecoveryMember] = []
+        for identity in identities:
+            if identity.embedding is None:
+                continue
+            fields = persisted.get(str(identity.id))
+            if fields is None:
+                embedding = np.asarray(identity.embedding, dtype=np.float32)
+                embedding_model = identity.embedding_model
+                quality_score = None
+            else:
+                persisted_cluster_id, embedding, embedding_model, quality_score, _media_id = fields
+                if persisted_cluster_id != str(cluster_id):
+                    continue
+            members.append(
+                RecoveryMember(
+                    identity_id=str(identity.id),
+                    cluster_id=str(cluster_id),
+                    embedding=embedding,
+                    media_id=str(identity.media_id),
+                    quality_score=quality_score,
+                    operating_condition=RECOVERY_UNKNOWN_OPERATING_CONDITION,
+                    embedding_model=embedding_model,
+                )
+            )
+        if not members:
+            continue
+        recovered.append(
+            RecoveryCluster(
+                cluster_id=str(cluster_id),
+                members=members,
+                label=getattr(cluster, "label", None),
+                user_confirmed=bool(getattr(cluster, "user_confirmed", False)),
+                # Member-level provenance is authoritative; no cluster-level
+                # fallback may license cross-space centroid comparisons.
+                embedding_model=None,
             )
         )
     return recovered
@@ -620,6 +854,107 @@ def _binding_from_clusters(
     return None
 
 
+class _RecoveryCasMissError(RuntimeError):
+    """The planned source membership no longer matches the database snapshot."""
+
+
+async def _apply_recovery_receipt(
+    *,
+    session: Any,
+    receipt_store: RecoveryReceiptStore,
+    receipt: ClusterMergeReceipt,
+    tenant_id: str,
+) -> bool:
+    """Apply one planned merge under row locks and a member-set CAS guard."""
+    tenant_uuid = uuid.UUID(str(tenant_id))
+    source_uuid = uuid.UUID(str(receipt.source_cluster_id))
+    destination_uuid = uuid.UUID(str(receipt.survivor_cluster_id))
+    moved_ids = tuple(uuid.UUID(str(identity_id)) for identity_id in receipt.moved_identity_ids)
+    if not moved_ids:
+        return False
+
+    try:
+        async with session.begin_nested():
+            locked = await session.execute(
+                select(IdentityClusterModel)
+                .where(
+                    IdentityClusterModel.tenant_id == tenant_uuid,
+                    IdentityClusterModel.id.in_((source_uuid, destination_uuid)),
+                )
+                .order_by(IdentityClusterModel.id)
+                .with_for_update()
+            )
+            locked_ids = {model.id for model in locked.scalars().all()}
+            if source_uuid not in locked_ids or destination_uuid not in locked_ids:
+                raise _RecoveryCasMissError
+
+            source_count_result = await session.execute(
+                select(func.count(IdentityMemberModel.id)).where(
+                    IdentityMemberModel.tenant_id == tenant_uuid,
+                    IdentityMemberModel.cluster_id == source_uuid,
+                )
+            )
+            if int(source_count_result.scalar_one() or 0) != len(moved_ids):
+                raise _RecoveryCasMissError
+
+            moved = await session.execute(
+                update(IdentityMemberModel)
+                .where(
+                    IdentityMemberModel.tenant_id == tenant_uuid,
+                    IdentityMemberModel.cluster_id == source_uuid,
+                    IdentityMemberModel.identity_id.in_(moved_ids),
+                )
+                .values(cluster_id=destination_uuid)
+            )
+            if int(moved.rowcount or 0) != len(moved_ids):
+                raise _RecoveryCasMissError
+
+            remaining = await session.execute(
+                select(func.count(IdentityMemberModel.id)).where(
+                    IdentityMemberModel.tenant_id == tenant_uuid,
+                    IdentityMemberModel.cluster_id == source_uuid,
+                )
+            )
+            if int(remaining.scalar_one() or 0) != 0:
+                raise _RecoveryCasMissError
+
+            siblings = await receipt_store.siblings(str(destination_uuid))
+            receipt.sequence_no = ClusterMergeReceipt.next_sequence_no(siblings)
+            destination_update = await session.execute(
+                update(IdentityClusterModel)
+                .where(
+                    IdentityClusterModel.tenant_id == tenant_uuid,
+                    IdentityClusterModel.id == destination_uuid,
+                )
+                .values(identity_count=IdentityClusterModel.identity_count + len(moved_ids))
+            )
+            if int(destination_update.rowcount or 0) != 1:
+                raise _RecoveryCasMissError
+
+            source_delete = await session.execute(
+                delete(IdentityClusterModel).where(
+                    IdentityClusterModel.tenant_id == tenant_uuid,
+                    IdentityClusterModel.id == source_uuid,
+                )
+            )
+            if int(source_delete.rowcount or 0) != 1:
+                raise _RecoveryCasMissError
+
+            # The receipt is durable only after the exact member move and
+            # source deletion have succeeded inside this savepoint.
+            await receipt_store.add(receipt)
+            await session.flush()
+    except _RecoveryCasMissError:
+        logger.info(
+            "recovery_merge_cas_miss tenant_id=%s source_cluster_id=%s destination_cluster_id=%s",
+            tenant_id,
+            receipt.source_cluster_id,
+            receipt.survivor_cluster_id,
+        )
+        return False
+    return True
+
+
 async def run_recovery_merge(
     *,
     tenant_id: str,
@@ -637,41 +972,33 @@ async def run_recovery_merge(
     if not clustering.recovery_merge_enabled:
         return RecoveryMergeResult()
 
-    cluster_repo = getattr(assignment_writer, "cluster_repository", None)
-    member_repo = getattr(assignment_writer, "member_repository", None)
-    if cluster_repo is None:
-        return RecoveryMergeResult()
+    cluster_repo = assignment_writer.cluster_repository
+    session = getattr(assignment_writer, "_session", None) or getattr(cluster_repo, "_session", None)
+    store = receipt_store
+    if store is None:
+        store = _SessionReceiptStore(session, tenant_id) if session is not None else InMemoryReceiptStore()
 
-    get_by_tenant = getattr(cluster_repo, "get_by_tenant", None)
-    if not callable(get_by_tenant):
-        return RecoveryMergeResult()
-
-    domain_clusters = await get_by_tenant(tenant_id, limit=1000)
-    cluster_ids = [str(cluster.id) for cluster in domain_clusters if getattr(cluster, "id", None)]
-    members_by_cluster: dict[str, Sequence[MediaIdentity]] = {}
-    loader = getattr(cluster_repo, "get_member_identities_for_clusters", None)
-    if callable(loader) and cluster_ids:
-        loaded = await loader(cluster_ids)
-        members_by_cluster = {str(key): value for key, value in loaded.items()}
+    domain_clusters = await cluster_repo.get_by_tenant(tenant_id, limit=1000)
+    cluster_ids = [str(cluster.id) for cluster in domain_clusters if cluster.id is not None]
+    if session is not None:
+        persisted_fields = await _load_persisted_recovery_fields(
+            session=session,
+            tenant_id=tenant_id,
+            cluster_ids=cluster_ids,
+        )
+        recovered = _clusters_from_persisted_fields(domain_clusters, persisted_fields)
     else:
-        get_members = getattr(cluster_repo, "get_member_identities", None)
-        if callable(get_members):
-            for cluster_id in cluster_ids:
-                members_by_cluster[cluster_id] = await get_members(cluster_id)
-
-    recovered = _clusters_from_identities(domain_clusters, members_by_cluster)
+        members_by_cluster: dict[str, Sequence[MediaIdentity]] = {}
+        if cluster_ids:
+            loaded = await cluster_repo.get_member_identities_for_clusters(cluster_ids)
+            members_by_cluster = {str(key): value for key, value in loaded.items()}
+        recovered = _clusters_from_identities(domain_clusters, members_by_cluster)
     typed_policy = policy or default_cluster_recovery_calibration_policy()
     binding = _binding_from_clusters(recovered, runtime_binding)
     if binding is None:
         logger.info("[clustering] recovery_merge_skip reason=unbound_runtime_embedding_space")
-        store = receipt_store or InMemoryReceiptStore()
         purged = await store.purge_expired_or_reverted(now=now or datetime.now(tz=UTC))
         return RecoveryMergeResult(purged_receipts=purged, applied=False)
-
-    store = receipt_store
-    if store is None:
-        session = getattr(assignment_writer, "_session", None)
-        store = _SessionReceiptStore(session, tenant_id) if session is not None else InMemoryReceiptStore()
 
     emitter = suggestion_emitter
     if emitter is None and merge_suggestion_service is not None:
@@ -689,46 +1016,53 @@ async def run_recovery_merge(
         now=now,
     )
 
-    if result.merged and member_repo is not None:
-        for receipt in result.receipts:
-            source_id = str(receipt.source_cluster_id)
-            dest_id = str(receipt.survivor_cluster_id)
-            move = getattr(member_repo, "move_members", None)
-            if callable(move):
-                moved = await move(source_id, dest_id)
-            else:
-                moved = len(receipt.moved_identity_ids)
-            delete_cluster = getattr(cluster_repo, "delete", None)
-            if callable(delete_cluster):
-                await delete_cluster(source_id)
-            get_by_id = getattr(cluster_repo, "get_by_id", None)
-            if callable(get_by_id):
-                dest_cluster = await get_by_id(dest_id)
-                if dest_cluster is not None:
-                    dest_cluster.identity_count = (dest_cluster.identity_count or 0) + int(moved or 0)
-                    updater = getattr(cluster_repo, "update", None)
-                    if callable(updater):
-                        await updater(dest_cluster)
-            recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
-            recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
-            if callable(recompute_reps):
-                await recompute_reps(dest_id)
-            if callable(recompute_centroid):
-                await recompute_centroid(dest_id)
-            delete_suggestions = getattr(merge_suggestion_service, "delete_by_cluster", None)
-            if callable(delete_suggestions):
-                await delete_suggestions(tenant_id, source_id)
-                await delete_suggestions(tenant_id, dest_id)
+    if not result.receipts:
+        return result
+    if session is None:
+        logger.warning(
+            "[clustering] recovery_merge_skip reason=no_session_for_apply tenant_id=%s",
+            tenant_id,
+        )
+        return RecoveryMergeResult(
+            abstentions=result.abstentions,
+            purged_receipts=result.purged_receipts,
+            suggestions_emitted=result.suggestions_emitted,
+            applied=False,
+        )
 
-        refresh = getattr(assignment_writer, "refresh_centroids_view", None)
-        if callable(refresh):
-            try:
-                await refresh()
-            except Exception:
-                logger.warning(
-                    "[clustering] recovery_merge MV refresh failed tenant_id=%s",
-                    tenant_id,
-                    exc_info=True,
-                )
+    applied_receipts: list[ClusterMergeReceipt] = []
+    for receipt in result.receipts:
+        if not await _apply_recovery_receipt(
+            session=session,
+            receipt_store=store,
+            receipt=receipt,
+            tenant_id=tenant_id,
+        ):
+            continue
+        applied_receipts.append(receipt)
+        destination_id = str(receipt.survivor_cluster_id)
+        await assignment_writer.recompute_representatives(destination_id)
+        await assignment_writer.recompute_centroid(destination_id)
+        if merge_suggestion_service is not None:
+            await merge_suggestion_service.delete_by_cluster(tenant_id, str(receipt.source_cluster_id))
+            await merge_suggestion_service.delete_by_cluster(tenant_id, destination_id)
 
-    return result
+    if applied_receipts:
+        try:
+            await assignment_writer.refresh_centroids_view()
+        except Exception:
+            logger.warning(
+                "[clustering] recovery_merge MV refresh failed tenant_id=%s",
+                tenant_id,
+                exc_info=True,
+            )
+
+    return RecoveryMergeResult(
+        merged=len(applied_receipts),
+        receipt_ids=tuple(receipt.receipt_id for receipt in applied_receipts),
+        receipts=tuple(applied_receipts),
+        abstentions=result.abstentions,
+        purged_receipts=result.purged_receipts,
+        suggestions_emitted=result.suggestions_emitted,
+        applied=result.applied and (bool(applied_receipts) or not result.receipts),
+    )

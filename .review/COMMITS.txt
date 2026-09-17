@@ -1,1 +1,5 @@
-1b04228e0e5f docs(pg19): retarget PostgreSQL upgrade evaluation to 17 -> 19 (skip 18)
+5290f1aca4f7 offload: Committed r4 review report as ad88ed5; verdict is fail.
+8661e01ab4ff offload: Committed the r3 recovery-merge re-review report with verdict
+4e7202abdd43 offload: Appended and committed the r2c re-review with a fail verdict
+0d2795455404 offload: Committed review report e87136b with Verdict: fail and six
+f6e9f3fd980a offload: Fixed recovery revert-block reconciliation and committed it as

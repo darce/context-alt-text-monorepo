@@ -849,8 +849,7 @@ class OutboxMaintenanceService {
 		$case_args = array_merge( ...$case_argument_parts );
 		$id_placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$bulk_sql =
-			'UPDATE %i
-			SET status = %s,
+			'UPDATE %i SET status = %s,
 				attempts = %d,
 				payload = JSON_REMOVE(payload, %s),
 				last_error_code = NULL,

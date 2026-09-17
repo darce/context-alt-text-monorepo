@@ -9,6 +9,20 @@ use AltContext\Tests\TestCase;
 
 class OutboxQueryRepositoryTest extends TestCase
 {
+    /**
+     * @param array<int,string> $queries
+     */
+    private function findQueryContaining(array $queries, string $needle): string
+    {
+        foreach ($queries as $query) {
+            if (str_contains($query, $needle)) {
+                return $query;
+            }
+        }
+
+        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
+    }
+
     public function testFindFailedOperationsReturnsDecodedRowsOrderedByDate(): void
     {
         global $wpdb;
@@ -69,6 +83,7 @@ class OutboxQueryRepositoryTest extends TestCase
             'COALESCE(first_failed_at, last_attempted_at, created_at)',
             $select
         );
+        $this->assertStringContainsString('UTC_TIMESTAMP()', $select);
         $this->assertStringContainsString('AS age_seconds', $select);
     }
 

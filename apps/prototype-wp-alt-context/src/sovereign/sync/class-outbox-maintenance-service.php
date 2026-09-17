@@ -628,16 +628,13 @@ class OutboxMaintenanceService {
 			$tenant_id,
 			OutboxStatus::FAILED,
 			array(
-				// Keep the dead-letter transition in the failed state. DISCARDED is only
-				// reachable through the explicit operator discard action.
-				'status' => OutboxStatus::FAILED,
 				'last_error_code' => self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
 				'last_error_message' => $message,
 				'attempts' => $attempt_count,
 				'last_attempted_at' => $exhausted_at,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%d', '%s', '%s' )
 		);
 	}
 

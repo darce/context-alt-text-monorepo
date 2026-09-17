@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { HTTPError } from '../../../utils/http';
 import type {
   BulkRetryResponse,
   OutboxListResponse,
@@ -757,5 +758,184 @@ describe('DeadLetterPanel', () => {
       expect(reasonId).toBeTruthy();
       expect(document.getElementById(reasonId!)).toHaveTextContent('Failed-change action in progress. Please wait.');
     }
+  });
+
+  it('shows age per failed row and timeline entry', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-19T10:00:00Z'));
+    try {
+      renderPanel();
+
+      expect(screen.getAllByText('Age: 8 days')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Will not retry for terminal failed rows and hides Retry', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              last_error_code: 'unauthorized',
+              last_error_message: 'Session expired.',
+            }),
+          ],
+          total: 1,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Will not retry')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('shows Will not retry for discarded timeline rows', () => {
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 44,
+              status: 'discarded',
+              last_error_code: 'auto_retry_exhausted',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Will not retry')).toBeInTheDocument();
+  });
+
+  it('keeps Discard failed older than 7 days visible and disabled at zero failed changes', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: { items: [], total: 0, limit: 20, offset: 0 },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard failed older than 7 days' })).toBeDisabled();
+  });
+
+  it('requests a bulk-discard page of at most 50 failed changes', () => {
+    renderPanel();
+
+    expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+  });
+
+  it('requires confirmation before discarding failed changes older than 7 days', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ operation: null });
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({ id: 11, created_at: '2026-09-01T00:00:00Z' }),
+            buildOperation({
+              id: 12,
+              entity_key: 'cluster-2',
+              created_at: '2026-09-16T00:00:00Z',
+            }),
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard failed older than 7 days' }));
+
+    expect(screen.getByRole('button', { name: 'Confirm discard failed older than 7 days' })).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Discard failed older than 7 days is armed. Activate Confirm discard failed older than 7 days to continue.',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard failed older than 7 days' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+    expect(mutateAsync).toHaveBeenCalledWith(11);
+
+    expect(screen.getByTestId('acx-bulk-discard-results')).toHaveTextContent(
+      'Cluster label update for cluster-1 (operation 11) discarded.',
+    );
+    expect(screen.getByText('Discarded 1 failed changes older than 7 days.')).toBeInTheDocument();
+  });
+
+  it('stops the bulk discard on the first auth or 4xx and shows per-row results', async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValueOnce({ operation: null })
+      .mockRejectedValueOnce(
+        new HTTPError({
+          status: 403,
+          retryAfterSeconds: undefined,
+          endpoint: '/acx/v1/recognition/outbox/12/discard',
+          bodyPreview: '',
+          message: 'forbidden',
+        }),
+      )
+      .mockResolvedValue({ operation: null });
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({ id: 11, created_at: '2026-09-01T00:00:00Z' }),
+            buildOperation({
+              id: 12,
+              entity_key: 'cluster-2',
+              created_at: '2026-09-01T00:00:00Z',
+            }),
+            buildOperation({
+              id: 13,
+              entity_key: 'cluster-3',
+              created_at: '2026-09-01T00:00:00Z',
+            }),
+          ],
+          total: 3,
+          limit: 50,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard failed older than 7 days' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard failed older than 7 days' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(2);
+    });
+    expect(mutateAsync).not.toHaveBeenCalledWith(13);
+
+    const results = screen.getByTestId('acx-bulk-discard-results');
+    expect(results).toHaveTextContent('Cluster label update for cluster-1 (operation 11) discarded.');
+    expect(results).toHaveTextContent(
+      'Stopped before discarding Cluster label update for cluster-2 (operation 12) (authorization or client error).',
+    );
+    expect(screen.getByText('Stopped after an authorization or client error. 1 discarded.')).toBeInTheDocument();
   });
 });

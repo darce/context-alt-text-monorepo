@@ -122,5 +122,25 @@
         }
       }
     }
+  },
+  "unavailable_endpoint_not_private": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": null,
+        "startup_id": null,
+        "reason": "endpoint_not_private",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": null
+        }
+      }
+    }
   }
 }

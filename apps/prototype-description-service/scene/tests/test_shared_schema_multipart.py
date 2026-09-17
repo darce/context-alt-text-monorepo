@@ -244,6 +244,7 @@ def test_post_accept_starting_budget_is_normalized(monkeypatch, tmp_path, budget
     from scene.interface_adapters.http.routers import describe as describe_module
 
     _gpu_env(monkeypatch, tmp_path, state="ready")
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
 
     detail = {
         "code": "description_service_starting",
@@ -280,7 +281,7 @@ def test_post_accept_starting_budget_is_normalized(monkeypatch, tmp_path, budget
         assert normalized["message"] == "dependency starting"
         assert normalized["operation_id"] != "upstream-operation"
         assert normalized["startup_id"] is None
-        assert normalized["startup_budget_seconds"] > 0
+        assert normalized["startup_budget_seconds"] == pytest.approx(17.5)
         assert normalized["warmup_eta_seconds"] == 45
         assert "reason" not in normalized
         assert response.headers.get("Retry-After") == "45"

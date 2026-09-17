@@ -356,6 +356,7 @@ _MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
     "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
     "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
 }
+_DEFAULT_UNAVAILABLE_REASON = UnavailableReason.STATE_MISSING
 
 
 def _typed_describe_error(
@@ -376,7 +377,7 @@ def _typed_describe_error(
     if code == "description_service_starting" and startup_budget_seconds is None:
         startup_budget_seconds = DescriptionSettings().gpu_warmup_timeout_seconds
     if code == "description_service_unavailable" and reason is None:
-        reason = UnavailableReason.STATE_MISSING
+        reason = _DEFAULT_UNAVAILABLE_REASON
     detail = DescribeOperationErrorDetail(
         code=code,
         message=message,
@@ -423,6 +424,18 @@ def _retry_after_header(exc: HTTPException) -> int | None:
     return value
 
 
+def _coerce_unavailable_reason(raw_reason: Any) -> UnavailableReason | None:
+    """Return a contract reason only when the value is already recognized."""
+    if isinstance(raw_reason, UnavailableReason):
+        return raw_reason
+    if not isinstance(raw_reason, str):
+        return None
+    try:
+        return UnavailableReason(raw_reason)
+    except ValueError:
+        return None
+
+
 def _unavailable_reason_from_adapter(adapter, *, settings: DescriptionSettings) -> UnavailableReason | None:
     """Return the typed reason carried by a fail-closed GPU adapter.
 
@@ -434,8 +447,9 @@ def _unavailable_reason_from_adapter(adapter, *, settings: DescriptionSettings) 
         return None
     for attribute in ("reason_code", "unavailable_reason", "reason"):
         raw_reason = getattr(adapter, attribute, None)
-        if isinstance(raw_reason, UnavailableReason):
-            return raw_reason
+        parsed_reason = _coerce_unavailable_reason(raw_reason)
+        if parsed_reason is not None:
+            return parsed_reason
         if not isinstance(raw_reason, str):
             continue
         normalized = raw_reason.strip().casefold().replace("-", "_").replace(" ", "_")
@@ -471,12 +485,7 @@ def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
             and budget > 0
         )
     if code == "description_service_unavailable":
-        raw_reason = detail.get("reason")
-        if not isinstance(raw_reason, str):
-            return True
-        try:
-            UnavailableReason(raw_reason)
-        except ValueError:
+        if _coerce_unavailable_reason(detail.get("reason")) is None:
             return True
     return False
 
@@ -485,6 +494,7 @@ def _rebuild_post_accept_typed_error(
     exc: HTTPException,
     *,
     op,
+    settings: DescriptionSettings,
     server_start: float,
 ) -> HTTPException:
     detail = exc.detail
@@ -503,14 +513,14 @@ def _rebuild_post_accept_typed_error(
         budget = detail.get("startup_budget_seconds")
         if isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0:
             startup_budget_seconds = float(budget)
+        else:
+            # The route's resolved settings are the source of truth for the
+            # advertised budget; never preserve an invalid upstream value or
+            # invent a client-facing ceiling during normalization.
+            startup_budget_seconds = settings.gpu_warmup_timeout_seconds
         retry_after = _retry_after_header(exc)
     elif isinstance(detail, dict) and code == "description_service_unavailable":
-        raw_reason = detail.get("reason")
-        if isinstance(raw_reason, str):
-            try:
-                reason = UnavailableReason(raw_reason)
-            except ValueError:
-                reason = None
+        reason = _coerce_unavailable_reason(detail.get("reason"))
         raw_lifecycle = detail.get("lifecycle_reason")
         if isinstance(raw_lifecycle, str) and raw_lifecycle.strip():
             lifecycle_reason = raw_lifecycle
@@ -1402,7 +1412,12 @@ async def describe_image_multipart(
         if not _preserves_demand_lease(exc):
             await _cleanup_accepted()
         if op is not None and _typed_error_detail_needs_rebuild(exc):
-            raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
+            raise _rebuild_post_accept_typed_error(
+                exc,
+                op=op,
+                settings=settings,
+                server_start=server_start,
+            ) from exc
         raise
     except TimeoutError as exc:
         await _cleanup_accepted()

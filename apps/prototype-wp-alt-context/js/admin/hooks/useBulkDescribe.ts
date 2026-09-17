@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -19,6 +19,8 @@ import {
   DESCRIBE_OPERATION_CONTEXT_VERSION,
   DESCRIBE_OPERATION_KIND,
   putDescribeOperationContext,
+  resolveDescribeOperationTenantId,
+  subscribeDescribeOperationStore,
 } from './describeOperationStore';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 
@@ -42,6 +44,13 @@ export interface UseBulkDescribeResult {
 
 const SUBMIT_ERROR_FALLBACK = __('Could not start the describe run. Please try again.', 'alt-context');
 const CANCEL_ERROR_FALLBACK = __('Could not cancel the describe run. Please try again.', 'alt-context');
+
+type TerminalDescribeRun = {
+  tenantId: string | null;
+  runId: string;
+};
+
+const emptyTenantSnapshot = (): string | null => null;
 
 /**
  * Build the operator-visible notice for a bulk-describe mutation failure.
@@ -87,6 +96,11 @@ const persistRunContext = (response: DescribeRunResponse): void => {
 
 export const useBulkDescribe = (): UseBulkDescribeResult => {
   const queryClient = useQueryClient();
+  const tenantId = useSyncExternalStore(
+    subscribeDescribeOperationStore,
+    resolveDescribeOperationTenantId,
+    emptyTenantSnapshot,
+  );
   const { runId: storedRunId } = useActiveDescribeRun();
   const submit = useMutation<DescribeRunResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
@@ -101,22 +115,35 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   // while the latter keeps the finished response available for the terminal
   // summary after the active store entry is cleared.
   const activeRunIdRef = useRef<string | null>(null);
-  const lastTerminalRunIdRef = useRef<string | null>(null);
-  const [lastTerminalRunId, setLastTerminalRunId] = useState<string | null>(null);
+  const lastTerminalRunRef = useRef<TerminalDescribeRun | null>(null);
+  const [lastTerminalRun, setLastTerminalRun] = useState<TerminalDescribeRun | null>(null);
   if (storedRunId !== activeRunIdRef.current) {
     // The store is the source of truth for whether a run is active. A terminal
-    // summary may continue polling through lastTerminalRunIdRef, but it must
+    // summary may continue polling through lastTerminalRunRef, but it must
     // never keep the activeRunId alive after the store is cleared.
     activeRunIdRef.current = storedRunId;
     if (storedRunId !== null) {
-      lastTerminalRunIdRef.current = null;
+      lastTerminalRunRef.current = null;
     }
   }
   const activeRunId = activeRunIdRef.current;
-  const runId = activeRunId ?? lastTerminalRunId;
-  const progressRunId = activeRunId ?? lastTerminalRunIdRef.current;
+  const currentTerminalRun =
+    lastTerminalRun?.tenantId === tenantId ? lastTerminalRun : null;
+  const currentTerminalRunRef =
+    lastTerminalRunRef.current?.tenantId === tenantId ? lastTerminalRunRef.current : null;
+  const runId = activeRunId ?? currentTerminalRun?.runId ?? null;
+  const progressRunId = activeRunId ?? currentTerminalRunRef?.runId ?? null;
   const progress = useDescribeRunProgress(progressRunId);
   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastTerminalRun !== null && lastTerminalRun.tenantId !== tenantId) {
+      setLastTerminalRun(null);
+    }
+    if (lastTerminalRunRef.current !== null && lastTerminalRunRef.current.tenantId !== tenantId) {
+      lastTerminalRunRef.current = null;
+    }
+  }, [lastTerminalRun, tenantId]);
 
   useEffect(() => {
     if (activeRunId === null || !progress.isTerminal) {
@@ -131,12 +158,13 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
 
   useEffect(() => {
     if (activeRunId !== null && progress.isTerminal) {
-      lastTerminalRunIdRef.current = activeRunId;
-      setLastTerminalRunId(activeRunId);
+      const terminalRun = { tenantId, runId: activeRunId };
+      lastTerminalRunRef.current = terminalRun;
+      setLastTerminalRun(terminalRun);
       clearActiveDescribeRunId(activeRunId);
       activeRunIdRef.current = null;
     }
-  }, [activeRunId, progress.isTerminal]);
+  }, [activeRunId, progress.isTerminal, tenantId]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)

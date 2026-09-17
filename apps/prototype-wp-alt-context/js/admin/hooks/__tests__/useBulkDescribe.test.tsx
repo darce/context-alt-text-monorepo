@@ -309,6 +309,62 @@ describe('useBulkDescribe', () => {
     expect(result.current.runId).not.toBe('run-done');
   });
 
+  it('does not expose or poll a terminal summary across tenant changes', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-tenant-a', status: 'pending' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-tenant-a', status: 'completed', completed: 2, total: 2 }),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2]);
+
+    await waitFor(() => expect(result.current.runId).toBe('run-tenant-a'));
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.progress.run?.run_id).toBe('run-tenant-a');
+    const callsBeforeTenantSwitch = fetchBulkDescribeRunMock.mock.calls.length;
+
+    registerConfig({
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      tenant_id: 'tenant-b',
+    });
+    // Create and clear a transient B context to exercise the store's existing
+    // subscription path while leaving tenant B with no active run.
+    setActiveDescribeRunId('run-tenant-b');
+    setActiveDescribeRunId(null);
+
+    await waitFor(() => {
+      expect(result.current.runId).toBeNull();
+      expect(result.current.activeRunId).toBeNull();
+      expect(result.current.progress.isPolling).toBe(false);
+    });
+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
+      'run-tenant-a',
+    ]);
+
+    registerConfig({
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      tenant_id: TENANT,
+    });
+    // Emit again after switching back. The terminal summary was cleared for B,
+    // so returning to A must not resurrect it as an active run.
+    setActiveDescribeRunId('run-tenant-a-new');
+    setActiveDescribeRunId(null);
+
+    await waitFor(() => {
+      expect(result.current.runId).toBeNull();
+      expect(result.current.activeRunId).toBeNull();
+    });
+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
+      'run-tenant-a',
+    ]);
+  });
+
   it('does not resume a completed run after remount once storage is cleared', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-done', status: 'pending' }));
     fetchBulkDescribeRunMock.mockResolvedValue(

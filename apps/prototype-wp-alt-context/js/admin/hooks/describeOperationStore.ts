@@ -81,6 +81,8 @@ const resolveTenantId = (): string | null => {
   }
 };
 
+export const resolveDescribeOperationTenantId = resolveTenantId;
+
 const isDescribeOperationKind = (value: unknown): value is DescribeOperationKind =>
   value === DESCRIBE_OPERATION_KIND.SUGGEST || value === DESCRIBE_OPERATION_KIND.RUN;
 

@@ -16,12 +16,12 @@ export type DescribeOperationKind =
 
 export const DESCRIBE_OPERATION_CONTEXT_VERSION = 1 as const;
 
-export type DescribeOperationRequest = {
+export interface DescribeOperationRequest {
   writeAlt: boolean;
   force: boolean;
-};
+}
 
-export type DescribeOperationContext = {
+export interface DescribeOperationContext {
   version: typeof DESCRIBE_OPERATION_CONTEXT_VERSION;
   kind: DescribeOperationKind;
   id: string;
@@ -31,7 +31,7 @@ export type DescribeOperationContext = {
   warming_started_at?: number;
   startup_budget_seconds?: number;
   request: DescribeOperationRequest;
-};
+}
 
 export const DESCRIBE_OPERATION_STORAGE_PREFIX = 'acx_describe_op_v1';
 
@@ -43,8 +43,14 @@ export const describeOperationMediaStorageKey = (tenantId: string, mediaId: numb
 
 const listeners = new Set<() => void>();
 
-let runContext: DescribeOperationContext | null = null;
-const suggestByMediaId = new Map<number, DescribeOperationContext>();
+type TenantScope = string | null;
+
+// Keep the fallback memory cache tenant-scoped too. sessionStorage is keyed by
+// tenant, but a page can change its config without reloading (and tests do so
+// deliberately); a single process-wide context would otherwise leak one
+// tenant's active operation into the next tenant until storage rehydration.
+const runContextByTenant = new Map<TenantScope, DescribeOperationContext>();
+const suggestByTenant = new Map<TenantScope, Map<number, DescribeOperationContext>>();
 
 const emitChange = (): void => {
   listeners.forEach((listener) => listener());
@@ -98,7 +104,11 @@ const parseContext = (value: unknown): DescribeOperationContext | null => {
   if (id === null) {
     return null;
   }
-  if (typeof record.started_at !== 'number' || !Number.isFinite(record.started_at)) {
+  if (
+    typeof record.started_at !== 'number' ||
+    !Number.isFinite(record.started_at) ||
+    record.started_at < 0
+  ) {
     return null;
   }
   const request = parseRequest(record.request);
@@ -119,14 +129,22 @@ const parseContext = (value: unknown): DescribeOperationContext | null => {
   }
   let warmingStartedAt: number | undefined;
   if (record.warming_started_at !== undefined) {
-    if (typeof record.warming_started_at !== 'number' || !Number.isFinite(record.warming_started_at)) {
+    if (
+      typeof record.warming_started_at !== 'number' ||
+      !Number.isFinite(record.warming_started_at) ||
+      record.warming_started_at < 0
+    ) {
       return null;
     }
     warmingStartedAt = record.warming_started_at;
   }
   let startupBudgetSeconds: number | undefined;
   if (record.startup_budget_seconds !== undefined) {
-    if (typeof record.startup_budget_seconds !== 'number' || !(record.startup_budget_seconds > 0)) {
+    if (
+      typeof record.startup_budget_seconds !== 'number' ||
+      !Number.isFinite(record.startup_budget_seconds) ||
+      !(record.startup_budget_seconds > 0)
+    ) {
       return null;
     }
     startupBudgetSeconds = record.startup_budget_seconds;
@@ -152,7 +170,11 @@ export const isDescribeOperationExpired = (
   nowMs: number = Date.now(),
 ): boolean => {
   const budgetSeconds = context.startup_budget_seconds;
-  if (typeof budgetSeconds !== 'number' || !(budgetSeconds > 0)) {
+  if (
+    typeof budgetSeconds !== 'number' ||
+    !Number.isFinite(budgetSeconds) ||
+    !(budgetSeconds > 0)
+  ) {
     return false;
   }
   return nowMs >= budgetStartMs(context) + budgetSeconds * 1000;
@@ -188,8 +210,15 @@ const readStoredContext = (key: string): DescribeOperationContext | null => {
     return null;
   }
   try {
-    return parseContext(JSON.parse(raw) as unknown);
+    const parsed = parseContext(JSON.parse(raw) as unknown);
+    if (parsed === null) {
+      // Invalid data is not a resumable operation. Remove it at the boundary
+      // so a reload cannot repeatedly attempt the same bad payload.
+      removeStorageItem(key);
+    }
+    return parsed;
   } catch {
+    removeStorageItem(key);
     return null;
   }
 };
@@ -212,76 +241,122 @@ const serializeContext = (context: DescribeOperationContext): string =>
   });
 
 const hydrateRunFromStorage = (): void => {
-  if (runContext !== null) {
+  const tenantId = resolveTenantId();
+  if (runContextByTenant.has(tenantId)) {
     return;
   }
-  const tenantId = resolveTenantId();
   if (tenantId === null) {
     return;
   }
   const stored = readStoredContext(describeOperationRunStorageKey(tenantId));
-  if (stored === null || stored.kind !== DESCRIBE_OPERATION_KIND.RUN) {
+  if (stored?.kind !== DESCRIBE_OPERATION_KIND.RUN) {
+    if (stored !== null) {
+      removeStorageItem(describeOperationRunStorageKey(tenantId));
+    }
     return;
   }
   if (isDescribeOperationExpired(stored)) {
+    removeStorageItem(describeOperationRunStorageKey(tenantId));
     return;
   }
-  runContext = stored;
+  runContextByTenant.set(tenantId, stored);
 };
 
 const liveRunContext = (): DescribeOperationContext | null => {
+  const tenantId = resolveTenantId();
   hydrateRunFromStorage();
-  if (runContext === null) {
+  const current = runContextByTenant.get(tenantId);
+  if (current === undefined) {
     return null;
   }
-  if (isDescribeOperationExpired(runContext)) {
+  if (isDescribeOperationExpired(current)) {
+    runContextByTenant.delete(tenantId);
+    if (tenantId !== null) {
+      removeStorageItem(describeOperationRunStorageKey(tenantId));
+    }
     return null;
   }
-  return runContext;
+  return current;
 };
 
 const liveSuggestContext = (mediaId: number): DescribeOperationContext | null => {
-  const cached = suggestByMediaId.get(mediaId);
-  if (cached !== undefined) {
-    return isDescribeOperationExpired(cached) ? null : cached;
-  }
   const tenantId = resolveTenantId();
+  const suggestByMediaId = suggestByTenant.get(tenantId);
+  const cached = suggestByMediaId?.get(mediaId);
+  if (cached !== undefined) {
+    if (!isDescribeOperationExpired(cached)) {
+      return cached;
+    }
+    suggestByMediaId?.delete(mediaId);
+    if (suggestByMediaId?.size === 0) {
+      suggestByTenant.delete(tenantId);
+    }
+    if (tenantId !== null) {
+      removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+    }
+    return null;
+  }
   if (tenantId === null) {
     return null;
   }
   const stored = readStoredContext(describeOperationMediaStorageKey(tenantId, mediaId));
-  if (stored === null || stored.kind !== DESCRIBE_OPERATION_KIND.SUGGEST) {
+  if (stored?.kind !== DESCRIBE_OPERATION_KIND.SUGGEST) {
+    if (stored !== null) {
+      removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+    }
     return null;
   }
   if (stored.media_id !== mediaId || isDescribeOperationExpired(stored)) {
+    removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
     return null;
   }
-  suggestByMediaId.set(mediaId, stored);
+  const tenantSuggestContexts =
+    suggestByTenant.get(tenantId) ?? new Map<number, DescribeOperationContext>();
+  tenantSuggestContexts.set(mediaId, stored);
+  suggestByTenant.set(tenantId, tenantSuggestContexts);
   return stored;
 };
 
 const purgeInvalid = (): void => {
   const tenantId = resolveTenantId();
+  const cachedRun = runContextByTenant.get(tenantId);
+  if (cachedRun !== undefined && isDescribeOperationExpired(cachedRun)) {
+    runContextByTenant.delete(tenantId);
+    if (tenantId !== null) {
+      removeStorageItem(describeOperationRunStorageKey(tenantId));
+    }
+  }
+
+  const cachedSuggest = suggestByTenant.get(tenantId);
+  if (cachedSuggest !== undefined) {
+    for (const [mediaId, context] of cachedSuggest) {
+      if (isDescribeOperationExpired(context)) {
+        cachedSuggest.delete(mediaId);
+        if (tenantId !== null) {
+          removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+        }
+      }
+    }
+    if (cachedSuggest.size === 0) {
+      suggestByTenant.delete(tenantId);
+    }
+  }
+
   if (tenantId === null) {
     return;
   }
+
   const runKey = describeOperationRunStorageKey(tenantId);
   const storedRun = readStoredContext(runKey);
-  const runSlotInvalid =
-    storedRun === null ||
-    storedRun.kind !== DESCRIBE_OPERATION_KIND.RUN ||
-    isDescribeOperationExpired(storedRun);
-  if (readStorageItem(runKey) !== null && runSlotInvalid) {
+  if (
+    storedRun !== null &&
+    (storedRun.kind !== DESCRIBE_OPERATION_KIND.RUN || isDescribeOperationExpired(storedRun))
+  ) {
     removeStorageItem(runKey);
-    if (runContext !== null && (storedRun === null || isDescribeOperationExpired(runContext))) {
-      runContext = null;
-    }
-  }
-  for (const [mediaId, context] of suggestByMediaId) {
-    if (isDescribeOperationExpired(context)) {
-      suggestByMediaId.delete(mediaId);
-      removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
-    }
+  } else if (storedRun === null && readStorageItem(runKey) !== null) {
+    // readStoredContext normally removes malformed JSON/version data; this
+    // branch also covers storage implementations that changed between reads.
+    removeStorageItem(runKey);
   }
 };
 
@@ -307,7 +382,7 @@ export const putDescribeOperationContext = (context: DescribeOperationContext): 
   }
   const tenantId = resolveTenantId();
   if (parsed.kind === DESCRIBE_OPERATION_KIND.RUN) {
-    runContext = parsed;
+    runContextByTenant.set(tenantId, parsed);
     if (tenantId !== null) {
       writeStorageItem(describeOperationRunStorageKey(tenantId), serializeContext(parsed));
     }
@@ -317,7 +392,10 @@ export const putDescribeOperationContext = (context: DescribeOperationContext): 
   if (parsed.media_id === undefined) {
     return;
   }
-  suggestByMediaId.set(parsed.media_id, parsed);
+  const tenantSuggestContexts =
+    suggestByTenant.get(tenantId) ?? new Map<number, DescribeOperationContext>();
+  tenantSuggestContexts.set(parsed.media_id, parsed);
+  suggestByTenant.set(tenantId, tenantSuggestContexts);
   if (tenantId !== null) {
     writeStorageItem(
       describeOperationMediaStorageKey(tenantId, parsed.media_id),
@@ -328,24 +406,32 @@ export const putDescribeOperationContext = (context: DescribeOperationContext): 
 };
 
 export const clearDescribeRunContext = (): void => {
-  const hadRun = runContext !== null;
-  runContext = null;
   const tenantId = resolveTenantId();
+  const hadRun = runContextByTenant.delete(tenantId);
+  const hadStoredRun =
+    tenantId !== null && readStorageItem(describeOperationRunStorageKey(tenantId)) !== null;
   if (tenantId !== null) {
     removeStorageItem(describeOperationRunStorageKey(tenantId));
   }
-  if (hadRun) {
+  if (hadRun || hadStoredRun) {
     emitChange();
   }
 };
 
 export const clearDescribeSuggestContext = (mediaId: number): void => {
-  const hadSuggest = suggestByMediaId.delete(mediaId);
   const tenantId = resolveTenantId();
+  const tenantSuggestContexts = suggestByTenant.get(tenantId);
+  const hadSuggest = tenantSuggestContexts?.delete(mediaId) ?? false;
+  if (tenantSuggestContexts?.size === 0) {
+    suggestByTenant.delete(tenantId);
+  }
+  const hadStoredSuggest =
+    tenantId !== null &&
+    readStorageItem(describeOperationMediaStorageKey(tenantId, mediaId)) !== null;
   if (tenantId !== null) {
     removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
   }
-  if (hadSuggest) {
+  if (hadSuggest || hadStoredSuggest) {
     emitChange();
   }
 };
@@ -362,6 +448,6 @@ export const useDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 
 /** Test-only: drop the in-memory snapshot so the next read rehydrates from sessionStorage. */
 export const _resetDescribeOperationStoreForTests = (): void => {
-  runContext = null;
-  suggestByMediaId.clear();
+  runContextByTenant.clear();
+  suggestByTenant.clear();
 };

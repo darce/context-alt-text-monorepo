@@ -119,6 +119,31 @@ describe('describeOperationStore', () => {
     expect(getDescribeSuggestContext(42)).toBeNull();
   });
 
+  it('keeps the in-memory fallback isolated when the configured tenant changes', () => {
+    putDescribeOperationContext(runContext({ id: 'run-tenant-a' }));
+    putDescribeOperationContext(suggestContext({ id: 'op-tenant-a' }));
+
+    installTenant(FOREIGN_TENANT);
+    expect(getDescribeRunContext()).toBeNull();
+    expect(getDescribeSuggestContext(42)).toBeNull();
+
+    putDescribeOperationContext(runContext({ id: 'run-tenant-b' }));
+    putDescribeOperationContext(suggestContext({ id: 'op-tenant-b' }));
+    expect(getDescribeRunContext()?.id).toBe('run-tenant-b');
+    expect(getDescribeSuggestContext(42)?.id).toBe('op-tenant-b');
+
+    installTenant(TENANT);
+    expect(getDescribeRunContext()?.id).toBe('run-tenant-a');
+    expect(getDescribeSuggestContext(42)?.id).toBe('op-tenant-a');
+
+    installTenant(FOREIGN_TENANT);
+    clearDescribeRunContext();
+    clearDescribeSuggestContext(42);
+    installTenant(TENANT);
+    expect(getDescribeRunContext()?.id).toBe('run-tenant-a');
+    expect(getDescribeSuggestContext(42)?.id).toBe('op-tenant-a');
+  });
+
   it('discards an unknown version instead of partially applying it', () => {
     sessionStorage.setItem(
       describeOperationRunStorageKey(TENANT),
@@ -126,6 +151,7 @@ describe('describeOperationStore', () => {
     );
 
     expect(getDescribeRunContext()).toBeNull();
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull();
   });
 
   it('expires a context once startup_budget_seconds elapses from the persisted start', () => {
@@ -144,6 +170,7 @@ describe('describeOperationStore', () => {
     vi.setSystemTime(1_700_000_000_000 + 30_000);
     _resetDescribeOperationStoreForTests();
     expect(getDescribeSuggestContext(42)).toBeNull();
+    expect(sessionStorage.getItem(describeOperationMediaStorageKey(TENANT, 42))).toBeNull();
   });
 
   it('does not store a suggest context whose startup budget has already elapsed at put time', () => {

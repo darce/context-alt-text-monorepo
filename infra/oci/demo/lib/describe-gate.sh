@@ -83,8 +83,10 @@ php_define_value() {
 
 # extract_probed_description_adapter <http_code> <body>
 # Returns description_adapter.profile from the top-level JSON readiness object
-# when HTTP is 2xx and the body is parseable. Empty on probe failure, non-2xx,
-# missing/invalid profile, missing or invalid model identity fields (schema: required, non-empty string or null), unparseable body,
+# when HTTP is 2xx, the body is parseable, and description_adapter matches the
+# full descriptionAdapterReadiness shape. Empty on probe failure, non-2xx,
+# missing or invalid shape fields (including required, non-empty model identity
+# strings or null), unparseable body,
 # nested-only key, non-object value, or missing python3.
 # NEVER invents a fallback profile. python3 is required; fail closed if absent.
 extract_probed_description_adapter() {
@@ -112,12 +114,43 @@ if not isinstance(data, dict):
 value = data.get("description_adapter")
 if not isinstance(value, dict):
     raise SystemExit(0)
+
+required_keys = {
+    "profile",
+    "kind",
+    "endpoint_configured",
+    "endpoint_allowlisted",
+    "endpoint_private",
+    "checked_at",
+    "fresh",
+    "usable",
+    "reason",
+    "model_id",
+    "model_version",
+}
+if set(value) != required_keys:
+    raise SystemExit(0)
+
 profile = value.get("profile")
 if not isinstance(profile, str) or not profile:
     raise SystemExit(0)
-for key in ("model_id", "model_version"):
-    if key not in value:
+if value["kind"] not in {"seeded", "local_cpu", "gpu", "hosted_provider"}:
+    raise SystemExit(0)
+for key in ("endpoint_configured", "endpoint_allowlisted", "fresh", "usable"):
+    if type(value[key]) is not bool:
         raise SystemExit(0)
+if value["endpoint_private"] is not None and type(value["endpoint_private"]) is not bool:
+    raise SystemExit(0)
+checked_at = value["checked_at"]
+if checked_at is not None and (
+    isinstance(checked_at, bool)
+    or not isinstance(checked_at, (int, float))
+    or not checked_at >= 0
+):
+    raise SystemExit(0)
+if value["reason"] is not None and not isinstance(value["reason"], str):
+    raise SystemExit(0)
+for key in ("model_id", "model_version"):
     if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
         raise SystemExit(0)
 sys.stdout.write(profile)

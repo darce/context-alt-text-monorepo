@@ -87,6 +87,7 @@ describe('RosterEntriesSection queue filter [S4-BR-01]', () => {
     );
 
     expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Named people (1)' })).toBeInTheDocument();
     expect(screen.getByText('Legacy Person')).toBeInTheDocument();
   });
 });

@@ -1,9 +1,6 @@
- ...ion-context-enrichment-assessment-2026-07-05.md |   2 +
- ...-quadrant-mvp-strategy-assessment-2026-06-11.md |   2 +-
- docs/epics/v0.3.1/self-hosting-epic.md             |  18 +
- docs/roadmaps/README.md                            |   3 +-
- .../local-ai-managed-default-roadmap-2026-07-31.md |   4 +-
- docs/roadmaps/roadmap-pg-durable-evaluation.md     |   6 +-
- docs/roadmaps/roadmap-pg18-upgrade.md              | 534 +--------------------
- docs/roadmaps/roadmap-pg19-upgrade.md              | 311 ++++++++++++
- 8 files changed, 350 insertions(+), 530 deletions(-)
+ apps/prototype-description-service/api/main.py     |  34 ++++--
+ .../scene/tests/test_health_detailed_adapter.py    |   8 ++
+ .../reports/GPUFLOW-2-svc-health-adapter-review.md | 125 +++++++++++++++++++++
+ infra/oci/demo/lib/describe-gate.sh                |  17 ++-
+ infra/oci/demo/tests/test-describe-gate.sh         |  13 ++-
+ 5 files changed, 181 insertions(+), 16 deletions(-)

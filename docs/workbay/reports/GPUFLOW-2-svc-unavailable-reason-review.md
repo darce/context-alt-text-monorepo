@@ -55,3 +55,22 @@ Verdict: fail
 VERIFIED: {"GPUFLOW-2-SVCUNAVAILABLEREASON-R-01": "fixed", "GPUFLOW-2-SVCUNAVAILABLEREASON-R-02": "fixed"}
 FINDINGS: [{"id":"GPUFLOW-2-SVCUNAVAILABLEREASON-R-04","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":511,"summary":"Full-envelope starting-error normalization preserves negative warmup ETA and then fails response validation","evidence":"_typed_error_detail_needs_rebuild() rebuilds invalid typed details, but _rebuild_post_accept_typed_error() accepts any finite warmup_eta_seconds, including -1; DescribeOperationErrorDetail requires warmup_eta_seconds >= 0, so the rebuild can raise instead of returning a typed error."}]
 Verdict: fail
+
+## Re-review r4c (4fc623a11..7522d04e9)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCUNAVAILABLEREASON-R3-04 | partially_fixed | `describe.py:511-528` now drops negative/non-finite warmup ETA values and falls back from a missing accepted operation to `state_missing`; however `describe.py:474-485` still accepts Pydantic-coerced numeric-string ETA values and does not validate an explicit null `lifecycle_reason`. |
+| GPUFLOW-2-SVCUNAVAILABLEREASON-R3-05 | fixed | `describe.py:1260-1272` only takes the immediate unavailable response when no operation was supplied; a supplied operation reaches `_accept_operation` at `:1285-1292`, and `:1355-1367` terminalizes the accepted operation before returning the typed 503. The added route tests cover known-operation cleanup and unknown-operation mismatch. |
+| GPUFLOW-2-SVCUNAVAILABLEREASON-R3-06 | not_fixed | The fix delta still edits `scene/tests/test_describe_route.py` and `scene/tests/test_shared_schema_multipart.py`, while this review lane's only owned path is the report; the added test hunks remain outside the declared ownership boundary. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCUNAVAILABLEREASON-R-05 — high
+
+- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:474-485,1464-1471`.
+- Evidence: The rebuild predicate validates `DescribeOperationErrorDetail`, whose non-strict float field coerces `warmup_eta_seconds: "30"` to a number, then checks only `operation_id` and `startup_budget_seconds` for `description_service_starting`. For `description_service_unavailable` it checks only `reason`, so `lifecycle_reason: null` also returns false. The route rebuilds only when this predicate is true; a full typed upstream envelope therefore keeps the numeric string or explicit null and violates the shared schema. Direct probes returned `False` for both cases.
+- Impact: Invalid post-accept typed envelopes can still cross the HTTP boundary, so consumers may receive a schema-invalid 503 even after the new normalization path was intended to make these errors fail closed.
+- Fix: Validate raw code-specific field types and nullability in the predicate, or always rebuild recognized typed errors after acceptance; add route-level regressions that exercise the predicate rather than calling the rebuild helper directly.
+
+Verdict: fail

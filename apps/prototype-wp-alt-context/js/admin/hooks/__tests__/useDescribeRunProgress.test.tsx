@@ -266,7 +266,7 @@ describe('useDescribeRunProgress', () => {
 
     render(<Harness />, { wrapper });
 
-    await screen.findByRole('status', { name: 'Description Service: ready' });
+    await screen.findByRole('status', { name: 'Description Service is ready' });
     act(() => screen.getByRole('button', { name: 'Refresh status' }).click());
 
     expect(await screen.findByRole('status', { name: 'Description Service status is out of date' })).toHaveTextContent(
@@ -296,7 +296,7 @@ describe('useDescribeRunProgress', () => {
 
     render(<Harness />, { wrapper });
 
-    await screen.findByRole('status', { name: 'Description Service: ready' });
+    await screen.findByRole('status', { name: 'Description Service is ready' });
     act(() => screen.getByRole('button', { name: 'Refresh status' }).click());
 
     expect(await screen.findByRole('status', { name: 'Description Service status is out of date' })).toHaveTextContent(
@@ -312,13 +312,13 @@ describe('useDescribeRunProgress', () => {
     [GPU_STATE.READY, 'Description Service is ready'],
     [GPU_STATE.DEGRADED, 'Description Service is unavailable'],
   ] as const)('renders valid GPU state %s with accessible name %s', (gpuState, accessibleName) => {
-    render(<GpuTierStatus gpuState={gpuState} isRunPending />);
+    render(<GpuTierStatus gpuState={gpuState} isRunPending />, { wrapper });
 
     expect(screen.getByRole('status', { name: accessibleName })).toHaveAttribute('data-gpu-state', gpuState);
   });
 
   it('renders the out-of-date status while a run is pending', () => {
-    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />);
+    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />, { wrapper });
 
     const status = screen.getByRole('status', { name: 'Description Service status is out of date' });
     expect(status).toHaveTextContent('Description Service status is out of date');
@@ -326,17 +326,17 @@ describe('useDescribeRunProgress', () => {
   });
 
   it('announces an out-of-date state when known telemetry becomes unknown', async () => {
-    const { rerender } = render(<GpuTierStatus gpuState={GPU_STATE.READY} isRunPending />);
+    const { rerender } = render(<GpuTierStatus gpuState={GPU_STATE.READY} isRunPending />, { wrapper });
 
     const liveRegion = screen.getByTestId('gpu-tier-status-live');
 
-    rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />);
+    rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending />, { wrapper });
 
     await waitFor(() => expect(liveRegion).toHaveTextContent('Description Service status is out of date'));
   });
 
   it('renders the not-reported presentation for a direct legacy null GPU state', () => {
-    render(<GpuTierStatus gpuState={null} isRunPending />);
+    render(<GpuTierStatus gpuState={null} isRunPending />, { wrapper });
 
     expect(screen.getByRole('status', { name: 'Description Service status is out of date' })).toHaveAttribute(
       'data-gpu-state',
@@ -345,13 +345,13 @@ describe('useDescribeRunProgress', () => {
   });
 
   it('renders idle service status when there is no run pending', () => {
-    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending={false} />);
+    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} isRunPending={false} />, { wrapper });
 
     expect(screen.getByRole('status')).toBeInTheDocument();
   });
 
   it('reserves a tokenized block-size slot for GPU status changes', () => {
-    render(<GpuTierStatus gpuState={GPU_STATE.READY} isRunPending />);
+    render(<GpuTierStatus gpuState={GPU_STATE.READY} isRunPending />, { wrapper });
 
     expect(screen.getByRole('status')).toHaveClass('acx-media-selection__gpu-tier-status');
     expect(mediaSelectionStyles).toMatch(/&__gpu-tier-status\s*{[^}]*min-block-size:\s*var\(--acx-space-\d+\)/s);

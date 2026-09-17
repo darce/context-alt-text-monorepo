@@ -114,8 +114,15 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
     return null;
   }
   const idFromId = typeof record.id === 'string' && record.id !== '' ? record.id : null;
+  // `operation_id` is the service lease identifier used by Suggest. A bulk
+  // run must resume by its `run_id`; accepting the alias for a run could make
+  // a malformed persisted payload poll the wrong operation after reload.
   const idFromOperationId =
-    typeof record.operation_id === 'string' && record.operation_id !== '' ? record.operation_id : null;
+    record.kind === DESCRIBE_OPERATION_KIND.SUGGEST &&
+    typeof record.operation_id === 'string' &&
+    record.operation_id !== ''
+      ? record.operation_id
+      : null;
   const id = idFromId ?? idFromOperationId;
   if (id === null) {
     return null;

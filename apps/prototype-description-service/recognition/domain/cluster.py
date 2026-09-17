@@ -73,6 +73,12 @@ class IdentityCluster:
     # Appended last for positional safety; None also means the receipt stack was
     # not loaded or has no currently undoable receipt.
     undoable_merge_receipt_id: str | None = None
+    # Last membership or centroid mutation timestamp used for freshness checks.
+    # Appended last for positional safety.
+    updated_at: datetime | None = None
+    # Last refresh timestamp for the persisted centroid materialization.
+    # Appended last for positional safety.
+    centroid_refreshed_at: datetime | None = None
 
     @property
     def is_auto_label(self) -> bool:

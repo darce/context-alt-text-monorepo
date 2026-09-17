@@ -52,6 +52,26 @@ if TYPE_CHECKING:
 _choose_embedding_model = choose_embedding_model
 
 
+async def touch_cluster_updated_at(
+    session: AsyncSession,
+    cluster_id: str | uuid.UUID | None,
+    *,
+    tenant_id: str | uuid.UUID | None = None,
+) -> None:
+    """Stamp a cluster after a membership, representative, or centroid-input write."""
+    cluster_uuid = _coerce_uuid(str(cluster_id)) if cluster_id is not None else None
+    if cluster_uuid is None:
+        return
+
+    stmt = update(ClusterModel).where(ClusterModel.id == cluster_uuid)
+    if tenant_id is not None:
+        tenant_uuid = _coerce_uuid(str(tenant_id))
+        if tenant_uuid is None:
+            return
+        stmt = stmt.where(ClusterModel.tenant_id == tenant_uuid)
+    await session.execute(stmt.values(updated_at=datetime.now(tz=UTC)))
+
+
 def _filter_embedding_pairs_to_single_model(
     rows: Sequence[tuple[np.ndarray, str | None]],
 ) -> list[tuple[np.ndarray, str | None]]:
@@ -1385,6 +1405,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
         self._session.add(member)
         await self._session.flush()
+        await self._touch_cluster_updated_at(cluster_id)
+        await self._session.flush()
 
     async def add_representative(self, representative: ClusterRepresentative) -> None:
         """Persist a representative embedding for a cluster."""
@@ -1404,13 +1426,21 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
         self._session.add(rep)
         await self._session.flush()
+        await self._touch_cluster_updated_at(representative.cluster_id)
+        await self._session.flush()
 
     async def remove_representative(self, representative_id: str) -> None:
         """Remove a specific representative."""
+        representative = await self._session.get(
+            IdentityClusterRepresentative,
+            _coerce_uuid(representative_id),
+        )
         stmt = delete(IdentityClusterRepresentative).where(
             IdentityClusterRepresentative.id == _coerce_uuid(representative_id)
         )
-        await self._session.execute(stmt)
+        result = await self._session.execute(stmt)
+        if get_rowcount(result) > 0 and representative is not None:
+            await self._touch_cluster_updated_at(str(representative.cluster_id))
         await self._session.flush()
 
     async def clear_representatives(self, cluster_id: str) -> None:
@@ -1418,8 +1448,14 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         stmt = delete(IdentityClusterRepresentative).where(
             IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
         )
-        await self._session.execute(stmt)
+        result = await self._session.execute(stmt)
+        if get_rowcount(result) > 0:
+            await self._touch_cluster_updated_at(cluster_id)
         await self._session.flush()
+
+    async def _touch_cluster_updated_at(self, cluster_id: str) -> None:
+        """Stamp a cluster when a child write changes membership or centroid inputs."""
+        await touch_cluster_updated_at(self._session, cluster_id)
 
     async def count_labeled(self) -> int:
         """Count clusters with user-provided labels (not auto-generated like 'cluster-xxx').
@@ -1549,8 +1585,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
         # Extract centroid from materialized view relationship if available
         centroid = None
+        centroid_refreshed_at = None
         if hasattr(model, "centroid_data") and model.centroid_data is not None:
             centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
+            if isinstance(model.centroid_data.refreshed_at, datetime):
+                centroid_refreshed_at = model.centroid_data.refreshed_at
 
         undoable_merge_receipt_id = _loaded_undoable_merge_receipt_id(
             model,
@@ -1574,6 +1613,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             centroid=centroid,
             embedding_model=_choose_embedding_model([rep.embedding_model for rep in domain_reps]),
             undoable_merge_receipt_id=undoable_merge_receipt_id,
+            updated_at=model.updated_at if isinstance(model.updated_at, datetime) else None,
+            centroid_refreshed_at=centroid_refreshed_at,
         )
 
     async def get_snapshot(

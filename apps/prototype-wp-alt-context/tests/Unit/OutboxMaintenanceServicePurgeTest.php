@@ -86,10 +86,16 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $syncState->refreshCount);
 
         $selectQuery = $this->findQueryContaining($wpdb->queries, 'last_error_code IN');
-        $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code FROM `wp_acx_sync_outbox`', $selectQuery);
+        $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, attempts FROM `wp_acx_sync_outbox`', $selectQuery);
         $this->assertStringContainsString("status = '" . OutboxStatus::FAILED . "'", $selectQuery);
         $this->assertStringContainsString("'invalid_payload'", $selectQuery);
         $this->assertStringContainsString("'unauthorized'", $selectQuery);
+
+        $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_sync_outbox');
+        $this->assertStringContainsString("last_attempted_at = '{$oldStamp}'", $deleteQuery);
+        $this->assertStringContainsString("last_error_code = 'invalid_payload'", $deleteQuery);
+        $this->assertStringContainsString('attempts = 1', $deleteQuery);
+        $this->assertStringContainsString("first_failed_at = '{$oldStamp}'", $deleteQuery);
 
         $remaining = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
         $this->assertArrayNotHasKey(41, $remaining);
@@ -135,7 +141,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
             'conflicts' => 0,
         ]);
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildFailedOutboxRow(11, $tenantId, 'remote_error'),
+            $this->buildFailedOutboxRow(11, $tenantId, 'transport_error'),
             $this->buildFailedOutboxRow(12, $tenantId, 'invalid_payload'),
         ];
 
@@ -146,6 +152,12 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $purged['retried']);
         $this->assertSame(0, $purged['dead_lettered']);
         $this->assertSame(0, $purged['skipped_concurrent']);
+
+        $updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+        $this->assertStringContainsString("last_attempted_at = '2026-09-16 00:00:00'", $updateQuery);
+        $this->assertStringContainsString("last_error_code = 'transport_error'", $updateQuery);
+        $this->assertStringContainsString('attempts = 1', $updateQuery);
+        $this->assertStringContainsString("first_failed_at = '2026-09-16 00:00:00'", $updateQuery);
 
         $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
         $this->assertSame(OutboxStatus::PENDING, $rowsById[11]['status']);
@@ -164,6 +176,48 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $payload['acx_auto_attempts']);
         $this->assertSame(OutboxStatus::FAILED, $rowsById[12]['status']);
         $this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+    }
+
+    /**
+     * @dataProvider retryableErrorCodeProvider
+     */
+    public function testPurgeReclaimsOnlyAllowlistedTransientErrorCodes(string $errorCode, bool $expectedRetry): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-retryability-' . md5($errorCode);
+        $wpdb->defaultQueryResult = 0;
+        $row = $this->buildFailedOutboxRow(31, $tenantId, $errorCode);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$row];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame($expectedRetry ? 1 : 0, $purged['retried']);
+        $this->assertSame(0, $purged['dead_lettered']);
+        $this->assertSame($expectedRetry ? OutboxStatus::PENDING : OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+    }
+
+    /**
+     * @return array<string,array{string,bool}>
+     */
+    public static function retryableErrorCodeProvider(): array
+    {
+        return [
+            'http 400' => ['http_400', false],
+            'http 401' => ['http_401', false],
+            'http 403' => ['http_403', false],
+            'http 404' => ['http_404', false],
+            'http 422' => ['http_422', false],
+            'http 500' => ['http_500', true],
+            'http 502' => ['backend_502', true],
+            'http 503' => ['remote_http_503', true],
+            'http 504' => ['status_504', true],
+            'http 429' => ['http_429', true],
+            'timeout' => ['timeout', true],
+            'unknown' => ['unknown_failure', false],
+            'generic remote error' => ['remote_error', false],
+        ];
     }
 
     public function testPurgeDeadLettersRetryableFailedRowsAfterMaxAutoAttempts(): void
@@ -196,6 +250,12 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(gmdate('Y-m-d H:i:s', $before), $updated['last_attempted_at']);
         $this->assertNull($updated['next_attempt_at']);
         $this->assertStringContainsString('age 3600 seconds', (string) $updated['last_error_message']);
+
+        $updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+        $this->assertStringContainsString("last_attempted_at = '2026-09-16 00:00:00'", $updateQuery);
+        $this->assertStringContainsString("last_error_code = 'transport_error'", $updateQuery);
+        $this->assertStringContainsString('attempts = 1', $updateQuery);
+        $this->assertStringContainsString("first_failed_at = '2026-09-16 00:00:00'", $updateQuery);
     }
 
     public function testOperatorRetryClearsAutoAttemptMarkerBeforeNextMaintenanceFailure(): void
@@ -278,7 +338,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
 
         $tenantId = 'tenant-cas-retry';
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildFailedOutboxRow(61, $tenantId, 'remote_error'),
+            $this->buildFailedOutboxRow(61, $tenantId, 'transport_error'),
         ];
         $wpdb->updateResultsByTable['wp_acx_sync_outbox'] = 0;
 

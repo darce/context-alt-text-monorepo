@@ -151,31 +151,38 @@ assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN "$(classify_describe_gat
 assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate florence_small 0 0 FAIL)"
 
 # --- R1-05: probe the live producer JSON, never a disconnected env var ---
-assert_eq "probe 200 quoted adapter" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":"florence_small"}')"
-assert_eq "probe 200 seeded adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","status":"ok"}')"
+assert_eq "probe 200 object adapter" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"florence_small","model_id":"microsoft/Florence-2-base-ft","model_version":"florence-2-base-ft"}}')"
+assert_eq "probe 200 seeded object adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","model_id":"seeded-model","model_version":"1"},"status":"ok"}')"
 assert_eq "probe 200 spaced json" gpu_qwen30b "$(extract_probed_description_adapter 200 '{
   "status": "ok",
-  "description_adapter": "gpu_qwen30b"
+  "description_adapter": {
+    "profile": "gpu_qwen30b",
+    "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@revision",
+    "model_version": "Q4_K_M"
+  }
 }')"
-assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":"florence_small"}')"
-assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
 assert_eq "probe 000 curl-fail empty" "" "$(extract_probed_description_adapter 000 '')"
 assert_eq "probe 200 missing field empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok"}')"
 assert_eq "probe 200 null field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":null}')"
-assert_eq "probe 200 object field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small"}}')"
+assert_eq "probe 200 legacy string field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 200 object missing profile empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object non-string model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":7,"model_version":"v"}}')"
+assert_eq "probe 200 object non-string model_version empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":false}}')"
 assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
 assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
-assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":"florence_small"}')"
-assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
 assert_eq "probe 200 boolean field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":true}')"
-assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":"florence_small"}]')"
+assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}]')"
 assert_eq "probe 200 HTML page empty" "" "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')"
 assert_eq "probe 200 HTML page classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')" 100 0)"
-assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')"
-assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')" 100 0)"
-assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}}')"
+assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}}')" 100 0)"
+assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}}')"
 assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
-assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":"florence_small"}')"
+assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
 
 # --- R2-07: claimed WP adapter vs independently probed producer ---
 # classify_claimed_adapter_matches_probe <probed> <claimed_blob>
@@ -448,7 +455,7 @@ assert_eq "block cause: a glob profile does not expand against cwd" \
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
 health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"
 assert_file_grep "service /health/detailed payload includes description_adapter" \
-    "$health_file" '"description_adapter": description_adapter'
+    "$health_file" '"description_adapter": await _description_adapter_readiness()'
 assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
 assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'
 assert_file_not_grep "bootstrap does not env_get ACX_DESCRIPTION_ADAPTER" "$bootstrap_file" 'env_get ACX_DESCRIPTION_ADAPTER'

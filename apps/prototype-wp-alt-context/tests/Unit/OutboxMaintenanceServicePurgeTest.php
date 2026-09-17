@@ -67,6 +67,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $now = (int) current_time('timestamp');
         $oldStamp = gmdate('Y-m-d H:i:s', $now - (8 * 86400));
         $recentStamp = gmdate('Y-m-d H:i:s', $now - (2 * 86400));
+        $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
             $this->buildFailedOutboxRow(41, $tenantId, 'invalid_payload', $oldStamp),
             $this->buildFailedOutboxRow(42, $tenantId, 'unauthorized', $recentStamp),
@@ -104,6 +105,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
 
         $tenantId = 'tenant-purge-failed-refresh';
         $oldStamp = gmdate('Y-m-d H:i:s', (int) current_time('timestamp') - (10 * 86400));
+        $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
             $this->buildFailedOutboxRow(51, $tenantId, 'forbidden', $oldStamp),
         ];

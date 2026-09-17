@@ -12,14 +12,17 @@ import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types';
 import { type DetectedIdentity } from '../../../api/recognition';
 import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 import { APP_LINK_VALUES, toWorkbench } from '../../../navigation/appLinks';
+import { ClusterActions } from './ClusterActions';
 import { ClusterPreview } from './ClusterPreview';
 import { EmptyStateWarning } from './EmptyStateWarning';
+import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 import { pendingMergeTwinForCluster } from './pendingMergeTwin';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { TWIN_CHIP_PENDING_STATUS } from './twinChipCopy';
-import { groupIdentitiesByClusters, isUngroupedGroup } from './utils';
+import { groupIdentitiesByClusters, isUngroupedGroup, unlabeledSuggestionBatchIds } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
-import { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
+import { useClusterMutations } from './useClusterMutations';
+import { useInlineSuggestionBatch, type InlineSuggestionBatchResult } from './useInlineSuggestionBatch';
 import { usePendingMergeTwins } from './usePendingMergeTwins';
 
 interface IdentityClusterListProps {
@@ -29,9 +32,25 @@ interface IdentityClusterListProps {
   onRetry?: () => void;
 }
 
-const UngroupedResidueSection = ({ members }: { members: DetectedIdentity[] }): React.JSX.Element => {
+interface UngroupedResidueSectionProps {
+  members: DetectedIdentity[];
+  canMutate: boolean;
+  getMatch: InlineSuggestionBatchResult['getMatch'];
+}
+
+const UngroupedResidueSection = ({
+  members,
+  canMutate,
+  getMatch,
+}: UngroupedResidueSectionProps): React.JSX.Element => {
   const headingId = React.useId();
   const heading = sprintf(__('Not yet grouped (%d)', 'alt-context'), members.length);
+  const mutations = useClusterMutations({
+    clusterId: null,
+    identityCount: 1,
+    currentLabel: null,
+    derivedLabel: null,
+  });
 
   return (
     <section className="acx-identity-clusters__ungrouped" aria-labelledby={headingId}>
@@ -46,6 +65,32 @@ const UngroupedResidueSection = ({ members }: { members: DetectedIdentity[] }): 
               representativeFace={member.representative_face}
               memberCount={1}
             />
+            {!member.clustering_pending && (
+              <ClusterActions
+                canEdit={false}
+                canSearchForMatch
+                hasLabel={false}
+                isAutoLabel={false}
+                canSplit={false}
+                canReject={false}
+                isPending={mutations.isPending}
+                // WHY: residue is not a person card; Find similar is the singleton
+                // affordance (R-03) without opening an Unnamed person editor.
+                onEdit={() => undefined}
+                onWrongPerson={() => undefined}
+                onSplit={() => undefined}
+              />
+            )}
+            {canMutate ? (
+              <InlineSuggestionPrompt
+                match={getMatch(member.identity_id)}
+                onConfirm={(clusterId, _label, suggestionId) => {
+                  mutations.assignToCluster(member.identity_id, clusterId, undefined, suggestionId);
+                }}
+                onReject={() => undefined}
+                isPending={mutations.isPending}
+              />
+            ) : null}
           </li>
         ))}
       </ul>
@@ -83,19 +128,14 @@ export const IdentityClusterList = ({
   const { mergeSuggestions, truncated, scheduleAcceptMerge, scheduleRejectMerge, isCardPending } =
     usePendingMergeTwins();
 
-  // Same predicate as IdentityClusterItem's render gate:
-  // `!cluster.label && anchorIdentityId && canMutate`, with anchorIdentityId
-  // derived from the shared grouped data (members[0]). Residue is not a person
-  // card, so it is excluded from the inline-suggestion batch.
+  // Same unlabeled predicate as IdentityClusterItem's prompt gate, plus every
+  // residue member: grouping changes presentation only, never the batch (rg-002).
   const batchIdentityIds = React.useMemo(() => {
     if (!canMutate) {
       return [];
     }
-    return identityGroups
-      .filter((cluster) => !cluster.label)
-      .map((cluster) => cluster.members[0]?.identity_id)
-      .filter((identityId): identityId is string => Boolean(identityId));
-  }, [identityGroups, canMutate]);
+    return unlabeledSuggestionBatchIds(clusters);
+  }, [clusters, canMutate]);
 
   const { getMatch } = useInlineSuggestionBatch(batchIdentityIds);
 
@@ -208,7 +248,9 @@ export const IdentityClusterList = ({
           </React.Fragment>
         );
       })}
-      {ungroupedGroup ? <UngroupedResidueSection members={ungroupedGroup.members} /> : null}
+      {ungroupedGroup ? (
+        <UngroupedResidueSection members={ungroupedGroup.members} canMutate={canMutate} getMatch={getMatch} />
+      ) : null}
     </div>
   );
 };

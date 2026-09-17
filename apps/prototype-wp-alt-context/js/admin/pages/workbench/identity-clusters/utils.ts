@@ -12,6 +12,34 @@ export const UNGROUPED_GROUP_KEY = 'ungrouped';
 export const isUngroupedGroup = (group: ClusterGroup): boolean => group.key === UNGROUPED_GROUP_KEY;
 
 /**
+ * Identity ids for the single inline-suggestion batch.
+ *
+ * Unlabeled grouped clusters contribute their anchor (`members[0]`); ungrouped
+ * residue contributes every member. Grouping changes presentation only (rg-002).
+ */
+export const unlabeledSuggestionBatchIds = (groups: readonly ClusterGroup[]): string[] => {
+  const ids: string[] = [];
+  for (const group of groups) {
+    if (group.label) {
+      continue;
+    }
+    if (isUngroupedGroup(group)) {
+      for (const member of group.members) {
+        if (member.identity_id) {
+          ids.push(member.identity_id);
+        }
+      }
+      continue;
+    }
+    const anchorId = group.members[0]?.identity_id;
+    if (anchorId) {
+      ids.push(anchorId);
+    }
+  }
+  return ids;
+};
+
+/**
  * Format a cluster label for display.
  *
  * - If no cluster ID, returns the raw label as-is

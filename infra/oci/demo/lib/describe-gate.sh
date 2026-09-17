@@ -84,7 +84,7 @@ php_define_value() {
 # extract_probed_description_adapter <http_code> <body>
 # Returns description_adapter.profile from the top-level JSON readiness object
 # when HTTP is 2xx and the body is parseable. Empty on probe failure, non-2xx,
-# missing/invalid profile, invalid model identity fields, unparseable body,
+# missing/invalid profile, missing or invalid model identity fields (schema: required, non-empty string or null), unparseable body,
 # nested-only key, non-object value, or missing python3.
 # NEVER invents a fallback profile. python3 is required; fail closed if absent.
 extract_probed_description_adapter() {
@@ -116,7 +116,9 @@ profile = value.get("profile")
 if not isinstance(profile, str) or not profile:
     raise SystemExit(0)
 for key in ("model_id", "model_version"):
-    if key in value and not isinstance(value[key], str):
+    if key not in value:
+        raise SystemExit(0)
+    if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
         raise SystemExit(0)
 sys.stdout.write(profile)
 ' 2>/dev/null) || value=""

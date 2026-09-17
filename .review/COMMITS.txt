@@ -1,6 +1,1 @@
-8291fecdfba3 offload: Committed r6 re-review report as 419babe with a failing
-f196f7ee70be offload: Committed the r5 review as ce48d8f; the listed compatibility
-1e8536d1bc08 offload: Committed the svc-health-adapter r4 review as ad14f01.
-d7202ae90982 offload: Committed the r3 svc-health-adapter re-review report as
-0b826a0fdcaa offload: Committed the A1 re-review report with a fail verdict.
-df3c7a9b9b53 offload: Committed aa487ff with trusted-identity/status gate checks and
+5f05f3df99d1 offload: Landed GPUFLOW-2 contracts-roster B2/B6/C3 schemas and

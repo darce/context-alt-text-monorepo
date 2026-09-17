@@ -10,20 +10,22 @@ require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-reposito
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-conflict-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-query-repository.php';
-require_once __DIR__ . '/../sovereign/sync/class-outbox-status.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-maintenance-service.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\ConflictRepository;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
-use AltContext\Sovereign\Sync\OutboxStatus;
 use AltContext\Sovereign\Sync\SyncPullResult;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function apply_filters;
 use function get_transient;
 use function is_array;
+use function is_int;
 use function max;
 
 class SyncHealthController extends AbstractRecognitionProxyController {
@@ -31,16 +33,19 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private OutboxQueryRepository $outbox_query_repository;
 	private ConflictRepository $conflict_repository;
+	private OutboxMaintenanceService $outbox_maintenance_service;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?OutboxQueryRepository $outbox_query_repository = null,
 		?RecognitionEndpointResolver $endpoint_resolver = null,
-		?ConflictRepository $conflict_repository = null
+		?ConflictRepository $conflict_repository = null,
+		?OutboxMaintenanceService $outbox_maintenance_service = null
 	) {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->outbox_query_repository = $outbox_query_repository ?? new OutboxQueryRepository();
 		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
+		$this->outbox_maintenance_service = $outbox_maintenance_service ?? new OutboxMaintenanceService( $this->outbox_query_repository );
 		if ( null !== $endpoint_resolver ) {
 			$this->set_endpoint_resolver( $endpoint_resolver );
 		}
@@ -58,13 +63,39 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 		);
 	}
 
-	public function get_sync_health( WP_REST_Request $request ): WP_REST_Response {
+	public function get_sync_health( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
 		$base_url = $this->get_recognition_base_url();
 		$circuit_key = RecognitionCircuitKeys::for_base_url( $base_url );
 		$is_open = false !== get_transient( $circuit_key );
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
 		$open_conflicts = $this->sync_state_repository->get_conflict_count( $tenant_id );
+		$outbox_counters = $this->project_outbox_health_counters(
+			$this->outbox_maintenance_service->get_health_counters( $tenant_id )
+		);
+		if ( false === $outbox_counters ) {
+			$outbox = array(
+				'state' => 'degraded',
+				'pending' => null,
+				'failed' => null,
+				'dead_lettered' => null,
+				'oldest_age_seconds' => null,
+				'warnings' => array(
+					array(
+						'code' => 'outbox_counters_unavailable',
+						'message' => 'Outbox health counters are temporarily unavailable.',
+						'count' => null,
+						'threshold' => null,
+					),
+				),
+			);
+		} else {
+			$outbox = array_merge(
+				array( 'state' => 'ok' ),
+				$outbox_counters
+			);
+		}
+		$warnings = $this->build_warnings( $tenant_id, $open_conflicts );
 
 		return new WP_REST_Response(
 			array(
@@ -73,10 +104,7 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'base_url' => $base_url,
 					'opened_at' => null,
 				),
-				'outbox' => array(
-					'pending' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::PENDING ),
-					'failed' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::FAILED ),
-				),
+				'outbox' => $outbox,
 				'conflicts' => array(
 					'open' => $open_conflicts,
 				),
@@ -88,9 +116,39 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'at' => $this->sync_state_repository->get_last_updated( $tenant_id ),
 					'ok' => SyncPullResult::OK === $last_sync_result,
 				),
-				'warnings' => $this->build_warnings( $tenant_id, $open_conflicts ),
+				'warnings' => $warnings,
 			),
 			200
+		);
+	}
+
+	/**
+	 * Project OBS-05 outbox counters. Missing/non-int keys or a failed read
+	 * return false so the endpoint can emit an explicit degraded component with
+	 * null counters and an outbox.warnings[] outbox_counters_unavailable entry
+	 * while preserving the rest of the health envelope.
+	 *
+	 * @param mixed $counters
+	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}|false
+	 */
+	private function project_outbox_health_counters( mixed $counters ): array|false {
+		if ( ! is_array( $counters ) ) {
+			return false;
+		}
+
+		$pending = $counters['pending'] ?? null;
+		$failed = $counters['failed'] ?? null;
+		$dead_lettered = $counters['dead_lettered'] ?? null;
+		$oldest_age_seconds = $counters['oldest_age_seconds'] ?? null;
+		if ( ! is_int( $pending ) || ! is_int( $failed ) || ! is_int( $dead_lettered ) || ! is_int( $oldest_age_seconds ) ) {
+			return false;
+		}
+
+		return array(
+			'pending' => $pending,
+			'failed' => $failed,
+			'dead_lettered' => $dead_lettered,
+			'oldest_age_seconds' => $oldest_age_seconds,
 		);
 	}
 

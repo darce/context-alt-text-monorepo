@@ -913,6 +913,7 @@ class LifecycleManager {
 			attempts int(11) unsigned NOT NULL DEFAULT 0,
 			last_error_code varchar(64) DEFAULT NULL,
 			last_error_message text DEFAULT NULL,
+			last_error_retryable tinyint(1) DEFAULT NULL,
 			acknowledged_version bigint(20) unsigned DEFAULT NULL,
 			created_at datetime NOT NULL,
 			claimed_at datetime DEFAULT NULL,

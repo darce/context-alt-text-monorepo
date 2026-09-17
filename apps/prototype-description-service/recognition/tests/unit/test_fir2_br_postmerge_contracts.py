@@ -29,6 +29,7 @@ from recognition.application.assignment.quality import (
     IdentityQualityInfo,
     compute_identity_quality,
     compute_quality_adjustment,
+    compute_representative_quality,
 )
 from recognition.application.embedding.detector import FaceDetection
 from recognition.application.embedding.manifest import incumbent_embedding_model_manifest
@@ -36,9 +37,7 @@ from recognition.infrastructure.face_pipeline._common import RawDetection
 
 # recognition/tests/unit/this → parents[3] = service root
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
-_MIGRATION_PATH = (
-    _SERVICE_ROOT / "db" / "migrations" / "versions" / "001_identity_schema.py"
-)
+_MIGRATION_PATH = _SERVICE_ROOT / "db" / "migrations" / "versions" / "001_identity_schema.py"
 
 
 def _clear_settings_caches() -> None:
@@ -62,9 +61,7 @@ def _fresh_db_settings_module():
 
 
 def _fresh_migration_module():
-    return importlib.reload(
-        importlib.import_module("db.migrations.versions.001_identity_schema")
-    )
+    return importlib.reload(importlib.import_module("db.migrations.versions.001_identity_schema"))
 
 
 def _rereload_touched_modules() -> None:
@@ -75,9 +72,7 @@ def _rereload_touched_modules() -> None:
     importlib.reload(settings_module)
     importlib.reload(db_settings)
     _clear_settings_caches()
-    fpa = importlib.import_module(
-        "recognition.infrastructure.embeddings.face_pipeline_adapter"
-    )
+    fpa = importlib.import_module("recognition.infrastructure.embeddings.face_pipeline_adapter")
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
@@ -101,9 +96,7 @@ class TestFir2Br01EmbeddingDimensionSsot:
     that root. RECOGNITION_EMBEDDING_DIMENSION must not create a second root.
     """
 
-    def test_pgvector_dim_drives_db_and_recognition_embedding_dimension(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_pgvector_dim_drives_db_and_recognition_embedding_dimension(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With PGVECTOR_DIM=384, db + recognition dims both resolve to 384."""
         monkeypatch.setenv("PGVECTOR_DIM", "384")
         monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
@@ -117,9 +110,7 @@ class TestFir2Br01EmbeddingDimensionSsot:
         assert db_settings.pgvector_dimension == 384
         assert rec_settings.identity_detection.embedding_dimension == 384
 
-    def test_recognition_embedding_dimension_env_is_not_a_second_root(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_recognition_embedding_dimension_env_is_not_a_second_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """RECOGNITION_EMBEDDING_DIMENSION alone must not diverge from PGVECTOR_DIM.
 
         When PGVECTOR_DIM=384 and RECOGNITION_EMBEDDING_DIMENSION=128, the sole
@@ -135,9 +126,7 @@ class TestFir2Br01EmbeddingDimensionSsot:
         settings = rec_mod.RecognitionSettings()
         assert settings.identity_detection.embedding_dimension == 384
 
-    def test_migration_embedding_dimension_follows_pgvector_dim(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_migration_embedding_dimension_follows_pgvector_dim(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """001 identity schema EMBEDDING_DIMENSION resolves from PGVECTOR_DIM."""
         monkeypatch.setenv("PGVECTOR_DIM", "384")
         monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
@@ -155,9 +144,7 @@ class TestFir2Br01EmbeddingDimensionSsot:
         ``Vector(512)`` or ``::vector(512)`` literals.
         """
         source = _MIGRATION_PATH.read_text(encoding="utf-8")
-        assert "Vector(512)" not in source, (
-            "001_identity_schema must not hardcode Vector(512); use the SSOT dim"
-        )
+        assert "Vector(512)" not in source, "001_identity_schema must not hardcode Vector(512); use the SSOT dim"
         assert re.search(r"::vector\(\s*512\s*\)", source) is None, (
             "001_identity_schema must not hardcode ::vector(512) casts"
         )
@@ -213,9 +200,7 @@ class TestFir2Br02LandmarksSeam:
 
     def test_face_detection_has_landmarks_field(self) -> None:
         field_names = {f.name for f in fields(FaceDetection)}
-        assert "landmarks" in field_names, (
-            "FaceDetection must expose landmarks (tuple of five (x,y) or None)"
-        )
+        assert "landmarks" in field_names, "FaceDetection must expose landmarks (tuple of five (x,y) or None)"
 
     def test_face_detection_landmarks_default_none(self) -> None:
         det = FaceDetection(
@@ -238,9 +223,7 @@ class TestFir2Br02LandmarksSeam:
         assert isinstance(det.landmarks, tuple)
         assert len(det.landmarks) == 5
         assert all(isinstance(p, tuple) and len(p) == 2 for p in det.landmarks)
-        assert all(
-            isinstance(coord, float) for p in det.landmarks for coord in p
-        )
+        assert all(isinstance(coord, float) for p in det.landmarks for coord in p)
 
     def test_normalize_landmarks_helper_accepts_five_finite_points(self) -> None:
         from recognition.application.embedding.detector import normalize_landmarks
@@ -275,9 +258,7 @@ class TestFir2Br02LandmarksSeam:
             normalize_landmarks(bad)
 
     @pytest.mark.asyncio
-    async def test_face_pipeline_detector_surfaces_raw_landmarks(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_face_pipeline_detector_surfaces_raw_landmarks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FacePipelineFaceDetector maps RawDetection.landmarks onto the seam."""
         from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
         from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
@@ -439,11 +420,7 @@ class TestFir2Br03PoseNeutralQuality:
         c = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
 
         assert a.score == b.score == c.score
-        assert (
-            a.threshold_adjustment
-            == b.threshold_adjustment
-            == c.threshold_adjustment
-        )
+        assert a.threshold_adjustment == b.threshold_adjustment == c.threshold_adjustment
 
     def test_extreme_pose_not_penalized_relative_to_frontal(self) -> None:
         """RED rewrite of the old extreme-pose-penalty expectation."""
@@ -487,6 +464,37 @@ class TestFir2Br03PoseNeutralQuality:
         assert a.threshold_adjustment == b.threshold_adjustment
         # And matches adjustment derived from the shared score alone.
         assert a.threshold_adjustment == compute_quality_adjustment(a.score)
+
+    def test_threshold_score_ignores_occlusion_representative_composite_does_not(
+        self,
+    ) -> None:
+        """C4: threshold quality stays FIR2-BR-03; representative composite is separate."""
+        from recognition.application.settings import QualitySettings
+
+        clear = self._quality(confidence=0.9, bbox_width=100, bbox_height=100)
+        occluded = compute_identity_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.9,
+        )
+        assert clear.score == occluded.score
+        settings = QualitySettings(oact_coefficient=1.0, representative_quality_composite_enabled=True)
+        clear_rep = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.0,
+            settings=settings,
+        )
+        occluded_rep = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.9,
+            settings=settings,
+        )
+        assert occluded_rep.composite < clear_rep.composite
 
     def test_face_detection_still_carries_model_id_beside_quality(self) -> None:
         """model_id remains the provenance stamp next to quality (PROV-04/06)."""

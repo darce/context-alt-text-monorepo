@@ -27,9 +27,12 @@ from pydantic import ValidationError
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.assignment.checks.confidence import ConfidenceCheck
-from recognition.application.assignment.quality import compute_identity_quality
+from recognition.application.assignment.quality import (
+    compute_identity_quality,
+    compute_representative_quality,
+)
 from recognition.application.health import CheckResult, check_database
-from recognition.application.settings import ClusteringSettings
+from recognition.application.settings import ClusteringSettings, QualitySettings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, ClusterMaturityLevel
 from recognition.shared.ids import generate_id
@@ -54,9 +57,7 @@ def _rereload_touched_modules() -> None:
 
     importlib.reload(settings_module)
     _clear_settings_caches()
-    fpa = importlib.import_module(
-        "recognition.infrastructure.embeddings.face_pipeline_adapter"
-    )
+    fpa = importlib.import_module("recognition.infrastructure.embeddings.face_pipeline_adapter")
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
 
@@ -114,9 +115,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
     """
 
     @pytest.mark.asyncio
-    async def test_dim_mismatch_reports_unhealthy_with_actionable_detail(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_dim_mismatch_reports_unhealthy_with_actionable_detail(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PGVECTOR_DIM=128 vs live vector(512) columns → UNHEALTHY database check."""
         monkeypatch.setenv("PGVECTOR_DIM", "128")
         monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
@@ -143,9 +142,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
         assert "512" in result.detail, f"detail must include live typmod 512: {result.detail!r}"
 
     @pytest.mark.asyncio
-    async def test_matching_dimensions_remain_healthy(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_matching_dimensions_remain_healthy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When every identity vector column matches PGVECTOR_DIM, database is OK."""
         monkeypatch.setenv("PGVECTOR_DIM", "128")
         monkeypatch.delenv("RECOGNITION_EMBEDDING_DIMENSION", raising=False)
@@ -161,9 +158,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
         session.execute.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_partial_column_mismatch_is_unhealthy(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_partial_column_mismatch_is_unhealthy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """GREEN must validate all identity embedding columns, not one sample."""
         monkeypatch.setenv("PGVECTOR_DIM", "128")
         _clear_settings_caches()
@@ -181,9 +176,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
         assert "512" in result.detail or "mismatch" in result.detail.lower()
 
     @pytest.mark.asyncio
-    async def test_missing_or_empty_vector_schema_fail_closed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_missing_or_empty_vector_schema_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No typmod rows (missing schema) must not report database ready."""
         monkeypatch.setenv("PGVECTOR_DIM", "128")
         _clear_settings_caches()
@@ -203,9 +196,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
         ), f"fail-closed detail expected; got {result.detail!r}"
 
     @pytest.mark.asyncio
-    async def test_malformed_typmod_fail_closed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_malformed_typmod_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unparseable / non-positive vector dims fail closed (no silent OK)."""
         monkeypatch.setenv("PGVECTOR_DIM", "128")
         _clear_settings_caches()
@@ -231,8 +222,7 @@ class TestFinalA02LivePgvectorWidthReadiness:
 
         sql = health_mod._IDENTITY_VECTOR_TYPMOD_SQL
         assert "current_schema()" in sql, (
-            "typmod probe must filter by current_schema() (or equivalent visible "
-            f"relation strategy); got SQL:\n{sql}"
+            f"typmod probe must filter by current_schema() (or equivalent visible relation strategy); got SQL:\n{sql}"
         )
         # Hardcoded public is the bug: reject exact nspname = 'public' / "public".
         assert "nspname = 'public'" not in sql
@@ -254,9 +244,7 @@ class TestFinalA03AdmissionDeadlineHonored:
     """
 
     @pytest.mark.asyncio
-    async def test_delayed_wake_after_deadline_does_not_consume_permit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_delayed_wake_after_deadline_does_not_consume_permit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
             FacePipelineAdmissionGate,
         )
@@ -343,9 +331,7 @@ class TestFinalA04TimeoutFinitePositive:
         "bad",
         [float("nan"), float("inf"), float("-inf"), 0.0, -1.0, -0.01],
     )
-    def test_face_pipeline_timeout_s_rejects_non_finite_or_non_positive(
-        self, bad: float
-    ) -> None:
+    def test_face_pipeline_timeout_s_rejects_non_finite_or_non_positive(self, bad: float) -> None:
         mod = _fresh_settings_module()
         with pytest.raises((ValueError, ValidationError)):
             mod.FacePipelineSettings(timeout_s=bad)
@@ -357,9 +343,7 @@ class TestFinalA04TimeoutFinitePositive:
         assert math.isfinite(settings.timeout_s)
         assert settings.timeout_s > 0
 
-    def test_db_embedding_timeout_preserves_valid_positive(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
+    def test_db_embedding_timeout_preserves_valid_positive(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         import db.settings as db_settings_mod
 
         monkeypatch.setenv("DB_EMBEDDING_TIMEOUT_SECONDS", "12.25")
@@ -499,6 +483,15 @@ class TestFinalB01ConfidenceCheckPoseSafety:
         again = compute_identity_quality(confidence=0.99, bbox_width=200, bbox_height=200)
         assert frontal.score == again.score
         assert not hasattr(frontal, "pose_penalty")
+        # C4 representative composite is a separate channel from threshold score.
+        composite = compute_representative_quality(
+            confidence=0.99,
+            bbox_width=200,
+            bbox_height=200,
+            settings=QualitySettings(representative_quality_composite_enabled=True),
+        )
+        assert frontal.score == pytest.approx(0.99, abs=0.001)
+        assert composite.composite == pytest.approx(0.995, abs=0.001)
 
     @pytest.mark.asyncio
     async def test_extreme_pose_does_not_receive_quality_leniency(self) -> None:
@@ -563,8 +556,7 @@ class TestFinalB01ConfidenceCheckPoseSafety:
 
         quality_adj = result.metadata["quality_adj"]
         assert quality_adj < 0.0, (
-            "frontal high-quality face should retain quality-derived leniency; "
-            f"got quality_adj={quality_adj}"
+            f"frontal high-quality face should retain quality-derived leniency; got quality_adj={quality_adj}"
         )
         assert quality_adj == pytest.approx(-0.05, abs=0.0001)
 
@@ -574,19 +566,14 @@ class TestFinalB01ConfidenceCheckPoseSafety:
         check = ConfidenceCheck(_make_settings(), _maturity_repo(adj=0.0))
         common = {"similarity": 0.70, "confidence": 0.99, "bbox_size": 200}
 
-        frontal = await check.evaluate(
-            _make_candidate(**common, pose_pitch=0.0, pose_yaw=0.0, pose_roll=0.0)
-        )
-        extreme = await check.evaluate(
-            _make_candidate(**common, pose_pitch=55.0, pose_yaw=70.0, pose_roll=10.0)
-        )
+        frontal = await check.evaluate(_make_candidate(**common, pose_pitch=0.0, pose_yaw=0.0, pose_roll=0.0))
+        extreme = await check.evaluate(_make_candidate(**common, pose_pitch=55.0, pose_yaw=70.0, pose_roll=10.0))
 
         # Same pose-neutral quality_score; assignment policy differs on quality_adj.
         assert extreme.metadata["quality_score"] == frontal.metadata["quality_score"]
         assert frontal.metadata["quality_adj"] < 0.0, "frontal high-quality retains leniency"
         assert extreme.metadata["quality_adj"] >= 0.0, (
-            "extreme must drop leniency (non-negative quality_adj); "
-            f"got {extreme.metadata['quality_adj']}"
+            f"extreme must drop leniency (non-negative quality_adj); got {extreme.metadata['quality_adj']}"
         )
         assert extreme.metadata["final_threshold"] > frontal.metadata["final_threshold"], (
             "extreme pose must tighten vs frontal leniency; "

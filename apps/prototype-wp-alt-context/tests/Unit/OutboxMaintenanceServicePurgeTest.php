@@ -255,7 +255,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertStringContainsString("last_attempted_at = '2026-09-16 00:00:00'", $updateQuery);
         $this->assertStringContainsString("last_error_code = 'transport_error'", $updateQuery);
         $this->assertStringContainsString('attempts = 1', $updateQuery);
-        $this->assertStringContainsString("first_failed_at = '2026-09-16 00:00:00'", $updateQuery);
+        $this->assertStringContainsString("first_failed_at = '{$row['first_failed_at']}'", $updateQuery);
     }
 
     public function testOperatorRetryClearsAutoAttemptMarkerBeforeNextMaintenanceFailure(): void

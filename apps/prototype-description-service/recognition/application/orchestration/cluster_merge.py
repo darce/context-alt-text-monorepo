@@ -10,12 +10,21 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import numpy as np
-from sqlalchemy import update
+from sqlalchemy import select, update
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from db.models.identity import (
+    ClusterMergeReceipt,
+    ReceiptExpiredError,
+    ReceiptNotTopError,
+    require_top_unreverted_receipt,
+)
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.identity_mapping import media_identity_from_model
@@ -438,3 +447,292 @@ async def merge_cluster(
         updated.identity_count = len(await member_repo.get_by_cluster(target_cluster_id))
 
     return updated
+
+
+class MergeReceiptNotFoundError(LookupError):
+    """Receipt missing under (tenant_id, receipt_id); map to 404, do not leak."""
+
+    def __init__(self, receipt_id: uuid.UUID) -> None:
+        self.receipt_id = receipt_id
+        super().__init__("Merge receipt not found")
+
+
+class MergeReceiptStaleError(ValueError):
+    """Path, membership, or source occupancy no longer matches the receipt (API-05)."""
+
+    code = "merge_receipt_stale"
+
+    def __init__(self, receipt_id: uuid.UUID) -> None:
+        self.receipt_id = receipt_id
+        super().__init__("Merge receipt is stale")
+
+
+def _norm_uuid_str(value: object) -> str:
+    return str(uuid.UUID(str(value)))
+
+
+_REVERT_CONCURRENCY_CODES = frozenset({"40P01", "40001"})
+
+
+def _is_revert_concurrency_error(exc: DBAPIError) -> bool:
+    """Return whether a database failure should be exposed as a deterministic refusal."""
+    for candidate in (exc, getattr(exc, "orig", None), getattr(exc, "__cause__", None)):
+        for attribute in ("pgcode", "sqlstate"):
+            code = getattr(candidate, attribute, None)
+            if code is not None and str(code).upper() in _REVERT_CONCURRENCY_CODES:
+                return True
+    return False
+
+
+async def _rollback_revert_concurrency_failure(session: AsyncSession) -> None:
+    """Leave the session usable after PostgreSQL aborts a deadlocked transaction."""
+    try:
+        await session.rollback()
+    except Exception:
+        logger.warning("Failed to roll back a rejected cluster-merge revert", exc_info=True)
+
+
+def _restored_cluster_label(receipt: ClusterMergeReceipt, survivor: IdentityCluster) -> str:
+    source_label = (receipt.source_label or "").strip()
+    if source_label:
+        return source_label
+    name = (survivor.label or "").strip()
+    if name:
+        return f"{name} (restored)"
+    return "(restored)"
+
+
+async def _load_receipt(
+    session: AsyncSession, *, tenant_id: uuid.UUID, receipt_id: uuid.UUID
+) -> ClusterMergeReceipt | None:
+    """Look up a receipt by (tenant_id, receipt_id) without taking a row lock."""
+    result = await session.execute(
+        select(ClusterMergeReceipt)
+        .where(
+            ClusterMergeReceipt.tenant_id == tenant_id,
+            ClusterMergeReceipt.receipt_id == receipt_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _load_sibling_receipts(
+    session: AsyncSession, *, tenant_id: uuid.UUID, survivor_cluster_id: uuid.UUID
+) -> list[ClusterMergeReceipt]:
+    result = await session.execute(
+        select(ClusterMergeReceipt)
+        .where(
+            ClusterMergeReceipt.tenant_id == tenant_id,
+            ClusterMergeReceipt.survivor_cluster_id == survivor_cluster_id,
+        )
+        .order_by(ClusterMergeReceipt.receipt_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    return list(result.scalars().all())
+
+
+async def _lock_survivor_cluster(
+    session: AsyncSession, *, tenant_id: uuid.UUID, survivor_cluster_id: uuid.UUID
+) -> None:
+    """Serialize receipt reverts for one survivor cluster."""
+    await session.execute(
+        select(IdentityClusterModel)
+        .where(
+            IdentityClusterModel.tenant_id == tenant_id,
+            IdentityClusterModel.id == survivor_cluster_id,
+        )
+        .with_for_update()
+    )
+
+
+async def _revert_merge_impl(
+    *,
+    tenant_id: str,
+    receipt_id: str,
+    path_cluster_id: str,
+    assignment_writer: AssignmentWriter,
+    session: AsyncSession,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
+    now: datetime | None = None,
+    return_event_payload: bool = False,
+) -> IdentityCluster | tuple[IdentityCluster, dict[str, object]]:
+    """LIFO-revert a receipted merge into the stored source_cluster_id."""
+    tenant_uuid = uuid.UUID(str(tenant_id))
+    receipt_uuid = uuid.UUID(str(receipt_id))
+    path_id = _norm_uuid_str(path_cluster_id)
+    clock = now or datetime.now(tz=UTC)
+
+    receipt = await _load_receipt(session, tenant_id=tenant_uuid, receipt_id=receipt_uuid)
+    if receipt is None:
+        raise MergeReceiptNotFoundError(receipt_uuid)
+
+    requested_survivor_id = uuid.UUID(str(receipt.survivor_cluster_id))
+    if _norm_uuid_str(requested_survivor_id) != path_id:
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    await _lock_survivor_cluster(
+        session,
+        tenant_id=tenant_uuid,
+        survivor_cluster_id=requested_survivor_id,
+    )
+
+    siblings = await _load_sibling_receipts(
+        session,
+        tenant_id=tenant_uuid,
+        survivor_cluster_id=requested_survivor_id,
+    )
+    receipt = next(
+        (
+            sibling
+            for sibling in siblings
+            if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)
+        ),
+        None,
+    )
+    if receipt is None:
+        raise ReceiptNotTopError(receipt_uuid)
+    if _norm_uuid_str(receipt.survivor_cluster_id) != _norm_uuid_str(requested_survivor_id):
+        raise MergeReceiptStaleError(receipt.receipt_id)
+    if receipt.reverted_at is not None:
+        raise ReceiptNotTopError(receipt.receipt_id)
+    if clock > receipt.expires_at:
+        raise ReceiptExpiredError(receipt.receipt_id)
+
+    cluster_repo: ClusterRepository = assignment_writer.cluster_repository
+    member_repo: MemberRepository = assignment_writer.member_repository
+
+    survivor = await cluster_repo.get_by_id(path_id)
+    if survivor is None or _norm_uuid_str(survivor.tenant_id) != _norm_uuid_str(tenant_uuid):
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    stack = list(siblings)
+    require_top_unreverted_receipt(stack, receipt.receipt_id)
+
+    source_cluster_id = _norm_uuid_str(receipt.source_cluster_id)
+    occupied = await cluster_repo.get_by_id(source_cluster_id)
+    if occupied is not None:
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    moved_uuids = [_norm_uuid_str(identity_id) for identity_id in receipt.moved_identity_ids]
+    survivor_members = await member_repo.get_by_cluster(path_id)
+    members_by_identity = {_norm_uuid_str(member.identity_id): member for member in survivor_members}
+    if any(identity_id not in members_by_identity for identity_id in moved_uuids):
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    claim_result = await session.execute(
+        update(ClusterMergeReceipt)
+        .where(
+            ClusterMergeReceipt.tenant_id == tenant_uuid,
+            ClusterMergeReceipt.receipt_id == receipt_uuid,
+            ClusterMergeReceipt.reverted_at.is_(None),
+        )
+        .values(reverted_at=clock)
+    )
+    if int(getattr(claim_result, "rowcount", 0) or 0) == 0:
+        raise ReceiptNotTopError(receipt.receipt_id)
+    receipt.reverted_at = clock
+
+    restored_label = _restored_cluster_label(receipt, survivor)
+    try:
+        restored = await cluster_repo.save(
+            IdentityCluster(
+                id=source_cluster_id,
+                tenant_id=_norm_uuid_str(tenant_uuid),
+                label=restored_label,
+                is_labeled=bool(restored_label),
+                identity_count=0,
+                clustering_algorithm=survivor.clustering_algorithm or "graph",
+                user_confirmed=bool((receipt.source_label or "").strip()),
+            )
+        )
+    except IntegrityError as exc:
+        await session.rollback()
+        receipt.reverted_at = None
+        raise ReceiptNotTopError(receipt.receipt_id) from exc
+    if restored.id is None:
+        raise MergeReceiptStaleError(receipt.receipt_id)
+
+    for identity_id in moved_uuids:
+        member = members_by_identity[identity_id]
+        await member_repo.remove_by_identity_id(identity_id)
+        await member_repo.add_member(restored.id, identity_id, member.similarity)
+
+    if moved_uuids:
+        await session.execute(
+            update(MediaIdentityModel)
+            .where(MediaIdentityModel.id.in_([uuid.UUID(identity_id) for identity_id in moved_uuids]))
+            .values(moved_by_merge_id=None)
+        )
+        await session.flush()
+
+    await assignment_writer.recompute_representatives(restored.id)
+    await assignment_writer.recompute_centroid(restored.id)
+    await assignment_writer.recompute_representatives(path_id)
+    await assignment_writer.recompute_centroid(path_id)
+    try:
+        await assignment_writer.refresh_centroids_view()
+    except Exception:
+        logger.warning(
+            "Post-revert centroid MV refresh failed for source_cluster_id=%s survivor_cluster_id=%s; "
+            "centroids may lag until the next scheduled refresh",
+            restored.id,
+            path_id,
+            exc_info=True,
+        )
+
+    if merge_suggestion_service is not None:
+        try:
+            await merge_suggestion_service.delete_by_cluster(tenant_id, restored.id)
+            await merge_suggestion_service.delete_by_cluster(tenant_id, path_id)
+        except Exception:
+            logger.warning(
+                "Failed to delete merge suggestions after revert for source_cluster_id=%s survivor_cluster_id=%s",
+                restored.id,
+                path_id,
+                exc_info=True,
+            )
+
+    restored.identity_count = len(await member_repo.get_by_cluster(restored.id))
+    survivor.identity_count = len(await member_repo.get_by_cluster(path_id))
+    restored = await cluster_repo.update(restored)
+    await cluster_repo.update(survivor)
+
+    if return_event_payload:
+        return restored, {
+            "source_cluster_id": restored.id,
+            "survivor_cluster_id": path_id,
+            "receipt_id": str(receipt.receipt_id),
+            "moved_count": len(moved_uuids),
+        }
+    return restored
+
+
+async def revert_merge(
+    *,
+    tenant_id: str,
+    receipt_id: str,
+    path_cluster_id: str,
+    assignment_writer: AssignmentWriter,
+    session: AsyncSession,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
+    now: datetime | None = None,
+    return_event_payload: bool = False,
+) -> IdentityCluster | tuple[IdentityCluster, dict[str, object]]:
+    """Revert a merge, mapping deadlock/serialization failures to a stable refusal."""
+    try:
+        return await _revert_merge_impl(
+            tenant_id=tenant_id,
+            receipt_id=receipt_id,
+            path_cluster_id=path_cluster_id,
+            assignment_writer=assignment_writer,
+            session=session,
+            merge_suggestion_service=merge_suggestion_service,
+            now=now,
+            return_event_payload=return_event_payload,
+        )
+    except DBAPIError as exc:
+        if not _is_revert_concurrency_error(exc):
+            raise
+        await _rollback_revert_concurrency_failure(session)
+        raise ReceiptNotTopError(uuid.UUID(str(receipt_id))) from exc

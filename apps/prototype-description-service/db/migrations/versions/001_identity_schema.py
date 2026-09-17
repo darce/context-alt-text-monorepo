@@ -71,6 +71,11 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_image_description_runs_idempotency_key",
         ("tenant_id", "idempotency_key"),
     ),
+    (
+        "cluster_merge_receipts",
+        "uq_cluster_merge_receipts_survivor_seq",
+        ("survivor_cluster_id", "sequence_no"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -784,7 +789,16 @@ def ensure_tables(op) -> None:
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("reverted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("sequence_no", sa.Integer(), nullable=False),
         sa.CheckConstraint("kind IN ('auto', 'operator')", name="cluster_merge_receipt_valid_kind"),
+        sa.UniqueConstraint(
+            "survivor_cluster_id",
+            "sequence_no",
+            name="uq_cluster_merge_receipts_survivor_seq",
+        ),
+        heal_constraints=tuple(
+            name for table, name, _cols in HEAL_UNIQUE_CONSTRAINTS if table == "cluster_merge_receipts"
+        ),
     )
 
     _ensure_table(

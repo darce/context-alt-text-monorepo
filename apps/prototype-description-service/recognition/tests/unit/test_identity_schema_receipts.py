@@ -19,7 +19,9 @@ from db.models.identity import (
     ClusterMergeReceipt,
     IdentityCluster,
     IdentityClusterRepresentative,
+    ReceiptExpiredError,
     ReceiptNotTopError,
+    ReceiptStackUnavailableError,
     require_top_unreverted_receipt,
 )
 
@@ -65,7 +67,12 @@ def _unwrap_type(column_type: object) -> object:
     return getattr(impl, "impl", impl)
 
 
-def _receipt(*, created_at: datetime, reverted_at: datetime | None = None) -> ClusterMergeReceipt:
+def _receipt(
+    *,
+    created_at: datetime,
+    sequence_no: int = 1,
+    reverted_at: datetime | None = None,
+) -> ClusterMergeReceipt:
     return ClusterMergeReceipt(
         receipt_id=uuid4(),
         tenant_id=uuid4(),
@@ -78,6 +85,7 @@ def _receipt(*, created_at: datetime, reverted_at: datetime | None = None) -> Cl
         created_at=created_at,
         expires_at=created_at + timedelta(days=7),
         reverted_at=reverted_at,
+        sequence_no=sequence_no,
     )
 
 
@@ -95,7 +103,15 @@ def test_cluster_merge_receipts_orm_declares_contract_columns() -> None:
         "created_at",
         "expires_at",
         "reverted_at",
+        "sequence_no",
     }
+    assert columns["sequence_no"].nullable is False
+    unique_names = {
+        constraint.name
+        for constraint in ClusterMergeReceipt.__table__.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    }
+    assert "uq_cluster_merge_receipts_survivor_seq" in unique_names
     assert columns["receipt_id"].primary_key is True
     assert isinstance(_unwrap_type(columns["receipt_id"].type), PG_UUID)
     assert columns["source_label"].nullable is True
@@ -118,14 +134,15 @@ def test_cluster_merge_kind_is_centralized_enum() -> None:
     assert "operator" in constraint_sql
 
 
-def test_identity_cluster_merge_receipts_are_ordered_created_at_desc() -> None:
+def test_identity_cluster_merge_receipts_are_ordered_created_at_then_sequence_desc() -> None:
     relationship = sa_inspect(IdentityCluster).relationships["merge_receipts"]
     order_by = relationship.order_by
     assert order_by is not None
     clauses = order_by if isinstance(order_by, tuple) else (order_by,)
     rendered = " ".join(str(clause).lower() for clause in clauses)
     assert "created_at" in rendered
-    assert "desc" in rendered
+    assert "sequence_no" in rendered
+    assert rendered.count("desc") >= 2
 
 
 def test_identity_cluster_representative_has_exactly_one_quality_scalar() -> None:
@@ -163,6 +180,11 @@ def test_migration_creates_receipts_table_and_quality_components(monkeypatch) ->
     assert receipt_columns["moved_identity_ids"].nullable is False
     assert receipt_columns["kind"].nullable is False
     assert receipt_columns["reverted_at"].nullable is True
+    assert receipt_columns["sequence_no"].nullable is False
+    unique_names = {
+        arg.name for arg in receipt_args if isinstance(arg, sa.UniqueConstraint)
+    }
+    assert "uq_cluster_merge_receipts_survivor_seq" in unique_names
     assert ("idx_cluster_merge_receipts_survivor", "cluster_merge_receipts") in recorder.created_indexes
     assert ("idx_cluster_merge_receipts_tenant", "cluster_merge_receipts") in recorder.created_indexes
 
@@ -176,8 +198,8 @@ def test_migration_creates_receipts_table_and_quality_components(monkeypatch) ->
 
 def test_require_top_unreverted_receipt_refuses_non_top() -> None:
     now = datetime(2026, 9, 17, tzinfo=UTC)
-    older = _receipt(created_at=now - timedelta(hours=2))
-    newer = _receipt(created_at=now - timedelta(hours=1))
+    older = _receipt(created_at=now - timedelta(hours=2), sequence_no=1)
+    newer = _receipt(created_at=now - timedelta(hours=1), sequence_no=2)
     stack = [newer, older]
 
     with pytest.raises(ReceiptNotTopError) as exc_info:
@@ -188,10 +210,25 @@ def test_require_top_unreverted_receipt_refuses_non_top() -> None:
     assert require_top_unreverted_receipt(stack, newer.receipt_id) is newer
 
 
+def test_require_top_unreverted_receipt_tie_breaks_equal_created_at_on_sequence_no() -> None:
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    first = _receipt(created_at=now, sequence_no=1)
+    second = _receipt(created_at=now, sequence_no=2)
+    stack = [first, second]
+
+    with pytest.raises(ReceiptNotTopError) as exc_info:
+        require_top_unreverted_receipt(stack, first.receipt_id)
+
+    assert exc_info.value.code == "receipt_not_top"
+    assert require_top_unreverted_receipt(stack, second.receipt_id) is second
+    assert ClusterMergeReceipt.next_sequence_no(stack) == 3
+    assert ClusterMergeReceipt.next_sequence_no(()) == 1
+
+
 def test_reverting_non_top_receipt_is_impossible_at_repository_layer() -> None:
     now = datetime(2026, 9, 17, tzinfo=UTC)
-    older = _receipt(created_at=now - timedelta(hours=2))
-    newer = _receipt(created_at=now - timedelta(hours=1))
+    older = _receipt(created_at=now - timedelta(hours=2), sequence_no=1)
+    newer = _receipt(created_at=now - timedelta(hours=1), sequence_no=2)
     cluster = IdentityCluster()
     cluster.merge_receipts = [newer, older]
     older.survivor_cluster = cluster
@@ -208,3 +245,32 @@ def test_reverting_non_top_receipt_is_impossible_at_repository_layer() -> None:
         newer.revert(now=now + timedelta(seconds=1))
     older.revert(now=now + timedelta(seconds=1))
     assert older.reverted_at == now + timedelta(seconds=1)
+
+
+def test_revert_refuses_expired_top_receipt() -> None:
+    created = datetime(2026, 9, 1, tzinfo=UTC)
+    receipt = _receipt(created_at=created, sequence_no=1)
+    now = receipt.expires_at + timedelta(seconds=1)
+
+    with pytest.raises(ReceiptExpiredError) as exc_info:
+        receipt.revert(now=now, sibling_receipts=[receipt])
+
+    assert exc_info.value.code == "receipt_expired"
+    assert exc_info.value.receipt_id == receipt.receipt_id
+    assert receipt.reverted_at is None
+    receipt.revert(now=receipt.expires_at, sibling_receipts=[receipt])
+    assert receipt.reverted_at == receipt.expires_at
+
+
+def test_revert_without_loaded_stack_fails_closed() -> None:
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    receipt = _receipt(created_at=now - timedelta(hours=1), sequence_no=1)
+
+    with pytest.raises(ReceiptStackUnavailableError) as exc_info:
+        receipt.revert(now=now)
+
+    assert exc_info.value.code == "receipt_stack_unavailable"
+    assert exc_info.value.receipt_id == receipt.receipt_id
+    assert receipt.reverted_at is None
+    receipt.revert(now=now, sibling_receipts=[receipt])
+    assert receipt.reverted_at == now

@@ -184,5 +184,89 @@ class ClusterProjectionWriterTest extends TestCase
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $query);
         $this->assertStringContainsString('ON DUPLICATE KEY UPDATE', $query);
         $this->assertStringContainsString('is_user_confirmed = VALUES(is_user_confirmed)', $query);
+        $row = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($row['representative_quality'] ?? null);
+        $this->assertNull($row['quality_components'] ?? null);
+        $this->assertNull($row['representative_media_id'] ?? null);
+        $this->assertNull($row['undoable_merge_receipt_id'] ?? null);
+    }
+
+    public function testUpsertProjectionClusterPersistsSnapshotExportFields(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->writer->upsert_projection_cluster(
+            self::currentTenantId(),
+            'cluster-proj',
+            'Projection Label',
+            4,
+            9,
+            'acx://cluster/cluster-proj/media/501',
+            '4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb',
+            false,
+            array(
+                'representative_quality' => 0.82,
+                'quality_components' => array(
+                    'confidence' => 0.94,
+                    'bbox_area' => 7680,
+                    'sharpness' => 0.71,
+                    'occlusion_severity' => 0.12,
+                ),
+                'representative_media_id' => 501,
+                'undoable_merge_receipt_id' => 'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44',
+            )
+        );
+
+        $this->assertSame(1, $result);
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString('representative_quality', $query);
+        $this->assertStringContainsString('quality_components', $query);
+        $this->assertStringContainsString('representative_media_id', $query);
+        $this->assertStringContainsString('undoable_merge_receipt_id', $query);
+        $this->assertStringContainsString('representative_quality = IF(1, VALUES(representative_quality), representative_quality)', $query);
+
+        $row = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertSame('0.82', (string) $row['representative_quality']);
+        $this->assertSame(501, (int) $row['representative_media_id']);
+        $this->assertSame('b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44', $row['undoable_merge_receipt_id']);
+        $components = json_decode((string) $row['quality_components'], true);
+        $this->assertIsArray($components);
+        $this->assertSame(0.94, $components['confidence']);
+        $this->assertSame(7680, $components['bbox_area']);
+        $this->assertSame(0.71, $components['sharpness']);
+        $this->assertSame(0.12, $components['occlusion_severity']);
+    }
+
+    public function testUpsertProjectionClusterDoesNotInventSnapshotExportFields(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $this->writer->upsert_projection_cluster(
+            self::currentTenantId(),
+            'cluster-proj',
+            'Projection Label',
+            4,
+            9,
+            'acx://cluster/cluster-proj/media/501',
+            null,
+            false,
+            array(
+                'representative_quality' => null,
+                'quality_components' => array(
+                    'confidence' => 0.94,
+                    'bbox_area' => 7680,
+                ),
+                'representative_media_id' => null,
+                'undoable_merge_receipt_id' => 'not-a-uuid',
+            )
+        );
+
+        $row = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($row['representative_quality']);
+        $this->assertNull($row['quality_components']);
+        $this->assertNull($row['representative_media_id']);
+        $this->assertNull($row['undoable_merge_receipt_id']);
     }
 }

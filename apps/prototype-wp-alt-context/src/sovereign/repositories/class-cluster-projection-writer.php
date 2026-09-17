@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/interface-clusters-repository.php';
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/class-cluster-curation-writer.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
@@ -14,14 +15,22 @@ use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\Sync\OutboxWriter;
 use AltContext\Support\DetectsSystemDefinedLabels;
 
+use function array_key_exists;
+use function count;
+use function function_exists;
 use function gmdate;
+use function is_array;
+use function is_float;
 use function is_int;
 use function is_object;
 use function is_string;
 use function is_wp_error;
+use function json_encode;
 use function max;
 use function method_exists;
 use function trim;
+use function wp_is_uuid;
+use function wp_json_encode;
 
 class ClusterProjectionWriter {
 	use DetectsSystemDefinedLabels;
@@ -115,7 +124,10 @@ class ClusterProjectionWriter {
 		return $inserted;
 	}
 
-	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int {
+	/**
+	 * @param array<string,mixed> $snapshot_export Snapshot keys from recognition-cluster-snapshot.schema.json.
+	 */
+	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false, array $snapshot_export = array() ): int {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -129,10 +141,11 @@ class ClusterProjectionWriter {
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$export = $this->normalize_snapshot_export( $snapshot_export );
 		$sql = $this->prepare_query(
 			'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, local_revision, created_at, updated_at, last_synced_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %s, %s, %s)
+				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, local_revision, created_at, updated_at, last_synced_at, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)
+			VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 			ON DUPLICATE KEY UPDATE
 				label = VALUES(label),
 				curation_state = VALUES(curation_state),
@@ -143,7 +156,11 @@ class ClusterProjectionWriter {
 				snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
 				is_user_confirmed = VALUES(is_user_confirmed),
 				updated_at = VALUES(updated_at),
-				last_synced_at = VALUES(last_synced_at)',
+				last_synced_at = VALUES(last_synced_at),
+				representative_quality = IF(%d, VALUES(representative_quality), representative_quality),
+				quality_components = IF(%d, VALUES(quality_components), quality_components),
+				representative_media_id = IF(%d, VALUES(representative_media_id), representative_media_id),
+				undoable_merge_receipt_id = IF(%d, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)',
 			array(
 				$this->table_name,
 				$normalized_cluster_uuid,
@@ -160,6 +177,14 @@ class ClusterProjectionWriter {
 				$now_utc,
 				$now_utc,
 				$now_utc,
+				$export['representative_quality'],
+				$export['quality_components'],
+				$export['representative_media_id'],
+				$export['undoable_merge_receipt_id'],
+				$export['apply'],
+				$export['apply'],
+				$export['apply'],
+				$export['apply'],
 			)
 		);
 
@@ -247,5 +272,133 @@ class ClusterProjectionWriter {
 
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
+	}
+
+	/**
+	 * @param array<string,mixed> $snapshot_export
+	 * @return array{representative_quality: string, quality_components: string, representative_media_id: string, undoable_merge_receipt_id: string, apply: int}
+	 */
+	private function normalize_snapshot_export( array $snapshot_export ): array {
+		$apply = $this->snapshot_export_is_present( $snapshot_export ) ? 1 : 0;
+		if ( 0 === $apply ) {
+			return array(
+				'representative_quality' => '',
+				'quality_components' => '',
+				'representative_media_id' => '',
+				'undoable_merge_receipt_id' => '',
+				'apply' => 0,
+			);
+		}
+
+		return array(
+			'representative_quality' => $this->normalize_representative_quality(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ] ?? null
+			),
+			'quality_components' => $this->normalize_quality_components(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ] ?? null
+			),
+			'representative_media_id' => $this->normalize_representative_media_id(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID ] ?? null
+			),
+			'undoable_merge_receipt_id' => $this->normalize_undoable_merge_receipt_id(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_UNDOABLE_MERGE_RECEIPT_ID ] ?? null
+			),
+			'apply' => 1,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $snapshot_export
+	 */
+	private function snapshot_export_is_present( array $snapshot_export ): bool {
+		foreach ( array(
+			ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY,
+			ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS,
+			ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID,
+			ClustersRepositoryInterface::SNAPSHOT_EXPORT_UNDOABLE_MERGE_RECEIPT_ID,
+		) as $key ) {
+			if ( array_key_exists( $key, $snapshot_export ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function normalize_representative_quality( mixed $value ): string {
+		if ( ! is_int( $value ) && ! is_float( $value ) ) {
+			return '';
+		}
+
+		$quality = (float) $value;
+		if ( $quality < 0.0 || $quality > 1.0 ) {
+			return '';
+		}
+
+		return (string) $quality;
+	}
+
+	private function normalize_quality_components( mixed $value ): string {
+		if ( ! is_array( $value ) ) {
+			return '';
+		}
+
+		$required = array( 'confidence', 'bbox_area', 'sharpness', 'occlusion_severity' );
+		foreach ( $required as $key ) {
+			if ( ! array_key_exists( $key, $value ) ) {
+				return '';
+			}
+		}
+		if ( count( $value ) !== 4 ) {
+			return '';
+		}
+
+		$normalized = array();
+		foreach ( $required as $key ) {
+			$component = $value[ $key ];
+			if ( null === $component ) {
+				$normalized[ $key ] = null;
+				continue;
+			}
+			if ( ! is_int( $component ) && ! is_float( $component ) ) {
+				return '';
+			}
+			$number = (float) $component;
+			if ( 'bbox_area' === $key ) {
+				if ( $number < 0.0 ) {
+					return '';
+				}
+			} elseif ( $number < 0.0 || $number > 1.0 ) {
+				return '';
+			}
+			$normalized[ $key ] = is_int( $component ) ? $component : $number;
+		}
+
+		$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $normalized ) : json_encode( $normalized );
+		return is_string( $encoded ) && '' !== $encoded ? $encoded : '';
+	}
+
+	private function normalize_representative_media_id( mixed $value ): string {
+		if ( is_int( $value ) ) {
+			return $value >= 1 ? (string) $value : '';
+		}
+		if ( is_float( $value ) && (float) (int) $value === $value && $value >= 1.0 ) {
+			return (string) (int) $value;
+		}
+
+		return '';
+	}
+
+	private function normalize_undoable_merge_receipt_id( mixed $value ): string {
+		if ( ! is_string( $value ) ) {
+			return '';
+		}
+
+		$normalized = trim( $value );
+		if ( '' === $normalized || ! wp_is_uuid( $normalized ) ) {
+			return '';
+		}
+
+		return $normalized;
 	}
 }

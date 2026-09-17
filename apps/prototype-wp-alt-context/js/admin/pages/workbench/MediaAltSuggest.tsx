@@ -99,6 +99,18 @@ export const ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE = __(
  */
 export const DECORATIVE_TOGGLE_VISIBLE_LABEL = __('Decorative', 'alt-context');
 
+/** Pressed compact decorative toggle — token-backed so AT/UI share sr-004 color+icon pairing. */
+export const DECORATIVE_TOGGLE_PRESSED_STYLE = {
+  color: 'var(--acx-color-success-text)',
+  backgroundColor: 'var(--acx-color-success-bg)',
+  borderColor: 'var(--acx-color-success-border)',
+};
+
+/** Unpressed compact decorative toggle. */
+export const DECORATIVE_TOGGLE_IDLE_STYLE = {
+  color: 'var(--acx-color-text-secondary)',
+};
+
 /**
  * Explicit control to mark the image decorative (empty alt + durable marker).
  * Accessible name / tooltip states the screen-reader outcome — the visible
@@ -613,14 +625,8 @@ export const MediaAltSuggest = ({
       : __('Marking as decorative…', 'alt-context')
     : null;
   const decorativePressedStyle = isDecorative
-    ? {
-        color: 'var(--acx-color-success-text)',
-        backgroundColor: 'var(--acx-color-success-bg)',
-        borderColor: 'var(--acx-color-success-border)',
-      }
-    : {
-        color: 'var(--acx-color-text-secondary)',
-      };
+    ? DECORATIVE_TOGGLE_PRESSED_STYLE
+    : DECORATIVE_TOGGLE_IDLE_STYLE;
   const renderDecorativeToggle = (disabled: boolean): React.JSX.Element => (
     <>
       <button

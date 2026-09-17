@@ -5,6 +5,7 @@
     "opened_at": null
   },
   "outbox": {
+    "state": "ok",
     "pending": 5,
     "failed": 2,
     "dead_lettered": 1,

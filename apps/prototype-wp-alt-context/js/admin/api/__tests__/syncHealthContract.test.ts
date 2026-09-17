@@ -14,6 +14,7 @@ describe('sync health response contract', () => {
     expect(fixture.replays.source).toBe('unavailable_local');
     expect(fixture.breaker.state).toBe('closed');
     expect(fixture.outbox).toEqual({
+      state: 'ok',
       pending: 5,
       failed: 2,
       dead_lettered: 1,

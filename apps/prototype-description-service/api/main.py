@@ -269,9 +269,19 @@ def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
     return None if model_id is None else spec.model_version
 
 
-async def _description_adapter_readiness() -> dict[str, object]:
+def _resolve_description_profile() -> DescriptionProfile:
+    """Validate the configured description profile before registering routes."""
+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.SEEDED.value)
+    try:
+        return DescriptionProfile(raw)
+    except ValueError as exc:
+        allowed = ", ".join(profile.value for profile in DescriptionProfile)
+        raise ValueError(f"ACX_DESCRIPTION_ADAPTER must be one of: {allowed} (got {raw!r})") from exc
+
+
+async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[str, object]:
     """Per-request GPU adapter readiness; DNS never runs inline on the loop."""
-    spec = get_profile_spec(DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded")))
+    spec = get_profile_spec(profile)
     endpoint_url = os.environ.get("ACX_GPU_ENDPOINT_URL") or None
     endpoint_configured = bool(endpoint_url)
     url_valid = endpoint_url is not None and _gpu_endpoint_url_is_valid(endpoint_url)
@@ -530,6 +540,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    description_profile = _resolve_description_profile()
     # Log version info at startup
     _log_startup_info()
 
@@ -604,7 +615,7 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    register_health_probes(app)
+    register_health_probes(app, description_profile=description_profile)
     register_metrics_route(app)
     register_version_route(app)
 
@@ -656,7 +667,12 @@ def register_metrics_route(app: FastAPI) -> None:
         )
 
 
-def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
+def register_health_probes(
+    app: FastAPI,
+    *,
+    model_cache_dir: Path | None = None,
+    description_profile: DescriptionProfile | None = None,
+) -> None:
     """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
 
     /health is NOT a liveness probe (HEALTHOBS-1-BR-07): it does a bounded
@@ -674,10 +690,12 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     existing onnx-count check; face_pipeline uses eager sha256 verification
     with mtime/size drift re-verify ([EMB-05]).
 
-    Settings are constructed once at registration (S3CR-06); only the profile
-    env key is re-read per probe (cheap). Invalid profile yields aggregated
-    UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
+    Settings are constructed once at registration (S3CR-06), including the
+    description profile validation; the request path uses that validated
+    profile instead of re-parsing the environment.
     """
+    if description_profile is None:
+        description_profile = _resolve_description_profile()
     commit_sha = _resolve_version_commit_sha() or "unknown"
     # Baked at image build (/app/.image-variant); resolve once like commit_sha.
     image_variant = _resolve_image_variant()
@@ -860,7 +878,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "profile": profile,
             },
             "embedding_runtime": embedding_runtime,
-            "description_adapter": await _description_adapter_readiness(),
+            "description_adapter": await _description_adapter_readiness(description_profile),
             "disk_headroom": disk_headroom_check.payload or {},
         }
 

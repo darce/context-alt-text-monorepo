@@ -378,54 +378,7 @@ const liveSuggestContext = (mediaId: number): DescribeOperationContext | null =>
   return stored.context;
 };
 
-const purgeInvalid = (): void => {
-  const tenantId = resolveTenantId();
-  const cachedRun = runContextByTenant.get(tenantId);
-  if (cachedRun !== undefined && cachedRun !== null && isDescribeOperationExpired(cachedRun)) {
-    runContextByTenant.delete(tenantId);
-    if (tenantId !== null) {
-      const key = describeOperationRunStorageKey(tenantId);
-      if (!removeStorageWithTombstone(key)) {
-        runContextByTenant.set(tenantId, null);
-      }
-    }
-  }
-
-  const cachedSuggest = suggestByTenant.get(tenantId);
-  if (cachedSuggest !== undefined) {
-    for (const [mediaId, context] of cachedSuggest) {
-      if (isDescribeOperationExpired(context)) {
-        cachedSuggest.delete(mediaId);
-        if (tenantId !== null) {
-          removeStorageWithTombstone(describeOperationMediaStorageKey(tenantId, mediaId));
-        }
-      }
-    }
-    if (cachedSuggest.size === 0) {
-      suggestByTenant.delete(tenantId);
-    }
-  }
-
-  if (tenantId === null) {
-    return;
-  }
-
-  const runKey = describeOperationRunStorageKey(tenantId);
-  if (storageTombstones.has(runKey)) {
-    return;
-  }
-  const storedRun = readStoredContext(runKey);
-  if (
-    storedRun.kind === 'value' &&
-    (storedRun.context.kind !== DESCRIBE_OPERATION_KIND.RUN ||
-      isDescribeOperationExpired(storedRun.context))
-  ) {
-    removeStorageWithTombstone(runKey);
-  }
-};
-
 export const subscribeDescribeOperationStore = (listener: () => void): (() => void) => {
-  purgeInvalid();
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
@@ -485,11 +438,9 @@ export const putDescribeOperationContext = (context: DescribeOperationContextInp
 export const clearDescribeRunContext = (): void => {
   const tenantId = resolveTenantId();
   const hadRun = runContextByTenant.has(tenantId);
-  let hadStoredRun = false;
   let removed = true;
   if (tenantId !== null) {
     const key = describeOperationRunStorageKey(tenantId);
-    hadStoredRun = readStorageItem(key).kind === 'value';
     removed = removeStorageWithTombstone(key);
     if (removed) {
       runContextByTenant.delete(tenantId);
@@ -501,7 +452,11 @@ export const clearDescribeRunContext = (): void => {
   } else {
     runContextByTenant.delete(tenantId);
   }
-  if (hadRun || hadStoredRun || !removed) {
+  // A clear can target a storage-only snapshot after a reload. Notify
+  // subscribers after the remove attempt without reading the key first: a
+  // failed remove must leave its raw value available for the tombstone to
+  // protect, and a getter must own the single storage-read boundary.
+  if (hadRun || tenantId !== null || !removed) {
     emitChange();
   }
 };
@@ -513,14 +468,12 @@ export const clearDescribeSuggestContext = (mediaId: number): void => {
   if (tenantSuggestContexts?.size === 0) {
     suggestByTenant.delete(tenantId);
   }
-  let hadStoredSuggest = false;
   let removed = true;
   if (tenantId !== null) {
     const key = describeOperationMediaStorageKey(tenantId, mediaId);
-    hadStoredSuggest = readStorageItem(key).kind === 'value';
     removed = removeStorageWithTombstone(key);
   }
-  if (hadSuggest || hadStoredSuggest || !removed) {
+  if (hadSuggest || tenantId !== null || !removed) {
     emitChange();
   }
 };

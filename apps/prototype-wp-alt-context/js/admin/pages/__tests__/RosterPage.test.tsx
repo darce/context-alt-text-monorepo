@@ -1,7 +1,19 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+
+import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
+import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterApi';
+import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
+import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
+import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
+import { RosterPage } from '../RosterPage';
 import { ClusterDrawerPanel } from '../roster/ClusterDrawerPanel';
-import type { ClusterSummary } from '../../api/recognition';
+import { useClusterActions } from '../roster/hooks/useClusterActions';
+import { useClusterDragDrop } from '../roster/hooks/useClusterDragDrop';
+import { useClusterMediaMap } from '../roster/hooks/useClusterMediaMap';
+import { useTopUnlabeledTotal } from '../roster/hooks/useTopUnlabeledTotal';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -41,6 +53,37 @@ vi.mock('../../../components/ui/combobox', () => ({
       </button>
     </div>
   ),
+}));
+
+vi.mock('../../hooks/useRecognitionHooks', () => ({
+  useRecognitionCluster: vi.fn(),
+}));
+
+vi.mock('../../hooks/useRosterHooks', () => ({
+  useRosterEntries: vi.fn(),
+  useCreatePerson: vi.fn(),
+  useUpdatePerson: vi.fn(),
+  useDeletePerson: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useClusterMediaMap', () => ({
+  useClusterMediaMap: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useClusterDragDrop', () => ({
+  useClusterDragDrop: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useClusterActions', () => ({
+  useClusterActions: vi.fn(),
+}));
+
+vi.mock('../roster/hooks/useTopUnlabeledTotal', () => ({
+  useTopUnlabeledTotal: vi.fn(),
+}));
+
+vi.mock('../roster/PersonWorkspacePanel', () => ({
+  PersonWorkspacePanel: () => null,
 }));
 
 const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary => ({
@@ -364,5 +407,114 @@ describe('ClusterDrawerPanel', () => {
     expect(screen.getByText('Unresolved face group')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open person review/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
+  });
+});
+
+const namedEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
+  id: 7,
+  person_uuid: 'person-uuid-alice',
+  name: 'Alice Anderson',
+  tags: ['family'],
+  cluster_count: 1,
+  clusters: [],
+  queue_memberships: [],
+  updated_at: '2026-01-01T00:00:00Z',
+  source_version: 1,
+  projection_status: 'current',
+  projection_refreshed_at: '2026-01-01T00:00:00Z',
+  ...overrides,
+});
+
+const dragDropState = {
+  dragPayload: null,
+  dropTarget: null,
+  isDragging: false,
+  handleFaceDragStart: vi.fn(),
+  handleFaceDragEnd: vi.fn(),
+  handleDropTargetChange: vi.fn(),
+  resetDragState: vi.fn(),
+};
+
+const clusterActionState = {
+  reassignMutation: createMockMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
+    mutate: vi.fn(),
+  }),
+  rescanMutation: createMockMutation<
+    BatchAnalyzeResponse,
+    Error,
+    { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
+  >({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  commitMutation: createMockMutation<
+    RosterClusterCommitResponse,
+    Error,
+    { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+  >({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  rescanGate: {
+    disabled: false,
+    'aria-disabled': undefined as true | undefined,
+    title: undefined as string | undefined,
+  },
+  errorMessage: null,
+  resetAll: vi.fn(),
+};
+
+const renderRosterPage = (): ReturnType<typeof render> => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <MemoryRouter initialEntries={['/']}>
+      <QueryClientProvider client={queryClient}>
+        <RosterPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+};
+
+describe('RosterPage headings [GPUFLOW-2 B1]', () => {
+  const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
+  const mockedUseRosterEntries = vi.mocked(useRosterEntries);
+  const mockedUseTopUnlabeledTotal = vi.mocked(useTopUnlabeledTotal);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({ data: undefined, isLoading: false, isError: false }),
+    );
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery<RosterEntry[], Error>({
+        data: [namedEntry(), namedEntry({ id: 8, person_uuid: 'person-uuid-bob', name: 'Bob' })],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseTopUnlabeledTotal.mockReturnValue(null);
+    vi.mocked(useCreatePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
+    vi.mocked(useUpdatePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
+    vi.mocked(useDeletePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
+    vi.mocked(useClusterMediaMap).mockReturnValue({});
+    vi.mocked(useClusterDragDrop).mockReturnValue(dragDropState);
+    vi.mocked(useClusterActions).mockReturnValue(clusterActionState);
+  });
+
+  it('exposes exactly one accessible heading named People', () => {
+    renderRosterPage();
+
+    const peopleHeadings = screen.getAllByRole('heading', { name: /^People$/ });
+    expect(peopleHeadings).toHaveLength(1);
+    expect(peopleHeadings[0].tagName).toBe('H1');
+    expect(peopleHeadings[0]).toHaveAttribute('id', 'acx-roster-title');
+    expect(screen.getByRole('heading', { name: 'Named people (2)' })).toBeVisible();
+    expect(
+      screen.queryByText('People are the faces you have named. Unnamed face groups are reviewed in the Review Queue.'),
+    ).not.toBeInTheDocument();
   });
 });

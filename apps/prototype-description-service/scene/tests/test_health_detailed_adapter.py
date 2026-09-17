@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jsonschema import Draft7Validator
 
-from scene.config.profiles import DescriptionProfile, get_profile_spec
+from scene.config.profiles import PROFILE_SPECS, DescriptionProfile, get_profile_spec
 
 GPU_ENDPOINT = "http://gpu.oraclevcn.com:8000"
 GPU_HOST = "gpu.oraclevcn.com"
@@ -32,7 +32,12 @@ ADAPTER_KEYS = {
     "fresh",
     "usable",
     "reason",
+    "model_id",
+    "model_version",
 }
+_UNAVAILABLE_PROFILES = tuple(profile for profile, spec in PROFILE_SPECS.items() if not spec.available)
+_PRIVATE_ADDRINFO = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))]
+_PUBLIC_ADDRINFO = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
 
 
 def _schema_document() -> dict[str, Any]:
@@ -95,6 +100,10 @@ def _get_adapter(client: TestClient) -> dict[str, Any]:
     return adapter
 
 
+def _patch_getaddrinfo(monkeypatch: pytest.MonkeyPatch, impl: Any) -> None:
+    monkeypatch.setattr("api.main.socket.getaddrinfo", impl)
+
+
 @pytest.fixture(autouse=True)
 def _reset_privacy_cache() -> None:
     from api import main as main_module
@@ -105,17 +114,21 @@ def _reset_privacy_cache() -> None:
 
 
 def test_schema_example_validates() -> None:
+    from api.main import wire_model_id
+
     document = _schema_document()
     Draft7Validator.check_schema(document)
     Draft7Validator(document).validate(document["examples"][0])
     adapter = document["examples"][0]["description_adapter"]
     assert set(adapter) == ADAPTER_KEYS
     gpu_spec = get_profile_spec(DescriptionProfile(adapter["profile"]))
-    assert gpu_spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
-    assert gpu_spec.model_version == "Q4_K_M"
+    assert adapter["model_id"] == wire_model_id(gpu_spec)
+    assert adapter["model_version"] == gpu_spec.model_version
 
 
 def test_unset_endpoint_is_not_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import AdapterReadinessReason, wire_model_id
+
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
     spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
@@ -128,15 +141,17 @@ def test_unset_endpoint_is_not_usable(tmp_path: Path, monkeypatch: pytest.Monkey
     assert adapter["checked_at"] is None
     assert adapter["fresh"] is False
     assert adapter["usable"] is False
-    assert adapter["reason"] == "endpoint_unconfigured"
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_UNCONFIGURED.value
+    assert adapter["model_id"] == wire_model_id(spec)
+    assert adapter["model_version"] == spec.model_version
 
 
 def test_non_private_endpoint_is_not_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from api import main as main_module
+    from api.main import AdapterReadinessReason, wire_model_id
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", GPU_ENDPOINT)
-    monkeypatch.setattr(main_module, "_resolved_addresses_are_private", lambda host: False)
+    _patch_getaddrinfo(monkeypatch, lambda *args, **kwargs: _PUBLIC_ADDRINFO)
     spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["profile"] == spec.profile.value
@@ -146,22 +161,31 @@ def test_non_private_endpoint_is_not_usable(tmp_path: Path, monkeypatch: pytest.
     assert adapter["endpoint_private"] is False
     assert adapter["fresh"] is True
     assert adapter["usable"] is False
-    assert adapter["reason"] == "endpoint_not_private"
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_NOT_PRIVATE.value
     assert isinstance(adapter["checked_at"], float)
+    assert adapter["model_id"] == wire_model_id(spec)
+    assert adapter["model_version"] == spec.model_version
 
 
 def test_allowlisted_fresh_endpoint_is_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from api import main as main_module
+    from api.main import wire_model_id
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", GPU_ENDPOINT)
-    monkeypatch.setattr(main_module, "_resolved_addresses_are_private", lambda host: True)
+    _patch_getaddrinfo(monkeypatch, lambda *args, **kwargs: _PRIVATE_ADDRINFO)
     spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
+    gpu_adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://127.0.0.1:9",
+        model_id=spec.model_id or "unavailable",
+        model_version=spec.model_version,
+        model_revision=spec.model_revision,
+        hub_repo=spec.hub_repo,
+    )
+    assert wire_model_id(spec) == gpu_adapter.model_id
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["profile"] == spec.profile.value
-    assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
-    assert spec.model_version == "Q4_K_M"
-    assert adapter["kind"] == "gpu"
+    assert adapter["kind"] == spec.adapter_kind.value
     assert adapter["endpoint_configured"] is True
     assert adapter["endpoint_allowlisted"] is True
     assert adapter["endpoint_private"] is True
@@ -169,18 +193,21 @@ def test_allowlisted_fresh_endpoint_is_usable(tmp_path: Path, monkeypatch: pytes
     assert adapter["usable"] is True
     assert adapter["reason"] is None
     assert isinstance(adapter["checked_at"], float)
+    assert adapter["model_id"] == gpu_adapter.model_id
+    assert adapter["model_version"] == spec.model_version
 
 
 def test_allowlisted_stale_cache_is_not_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from api import main as main_module
+    from api.main import AdapterReadinessReason
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", GPU_ENDPOINT)
 
-    def _forbid(host: str) -> bool:
-        raise AssertionError(f"stale cache must not re-resolve {host}")
+    def _forbid(*args: object, **kwargs: object) -> list[object]:
+        raise AssertionError(f"stale cache must not re-resolve {args!r}")
 
-    monkeypatch.setattr(main_module, "_resolved_addresses_are_private", _forbid)
+    _patch_getaddrinfo(monkeypatch, _forbid)
     now = time.time()
     main_module._endpoint_privacy_cache.seed(
         host=GPU_HOST,
@@ -194,18 +221,21 @@ def test_allowlisted_stale_cache_is_not_usable(tmp_path: Path, monkeypatch: pyte
     assert adapter["endpoint_private"] is True
     assert adapter["fresh"] is False
     assert adapter["usable"] is False
-    assert adapter["reason"] == "endpoint_resolution_pending"
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
 
 
 def test_cpu_profile_has_no_gpu_endpoint_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import wire_model_id
+
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
     spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["profile"] == spec.profile.value
     assert adapter["kind"] == spec.adapter_kind.value
-    assert spec.model_id == "microsoft/Florence-2-base-ft"
-    assert spec.model_version == "florence-2-base-ft"
+    assert adapter["model_id"] == wire_model_id(spec)
+    assert adapter["model_id"] == spec.model_id
+    assert adapter["model_version"] == spec.model_version
     assert adapter["endpoint_configured"] is False
     assert adapter["usable"] is True
     assert adapter["reason"] is None
@@ -213,19 +243,88 @@ def test_cpu_profile_has_no_gpu_endpoint_reason(tmp_path: Path, monkeypatch: pyt
     assert adapter["endpoint_private"] is None
 
 
-def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from api import main as main_module
+@pytest.mark.parametrize("profile", _UNAVAILABLE_PROFILES, ids=lambda profile: profile.value)
+def test_unavailable_profile_is_not_usable(
+    profile: DescriptionProfile, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from api.main import AdapterReadinessReason, wire_model_id
 
-    calls: list[str] = []
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", profile.value)
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    spec = get_profile_spec(profile)
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert spec.available is False
+    assert adapter["profile"] == spec.profile.value
+    assert adapter["kind"] == spec.adapter_kind.value
+    assert adapter["usable"] is False
+    assert adapter["reason"] == AdapterReadinessReason.PROFILE_UNAVAILABLE.value
+    assert adapter["model_id"] == wire_model_id(spec)
+    assert adapter["model_version"] == (None if adapter["model_id"] is None else spec.model_version)
 
-    def _stalled(host: str) -> bool:
-        calls.append(host)
-        time.sleep(5)
-        return True
+
+@pytest.mark.parametrize("endpoint_url", ["gpu.oraclevcn.com", "ftp://10.0.0.5"])
+def test_invalid_gpu_endpoint_url_skips_dns(
+    endpoint_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from api.main import AdapterReadinessReason
+
+    def _forbid(*args: object, **kwargs: object) -> list[object]:
+        raise AssertionError("resolver must not be called for an invalid GPU endpoint URL")
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", endpoint_url)
+    _patch_getaddrinfo(monkeypatch, _forbid)
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert adapter["endpoint_configured"] is True
+    assert adapter["usable"] is False
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_INVALID_URL.value
+    assert adapter["fresh"] is False
+
+
+def test_gaierror_is_resolution_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import AdapterReadinessReason
+
+    def _raise_gaierror(*args: object, **kwargs: object) -> list[object]:
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", GPU_ENDPOINT)
-    monkeypatch.setattr(main_module, "_resolved_addresses_are_private", _stalled)
+    _patch_getaddrinfo(monkeypatch, _raise_gaierror)
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert adapter["endpoint_configured"] is True
+    assert adapter["endpoint_allowlisted"] is True
+    assert adapter["endpoint_private"] is None
+    assert adapter["fresh"] is False
+    assert adapter["usable"] is False
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
+
+
+def test_health_detailed_does_not_read_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise_provider() -> None:
+        raise RuntimeError("health path must not construct DescriptionSettings or read secrets")
+
+    monkeypatch.setattr("shared.secrets.get_secret_provider", _raise_provider)
+    monkeypatch.setattr("scene.config.settings.get_secret_provider", _raise_provider)
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert adapter["usable"] is True
+    assert adapter["reason"] is None
+
+
+def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import AdapterReadinessReason
+
+    calls: list[str] = []
+
+    def _stalled(host: str, *args: object, **kwargs: object) -> list[object]:
+        calls.append(host)
+        time.sleep(5)
+        return _PRIVATE_ADDRINFO
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", GPU_ENDPOINT)
+    _patch_getaddrinfo(monkeypatch, _stalled)
     client = _build_client(tmp_path)
 
     started = time.perf_counter()
@@ -233,7 +332,7 @@ def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch
     elapsed = time.perf_counter() - started
     assert elapsed < 1, f"/health/detailed stalled-resolver bound exceeded: {elapsed:.3f}s"
     assert adapter["usable"] is False
-    assert adapter["reason"] == "endpoint_resolution_pending"
+    assert adapter["reason"] == AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
     assert adapter["endpoint_private"] is None
     assert adapter["fresh"] is False
     assert calls == [GPU_HOST]
@@ -243,7 +342,7 @@ def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch
     repeat_elapsed = time.perf_counter() - started_repeat
     assert repeat_elapsed < 1, f"repeated stalled resolve exceeded bound: {repeat_elapsed:.3f}s"
     assert repeated["usable"] is False
-    assert repeated["reason"] == "endpoint_resolution_pending"
+    assert repeated["reason"] == AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
     assert calls == [GPU_HOST]
 
 
@@ -252,12 +351,12 @@ def test_privacy_cache_single_flight_on_concurrent_stalled_resolutions(monkeypat
 
     calls: list[str] = []
 
-    def _stalled(host: str) -> bool:
+    def _stalled(host: str, *args: object, **kwargs: object) -> list[object]:
         calls.append(host)
         time.sleep(5)
-        return True
+        return _PRIVATE_ADDRINFO
 
-    monkeypatch.setattr("api.main._resolved_addresses_are_private", _stalled)
+    _patch_getaddrinfo(monkeypatch, _stalled)
     cache = EndpointPrivacyCache()
 
     async def _run() -> None:
@@ -279,20 +378,16 @@ def test_privacy_cache_single_flight_on_concurrent_stalled_resolutions(monkeypat
     asyncio.run(_run())
 
 
-def test_gaierror_leaves_last_value_stale(monkeypatch: pytest.MonkeyPatch) -> None:
-    from api.main import EndpointPrivacyCache
+def test_seeded_profile_model_identity_is_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import wire_model_id
 
-    def _raise_gaierror(host: str) -> bool:
-        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
-
-    monkeypatch.setattr("api.main._resolved_addresses_are_private", _raise_gaierror)
-    cache = EndpointPrivacyCache()
-    checked_at = time.time() - 5
-    cache.seed(host=GPU_HOST, value=True, checked_at=checked_at, last_attempt_at=None)
-
-    async def _run() -> None:
-        value, cached_at = await cache.refresh(GPU_HOST)
-        assert value is True
-        assert cached_at == checked_at
-
-    asyncio.run(_run())
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    spec = get_profile_spec(DescriptionProfile.SEEDED)
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert spec.model_id is None
+    assert wire_model_id(spec) is None
+    assert adapter["model_id"] is None
+    assert adapter["model_version"] is None
+    assert adapter["usable"] is True
+    assert adapter["reason"] is None

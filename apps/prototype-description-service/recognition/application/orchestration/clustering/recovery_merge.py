@@ -127,6 +127,7 @@ class RecoveryMergeResult:
     purged_receipts: int = 0
     suggestions_emitted: int = 0
     applied: bool = False
+    skip_reason: str | None = None
 
 
 class RecoveryReceiptStore(Protocol):
@@ -749,7 +750,7 @@ class _SessionReceiptStore:
         return int(result.rowcount or 0)
 
 
-async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str) -> int:
+async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now: datetime) -> int:
     """Carry reverted receipts into durable identity-to-cluster blocks.
 
     Receipts are intentionally purged later in the recovery run, so this
@@ -822,11 +823,26 @@ async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str) -> i
                         reason=RECOVERY_REVERT_BLOCK_REASON,
                         expires_at=None,
                     )
-                )
-                persisted += 1
+            )
+            persisted += 1
+            continue
+            if block.reason == RECOVERY_REVERT_BLOCK_REASON:
                 continue
-            block.reason = RECOVERY_REVERT_BLOCK_REASON
-            block.expires_at = None
+            if block.expires_at is None or block.expires_at > now:
+                continue
+            await session.delete(block)
+            await session.flush()
+            session.add(
+                IdentityClusterBlock(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant_uuid,
+                    identity_id=identity_id,
+                    blocked_cluster_id=survivor_id,
+                    reason=RECOVERY_REVERT_BLOCK_REASON,
+                    expires_at=None,
+                )
+            )
+            persisted += 1
     return persisted
 
 
@@ -977,27 +993,6 @@ def _clusters_from_identities(
     return recovered
 
 
-def _binding_from_clusters(
-    clusters: Sequence[RecoveryCluster],
-    fallback: EmbeddingSpaceBinding | None,
-) -> EmbeddingSpaceBinding | None:
-    if fallback is not None:
-        return fallback
-    for cluster in clusters:
-        for member in cluster.members:
-            if not member.embedding_model:
-                continue
-            return EmbeddingSpaceBinding(
-                embedding_model_id=member.embedding_model,
-                embedding_model_revision="unbound",
-                embedding_dimensionality=int(np.asarray(member.embedding).shape[-1]),
-                distance_metric="cosine",
-                dataset_manifest_digest="unbound",
-                calibration_run_digest="unbound",
-            )
-    return None
-
-
 class _RecoveryCasMissError(RuntimeError):
     """The planned source membership no longer matches the database snapshot."""
 
@@ -1051,6 +1046,17 @@ async def _apply_recovery_receipt(
                 .values(cluster_id=destination_uuid)
             )
             if int(moved.rowcount or 0) != len(moved_ids):
+                raise _RecoveryCasMissError
+
+            moved_identity_stamp = await session.execute(
+                update(MediaIdentityModel)
+                .where(
+                    MediaIdentityModel.tenant_id == tenant_uuid,
+                    MediaIdentityModel.id.in_(moved_ids),
+                )
+                .values(moved_by_merge_id=receipt.receipt_id)
+            )
+            if int(moved_identity_stamp.rowcount or 0) != len(moved_ids):
                 raise _RecoveryCasMissError
 
             remaining = await session.execute(
@@ -1115,6 +1121,7 @@ async def run_recovery_merge(
     clustering = settings or getattr(assignment_writer, "_settings", None) or ClusteringSettings()
     if not clustering.recovery_merge_enabled:
         return RecoveryMergeResult()
+    clock = now or datetime.now(tz=UTC)
 
     cluster_repo = assignment_writer.cluster_repository
     session = getattr(assignment_writer, "_session", None) or getattr(cluster_repo, "_session", None)
@@ -1122,7 +1129,19 @@ async def run_recovery_merge(
     if store is None:
         store = _SessionReceiptStore(session, tenant_id) if session is not None else InMemoryReceiptStore()
     if session is not None:
-        await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id)
+        await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=clock)
+
+    if runtime_binding is None:
+        logger.warning(
+            "[clustering] recovery_merge_skip reason=runtime_binding_unavailable tenant_id=%s",
+            tenant_id,
+        )
+        purged = await store.purge_expired_or_reverted(now=clock)
+        return RecoveryMergeResult(
+            purged_receipts=purged,
+            applied=False,
+            skip_reason="runtime_binding_unavailable",
+        )
 
     domain_clusters = await cluster_repo.get_by_tenant(tenant_id, limit=1000)
     cluster_ids = [str(cluster.id) for cluster in domain_clusters if cluster.id is not None]
@@ -1140,11 +1159,6 @@ async def run_recovery_merge(
             members_by_cluster = {str(key): value for key, value in loaded.items()}
         recovered = _clusters_from_identities(domain_clusters, members_by_cluster)
     typed_policy = policy or default_cluster_recovery_calibration_policy()
-    binding = _binding_from_clusters(recovered, runtime_binding)
-    if binding is None:
-        logger.info("[clustering] recovery_merge_skip reason=unbound_runtime_embedding_space")
-        purged = await store.purge_expired_or_reverted(now=now or datetime.now(tz=UTC))
-        return RecoveryMergeResult(purged_receipts=purged, applied=False)
 
     emitter = suggestion_emitter
     if emitter is None and merge_suggestion_service is not None:
@@ -1156,10 +1170,10 @@ async def run_recovery_merge(
         clusters=list(snapshot.values()),
         settings=clustering,
         policy=typed_policy,
-        runtime_binding=binding,
+        runtime_binding=runtime_binding,
         receipt_store=store,
         suggestion_emitter=emitter,
-        now=now,
+        now=clock,
     )
 
     if not result.receipts:

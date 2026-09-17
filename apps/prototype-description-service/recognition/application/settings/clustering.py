@@ -565,6 +565,12 @@ class ClusterRecoveryCalibrationPolicy(_ForbidModel):
     representative: RepresentativePolicy
     evaluation: EvaluationPolicy
 
+    @model_validator(mode="after")
+    def validate_apply_mode_status(self) -> ClusterRecoveryCalibrationPolicy:
+        if self.apply_mode is CalibrationApplyMode.ACCEPTED and self.status is not CalibrationPolicyStatus.ACCEPTED:
+            raise ValueError("apply_mode=accepted requires status=accepted")
+        return self
+
     def abstained_cells(self) -> frozenset[str]:
         """Return the closed set of abstained ``<quality_band>×<operating_condition>`` cells."""
         strata = self.abstained_strata
@@ -760,13 +766,16 @@ def calibration_policy_is_applicable(
     policy: ClusterRecoveryCalibrationPolicy,
     runtime: EmbeddingSpaceBinding,
 ) -> bool:
-    """True only when apply_mode is accepted and the embedding-space binding matches.
+    """True only when status and apply_mode are accepted and binding matches.
 
     Unbound policy fields, a binding mismatch, or an all-abstained policy keep
     apply_mode effectively disabled (CALIBR-M-05). The stored apply_mode is not
     mutated.
     """
-    if policy.apply_mode is not CalibrationApplyMode.ACCEPTED:
+    if (
+        policy.status is not CalibrationPolicyStatus.ACCEPTED
+        or policy.apply_mode is not CalibrationApplyMode.ACCEPTED
+    ):
         return False
     binding = policy.binding
     matches = (

@@ -465,6 +465,7 @@ class OutboxDrain {
 					'attempts' => $attempts,
 					'last_error_code' => null,
 					'last_error_message' => null,
+					'last_error_retryable' => null,
 					'acknowledged_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
 					'last_attempted_at' => $attempted_at,
 					'first_failed_at' => null,
@@ -472,7 +473,7 @@ class OutboxDrain {
 					'acknowledged_at' => $attempted_at,
 				),
 				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-				array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
+				array( '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
 				array( '%d', '%s' )
 			);
 			return;
@@ -488,11 +489,12 @@ class OutboxDrain {
 					'attempts' => $attempts,
 					'last_error_code' => $this->normalize_text( $result['conflict_code'] ?? '', 'version_conflict' ),
 					'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Remote curation replay conflict.' ),
+					'last_error_retryable' => null,
 					'last_attempted_at' => $attempted_at,
 					'next_attempt_at' => null,
 				),
 				array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-				array( '%s', '%d', '%s', '%s', '%s', '%s' ),
+				array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
 				array( '%d', '%s' )
 			);
 			return;
@@ -525,12 +527,13 @@ class OutboxDrain {
 				'attempts' => $attempts,
 				'last_error_code' => $this->normalize_text( $result['error_code'] ?? '', 'dispatch_failed' ),
 				'last_error_message' => $this->normalize_text( $result['error_message'] ?? '', 'Outbox dispatch failed.' ),
+				'last_error_retryable' => $retryable ? 1 : 0,
 				'last_attempted_at' => $attempted_at,
 				'first_failed_at' => $first_failed_at,
 				'next_attempt_at' => $next_attempt_at,
 			),
 			array( 'id' => $outbox_id, 'status' => OutboxStatus::IN_FLIGHT ),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
+			array( '%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s' ),
 			array( '%d', '%s' )
 		);
 	}

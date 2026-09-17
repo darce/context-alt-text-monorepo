@@ -34,9 +34,7 @@ use function json_decode;
 use function max;
 use function method_exists;
 use function min;
-use function preg_match_all;
 use function sprintf;
-use function strtolower;
 use function trim;
 use function wp_json_encode;
 
@@ -53,33 +51,6 @@ class OutboxMaintenanceService {
 	private const MAX_PURGE_BATCH_ITERATIONS = 20;
 	private const AUTO_ATTEMPT_PAYLOAD_KEY = 'acx_auto_attempts';
 	private const DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED = 'auto_retry_exhausted';
-	/** @var string[] Non-retryable dispatcher codes (auth/4xx/invalid payload). */
-	private const NON_RETRYABLE_ERROR_CODES = array(
-		'invalid_payload',
-		'unauthorized',
-		'forbidden',
-		'not_found',
-	);
-	/** @var string[] Explicit transient dispatcher/transport codes safe for automatic retry. */
-	private const RETRYABLE_ERROR_CODES = array(
-		'connection_error',
-		'connection_timeout',
-		'connect_timeout',
-		'bad_gateway',
-		'gateway_timeout',
-		'http_request_failed',
-		'network_error',
-		'read_timeout',
-		'request_timeout',
-		'service_unavailable',
-		'timeout',
-		'too_many_requests',
-		'transport_error',
-		'upstream_timeout',
-		'breaker_open',
-		'circuit_breaker_open',
-		'circuit_open',
-	);
 	// E15-35 Slice 2 bulk-requeue tunables (filterable, fail-safe floored at 1).
 	private const DEFAULT_BULK_RETRY_MAX_ROWS = 1000;
 	private const DEFAULT_BULK_RETRY_PACING_STRIDE_SECONDS = 60;
@@ -163,8 +134,9 @@ class OutboxMaintenanceService {
 	 * OBS-05 counters for spa-deadletter /sync/health.
 	 *
 	 * `failed` is FAILED rows still eligible for automatic retry.
-	 * `dead_lettered` is FAILED rows with a terminal reason (auto_retry_exhausted
-	 * or a non-retryable dispatcher code). Both remain operator-visible/retryable.
+	 * `dead_lettered` is FAILED rows with a terminal retryability decision
+	 * (auto_retry_exhausted or a false/NULL retryable flag). Both remain
+	 * operator-visible/retryable.
 	 * Age is created_at of the oldest pending or failed row; 0 when the tenant has none.
 	 * Returns false when the adapter is unavailable so callers do not fabricate zeros.
 	 *
@@ -193,25 +165,24 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$terminal_error_codes = array_merge(
-			self::NON_RETRYABLE_ERROR_CODES,
-			array( self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED )
-		);
-		$terminal_error_placeholders = implode( ', ', array_fill( 0, count( $terminal_error_codes ), '%s' ) );
 		$health_sql =
 			'SELECT
 				SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS pending,
-				SUM(CASE WHEN status = %s AND (last_error_code IS NULL OR last_error_code NOT IN (' . $terminal_error_placeholders . ')) THEN 1 ELSE 0 END) AS failed,
-				SUM(CASE WHEN status = %s AND last_error_code IN (' . $terminal_error_placeholders . ') THEN 1 ELSE 0 END) AS dead_lettered,
+				SUM(CASE WHEN status = %s AND last_error_retryable = 1 AND last_error_code <> %s THEN 1 ELSE 0 END) AS failed,
+				SUM(CASE WHEN status = %s AND (last_error_retryable IS NULL OR last_error_retryable <> 1 OR last_error_code IS NULL OR last_error_code = %s) THEN 1 ELSE 0 END) AS dead_lettered,
 				MIN(created_at) AS oldest_created_at
 			FROM %i
 			WHERE tenant_id = %s AND status IN (%s, %s)';
-		$health_args = array_merge(
-			array( OutboxStatus::PENDING, OutboxStatus::FAILED ),
-			$terminal_error_codes,
-			array( OutboxStatus::FAILED ),
-			$terminal_error_codes,
-			array( $this->table_name, $normalized_tenant_id, OutboxStatus::PENDING, OutboxStatus::FAILED )
+		$health_args = array(
+			OutboxStatus::PENDING,
+			OutboxStatus::FAILED,
+			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
+			OutboxStatus::FAILED,
+			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
+			$this->table_name,
+			$normalized_tenant_id,
+			OutboxStatus::PENDING,
+			OutboxStatus::FAILED,
 		);
 		$rows = $wpdb->get_results(
 			$wpdb->prepare( $health_sql, ...$health_args ),
@@ -341,7 +312,7 @@ class OutboxMaintenanceService {
 			$after_id = (int) ( $last['id'] ?? $after_id );
 
 			foreach ( $candidates as $candidate ) {
-				if ( ! $this->is_retryable_error_code( $candidate['last_error_code'] ?? null ) ) {
+				if ( $this->is_terminal_failed_row( $candidate ) ) {
 					continue;
 				}
 
@@ -466,12 +437,13 @@ class OutboxMaintenanceService {
 		$retention_days = $this->resolve_positive_int_tunable( 'acx_sync_purge_failed_days', self::DEFAULT_FAILED_RETENTION_DAYS );
 		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
 		$cutoff_epoch = (int) current_time( 'timestamp' ) - ( $retention_days * $day_seconds );
-		$codes = self::NON_RETRYABLE_ERROR_CODES;
-		$placeholders = implode( ', ', array_fill( 0, count( $codes ), '%s' ) );
-		$prepare_args = array_merge(
-			array( $this->table_name, $normalized_tenant_id, OutboxStatus::FAILED, max( 0, $after_id ) ),
-			$codes,
-			array( max( 1, $batch_size ) )
+		$prepare_args = array(
+			$this->table_name,
+			$normalized_tenant_id,
+			OutboxStatus::FAILED,
+			max( 0, $after_id ),
+			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
+			max( 1, $batch_size ),
 		);
 
 		$rows = $wpdb->get_results(
@@ -480,7 +452,7 @@ class OutboxMaintenanceService {
 				// marked during the reclaim pass above and must remain visible to the operator;
 				// it must not disappear in that same maintenance run merely because its original
 				// failure timestamp is old.
-				"SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, attempts FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_code IN ({$placeholders}) ORDER BY id ASC LIMIT %d",
+				'SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, last_error_retryable, attempts FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND (last_error_retryable IS NULL OR last_error_retryable <> 1 OR last_error_code IS NULL) AND (last_error_code IS NULL OR last_error_code <> %s) ORDER BY id ASC LIMIT %d',
 				...$prepare_args
 			),
 			ARRAY_A
@@ -503,6 +475,12 @@ class OutboxMaintenanceService {
 
 			++$scanned;
 			$last_id = max( $last_id, (int) ( $row['id'] ?? 0 ) );
+			if (
+				! $this->is_terminal_failed_row( $row )
+				|| self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === (string) ( $row['last_error_code'] ?? '' )
+			) {
+				continue;
+			}
 			if ( ! $this->failed_row_is_past_retention( $row, $cutoff_epoch ) ) {
 				continue;
 			}
@@ -522,8 +500,9 @@ class OutboxMaintenanceService {
 					'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
 					'attempts' => max( 0, (int) ( $row['attempts'] ?? 0 ) ),
 					'first_failed_at' => $this->fingerprint_nullable_value( $row['first_failed_at'] ?? null ),
+					'last_error_retryable' => $this->fingerprint_nullable_int( $row['last_error_retryable'] ?? null ),
 				),
-				array( '%d', '%s', '%s', '%s', '%s', '%d', '%s' )
+				array( '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%d' )
 			);
 			if ( is_numeric( $removed ) && (int) $removed > 0 ) {
 				++$deleted;
@@ -556,11 +535,12 @@ class OutboxMaintenanceService {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, attempts, last_error_code, last_error_message, first_failed_at, last_attempted_at, created_at, payload FROM %i WHERE tenant_id = %s AND status = %s AND id > %d ORDER BY id ASC LIMIT %d',
+				'SELECT id, attempts, last_error_code, last_error_message, last_error_retryable, first_failed_at, last_attempted_at, created_at, payload FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_retryable = 1 AND last_error_code <> %s ORDER BY id ASC LIMIT %d',
 				$this->table_name,
 				$normalized_tenant_id,
 				OutboxStatus::FAILED,
 				max( 0, $after_id ),
+				self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
 				max( 1, $limit )
 			),
 			ARRAY_A
@@ -618,11 +598,12 @@ class OutboxMaintenanceService {
 				'payload' => $payload_json,
 				'last_error_code' => null,
 				'last_error_message' => null,
+				'last_error_retryable' => null,
 				'last_attempted_at' => null,
 				'first_failed_at' => null,
 				'next_attempt_at' => $this->compute_auto_retry_next_attempt_at( $next_auto_attempts ),
 			),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 			$this->failed_row_fingerprint( $row )
 		);
 		if ( false === $updated ) {
@@ -675,44 +656,16 @@ class OutboxMaintenanceService {
 		return gmdate( 'Y-m-d H:i:s', (int) current_time( 'timestamp' ) + $delay );
 	}
 
-	private function is_retryable_error_code( mixed $error_code ): bool {
-		$normalized = is_string( $error_code ) ? strtolower( trim( $error_code ) ) : '';
-		if ( '' === $normalized ) {
-			return false;
-		}
-
-		if (
-			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $normalized
-			|| in_array( $normalized, self::NON_RETRYABLE_ERROR_CODES, true )
-		) {
-			return false;
-		}
-
-		$matches = array();
-		if ( preg_match_all( '/(?<!\d)([45]\d{2})(?!\d)/', $normalized, $matches ) > 0 ) {
-			$has_retryable_http_status = false;
-			foreach ( $matches[1] as $status_match ) {
-				$status = (int) $status_match;
-				if ( $status >= 400 && $status < 500 && ! in_array( $status, array( 408, 409, 429 ), true ) ) {
-					return false;
-				}
-
-				if ( $status >= 500 || in_array( $status, array( 408, 409, 429 ), true ) ) {
-					$has_retryable_http_status = true;
-				}
-			}
-
-			return $has_retryable_http_status;
-		}
-
-		return in_array( $normalized, self::RETRYABLE_ERROR_CODES, true );
-	}
-
 	/**
 	 * @param array<string,mixed> $row
 	 */
 	private function is_terminal_failed_row( array $row ): bool {
-		return ! $this->is_retryable_error_code( $row['last_error_code'] ?? null );
+		$retryable = $row['last_error_retryable'] ?? null;
+		$error_code = $row['last_error_code'] ?? null;
+
+		return 1 !== (int) $retryable
+			|| ! is_string( $error_code )
+			|| self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $error_code;
 	}
 
 	/**
@@ -801,13 +754,14 @@ class OutboxMaintenanceService {
 				'payload' => $payload_json,
 				'last_error_code' => null,
 				'last_error_message' => null,
+				'last_error_retryable' => null,
 				'last_attempted_at' => null,
 				// E15-35: a requeued op starts a fresh retry window — stale first_failed_at
 				// would instantly re-terminate it on the next retryable failure.
 				'first_failed_at' => null,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 		if ( ! $updated ) {
 			return false;
@@ -906,6 +860,7 @@ class OutboxMaintenanceService {
 				payload = JSON_REMOVE(payload, %s),
 				last_error_code = NULL,
 				last_error_message = NULL,
+				last_error_retryable = NULL,
 				last_attempted_at = NULL,
 				first_failed_at = NULL,
 				next_attempt_at = CASE id ' . implode( ' ', $case_fragments ) . ' ELSE next_attempt_at END
@@ -992,11 +947,12 @@ class OutboxMaintenanceService {
 			'expected_base_version' => max( 0, $backend_version ),
 			'last_error_code' => null,
 			'last_error_message' => null,
+			'last_error_retryable' => null,
 			// E15-35: re-enqueue starts a fresh retry window (see retry_failed_operation).
 			'first_failed_at' => null,
 			'next_attempt_at' => null,
 		);
-		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s' );
+		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
 
 		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
 		if ( '' !== $normalized_merged_value ) {
@@ -1045,7 +1001,7 @@ class OutboxMaintenanceService {
 	 *
 	 * @param array<string,mixed> $data
 	 * @param string[] $format
-	 * @param array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string}|null $fingerprint
+	 * @param array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string,last_error_retryable:?int}|null $fingerprint
 	 * @return int|false
 	 */
 	private function update_operation_status( int $outbox_id, string $tenant_id, string $expected_status, array $data, array $format, ?array $fingerprint = null ): int|false {
@@ -1079,9 +1035,10 @@ class OutboxMaintenanceService {
 					'last_error_code' => $fingerprint['last_error_code'],
 					'attempts' => $fingerprint['attempts'],
 					'first_failed_at' => $fingerprint['first_failed_at'],
+					'last_error_retryable' => $fingerprint['last_error_retryable'],
 				)
 			);
-			$where_format = array_merge( $where_format, array( '%s', '%s', '%d', '%s' ) );
+			$where_format = array_merge( $where_format, array( '%s', '%s', '%d', '%s', '%d' ) );
 		}
 
 		$updated = $wpdb->update(
@@ -1106,7 +1063,7 @@ class OutboxMaintenanceService {
 
 	/**
 	 * @param array<string,mixed> $row
-	 * @return array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string}
+	 * @return array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string,last_error_retryable:?int}
 	 */
 	private function failed_row_fingerprint( array $row ): array {
 		return array(
@@ -1114,10 +1071,15 @@ class OutboxMaintenanceService {
 			'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
 			'attempts' => max( 0, (int) ( $row['attempts'] ?? 0 ) ),
 			'first_failed_at' => $this->fingerprint_nullable_value( $row['first_failed_at'] ?? null ),
+			'last_error_retryable' => $this->fingerprint_nullable_int( $row['last_error_retryable'] ?? null ),
 		);
 	}
 
 	private function fingerprint_nullable_value( mixed $value ): ?string {
 		return null === $value ? null : (string) $value;
+	}
+
+	private function fingerprint_nullable_int( mixed $value ): ?int {
+		return null === $value ? null : (int) $value;
 	}
 }

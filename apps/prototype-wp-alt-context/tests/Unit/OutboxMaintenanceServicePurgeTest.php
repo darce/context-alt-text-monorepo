@@ -69,9 +69,9 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $recentStamp = gmdate('Y-m-d H:i:s', $now - (2 * 86400));
         $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildFailedOutboxRow(41, $tenantId, 'invalid_payload', $oldStamp),
-            $this->buildFailedOutboxRow(42, $tenantId, 'unauthorized', $recentStamp),
-            $this->buildFailedOutboxRow(43, $tenantId, 'auto_retry_exhausted', $oldStamp),
+            $this->buildFailedOutboxRow(41, $tenantId, 'remote_error', $oldStamp, 0),
+            $this->buildFailedOutboxRow(42, $tenantId, 'remote_error', $recentStamp, 0),
+            $this->buildFailedOutboxRow(43, $tenantId, 'auto_retry_exhausted', $oldStamp, 1),
         ];
 
         $syncState = $this->trackingSyncStateRepository();
@@ -85,15 +85,16 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $purged['outbox']);
         $this->assertSame(1, $syncState->refreshCount);
 
-        $selectQuery = $this->findQueryContaining($wpdb->queries, 'last_error_code IN');
-        $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, attempts FROM `wp_acx_sync_outbox`', $selectQuery);
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'last_error_retryable IS NULL');
+        $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, last_error_retryable, attempts FROM `wp_acx_sync_outbox`', $selectQuery);
         $this->assertStringContainsString("status = '" . OutboxStatus::FAILED . "'", $selectQuery);
-        $this->assertStringContainsString("'invalid_payload'", $selectQuery);
-        $this->assertStringContainsString("'unauthorized'", $selectQuery);
+        $this->assertStringContainsString("last_error_code <> 'auto_retry_exhausted'", $selectQuery);
+        $this->assertStringNotContainsString('last_error_code IN', $selectQuery);
 
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_sync_outbox');
         $this->assertStringContainsString("last_attempted_at = '{$oldStamp}'", $deleteQuery);
-        $this->assertStringContainsString("last_error_code = 'invalid_payload'", $deleteQuery);
+        $this->assertStringContainsString("last_error_code = 'remote_error'", $deleteQuery);
+        $this->assertStringContainsString('last_error_retryable = 0', $deleteQuery);
         $this->assertStringContainsString('attempts = 1', $deleteQuery);
         $this->assertStringContainsString("first_failed_at = '{$oldStamp}'", $deleteQuery);
 
@@ -113,7 +114,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $oldStamp = gmdate('Y-m-d H:i:s', (int) current_time('timestamp') - (10 * 86400));
         $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildFailedOutboxRow(51, $tenantId, 'forbidden', $oldStamp),
+            $this->buildFailedOutboxRow(51, $tenantId, 'remote_error', $oldStamp, 0),
         ];
 
         $syncState = $this->trackingSyncStateRepository();
@@ -142,7 +143,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         ]);
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
             $this->buildFailedOutboxRow(11, $tenantId, 'transport_error'),
-            $this->buildFailedOutboxRow(12, $tenantId, 'invalid_payload'),
+            $this->buildFailedOutboxRow(12, $tenantId, 'remote_error', null, 0),
         ];
 
         $before = (int) current_time('timestamp');
@@ -179,15 +180,15 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
     }
 
     /**
-     * @dataProvider retryableErrorCodeProvider
+     * @dataProvider retryabilityFlagProvider
      */
-    public function testPurgeReclaimsOnlyAllowlistedTransientErrorCodes(string $errorCode, bool $expectedRetry): void
+    public function testPurgeClassifiesFailedRowsFromPersistedRetryabilityFlag(string $errorCode, ?int $retryable, bool $expectedRetry): void
     {
         global $wpdb;
 
-        $tenantId = 'tenant-retryability-' . md5($errorCode);
+        $tenantId = 'tenant-retryability-' . md5($errorCode . (string) $retryable);
         $wpdb->defaultQueryResult = 0;
-        $row = $this->buildFailedOutboxRow(31, $tenantId, $errorCode);
+        $row = $this->buildFailedOutboxRow(31, $tenantId, $errorCode, null, $retryable);
         $wpdb->tableRows['wp_acx_sync_outbox'] = [$row];
 
         $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
@@ -199,25 +200,38 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
     }
 
     /**
-     * @return array<string,array{string,bool}>
+     * @return array<string,array{string,?int,bool}>
      */
-    public static function retryableErrorCodeProvider(): array
+    public static function retryabilityFlagProvider(): array
     {
         return [
-            'http 400' => ['http_400', false],
-            'http 401' => ['http_401', false],
-            'http 403' => ['http_403', false],
-            'http 404' => ['http_404', false],
-            'http 422' => ['http_422', false],
-            'http 500' => ['http_500', true],
-            'http 502' => ['backend_502', true],
-            'http 503' => ['remote_http_503', true],
-            'http 504' => ['status_504', true],
-            'http 429' => ['http_429', true],
-            'timeout' => ['timeout', true],
-            'unknown' => ['unknown_failure', false],
-            'generic remote error' => ['remote_error', false],
+            'remote error retryable' => ['remote_error', 1, true],
+            'unexpected response retryable' => ['unexpected_response', 1, true],
+            'remote error terminal' => ['remote_error', 0, false],
+            'remote error unknown flag' => ['remote_error', null, false],
+            'http 400 marked retryable' => ['http_400', 1, true],
+            'timeout marked terminal' => ['timeout', 0, false],
         ];
+    }
+
+    public function testPurgeRemovesOldRemoteErrorMarkedNonRetryable(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-remote-error-terminal';
+        $oldStamp = gmdate('Y-m-d H:i:s', (int) current_time('timestamp') - (8 * 86400));
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(32, $tenantId, 'remote_error', $oldStamp, 0),
+            $this->buildFailedOutboxRow(33, $tenantId, 'remote_error', $oldStamp, null),
+        ];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['retried']);
+        $this->assertSame(2, $purged['purged_failed']);
+        $this->assertSame([], $wpdb->tableRows['wp_acx_sync_outbox']);
     }
 
     public function testPurgeDeadLettersRetryableFailedRowsAfterMaxAutoAttempts(): void
@@ -246,6 +260,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $updated = $wpdb->tableRows['wp_acx_sync_outbox'][0];
         $this->assertSame(OutboxStatus::FAILED, $updated['status']);
         $this->assertSame('auto_retry_exhausted', $updated['last_error_code']);
+        $this->assertSame(1, $updated['last_error_retryable']);
         $this->assertSame(3, $updated['attempts']);
         $this->assertSame(gmdate('Y-m-d H:i:s', $before), $updated['last_attempted_at']);
         $this->assertNull($updated['next_attempt_at']);
@@ -277,6 +292,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $requeued = $wpdb->tableRows['wp_acx_sync_outbox'][0];
         $payload = json_decode((string) $requeued['payload'], true);
         $this->assertSame(OutboxStatus::PENDING, $requeued['status']);
+        $this->assertNull($requeued['last_error_retryable']);
         $this->assertIsArray($payload);
         $this->assertSame('cluster-81', $payload['cluster_uuid']);
         $this->assertArrayNotHasKey('acx_auto_attempts', $payload);
@@ -285,6 +301,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['status'] = OutboxStatus::FAILED;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['attempts'] = 1;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_code'] = 'transport_error';
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_retryable'] = 1;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['first_failed_at'] = gmdate('Y-m-d H:i:s', current_time('timestamp'));
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload'] = wp_json_encode($payload);
 
@@ -317,11 +334,13 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $bulkUpdate = $this->findQueryContaining($wpdb->queries, 'JSON_REMOVE(payload');
         $this->assertStringContainsString("payload = JSON_REMOVE(payload, '$.acx_auto_attempts')", $bulkUpdate);
         $this->assertSame(OutboxStatus::PENDING, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertNull($wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_retryable']);
 
         // Model the next dispatch failure with the marker removed by the SQL update.
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['status'] = OutboxStatus::FAILED;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['attempts'] = 1;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_code'] = 'transport_error';
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_retryable'] = 1;
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['first_failed_at'] = gmdate('Y-m-d H:i:s', current_time('timestamp'));
         $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload'] = '{}';
 
@@ -452,7 +471,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
     /**
      * @return array<string,mixed>
      */
-    private function buildFailedOutboxRow(int $id, string $tenantId, string $errorCode, ?string $failedAt = null): array
+    private function buildFailedOutboxRow(int $id, string $tenantId, string $errorCode, ?string $failedAt = null, ?int $retryable = 1): array
     {
         $stamp = $failedAt ?? '2026-09-16 00:00:00';
 
@@ -463,6 +482,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
             'attempts' => 1,
             'last_error_code' => $errorCode,
             'last_error_message' => 'failed',
+            'last_error_retryable' => $retryable,
             'first_failed_at' => $stamp,
             'last_attempted_at' => $stamp,
             'created_at' => $stamp,

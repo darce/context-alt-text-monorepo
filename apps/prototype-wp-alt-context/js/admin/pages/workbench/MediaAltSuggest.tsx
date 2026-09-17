@@ -46,11 +46,13 @@ export interface MediaAltSuggestProps {
    */
   isDecorative: boolean;
   /**
-   * Row media title for Suggest / Mark decorative accessible names so AT
-   * element lists can tell which image each bare verb belongs to [A11Y-04].
-   * When absent, Suggest keeps its short visible label as the accessible name.
-   * The decorative toggle always exposes the full outcome sentence as its
-   * accessible name, tooltip, and aria-describedby [GPUFLOW-2 B7].
+   * Row media title for Suggest / decorative accessible names so AT
+   * element lists can tell which image each compact control belongs to [A11Y-04].
+   * When absent, Suggest and the decorative toggle keep their short visible
+   * labels as the accessible name (no aria-label). With a title, the decorative
+   * toggle qualifies as "Decorative: {title}" so the visible word comes first
+   * [GPUFLOW-2 B7]. Tooltip and aria-describedby still carry the full outcome
+   * sentence.
    */
   title?: string;
   /**
@@ -94,8 +96,9 @@ export const ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE = __(
 
 /**
  * Compact visible label for the per-image decorative toggle (≤ 2 words).
- * The full outcome sentence lives on aria-label / tooltip / aria-describedby
- * so the suggestion column does not grow [GPUFLOW-2 B7][LAY-01][INT-06].
+ * The full outcome sentence lives on tooltip / aria-describedby so the
+ * suggestion column does not grow. aria-label is title-qualified only
+ * [GPUFLOW-2 B7][LAY-01][INT-06][A11Y-04].
  */
 export const DECORATIVE_TOGGLE_VISIBLE_LABEL = __('Decorative', 'alt-context');
 
@@ -259,15 +262,15 @@ export const MediaAltSuggest = ({
   const suggestTriggerLabel = title
     ? sprintf(__('Suggest alt text for %s', 'alt-context'), title)
     : undefined;
-  // Distinct label per state so AT users do not act on the wrong operation [INT-06].
-  // Full sentence is the accessible name (and tooltip) — visible text stays
-  // the compact DECORATIVE_TOGGLE_VISIBLE_LABEL [GPUFLOW-2 B7].
+  // Distinct description per state so AT users do not act on the wrong
+  // operation [INT-06]. Visible text stays DECORATIVE_TOGGLE_VISIBLE_LABEL;
+  // aria-label is title-qualified only; tooltip / aria-describedby keep the
+  // full outcome sentence [GPUFLOW-2 B7][A11Y-04].
   const decorativeSentence = isDecorative ? UNMARK_DECORATIVE_LABEL : MARK_DECORATIVE_LABEL;
-  const decorativeControlAriaLabel = title
-    ? isDecorative
-      ? sprintf(__('Remove decorative mark for %s', 'alt-context'), title)
-      : sprintf(__('Mark as decorative for %s', 'alt-context'), title)
-    : decorativeSentence;
+  const trimmedTitle = title?.trim() ?? '';
+  const decorativeControlAriaLabel = trimmedTitle
+    ? sprintf(__('Decorative: %s', 'alt-context'), trimmedTitle)
+    : undefined;
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
   // ready…") still remounts the live region. Plain useState<string> bails out
@@ -640,13 +643,18 @@ export const MediaAltSuggest = ({
         onClick={toggleDecorative}
         disabled={disabled}
         aria-pressed={isDecorative}
+        aria-busy={isMarkingDecorative ? true : undefined}
         aria-label={decorativeBusyLabel ?? decorativeControlAriaLabel}
         aria-describedby={decorativeDescriptionId}
         title={decorativeSentence}
         style={decorativePressedStyle}
       >
-        <ImageOff aria-hidden="true" size={16} />
-        {decorativeBusyLabel ?? DECORATIVE_TOGGLE_VISIBLE_LABEL}
+        {isMarkingDecorative ? (
+          <Loader2 aria-hidden="true" size={16} />
+        ) : (
+          <ImageOff aria-hidden="true" size={16} />
+        )}
+        {DECORATIVE_TOGGLE_VISIBLE_LABEL}
       </button>
       <span id={decorativeDescriptionId} className="screen-reader-text">
         {decorativeSentence}

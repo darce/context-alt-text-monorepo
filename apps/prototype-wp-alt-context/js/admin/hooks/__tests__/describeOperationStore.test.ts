@@ -48,6 +48,11 @@ const suggestContext = (
   ...overrides,
 });
 
+const durableContext = (context: DescribeOperationContext): DescribeOperationContext => ({
+  ...context,
+  persistence: 'durable',
+});
+
 const installTenant = (tenantId: string): void => {
   resetConfigCache();
   registerConfig({
@@ -78,7 +83,7 @@ describe('describeOperationStore', () => {
     const context = runContext();
     putDescribeOperationContext(context);
 
-    expect(getDescribeRunContext()).toEqual(context);
+    expect(getDescribeRunContext()).toEqual(durableContext(context));
     expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBe(
       JSON.stringify(context),
     );
@@ -89,7 +94,7 @@ describe('describeOperationStore', () => {
     const context = suggestContext();
     putDescribeOperationContext(context);
 
-    expect(getDescribeSuggestContext(42)).toEqual(context);
+    expect(getDescribeSuggestContext(42)).toEqual(durableContext(context));
     expect(sessionStorage.getItem(describeOperationMediaStorageKey(TENANT, 42))).toBe(
       JSON.stringify(context),
     );
@@ -101,8 +106,43 @@ describe('describeOperationStore', () => {
     putDescribeOperationContext(suggestContext({ id: 'op-reload' }));
     _resetDescribeOperationStoreForTests();
 
-    expect(getDescribeRunContext()).toEqual(runContext({ id: 'run-reload' }));
-    expect(getDescribeSuggestContext(42)).toEqual(suggestContext({ id: 'op-reload' }));
+    expect(getDescribeRunContext()).toEqual(
+      durableContext(runContext({ id: 'run-reload' })),
+    );
+    expect(getDescribeSuggestContext(42)).toEqual(
+      durableContext(suggestContext({ id: 'op-reload' })),
+    );
+  });
+
+  it('keeps a run resumable when a storage read errors once', () => {
+    const context = runContext({ id: 'run-read-retry' });
+    sessionStorage.setItem(describeOperationRunStorageKey(TENANT), JSON.stringify(context));
+    _resetDescribeOperationStoreForTests();
+
+    const getItem = vi.spyOn(sessionStorage, 'getItem').mockImplementationOnce(() => {
+      throw new Error('sessionStorage unavailable');
+    });
+    expect(getDescribeRunContext()).toBeNull();
+    getItem.mockRestore();
+
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBe(
+      JSON.stringify(context),
+    );
+    expect(getDescribeRunContext()).toEqual(durableContext(context));
+  });
+
+  it('marks a snapshot memory_only when sessionStorage cannot write', () => {
+    const setItem = vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+
+    putDescribeOperationContext(runContext({ id: 'run-memory-only' }));
+
+    expect(getDescribeRunContext()).toEqual({
+      ...runContext({ id: 'run-memory-only' }),
+      persistence: 'memory_only',
+    });
+    setItem.mockRestore();
   });
 
   it('ignores a foreign-tenant storage key', () => {
@@ -202,6 +242,24 @@ describe('describeOperationStore', () => {
 
     expect(getDescribeRunContext()).toBeNull();
     expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull();
+  });
+
+  it('does not resurrect a cleared run when removeItem fails', () => {
+    const context = runContext({ id: 'run-clear-failed' });
+    putDescribeOperationContext(context);
+    const removeItem = vi.spyOn(sessionStorage, 'removeItem').mockImplementation(() => {
+      throw new Error('sessionStorage unavailable');
+    });
+
+    clearDescribeRunContext();
+    expect(getDescribeRunContext()).toBeNull();
+    _resetDescribeOperationStoreForTests();
+    expect(getDescribeRunContext()).toBeNull();
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBe(
+      JSON.stringify(context),
+    );
+
+    removeItem.mockRestore();
   });
 
   it('clears only the matching media slot', () => {

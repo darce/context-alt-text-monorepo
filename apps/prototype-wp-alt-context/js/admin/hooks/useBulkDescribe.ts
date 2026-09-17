@@ -94,15 +94,26 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
   });
 
-  // Store is the durable source (navigation/reload). Keep the last store id for
-  // this mount after terminal clear so the outcome panel can still poll the
-  // finished run (FE-01); remount hydrates only from sessionStorage.
-  const retainedRunIdRef = useRef<string | null>(null);
-  if (storedRunId !== null) {
-    retainedRunIdRef.current = storedRunId;
+  // Store is the durable source (navigation/reload). Keep active and terminal
+  // identities separate: the former controls whether a new submit is allowed,
+  // while the latter keeps the finished response available for the terminal
+  // summary after the active store entry is cleared.
+  const activeRunIdRef = useRef<string | null>(null);
+  const lastTerminalRunIdRef = useRef<string | null>(null);
+  if (storedRunId !== null && storedRunId !== activeRunIdRef.current) {
+    activeRunIdRef.current = storedRunId;
+    lastTerminalRunIdRef.current = null;
+  } else if (
+    storedRunId === null &&
+    activeRunIdRef.current !== null &&
+    lastTerminalRunIdRef.current !== activeRunIdRef.current
+  ) {
+    // A non-terminal explicit clear must not fall back to an older active run.
+    activeRunIdRef.current = null;
   }
-  const runId = storedRunId ?? retainedRunIdRef.current;
-  const progress = useDescribeRunProgress(runId);
+  const runId = activeRunIdRef.current;
+  const progressRunId = runId ?? lastTerminalRunIdRef.current;
+  const progress = useDescribeRunProgress(progressRunId);
   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -118,7 +129,9 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
 
   useEffect(() => {
     if (runId !== null && progress.isTerminal) {
+      lastTerminalRunIdRef.current = runId;
       clearActiveDescribeRunId(runId);
+      activeRunIdRef.current = null;
     }
   }, [progress.isTerminal, runId]);
 

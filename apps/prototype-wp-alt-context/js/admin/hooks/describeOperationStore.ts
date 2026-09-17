@@ -21,6 +21,8 @@ export interface DescribeOperationRequest {
   force: boolean;
 }
 
+export type DescribeOperationPersistence = 'durable' | 'memory_only';
+
 export interface DescribeOperationContext {
   version: typeof DESCRIBE_OPERATION_CONTEXT_VERSION;
   kind: DescribeOperationKind;
@@ -31,6 +33,8 @@ export interface DescribeOperationContext {
   warming_started_at?: number;
   startup_budget_seconds?: number;
   request: DescribeOperationRequest;
+  /** Whether this snapshot was written to sessionStorage or only kept in memory. */
+  persistence?: DescribeOperationPersistence;
 }
 
 export const DESCRIBE_OPERATION_STORAGE_PREFIX = 'acx_describe_op_v1';
@@ -49,8 +53,13 @@ type TenantScope = string | null;
 // tenant, but a page can change its config without reloading (and tests do so
 // deliberately); a single process-wide context would otherwise leak one
 // tenant's active operation into the next tenant until storage rehydration.
-const runContextByTenant = new Map<TenantScope, DescribeOperationContext>();
+const runContextByTenant = new Map<TenantScope, DescribeOperationContext | null>();
 const suggestByTenant = new Map<TenantScope, Map<number, DescribeOperationContext>>();
+
+// A failed remove can leave the old storage value in place. Keep a process-local
+// tombstone for that key so a later hydration cannot resurrect the cleared run.
+// A successful write or remove clears the tombstone.
+const storageTombstones = new Set<string>();
 
 const emitChange = (): void => {
   listeners.forEach((listener) => listener());
@@ -180,46 +189,76 @@ export const isDescribeOperationExpired = (
   return nowMs >= budgetStartMs(context) + budgetSeconds * 1000;
 };
 
-const readStorageItem = (key: string): string | null => {
+type StorageReadResult =
+  | { kind: 'value'; raw: string }
+  | { kind: 'absent' }
+  | { kind: 'error' };
+
+const readStorageItem = (key: string): StorageReadResult => {
   try {
-    return sessionStorage.getItem(key);
+    const raw = sessionStorage.getItem(key);
+    return raw === null ? { kind: 'absent' } : { kind: 'value', raw };
   } catch {
-    return null;
+    return { kind: 'error' };
   }
 };
 
-const writeStorageItem = (key: string, value: string): void => {
+const writeStorageItem = (key: string, value: string): boolean => {
   try {
     sessionStorage.setItem(key, value);
+    return true;
   } catch {
     // Private mode / quota: keep the in-memory half of the (state, context) pair.
+    return false;
   }
 };
 
-const removeStorageItem = (key: string): void => {
+const removeStorageItem = (key: string): boolean => {
   try {
     sessionStorage.removeItem(key);
+    return true;
   } catch {
     // Ignore storage failures; memory remains the live snapshot.
+    return false;
   }
 };
 
-const readStoredContext = (key: string): DescribeOperationContext | null => {
-  const raw = readStorageItem(key);
-  if (raw === null) {
-    return null;
+const removeStorageWithTombstone = (key: string): boolean => {
+  const removed = removeStorageItem(key);
+  if (removed) {
+    storageTombstones.delete(key);
+  } else {
+    storageTombstones.add(key);
+  }
+  return removed;
+};
+
+type StoredContextReadResult =
+  | { kind: 'value'; context: DescribeOperationContext }
+  | { kind: 'absent' }
+  | { kind: 'invalid' }
+  | { kind: 'error' };
+
+const readStoredContext = (key: string): StoredContextReadResult => {
+  const storage = readStorageItem(key);
+  if (storage.kind === 'error') {
+    return storage;
+  }
+  if (storage.kind === 'absent') {
+    return storage;
   }
   try {
-    const parsed = parseContext(JSON.parse(raw) as unknown);
+    const parsed = parseContext(JSON.parse(storage.raw) as unknown);
     if (parsed === null) {
       // Invalid data is not a resumable operation. Remove it at the boundary
       // so a reload cannot repeatedly attempt the same bad payload.
-      removeStorageItem(key);
+      removeStorageWithTombstone(key);
+      return { kind: 'invalid' };
     }
-    return parsed;
+    return { kind: 'value', context: { ...parsed, persistence: 'durable' } };
   } catch {
-    removeStorageItem(key);
-    return null;
+    removeStorageWithTombstone(key);
+    return { kind: 'invalid' };
   }
 };
 
@@ -248,31 +287,39 @@ const hydrateRunFromStorage = (): void => {
   if (tenantId === null) {
     return;
   }
-  const stored = readStoredContext(describeOperationRunStorageKey(tenantId));
-  if (stored?.kind !== DESCRIBE_OPERATION_KIND.RUN) {
-    if (stored !== null) {
-      removeStorageItem(describeOperationRunStorageKey(tenantId));
-    }
+  const key = describeOperationRunStorageKey(tenantId);
+  if (storageTombstones.has(key)) {
     return;
   }
-  if (isDescribeOperationExpired(stored)) {
-    removeStorageItem(describeOperationRunStorageKey(tenantId));
+  const stored = readStoredContext(key);
+  if (stored.kind !== 'value') {
     return;
   }
-  runContextByTenant.set(tenantId, stored);
+  if (stored.context.kind !== DESCRIBE_OPERATION_KIND.RUN) {
+    removeStorageWithTombstone(key);
+    return;
+  }
+  if (isDescribeOperationExpired(stored.context)) {
+    removeStorageWithTombstone(key);
+    return;
+  }
+  runContextByTenant.set(tenantId, stored.context);
 };
 
 const liveRunContext = (): DescribeOperationContext | null => {
   const tenantId = resolveTenantId();
   hydrateRunFromStorage();
   const current = runContextByTenant.get(tenantId);
-  if (current === undefined) {
+  if (current === undefined || current === null) {
     return null;
   }
   if (isDescribeOperationExpired(current)) {
     runContextByTenant.delete(tenantId);
     if (tenantId !== null) {
-      removeStorageItem(describeOperationRunStorageKey(tenantId));
+      const key = describeOperationRunStorageKey(tenantId);
+      if (!removeStorageWithTombstone(key)) {
+        runContextByTenant.set(tenantId, null);
+      }
     }
     return null;
   }
@@ -292,38 +339,46 @@ const liveSuggestContext = (mediaId: number): DescribeOperationContext | null =>
       suggestByTenant.delete(tenantId);
     }
     if (tenantId !== null) {
-      removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+      removeStorageWithTombstone(describeOperationMediaStorageKey(tenantId, mediaId));
     }
     return null;
   }
   if (tenantId === null) {
     return null;
   }
-  const stored = readStoredContext(describeOperationMediaStorageKey(tenantId, mediaId));
-  if (stored?.kind !== DESCRIBE_OPERATION_KIND.SUGGEST) {
-    if (stored !== null) {
-      removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
-    }
+  const key = describeOperationMediaStorageKey(tenantId, mediaId);
+  if (storageTombstones.has(key)) {
     return null;
   }
-  if (stored.media_id !== mediaId || isDescribeOperationExpired(stored)) {
-    removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+  const stored = readStoredContext(key);
+  if (stored.kind !== 'value') {
+    return null;
+  }
+  if (stored.context.kind !== DESCRIBE_OPERATION_KIND.SUGGEST) {
+    removeStorageWithTombstone(key);
+    return null;
+  }
+  if (stored.context.media_id !== mediaId || isDescribeOperationExpired(stored.context)) {
+    removeStorageWithTombstone(key);
     return null;
   }
   const tenantSuggestContexts =
     suggestByTenant.get(tenantId) ?? new Map<number, DescribeOperationContext>();
-  tenantSuggestContexts.set(mediaId, stored);
+  tenantSuggestContexts.set(mediaId, stored.context);
   suggestByTenant.set(tenantId, tenantSuggestContexts);
-  return stored;
+  return stored.context;
 };
 
 const purgeInvalid = (): void => {
   const tenantId = resolveTenantId();
   const cachedRun = runContextByTenant.get(tenantId);
-  if (cachedRun !== undefined && isDescribeOperationExpired(cachedRun)) {
+  if (cachedRun !== undefined && cachedRun !== null && isDescribeOperationExpired(cachedRun)) {
     runContextByTenant.delete(tenantId);
     if (tenantId !== null) {
-      removeStorageItem(describeOperationRunStorageKey(tenantId));
+      const key = describeOperationRunStorageKey(tenantId);
+      if (!removeStorageWithTombstone(key)) {
+        runContextByTenant.set(tenantId, null);
+      }
     }
   }
 
@@ -333,7 +388,7 @@ const purgeInvalid = (): void => {
       if (isDescribeOperationExpired(context)) {
         cachedSuggest.delete(mediaId);
         if (tenantId !== null) {
-          removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+          removeStorageWithTombstone(describeOperationMediaStorageKey(tenantId, mediaId));
         }
       }
     }
@@ -347,16 +402,16 @@ const purgeInvalid = (): void => {
   }
 
   const runKey = describeOperationRunStorageKey(tenantId);
+  if (storageTombstones.has(runKey)) {
+    return;
+  }
   const storedRun = readStoredContext(runKey);
   if (
-    storedRun !== null &&
-    (storedRun.kind !== DESCRIBE_OPERATION_KIND.RUN || isDescribeOperationExpired(storedRun))
+    storedRun.kind === 'value' &&
+    (storedRun.context.kind !== DESCRIBE_OPERATION_KIND.RUN ||
+      isDescribeOperationExpired(storedRun.context))
   ) {
-    removeStorageItem(runKey);
-  } else if (storedRun === null && readStorageItem(runKey) !== null) {
-    // readStoredContext normally removes malformed JSON/version data; this
-    // branch also covers storage implementations that changed between reads.
-    removeStorageItem(runKey);
+    removeStorageWithTombstone(runKey);
   }
 };
 
@@ -382,10 +437,18 @@ export const putDescribeOperationContext = (context: DescribeOperationContext): 
   }
   const tenantId = resolveTenantId();
   if (parsed.kind === DESCRIBE_OPERATION_KIND.RUN) {
-    runContextByTenant.set(tenantId, parsed);
+    let persistence: DescribeOperationPersistence = 'memory_only';
     if (tenantId !== null) {
-      writeStorageItem(describeOperationRunStorageKey(tenantId), serializeContext(parsed));
+      const key = describeOperationRunStorageKey(tenantId);
+      const durable = writeStorageItem(key, serializeContext(parsed));
+      persistence = durable ? 'durable' : 'memory_only';
+      if (durable) {
+        storageTombstones.delete(key);
+      } else {
+        storageTombstones.add(key);
+      }
     }
+    runContextByTenant.set(tenantId, { ...parsed, persistence });
     emitChange();
     return;
   }
@@ -394,26 +457,42 @@ export const putDescribeOperationContext = (context: DescribeOperationContext): 
   }
   const tenantSuggestContexts =
     suggestByTenant.get(tenantId) ?? new Map<number, DescribeOperationContext>();
-  tenantSuggestContexts.set(parsed.media_id, parsed);
-  suggestByTenant.set(tenantId, tenantSuggestContexts);
+  let persistence: DescribeOperationPersistence = 'memory_only';
   if (tenantId !== null) {
-    writeStorageItem(
-      describeOperationMediaStorageKey(tenantId, parsed.media_id),
-      serializeContext(parsed),
-    );
+    const key = describeOperationMediaStorageKey(tenantId, parsed.media_id);
+    const durable = writeStorageItem(key, serializeContext(parsed));
+    persistence = durable ? 'durable' : 'memory_only';
+    if (durable) {
+      storageTombstones.delete(key);
+    } else {
+      storageTombstones.add(key);
+    }
   }
+  tenantSuggestContexts.set(parsed.media_id, { ...parsed, persistence });
+  suggestByTenant.set(tenantId, tenantSuggestContexts);
   emitChange();
 };
 
 export const clearDescribeRunContext = (): void => {
   const tenantId = resolveTenantId();
-  const hadRun = runContextByTenant.delete(tenantId);
-  const hadStoredRun =
-    tenantId !== null && readStorageItem(describeOperationRunStorageKey(tenantId)) !== null;
+  const hadRun = runContextByTenant.has(tenantId);
+  let hadStoredRun = false;
+  let removed = true;
   if (tenantId !== null) {
-    removeStorageItem(describeOperationRunStorageKey(tenantId));
+    const key = describeOperationRunStorageKey(tenantId);
+    hadStoredRun = readStorageItem(key).kind === 'value';
+    removed = removeStorageWithTombstone(key);
+    if (removed) {
+      runContextByTenant.delete(tenantId);
+    } else {
+      // Keep a null snapshot as an in-memory tombstone until the storage layer
+      // recovers, so the failed delete cannot be rehydrated in this process.
+      runContextByTenant.set(tenantId, null);
+    }
+  } else {
+    runContextByTenant.delete(tenantId);
   }
-  if (hadRun || hadStoredRun) {
+  if (hadRun || hadStoredRun || !removed) {
     emitChange();
   }
 };
@@ -425,13 +504,14 @@ export const clearDescribeSuggestContext = (mediaId: number): void => {
   if (tenantSuggestContexts?.size === 0) {
     suggestByTenant.delete(tenantId);
   }
-  const hadStoredSuggest =
-    tenantId !== null &&
-    readStorageItem(describeOperationMediaStorageKey(tenantId, mediaId)) !== null;
+  let hadStoredSuggest = false;
+  let removed = true;
   if (tenantId !== null) {
-    removeStorageItem(describeOperationMediaStorageKey(tenantId, mediaId));
+    const key = describeOperationMediaStorageKey(tenantId, mediaId);
+    hadStoredSuggest = readStorageItem(key).kind === 'value';
+    removed = removeStorageWithTombstone(key);
   }
-  if (hadSuggest || hadStoredSuggest) {
+  if (hadSuggest || hadStoredSuggest || !removed) {
     emitChange();
   }
 };
@@ -450,4 +530,11 @@ export const useDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 export const _resetDescribeOperationStoreForTests = (): void => {
   runContextByTenant.clear();
   suggestByTenant.clear();
+  // Preserve tombstones while the failed delete's old storage value remains;
+  // clear them when the backing key is gone so each test can start cleanly.
+  for (const key of storageTombstones) {
+    if (readStorageItem(key).kind === 'absent') {
+      storageTombstones.delete(key);
+    }
+  }
 };

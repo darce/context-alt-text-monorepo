@@ -70,20 +70,32 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 		$is_open = false !== get_transient( $circuit_key );
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
 		$open_conflicts = $this->sync_state_repository->get_conflict_count( $tenant_id );
-		$outbox = $this->project_outbox_health_counters(
+		$outbox_counters = $this->project_outbox_health_counters(
 			$this->outbox_maintenance_service->get_health_counters( $tenant_id )
 		);
-		if ( false === $outbox ) {
-			return new WP_Error(
-				'sync_health_outbox_unavailable',
-				'Outbox health counters are temporarily unavailable.',
-				array(
-					'status' => 503,
-					'component' => 'outbox',
-					'state' => 'degraded',
-				)
+		if ( false === $outbox_counters ) {
+			$outbox = array(
+				'state' => 'degraded',
+				'pending' => null,
+				'failed' => null,
+				'dead_lettered' => null,
+				'oldest_age_seconds' => null,
+				'warnings' => array(
+					array(
+						'code' => 'outbox_counters_unavailable',
+						'message' => 'Outbox health counters are temporarily unavailable.',
+						'count' => null,
+						'threshold' => null,
+					),
+				),
+			);
+		} else {
+			$outbox = array_merge(
+				array( 'state' => 'ok' ),
+				$outbox_counters
 			);
 		}
+		$warnings = $this->build_warnings( $tenant_id, $open_conflicts );
 
 		return new WP_REST_Response(
 			array(
@@ -104,7 +116,7 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'at' => $this->sync_state_repository->get_last_updated( $tenant_id ),
 					'ok' => SyncPullResult::OK === $last_sync_result,
 				),
-				'warnings' => $this->build_warnings( $tenant_id, $open_conflicts ),
+				'warnings' => $warnings,
 			),
 			200
 		);
@@ -112,7 +124,9 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 
 	/**
 	 * Project OBS-05 outbox counters. Missing/non-int keys or a failed read
-	 * return false so the endpoint can emit an explicit degraded error envelope.
+	 * return false so the endpoint can emit an explicit degraded component with
+	 * null counters and an outbox.warnings[] outbox_counters_unavailable entry
+	 * while preserving the rest of the health envelope.
 	 *
 	 * @param mixed $counters
 	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}|false

@@ -127,7 +127,7 @@ class SyncHealthControllerTest extends TestCase
         $this->assertSame($fixture['warnings'], $data['warnings']);
     }
 
-    public function testGetSyncHealthReturnsExplicitOutboxFailureEnvelopeWhenMaintenanceReadFails(): void
+    public function testGetSyncHealthReturnsDegradedOutboxComponentWhenMaintenanceReadFails(): void
     {
         $maintenance = new class() extends OutboxMaintenanceService {
             public function __construct()
@@ -143,16 +143,26 @@ class SyncHealthControllerTest extends TestCase
         $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
         $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
 
-        $this->assertInstanceOf(\WP_Error::class, $response);
-        $this->assertSame('sync_health_outbox_unavailable', $response->get_error_code());
-        $this->assertSame('Outbox health counters are temporarily unavailable.', $response->get_error_message());
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
         $this->assertSame(
             [
-                'status' => 503,
-                'component' => 'outbox',
                 'state' => 'degraded',
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+                'warnings' => [
+                    [
+                        'code' => 'outbox_counters_unavailable',
+                        'message' => 'Outbox health counters are temporarily unavailable.',
+                        'count' => null,
+                        'threshold' => null,
+                    ],
+                ],
             ],
-            $response->get_error_data()
+            $data['outbox']
         );
     }
 
@@ -175,16 +185,69 @@ class SyncHealthControllerTest extends TestCase
         $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
         $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
 
-        $this->assertInstanceOf(\WP_Error::class, $response);
-        $this->assertSame('sync_health_outbox_unavailable', $response->get_error_code());
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
         $this->assertSame(
             [
-                'status' => 503,
-                'component' => 'outbox',
                 'state' => 'degraded',
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+                'warnings' => [
+                    [
+                        'code' => 'outbox_counters_unavailable',
+                        'message' => 'Outbox health counters are temporarily unavailable.',
+                        'count' => null,
+                        'threshold' => null,
+                    ],
+                ],
             ],
-            $response->get_error_data()
+            $data['outbox']
         );
+    }
+
+    public function testGetSyncHealthPreservesBreakerAndConflictsWhenOutboxCountersAreUnavailable(): void
+    {
+        $baseUrl = 'https://recognition.test';
+        $this->setOption('acx_recognition_source', 'service');
+        $this->setOption('acx_recognition_url', $baseUrl);
+        $circuitKey = RecognitionCircuitKeys::for_base_url($baseUrl);
+        set_transient($circuitKey, 1, 60);
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_conflict_count(string $tenant_id): int
+            {
+                return 7;
+            }
+        };
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncHealthController($syncRepo, null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('open', $data['breaker']['state']);
+        $this->assertSame(['open' => 7], $data['conflicts']);
+        $this->assertSame('degraded', $data['outbox']['state']);
+        $this->assertNull($data['outbox']['pending']);
+        $this->assertNull($data['outbox']['failed']);
+        $this->assertNull($data['outbox']['dead_lettered']);
+        $this->assertNull($data['outbox']['oldest_age_seconds']);
+        $this->assertSame('outbox_counters_unavailable', $data['outbox']['warnings'][0]['code']);
+
+        delete_transient($circuitKey);
     }
 
     public function testGetSyncHealthIncludesConflictThresholdWarning(): void

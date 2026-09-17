@@ -49,9 +49,26 @@ export type BreakerState = 'open' | 'closed';
 export interface SyncHealthWarning {
   code: string;
   message: string;
-  count: number;
-  threshold: number;
+  count: number | null;
+  threshold: number | null;
 }
+
+export type SyncHealthOutbox =
+  | {
+      state: 'ok';
+      pending: number;
+      failed: number;
+      dead_lettered: number;
+      oldest_age_seconds: number;
+    }
+  | {
+      state: 'degraded';
+      pending: null;
+      failed: null;
+      dead_lettered: null;
+      oldest_age_seconds: null;
+      warnings: SyncHealthWarning[];
+    };
 
 export interface SyncHealthResponse {
   breaker: {
@@ -59,12 +76,7 @@ export interface SyncHealthResponse {
     base_url: string;
     opened_at: string | null;
   };
-  outbox: {
-    pending: number;
-    failed: number;
-    dead_lettered: number;
-    oldest_age_seconds: number | null;
-  };
+  outbox: SyncHealthOutbox;
   conflicts: {
     open: number;
   };

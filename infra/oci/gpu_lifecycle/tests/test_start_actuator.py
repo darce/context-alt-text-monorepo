@@ -6,11 +6,14 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
     LifecycleAction,
 )
+from infra.oci.gpu_lifecycle.intent import DecisionLogStore, IntentStatus
+from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     OciCliStartActuator,
@@ -19,6 +22,7 @@ from infra.oci.gpu_lifecycle.reaper import (
     run_reap_cycle,
     run_start_cycle,
 )
+from infra.oci.gpu_lifecycle.state_snapshot import LastTransitionReason
 
 
 class RecordingStartActuator:
@@ -27,6 +31,11 @@ class RecordingStartActuator:
 
     def start_instance(self, instance_id: str) -> None:
         self.started.append(instance_id)
+
+
+class NeverReady:
+    def probe(self, instance_id: str) -> ProbeSample:
+        return ProbeSample(instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold")
 
 
 def test_controller_emits_start_for_stopped_instance_when_work_waiting() -> None:
@@ -250,3 +259,127 @@ def test_run_start_cycle_is_quiet_when_no_work() -> None:
     assert result.decided == []
     assert result.actuated == []
     assert actuator.started == []
+
+
+def test_stop_intent_with_work_and_stopped_gpu_emits_operator_stop_fallback(
+    tmp_path: Path,
+) -> None:
+    gpu_state_path = tmp_path / "gpu-state.json"
+    actuator = RecordingStartActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        gpu_state_path=gpu_state_path,
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert actuator.started == []
+    assert len(result.fallbacks) == 1
+    fallback = result.fallbacks[0]
+    assert fallback.action is LifecycleAction.FALLBACK
+    assert fallback.instance_id == "ocid1.gpu"
+    assert fallback.reason == "operator_stop_with_work"
+    assert fallback.profile == "florence_small"
+    assert result.intent_status is IntentStatus.STOPPED_WITH_WORK
+    assert result.last_transition_reason is LastTransitionReason.OPERATOR
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "degraded"
+    assert snapshot["reason"] == "operator_stop_with_work"
+    assert snapshot["intent_status"] == "stopped_with_work"
+    assert snapshot["last_transition_reason"] == "operator"
+
+
+def test_stop_intent_with_work_does_not_fallback_while_gpu_is_live() -> None:
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert result.fallbacks == ()
+
+
+def test_stop_intent_with_work_and_starting_gpu_probes_readiness_and_fallbacks() -> None:
+    actuator = RecordingStartActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STARTING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        probe=NeverReady(),
+        readiness_wait=WarmReadinessWait(max_cycles=2, stall_cycles=10, sleep_seconds=0.0),
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert actuator.started == []
+    assert result.wait_result is not None
+    assert result.wait_result.timed_out == ("ocid1.gpu",)
+    assert len(result.fallbacks) == 1
+    fallback = result.fallbacks[0]
+    assert fallback.action is LifecycleAction.FALLBACK
+    assert fallback.instance_id == "ocid1.gpu"
+    assert fallback.reason == "readiness_timeout"
+    assert fallback.profile == "florence_small"
+    assert result.intent_status is not IntentStatus.STOPPED_WITH_WORK
+
+
+@pytest.mark.parametrize("state", ["UNKNOWN", "NOT_A_STATE"])
+def test_stop_intent_with_work_unknown_state_keeps_fail_closed_snapshot(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    state: str,
+) -> None:
+    gpu_state_path = tmp_path / "gpu-state.json"
+    actuator = RecordingStartActuator()
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state=state, idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        gpu_state_path=gpu_state_path,
+        intent="stop",
+    )
+
+    assert result.decided == []
+    assert result.actuated == []
+    assert actuator.started == []
+    assert result.fallbacks == ()
+    assert result.errors
+    assert any(state in message for message in result.errors)
+    assert any(record.levelno >= 40 for record in caplog.records)
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "degraded"
+    assert snapshot["reason"] == "instance_state_unknown"
+
+
+def test_operator_stop_fallback_is_journaled(tmp_path: Path) -> None:
+    log_path = tmp_path / "decision-log.jsonl"
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        intent="stop",
+        decision_log_store=DecisionLogStore(log_path),
+    )
+
+    assert len(result.fallbacks) == 1
+    assert result.fallbacks[0].reason == "operator_stop_with_work"
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    recorded = json.loads(lines[0])["fallbacks"]
+    assert len(recorded) == 1
+    assert recorded[0]["action"] == "FALLBACK"
+    assert recorded[0]["instance_id"] == "ocid1.gpu"
+    assert recorded[0]["profile"] == "florence_small"
+    assert recorded[0]["reason"] == "operator_stop_with_work"

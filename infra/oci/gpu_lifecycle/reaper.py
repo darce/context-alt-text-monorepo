@@ -41,7 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -81,6 +81,8 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
     GpuLifecycleState,
     LastTransitionReason,
+    instance_state_is_explicitly_stopped,
+    instance_state_is_unknown,
     read_previous_gpu_state,
     resolve_gpu_state_path,
     state_for_instances,
@@ -115,6 +117,7 @@ _MIN_DEFERRED_STOP_EXTENSION_SECONDS = 60
 _MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
+_OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
 
 
 def _acquire_flock_with_timeout(
@@ -1828,7 +1831,7 @@ def _state_reason(
         return None
     if fallback_reason is not None:
         return fallback_reason
-    if not instances or any(instance.state == "UNKNOWN" for instance in instances):
+    if not instances or any(instance_state_is_unknown(instance.state) for instance in instances):
         return "instance_state_unknown"
     if has_errors:
         return "lifecycle_error"
@@ -1845,6 +1848,20 @@ def _decision_action_pairs(pairs: list[tuple[str, str]]) -> list[dict[str, str]]
     ]
 
 
+def _fallback_records(fallbacks: Iterable[FallbackDecision] | None) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    for fallback in fallbacks or ():
+        records.append(
+            {
+                "action": getattr(fallback.action, "value", str(fallback.action)),
+                "instance_id": fallback.instance_id,
+                "profile": fallback.profile,
+                "reason": fallback.reason,
+            }
+        )
+    return records
+
+
 def _record_decision(
     result: ReapCycleResult | StartCycleResult,
     *,
@@ -1856,8 +1873,9 @@ def _record_decision(
     if store is None:
         return result
     lease_expired = getattr(result, "lease_expired", [])
+    fallbacks = _fallback_records(getattr(result, "fallbacks", ()))
     blocked = result.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
-    if not (result.decided or result.actuated or lease_expired or blocked):
+    if not (result.decided or result.actuated or lease_expired or blocked or fallbacks):
         return result
     if result.actuated:
         outcome = "honoured" if not result.errors else "partial"
@@ -1888,6 +1906,7 @@ def _record_decision(
         "actuated": _decision_action_pairs(result.actuated),
         "actuation_outcome": outcome,
         "errors": list(result.errors),
+        "fallbacks": fallbacks,
     }
     try:
         store.append(record)
@@ -2817,9 +2836,7 @@ def _start_work_decision(
             honoured_instance_ids=honoured_ids,
         )
         waiting_ids = (
-            controller.instances_waiting_on_boot(instances)
-            if load.has_work and effective_intent.action is not IntentAction.STOP
-            else []
+            controller.instances_waiting_on_boot(instances) if load.has_work else []
         )
     running_ids = [instance.instance_id for instance in instances if instance.state == "RUNNING"]
     return _StartDecision(
@@ -2839,21 +2856,49 @@ def _start_blocking_errors(
     effective_intent: EffectiveIntent,
 ) -> list[str]:
     """Record fail-closed START refusals for instances that block waiting work."""
+    del effective_intent
     load = decision.load
-    blocked = (
-        controller.instances_blocking_start(instances)
-        if isinstance(load, JobLoadSnapshot)
-        and not load.untrustworthy
-        and load.has_work
-        and effective_intent.action is not IntentAction.STOP
-        else []
-    )
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy or not load.has_work:
+        return []
+    blocked = list(controller.instances_blocking_start(instances))
+    seen_ids = {instance.instance_id for instance in blocked}
+    for instance in instances:
+        if instance_state_is_unknown(instance.state) and instance.instance_id not in seen_ids:
+            blocked.append(instance)
+            seen_ids.add(instance.instance_id)
     errors: list[str] = []
     for instance in blocked:
         msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
     return errors
+
+
+def _is_operator_stop_with_work(
+    *,
+    effective_intent: EffectiveIntent,
+    load: object,
+    instances: list[GpuInstance],
+) -> bool:
+    """True when a live stop would otherwise stall queued work on a dark GPU."""
+    if effective_intent.action is not IntentAction.STOP:
+        return False
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy or not load.has_work:
+        return False
+    if not instances:
+        return False
+    return all(instance_state_is_explicitly_stopped(instance.state) for instance in instances)
+
+
+def _operator_stop_with_work_fallbacks(
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+) -> list[FallbackDecision]:
+    """Route queued work to the CPU floor while operator stop keeps the GPU off."""
+    return controller.fallback_on_boot_failure(
+        [instance.instance_id for instance in instances],
+        reason=_OPERATOR_STOP_WITH_WORK_REASON,
+    )
 
 
 def _start_idle_intent_status(
@@ -2878,12 +2923,19 @@ def _start_pre_actuation(
     effective_intent: EffectiveIntent,
     probe: InstanceReadinessProbe | None,
     readiness_wait: WarmReadinessWait | None,
+    operator_stop_with_work: bool = False,
 ) -> _StartPreActuation:
     """Apply no-work and shared-endpoint guards before issuing START."""
     start_ids = [instance_id for action, instance_id in decision.decided if action == LifecycleAction.START]
     wait_ids = list(dict.fromkeys([*start_ids, *decision.waiting_ids, *decision.running_ids]))
     should_probe_running = probe is not None and readiness_wait is not None and bool(decision.running_ids)
-    if not decision.decided and not decision.waiting_ids and not errors and not should_probe_running:
+    if (
+        not decision.decided
+        and not decision.waiting_ids
+        and not errors
+        and not should_probe_running
+        and not operator_stop_with_work
+    ):
         return _StartPreActuation(
             result=StartCycleResult(
                 decided=[],
@@ -3094,9 +3146,11 @@ def _finalize_start_result(
     actuation: _StartActuationResult,
     readiness: _StartReadinessResult,
     errors: list[str],
+    intent_status: IntentStatus | None = None,
 ) -> StartCycleResult:
     """Publish START intent, lease, readiness, and transition metadata."""
-    intent_status = _pending_intent_status(effective_intent)
+    if intent_status is None:
+        intent_status = _pending_intent_status(effective_intent)
     honoured_nonce = effective_intent.nonce if decision.honoured_ids else None
     last_transition_reason = LastTransitionReason.UNKNOWN
     if actuation.actuated:
@@ -3113,6 +3167,11 @@ def _finalize_start_result(
         )
     if actuation.start_failed:
         last_transition_reason = LastTransitionReason.START_FAILED
+    if any(
+        fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in readiness.fallbacks
+    ):
+        last_transition_reason = LastTransitionReason.OPERATOR
+        intent_status = IntentStatus.STOPPED_WITH_WORK
     return StartCycleResult(
         decided=decision.decided,
         actuated=actuation.actuated,
@@ -3166,12 +3225,18 @@ def _run_start_cycle(
             effective_intent=effective_intent,
         )
     )
+    operator_stop_with_work = _is_operator_stop_with_work(
+        effective_intent=effective_intent,
+        load=decision.load,
+        instances=instances,
+    )
     pre_actuation = _start_pre_actuation(
         decision=decision,
         errors=errors,
         effective_intent=effective_intent,
         probe=probe,
         readiness_wait=readiness_wait,
+        operator_stop_with_work=operator_stop_with_work,
     )
     if pre_actuation.result is not None:
         return pre_actuation.result
@@ -3202,12 +3267,23 @@ def _run_start_cycle(
             errors=errors,
         )
     )
+    if operator_stop_with_work:
+        readiness = replace(
+            readiness,
+            fallbacks=[
+                *readiness.fallbacks,
+                *_operator_stop_with_work_fallbacks(controller, instances),
+            ],
+        )
     return _finalize_start_result(
         effective_intent=effective_intent,
         decision=decision,
         actuation=actuation,
         readiness=readiness,
         errors=errors,
+        intent_status=(
+            IntentStatus.STOPPED_WITH_WORK if operator_stop_with_work else None
+        ),
     )
 
 

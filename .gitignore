@@ -170,6 +170,8 @@ local/*-worktrees.txt
 /scripts/workbay
 /.grok/plugins/workbay-system
 /.workbay-cache
+/scripts/review_pipeline.py
+/scripts/assert_gate_interpreter.sh
 # <<< WORKBAY_BOOTSTRAP OVERLAY IGNORE <<<
 
 # codemap MCP index artifact (local, regenerated)

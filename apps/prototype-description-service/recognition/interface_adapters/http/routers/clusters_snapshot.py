@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
@@ -19,7 +20,9 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.config.security import get_security_settings
 from recognition.config.settings import resolve_effective_clustering_settings
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.deps import (
     get_cluster_repository,
@@ -114,7 +117,11 @@ def _optional_float(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, int | float):
-        return float(value)
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return number if isfinite(number) else None
     return None
 
 
@@ -127,29 +134,46 @@ def _component_value(key: str, value: object) -> float | None:
     return number
 
 
-def _export_quality_components(raw: object) -> ClusterSnapshotQualityComponents | None:
+def _export_quality_components(raw: dict[str, float] | None) -> ClusterSnapshotQualityComponents | None:
     # Pass through stored parts only; never derive from identity bbox/confidence (rg-015).
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or not raw:
+        return None
+    if any(_optional_float(value) is None for value in raw.values()):
+        return None
+
+    components: dict[str, float | None] = {}
+    has_component = False
+    for key in _QUALITY_COMPONENT_KEYS:
+        if key not in raw:
+            components[key] = None
+            continue
+        component = _component_value(key, raw[key])
+        if component is None:
+            return None
+        components[key] = component
+        has_component = True
+
+    if not has_component:
         return None
     return ClusterSnapshotQualityComponents(
-        **{key: _component_value(key, raw.get(key)) for key in _QUALITY_COMPONENT_KEYS}
+        **components,
     )
 
 
 def _export_representative_quality(
-    rep: object,
+    rep: ClusterRepresentative,
 ) -> tuple[float | None, ClusterSnapshotQualityComponents | None]:
-    score = _optional_float(getattr(rep, "quality_score", None))
-    if score is not None and (score < 0 or score > 1):
-        score = None
-    return score, _export_quality_components(getattr(rep, "quality_components", None))
+    score = _optional_float(rep.quality_score)
+    if score is None or score < 0 or score > 1:
+        return None, None
+    components = _export_quality_components(rep.quality_components)
+    if components is None:
+        return None, None
+    return score, components
 
 
-def _representative_media_id(rep: object) -> int | None:
-    raw = getattr(rep, "media_id", None)
-    if raw is None:
-        identity = getattr(rep, "identity", None)
-        raw = getattr(identity, "media_id", None) if identity is not None else None
+def _representative_media_id(rep: ClusterRepresentative) -> int | None:
+    raw = rep.media_id
     if raw is None or isinstance(raw, bool):
         return None
     try:
@@ -161,45 +185,8 @@ def _representative_media_id(rep: object) -> int | None:
     return media_id
 
 
-def _as_aware_utc(value: object) -> datetime | None:
-    if not isinstance(value, datetime):
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
-def _undoable_merge_receipt_id(cluster: object, *, now: datetime) -> str | None:
-    try:
-        receipts = getattr(cluster, "merge_receipts", None)
-        rows = list(receipts) if receipts is not None else []
-    except Exception:
-        return None
-    now_utc = _as_aware_utc(now) or now
-    candidates: list[tuple[datetime, int, object]] = []
-    for receipt in rows:
-        if getattr(receipt, "reverted_at", None) is not None:
-            continue
-        expires_at = _as_aware_utc(getattr(receipt, "expires_at", None))
-        if expires_at is None or expires_at < now_utc:
-            continue
-        receipt_id = getattr(receipt, "receipt_id", None)
-        if receipt_id is None:
-            continue
-        created_at = _as_aware_utc(getattr(receipt, "created_at", None)) or datetime.min.replace(tzinfo=UTC)
-        try:
-            sequence_no = int(getattr(receipt, "sequence_no", 0) or 0)
-        except (TypeError, ValueError):
-            sequence_no = 0
-        candidates.append((created_at, sequence_no, receipt_id))
-    if not candidates:
-        return None
-    _created, _seq, receipt_id = max(candidates, key=lambda item: (item[0], item[1]))
-    return str(receipt_id)
-
-
-def _select_snapshot_representative(cluster: object) -> object | None:
-    representatives = getattr(cluster, "representatives", None)
+def _select_snapshot_representative(cluster: IdentityCluster) -> ClusterRepresentative | None:
+    representatives = cluster.representatives
     if not representatives:
         return None
     reps = sorted(representatives, key=lambda r: str(r.id))
@@ -207,12 +194,11 @@ def _select_snapshot_representative(cluster: object) -> object | None:
 
 
 def _build_cluster_responses(
-    clusters: list,
+    clusters: list[IdentityCluster],
     *,
     now: datetime | None = None,
 ) -> list[ClusterSnapshotQualityClusterResponse]:
     """Build cluster snapshot responses from domain cluster objects."""
-    exported_at = now or datetime.now(tz=UTC)
     responses: list[ClusterSnapshotQualityClusterResponse] = []
     for cluster in clusters:
         curation_state = "dismissed" if cluster.dismissed_at else ("confirmed" if cluster.user_confirmed else "active")
@@ -245,7 +231,7 @@ def _build_cluster_responses(
                 representative_quality=representative_quality,
                 quality_components=quality_components,
                 representative_media_id=representative_media_id,
-                undoable_merge_receipt_id=_undoable_merge_receipt_id(cluster, now=exported_at),
+                undoable_merge_receipt_id=cluster.undoable_merge_receipt_id,
             )
         )
     return responses

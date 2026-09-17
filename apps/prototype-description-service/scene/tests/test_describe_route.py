@@ -1157,6 +1157,56 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
         assert _lease_state(client, detail["operation_id"]) == "active"
 
 
+def test_gpu_unavailable_retry_terminalizes_existing_operation(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = _UnavailableGpuAdapter()
+    with _client(adapter=adapter) as client:
+        first = _post(client, TENANT_ID)
+        assert first.status_code == 503, first.text
+        operation_id = first.json()["detail"]["operation_id"]
+        assert first.json()["detail"]["code"] == "description_service_starting"
+        assert _lease_state(client, operation_id) == "active"
+        assert _active_lease_count(client) == 1
+
+        # The original request was admitted while the GPU was starting. On the
+        # retry the resolver now fails closed, so the known operation must be
+        # correlated and terminalized rather than bypassing operation lookup.
+        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+        retry = _post(
+            client,
+            TENANT_ID,
+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
+            extra_data={"operation_id": operation_id},
+        )
+        assert retry.status_code == 503, retry.text
+        detail = retry.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+        assert detail["operation_id"] == operation_id
+        assert _lease_state(client, operation_id) == "completed"
+        assert _active_lease_count(client) == 0
+        assert adapter.calls == 0
+
+
+def test_gpu_unavailable_retry_unknown_operation_is_mismatch(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = _UnavailableGpuAdapter()
+    with _client(adapter=adapter) as client:
+        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+        response = _post(
+            client,
+            TENANT_ID,
+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
+            extra_data={"operation_id": "unknown-operation-id"},
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "operation_mismatch"
+        assert detail["operation_id"] is None
+        assert _lease_rows(client) == []
+        assert adapter.calls == 0
+
+
 def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
     _, _, intent_path, now = _gpu_env(monkeypatch, tmp_path, state="stopped")
     from datetime import UTC, datetime

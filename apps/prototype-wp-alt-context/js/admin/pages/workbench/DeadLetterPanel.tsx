@@ -1,7 +1,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { OutboxOperation } from '../../api/recognition';
+import type { OutboxListResponse, OutboxOperation } from '../../api/recognition';
 import { useBulkRetryOperations } from '../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../hooks/useDeadLetterOperations';
 import { useDiscardOperation } from '../../hooks/useDiscardOperation';
@@ -56,6 +56,30 @@ interface BulkDiscardRowResult {
   outcome: BulkDiscardOutcome;
 }
 
+/** Optional D1 wire fields not yet on the shared OutboxOperation type. */
+type FailureAgeOperation = OutboxOperation & {
+  first_failed_at?: string | null;
+  age_seconds?: number | null;
+  oldest_age_seconds?: number | null;
+};
+
+type FailureAgeList = OutboxListResponse & {
+  now?: string | null;
+  oldest_age_seconds?: number | null;
+};
+
+interface WpDateSettings {
+  timezone?: {
+    offset?: number;
+  };
+}
+
+interface WpDateBootstrap {
+  date?: {
+    getSettings?: () => WpDateSettings;
+  };
+}
+
 const DEAD_LETTER_STATUS = {
   alertRole: 'alert',
   live: 'polite',
@@ -63,6 +87,7 @@ const DEAD_LETTER_STATUS = {
   testId: 'acx-dead-letter-status',
 } as const;
 const DEAD_LETTER_PENDING_REASON_ID = 'acx-dead-letter-pending-reason';
+const DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID = 'acx-dead-letter-age-unavailable-reason';
 const NOTICE_VARIANTS = {
   info: 'acx-notice acx-notice--info',
   warning: 'acx-notice acx-notice--warning',
@@ -181,17 +206,74 @@ const formatOperationIdentity = (operation: OutboxOperation): string =>
     operation.id,
   );
 
-const formatTimestamp = (value: string | null | undefined): string => {
+const MYSQL_WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
+const HAS_EXPLICIT_TZ = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+const AGE_CLOCK_UNAVAILABLE = __('Failure age unavailable from server', 'alt-context');
+
+const getSiteGmtOffsetHours = (): number => {
+  const wpDate = (window as Window & { wp?: WpDateBootstrap }).wp?.date;
+  const offset = wpDate?.getSettings?.()?.timezone?.offset;
+  if (typeof offset === 'number' && Number.isFinite(offset)) {
+    return offset;
+  }
+
+  const localizedOffset = (window.AltContextAdmin as { gmt_offset?: unknown } | undefined)?.gmt_offset;
+  if (typeof localizedOffset === 'number' && Number.isFinite(localizedOffset)) {
+    return localizedOffset;
+  }
+
+  return 0;
+};
+
+const parseWpTimestampMs = (value: string | null | undefined, siteGmtOffsetHours: number): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const wall = MYSQL_WALL_CLOCK.exec(trimmed);
+  if (wall) {
+    const utcMs = Date.UTC(
+      Number(wall[1]),
+      Number(wall[2]) - 1,
+      Number(wall[3]),
+      Number(wall[4]),
+      Number(wall[5]),
+      Number(wall[6]),
+    );
+    if (!Number.isFinite(utcMs)) {
+      return null;
+    }
+
+    return utcMs - siteGmtOffsetHours * HOUR_MS;
+  }
+
+  if (!HAS_EXPLICIT_TZ.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatTimestamp = (
+  value: string | null | undefined,
+  siteGmtOffsetHours: number = getSiteGmtOffsetHours(),
+): string => {
   if (!value) {
     return __('Unknown time', 'alt-context');
   }
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsedMs = parseWpTimestampMs(value, siteGmtOffsetHours);
+  if (parsedMs === null) {
     return value;
   }
 
-  return parsed.toLocaleString();
+  return new Date(parsedMs).toLocaleString();
 };
 
 const formatErrorSummary = (operation: OutboxOperation): string => {
@@ -226,17 +308,12 @@ const formatPayloadSummary = (payload: Record<string, unknown> | undefined): str
   return JSON.stringify(payload);
 };
 
-const parseTimestampMs = (value: string | null | undefined): number | null => {
-  if (!value) {
-    return null;
-  }
-
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const formatAge = (value: string | null | undefined, nowMs: number = Date.now()): string => {
-  const thenMs = parseTimestampMs(value);
+const formatAge = (
+  value: string | null | undefined,
+  nowMs: number = Date.now(),
+  siteGmtOffsetHours: number = getSiteGmtOffsetHours(),
+): string => {
+  const thenMs = parseWpTimestampMs(value, siteGmtOffsetHours);
   if (thenMs === null) {
     return __('Age: unknown', 'alt-context');
   }
@@ -257,6 +334,46 @@ const formatAge = (value: string | null | undefined, nowMs: number = Date.now())
   return sprintf(__('Age: %d days', 'alt-context'), Math.floor(ageMs / DAY_MS));
 };
 
+const readOptionalNonEmptyString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() !== '' ? value : null;
+
+const readOptionalFiniteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const readEligibilityAgeMs = (
+  operation: FailureAgeOperation,
+  nowMs: number | null,
+  siteGmtOffsetHours: number,
+): number | null => {
+  const ageSeconds = readOptionalFiniteNumber(operation.age_seconds);
+  if (ageSeconds !== null) {
+    return Math.max(0, ageSeconds * 1000);
+  }
+
+  const firstFailedAt = readOptionalNonEmptyString(operation.first_failed_at);
+  if (firstFailedAt === null || nowMs === null) {
+    return null;
+  }
+
+  const thenMs = parseWpTimestampMs(firstFailedAt, siteGmtOffsetHours);
+  if (thenMs === null) {
+    return null;
+  }
+
+  return Math.max(0, nowMs - thenMs);
+};
+
+const resolveNowMs = (list: FailureAgeList | undefined, siteGmtOffsetHours: number): number | null => {
+  const serverNow = readOptionalNonEmptyString(list?.now);
+  if (serverNow === null) {
+    return null;
+  }
+
+  return parseWpTimestampMs(serverNow, siteGmtOffsetHours);
+};
+
+const asFailureAgeList = (list: OutboxListResponse | undefined): FailureAgeList | undefined => list;
+
 const readAutoAttempts = (payload: Record<string, unknown> | undefined): number => {
   if (!payload) {
     return 0;
@@ -271,13 +388,17 @@ const isTerminalOperation = (operation: OutboxOperation): boolean =>
   (operation.last_error_code !== null && TERMINAL_ERROR_CODE_SET.has(operation.last_error_code)) ||
   readAutoAttempts(operation.payload) >= MAX_AUTO_ATTEMPTS;
 
-const isOlderThanRetention = (operation: OutboxOperation, nowMs: number): boolean => {
-  const thenMs = parseTimestampMs(operation.created_at);
-  if (thenMs === null) {
+const isOlderThanRetention = (
+  operation: FailureAgeOperation,
+  nowMs: number | null,
+  siteGmtOffsetHours: number,
+): boolean => {
+  const ageMs = readEligibilityAgeMs(operation, nowMs, siteGmtOffsetHours);
+  if (ageMs === null) {
     return false;
   }
 
-  return nowMs - thenMs >= FAILED_RETENTION_MS;
+  return ageMs >= FAILED_RETENTION_MS;
 };
 
 const getErrorHttpStatus = (error: unknown): number | null => {
@@ -350,6 +471,33 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     bulkDiscardRunning;
 
   const failedTotal = operationsQuery.data?.total;
+  const siteGmtOffsetHours = getSiteGmtOffsetHours();
+  const eligibilityList = asFailureAgeList(bulkDiscardPageQuery.data);
+  const eligibilityNowMs = resolveNowMs(
+    eligibilityList ?? asFailureAgeList(operationsQuery.data),
+    siteGmtOffsetHours,
+  );
+  const displayNowMs = eligibilityNowMs ?? Date.now();
+  const eligibilityReady = Boolean(
+    bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError && eligibilityList,
+  );
+  const eligibleOperations =
+    eligibilityList && bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError
+      ? eligibilityList.items
+          .filter((operation) => isOlderThanRetention(operation, eligibilityNowMs, siteGmtOffsetHours))
+          .slice(0, BULK_DISCARD_PAGE_SIZE)
+      : [];
+  const eligibleCount = eligibleOperations.length;
+  const canBulkDiscard = eligibilityReady && eligibleCount > 0;
+  const missingAgeClock = Boolean(
+    eligibilityList &&
+      bulkDiscardPageQuery.isSuccess &&
+      !bulkDiscardPageQuery.isError &&
+      eligibilityList.items.length > 0 &&
+      eligibilityList.items.every(
+        (operation) => readEligibilityAgeMs(operation, eligibilityNowMs, siteGmtOffsetHours) === null,
+      ),
+  );
 
   React.useEffect(() => {
     if (!operationsQuery.isLoading) {
@@ -506,10 +654,18 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       status: __('Discarding failed changes older than 7 days…', 'alt-context'),
     });
 
-    const nowMs = Date.now();
-    const candidates = (bulkDiscardPageQuery.data?.items ?? [])
-      .filter((operation) => isOlderThanRetention(operation, nowMs))
-      .slice(0, BULK_DISCARD_PAGE_SIZE);
+    if (!eligibilityReady) {
+      dispatch({ type: 'setBulkDiscardRunning', running: false });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to load eligible failed changes for bulk discard.', 'alt-context'),
+      });
+      return;
+    }
+
+    const candidates = eligibleOperations;
+    const failedTotalAtStart = eligibilityList?.total ?? 0;
 
     if (candidates.length === 0) {
       dispatch({ type: 'setBulkDiscardRunning', running: false });
@@ -553,6 +709,11 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     }
 
     const discardedCount = results.filter((result) => result.outcome === BULK_DISCARD_OUTCOME.DISCARDED).length;
+    const remainingTotal = Math.max(0, failedTotalAtStart - discardedCount);
+    const remainderCopy =
+      remainingTotal > 0
+        ? sprintf(__('%d remain — run again for the next page.', 'alt-context'), remainingTotal)
+        : '';
     dispatch({ type: 'setBulkDiscardResults', results });
     dispatch({ type: 'setBulkDiscardRunning', running: false });
     dispatch({ type: 'setPendingDiscardId', id: null });
@@ -563,14 +724,15 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         ? sprintf(
             __('Stopped after an authorization or client error. %d discarded.', 'alt-context'),
             discardedCount,
-          )
+          ) + (remainderCopy ? ` ${remainderCopy}` : '')
         : discardedCount === results.length
-          ? sprintf(__('Discarded %d failed changes older than 7 days.', 'alt-context'), discardedCount)
+          ? sprintf(__('Discarded %d failed changes older than 7 days.', 'alt-context'), discardedCount) +
+            (remainderCopy ? ` ${remainderCopy}` : '')
           : sprintf(
               __('Discarded %1$d of %2$d failed changes older than 7 days.', 'alt-context'),
               discardedCount,
               results.length,
-            ),
+            ) + (remainderCopy ? ` ${remainderCopy}` : ''),
     });
   };
 
@@ -594,9 +756,13 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                   failedTotal,
                 )
               : bulkDiscardArmed
-                ? __(
-                    'Discard failed older than 7 days is armed. Activate Confirm discard failed older than 7 days to continue.',
-                    'alt-context',
+                ? sprintf(
+                    __(
+                      'Discard %d eligible is armed. Activate Confirm discard %d eligible to continue.',
+                      'alt-context',
+                    ),
+                    eligibleCount,
+                    eligibleCount,
                   )
                 : (notice ?? ''));
 
@@ -646,9 +812,6 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       topologyStatus.applied > 0 ||
       topologyStatus.failed > 0 ||
       topologyStatus.conflict > 0);
-  const nowMs = Date.now();
-  const bulkPageItems = bulkDiscardPageQuery.data?.items ?? items;
-  const canBulkDiscard = bulkPageItems.some((operation) => isOlderThanRetention(operation, nowMs));
 
   return (
     <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy={mutationPending ? 'true' : undefined}>
@@ -683,15 +846,24 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           }}
           disabled={!canBulkDiscard || mutationPending}
           aria-disabled={!canBulkDiscard || mutationPending ? true : undefined}
-          aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+          aria-describedby={
+            mutationPending
+              ? DEAD_LETTER_PENDING_REASON_ID
+              : missingAgeClock
+                ? DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID
+                : undefined
+          }
         >
           {bulkDiscardRunning
             ? __('Discarding failed older than 7 days…', 'alt-context')
             : bulkDiscardArmed
-              ? __('Confirm discard failed older than 7 days', 'alt-context')
-              : __('Discard failed older than 7 days', 'alt-context')}
+              ? sprintf(__('Confirm discard %d eligible', 'alt-context'), eligibleCount)
+              : sprintf(__('Discard %d eligible', 'alt-context'), eligibleCount)}
         </button>
       </div>
+      {missingAgeClock && !mutationPending ? (
+        <p id={DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID}>{AGE_CLOCK_UNAVAILABLE}</p>
+      ) : null}
       {mutationError ? (
         <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
           <span aria-hidden="true">⚠</span>
@@ -768,7 +940,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                           )}
                         </p>
                         <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
-                        <p>{formatAge(operation.created_at, nowMs)}</p>
+                        <p>{formatAge(operation.created_at, displayNowMs)}</p>
                         {isTerminalOperation(operation) ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                         {operation.last_attempted_at ? (
                           <p>
@@ -837,7 +1009,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       {sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}
                     </p>
                     <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
-                    <p>{formatAge(operation.created_at, nowMs)}</p>
+                    <p>{formatAge(operation.created_at, displayNowMs)}</p>
                     {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                     <p>
                       {sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}

@@ -216,7 +216,9 @@
         "checked_at",
         "fresh",
         "usable",
-        "reason"
+        "reason",
+        "model_id",
+        "model_version"
       ],
       "properties": {
         "profile": {
@@ -278,7 +280,21 @@
             "string",
             "null"
           ],
-          "description": "Machine-readable readiness reason; null when usable (or when a non-GPU profile has no GPU endpoint reason). Common values include endpoint_unconfigured, endpoint_not_private, and endpoint_resolution_pending."
+          "description": "Machine-readable readiness reason; null when usable (or when a non-GPU profile has no GPU endpoint reason). Common values include profile_unavailable, endpoint_unconfigured, endpoint_invalid_url, endpoint_not_private, and endpoint_resolution_pending."
+        },
+        "model_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Wire model identity the active adapter stamps on responses; null when the profile spec has no model_id."
+        },
+        "model_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Model version the active adapter stamps on responses; null when the profile spec has no model_id."
         }
       }
     }
@@ -296,7 +312,9 @@
         "checked_at": 1789603200.0,
         "fresh": true,
         "usable": true,
-        "reason": null
+        "reason": null,
+        "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639",
+        "model_version": "Q4_K_M"
       }
     }
   ]

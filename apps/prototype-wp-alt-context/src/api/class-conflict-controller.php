@@ -25,6 +25,7 @@ use WP_REST_Response;
 use function absint;
 use function current_time;
 use function is_array;
+use function is_numeric;
 use function is_string;
 use function max;
 use function sanitize_key;
@@ -377,6 +378,18 @@ class ConflictController extends AbstractRecognitionProxyController {
 	 * @param array<string,mixed> $operation
 	 */
 	private function operation_age_seconds( array $operation ): ?int {
+		// OutboxQueryRepository projects this value with the persisted failure clock. Keep
+		// the local fallback for injected/legacy drains that predate that projection; the
+		// production repository path always takes the server-computed value.
+		if ( array_key_exists( 'age_seconds', $operation ) ) {
+			$age_seconds = $operation['age_seconds'];
+			if ( ! is_numeric( $age_seconds ) ) {
+				return null;
+			}
+
+			return max( 0, (int) $age_seconds );
+		}
+
 		$stamp = $this->normalize_mysql_datetime( $operation['first_failed_at'] ?? null )
 			?? $this->normalize_mysql_datetime( $operation['last_attempted_at'] ?? null )
 			?? $this->normalize_mysql_datetime( $operation['created_at'] ?? null );

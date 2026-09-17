@@ -3146,9 +3146,11 @@ def _finalize_start_result(
     actuation: _StartActuationResult,
     readiness: _StartReadinessResult,
     errors: list[str],
+    intent_status: IntentStatus | None = None,
 ) -> StartCycleResult:
     """Publish START intent, lease, readiness, and transition metadata."""
-    intent_status = _pending_intent_status(effective_intent)
+    if intent_status is None:
+        intent_status = _pending_intent_status(effective_intent)
     honoured_nonce = effective_intent.nonce if decision.honoured_ids else None
     last_transition_reason = LastTransitionReason.UNKNOWN
     if actuation.actuated:
@@ -3169,6 +3171,7 @@ def _finalize_start_result(
         fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in readiness.fallbacks
     ):
         last_transition_reason = LastTransitionReason.OPERATOR
+        intent_status = IntentStatus.STOPPED_WITH_WORK
     return StartCycleResult(
         decided=decision.decided,
         actuated=actuation.actuated,
@@ -3278,6 +3281,9 @@ def _run_start_cycle(
         actuation=actuation,
         readiness=readiness,
         errors=errors,
+        intent_status=(
+            IntentStatus.STOPPED_WITH_WORK if operator_stop_with_work else None
+        ),
     )
 
 

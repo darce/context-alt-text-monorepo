@@ -206,3 +206,17 @@ File: `apps/prototype-description-service/recognition/application/orchestration/
 Evidence: In `_persist_reverted_receipt_blocks`, `persisted += 1` and `continue` are at the loop level immediately after the `block is None` insertion, so every existing block takes the `continue` before the new `reason` and `expires_at` checks. The three newly added tests fail: the active-manual and existing-recovery cases report `persisted == 1`, while the expired-manual case never records the expected delete/recreate. An expired manual block consequently remains without the indefinite recovery guard, allowing a reverted cluster to be reattached. This violates the no-silent-regression test contract ([TEST-03]) and the recovery exclusion invariant.
 
 Verdict: fail
+
+## Re-review r5 (55ff78260..f6e9f3fd9)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-11 | fixed | In the `recovery_merge.py` hunk `@@ -823,9 +823,9 @@`, the inserted-block closing parenthesis, `persisted += 1`, and `continue` are reindented under `if block is None` (`:823-830`). Existing blocks therefore reach the subsequent recovery-reason and active-expiry guards, while only newly inserted blocks are counted and skipped. |
+
+### FINDINGS
+
+FINDINGS: []
+
+The fix delta changes only the owned recovery-merge implementation and does not add, weaken, or skip tests or touch paths outside the declared lane scope. No regression or new contract break is visible in this one-hunk indentation correction.
+
+Verdict: pass

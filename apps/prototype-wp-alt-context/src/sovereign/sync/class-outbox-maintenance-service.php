@@ -34,7 +34,9 @@ use function json_decode;
 use function max;
 use function method_exists;
 use function min;
+use function preg_match_all;
 use function sprintf;
+use function strtolower;
 use function trim;
 use function wp_json_encode;
 
@@ -57,6 +59,26 @@ class OutboxMaintenanceService {
 		'unauthorized',
 		'forbidden',
 		'not_found',
+	);
+	/** @var string[] Explicit transient dispatcher/transport codes safe for automatic retry. */
+	private const RETRYABLE_ERROR_CODES = array(
+		'connection_error',
+		'connection_timeout',
+		'connect_timeout',
+		'bad_gateway',
+		'gateway_timeout',
+		'http_request_failed',
+		'network_error',
+		'read_timeout',
+		'request_timeout',
+		'service_unavailable',
+		'timeout',
+		'too_many_requests',
+		'transport_error',
+		'upstream_timeout',
+		'breaker_open',
+		'circuit_breaker_open',
+		'circuit_open',
 	);
 	// E15-35 Slice 2 bulk-requeue tunables (filterable, fail-safe floored at 1).
 	private const DEFAULT_BULK_RETRY_MAX_ROWS = 1000;
@@ -458,7 +480,7 @@ class OutboxMaintenanceService {
 				// marked during the reclaim pass above and must remain visible to the operator;
 				// it must not disappear in that same maintenance run merely because its original
 				// failure timestamp is old.
-				"SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_code IN ({$placeholders}) ORDER BY id ASC LIMIT %d",
+				"SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, attempts FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_code IN ({$placeholders}) ORDER BY id ASC LIMIT %d",
 				...$prepare_args
 			),
 			ARRAY_A
@@ -496,8 +518,12 @@ class OutboxMaintenanceService {
 					'id' => $outbox_id,
 					'tenant_id' => $normalized_tenant_id,
 					'status' => OutboxStatus::FAILED,
+					'last_attempted_at' => $this->fingerprint_nullable_value( $row['last_attempted_at'] ?? null ),
+					'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+					'attempts' => max( 0, (int) ( $row['attempts'] ?? 0 ) ),
+					'first_failed_at' => $this->fingerprint_nullable_value( $row['first_failed_at'] ?? null ),
 				),
-				array( '%d', '%s', '%s' )
+				array( '%d', '%s', '%s', '%s', '%s', '%d', '%s' )
 			);
 			if ( is_numeric( $removed ) && (int) $removed > 0 ) {
 				++$deleted;
@@ -596,7 +622,8 @@ class OutboxMaintenanceService {
 				'first_failed_at' => null,
 				'next_attempt_at' => $this->compute_auto_retry_next_attempt_at( $next_auto_attempts ),
 			),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			$this->failed_row_fingerprint( $row )
 		);
 		if ( false === $updated ) {
 			return 'skipped';
@@ -634,7 +661,8 @@ class OutboxMaintenanceService {
 				'last_attempted_at' => $exhausted_at,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%d', '%s', '%s' ),
+			$this->failed_row_fingerprint( $row )
 		);
 	}
 
@@ -648,16 +676,36 @@ class OutboxMaintenanceService {
 	}
 
 	private function is_retryable_error_code( mixed $error_code ): bool {
-		$normalized = is_string( $error_code ) ? trim( $error_code ) : '';
+		$normalized = is_string( $error_code ) ? strtolower( trim( $error_code ) ) : '';
 		if ( '' === $normalized ) {
-			return true;
-		}
-
-		if ( self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $normalized ) {
 			return false;
 		}
 
-		return ! in_array( $normalized, self::NON_RETRYABLE_ERROR_CODES, true );
+		if (
+			self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $normalized
+			|| in_array( $normalized, self::NON_RETRYABLE_ERROR_CODES, true )
+		) {
+			return false;
+		}
+
+		$matches = array();
+		if ( preg_match_all( '/(?<!\d)([45]\d{2})(?!\d)/', $normalized, $matches ) > 0 ) {
+			$has_retryable_http_status = false;
+			foreach ( $matches[1] as $status_match ) {
+				$status = (int) $status_match;
+				if ( $status >= 400 && $status < 500 && ! in_array( $status, array( 408, 409, 429 ), true ) ) {
+					return false;
+				}
+
+				if ( $status >= 500 || in_array( $status, array( 408, 409, 429 ), true ) ) {
+					$has_retryable_http_status = true;
+				}
+			}
+
+			return $has_retryable_http_status;
+		}
+
+		return in_array( $normalized, self::RETRYABLE_ERROR_CODES, true );
 	}
 
 	/**
@@ -997,9 +1045,10 @@ class OutboxMaintenanceService {
 	 *
 	 * @param array<string,mixed> $data
 	 * @param string[] $format
+	 * @param array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string}|null $fingerprint
 	 * @return int|false
 	 */
-	private function update_operation_status( int $outbox_id, string $tenant_id, string $expected_status, array $data, array $format ): int|false {
+	private function update_operation_status( int $outbox_id, string $tenant_id, string $expected_status, array $data, array $format, ?array $fingerprint = null ): int|false {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -1014,16 +1063,33 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
+		$where = array(
+			'id' => $outbox_id,
+			'tenant_id' => $normalized_tenant_id,
+			'status' => $expected_status,
+		);
+		$where_format = array( '%d', '%s', '%s' );
+		if ( is_array( $fingerprint ) ) {
+			// wpdb renders nullable WHERE values as IS NULL, which is the NULL-safe
+			// equivalent of a MySQL <=> comparison for the selected fingerprint.
+			$where = array_merge(
+				$where,
+				array(
+					'last_attempted_at' => $fingerprint['last_attempted_at'],
+					'last_error_code' => $fingerprint['last_error_code'],
+					'attempts' => $fingerprint['attempts'],
+					'first_failed_at' => $fingerprint['first_failed_at'],
+				)
+			);
+			$where_format = array_merge( $where_format, array( '%s', '%s', '%d', '%s' ) );
+		}
+
 		$updated = $wpdb->update(
 			$this->table_name,
 			$data,
-			array(
-				'id' => $outbox_id,
-				'tenant_id' => $normalized_tenant_id,
-				'status' => $expected_status,
-			),
+			$where,
 			$format,
-			array( '%d', '%s', '%s' )
+			$where_format
 		);
 		if ( false === $updated ) {
 			return false;
@@ -1036,5 +1102,22 @@ class OutboxMaintenanceService {
 		}
 
 		return $updated;
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 * @return array{last_attempted_at:?string,last_error_code:?string,attempts:int,first_failed_at:?string}
+	 */
+	private function failed_row_fingerprint( array $row ): array {
+		return array(
+			'last_attempted_at' => $this->fingerprint_nullable_value( $row['last_attempted_at'] ?? null ),
+			'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+			'attempts' => max( 0, (int) ( $row['attempts'] ?? 0 ) ),
+			'first_failed_at' => $this->fingerprint_nullable_value( $row['first_failed_at'] ?? null ),
+		);
+	}
+
+	private function fingerprint_nullable_value( mixed $value ): ?string {
+		return null === $value ? null : (string) $value;
 	}
 }

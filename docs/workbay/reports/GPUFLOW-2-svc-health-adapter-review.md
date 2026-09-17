@@ -87,3 +87,21 @@ Verdict: pass_with_findings
 The fix delta edits `apps/prototype-description-service/scene/tests/test_shared_schema_documents.py` (`+82-89`, `+144-152`) to repair the shared `HEALTH` fixture. The A1 lane row assigns `api/main.py` and `scene/tests/test_health_detailed_adapter.py` to `svc-health-adapter`, while the shared schema is assigned to `contracts-service`; this additional fixture path crosses the declared one-owner boundary and should be routed to the contract owner (`[sr-007]`).
 
 Verdict: pass_with_findings
+
+## Re-review r5 (cab42a114..607994cea)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f (high) | fixed | `extract_probed_description_adapter()` now requires a top-level `description_adapter` object and returns its profile (`infra/oci/demo/lib/describe-gate.sh:+84-122`); the demo-gate tests replace string fixtures and reject a legacy string (`infra/oci/demo/tests/test-describe-gate.sh:+154-198`), while the GPU smoke path reads object identity and checks the expected profile/model ID/version (`scripts/gpu_burst_smoke.py:+1574-1612,+1708-1733`). |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-11 — high
+
+`extract_probed_description_adapter()` validates `model_id` and `model_version` only when those keys are present (`infra/oci/demo/lib/describe-gate.sh:+110-122`). An object containing only a nonempty `profile`, or empty identity strings, is therefore accepted and reduced to a profile; the changed tests cover non-string identity values but not omitted or empty values (`infra/oci/demo/tests/test-describe-gate.sh:+164-174`). The demo/bootstrap gate can consequently accept a schema-invalid or non-identifiable readiness payload even though the GPU smoke consumer now requires nonempty exact identity fields (`scripts/gpu_burst_smoke.py:+1588-1604`), leaving inconsistent release checks and a fail-open path for required metadata (`[rg-015]`, `[CARD-09]`).
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-12 — low
+
+The fix delta changes `infra/oci/demo/lib/describe-gate.sh`, `infra/oci/demo/tests/test-describe-gate.sh`, `scripts/deploy/tests/test-smoke-gate.sh`, and `scripts/gpu_burst_smoke.py` (`:+84-122`, `:+154-198`, `:+923-926`, `:+73-82`, `:+1574-1733`), but the lane row assigns `svc-health-adapter` only `api/main.py` and `apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py`. These consumer and fixture edits cross the declared single-owner boundary and should be routed to their owning lanes (`[sr-007]`).
+
+Verdict: fail

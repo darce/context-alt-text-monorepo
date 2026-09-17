@@ -1,12 +1,13 @@
 # UX Map — workbench-identity-chips
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx`
 
 ## Goals
 - Show one person chip per person in each media row; a person's face-group membership stays in the +N count instead of becoming duplicate chips.
 - Render the store's representative face crop before the person label (HAI-01/HAI-17); use the current face only when representative evidence is unavailable.
 - Keep optional person_id and representative_face absence unresolved and visible without fabricating a person or representative image (rg-015, DDIA).
+- Keep ungrouped residue in one Not yet grouped (N) section with every unresolved face; never render N Unnamed person cards or visually deduplicate faces (GPUFLOW-2 C5).
 - Expose an N face groups badge when one person spans more than one face group, and let the chip expand into the existing face review panel.
 - Let chip name, avatar, and face-group-count buttons open the person workspace while preserving reversible roster merge behavior (INT-07, INT-09).
 
@@ -25,7 +26,7 @@
 
 ### Media row — person chips (`workbench-media-row-person-chips`)
 
-Purpose: A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review.
+Purpose: A media row renders one chip per resolved person: the representative face evidence comes first, followed by the person label and member +N count; unresolved faces remain available for face-group review in one Not yet grouped (N) section.
 
 url_params: `media`
 
@@ -33,6 +34,7 @@ url_params: `media`
 | --- | --- | --- | --- |
 | `z-media-row` | Selected media row (title, description status, and person chip rail) | content | default, loading, empty, error |
 | `z-person-chip-rail` | One person chip per person (no duplicate chip for each face group) | ai_review | default, loading, empty, error, degraded |
+| `z-ungrouped-residue` | Not yet grouped section (every unresolved face, never N Unnamed person cards) | ai_review | default, error, degraded |
 | `z-representative-avatar` | Representative face avatar (store reference crop rendered before the person's label) | ai_review | default, error, degraded |
 | `z-member-count` | Member count (+N faces on this person chip) | status | default, loading, empty, error |
 | `z-chip-actions` | Person chip buttons (expand face-group review or open person workspace) | form | default, loading, error |
@@ -45,6 +47,7 @@ url_params: `media`
 | ZONES                                                      |
 |   - Selected media row (title, description status, and pe… |
 |   - One person chip per person (no duplicate chip for eac… |
+|   - Not yet grouped section (every unresolved face, never… |
 |   - Representative face avatar (store reference crop rend… |
 |   - Member count (+N faces on this person chip) (status) … |
 |   - Person chip buttons (expand face-group review or open… |
@@ -216,6 +219,7 @@ flowchart TD
 2. Render representative face evidence, N face groups, and member +N chip states
 3. Render current-face fallback with canonical Representative image unavailable copy
 4. Connect chip actions to face review and the person workspace
+5. Collapse ungrouped residue into one Not yet grouped (N) section without visually deduplicating faces
 
 ## Parity index
 
@@ -225,7 +229,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: z-media-row z-person-chip-rail z-representative-avatar z-member-count z-chip-actions z-multi-group-chip z-face-group-badge z-multi-group-avatar z-multi-group-member-count z-multi-group-actions z-current-face-avatar z-representative-unavailable-copy z-fallback-member-count z-fallback-actions z-expanded-face-evidence z-expanded-face-members z-expanded-actions z-roster-person-entry
+Zone ids: z-media-row z-person-chip-rail z-ungrouped-residue z-representative-avatar z-member-count z-chip-actions z-multi-group-chip z-face-group-badge z-multi-group-avatar z-multi-group-member-count z-multi-group-actions z-current-face-avatar z-representative-unavailable-copy z-fallback-member-count z-fallback-actions z-expanded-face-evidence z-expanded-face-members z-expanded-actions z-roster-person-entry
 
 Action ids: act-expand-person-chip act-open-person-workspace-from-chip act-review-multi-group-person act-open-person-workspace-from-multi-group-chip act-review-current-face-fallback act-open-person-workspace-from-fallback act-close-person-chip-review act-open-person-workspace-from-review
 
@@ -233,6 +237,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 
 - Selected media row (title, description status, and person chip rail)
 - One person chip per person (no duplicate chip for each face group)
+- Not yet grouped section (every unresolved face, never N Unnamed person cards)
 - Representative face avatar (store reference crop rendered before the person's label)
 - Member count (+N faces on this person chip)
 - Person chip buttons (expand face-group review or open person workspace)

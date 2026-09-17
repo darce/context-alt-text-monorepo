@@ -66,3 +66,24 @@ The non-GPU branch still sets `usable=True` for every registry profile whose `av
 The fix delta edits `packages/shared-contracts/schemas/scene-health-detailed.schema.json`, while the lane row assigns `api/main.py` and the new scene test to `svc-health-adapter` and assigns that schema to `contracts-service`. This crosses the declared lane ownership boundary and should be routed to the schema owner.
 
 Verdict: fail
+
+## Re-review r4 (b2f35ea73..f07634674)
+
+VERIFIED: {"SVCHEA-0feee8f56b32d713-H-c1256b829ad577bd18c7693c":"fixed","SVCHEA-0feee8f56b32d713-H-f6bf1fc4861d3c8a95432829":"fixed","SVCHEA-0feee8f56b32d713-H-2bcba9707a7bea22ae8efc9d":"fixed","SVCHEA-0feee8f56b32d713-H-4c7afde184e3acbfdde31a78":"fixed"}
+FINDINGS: [{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-10","severity":"low","file_path":"apps/prototype-description-service/scene/tests/test_shared_schema_documents.py","line":82,"summary":"The fix delta edits a shared-schema fixture outside the svc-health-adapter lane ownership.","evidence":"The delta adds model_id/model_version to HEALTH and its required-key assertion in scene/tests/test_shared_schema_documents.py (+82-89, +144-152), but the A1 lane row owns only api/main.py and scene/tests/test_health_detailed_adapter.py; the shared contract fixture should remain with contracts-service."}]
+Verdict: pass_with_findings
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SVCHEA-0feee8f56b32d713-H-c1256b829ad577bd18c7693c (high) | fixed | The shared `HEALTH.description_adapter` fixture now supplies `model_id` and `model_version` (`apps/prototype-description-service/scene/tests/test_shared_schema_documents.py:+82-89`), and the expected-key assertion includes both fields (`:+144-152`), so the required schema document can validate. |
+| SVCHEA-0feee8f56b32d713-H-f6bf1fc4861d3c8a95432829 (high) | fixed | `wire_model_id()` returns `SeededDescriptionAdapter.model_id` for the seeded profile and `_wire_model_version()` reads the configured seeded model version (`apps/prototype-description-service/api/main.py:+256-270`); the readiness payload uses both values (`:+291-292`), with a matching configured-version test (`scene/tests/test_health_detailed_adapter.py:+383-401`). |
+| SVCHEA-0feee8f56b32d713-H-2bcba9707a7bea22ae8efc9d (high) | fixed | Readiness now checks `spec.available` and, for available local-CPU profiles, `_missing_vlm_dependencies()` before setting `usable` (`apps/prototype-description-service/api/main.py:+293-304`); missing VLM dependencies produce `vlm_dependencies_missing`, pinned by the added test (`scene/tests/test_health_detailed_adapter.py:+409-415`). |
+| SVCHEA-0feee8f56b32d713-H-4c7afde184e3acbfdde31a78 (high) | fixed | `_parse_endpoint_url()` catches malformed `urlparse()`/port errors and `_gpu_endpoint_url_is_valid()` requires HTTP(S) plus a hostname (`apps/prototype-description-service/api/main.py:+223-245`); the new cases cover an unmatched bracket and malformed port and assert DNS is skipped (`scene/tests/test_health_detailed_adapter.py:+263-281`). |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-10 — low
+
+The fix delta edits `apps/prototype-description-service/scene/tests/test_shared_schema_documents.py` (`+82-89`, `+144-152`) to repair the shared `HEALTH` fixture. The A1 lane row assigns `api/main.py` and `scene/tests/test_health_detailed_adapter.py` to `svc-health-adapter`, while the shared schema is assigned to `contracts-service`; this additional fixture path crosses the declared one-owner boundary and should be routed to the contract owner (`[sr-007]`).
+
+Verdict: pass_with_findings

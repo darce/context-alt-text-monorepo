@@ -105,3 +105,21 @@ Verdict: pass_with_findings
 The fix delta changes `infra/oci/demo/lib/describe-gate.sh`, `infra/oci/demo/tests/test-describe-gate.sh`, `scripts/deploy/tests/test-smoke-gate.sh`, and `scripts/gpu_burst_smoke.py` (`:+84-122`, `:+154-198`, `:+923-926`, `:+73-82`, `:+1574-1733`), but the lane row assigns `svc-health-adapter` only `api/main.py` and `apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py`. These consumer and fixture edits cross the declared single-owner boundary and should be routed to their owning lanes (`[sr-007]`).
 
 Verdict: fail
+
+## Re-review r6 (607994cea..db5eb118d)
+
+VERIFIED: {"SVCHEA-0feee8f56b32d713-H-1ab3ae3ba4b23b879dba88f2":"fixed","SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f":"not_fixed"}
+FINDINGS: [{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-13","severity":"high","file_path":"infra/oci/demo/lib/describe-gate.sh","line":118,"summary":"The adapter extractor accepts a payload that is not valid detailed-health schema.","evidence":"The fix hunk validates only profile plus model_id/model_version presence and value shape (infra/oci/demo/lib/describe-gate.sh:112-120), while descriptionAdapterReadiness also requires kind, endpoint_configured, endpoint_allowlisted, endpoint_private, checked_at, fresh, usable, and reason (packages/shared-contracts/schemas/scene-health-detailed.schema.json:218-231). The new null-identity test passes only profile/model_id/model_version and calls it schema-valid (infra/oci/demo/tests/test-describe-gate.sh:176), so a malformed 2xx health body can still be admitted by the bootstrap gate [RLSE-05][TEST-15]."}]
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| SVCHEA-0feee8f56b32d713-H-1ab3ae3ba4b23b879dba88f2 (high) | fixed | The extractor now rejects either missing identity key and rejects non-null values unless they are non-empty strings (`infra/oci/demo/lib/describe-gate.sh:116-120`); the added cases cover missing keys and an empty model_id (`infra/oci/demo/tests/test-describe-gate.sh:173-176`). Null remains allowed by the schema's identity types, so the claimed omitted/empty acceptance path is closed. |
+| SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f (high) | not_fixed | This delta only adds identity validation to the already-object extractor (`infra/oci/demo/lib/describe-gate.sh:112-120`); it does not change the health producer or the other consumers from string handling to object handling. The direct extractor tests (`infra/oci/demo/tests/test-describe-gate.sh:173-176`) do not prove the cross-consumer contract, so the listed object/string release break is not fixed by this diff. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCHEALTHADAPTER-R-13 — high
+
+The fix validates only `profile`, `model_id`, and `model_version` (`infra/oci/demo/lib/describe-gate.sh:112-120`), but the shared `descriptionAdapterReadiness` definition requires the complete readiness block, including `kind`, endpoint evidence, freshness, usability, and reason (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:218-231`). The new test explicitly accepts `{"profile":"seeded","model_id":null,"model_version":null}` as “schema-valid” (`infra/oci/demo/tests/test-describe-gate.sh:176`), although that object omits every other required readiness field. A malformed HTTP-2xx health response can therefore still yield a trusted profile and pass the bootstrap gate, violating fail-closed release behavior (`[RLSE-05]`, `[TEST-15]`).
+
+Verdict: fail

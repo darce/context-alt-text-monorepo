@@ -41,7 +41,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -51,7 +51,6 @@ from typing import Protocol
 from infra.oci.gpu_lifecycle.controller import (
     FallbackDecision,
     GpuInstance,
-    GpuInstanceState,
     GpuLifecycleController,
     JobLoadSnapshot,
     LifecycleAction,
@@ -82,6 +81,8 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
     GpuLifecycleState,
     LastTransitionReason,
+    instance_state_is_explicitly_stopped,
+    instance_state_is_unknown,
     read_previous_gpu_state,
     resolve_gpu_state_path,
     state_for_instances,
@@ -117,12 +118,6 @@ _MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 _OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
-_LIVE_GPU_INSTANCE_STATES = frozenset(
-    {
-        GpuInstanceState.RUNNING,
-        GpuInstanceState.STARTING,
-    }
-)
 
 
 def _acquire_flock_with_timeout(
@@ -1836,7 +1831,7 @@ def _state_reason(
         return None
     if fallback_reason is not None:
         return fallback_reason
-    if not instances or any(instance.state == "UNKNOWN" for instance in instances):
+    if not instances or any(instance_state_is_unknown(instance.state) for instance in instances):
         return "instance_state_unknown"
     if has_errors:
         return "lifecycle_error"
@@ -1853,6 +1848,20 @@ def _decision_action_pairs(pairs: list[tuple[str, str]]) -> list[dict[str, str]]
     ]
 
 
+def _fallback_records(fallbacks: Iterable[FallbackDecision] | None) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    for fallback in fallbacks or ():
+        records.append(
+            {
+                "action": getattr(fallback.action, "value", str(fallback.action)),
+                "instance_id": fallback.instance_id,
+                "profile": fallback.profile,
+                "reason": fallback.reason,
+            }
+        )
+    return records
+
+
 def _record_decision(
     result: ReapCycleResult | StartCycleResult,
     *,
@@ -1864,8 +1873,9 @@ def _record_decision(
     if store is None:
         return result
     lease_expired = getattr(result, "lease_expired", [])
+    fallbacks = _fallback_records(getattr(result, "fallbacks", ()))
     blocked = result.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
-    if not (result.decided or result.actuated or lease_expired or blocked):
+    if not (result.decided or result.actuated or lease_expired or blocked or fallbacks):
         return result
     if result.actuated:
         outcome = "honoured" if not result.errors else "partial"
@@ -1896,6 +1906,7 @@ def _record_decision(
         "actuated": _decision_action_pairs(result.actuated),
         "actuation_outcome": outcome,
         "errors": list(result.errors),
+        "fallbacks": fallbacks,
     }
     try:
         store.append(record)
@@ -2825,9 +2836,7 @@ def _start_work_decision(
             honoured_instance_ids=honoured_ids,
         )
         waiting_ids = (
-            controller.instances_waiting_on_boot(instances)
-            if load.has_work and effective_intent.action is not IntentAction.STOP
-            else []
+            controller.instances_waiting_on_boot(instances) if load.has_work else []
         )
     running_ids = [instance.instance_id for instance in instances if instance.state == "RUNNING"]
     return _StartDecision(
@@ -2847,29 +2856,22 @@ def _start_blocking_errors(
     effective_intent: EffectiveIntent,
 ) -> list[str]:
     """Record fail-closed START refusals for instances that block waiting work."""
+    del effective_intent
     load = decision.load
-    blocked = (
-        controller.instances_blocking_start(instances)
-        if isinstance(load, JobLoadSnapshot)
-        and not load.untrustworthy
-        and load.has_work
-        and effective_intent.action is not IntentAction.STOP
-        else []
-    )
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy or not load.has_work:
+        return []
+    blocked = list(controller.instances_blocking_start(instances))
+    seen_ids = {instance.instance_id for instance in blocked}
+    for instance in instances:
+        if instance_state_is_unknown(instance.state) and instance.instance_id not in seen_ids:
+            blocked.append(instance)
+            seen_ids.add(instance.instance_id)
     errors: list[str] = []
     for instance in blocked:
         msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
     return errors
-
-
-def _instance_is_live(instance: GpuInstance) -> bool:
-    """True when the instance is already running or an in-flight boot."""
-    try:
-        return GpuInstanceState(instance.state) in _LIVE_GPU_INSTANCE_STATES
-    except (TypeError, ValueError):
-        return False
 
 
 def _is_operator_stop_with_work(
@@ -2883,7 +2885,9 @@ def _is_operator_stop_with_work(
         return False
     if not isinstance(load, JobLoadSnapshot) or load.untrustworthy or not load.has_work:
         return False
-    return not any(_instance_is_live(instance) for instance in instances)
+    if not instances:
+        return False
+    return all(instance_state_is_explicitly_stopped(instance.state) for instance in instances)
 
 
 def _operator_stop_with_work_fallbacks(

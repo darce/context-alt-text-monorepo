@@ -16,7 +16,9 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 import numpy as np
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
+
+from db.models.constraints import IdentityClusterBlock
 
 from db.models.identity import (
     ClusterMergeKind,
@@ -48,6 +50,7 @@ from recognition.domain.repositories import MergeSuggestionCreateData
 logger = logging.getLogger(__name__)
 
 RECOVERY_UNKNOWN_OPERATING_CONDITION = "unknown"
+RECOVERY_REVERT_BLOCK_REASON = "merge_reverted"
 
 
 class RecoveryAbstainClause(StrEnum):
@@ -131,6 +134,14 @@ class RecoveryReceiptStore(Protocol):
 
     async def siblings(self, survivor_cluster_id: str) -> Sequence[ClusterMergeReceipt]: ...
 
+    async def active_block_pairs(
+        self,
+        identity_ids: Sequence[str],
+        *,
+        tenant_id: str | None = None,
+        now: datetime,
+    ) -> set[tuple[str, str]]: ...
+
     async def purge_expired_or_reverted(self, *, now: datetime) -> int: ...
 
 
@@ -150,6 +161,7 @@ class RecoverySuggestionEmitter(Protocol):
 @dataclass
 class InMemoryReceiptStore:
     receipts: list[ClusterMergeReceipt] = field(default_factory=list)
+    blocks: list[IdentityClusterBlock] = field(default_factory=list)
 
     async def add(self, receipt: ClusterMergeReceipt) -> None:
         self.receipts.append(receipt)
@@ -158,12 +170,60 @@ class InMemoryReceiptStore:
         survivor = str(survivor_cluster_id)
         return [receipt for receipt in self.receipts if str(receipt.survivor_cluster_id) == survivor]
 
+    async def add_block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        blocked_cluster_id: str,
+        reason: str = RECOVERY_REVERT_BLOCK_REASON,
+        expires_at: datetime | None = None,
+    ) -> IdentityClusterBlock:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        identity_uuid = uuid.UUID(str(identity_id))
+        blocked_cluster_uuid = uuid.UUID(str(blocked_cluster_id))
+        for block in self.blocks:
+            if (
+                block.tenant_id == tenant_uuid
+                and block.identity_id == identity_uuid
+                and block.blocked_cluster_id == blocked_cluster_uuid
+            ):
+                block.reason = reason
+                block.expires_at = expires_at
+                return block
+        block = IdentityClusterBlock(
+            id=uuid.uuid4(),
+            tenant_id=tenant_uuid,
+            identity_id=identity_uuid,
+            blocked_cluster_id=blocked_cluster_uuid,
+            reason=reason,
+            expires_at=expires_at,
+        )
+        self.blocks.append(block)
+        return block
+
+    async def active_block_pairs(
+        self,
+        identity_ids: Sequence[str],
+        *,
+        tenant_id: str | None = None,
+        now: datetime,
+    ) -> set[tuple[str, str]]:
+        identity_keys = {str(identity_id) for identity_id in identity_ids}
+        tenant_key = str(tenant_id) if tenant_id is not None else None
+        return {
+            (str(block.identity_id), str(block.blocked_cluster_id))
+            for block in self.blocks
+            if str(block.identity_id) in identity_keys
+            and (tenant_key is None or str(block.tenant_id) == tenant_key)
+            and (block.expires_at is None or block.expires_at > now)
+        }
+
     async def purge_expired_or_reverted(self, *, now: datetime) -> int:
         kept: list[ClusterMergeReceipt] = []
         purged = 0
         for receipt in self.receipts:
-            expired = receipt.expires_at <= now
-            if expired:
+            if receipt.reverted_at is not None or receipt.expires_at <= now:
                 purged += 1
                 continue
             kept.append(receipt)
@@ -401,42 +461,6 @@ def _prepare_runtime_space_clusters(
     return live, rejected_by_cluster, original_counts
 
 
-def _reverted_receipt_exclusions(
-    sibling_cache: Mapping[str, Sequence[ClusterMergeReceipt]],
-    *,
-    now: datetime,
-) -> tuple[set[tuple[frozenset[str], str]], set[tuple[str, str]]]:
-    """Build active undo-window exclusions before evaluating any residual."""
-    identity_exclusions: set[tuple[frozenset[str], str]] = set()
-    label_exclusions: set[tuple[str, str]] = set()
-    for receipts in sibling_cache.values():
-        for receipt in receipts:
-            if receipt.reverted_at is None or receipt.expires_at <= now:
-                continue
-            survivor_id = str(receipt.survivor_cluster_id)
-            moved_ids = frozenset(str(identity_id) for identity_id in receipt.moved_identity_ids)
-            if moved_ids:
-                identity_exclusions.add((moved_ids, survivor_id))
-            if receipt.source_label:
-                label_exclusions.add((receipt.source_label.strip().lower(), survivor_id))
-    return identity_exclusions, label_exclusions
-
-
-def _residual_is_reverted_excluded(
-    residual: RecoveryCluster,
-    destination: RecoveryCluster,
-    *,
-    identity_exclusions: set[tuple[frozenset[str], str]],
-    label_exclusions: set[tuple[str, str]],
-) -> bool:
-    survivor_id = destination.cluster_id
-    identity_key = frozenset(member.identity_id for member in residual.members)
-    if (identity_key, survivor_id) in identity_exclusions:
-        return True
-    label = residual.label.strip().lower() if residual.label else None
-    return label is not None and (label, survivor_id) in label_exclusions
-
-
 def _new_receipt(
     *,
     tenant_id: str,
@@ -491,10 +515,24 @@ async def run_recovery_merge_on_clusters(
         return RecoveryMergeResult(purged_receipts=purged, applied=False)
 
     sibling_cache = {cluster.cluster_id: list(await receipt_store.siblings(cluster.cluster_id)) for cluster in clusters}
-    identity_exclusions, label_exclusions = _reverted_receipt_exclusions(sibling_cache, now=clock)
-
-    live, rejected_by_cluster, original_counts = _prepare_runtime_space_clusters(clusters, runtime_binding)
     max_residual = settings.recovery_max_residual_size
+    candidate_identity_ids = tuple(
+        member.identity_id
+        for cluster in clusters
+        if len(cluster.members) <= max_residual
+        for member in cluster.members
+    )
+    active_block_pairs: set[tuple[str, str]] = set()
+    load_active_blocks = getattr(receipt_store, "active_block_pairs", None)
+    if callable(load_active_blocks) and candidate_identity_ids:
+        active_block_pairs = set(
+            await load_active_blocks(
+                candidate_identity_ids,
+                tenant_id=tenant_id,
+                now=clock,
+            )
+        )
+    live, rejected_by_cluster, original_counts = _prepare_runtime_space_clusters(clusters, runtime_binding)
     residuals = [
         cluster
         for cluster in clusters
@@ -549,11 +587,9 @@ async def run_recovery_merge_on_clusters(
             continue
         dest_similarity, destination = ranked[0]
         runner_up = ranked[1][1] if len(ranked) > 1 else None
-        if _residual_is_reverted_excluded(
-            residual,
-            destination,
-            identity_exclusions=identity_exclusions,
-            label_exclusions=label_exclusions,
+        if any(
+            (member.identity_id, destination.cluster_id) in active_block_pairs
+            for member in residual.members
         ):
             abstention = ResidualAbstention(
                 residual_cluster_id=residual.cluster_id,
@@ -666,8 +702,6 @@ class _SessionReceiptStore:
         self._session.add(receipt)
 
     async def siblings(self, survivor_cluster_id: str) -> Sequence[ClusterMergeReceipt]:
-        from sqlalchemy import select
-
         result = await self._session.execute(
             select(ClusterMergeReceipt).where(
                 ClusterMergeReceipt.tenant_id == self._tenant_id,
@@ -676,14 +710,124 @@ class _SessionReceiptStore:
         )
         return list(result.scalars().all())
 
+    async def active_block_pairs(
+        self,
+        identity_ids: Sequence[str],
+        *,
+        tenant_id: str | None = None,
+        now: datetime,
+    ) -> set[tuple[str, str]]:
+        del tenant_id
+        if not identity_ids:
+            return set()
+        identity_uuids = [uuid.UUID(str(identity_id)) for identity_id in identity_ids]
+        result = await self._session.execute(
+            select(
+                IdentityClusterBlock.identity_id,
+                IdentityClusterBlock.blocked_cluster_id,
+            ).where(
+                IdentityClusterBlock.tenant_id == self._tenant_id,
+                IdentityClusterBlock.identity_id.in_(identity_uuids),
+                or_(
+                    IdentityClusterBlock.expires_at.is_(None),
+                    IdentityClusterBlock.expires_at > now,
+                ),
+            )
+        )
+        return {(str(identity_id), str(cluster_id)) for identity_id, cluster_id in result.all()}
+
     async def purge_expired_or_reverted(self, *, now: datetime) -> int:
         result = await self._session.execute(
             delete(ClusterMergeReceipt).where(
                 ClusterMergeReceipt.tenant_id == self._tenant_id,
-                ClusterMergeReceipt.expires_at <= now,
+                or_(
+                    ClusterMergeReceipt.reverted_at.is_not(None),
+                    ClusterMergeReceipt.expires_at <= now,
+                ),
             )
         )
         return int(result.rowcount or 0)
+
+
+async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str) -> int:
+    """Carry reverted receipts into durable identity-to-cluster blocks.
+
+    Receipts are intentionally purged later in the recovery run, so this
+    bridge must execute first. Identity rows are checked before inserts because
+    receipt history can outlive an identity and the block table has an FK.
+    """
+    tenant_uuid = uuid.UUID(str(tenant_id))
+    receipt_result = await session.execute(
+        select(ClusterMergeReceipt)
+        .where(
+            ClusterMergeReceipt.tenant_id == tenant_uuid,
+            ClusterMergeReceipt.reverted_at.is_not(None),
+        )
+    )
+    reverted_receipts = list(receipt_result.scalars().all())
+    if not reverted_receipts:
+        return 0
+
+    receipt_pairs: dict[uuid.UUID, set[uuid.UUID]] = {}
+    moved_ids = {
+        uuid.UUID(str(identity_id))
+        for receipt in reverted_receipts
+        for identity_id in receipt.moved_identity_ids
+    }
+    for receipt in reverted_receipts:
+        survivor_id = uuid.UUID(str(receipt.survivor_cluster_id))
+        receipt_pairs.setdefault(survivor_id, set()).update(
+            uuid.UUID(str(identity_id)) for identity_id in receipt.moved_identity_ids
+        )
+    if not moved_ids:
+        return 0
+
+    identity_result = await session.execute(
+        select(MediaIdentityModel.id).where(
+            MediaIdentityModel.tenant_id == tenant_uuid,
+            MediaIdentityModel.id.in_(moved_ids),
+        )
+    )
+    existing_identity_ids = {
+        uuid.UUID(str(identity_id)) for identity_id in identity_result.scalars().all()
+    }
+    if not existing_identity_ids:
+        return 0
+
+    survivor_ids = tuple(receipt_pairs)
+    existing_block_result = await session.execute(
+        select(IdentityClusterBlock)
+        .where(
+            IdentityClusterBlock.tenant_id == tenant_uuid,
+            IdentityClusterBlock.identity_id.in_(existing_identity_ids),
+            IdentityClusterBlock.blocked_cluster_id.in_(survivor_ids),
+        )
+    )
+    existing_blocks = {
+        (uuid.UUID(str(block.identity_id)), uuid.UUID(str(block.blocked_cluster_id))): block
+        for block in existing_block_result.scalars().all()
+    }
+
+    persisted = 0
+    for survivor_id, receipt_identity_ids in receipt_pairs.items():
+        for identity_id in receipt_identity_ids & existing_identity_ids:
+            block = existing_blocks.get((identity_id, survivor_id))
+            if block is None:
+                session.add(
+                    IdentityClusterBlock(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_uuid,
+                        identity_id=identity_id,
+                        blocked_cluster_id=survivor_id,
+                        reason=RECOVERY_REVERT_BLOCK_REASON,
+                        expires_at=None,
+                    )
+                )
+                persisted += 1
+                continue
+            block.reason = RECOVERY_REVERT_BLOCK_REASON
+            block.expires_at = None
+    return persisted
 
 
 _PersistedRecoveryFields = tuple[str, np.ndarray, str | None, float | None, str]
@@ -977,6 +1121,8 @@ async def run_recovery_merge(
     store = receipt_store
     if store is None:
         store = _SessionReceiptStore(session, tenant_id) if session is not None else InMemoryReceiptStore()
+    if session is not None:
+        await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id)
 
     domain_clusters = await cluster_repo.get_by_tenant(tenant_id, limit=1000)
     cluster_ids = [str(cluster.id) for cluster in domain_clusters if cluster.id is not None]

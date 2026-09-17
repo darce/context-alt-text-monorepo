@@ -12,6 +12,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
@@ -49,6 +50,38 @@ CLUSTER_MEMBERS_PAGE_LIMIT = 500
 
 _INFERENCE_CAP = 20
 
+_QUALITY_COMPONENT_KEYS = ("confidence", "bbox_area", "sharpness", "occlusion_severity")
+_UNIT_INTERVAL_KEYS = frozenset({"confidence", "occlusion_severity"})
+
+
+class ClusterSnapshotQualityComponents(BaseModel):
+    """Parts of representative_quality (UXR-15). Missing signals are null, never omitted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence: float | None = None
+    bbox_area: float | None = None
+    sharpness: float | None = None
+    occlusion_severity: float | None = None
+
+
+class ClusterSnapshotQualityClusterResponse(ClusterSnapshotClusterResponse):
+    """Snapshot cluster row with B2a quality/undo fields (API-10 rename at export)."""
+
+    representative_quality: float | None = None
+    quality_components: ClusterSnapshotQualityComponents | None = None
+    representative_media_id: int | None = None
+    undoable_merge_receipt_id: str | None = None
+
+
+class ClusterSnapshotQualityResponse(ClusterSnapshotResponse):
+    clusters: list[ClusterSnapshotQualityClusterResponse]
+
+
+class ClusterDeltaQualityResponse(ClusterDeltaResponse):
+    clusters: list[ClusterSnapshotQualityClusterResponse]
+
+
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
@@ -77,34 +110,130 @@ def _face_thumb_url_for_identity(identity, bbox: FaceBoxResponse | None) -> str 
     )
 
 
+def _optional_float(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _component_value(key: str, value: object) -> float | None:
+    number = _optional_float(value)
+    if number is None or number < 0:
+        return None
+    if key in _UNIT_INTERVAL_KEYS and number > 1:
+        return None
+    return number
+
+
+def _export_quality_components(raw: object) -> ClusterSnapshotQualityComponents | None:
+    # Pass through stored parts only; never derive from identity bbox/confidence (rg-015).
+    if not isinstance(raw, dict):
+        return None
+    return ClusterSnapshotQualityComponents(
+        **{key: _component_value(key, raw.get(key)) for key in _QUALITY_COMPONENT_KEYS}
+    )
+
+
+def _export_representative_quality(
+    rep: object,
+) -> tuple[float | None, ClusterSnapshotQualityComponents | None]:
+    score = _optional_float(getattr(rep, "quality_score", None))
+    if score is not None and (score < 0 or score > 1):
+        score = None
+    return score, _export_quality_components(getattr(rep, "quality_components", None))
+
+
+def _representative_media_id(rep: object) -> int | None:
+    raw = getattr(rep, "media_id", None)
+    if raw is None:
+        identity = getattr(rep, "identity", None)
+        raw = getattr(identity, "media_id", None) if identity is not None else None
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        media_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if media_id < 1:
+        return None
+    return media_id
+
+
+def _as_aware_utc(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _undoable_merge_receipt_id(cluster: object, *, now: datetime) -> str | None:
+    try:
+        receipts = getattr(cluster, "merge_receipts", None)
+        rows = list(receipts) if receipts is not None else []
+    except Exception:
+        return None
+    now_utc = _as_aware_utc(now) or now
+    candidates: list[tuple[datetime, int, object]] = []
+    for receipt in rows:
+        if getattr(receipt, "reverted_at", None) is not None:
+            continue
+        expires_at = _as_aware_utc(getattr(receipt, "expires_at", None))
+        if expires_at is None or expires_at < now_utc:
+            continue
+        receipt_id = getattr(receipt, "receipt_id", None)
+        if receipt_id is None:
+            continue
+        created_at = _as_aware_utc(getattr(receipt, "created_at", None)) or datetime.min.replace(tzinfo=UTC)
+        try:
+            sequence_no = int(getattr(receipt, "sequence_no", 0) or 0)
+        except (TypeError, ValueError):
+            sequence_no = 0
+        candidates.append((created_at, sequence_no, receipt_id))
+    if not candidates:
+        return None
+    _created, _seq, receipt_id = max(candidates, key=lambda item: (item[0], item[1]))
+    return str(receipt_id)
+
+
+def _select_snapshot_representative(cluster: object) -> object | None:
+    representatives = getattr(cluster, "representatives", None)
+    if not representatives:
+        return None
+    reps = sorted(representatives, key=lambda r: str(r.id))
+    return next((candidate for candidate in reps if candidate.is_user_selected), reps[0])
+
+
 def _build_cluster_responses(
     clusters: list,
-) -> list[ClusterSnapshotClusterResponse]:
+    *,
+    now: datetime | None = None,
+) -> list[ClusterSnapshotQualityClusterResponse]:
     """Build cluster snapshot responses from domain cluster objects."""
-    responses: list[ClusterSnapshotClusterResponse] = []
+    exported_at = now or datetime.now(tz=UTC)
+    responses: list[ClusterSnapshotQualityClusterResponse] = []
     for cluster in clusters:
         curation_state = "dismissed" if cluster.dismissed_at else ("confirmed" if cluster.user_confirmed else "active")
 
-        # Get representative thumb path
         representative_thumb_path = None
         representative_id = None
         is_pinned = False
-        if cluster.representatives and len(cluster.representatives) > 0:
-            # Sort by id for stable fallback if no user-selected representative exists
-            # ( mitigates RSWR-IMPL-007: non-deterministic collection ordering )
-            reps = sorted(cluster.representatives, key=lambda r: str(r.id))
-            rep = next(
-                (candidate for candidate in reps if candidate.is_user_selected),
-                reps[0],
-            )
-            if rep.identity_id:
+        representative_quality = None
+        quality_components = None
+        representative_media_id = None
+        rep = _select_snapshot_representative(cluster)
+        if rep is not None:
+            if getattr(rep, "identity_id", None):
                 representative_id = str(rep.identity_id)
                 is_pinned = bool(rep.is_user_selected)
-                # Format: acx://cluster/{cluster_uuid}/media/{media_id}
                 representative_thumb_path = f"acx://cluster/{cluster.id}/media/{rep.media_id}"
+            representative_quality, quality_components = _export_representative_quality(rep)
+            representative_media_id = _representative_media_id(rep)
 
         responses.append(
-            ClusterSnapshotClusterResponse(
+            ClusterSnapshotQualityClusterResponse(
                 cluster_uuid=str(cluster.id),
                 label=cluster.label,
                 curation_state=curation_state,
@@ -113,6 +242,10 @@ def _build_cluster_responses(
                 representative_thumb_path=representative_thumb_path,
                 representative_id=representative_id,
                 is_pinned=is_pinned,
+                representative_quality=representative_quality,
+                quality_components=quality_components,
+                representative_media_id=representative_media_id,
+                undoable_merge_receipt_id=_undoable_merge_receipt_id(cluster, now=exported_at),
             )
         )
     return responses
@@ -211,14 +344,14 @@ async def list_clusters(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotQualityResponse)
 async def get_tenant_cluster_snapshot(
     tenant_uuid: str,
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
     session=Depends(get_session),
-) -> ClusterSnapshotResponse:
+) -> ClusterSnapshotQualityResponse:
     """Get complete cluster snapshot for WordPress plugin projection.
 
     Returns all clusters and members for a tenant in a single response,
@@ -251,7 +384,7 @@ async def get_tenant_cluster_snapshot(
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
     member_responses = _build_member_responses(members_with_identities)
 
-    return ClusterSnapshotResponse(
+    return ClusterSnapshotQualityResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         snapshot_generation_id=snapshot_generation_id,
@@ -262,14 +395,14 @@ async def get_tenant_cluster_snapshot(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/targeted-snapshot", response_model=ClusterSnapshotResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/targeted-snapshot", response_model=ClusterSnapshotQualityResponse)
 async def get_tenant_targeted_cluster_snapshot(
     tenant_uuid: str,
     cluster_ids: list[str] = Query(default_factory=list),
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
-) -> ClusterSnapshotResponse:
+) -> ClusterSnapshotQualityResponse:
     """Get a targeted cluster snapshot for a subset of cluster ids."""
     tenant_id = tenant_uuid
 
@@ -287,7 +420,7 @@ async def get_tenant_targeted_cluster_snapshot(
     if not clusters and not members_with_identities:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for requested ids")
 
-    return ClusterSnapshotResponse(
+    return ClusterSnapshotQualityResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
@@ -297,14 +430,14 @@ async def get_tenant_targeted_cluster_snapshot(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/delta", response_model=ClusterDeltaResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/delta", response_model=ClusterDeltaQualityResponse)
 async def get_tenant_cluster_delta(
     tenant_uuid: str,
     since_version: int = Query(..., ge=0),
     auth=Depends(require_auth),
     repo: ClusterRepository = Depends(get_cluster_repository),
     session=Depends(get_session),
-) -> ClusterDeltaResponse:
+) -> ClusterDeltaQualityResponse:
     """Get version-filtered cluster updates for incremental projection sync."""
     tenant_id = tenant_uuid
 
@@ -319,7 +452,7 @@ async def get_tenant_cluster_delta(
     clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
 
-    return ClusterDeltaResponse(
+    return ClusterDeltaQualityResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         generated_at=datetime.now(tz=UTC),

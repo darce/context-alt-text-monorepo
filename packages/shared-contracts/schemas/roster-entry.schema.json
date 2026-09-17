@@ -87,6 +87,14 @@
               "bbox",
               "similarity"
             ],
+            "dependencies": {
+              "representative_quality": ["quality_components"],
+              "quality_components": ["representative_quality"]
+            },
+            "dependentRequired": {
+              "representative_quality": ["quality_components"],
+              "quality_components": ["representative_quality"]
+            },
             "properties": {
               "identity_id": {
                 "type": "string",
@@ -121,11 +129,11 @@
                 "type": ["number", "null"],
                 "minimum": 0,
                 "maximum": 1,
-                "description": "Projected composite quality in [0,1]. Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
+                "description": "Projected composite quality in [0,1]. The producer normalizes sharpness before weighting. Co-required with quality_components (both present or both omitted). Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
               },
               "quality_components": {
                 "type": ["object", "null"],
-                "description": "Projected parts of representative_quality (UXR-15). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
+                "description": "Projected parts of representative_quality (UXR-15). Co-required with representative_quality (both present or both omitted). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
                 "additionalProperties": false,
                 "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
                 "properties": {
@@ -140,8 +148,7 @@
                   },
                   "sharpness": {
                     "type": ["number", "null"],
-                    "minimum": 0,
-                    "maximum": 1
+                    "minimum": 0
                   },
                   "occlusion_severity": {
                     "type": ["number", "null"],

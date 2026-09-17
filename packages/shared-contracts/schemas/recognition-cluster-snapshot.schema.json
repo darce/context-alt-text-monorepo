@@ -35,6 +35,14 @@
       "items": {
         "type": "object",
         "required": ["cluster_uuid", "label", "curation_state", "is_user_confirmed", "identity_count"],
+        "dependencies": {
+          "representative_quality": ["quality_components"],
+          "quality_components": ["representative_quality"]
+        },
+        "dependentRequired": {
+          "representative_quality": ["quality_components"],
+          "quality_components": ["representative_quality"]
+        },
         "properties": {
           "cluster_uuid": {
             "type": "string",
@@ -97,11 +105,11 @@
             "type": ["number", "null"],
             "minimum": 0,
             "maximum": 1,
-            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
+            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). The producer normalizes sharpness before weighting. Co-required with quality_components (both present or both omitted). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
           },
           "quality_components": {
             "type": ["object", "null"],
-            "description": "Parts of representative_quality (UXR-15). Null when the snapshot omits them. When present, all four keys are required; a missing signal is null, never omitted. Consumers MUST NOT invent components.",
+            "description": "Parts of representative_quality (UXR-15). Co-required with representative_quality (both present or both omitted). Null when the snapshot omits them. When present, all four keys are required; a missing signal is null, never omitted. Consumers MUST NOT invent components.",
             "additionalProperties": false,
             "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
             "properties": {
@@ -119,8 +127,7 @@
               "sharpness": {
                 "type": ["number", "null"],
                 "minimum": 0,
-                "maximum": 1,
-                "description": "Sharpness term in [0,1] when computed; null while the producer has no sharpness signal."
+                "description": "Raw variance-of-Laplacian from compute_sharpness; minimum 0, unbounded above (fixtures persist values such as 42.5 and 77.0). Null while the producer has no sharpness signal. representative_quality normalizes sharpness before weighting."
               },
               "occlusion_severity": {
                 "type": ["number", "null"],
@@ -222,7 +229,7 @@
           "quality_components": {
             "confidence": 0.94,
             "bbox_area": 7680,
-            "sharpness": 0.71,
+            "sharpness": 42.5,
             "occlusion_severity": 0.12
           },
           "representative_media_id": 501,

@@ -60,13 +60,12 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
-from scene.config.profiles import get_profile_spec
-from scene.config.settings import DescriptionSettings
+from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
+from scene.config.settings import _parse_allowlist
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import (
     _DEFAULT_GPU_ENDPOINT_ALLOWLIST,
     _hostname_matches_allowlist,
-    _resolved_addresses_are_private,
 )
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.gpu import router as gpu_router
@@ -98,7 +97,9 @@ _ENDPOINT_PRIVACY_RESOLVE_TIMEOUT_SECONDS = 0.5
 class AdapterReadinessReason(StrEnum):
     """Machine-readable /health/detailed description_adapter.reason values (sr-007)."""
 
+    PROFILE_UNAVAILABLE = "profile_unavailable"
     ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
+    ENDPOINT_INVALID_URL = "endpoint_invalid_url"
     ENDPOINT_NOT_ALLOWLISTED = "endpoint_not_allowlisted"
     ENDPOINT_NOT_PRIVATE = "endpoint_not_private"
     ENDPOINT_RESOLUTION_PENDING = "endpoint_resolution_pending"
@@ -141,12 +142,28 @@ class EndpointPrivacyCache:
 
     def _resolve_blocking(self, host: str) -> None:
         try:
-            value = _resolved_addresses_are_private(host)
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except socket.gaierror:
             return
         except Exception:
             logger.warning("endpoint privacy resolution failed for %s", host, exc_info=True)
             return
+        if not infos:
+            self._value = False
+            self._checked_at = time.time()
+            self._host = host
+            return
+        value = True
+        for info in infos:
+            sockaddr = info[4]
+            try:
+                addr = ip_address(sockaddr[0])
+            except ValueError:
+                value = False
+                break
+            if not (addr.is_private or addr.is_loopback):
+                value = False
+                break
         self._value = bool(value)
         self._checked_at = time.time()
         self._host = host
@@ -208,6 +225,11 @@ def _endpoint_hostname(endpoint_url: str | None) -> str | None:
     return urlparse(endpoint_url).hostname
 
 
+def _gpu_endpoint_url_is_valid(endpoint_url: str) -> bool:
+    parsed = urlparse(endpoint_url)
+    return parsed.scheme in {"http", "https"} and parsed.hostname is not None
+
+
 def _endpoint_is_allowlisted(host: str, allowlist: tuple[str, ...]) -> bool:
     try:
         addr = ip_address(host)
@@ -216,38 +238,58 @@ def _endpoint_is_allowlisted(host: str, allowlist: tuple[str, ...]) -> bool:
     return addr.is_private or addr.is_loopback
 
 
+def wire_model_id(spec: ProfileSpec) -> str | None:
+    """Wire identity the GPU adapter stamps; otherwise the profile model_id."""
+    if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.model_revision:
+        return f"{spec.hub_repo or spec.model_id}@{spec.model_revision}"
+    return spec.model_id
+
+
 async def _description_adapter_readiness() -> dict[str, object]:
     """Per-request GPU adapter readiness; DNS never runs inline on the loop."""
-    settings = DescriptionSettings()
-    spec = get_profile_spec(settings.profile)
-    endpoint_url = settings.gpu_endpoint_url
+    spec = get_profile_spec(DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded")))
+    endpoint_url = os.environ.get("ACX_GPU_ENDPOINT_URL") or None
     endpoint_configured = bool(endpoint_url)
-    host = _endpoint_hostname(endpoint_url)
-    effective_allowlist = settings.gpu_endpoint_allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
+    url_valid = endpoint_url is not None and _gpu_endpoint_url_is_valid(endpoint_url)
+    host = _endpoint_hostname(endpoint_url) if url_valid else None
+    parsed_allowlist = _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
+    effective_allowlist = parsed_allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
     endpoint_allowlisted = bool(host) and _endpoint_is_allowlisted(host, effective_allowlist)
     endpoint_private: bool | None = None
     checked_at: float | None = None
-    if host is not None and endpoint_allowlisted:
+    may_resolve = spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU and url_valid
+    if may_resolve and host is not None and endpoint_allowlisted:
         endpoint_private, checked_at = await _endpoint_privacy_cache.refresh(host)
-    elif host is not None:
+    elif may_resolve and host is not None:
         endpoint_private, checked_at = _endpoint_privacy_cache.snapshot(host)
     now = time.time()
     fresh = checked_at is not None and (now - checked_at) < EndpointPrivacyCache.TTL_SECONDS
-    if spec.adapter_kind is not DescriptionAdapterKind.GPU:
+    model_id = wire_model_id(spec)
+    model_version: str | None = None if model_id is None else spec.model_version
+    if not spec.available:
+        usable = False
+        reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value
+    elif spec.adapter_kind is not DescriptionAdapterKind.GPU:
         usable = True
-        reason: str | None = None
+        reason = None
+    elif not endpoint_configured:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_UNCONFIGURED.value
+    elif not url_valid:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_INVALID_URL.value
+    elif not endpoint_allowlisted:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_NOT_ALLOWLISTED.value
+    elif endpoint_private is False:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_NOT_PRIVATE.value
+    elif not (endpoint_private is True and fresh):
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
     else:
-        usable = bool(endpoint_configured and endpoint_allowlisted and endpoint_private is True and fresh)
-        if usable:
-            reason = None
-        elif not endpoint_configured:
-            reason = AdapterReadinessReason.ENDPOINT_UNCONFIGURED.value
-        elif not endpoint_allowlisted:
-            reason = AdapterReadinessReason.ENDPOINT_NOT_ALLOWLISTED.value
-        elif endpoint_private is False:
-            reason = AdapterReadinessReason.ENDPOINT_NOT_PRIVATE.value
-        else:
-            reason = AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
+        usable = True
+        reason = None
     return {
         "profile": spec.profile.value,
         "kind": spec.adapter_kind.value,
@@ -258,6 +300,8 @@ async def _description_adapter_readiness() -> dict[str, object]:
         "fresh": fresh,
         "usable": usable,
         "reason": reason,
+        "model_id": model_id,
+        "model_version": model_version,
     }
 
 

@@ -76,7 +76,7 @@ describe('groupIdentitiesByClusters person grouping', () => {
     expect(formatClusterLabel(group.clusterId, group.label, group.isAutoLabel)).toBe('Jane Doe');
   });
 
-  it('keeps unbound members grouped by cluster and singleton keys in distinct namespaces', () => {
+  it('keeps unbound members grouped by cluster and collapses identity-keyed residue into ungrouped', () => {
     const members = [
       identity({ person_id: 'same', cluster_id: 'same' }),
       identity({ identity_id: 'id-2', person_id: null, cluster_id: 'same' }),
@@ -85,10 +85,50 @@ describe('groupIdentitiesByClusters person grouping', () => {
     ];
     const groups = groupIdentitiesByClusters(members);
 
-    expect(groups.map((group) => group.key)).toEqual(['person:same', 'cluster:same', 'identity:same']);
+    expect(groups.map((group) => group.key)).toEqual(['person:same', 'cluster:same', 'ungrouped']);
     expect(groups.map((group) => group.personId)).toEqual(['same', null, null]);
     expect(groups.map((group) => group.clusterIds)).toEqual([['same'], ['same'], []]);
     expect(groups.map((group) => group.members)).toEqual([[members[0]], [members[1], members[2]], [members[3]]]);
+  });
+});
+
+describe('groupIdentitiesByClusters ungrouped residue (GPUFLOW-2 C5)', () => {
+  const watsonFace = (identityId: string, mediaId: number): DetectedIdentity =>
+    identity({
+      identity_id: identityId,
+      representative_id: `rep-${identityId}`,
+      media_id: mediaId,
+      cluster_id: null,
+      cluster_label: null,
+      person_id: null,
+    });
+
+  it('buckets identity-keyed Watson faces into a single ungrouped group after named people', () => {
+    // Watson ×3 residue (two faces share media 10 — no visual/key dedupe) plus a named person.
+    const watson = [
+      watsonFace('watson-1', 10),
+      watsonFace('watson-2', 10),
+      watsonFace('watson-3', 11),
+    ];
+    const perry = identity({
+      identity_id: 'perry-1',
+      cluster_label: 'Katy Perry',
+      person_id: 'perry',
+    });
+    const groups = groupIdentitiesByClusters([...watson, perry]);
+
+    expect(groups.map((group) => group.key)).toEqual(['person:perry', 'ungrouped']);
+    expect(groups[1]).toEqual({
+      key: 'ungrouped',
+      clusterId: null,
+      personId: null,
+      clusterIds: [],
+      label: null,
+      isAutoLabel: false,
+      clusteringPending: false,
+      members: watson,
+      identityClusterIds: {},
+    });
   });
 });
 

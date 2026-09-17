@@ -454,6 +454,10 @@ class OutboxMaintenanceService {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
+				// Keep auto_retry_exhausted out of this purge selector. An exhausted row is
+				// marked during the reclaim pass above and must remain visible to the operator;
+				// it must not disappear in that same maintenance run merely because its original
+				// failure timestamp is old.
 				"SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_code IN ({$placeholders}) ORDER BY id ASC LIMIT %d",
 				...$prepare_args
 			),
@@ -624,13 +628,16 @@ class OutboxMaintenanceService {
 			$tenant_id,
 			OutboxStatus::FAILED,
 			array(
+				// Keep the dead-letter transition in the failed state. DISCARDED is only
+				// reachable through the explicit operator discard action.
+				'status' => OutboxStatus::FAILED,
 				'last_error_code' => self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
 				'last_error_message' => $message,
 				'attempts' => $attempt_count,
 				'last_attempted_at' => $exhausted_at,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 	}
 

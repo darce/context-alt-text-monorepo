@@ -30,6 +30,7 @@ class OutboxQueryRepositoryTest extends TestCase
                 'payload' => '{"cluster_uuid":"cluster-2"}',
                 'created_at' => '2026-03-10 12:05:00',
                 'last_attempted_at' => '2026-03-10 12:06:00',
+                'first_failed_at' => '2026-03-10 12:05:30',
                 'acknowledged_at' => null,
             ],
             [
@@ -47,6 +48,7 @@ class OutboxQueryRepositoryTest extends TestCase
                 'payload' => '{"cluster_uuid":"cluster-1"}',
                 'created_at' => '2026-03-10 12:00:00',
                 'last_attempted_at' => '2026-03-10 12:01:00',
+                'first_failed_at' => '2026-03-10 12:00:30',
                 'acknowledged_at' => null,
             ],
         ];
@@ -59,6 +61,15 @@ class OutboxQueryRepositoryTest extends TestCase
         $this->assertSame([12, 11], array_column($result, 'id'));
         $this->assertSame(['cluster_uuid' => 'cluster-2'], $result[0]['payload']);
         $this->assertSame('dispatch_failed', $result[0]['last_error_code']);
+        $this->assertSame('2026-03-10 12:05:30', $result[0]['first_failed_at']);
+
+        $select = $this->findQueryContaining($wpdb->queries, 'SELECT id, tenant_id');
+        $this->assertStringContainsString('first_failed_at', $select);
+        $this->assertStringContainsString(
+            'COALESCE(first_failed_at, last_attempted_at, created_at)',
+            $select
+        );
+        $this->assertStringContainsString('AS age_seconds', $select);
     }
 
     public function testFindFailedOperationIdsReturnsTenantScopedFailedIdsOldestFirst(): void

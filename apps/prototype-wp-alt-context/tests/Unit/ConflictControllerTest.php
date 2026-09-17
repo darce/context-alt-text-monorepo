@@ -457,6 +457,7 @@ class ConflictControllerTest extends TestCase
                     'created_at' => '2026-03-11 09:00:00',
                     'last_attempted_at' => '2026-03-11 11:55:00',
                     'first_failed_at' => '2026-03-11 10:00:00',
+                    'age_seconds' => '7200',
                     'acknowledged_at' => null,
                 ],];
             }

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 import {
   ALT_SUGGEST_COMMIT_CONFLICT_MESSAGE,
+  DECORATIVE_TOGGLE_PRESSED_STYLE,
+  DECORATIVE_TOGGLE_VISIBLE_LABEL,
   formatAltLengthAdvisory,
   formatMeasuredDuration,
   formatOverLengthReadyAnnouncement,
@@ -2755,6 +2757,98 @@ describe('MediaAltSuggest', () => {
       );
     });
     expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(/to-do list|missing/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // GPUFLOW-2 B7 — compact decorative icon toggle
+  // ---------------------------------------------------------------------------
+
+  it('renders a compact Decorative toggle with accessible name and description [GPUFLOW-2 B7]', () => {
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
+
+    const toggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
+    expect(toggle).toHaveAccessibleName(MARK_DECORATIVE_LABEL);
+    expect(toggle).toHaveAccessibleDescription(MARK_DECORATIVE_LABEL);
+    const describedBy = toggle.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy ?? '')).toHaveTextContent(MARK_DECORATIVE_LABEL);
+    expect(toggle).toHaveAttribute('title', MARK_DECORATIVE_LABEL);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.querySelector('svg')).not.toBeNull();
+
+    const visibleLabel = (toggle.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(visibleLabel).toBe(DECORATIVE_TOGGLE_VISIBLE_LABEL);
+    expect(visibleLabel.split(/\s+/)).toHaveLength(1);
+    expect(visibleLabel.split(/\s+/).length).toBeLessThanOrEqual(2);
+    expect(visibleLabel).not.toMatch(/screen readers will announce nothing/i);
+  });
+
+  it('presses the compact toggle when the row is decorative [GPUFLOW-2 B7][sr-004]', () => {
+    renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
+
+    const toggle = screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL });
+    expect(toggle).toHaveAccessibleName(UNMARK_DECORATIVE_LABEL);
+    expect(toggle).toHaveAccessibleDescription(UNMARK_DECORATIVE_LABEL);
+    const describedBy = toggle.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy ?? '')).toHaveTextContent(UNMARK_DECORATIVE_LABEL);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toggle).toHaveClass('acx-media-selection__media-alt-suggest-decorative--pressed');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.color).toBe('var(--acx-color-success-text)');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.backgroundColor).toBe('var(--acx-color-success-bg)');
+    expect(DECORATIVE_TOGGLE_PRESSED_STYLE.borderColor).toBe('var(--acx-color-success-border)');
+    expect((toggle.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
+      DECORATIVE_TOGGLE_VISIBLE_LABEL,
+    );
+  });
+
+  it('keeps the compact visible label at both idle and draft-review sites [GPUFLOW-2 B7][LAY-01]', async () => {
+    describeMock.mockResolvedValue(sampleResponse());
+    const { unmount } = renderSuggest(
+      <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />,
+    );
+
+    const idleRow = document.querySelector('.acx-media-selection__media-alt-suggest');
+    expect(idleRow).not.toBeNull();
+    const idleToggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
+    const idleVisible = (idleToggle.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(idleVisible.split(/\s+/).length).toBeLessThanOrEqual(2);
+    expect(idleVisible.length).toBeLessThan(MARK_DECORATIVE_LABEL.length);
+    expect({
+      site: 'idle',
+      visibleLabel: idleVisible,
+      visibleWordCount: idleVisible.split(/\s+/).length,
+      longSentenceInButton: idleVisible.includes('screen readers will announce nothing'),
+      rowClassName: idleRow?.className,
+    }).toEqual({
+      site: 'idle',
+      visibleLabel: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      visibleWordCount: 1,
+      longSentenceInButton: false,
+      rowClassName: 'acx-media-selection__media-alt-suggest',
+    });
+    unmount();
+
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await screen.findByText(draft);
+
+    const draftRow = document.querySelector('.acx-media-selection__media-alt-suggest');
+    const draftToggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
+    const draftVisible = (draftToggle.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect({
+      site: 'draft-review',
+      visibleLabel: draftVisible,
+      visibleWordCount: draftVisible.split(/\s+/).length,
+      longSentenceInButton: draftVisible.includes('screen readers will announce nothing'),
+      rowClassName: draftRow?.className,
+    }).toEqual({
+      site: 'draft-review',
+      visibleLabel: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      visibleWordCount: 1,
+      longSentenceInButton: false,
+      rowClassName: 'acx-media-selection__media-alt-suggest',
+    });
   });
 });
 

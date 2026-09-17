@@ -910,6 +910,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-01T00:00:00Z',
               last_attempted_at: '2026-09-01T00:00:00Z',
               created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
             }),
             buildOperation({
               id: 12,
@@ -917,6 +918,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-16T00:00:00Z',
               last_attempted_at: '2026-09-16T00:00:00Z',
               created_at: '2026-09-16T00:00:00Z',
+              age_seconds: 1 * 24 * 3600,
             }),
           ],
           total: 2,
@@ -976,6 +978,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-01T00:00:00Z',
               last_attempted_at: '2026-09-01T00:00:00Z',
               created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
             }),
             buildOperation({
               id: 12,
@@ -983,6 +986,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-01T00:00:00Z',
               last_attempted_at: '2026-09-01T00:00:00Z',
               created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
             }),
             buildOperation({
               id: 13,
@@ -990,6 +994,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-01T00:00:00Z',
               last_attempted_at: '2026-09-01T00:00:00Z',
               created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
             }),
           ],
           total: 3,
@@ -1020,38 +1025,34 @@ describe('DeadLetterPanel', () => {
     ).toBeInTheDocument();
   });
 
-  it('uses first_failed_at over last_attempted_at and created_at for 7-day eligibility', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-17T12:00:00Z'));
-    try {
-      mockFailedPages(
-        listResponse({
-          items: [
-            buildOperation({
-              id: 11,
-              first_failed_at: '2026-09-01T00:00:00Z',
-              last_attempted_at: '2026-09-16T00:00:00Z',
-              created_at: '2026-08-01T00:00:00Z',
-            }),
-            buildOperation({
-              id: 12,
-              entity_key: 'cluster-2',
-              first_failed_at: '2026-09-16T00:00:00Z',
-              last_attempted_at: '2026-09-16T00:00:00Z',
-              created_at: '2026-08-01T00:00:00Z',
-            }),
-          ],
-          total: 2,
-          limit: 50,
-        }),
-      );
+  it('treats an old first failure with a recent retry as eligible via age_seconds', () => {
+    mockFailedPages(
+      listResponse({
+        items: [
+          buildOperation({
+            id: 11,
+            first_failed_at: '2026-09-01T00:00:00Z',
+            last_attempted_at: '2026-09-16T00:00:00Z',
+            created_at: '2026-08-01T00:00:00Z',
+            age_seconds: 16 * 24 * 3600,
+          }),
+          buildOperation({
+            id: 12,
+            entity_key: 'cluster-2',
+            first_failed_at: '2026-09-16T00:00:00Z',
+            last_attempted_at: '2026-09-16T00:00:00Z',
+            created_at: '2026-08-01T00:00:00Z',
+            age_seconds: 1 * 24 * 3600,
+          }),
+        ],
+        total: 2,
+        limit: 50,
+      }),
+    );
 
-      renderPanel();
+    renderPanel();
 
-      expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
   });
 
   it('derives eligibility from age_seconds when the failure-age stamps are missing', () => {
@@ -1125,6 +1126,7 @@ describe('DeadLetterPanel', () => {
               first_failed_at: '2026-09-16T00:00:00Z',
               last_attempted_at: '2026-09-16T00:00:00Z',
               created_at: '2026-09-16T00:00:00Z',
+              age_seconds: 1 * 24 * 3600,
             }),
           ],
           total: 2,
@@ -1138,6 +1140,7 @@ describe('DeadLetterPanel', () => {
                 first_failed_at: '2026-09-16T00:00:00Z',
                 last_attempted_at: '2026-09-16T00:00:00Z',
                 created_at: '2026-09-16T00:00:00Z',
+                age_seconds: 1 * 24 * 3600,
               }),
               buildOperation({
                 id: 11,
@@ -1145,6 +1148,7 @@ describe('DeadLetterPanel', () => {
                 first_failed_at: '2026-09-01T00:00:00Z',
                 last_attempted_at: '2026-09-01T00:00:00Z',
                 created_at: '2026-09-01T00:00:00Z',
+                age_seconds: 16 * 24 * 3600,
               }),
             ],
             total: 2,
@@ -1178,6 +1182,7 @@ describe('DeadLetterPanel', () => {
           ],
           total: 1,
           limit: 50,
+          now: '2026-09-17T08:00:00Z',
         }),
       );
 
@@ -1218,14 +1223,15 @@ describe('DeadLetterPanel', () => {
     }
   });
 
-  it('names php-outbox-reclaimer when eligibility rows have no failure-age clock', () => {
+  it('never treats a row without age_seconds, first_failed_at, and now as eligible', () => {
     mockFailedPages(
       listResponse({
         items: [
           buildOperation({
-            created_at: null,
-            last_attempted_at: null,
+            created_at: '2026-08-01T00:00:00Z',
+            last_attempted_at: '2026-08-01T00:00:00Z',
             first_failed_at: null,
+            age_seconds: null,
           }),
         ],
         total: 1,
@@ -1235,7 +1241,9 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByRole('button', { name: 'Discard 0 eligible' })).toBeDisabled();
-    expect(screen.getByRole('alert')).toHaveTextContent('php-outbox-reclaimer');
+    const button = screen.getByRole('button', { name: 'Discard 0 eligible' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('Failure age unavailable from server')).toBeInTheDocument();
+    expect(button).toHaveAttribute('aria-describedby', 'acx-dead-letter-age-unavailable-reason');
   });
 });

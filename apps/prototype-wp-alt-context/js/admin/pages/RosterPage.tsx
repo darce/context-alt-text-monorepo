@@ -13,7 +13,6 @@ import { ClusterDrawerPanel, ROSTER_ASSIGN_STATUS } from './roster/ClusterDrawer
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
 import {
-  ROSTER_SURFACE,
   ROSTER_ROUTE_PARAM_KEYS,
   parseRosterRoute,
   getRouteParam,
@@ -200,14 +199,13 @@ export const RosterPage = (): React.JSX.Element => {
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'People are the faces you have named. Unnamed face groups are reviewed in the Review Queue.',
+            'These are the faces you have named. Unnamed face groups are reviewed in the Review Queue.',
             'alt-context',
           )}
         </p>
       </header>
 
       <div className="acx-roster__panel">
-        <h2>{ROSTER_SURFACE.label}</h2>
         {resolvedWorkspaceEntry !== null && (
           <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
         )}

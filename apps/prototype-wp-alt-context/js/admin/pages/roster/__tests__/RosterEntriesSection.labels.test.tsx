@@ -101,4 +101,11 @@ describe('RosterEntriesSection visible field labels [UXB-02][A11Y-03]', () => {
 
     expectVisibleLabelBinding(screen.getByRole('textbox', { name: 'Tags' }), 'Tags');
   });
+
+  it('names the section heading from the entries query count [GPUFLOW-2 B1]', () => {
+    renderSection();
+
+    expect(screen.getByRole('heading', { name: 'Named people (1)' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: /^People$/ })).not.toBeInTheDocument();
+  });
 });

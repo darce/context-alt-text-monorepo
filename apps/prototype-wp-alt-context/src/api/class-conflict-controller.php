@@ -16,13 +16,17 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionService;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use DateTimeImmutable;
+use DateTimeZone;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function current_time;
 use function is_array;
 use function is_string;
+use function max;
 use function sanitize_key;
 use function sanitize_text_field;
 use function trim;
@@ -213,6 +217,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 				'total' => $total,
 				'limit' => $limit,
 				'offset' => $offset,
+				'now' => current_time( 'mysql' ),
 			),
 			200
 		);
@@ -236,6 +241,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 				'total' => $total,
 				'limit' => $limit,
 				'offset' => $offset,
+				'now' => current_time( 'mysql' ),
 			),
 			200
 		);
@@ -341,6 +347,8 @@ class ConflictController extends AbstractRecognitionProxyController {
 	 * @return array<string,mixed>
 	 */
 	private function map_operation_record( array $operation ): array {
+		$first_failed_at = $this->normalize_mysql_datetime( $operation['first_failed_at'] ?? null );
+
 		return array(
 			'id' => absint( $operation['id'] ?? 0 ),
 			'tenant_id' => (string) ( $operation['tenant_id'] ?? '' ),
@@ -356,8 +364,47 @@ class ConflictController extends AbstractRecognitionProxyController {
 			'payload' => $operation['payload'] ?? array(),
 			'created_at' => $operation['created_at'] ?? null,
 			'last_attempted_at' => $operation['last_attempted_at'] ?? null,
+			'first_failed_at' => $first_failed_at,
 			'acknowledged_at' => $operation['acknowledged_at'] ?? null,
+			'age_seconds' => $this->operation_age_seconds( $operation ),
 		);
+	}
+
+	/**
+	 * D1 failure clock: first_failed_at ?? last_attempted_at ?? created_at.
+	 * Null when no stamp parses — never fabricate an age (rg-015).
+	 *
+	 * @param array<string,mixed> $operation
+	 */
+	private function operation_age_seconds( array $operation ): ?int {
+		$stamp = $this->normalize_mysql_datetime( $operation['first_failed_at'] ?? null )
+			?? $this->normalize_mysql_datetime( $operation['last_attempted_at'] ?? null )
+			?? $this->normalize_mysql_datetime( $operation['created_at'] ?? null );
+		$epoch = $this->wp_datetime_to_epoch( $stamp ?? '' );
+		if ( null === $epoch ) {
+			return null;
+		}
+
+		return max( 0, (int) current_time( 'timestamp' ) - $epoch );
+	}
+
+	private function normalize_mysql_datetime( mixed $value ): ?string {
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
+	private function wp_datetime_to_epoch( string $datetime ): ?int {
+		$normalized = trim( $datetime );
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		$parsed = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', $normalized, new DateTimeZone( 'UTC' ) );
+		return false !== $parsed ? $parsed->getTimestamp() : null;
 	}
 
 	/**

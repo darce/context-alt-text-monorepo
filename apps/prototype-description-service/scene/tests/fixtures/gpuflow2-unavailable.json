@@ -1,0 +1,126 @@
+{
+  "starting": {
+    "status": 503,
+    "headers": {
+      "Retry-After": "15"
+    },
+    "body": {
+      "detail": {
+        "code": "description_service_starting",
+        "message": "Description service is starting",
+        "operation_id": "opaque-operation",
+        "startup_id": "ocid1.instance.test",
+        "warmup_eta_seconds": 45,
+        "startup_budget_seconds": 510,
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": 1200,
+          "processing_ms": 12,
+          "startup_ms": null,
+          "server_elapsed_ms": 1212
+        }
+      }
+    }
+  },
+  "unavailable_degraded": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": "opaque-operation",
+        "startup_id": "ocid1.instance.test",
+        "reason": "degraded",
+        "lifecycle_reason": "readiness_timeout",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": null
+        }
+      }
+    }
+  },
+  "unavailable_operator_stop": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": "opaque-operation",
+        "startup_id": null,
+        "reason": "operator_stop",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": null
+        }
+      }
+    }
+  },
+  "unavailable_state_missing": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": "opaque-operation",
+        "startup_id": null,
+        "reason": "state_missing",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": null
+        }
+      }
+    }
+  },
+  "unavailable_state_stale": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": "opaque-operation",
+        "startup_id": null,
+        "reason": "state_stale",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": null
+        }
+      }
+    }
+  },
+  "unavailable_endpoint_unconfigured": {
+    "status": 503,
+    "headers": {},
+    "body": {
+      "detail": {
+        "code": "description_service_unavailable",
+        "message": "Description service is unavailable",
+        "operation_id": null,
+        "startup_id": null,
+        "reason": "endpoint_unconfigured",
+        "timing": {
+          "queue_ms": null,
+          "ramp_up_ms": null,
+          "processing_ms": null,
+          "startup_ms": null,
+          "server_elapsed_ms": 4
+        }
+      }
+    }
+  }
+}

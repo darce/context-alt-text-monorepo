@@ -259,6 +259,35 @@ operator_stop_with_work}` (the last is contract-required, not yet emitted; see
 is logged only; no consumer is wired. Profile name is the given CPU floor
 (`florence_small`), not imported from `scene.config.profiles`.
 
+## Readiness exhaustion and the describe envelope (GPUFLOW-2 A3)
+
+Readiness exhaustion is an explicit lifecycle transition, not a successful
+startup with missing metadata (OBS-08). After a START, the bounded readiness probe keeps
+`NOT_READY` responses in pending boot, while consecutive probe errors count
+toward the stall bound. When the bounded wait is exhausted, the controller
+emits a `FALLBACK` decision with the exact reason `readiness_timeout` or
+`readiness_stall` (and the instance id); a START failure uses `start_failed`.
+
+The lifecycle state writer then publishes the decision as a `degraded` state
+in `/run/acx/gpu-state.json`. The snapshot's `reason` is the fallback reason,
+and `since` records the state transition. The write is atomic, so a partial
+snapshot cannot replace the previous complete snapshot. The API is a read-only
+consumer of this file.
+
+When the describe API reads a `degraded` snapshot, its 503 operation envelope
+sets `detail.reason` to `degraded`. If the snapshot has a reason, the API adds
+`detail.lifecycle_reason` with that value copied verbatim; for example,
+`readiness_timeout` remains `readiness_timeout`, rather than being collapsed
+into a generic unavailable message (rg-015). The lifecycle reason is optional because
+the reader must not invent one when the snapshot contains none. `Retry-After`
+remains an HTTP header and is not copied into the JSON body.
+
+This is the A3 evidence boundary: the deployed host must be checked for the
+probe → `FALLBACK` → `degraded` snapshot path and its start-cycle journal
+evidence. No lifecycle code change is implied unless that assessment finds the
+reason missing or dropped between the controller decision and the written
+snapshot.
+
 ## GPU state snapshot (GPUUX-1)
 
 Single writer, single file, one vocabulary (DATA-14, sr-007). The lifecycle
@@ -280,7 +309,7 @@ no API process ever writes it.
 | `starting` | START actuated, OCI not yet `RUNNING` | actuator + OCI probe |
 | `warming` | OCI `RUNNING`, readiness probe not yet 200 | readiness probe |
 | `ready` | readiness probe 200 | readiness probe |
-| `degraded` | FALLBACK emitted (`readiness_timeout`, `readiness_stall`, `start_failed`) or probe failing after `ready` | controller decision |
+| `degraded` | FALLBACK emitted (`readiness_timeout`, `readiness_stall`, `start_failed`, or `operator_stop_with_work`) or probe failing after `ready` | controller decision |
 | `unknown` | snapshot missing, unreadable, or stale | reader fail-closed |
 
 Rules:

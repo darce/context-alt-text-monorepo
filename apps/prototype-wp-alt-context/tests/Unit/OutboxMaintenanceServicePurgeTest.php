@@ -85,8 +85,10 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $purged['outbox']);
         $this->assertSame(1, $syncState->refreshCount);
 
-        $selectQuery = $this->findQueryContaining($wpdb->queries, 'last_error_retryable IS NULL');
+        // The reclaim SELECT also matches `last_error_retryable IS NULL` now; pin the purge projection instead.
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'SELECT id, first_failed_at, last_attempted_at');
         $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, last_error_retryable, attempts FROM `wp_acx_sync_outbox`', $selectQuery);
+        $this->assertStringContainsString('last_error_retryable IS NULL', $selectQuery);
         $this->assertStringContainsString("status = '" . OutboxStatus::FAILED . "'", $selectQuery);
         $this->assertStringContainsString("last_error_code <> 'auto_retry_exhausted'", $selectQuery);
         $this->assertStringNotContainsString('last_error_code IN', $selectQuery);

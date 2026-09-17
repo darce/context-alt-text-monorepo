@@ -23,19 +23,22 @@ undo stack. Machine-readable companion schemas:
 | Roster "Merged from N groups · Undo" | WP `PersonMergeService` `undo_token`, `UNDO_TOKEN_TTL_SECONDS` (24 h) | A WP person merge via `POST /roster/persons/merge/undo` | PHP person merge |
 | Workbench "Merged automatically · Undo" | `undoable_merge_receipt_id` from the cluster snapshot → projection | A recognition cluster merge via `POST /recognition/clusters/{id}/revert-merge` | Recognition receipts |
 
-Neither surface reads the other's token. No lane bridges them.
+Neither surface reads the other's token. No lane bridges them. The receipt
+revert is the only recognition undo surface.
 
 ## `cluster_merge_receipts`
 
 One row per merge (automatic or operator). Greenfield table in
 `001_identity_schema.py` (C0). ORM: `IdentityCluster.merge_receipts` ordered
-by `created_at` desc.
+by `created_at` desc. Receipts carry `tenant_id` (`NOT NULL`, RLS like sibling
+identity tables).
 
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `receipt_id` | UUID PK | Stable receipt id; the undo handle |
+| `tenant_id` | UUID NOT NULL | Tenant FK; RLS like sibling identity tables |
 | `survivor_cluster_id` | UUID | Cluster that kept the members |
-| `source_cluster_id` | UUID | Cluster that was absorbed |
+| `source_cluster_id` | UUID | Cluster that was absorbed; revert reuses this UUID |
 | `source_label` | string \| null | Label to restore on revert |
 | `moved_identity_ids` | UUID[] | Exact membership moved; revert restores this set |
 | `rule_version` | string | Calibration / merge-rule version that admitted the merge |
@@ -85,14 +88,22 @@ delete receipts.
 
 ## LIFO revert
 
-`revert_merge(receipt_id)`:
+`revert_merge(tenant_id, receipt_id, path cluster id)`:
 
+- Cross-tenant (receipt missing under this `tenant_id` / RLS) → **404**; do
+  not leak receipt existence.
+- Refuse `409` `merge_receipt_stale` unless path cluster id equals
+  `receipt.survivor_cluster_id` AND every moved identity is still in the
+  survivor cluster.
 - Refuse `receipt_not_top` unless the receipt is the survivor's newest
   unreverted one.
 - Refuse `receipt_expired` past `expires_at`.
-- Otherwise restore `moved_identity_ids` to a cluster labelled `source_label`
+- Restore the source cluster under its stored `source_cluster_id` (UUID
+  reused). If that id is occupied, refuse `409` `merge_receipt_stale`.
+- Restore `moved_identity_ids` into that cluster, labelled `source_label`
   when that label is non-empty, else `"<name> (restored)"` where `<name>` is
   the survivor's current display name (4.2.3 semantics). Set `reverted_at`.
+- Return the restored `source_cluster_id`.
 - Mirror `merge_cluster` step for step: move members, clear
   `moved_by_merge_id` on them, `recompute_representatives` +
   `recompute_centroid` for both clusters, best-effort `refresh_centroids_view`
@@ -100,9 +111,9 @@ delete receipts.
   both clusters, set `identity_count` from a member count, broadcast
   `cluster_merge_reverted`.
 
-Refusals are `409` problem-details with `code` (API-05). A second recovery
-run MUST NOT re-attach the restored cluster solely because it was previously
-merged.
+Refusals other than cross-tenant 404 are `409` problem-details with `code`
+(API-05). A second recovery run MUST NOT re-attach the restored cluster
+solely because it was previously merged.
 
 ```json
 {
@@ -122,23 +133,58 @@ merged.
 }
 ```
 
+```json
+{
+  "type": "https://context-alt-text.dev/problems/merge-receipt-stale",
+  "title": "Merge receipt is stale",
+  "status": 409,
+  "code": "merge_receipt_stale"
+}
+```
+
 ## HTTP
 
 Recognition (mounted by `svc-route-registry`; `_tenant_id = Depends(get_tenant_id)`):
 
 - `GET /recognition/clusters/{cluster_id}/merge-candidates` →
   [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
-- `POST /recognition/clusters/{id}/revert-merge` body `{ "receipt_id": "<uuid>" }`
+- `POST /recognition/clusters/{id}/revert-merge` takes
+  `(tenant_id, receipt_id, path cluster id)`; body `{ "receipt_id": "<uuid>" }`.
+  Success returns the restored `source_cluster_id`.
 
 WordPress:
 
 - `GET acx/v1/roster/persons/{id}/merge-candidates` →
   [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
 - `POST acx/v1/workbench/clusters/{id}/revert-merge` proxies the recognition
-  revert body `{ "receipt_id": "<uuid>" }`
+  revert body `{ "receipt_id": "<uuid>" }` with the path cluster id.
 
 Band cuts are read from the accepted calibration policy block. No route
 embeds literal similarity thresholds.
+
+## Retired surfaces
+
+The receipt revert is the only recognition undo surface. Implementation
+lanes delete the following (greenfield delete-over-flag; no compatibility
+shim):
+
+- `POST /recognition/clusters/revert-merge` (no path cluster id; body
+  source/target identifiers)
+- WP `POST /acx/v1/recognition/clusters/revert-merge` and curation-sync
+  `revert_merge_cluster`
+
+Those routes must not remain as aliases of the receipt revert.
+
+## Merge-candidate similarity (B6)
+
+Candidate `similarity` is
+`max(centroid cosine, latest pending ClusterMergeSuggestion similarity)`
+over the canonical unordered pair (`min uuid`, `max uuid`). Only `pending`
+suggestions not older than the latest cluster mutation participate. The band
+rule applies after that max.
+
+Person aggregation excludes candidates whose person_id equals the probe
+person_id; the schema text says so and the service drops them.
 
 ## Projection path for quality and undo (B2, rg-015)
 
@@ -147,10 +193,14 @@ availability reach WordPress. Four fields, stored as-is, never derived:
 
 | Snapshot / projection column | Wire type | Source |
 | --- | --- | --- |
-| `representative_quality` | number \| null | Representative row `quality_score`, renamed at export (API-10) |
-| `quality_components` | object \| null | Representative row `quality_components` (`confidence`, `bbox_area`, `sharpness`, `occlusion_severity`) |
+| `representative_quality` | number \| null | Representative row `quality_score`, renamed at export (API-10). `representative_quality` normalizes sharpness before weighting. |
+| `quality_components` | object \| null | Representative row `quality_components` (`confidence`, `bbox_area`, `sharpness`, `occlusion_severity`). `sharpness` is raw variance-of-Laplacian (minimum 0, unbounded above). |
 | `representative_media_id` | integer \| null | Persisted representative identity's WP attachment ID |
 | `undoable_merge_receipt_id` | uuid string \| null | Newest unreverted, unexpired receipt for that cluster |
+
+`representative_quality` and `quality_components` are co-required (JSON
+Schema `dependentRequired` / `dependencies` both ways). When components are
+present they require all four parts; a missing signal is null, never omitted.
 
 Absent fields stay null. Re-running bootstrap/targeted sync on the same
 `snapshot_version` is a no-op (COR-1 / FLOW-06). Heal by reprocessing into a
@@ -183,8 +233,10 @@ and the final survivor.
 | --- | --- | --- |
 | `survivor_id` | integer | Final confirmed survivor (`acx_persons.id`) |
 | `loser_id` | integer | Absorbed person |
-| `operator_initial_choice` | integer | Step-1 pick (`acx_persons.id`). Audit only; never a ranking input |
+| `operator_initial_choice` | integer | Required. Positive existing same-tenant person id, not the loser. Audit only; never a ranking input |
 
-`operator_initial_choice` is stored on the WP merge record. It is not a
+`operator_initial_choice` is required on commit: a positive existing
+same-tenant person id, not the loser. Missing or invalid gives `422`
+`invalid_initial_choice`. It is stored on the WP merge record. It is not a
 recognition receipt field. PHP MUST persist the submitted value and MUST NOT
 replace it with the top ranked candidate.

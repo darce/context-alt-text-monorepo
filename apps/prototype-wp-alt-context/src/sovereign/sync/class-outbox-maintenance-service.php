@@ -135,8 +135,8 @@ class OutboxMaintenanceService {
 	 *
 	 * `failed` is FAILED rows still eligible for automatic retry.
 	 * `dead_lettered` is FAILED rows with a terminal retryability decision
-	 * (auto_retry_exhausted or a false/NULL retryable flag). Both remain
-	 * operator-visible/retryable.
+	 * (auto_retry_exhausted, missing error code, or an explicitly false retryable flag).
+	 * Both remain operator-visible/retryable.
 	 * Age is created_at of the oldest pending or failed row; 0 when the tenant has none.
 	 * Returns false when the adapter is unavailable so callers do not fabricate zeros.
 	 *
@@ -168,8 +168,8 @@ class OutboxMaintenanceService {
 		$health_sql =
 			'SELECT
 				SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS pending,
-				SUM(CASE WHEN status = %s AND last_error_retryable = 1 AND last_error_code <> %s THEN 1 ELSE 0 END) AS failed,
-				SUM(CASE WHEN status = %s AND (last_error_retryable IS NULL OR last_error_retryable <> 1 OR last_error_code IS NULL OR last_error_code = %s) THEN 1 ELSE 0 END) AS dead_lettered,
+				SUM(CASE WHEN status = %s AND (last_error_retryable IS NULL OR last_error_retryable = 1) AND last_error_code <> %s THEN 1 ELSE 0 END) AS failed,
+				SUM(CASE WHEN status = %s AND ((last_error_retryable IS NOT NULL AND last_error_retryable <> 1) OR last_error_code IS NULL OR last_error_code = %s) THEN 1 ELSE 0 END) AS dead_lettered,
 				MIN(created_at) AS oldest_created_at
 			FROM %i
 			WHERE tenant_id = %s AND status IN (%s, %s)';
@@ -535,7 +535,7 @@ class OutboxMaintenanceService {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, attempts, last_error_code, last_error_message, last_error_retryable, first_failed_at, last_attempted_at, created_at, payload FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_retryable = 1 AND last_error_code <> %s ORDER BY id ASC LIMIT %d',
+				'SELECT id, attempts, last_error_code, last_error_message, last_error_retryable, first_failed_at, last_attempted_at, created_at, payload FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND (last_error_retryable IS NULL OR last_error_retryable = 1) AND last_error_code <> %s ORDER BY id ASC LIMIT %d',
 				$this->table_name,
 				$normalized_tenant_id,
 				OutboxStatus::FAILED,
@@ -663,7 +663,7 @@ class OutboxMaintenanceService {
 		$retryable = $row['last_error_retryable'] ?? null;
 		$error_code = $row['last_error_code'] ?? null;
 
-		return 1 !== (int) $retryable
+		return ( null !== $retryable && 1 !== (int) $retryable )
 			|| ! is_string( $error_code )
 			|| self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $error_code;
 	}
@@ -706,6 +706,19 @@ class OutboxMaintenanceService {
 	}
 
 	/**
+	 * Remove the automatic retry budget before an operator re-enqueues a row.
+	 *
+	 * @param mixed $payload
+	 */
+	private function reset_auto_attempt_payload( mixed $payload ): string {
+		$decoded_payload = $this->decode_payload( $payload );
+		unset( $decoded_payload[ self::AUTO_ATTEMPT_PAYLOAD_KEY ] );
+
+		$payload_json = wp_json_encode( $decoded_payload );
+		return is_string( $payload_json ) && '' !== $payload_json ? $payload_json : '{}';
+	}
+
+	/**
 	 * @param array<string,mixed> $row
 	 */
 	private function row_age_seconds( array $row ): int {
@@ -741,12 +754,7 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$payload = $this->decode_payload( is_array( $operation ) ? ( $operation['payload'] ?? null ) : null );
-		unset( $payload[ self::AUTO_ATTEMPT_PAYLOAD_KEY ] );
-		$payload_json = wp_json_encode( $payload );
-		if ( ! is_string( $payload_json ) || '' === $payload_json ) {
-			$payload_json = '{}';
-		}
+		$payload_json = $this->reset_auto_attempt_payload( $operation['payload'] ?? null );
 
 		$updated = $this->update_operation_status(
 			$outbox_id,
@@ -946,6 +954,11 @@ class OutboxMaintenanceService {
 	}
 
 	public function re_enqueue_with_current_base( int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null ): bool {
+		$operation = $this->query_repository->find_operation_by_id( $outbox_id, $tenant_id );
+		if ( ! is_array( $operation ) ) {
+			return false;
+		}
+
 		$data = array(
 			'status' => OutboxStatus::PENDING,
 			'attempts' => 0,
@@ -957,32 +970,23 @@ class OutboxMaintenanceService {
 			'first_failed_at' => null,
 			'next_attempt_at' => null,
 		);
-		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
+		$format = array( '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' );
+		$payload = $this->decode_payload( $operation['payload'] ?? null );
 
 		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
 		if ( '' !== $normalized_merged_value ) {
-			$operation = $this->query_repository->find_operation_by_id( $outbox_id, $tenant_id );
-			if ( is_array( $operation ) ) {
-				$payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
-				$payload['merged_value'] = $normalized_merged_value;
+			$payload['merged_value'] = $normalized_merged_value;
 
-				if ( '' === trim( (string) ( $payload['label'] ?? '' ) ) ) {
-					$payload['label'] = $normalized_merged_value;
-				}
+			if ( '' === trim( (string) ( $payload['label'] ?? '' ) ) ) {
+				$payload['label'] = $normalized_merged_value;
+			}
 
-				if ( '' === trim( (string) ( $payload['name'] ?? '' ) ) ) {
-					$payload['name'] = $normalized_merged_value;
-				}
-
-				$payload_json = wp_json_encode( $payload );
-				if ( ! is_string( $payload_json ) || '' === $payload_json ) {
-					$payload_json = '{}';
-				}
-
-				$data['payload'] = $payload_json;
-				$format[] = '%s';
+			if ( '' === trim( (string) ( $payload['name'] ?? '' ) ) ) {
+				$payload['name'] = $normalized_merged_value;
 			}
 		}
+
+		$data['payload'] = $this->reset_auto_attempt_payload( $payload );
 
 		$updated = $this->update_operation_status(
 			$outbox_id,

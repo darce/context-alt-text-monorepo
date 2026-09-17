@@ -127,7 +127,7 @@ class SyncHealthControllerTest extends TestCase
         $this->assertSame($fixture['warnings'], $data['warnings']);
     }
 
-    public function testGetSyncHealthNullsOutboxCountersWhenMaintenanceReadFails(): void
+    public function testGetSyncHealthReturnsExplicitOutboxFailureEnvelopeWhenMaintenanceReadFails(): void
     {
         $maintenance = new class() extends OutboxMaintenanceService {
             public function __construct()
@@ -142,16 +142,17 @@ class SyncHealthControllerTest extends TestCase
 
         $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
         $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
-        $data = $response->get_data();
 
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('sync_health_outbox_unavailable', $response->get_error_code());
+        $this->assertSame('Outbox health counters are temporarily unavailable.', $response->get_error_message());
         $this->assertSame(
             [
-                'pending' => null,
-                'failed' => null,
-                'dead_lettered' => null,
-                'oldest_age_seconds' => null,
+                'status' => 503,
+                'component' => 'outbox',
+                'state' => 'degraded',
             ],
-            $data['outbox']
+            $response->get_error_data()
         );
     }
 
@@ -173,16 +174,16 @@ class SyncHealthControllerTest extends TestCase
 
         $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
         $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
-        $data = $response->get_data();
 
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('sync_health_outbox_unavailable', $response->get_error_code());
         $this->assertSame(
             [
-                'pending' => null,
-                'failed' => null,
-                'dead_lettered' => null,
-                'oldest_age_seconds' => null,
+                'status' => 503,
+                'component' => 'outbox',
+                'state' => 'degraded',
             ],
-            $data['outbox']
+            $response->get_error_data()
         );
     }
 

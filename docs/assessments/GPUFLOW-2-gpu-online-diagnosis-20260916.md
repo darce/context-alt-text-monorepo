@@ -21,7 +21,7 @@ operator records the checks in [Gate R](#gate-r--operator-evidence-checklist)
 on the integrated HEAD. Provisioning or environment failures remain named
 operator gates, not reasons to substitute a CPU-only release.
 
-## a3_required: false
+## a3_required: false (provisional — Gate R falsifies)
 
 A3 is **not required by this diagnosis**. The tree has an explicit lifecycle
 path from readiness timeout/stall to a typed fallback and then to a `DEGRADED`
@@ -37,6 +37,8 @@ the adapter is unready. The unresolved gap is deployment proof, not a tree
 provenance gap; the deployed version and the last two start-cycle excerpts are
 therefore Gate R inputs.
 
+A3 becomes required if Gate R shows the deployed `gpu_lifecycle` version lacks the fallback path at `reaper.py:3055-3087`, or any start-cycle journal excerpt shows `READY` while `/health/detailed` reports the adapter unready.
+
 ## Recorded evidence boundary
 
 The planning session recorded the following facts at 2026-09-16 23:01 UTC.
@@ -51,7 +53,7 @@ agent captures.
 | Environment load files | All environment files reported zero work and legacy keys; no `lease_demand` or `revision` | CAPTURED by planning session | Current producer code emits `lease_demand` and a positive `revision` ([apps/prototype-description-service/scene/application/describe_load.py:392-449](../../apps/prototype-description-service/scene/application/describe_load.py#L392-L449)). |
 | GPU intent | No intent file | CAPTURED by planning session | Automatic lifecycle behavior remains the expected mode; an operator `stop` would suppress `START` ([docs/workbay/contracts/gpu-lifecycle.md:56-72](../../docs/workbay/contracts/gpu-lifecycle.md#L56-L72)). |
 | Demo plugin | Version `0.0.23` | CAPTURED by planning session | This identifies the client surface whose 120-second ceiling is recorded below. |
-| A10 service limit and `acx_gpu_burst` instance list | **NOT CAPTURED** | Operator pending | Gate R must confirm quota and the intended instance; quota and capacity are separate checks ([infra/oci/GPU-BURST-PROVISIONING.md:21-31](../../infra/oci/GPU-BURST-PROVISIONING.md#L21-L31)). |
+| A10 service limit and `acx-gpu-burst` instance list | **NOT CAPTURED** | Operator pending | Gate R must confirm quota and the intended `acx-gpu-burst` instance; Terraform and smoke tooling identify that display name ([infra/oci/main.tf:250-254](../../infra/oci/main.tf#L250-L254), [scripts/gpu_burst_smoke.py:99](../../scripts/gpu_burst_smoke.py#L99)); quota and capacity are separate checks ([infra/oci/GPU-BURST-PROVISIONING.md:21-31](../../infra/oci/GPU-BURST-PROVISIONING.md#L21-L31)). |
 | API-host adapter and endpoint environment | **NOT CAPTURED** | Operator pending | The deployed values must be read from the API host, not inferred from a checked-in example. |
 | Deployed `gpu_lifecycle` version and `reaper.py` fallback path | **NOT CAPTURED** | Operator pending | The tree path exists; deployed provenance is required before treating it as live. |
 | Last two start-cycle journal excerpts | **NOT CAPTURED** | Operator pending | Expected lines and command are in Gate R. |
@@ -214,11 +216,11 @@ missing value from that account is **NOT CAPTURED**, not zero.
     --service-name compute --region us-ashburn-1 \
     --query "data[?contains(\"name\",'a10')]"
   oci compute instance list --compartment-id <compartment_ocid> \
-    --region us-ashburn-1 --query "data[?contains(\"display-name\",'acx_gpu_burst')]"
+    --region us-ashburn-1 --query "data[?contains(\"display-name\",'acx-gpu-burst')]"
   ```
 
   Expected: the A10 limit is at least `1`, and the instance list contains the
-  intended `acx_gpu_burst` instance with its OCID, shape, lifecycle state, and
+  intended `acx-gpu-burst` instance with its OCID, shape, lifecycle state, and
   private endpoint address. A zero limit or missing instance is an operator
   gate; do not close the wave around it.
 
@@ -285,8 +287,12 @@ missing value from that account is **NOT CAPTURED**, not zero.
 
   ```bash
   sudo jq . /run/acx/gpu-state.json
-  curl -fsS https://<api-host>/health/detailed | jq .
+  curl -fsS -H "X-Api-Key: ${ACX_HEALTH_API_KEY:?set from the API host env}" https://<api-host>/health/detailed | jq '.description_adapter'
   ```
+
+  Read `ACX_HEALTH_API_KEY` from the API host env file and never echo its value
+  or include it in captured evidence; `/health/detailed` is auth-gated and the
+  deployment probe uses `X-Api-Key` ([api/main.py:543-548](../../apps/prototype-description-service/api/main.py#L543-L548), [infra/oci/demo/bootstrap-wp.sh:364-392](../../infra/oci/demo/bootstrap-wp.sh#L364-L392)).
 
   Expected: state transitions `stopped` → `starting`/`warming` → `ready` for a
   successful cold path, or `degraded` with a non-empty lifecycle reason for a

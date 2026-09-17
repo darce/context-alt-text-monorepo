@@ -4,6 +4,10 @@ Clustering and assignment thresholds for the recognition service.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from enum import StrEnum
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Canonical no-op enrollment triple (FIR-6 S3b / EMB-07). Single source for
@@ -335,6 +339,23 @@ class ClusteringSettings(BaseModel):
         default=0.20,
         description="Minimum quality score below which suggestions are suppressed.",
     )
+    recovery_merge_enabled: bool = Field(
+        default=False,
+        description=(
+            "ACX_RECOVERY_MERGE_ENABLED. Pairwise recovery merge after singleton HAC. "
+            "Default off until the C1 calibration policy is accepted."
+        ),
+    )
+    merge_undo_window_days: int = Field(
+        default=7,
+        ge=1,
+        description="ACX_MERGE_UNDO_WINDOW_DAYS. Receipt undo window in days; never a client constant.",
+    )
+    recovery_max_residual_size: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum identity_count for a residual cluster eligible for recovery merge.",
+    )
 
     @model_validator(mode="after")
     def _validate_low_confidence_thresholds(self) -> ClusteringSettings:
@@ -389,3 +410,447 @@ class HACSettings(BaseModel):
         default=50,
         description="kNN neighborhood size for scoped HAC.",
     )
+
+
+class CalibrationApplyMode(StrEnum):
+    """apply_mode vocabulary for the C1 recovery-calibration policy (sr-007)."""
+
+    DISABLED_UNTIL_ACCEPTED = "disabled_until_accepted"
+    ACCEPTED = "accepted"
+
+
+class CalibrationPolicyStatus(StrEnum):
+    """status vocabulary for the C1 recovery-calibration policy (sr-007)."""
+
+    NEEDS_OPERATOR = "needs_operator"
+    ACCEPTED = "accepted"
+
+
+class _ForbidModel(BaseModel):
+    """Strict nested policy node: unknown keys fail closed (CALIBR-M-06)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class CalibrationBinding(_ForbidModel):
+    embedding_model_id: str
+    embedding_model_revision: str
+    embedding_dimensionality: str | int
+    distance_metric: str
+    dataset_manifest_digest: str
+    calibration_run_digest: str
+    require_all_runtime_fields_match: bool
+    apply_only_when: str
+
+
+class InclusiveBand(_ForbidModel):
+    min_inclusive: float | None = None
+    max_inclusive: float | None = None
+    max_exclusive: float | None = None
+
+
+class QualityScoreBandCuts(_ForbidModel):
+    high: InclusiveBand
+    neutral: InclusiveBand
+    mediocre: InclusiveBand
+    poor: InclusiveBand
+
+
+class SimilarityBandCuts(_ForbidModel):
+    reject_below: float
+    low_confidence_suggestion: InclusiveBand
+    suggestion: InclusiveBand
+    accept_at_or_above: float
+
+
+class BandCuts(_ForbidModel):
+    quality_score: QualityScoreBandCuts
+    similarity: SimilarityBandCuts
+
+
+class SuggestionBandCuts(_ForbidModel):
+    low_confidence_floor: float
+    suggestion_floor: float
+    suggestion_ceiling: float
+
+
+class StratumResolution(_ForbidModel):
+    key: str
+    floor_precedence: list[str]
+    rule: str
+    abstention: str
+
+
+class PerStratumFloors(_ForbidModel):
+    key_format: str
+    base: float
+    quality_band_defaults: dict[str, float]
+    operating_condition_defaults: dict[str, float]
+    cell_overrides: dict[str, float]
+
+
+class PolicyAcceptance(_ForbidModel):
+    reject_all_abstained: bool
+    minimum_non_abstained_strata_with_floor: int
+    apply_mode_exit_requires: str
+
+
+class PolicyAbstain(_ForbidModel):
+    rule: str
+
+
+class AbstainedStrata(_ForbidModel):
+    key_format: str
+    selection: str
+    quality_bands: list[str]
+    operating_conditions: list[str]
+
+
+class FalseNameInterval(_ForbidModel):
+    method: str
+    confidence: float
+
+
+class FalseNameAcceptanceGate(_ForbidModel):
+    max_automatic_false_name_accepts: int
+    max_observed_rate: float
+    interval: FalseNameInterval
+    fail_if: str
+
+
+class RepresentativeWeights(_ForbidModel):
+    occlusion: float
+    detector_confidence: float
+    face_size: float
+
+
+class RepresentativePolicy(_ForbidModel):
+    status: str
+    weights: RepresentativeWeights
+    weights_sum: float
+
+
+class EvaluationPolicy(_ForbidModel):
+    calibration_identities_disjoint_from_evaluation: bool
+    required_metrics: list[str]
+    no_same_image_exemplar_credit: bool
+    noise_is_unassigned: bool
+
+
+class ClusterRecoveryCalibrationPolicy(_ForbidModel):
+    """Typed C1 recovery-calibration policy. Unknown keys fail (CALIBR-M-06)."""
+
+    schema_version: int
+    rule_version: str
+    status: CalibrationPolicyStatus
+    apply_mode: CalibrationApplyMode
+    binding: CalibrationBinding
+    tau_pair: float
+    tau_intra: float
+    recovery_margin: float
+    margin_delta: float
+    delta: float
+    k: int
+    min_agreeing_exemplars: int
+    band_cuts: BandCuts
+    suggestion_band_cuts: SuggestionBandCuts
+    stratum_resolution: StratumResolution
+    per_stratum_floors: PerStratumFloors
+    acceptance: PolicyAcceptance
+    min_pairs: int
+    abstain: PolicyAbstain
+    abstained_strata: AbstainedStrata
+    false_name_acceptance_gate: FalseNameAcceptanceGate
+    k_occ: float
+    representative: RepresentativePolicy
+    evaluation: EvaluationPolicy
+
+    @model_validator(mode="after")
+    def validate_apply_mode_status(self) -> ClusterRecoveryCalibrationPolicy:
+        if self.apply_mode is CalibrationApplyMode.ACCEPTED and self.status is not CalibrationPolicyStatus.ACCEPTED:
+            raise ValueError("apply_mode=accepted requires status=accepted")
+        return self
+
+    def abstained_cells(self) -> frozenset[str]:
+        """Return the closed set of abstained ``<quality_band>×<operating_condition>`` cells."""
+        strata = self.abstained_strata
+        if strata.selection != "cartesian_product":
+            return frozenset()
+        return frozenset(
+            f"{band}×{condition}" for band in strata.quality_bands for condition in strata.operating_conditions
+        )
+
+
+class EmbeddingSpaceBinding(_ForbidModel):
+    """Runtime embedding-space binding compared against the policy (CALIBR-M-05)."""
+
+    embedding_model_id: str
+    embedding_model_revision: str
+    embedding_dimensionality: int
+    distance_metric: str
+    dataset_manifest_digest: str
+    calibration_run_digest: str
+
+
+# Verbatim C1 machine-readable policy block
+# (docs/assessments/GPUFLOW-2-cluster-recovery-calibration-20260916.md).
+CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK: dict[str, Any] = {
+    "schema_version": 1,
+    "rule_version": "GPUFLOW-2-C1-provisional-20260916",
+    "status": "needs_operator",
+    "apply_mode": "disabled_until_accepted",
+    "binding": {
+        "embedding_model_id": "unbound",
+        "embedding_model_revision": "unbound",
+        "embedding_dimensionality": "unbound",
+        "distance_metric": "cosine",
+        "dataset_manifest_digest": "unbound",
+        "calibration_run_digest": "unbound",
+        "require_all_runtime_fields_match": True,
+        "apply_only_when": ("all binding fields match the runtime embedding space and calibration artifacts"),
+    },
+    "tau_pair": 0.55,
+    "tau_intra": 0.45,
+    "recovery_margin": 0.05,
+    "margin_delta": 0.05,
+    "delta": 0.05,
+    "k": 2,
+    "min_agreeing_exemplars": 2,
+    "band_cuts": {
+        "quality_score": {
+            "high": {"min_inclusive": 0.90, "max_inclusive": 1.00},
+            "neutral": {"min_inclusive": 0.80, "max_exclusive": 0.90},
+            "mediocre": {"min_inclusive": 0.60, "max_exclusive": 0.80},
+            "poor": {"min_inclusive": 0.00, "max_exclusive": 0.60},
+        },
+        "similarity": {
+            "reject_below": 0.30,
+            "low_confidence_suggestion": {"min_inclusive": 0.30, "max_exclusive": 0.35},
+            "suggestion": {"min_inclusive": 0.35, "max_exclusive": 0.55},
+            "accept_at_or_above": 0.55,
+        },
+    },
+    "suggestion_band_cuts": {
+        "low_confidence_floor": 0.30,
+        "suggestion_floor": 0.35,
+        "suggestion_ceiling": 0.55,
+    },
+    "stratum_resolution": {
+        "key": "<quality_band>×<operating_condition>",
+        "floor_precedence": [
+            "exact cell floor",
+            "both quality-band and operating-condition defaults",
+            "one quality-band or operating-condition default",
+            "base floor",
+        ],
+        "rule": (
+            "most specific floor wins; if both axis defaults apply without an exact cell floor, use the higher floor"
+        ),
+        "abstention": "any abstained quality or operating axis abstains the cell",
+    },
+    "per_stratum_floors": {
+        "key_format": "<quality_band>×<operating_condition>",
+        "base": 0.55,
+        "quality_band_defaults": {
+            "high": 0.55,
+            "neutral": 0.55,
+            "mediocre": 0.57,
+            "poor": 0.60,
+        },
+        "operating_condition_defaults": {
+            "clear": 0.55,
+            "profile": 0.55,
+            "sunglasses": 0.55,
+            "masked": 0.60,
+            "occlusion_other": 0.60,
+            "low_res": 0.60,
+            "blur": 0.60,
+            "similar_people": 0.60,
+            "unknown": 0.60,
+        },
+        "cell_overrides": {},
+    },
+    "acceptance": {
+        "reject_all_abstained": True,
+        "minimum_non_abstained_strata_with_floor": 1,
+        "apply_mode_exit_requires": (
+            "at least one non-abstained <quality_band>×<operating_condition> cell "
+            "with a floor and all acceptance gates passing"
+        ),
+    },
+    "min_pairs": 2,
+    "abstain": {
+        "rule": (
+            "abstain the whole residual when any member is in an abstained "
+            "<quality_band>×<operating_condition> cell, has fewer than min_pairs "
+            "labelled pairs, fails its cell floor, lacks k distinct-media exemplars, "
+            "fails tau_intra, misses recovery_margin against the runner-up, or "
+            "conflicts with a confirmed named identity"
+        ),
+    },
+    "abstained_strata": {
+        "key_format": "<quality_band>×<operating_condition>",
+        "selection": "cartesian_product",
+        "quality_bands": ["high", "neutral", "mediocre", "poor"],
+        "operating_conditions": [
+            "clear",
+            "profile",
+            "sunglasses",
+            "masked",
+            "occlusion_other",
+            "low_res",
+            "blur",
+            "similar_people",
+            "unknown",
+        ],
+    },
+    "false_name_acceptance_gate": {
+        "max_automatic_false_name_accepts": 0,
+        "max_observed_rate": 0.0,
+        "interval": {"method": "Wilson", "confidence": 0.95},
+        "fail_if": ("any non-abstained stratum has an observed automatic false-name acceptance or lacks its interval"),
+    },
+    "k_occ": 0.0,
+    "representative": {
+        "status": "proposed_not_current_runtime",
+        "weights": {
+            "occlusion": 0.0,
+            "detector_confidence": 0.6,
+            "face_size": 0.4,
+        },
+        "weights_sum": 1.0,
+    },
+    "evaluation": {
+        "calibration_identities_disjoint_from_evaluation": True,
+        "required_metrics": [
+            "pairwise_precision",
+            "pairwise_recall",
+            "bcubed_precision",
+            "bcubed_recall",
+            "false_merges",
+            "fragmentation",
+            "unknown_absorption",
+            "rejected_singleton_fraction",
+            "insertion_order_stability",
+            "far",
+            "frr",
+            "false_accept_interval",
+        ],
+        "no_same_image_exemplar_credit": True,
+        "noise_is_unassigned": True,
+    },
+}
+
+_UNBOUND = "unbound"
+
+
+def load_cluster_recovery_calibration_policy(
+    raw: Mapping[str, Any],
+) -> ClusterRecoveryCalibrationPolicy:
+    """Parse a calibration policy mapping. Unknown keys fail closed (CALIBR-M-06)."""
+    return ClusterRecoveryCalibrationPolicy.model_validate(dict(raw))
+
+
+def default_cluster_recovery_calibration_policy() -> ClusterRecoveryCalibrationPolicy:
+    """Return the verbatim C1 policy block as a typed object."""
+    return load_cluster_recovery_calibration_policy(CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK)
+
+
+def _binding_field_matches(policy_value: str | int, runtime_value: str | int) -> bool:
+    if isinstance(policy_value, str) and policy_value == _UNBOUND:
+        return False
+    return str(policy_value) == str(runtime_value)
+
+
+def calibration_policy_is_applicable(
+    policy: ClusterRecoveryCalibrationPolicy,
+    runtime: EmbeddingSpaceBinding,
+) -> bool:
+    """True only when status and apply_mode are accepted and binding matches.
+
+    Unbound policy fields, a binding mismatch, or an all-abstained policy keep
+    apply_mode effectively disabled (CALIBR-M-05). The stored apply_mode is not
+    mutated.
+    """
+    if (
+        policy.status is not CalibrationPolicyStatus.ACCEPTED
+        or policy.apply_mode is not CalibrationApplyMode.ACCEPTED
+    ):
+        return False
+    binding = policy.binding
+    matches = (
+        _binding_field_matches(binding.embedding_model_id, runtime.embedding_model_id)
+        and _binding_field_matches(binding.embedding_model_revision, runtime.embedding_model_revision)
+        and _binding_field_matches(binding.embedding_dimensionality, runtime.embedding_dimensionality)
+        and _binding_field_matches(binding.distance_metric, runtime.distance_metric)
+        and _binding_field_matches(binding.dataset_manifest_digest, runtime.dataset_manifest_digest)
+        and _binding_field_matches(binding.calibration_run_digest, runtime.calibration_run_digest)
+    )
+    if binding.require_all_runtime_fields_match and not matches:
+        return False
+    if not matches:
+        return False
+    if policy.acceptance.reject_all_abstained and not policy.abstained_cells():
+        # Empty abstain set is the test/accepted case: every cell is eligible.
+        return True
+    if policy.acceptance.reject_all_abstained:
+        quality_bands = ("high", "neutral", "mediocre", "poor")
+        operating_conditions = tuple(policy.per_stratum_floors.operating_condition_defaults)
+        abstained = policy.abstained_cells()
+        eligible = [
+            f"{band}×{condition}"
+            for band in quality_bands
+            for condition in operating_conditions
+            if f"{band}×{condition}" not in abstained
+        ]
+        if len(eligible) < policy.acceptance.minimum_non_abstained_strata_with_floor:
+            return False
+    return True
+
+
+def quality_band_for_score(score: float, policy: ClusterRecoveryCalibrationPolicy) -> str | None:
+    """Map a quality_score onto the policy's quality band, or None if it misses every cut."""
+    bands = policy.band_cuts.quality_score
+    for name in ("high", "neutral", "mediocre", "poor"):
+        cut = getattr(bands, name)
+        if cut.min_inclusive is not None and score < cut.min_inclusive:
+            continue
+        if cut.max_inclusive is not None and score > cut.max_inclusive:
+            continue
+        if cut.max_exclusive is not None and score >= cut.max_exclusive:
+            continue
+        return name
+    return None
+
+
+def stratum_cell_key(quality_band: str, operating_condition: str) -> str:
+    return f"{quality_band}×{operating_condition}"
+
+
+def stratum_is_abstained(
+    quality_band: str,
+    operating_condition: str,
+    policy: ClusterRecoveryCalibrationPolicy,
+) -> bool:
+    return stratum_cell_key(quality_band, operating_condition) in policy.abstained_cells()
+
+
+def stratum_pair_floor(
+    quality_band: str,
+    operating_condition: str,
+    policy: ClusterRecoveryCalibrationPolicy,
+) -> float:
+    """Most specific floor wins; both-axis defaults take the higher floor."""
+    floors = policy.per_stratum_floors
+    cell_key = stratum_cell_key(quality_band, operating_condition)
+    if cell_key in floors.cell_overrides:
+        return float(floors.cell_overrides[cell_key])
+    quality_floor = floors.quality_band_defaults.get(quality_band)
+    condition_floor = floors.operating_condition_defaults.get(operating_condition)
+    if quality_floor is not None and condition_floor is not None:
+        return float(max(quality_floor, condition_floor))
+    if quality_floor is not None:
+        return float(quality_floor)
+    if condition_floor is not None:
+        return float(condition_floor)
+    return float(floors.base)

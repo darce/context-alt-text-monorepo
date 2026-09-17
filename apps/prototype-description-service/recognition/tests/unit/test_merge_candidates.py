@@ -36,6 +36,7 @@ def _cluster(
     created_at: datetime | None = None,
     cluster_id: str | None = None,
     embedding_model: str | None = None,
+    representative_identity_id: str | None = None,
 ) -> IdentityCluster:
     centroid = compute_centroid([embedding]) if embedding is not None else None
     return IdentityCluster(
@@ -45,6 +46,7 @@ def _cluster(
         is_labeled=bool(label),
         identity_count=1 if embedding is not None else 0,
         created_at=created_at or datetime.now(tz=UTC),
+        representative_identity_id=representative_identity_id,
         centroid=centroid,
         embedding_model=embedding_model,
     )
@@ -58,15 +60,26 @@ def _pending(
     created_at: datetime,
     cluster_a_identity_count: int | None = None,
     cluster_b_identity_count: int | None = None,
+    cluster_a_representative_identity_id: str | None = None,
+    cluster_b_representative_identity_id: str | None = None,
     status: str = SuggestionStatus.PENDING.value,
     expires_at: datetime | None = None,
+    refreshed_at: datetime | None = None,
 ) -> MergeSuggestionDetails:
     if cluster_a_id <= cluster_b_id:
         left, right = cluster_a_id, cluster_b_id
         left_count, right_count = cluster_a_identity_count, cluster_b_identity_count
+        left_representative, right_representative = (
+            cluster_a_representative_identity_id,
+            cluster_b_representative_identity_id,
+        )
     else:
         left, right = cluster_b_id, cluster_a_id
         left_count, right_count = cluster_b_identity_count, cluster_a_identity_count
+        left_representative, right_representative = (
+            cluster_b_representative_identity_id,
+            cluster_a_representative_identity_id,
+        )
     return MergeSuggestionDetails(
         id=str(generate_id()),
         cluster_a_id=left,
@@ -74,9 +87,12 @@ def _pending(
         similarity=similarity,
         status=status,
         created_at=created_at,
+        refreshed_at=refreshed_at,
         expires_at=expires_at,
         cluster_a_identity_count=left_count,
         cluster_b_identity_count=right_count,
+        cluster_a_representative_identity_id=left_representative,
+        cluster_b_representative_identity_id=right_representative,
     )
 
 
@@ -163,7 +179,7 @@ async def test_bands_follow_each_injected_setting_boundary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ranks_similarity_desc_then_name_asc() -> None:
+async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
     tenant_id = str(uuid4())
     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
     probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec)
@@ -179,8 +195,60 @@ async def test_ranks_similarity_desc_then_name_asc() -> None:
         settings=ClusteringSettings(suggestion_floor=0.10, suggestion_ceiling=0.95),
     )
 
-    assert [row.cluster_id for row in result.candidates] == [str(best.id), str(ada.id), str(zed.id)]
+    assert [row.cluster_id for row in result.candidates] == [
+        str(best.id),
+        *sorted((str(ada.id), str(zed.id))),
+    ]
     assert result.cluster_id == str(probe.id)
+
+
+@pytest.mark.asyncio
+async def test_ranks_fresh_pending_score_above_higher_raw_cosine() -> None:
+    tenant_id = str(uuid4())
+    now = datetime.now(tz=UTC)
+    probe = _cluster(
+        tenant_id=tenant_id,
+        label=None,
+        embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+        created_at=now,
+    )
+    pending_candidate = _cluster(
+        tenant_id=tenant_id,
+        label="Pending",
+        embedding=_normalize(np.array([0.1, np.sqrt(0.99), 0.0])),
+        created_at=now,
+    )
+    raw_candidate = _cluster(
+        tenant_id=tenant_id,
+        label="Raw",
+        embedding=_normalize(np.array([0.8, 0.6, 0.0])),
+        created_at=now,
+    )
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, raw_candidate, pending_candidate]),
+        merge_suggestion_repository=_FakeMergeRepo(
+            [
+                _pending(
+                    cluster_a_id=str(probe.id),
+                    cluster_b_id=str(pending_candidate.id),
+                    similarity=0.91,
+                    created_at=now + timedelta(seconds=1),
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
+                )
+            ]
+        ),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
+    assert [row.cluster_id for row in result.candidates] == [
+        str(pending_candidate.id),
+        str(raw_candidate.id),
+    ]
+    assert [row.similarity for row in result.candidates] == pytest.approx([0.91, 0.8])
 
 
 @pytest.mark.asyncio
@@ -289,7 +357,100 @@ async def test_fresh_timestamp_with_stale_membership_uses_live_centroid_only() -
 
 
 @pytest.mark.asyncio
-async def test_negative_cosines_rank_by_raw_value_even_when_display_values_tie() -> None:
+async def test_same_count_representative_swap_rejects_pending_score() -> None:
+    tenant_id = str(uuid4())
+    now = datetime.now(tz=UTC)
+    probe_rep = str(uuid4())
+    original_other_rep = str(uuid4())
+    replacement_other_rep = str(uuid4())
+    probe = _cluster(
+        tenant_id=tenant_id,
+        label=None,
+        embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+        created_at=now,
+        representative_identity_id=probe_rep,
+    )
+    other = _cluster(
+        tenant_id=tenant_id,
+        label="Ada",
+        embedding=_normalize(np.array([0.0, 1.0, 0.0])),
+        created_at=now,
+        representative_identity_id=replacement_other_rep,
+    )
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, other]),
+        merge_suggestion_repository=_FakeMergeRepo(
+            [
+                _pending(
+                    cluster_a_id=str(probe.id),
+                    cluster_b_id=str(other.id),
+                    similarity=0.99,
+                    created_at=now + timedelta(seconds=1),
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
+                    cluster_a_representative_identity_id=probe_rep,
+                    cluster_b_representative_identity_id=original_other_rep,
+                )
+            ]
+        ),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
+    assert result.candidates[0].similarity == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_refreshed_pending_after_representative_mutation_is_accepted() -> None:
+    tenant_id = str(uuid4())
+    now = datetime.now(tz=UTC)
+    mutation = now + timedelta(seconds=2)
+    probe_rep = str(uuid4())
+    other_rep = str(uuid4())
+    probe = _cluster(
+        tenant_id=tenant_id,
+        label=None,
+        embedding=_normalize(np.array([1.0, 0.0, 0.0])),
+        created_at=now,
+        representative_identity_id=probe_rep,
+    )
+    other = _cluster(
+        tenant_id=tenant_id,
+        label="Ada",
+        embedding=_normalize(np.array([0.0, 1.0, 0.0])),
+        created_at=now,
+        representative_identity_id=other_rep,
+    )
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, other]),
+        merge_suggestion_repository=_FakeMergeRepo(
+            [
+                _pending(
+                    cluster_a_id=str(probe.id),
+                    cluster_b_id=str(other.id),
+                    similarity=0.91,
+                    created_at=now - timedelta(seconds=1),
+                    refreshed_at=mutation + timedelta(seconds=1),
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
+                    cluster_a_representative_identity_id=probe_rep,
+                    cluster_b_representative_identity_id=other_rep,
+                )
+            ]
+        ),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
+    assert result.candidates[0].similarity == pytest.approx(0.91)
+
+
+@pytest.mark.asyncio
+async def test_negative_cosines_preserve_values_and_none_band() -> None:
     tenant_id = str(uuid4())
     probe = _cluster(tenant_id=tenant_id, label=None, embedding=_normalize(np.array([1.0, 0.0, 0.0])))
     more_negative = _cluster(tenant_id=tenant_id, label="Ada", embedding=_normalize(np.array([-1.0, 0.0, 0.0])))
@@ -308,7 +469,7 @@ async def test_negative_cosines_rank_by_raw_value_even_when_display_values_tie()
     )
 
     assert [row.cluster_id for row in result.candidates] == [str(less_negative.id), str(more_negative.id)]
-    assert [row.similarity for row in result.candidates] == pytest.approx([0.0, 0.0])
+    assert [row.similarity for row in result.candidates] == pytest.approx([-0.2, -1.0])
     assert [row.band for row in result.candidates] == [SimilarityBand.NONE, SimilarityBand.NONE]
 
 

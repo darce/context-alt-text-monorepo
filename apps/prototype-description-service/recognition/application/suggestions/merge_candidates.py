@@ -53,10 +53,11 @@ async def list_merge_candidates(
 ) -> MergeCandidatesResult:
     """Rank other clusters by raw centroid cosine and current pending evidence.
 
-    The returned similarity is the non-negative display value, optionally raised
-    by a pending suggestion whose timestamp and membership evidence are current.
-    Ranking itself uses the unclamped centroid cosine so dissimilar clusters do
-    not all tie at zero. Band cuts come from the injected ClusteringSettings.
+    The returned similarity is the merged centroid/pending score, optionally
+    raised by a pending suggestion whose timestamp and membership evidence are
+    current. Ranking uses that returned score, then the raw centroid cosine as
+    a deterministic tie-breaker. Band cuts come from the injected
+    ClusteringSettings.
     Missing embeddings omit the candidate (rg-015).
     """
     inference_settings = settings or resolve_effective_clustering_settings()
@@ -115,8 +116,8 @@ def _rank_candidates(
             ranked.append(candidate)
     ranked.sort(
         key=lambda row: (
+            -row.candidate.similarity,
             -row.raw_similarity,
-            row.candidate.name.casefold(),
             row.candidate.cluster_id,
         )
     )
@@ -144,7 +145,7 @@ def _score_candidate(
     pending_similarity = pending_by_peer.get(other_id)
     if pending_similarity is not None:
         similarity = max(similarity, pending_similarity)
-    display_similarity = max(0.0, min(1.0, float(similarity)))
+    display_similarity = min(1.0, float(similarity))
     return _RankedMergeCandidate(
         raw_similarity=raw_similarity,
         candidate=MergeCandidate(
@@ -206,11 +207,12 @@ def _membership_matches_live(
     probe: IdentityCluster,
     other: IdentityCluster,
 ) -> bool:
-    """Require the suggestion's per-cluster counts to match live membership.
+    """Require counts and representative identities to match live membership.
 
     ``created_at`` only identifies when a cluster was created, not when its
-    membership changed. A pending score without count or version evidence is
-    therefore unsafe to blend into the live centroid result.
+    membership changed. A pending score without count or representative
+    identity evidence is therefore unsafe to blend into the live centroid
+    result.
     """
     probe_id = str(probe.id).casefold()
     left_id = str(row.cluster_a_id).casefold()
@@ -218,9 +220,13 @@ def _membership_matches_live(
     if left_id == probe_id:
         observed_probe_count = row.cluster_a_identity_count
         observed_other_count = row.cluster_b_identity_count
+        observed_probe_representative = row.cluster_a_representative_identity_id
+        observed_other_representative = row.cluster_b_representative_identity_id
     elif right_id == probe_id:
         observed_probe_count = row.cluster_b_identity_count
         observed_other_count = row.cluster_a_identity_count
+        observed_probe_representative = row.cluster_b_representative_identity_id
+        observed_other_representative = row.cluster_a_representative_identity_id
     else:
         return False
 
@@ -229,18 +235,31 @@ def _membership_matches_live(
         and observed_other_count is not None
         and observed_probe_count == probe.identity_count
         and observed_other_count == other.identity_count
+        and _same_identity_id(observed_probe_representative, probe.representative_identity_id)
+        and _same_identity_id(observed_other_representative, other.representative_identity_id)
     )
 
 
 def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime | None:
-    stamps = [_as_utc(stamp) for stamp in (probe.created_at, other.created_at) if stamp is not None]
+    stamps = [
+        _as_utc(stamp)
+        for cluster in (probe, other)
+        for stamp in (cluster.created_at, getattr(cluster, "updated_at", None))
+        if isinstance(stamp, datetime)
+    ]
     return max(stamps) if stamps else None
 
 
 def _suggestion_observed_at(row: MergeSuggestionDetails) -> datetime | None:
-    refreshed = getattr(row, "refreshed_at", None)
-    stamps = [stamp for stamp in (refreshed, row.created_at) if isinstance(stamp, datetime)]
-    return max(_as_utc(stamp) for stamp in stamps) if stamps else None
+    observed = row.refreshed_at or row.created_at
+    return _as_utc(observed) if isinstance(observed, datetime) else None
+
+
+def _same_identity_id(observed: str | None, current: str | None) -> bool:
+    """Compare representative identity ids while tolerating UUID casing."""
+    return (str(observed).casefold() if observed is not None else None) == (
+        str(current).casefold() if current is not None else None
+    )
 
 
 def _peer_id(row: MergeSuggestionDetails, probe_id: str) -> str | None:

@@ -82,6 +82,8 @@ HEALTH = {
         "fresh": True,
         "usable": True,
         "reason": None,
+        "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639",
+        "model_version": "Q4_K_M",
     },
 }
 
@@ -142,6 +144,8 @@ def test_health_detailed_adapter_readiness_document():
         "fresh",
         "usable",
         "reason",
+        "model_id",
+        "model_version",
     }
 
 

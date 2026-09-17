@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-merge-candidates-response.schema.json",
+  "title": "Recognition Cluster Merge Candidates Response",
+  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Similarity is centroid cosine merged with pending ClusterMergeSuggestion similarity. band is cut from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Same shape family as GET /recognition/clusters/{cluster_id}/roster-candidates. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
+  "type": "object",
+  "required": ["cluster_id", "candidates"],
+  "additionalProperties": false,
+  "properties": {
+    "cluster_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Probe cluster UUID from the request path."
+    },
+    "candidates": {
+      "type": "array",
+      "description": "Server-ranked other clusters. Similarity DESC, then name ASC within band. Browser/SPA clients must render in payload order.",
+      "items": {
+        "type": "object",
+        "required": ["cluster_id", "name", "similarity", "band"],
+        "additionalProperties": false,
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Candidate cluster UUID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Cluster label used for display and within-band name ASC. Empty string when the cluster is unlabeled; never fabricated from another cluster."
+          },
+          "similarity": {
+            "type": "number",
+            "description": "Ranking cosine only; not a calibrated probability. May be negative (band none)."
+          },
+          "band": {
+            "type": "string",
+            "enum": ["strong", "possible", "none"],
+            "description": "Suggestion band from the accepted calibration policy block. Same vocabulary as roster-candidates-response. Unknown values MUST be treated as none."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
+      "candidates": [
+        {
+          "cluster_id": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
+          "name": "Alice Example",
+          "similarity": 0.87,
+          "band": "strong"
+        },
+        {
+          "cluster_id": "c0ffee00-0000-4000-8000-000000000001",
+          "name": "",
+          "similarity": 0.41,
+          "band": "none"
+        }
+      ]
+    }
+  ]
+}

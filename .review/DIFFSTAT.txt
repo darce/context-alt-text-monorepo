@@ -1,6 +1,6 @@
- docs/workbay/contracts/identity-merge.md           | 190 +++++++++++++++++++++
- ...n-cluster-merge-candidates-response.schema.json |  64 +++++++
- .../recognition-cluster-snapshot.schema.json       | 113 +++++++++++-
- .../schemas/roster-entry.schema.json               |  43 +++++
- .../roster-merge-candidates-response.schema.json   |  72 ++++++++
- 5 files changed, 481 insertions(+), 1 deletion(-)
+ .../application/suggestions/merge_candidates.py    |  8 +--
+ .../recognition/domain/cluster.py                  |  3 +
+ .../repositories/cluster_repository.py             | 26 +++++++-
+ .../tests/unit/test_merge_candidates.py            | 24 +++----
+ .../GPUFLOW-2-svc-merge-candidates-review.md       | 77 ++++++++++++++++++++++
+ 5 files changed, 121 insertions(+), 17 deletions(-)

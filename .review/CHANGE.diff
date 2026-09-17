@@ -1,529 +1,271 @@
-diff --git a/docs/workbay/contracts/identity-merge.md b/docs/workbay/contracts/identity-merge.md
+diff --git a/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py b/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
+--- a/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
++++ b/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
+@@ -55,8 +55,8 @@ async def list_merge_candidates(
+ 
+     The returned similarity is the merged centroid/pending score, optionally
+     raised by a pending suggestion whose timestamp and membership evidence are
+-    current. Ranking uses that returned score, then the raw centroid cosine as
+-    a deterministic tie-breaker. Band cuts come from the injected
++    current. Ranking uses that returned score, then the candidate name and id
++    as deterministic tie-breakers. Band cuts come from the injected
+     ClusteringSettings.
+     Missing embeddings omit the candidate (rg-015).
+     """
+@@ -117,7 +117,7 @@ def _rank_candidates(
+     ranked.sort(
+         key=lambda row: (
+             -row.candidate.similarity,
+-            -row.raw_similarity,
++            row.candidate.name.casefold(),
+             row.candidate.cluster_id,
+         )
+     )
+@@ -244,7 +244,7 @@ def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime
+     stamps = [
+         _as_utc(stamp)
+         for cluster in (probe, other)
+-        for stamp in (cluster.created_at, getattr(cluster, "updated_at", None))
++        for stamp in (cluster.created_at, cluster.updated_at)
+         if isinstance(stamp, datetime)
+     ]
+     return max(stamps) if stamps else None
+diff --git a/apps/prototype-description-service/recognition/domain/cluster.py b/apps/prototype-description-service/recognition/domain/cluster.py
+--- a/apps/prototype-description-service/recognition/domain/cluster.py
++++ b/apps/prototype-description-service/recognition/domain/cluster.py
+@@ -73,6 +73,9 @@ class IdentityCluster:
+     # Appended last for positional safety; None also means the receipt stack was
+     # not loaded or has no currently undoable receipt.
+     undoable_merge_receipt_id: str | None = None
++    # Last membership or centroid mutation timestamp used for freshness checks.
++    # Appended last for positional safety.
++    updated_at: datetime | None = None
+ 
+     @property
+     def is_auto_label(self) -> bool:
+diff --git a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
+--- a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
++++ b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
+@@ -1385,6 +1385,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+         )
+         self._session.add(member)
+         await self._session.flush()
++        await self._touch_cluster_updated_at(cluster_id)
++        await self._session.flush()
+ 
+     async def add_representative(self, representative: ClusterRepresentative) -> None:
+         """Persist a representative embedding for a cluster."""
+@@ -1404,13 +1406,21 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+         )
+         self._session.add(rep)
+         await self._session.flush()
++        await self._touch_cluster_updated_at(representative.cluster_id)
++        await self._session.flush()
+ 
+     async def remove_representative(self, representative_id: str) -> None:
+         """Remove a specific representative."""
++        representative = await self._session.get(
++            IdentityClusterRepresentative,
++            _coerce_uuid(representative_id),
++        )
+         stmt = delete(IdentityClusterRepresentative).where(
+             IdentityClusterRepresentative.id == _coerce_uuid(representative_id)
+         )
+-        await self._session.execute(stmt)
++        result = await self._session.execute(stmt)
++        if get_rowcount(result) > 0 and representative is not None:
++            await self._touch_cluster_updated_at(str(representative.cluster_id))
+         await self._session.flush()
+ 
+     async def clear_representatives(self, cluster_id: str) -> None:
+@@ -1418,9 +1428,20 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+         stmt = delete(IdentityClusterRepresentative).where(
+             IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
+         )
+-        await self._session.execute(stmt)
++        result = await self._session.execute(stmt)
++        if get_rowcount(result) > 0:
++            await self._touch_cluster_updated_at(cluster_id)
+         await self._session.flush()
+ 
++    async def _touch_cluster_updated_at(self, cluster_id: str) -> None:
++        """Stamp a cluster when a child write changes membership or centroid inputs."""
++        stmt = (
++            update(ClusterModel)
++            .where(ClusterModel.id == _coerce_uuid(cluster_id))
++            .values(updated_at=datetime.now(tz=UTC))
++        )
++        await self._session.execute(stmt)
++
+     async def count_labeled(self) -> int:
+         """Count clusters with user-provided labels (not auto-generated like 'cluster-xxx').
+ 
+@@ -1574,6 +1595,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+             centroid=centroid,
+             embedding_model=_choose_embedding_model([rep.embedding_model for rep in domain_reps]),
+             undoable_merge_receipt_id=undoable_merge_receipt_id,
++            updated_at=model.updated_at if isinstance(model.updated_at, datetime) else None,
+         )
+ 
+     async def get_snapshot(
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py b/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
+--- a/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
++++ b/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
+@@ -34,6 +34,7 @@ def _cluster(
+     label: str | None,
+     embedding: np.ndarray | None,
+     created_at: datetime | None = None,
++    updated_at: datetime | None = None,
+     cluster_id: str | None = None,
+     embedding_model: str | None = None,
+     representative_identity_id: str | None = None,
+@@ -46,6 +47,7 @@ def _cluster(
+         is_labeled=bool(label),
+         identity_count=1 if embedding is not None else 0,
+         created_at=created_at or datetime.now(tz=UTC),
++        updated_at=updated_at,
+         representative_identity_id=representative_identity_id,
+         centroid=centroid,
+         embedding_model=embedding_model,
+@@ -179,7 +181,7 @@ async def test_bands_follow_each_injected_setting_boundary() -> None:
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
++async def test_ranks_similarity_desc_then_name_asc() -> None:
+     tenant_id = str(uuid4())
+     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+     probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec)
+@@ -195,10 +197,8 @@ async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
+         settings=ClusteringSettings(suggestion_floor=0.10, suggestion_ceiling=0.95),
+     )
+ 
+-    assert [row.cluster_id for row in result.candidates] == [
+-        str(best.id),
+-        *sorted((str(ada.id), str(zed.id))),
+-    ]
++    assert [row.name for row in result.candidates] == ["Best", "Ada", "Zed"]
++    assert [row.cluster_id for row in result.candidates] == [str(best.id), str(ada.id), str(zed.id)]
+     assert result.cluster_id == str(probe.id)
+ 
+ 
+@@ -288,14 +288,15 @@ async def test_similarity_uses_fresh_pending_with_matching_membership() -> None:
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_stale_pending_suggestion_is_ignored() -> None:
++async def test_pending_observed_before_cluster_updated_at_is_ignored() -> None:
+     tenant_id = str(uuid4())
+-    older = datetime(2026, 1, 1, tzinfo=UTC)
+-    newer = datetime(2026, 6, 1, tzinfo=UTC)
++    created = datetime(2026, 1, 1, tzinfo=UTC)
++    updated = datetime(2026, 6, 1, tzinfo=UTC)
++    observed = datetime(2026, 3, 1, tzinfo=UTC)
+     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+     other_vec = _normalize(np.array([0.0, 1.0, 0.0]))
+-    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=newer)
+-    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=newer)
++    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=created, updated_at=updated)
++    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=created, updated_at=updated)
+ 
+     result = await list_merge_candidates(
+         tenant_id,
+@@ -307,7 +308,7 @@ async def test_stale_pending_suggestion_is_ignored() -> None:
+                     cluster_a_id=str(probe.id),
+                     cluster_b_id=str(other.id),
+                     similarity=0.99,
+-                    created_at=older,
++                    created_at=observed,
+                     cluster_a_identity_count=1,
+                     cluster_b_identity_count=1,
+                 )
+@@ -421,6 +422,7 @@ async def test_refreshed_pending_after_representative_mutation_is_accepted() ->
+         label="Ada",
+         embedding=_normalize(np.array([0.0, 1.0, 0.0])),
+         created_at=now,
++        updated_at=mutation,
+         representative_identity_id=other_rep,
+     )
+ 
+diff --git a/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md b/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md
 new file mode 100644
 --- /dev/null
-+++ b/docs/workbay/contracts/identity-merge.md
-@@ -0,0 +1,190 @@
-+---
-+title: Identity merge and cluster recovery
-+boundary_owner: recognition
-+status: draft (GPUFLOW-2)
-+since: GPUFLOW-2
-+---
++++ b/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md
+@@ -0,0 +1,77 @@
++VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-01":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-03":"partially_fixed"}
++FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-04","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":116,"summary":"The merged pending score is ignored by the final ranking order.","evidence":"The fix raises similarity to max(raw_similarity, pending_similarity) at lines 142-147, but ranked.sort() keys only on -row.raw_similarity at lines 116-123. A candidate with raw cosine 0.10 and fresh pending score 0.91 can therefore appear below a candidate with raw cosine 0.80 while displaying the lower score first."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-05","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":100,"summary":"The fix keeps a second ranking implementation instead of reusing the roster ranking path required by B6.","evidence":"The delta retains _rank_candidates() and adds _raw_cosine_similarity() (lines 100-123 and 281-291); it does not call list_roster_candidates() or SimilaritySearch. The two paths can diverge in representative selection, thresholds, and score semantics, and this fix already introduces raw-centroid ordering separately from the roster path."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-06","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":310,"summary":"The negative-cosine regression test accepts non-discriminating display scores instead of proving the contract value.","evidence":"The new test asserts both negative candidates return similarity [0.0, 0.0] at lines 310-312. It proves raw ordering only; it does not fail when the API still clamps valid negative cosine values, so the test encodes the remaining display-contract gap."}]
++Verdict: pass_with_findings
 +
-+# Identity merge and cluster recovery
++# GPUFLOW-2 svc-merge-candidates review
 +
-+Recognition-side cluster merge receipts, pairwise recovery admission, LIFO
-+revert, and the operator-merge audit field. Not the WordPress person-merge
-+undo stack. Machine-readable companion schemas:
++The review is limited to the supplied fix delta `d55cc2fa5..0a19a3eed` for the `svc-merge-candidates` B6 slice. The aggregate router mount is owned by `svc-route-registry` and is not reassigned here.
 +
-+- [recognition-cluster-snapshot.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json)
-+- [roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
-+- [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
-+- [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
++## Re-review r2 (d55cc2fa5..0a19a3eed)
 +
-+## Two undo stacks, never conflated (INT-09)
-+
-+| Surface | Token | Reverts | Owner |
-+| --- | --- | --- | --- |
-+| Roster "Merged from N groups · Undo" | WP `PersonMergeService` `undo_token`, `UNDO_TOKEN_TTL_SECONDS` (24 h) | A WP person merge via `POST /roster/persons/merge/undo` | PHP person merge |
-+| Workbench "Merged automatically · Undo" | `undoable_merge_receipt_id` from the cluster snapshot → projection | A recognition cluster merge via `POST /recognition/clusters/{id}/revert-merge` | Recognition receipts |
-+
-+Neither surface reads the other's token. No lane bridges them.
-+
-+## `cluster_merge_receipts`
-+
-+One row per merge (automatic or operator). Greenfield table in
-+`001_identity_schema.py` (C0). ORM: `IdentityCluster.merge_receipts` ordered
-+by `created_at` desc.
-+
-+| Column | Type | Meaning |
++| finding | verdict | evidence |
 +| --- | --- | --- |
-+| `receipt_id` | UUID PK | Stable receipt id; the undo handle |
-+| `survivor_cluster_id` | UUID | Cluster that kept the members |
-+| `source_cluster_id` | UUID | Cluster that was absorbed |
-+| `source_label` | string \| null | Label to restore on revert |
-+| `moved_identity_ids` | UUID[] | Exact membership moved; revert restores this set |
-+| `rule_version` | string | Calibration / merge-rule version that admitted the merge |
-+| `kind` | `auto` \| `operator` | Vocabulary is this enum only (sr-007) |
-+| `created_at` | timestamptz | Receipt push time |
-+| `expires_at` | timestamptz | `created_at + ACX_MERGE_UNDO_WINDOW_DAYS` |
-+| `reverted_at` | timestamptz \| null | Set on successful revert; unreverted while null |
++| GPUFLOW-2-SVCMERGECANDIDATES-R-01 | fixed | The delta removes the `clustering_settings` import and the `SUGGESTION_BAND_CUTS` fallback with literal provisional thresholds. `band_for(display_similarity, settings)` remains the only band decision in the changed implementation (`merge_candidates.py:142-155`), and the added test verifies the shim symbols are absent (`test_merge_candidates.py:128-130`). |
++| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta adds `_membership_matches_live()` and rejects pending rows whose two stored identity counts do not equal the live counts (`merge_candidates.py:174-177,204-232`); the new stale-membership test exercises that rejection (`test_merge_candidates.py:257-288`). It still treats freshness as `max(probe.created_at, other.created_at)` (`merge_candidates.py:199-201,235-237`), while `_suggestion_observed_at()` can only see `refreshed_at` through `getattr` and `MergeSuggestionDetails`/`_to_details()` do not carry it (`merge_candidates.py:240-243`; `suggestion_details.py:45-61`; `merge_suggestion_repository.py:222-243`). Same-count membership or representative/centroid mutations can therefore still admit stale evidence. |
++| GPUFLOW-2-SVCMERGECANDIDATES-R-03 | partially_fixed | The fix computes an unclamped raw cosine and sorts negative candidates by that value (`merge_candidates.py:116-123,142,281-291`), closing the original all-zero ordering tie; the added test proves `less_negative` precedes `more_negative` (`test_merge_candidates.py:292-312`). However, `display_similarity` still clamps every negative merged score to `0.0` (`merge_candidates.py:143-154`), and the test explicitly accepts `[0.0, 0.0]`, so the contract-visible score remains non-discriminating. |
 +
-+`ACX_MERGE_UNDO_WINDOW_DAYS` default **7**. Undo window is this setting, never
-+a client constant.
++### FINDINGS
 +
-+Receipts for a survivor form an ordered stack. Only the newest unreverted
-+receipt is undoable (LIFO).
++#### GPUFLOW-2-SVCMERGECANDIDATES-R-04 — medium
 +
-+## Pairwise admission rule (GRPH-22)
++- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:116-123,142-150`.
++- **Evidence:** `_score_candidate()` computes the merged score with `max(raw_similarity, pending_similarity)`, but `_rank_candidates()` sorts on `raw_similarity` alone. The fix therefore ranks by a different value than it returns. A fresh pending score can be higher than the centroid score while its candidate remains below a candidate with a lower returned score.
++- **Impact:** The endpoint can present a lower-scored candidate ahead of the best merged candidate, defeating the ranked merge-candidate contract and downstream operator ordering.
++- **Fix:** Store the merged score as the primary ranking key while preserving the unclamped raw cosine as a deterministic secondary key for none-band ties, or route the merged score through the shared ranking implementation.
 +
-+Recovery merge runs after `run_singleton_hac_refinement`, gated by
-+`ACX_RECOVERY_MERGE_ENABLED` (default `false` until the C1 policy block is
-+accepted). For residual singleton/small cluster R and candidate destination D
-+(by centroid cosine), admit **only if every clause holds for every moved
-+member**:
++#### GPUFLOW-2-SVCMERGECANDIDATES-R-05 — medium
 +
-+1. Every member of R has cosine ≥ `τ_pair` to ≥ k destination exemplars from
-+   k distinct source media.
-+2. R is internally coherent (all intra-R pairs ≥ `τ_intra`).
-+3. The runner-up destination's best pairwise score trails by ≥ δ for every
-+   member (competing-identity margin).
-+4. Neither R nor D is bound to a different named person.
-+5. The member's quality stratum is not abstained.
++- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:100-123,281-291`.
++- **Evidence:** The fix retains a private `_rank_candidates()` loop and adds a private `_raw_cosine_similarity()` implementation. It does not reuse the mandated `list_roster_candidates()`/`SimilaritySearch` ranking path. The duplicated path has independent representative/centroid selection, score handling, and ordering rules; the raw-centroid sort versus merged pending score is already a concrete divergence.
++- **Impact:** B6 consumers can receive ranking semantics different from the existing roster surface, and future changes to the accepted ranking path can silently leave merge candidates inconsistent.
++- **Fix:** Extract or call one shared ranking primitive that accepts the pending-evidence merge policy, then use it from both surfaces rather than maintaining a second ranker.
 +
-+Any member failing any clause → the whole residual is abstained and a merge
-+suggestion is emitted. There is no partial move. Never merge by best edge.
-+Never use UMAP/t-SNE projections for merge decisions. Complete-link
-+safeguards stay. Numbers (`τ_pair`, `τ_intra`, δ, k ≥ 2, per-stratum floors,
-+suggestion-band cuts) come only from the accepted C1 calibration policy
-+block; this contract does not invent them.
++#### GPUFLOW-2-SVCMERGECANDIDATES-R-06 — low
 +
-+On admission the producer writes one `cluster_merge_receipts` row
-+(`kind: auto`, `rule_version`, `expires_at = now + ACX_MERGE_UNDO_WINDOW_DAYS`).
++- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:292-312`.
++- **Evidence:** The new negative-cosine test asserts `[0.0, 0.0]` for the two returned similarities. It proves only that raw ordering differs; it would stay green if valid negative values were silently clamped, so it does not protect the response contract or the user-visible match score.
++- **Impact:** The regression suite can report the negative-cosine fix as complete while preserving a non-discriminating score payload.
++- **Fix:** Assert the returned negative cosine values (and the none band) or explicitly amend the contract to prohibit negative output before accepting the clamp.
 +
-+## Housekeeping purge (RES-07)
++Verdict: pass_with_findings
 +
-+The clustering run's last step purges receipts that are reverted
-+(`reverted_at` set) or expired (`expires_at` in the past). Same-rate
-+reclaimer: the writer of receipts is the writer of the purge. Clients never
-+delete receipts.
++## Verification
 +
-+## LIFO revert
++- `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — 1 passed.
++- `.venv/bin/python -m pytest apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py -q -p no:cacheprovider` — 15 passed.
++- Import-origin control was skipped because this lane owns only the report artifact, not an importable Python package.
 +
-+`revert_merge(receipt_id)`:
++## Re-review r3c (0a19a3eed..106d5b743)
 +
-+- Refuse `receipt_not_top` unless the receipt is the survivor's newest
-+  unreverted one.
-+- Refuse `receipt_expired` past `expires_at`.
-+- Otherwise restore `moved_identity_ids` to a cluster labelled `source_label`
-+  when that label is non-empty, else `"<name> (restored)"` where `<name>` is
-+  the survivor's current display name (4.2.3 semantics). Set `reverted_at`.
-+- Mirror `merge_cluster` step for step: move members, clear
-+  `moved_by_merge_id` on them, `recompute_representatives` +
-+  `recompute_centroid` for both clusters, best-effort `refresh_centroids_view`
-+  (warn, never roll back), delete stale `ClusterMergeSuggestion` rows for
-+  both clusters, set `identity_count` from a member count, broadcast
-+  `cluster_merge_reverted`.
++VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-03":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-04":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-06":"not_fixed"}
 +
-+Refusals are `409` problem-details with `code` (API-05). A second recovery
-+run MUST NOT re-attach the restored cluster solely because it was previously
-+merged.
-+
-+```json
-+{
-+  "type": "https://context-alt-text.dev/problems/receipt-not-top",
-+  "title": "Receipt is not the top unreverted merge",
-+  "status": 409,
-+  "code": "receipt_not_top"
-+}
-+```
-+
-+```json
-+{
-+  "type": "https://context-alt-text.dev/problems/receipt-expired",
-+  "title": "Merge receipt has expired",
-+  "status": 409,
-+  "code": "receipt_expired"
-+}
-+```
-+
-+## HTTP
-+
-+Recognition (mounted by `svc-route-registry`; `_tenant_id = Depends(get_tenant_id)`):
-+
-+- `GET /recognition/clusters/{cluster_id}/merge-candidates` →
-+  [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
-+- `POST /recognition/clusters/{id}/revert-merge` body `{ "receipt_id": "<uuid>" }`
-+
-+WordPress:
-+
-+- `GET acx/v1/roster/persons/{id}/merge-candidates` →
-+  [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
-+- `POST acx/v1/workbench/clusters/{id}/revert-merge` proxies the recognition
-+  revert body `{ "receipt_id": "<uuid>" }`
-+
-+Band cuts are read from the accepted calibration policy block. No route
-+embeds literal similarity thresholds.
-+
-+## Projection path for quality and undo (B2, rg-015)
-+
-+The snapshot `clusters[]` object is the only path by which quality and undo
-+availability reach WordPress. Four fields, stored as-is, never derived:
-+
-+| Snapshot / projection column | Wire type | Source |
++| finding | verdict | evidence |
 +| --- | --- | --- |
-+| `representative_quality` | number \| null | Representative row `quality_score`, renamed at export (API-10) |
-+| `quality_components` | object \| null | Representative row `quality_components` (`confidence`, `bbox_area`, `sharpness`, `occlusion_severity`) |
-+| `representative_media_id` | integer \| null | Persisted representative identity's WP attachment ID |
-+| `undoable_merge_receipt_id` | uuid string \| null | Newest unreverted, unexpired receipt for that cluster |
++| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta carries `refreshed_at` and representative identity ids through `MergeSuggestionDetails` and `_to_details()` (`suggestion_details.py:53-67`; `merge_suggestion_repository.py:227-242`), then checks live counts and representative ids (`merge_candidates.py:207-241`). `_latest_mutation()` still reads only `created_at` plus `getattr(cluster, "updated_at", None)` (`merge_candidates.py:243-251`); the delta does not add or map `updated_at` on `IdentityCluster`, so same-count membership or centroid changes with an unchanged representative can still admit stale pending evidence. |
++| GPUFLOW-2-SVCMERGECANDIDATES-R-03 | fixed | The endpoint no longer applies a lower clamp: `display_similarity = min(1.0, float(similarity))` (`merge_candidates.py:143-155`). The new regression test expects `[-0.2, -1.0]` and the `none` band (`test_merge_candidates.py:453-469`), so valid negative cosine values are now returned and ordered distinctly. |
++| GPUFLOW-2-SVCMERGECANDIDATES-R2-04 | fixed | `_rank_candidates()` now uses the returned merged score as its primary key (`-row.candidate.similarity`) before raw cosine (`merge_candidates.py:116-123`), and the added test places a fresh pending `0.91` candidate ahead of a raw `0.80` candidate (`test_merge_candidates.py:208-251`). |
++| GPUFLOW-2-SVCMERGECANDIDATES-R2-06 | not_fixed | The supplied brief gives this identifier with no finding text or acceptance criterion. The fix delta therefore contains no evidence that can establish a behavioral change for this unspecified item; treating it as fixed would fabricate an acceptance claim ([AGT-02]). |
 +
-+Absent fields stay null. Re-running bootstrap/targeted sync on the same
-+`snapshot_version` is a no-op (COR-1 / FLOW-06). Heal by reprocessing into a
-+fresh version. No PHP backfill. Roster
-+[roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
-+reads those columns: `clusters[].representative_identity` carries
-+`representative_quality` and `quality_components`; `clusters[]` carries
-+`representative_media_id` and `undoable_merge_receipt_id`.
++### FINDINGS
 +
-+Workbench "Merged automatically · Undo" shows only while projected
-+`undoable_merge_receipt_id` is non-null, and submits that id.
++FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-07","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":116,"summary":"Equal returned scores are tie-broken by raw cosine and cluster ID before the required name ordering.","evidence":"The sort key is (-row.candidate.similarity, -row.raw_similarity, row.candidate.cluster_id) at lines 116-123, while B6 requires name ASC within a band. The changed test at lines 182-199 is renamed to cluster_id ordering and asserts UUID order, codifying the contract regression ([API-09])."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-08","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":406,"summary":"The post-mutation freshness test does not model a cluster mutation timestamp.","evidence":"The test declares mutation at lines 409-410 and puts refreshed_at after it at lines 438-442, but the _cluster fixture only adds representative_identity_id and never accepts or assigns updated_at at lines 27-49. The assertion therefore proves only that a newer refreshed suggestion is accepted; it cannot prove the intended cluster-mutation freshness behavior ([TEST-03])."}]
 +
-+The composite always ships with its parts (UXR-15). No tier recomputes
-+quality. `representative_media_id` is the attachment integer, not a UUID and
-+not parsed from `representative_thumb_path`.
++#### GPUFLOW-2-SVCMERGECANDIDATES-R-07 — medium
 +
-+## Operator merge audit (HAI-15)
++- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:116-123`; `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:182-199`.
++- **Evidence:** The fix sorts equal returned scores by raw cosine, then cluster ID, before considering name. B6 requires similarity descending with name ASC within a band. The changed test is explicitly renamed to `test_ranks_similarity_desc_then_cluster_id_asc` and asserts UUID order, making the wrong tie-break executable ([API-09]).
++- **Impact:** Two candidates with the same displayed similarity and band can appear in non-name order, changing the operator-visible result order and violating the merge-candidate response contract.
++- **Fix:** Keep merged similarity as the primary key, then sort by `name.casefold()` (and use cluster ID only as the final deterministic tie-break); do not place raw cosine ahead of name for equal returned scores.
 +
-+Person merge is two-step. Step 1 shows `#merge-survivor` as an unranked,
-+score-free list in `name ASC`, filtered by `#merge-search` typeahead, and
-+requires a pick. The pick is committed to dialog state and sent as
-+`operator_initial_choice`. Step 2 (only after the pick) fetches merge
-+candidates and re-renders `#merge-survivor` sorted by similarity desc (name
-+asc within band). The merge request carries both `operator_initial_choice`
-+and the final survivor.
++#### GPUFLOW-2-SVCMERGECANDIDATES-R-08 — low
 +
-+`POST acx/v1/roster/persons/merge` (commit) fields:
++- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:27-49,406-450`.
++- **Evidence:** The test creates `mutation` and sets `refreshed_at` after it, but the `_cluster` helper has no `updated_at` parameter or assignment. It therefore verifies only that a refreshed suggestion newer than `created_at` is accepted; it does not exercise the cluster mutation timestamp that `_latest_mutation()` claims to use ([TEST-03]).
++- **Impact:** The regression suite can stay green while the intended stale-after-mutation gate is absent or wired to a field that production clusters do not expose.
++- **Fix:** Populate a real `updated_at`/centroid-refresh timestamp in the fixture, assert an older pending observation is rejected, and separately assert a refresh after that timestamp is accepted.
 +
-+| Field | Type | Meaning |
-+| --- | --- | --- |
-+| `survivor_id` | integer | Final confirmed survivor (`acx_persons.id`) |
-+| `loser_id` | integer | Absorbed person |
-+| `operator_initial_choice` | integer | Step-1 pick (`acx_persons.id`). Audit only; never a ranking input |
-+
-+`operator_initial_choice` is stored on the WP merge record. It is not a
-+recognition receipt field. PHP MUST persist the submitted value and MUST NOT
-+replace it with the top ranked candidate.
-diff --git a/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
-new file mode 100644
---- /dev/null
-+++ b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
-@@ -0,0 +1,64 @@
-+{
-+  "$schema": "http://json-schema.org/draft-07/schema#",
-+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-merge-candidates-response.schema.json",
-+  "title": "Recognition Cluster Merge Candidates Response",
-+  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Similarity is centroid cosine merged with pending ClusterMergeSuggestion similarity. band is cut from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Same shape family as GET /recognition/clusters/{cluster_id}/roster-candidates. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
-+  "type": "object",
-+  "required": ["cluster_id", "candidates"],
-+  "additionalProperties": false,
-+  "properties": {
-+    "cluster_id": {
-+      "type": "string",
-+      "format": "uuid",
-+      "description": "Probe cluster UUID from the request path."
-+    },
-+    "candidates": {
-+      "type": "array",
-+      "description": "Server-ranked other clusters. Similarity DESC, then name ASC within band. Browser/SPA clients must render in payload order.",
-+      "items": {
-+        "type": "object",
-+        "required": ["cluster_id", "name", "similarity", "band"],
-+        "additionalProperties": false,
-+        "properties": {
-+          "cluster_id": {
-+            "type": "string",
-+            "format": "uuid",
-+            "description": "Candidate cluster UUID."
-+          },
-+          "name": {
-+            "type": "string",
-+            "description": "Cluster label used for display and within-band name ASC. Empty string when the cluster is unlabeled; never fabricated from another cluster."
-+          },
-+          "similarity": {
-+            "type": "number",
-+            "description": "Ranking cosine only; not a calibrated probability. May be negative (band none)."
-+          },
-+          "band": {
-+            "type": "string",
-+            "enum": ["strong", "possible", "none"],
-+            "description": "Suggestion band from the accepted calibration policy block. Same vocabulary as roster-candidates-response. Unknown values MUST be treated as none."
-+          }
-+        }
-+      }
-+    }
-+  },
-+  "examples": [
-+    {
-+      "cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
-+      "candidates": [
-+        {
-+          "cluster_id": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
-+          "name": "Alice Example",
-+          "similarity": 0.87,
-+          "band": "strong"
-+        },
-+        {
-+          "cluster_id": "c0ffee00-0000-4000-8000-000000000001",
-+          "name": "",
-+          "similarity": 0.41,
-+          "band": "none"
-+        }
-+      ]
-+    }
-+  ]
-+}
-diff --git a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
---- a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
-+++ b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
-@@ -92,6 +92,53 @@
-             "type": ["string", "null"],
-             "format": "uuid",
-             "description": "Target cluster ID for a pending merge suggestion. Null when the source is not similar_cluster."
-+          },
-+          "representative_quality": {
-+            "type": ["number", "null"],
-+            "minimum": 0,
-+            "maximum": 1,
-+            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
-+          },
-+          "quality_components": {
-+            "type": ["object", "null"],
-+            "description": "Parts of representative_quality (UXR-15). Null when the snapshot omits them. When present, all four keys are required; a missing signal is null, never omitted. Consumers MUST NOT invent components.",
-+            "additionalProperties": false,
-+            "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
-+            "properties": {
-+              "confidence": {
-+                "type": ["number", "null"],
-+                "minimum": 0,
-+                "maximum": 1,
-+                "description": "Detector confidence in [0,1]."
-+              },
-+              "bbox_area": {
-+                "type": ["number", "null"],
-+                "minimum": 0,
-+                "description": "Face bounding-box area in pixel-squared units."
-+              },
-+              "sharpness": {
-+                "type": ["number", "null"],
-+                "minimum": 0,
-+                "maximum": 1,
-+                "description": "Sharpness term in [0,1] when computed; null while the producer has no sharpness signal."
-+              },
-+              "occlusion_severity": {
-+                "type": ["number", "null"],
-+                "minimum": 0,
-+                "maximum": 1,
-+                "description": "Occlusion severity in [0,1] (eye-patch activity deficit today). Cheap shortlist ranker, not a calibrated occluder measure."
-+              }
-+            }
-+          },
-+          "representative_media_id": {
-+            "type": ["integer", "null"],
-+            "minimum": 1,
-+            "description": "WP attachment ID of the persisted representative identity. Integer on the wire (same grain as members[].attachment_id). Null when absent. Consumers MUST NOT parse it from representative_thumb_path (rg-015)."
-+          },
-+          "undoable_merge_receipt_id": {
-+            "type": ["string", "null"],
-+            "format": "uuid",
-+            "description": "Receipt id of this cluster's newest unreverted, unexpired cluster_merge_receipts row. Null when none is undoable. This is the only path by which workbench undo availability reaches WordPress."
-           }
-         }
-       }
-@@ -149,5 +196,69 @@
-         }
-       }
-     }
--  }
-+  },
-+  "examples": [
-+    {
-+      "tenant_id": "cc42f496-c7e1-5631-b3b5-cfa270c763f8",
-+      "snapshot_version": 105,
-+      "snapshot_generation_id": "70e7f684-7228-4b4d-9594-c3ca024478f6",
-+      "source_job_id": "6e2b534b-c5f1-4d3d-a6d1-1f0b8d8ab7ec",
-+      "generated_at": "2026-03-27T18:00:00Z",
-+      "clusters": [
-+        {
-+          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
-+          "label": "Alice Example",
-+          "curation_state": "confirmed",
-+          "is_user_confirmed": true,
-+          "identity_count": 2,
-+          "representative_thumb_path": "acx://cluster/6c1a2e32-31b2-4d54-a4de-98b1a73d77a1/media/501",
-+          "representative_id": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
-+          "is_pinned": true,
-+          "suggested_label": null,
-+          "suggested_label_source": null,
-+          "suggested_label_confidence": null,
-+          "suggested_target_cluster_id": null,
-+          "representative_quality": 0.82,
-+          "quality_components": {
-+            "confidence": 0.94,
-+            "bbox_area": 7680,
-+            "sharpness": 0.71,
-+            "occlusion_severity": 0.12
-+          },
-+          "representative_media_id": 501,
-+          "undoable_merge_receipt_id": "b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44"
-+        },
-+        {
-+          "cluster_uuid": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
-+          "label": null,
-+          "curation_state": "active",
-+          "is_user_confirmed": false,
-+          "identity_count": 1,
-+          "representative_thumb_path": "acx://cluster/28f91a5d-0a26-48cc-ab25-f1ad9ac74367/media/777",
-+          "representative_id": null,
-+          "is_pinned": false,
-+          "suggested_label": "Alice Example",
-+          "suggested_label_source": "similar_cluster",
-+          "suggested_label_confidence": 0.91,
-+          "suggested_target_cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
-+          "representative_quality": null,
-+          "quality_components": null,
-+          "representative_media_id": null,
-+          "undoable_merge_receipt_id": null
-+        }
-+      ],
-+      "members": [
-+        {
-+          "identity_uuid": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
-+          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
-+          "attachment_id": 501,
-+          "bbox": { "x": 12, "y": 20, "width": 80, "height": 96 },
-+          "image_width": 1200,
-+          "image_height": 1600,
-+          "thumb_path": "acx://identity/4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb/thumb",
-+          "similarity": 0.98
-+        }
-+      ]
-+    }
-+  ]
- }
-diff --git a/packages/shared-contracts/schemas/roster-entry.schema.json b/packages/shared-contracts/schemas/roster-entry.schema.json
---- a/packages/shared-contracts/schemas/roster-entry.schema.json
-+++ b/packages/shared-contracts/schemas/roster-entry.schema.json
-@@ -67,6 +67,16 @@
-             "minimum": 0,
-             "description": "Number of identities currently assigned to this cluster."
-           },
-+          "representative_media_id": {
-+            "type": ["integer", "null"],
-+            "minimum": 1,
-+            "description": "Projected WP attachment ID of the cluster representative. Read from the projection column; never derived from representative_identity.media_id (rg-015). Null when the snapshot omitted it."
-+          },
-+          "undoable_merge_receipt_id": {
-+            "type": ["string", "null"],
-+            "format": "uuid",
-+            "description": "Projected newest unreverted, unexpired cluster-merge receipt id. Read from the projection column; never computed in PHP (rg-015). Null when none is undoable."
-+          },
-           "representative_identity": {
-             "type": ["object", "null"],
-             "description": "Representative face evidence for the cluster when available.",
-@@ -106,6 +116,39 @@
-               "similarity_threshold": {
-                 "type": ["number", "null"],
-                 "description": "Threshold used for this projected evidence item when available."
-+              },
-+              "representative_quality": {
-+                "type": ["number", "null"],
-+                "minimum": 0,
-+                "maximum": 1,
-+                "description": "Projected composite quality in [0,1]. Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
-+              },
-+              "quality_components": {
-+                "type": ["object", "null"],
-+                "description": "Projected parts of representative_quality (UXR-15). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
-+                "additionalProperties": false,
-+                "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
-+                "properties": {
-+                  "confidence": {
-+                    "type": ["number", "null"],
-+                    "minimum": 0,
-+                    "maximum": 1
-+                  },
-+                  "bbox_area": {
-+                    "type": ["number", "null"],
-+                    "minimum": 0
-+                  },
-+                  "sharpness": {
-+                    "type": ["number", "null"],
-+                    "minimum": 0,
-+                    "maximum": 1
-+                  },
-+                  "occlusion_severity": {
-+                    "type": ["number", "null"],
-+                    "minimum": 0,
-+                    "maximum": 1
-+                  }
-+                }
-               }
-             }
-           },
-diff --git a/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
-new file mode 100644
---- /dev/null
-+++ b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
-@@ -0,0 +1,72 @@
-+{
-+  "$schema": "http://json-schema.org/draft-07/schema#",
-+  "$id": "https://context-alt-text.dev/schemas/roster-merge-candidates-response.schema.json",
-+  "title": "Roster Merge Candidates Response",
-+  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. similarity is the max over pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
-+  "type": "object",
-+  "required": ["person_id", "candidates"],
-+  "additionalProperties": false,
-+  "properties": {
-+    "person_id": {
-+      "type": "integer",
-+      "minimum": 1,
-+      "description": "Loser roster person id from the request path (acx_persons.id)."
-+    },
-+    "candidates": {
-+      "type": "array",
-+      "description": "Ranked survivor persons. Similarity DESC, then name ASC within band. SPA step 2 renders this order; step 1 MUST NOT fetch or display it.",
-+      "items": {
-+        "type": "object",
-+        "required": ["person_id", "name", "similarity", "band", "shared_media_count"],
-+        "additionalProperties": false,
-+        "properties": {
-+          "person_id": {
-+            "type": "integer",
-+            "minimum": 1,
-+            "description": "Survivor roster person id."
-+          },
-+          "name": {
-+            "type": "string",
-+            "minLength": 1,
-+            "description": "Display name from the bound person row."
-+          },
-+          "similarity": {
-+            "type": "number",
-+            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters. Ranking cosine only; not a calibrated probability. May be negative (band none)."
-+          },
-+          "band": {
-+            "type": "string",
-+            "enum": ["strong", "possible", "none"],
-+            "description": "Band of the max-similarity pair, copied from the service candidate. Same vocabulary as recognition-cluster-merge-candidates-response. Unknown values MUST be treated as none."
-+          },
-+          "shared_media_count": {
-+            "type": "integer",
-+            "minimum": 0,
-+            "description": "Count of projected media rows shared between the loser and this survivor. From the projection, never count(payload) (rg-015)."
-+          }
-+        }
-+      }
-+    }
-+  },
-+  "examples": [
-+    {
-+      "person_id": 12,
-+      "candidates": [
-+        {
-+          "person_id": 34,
-+          "name": "Alice Example",
-+          "similarity": 0.87,
-+          "band": "strong",
-+          "shared_media_count": 3
-+        },
-+        {
-+          "person_id": 56,
-+          "name": "Bob Example",
-+          "similarity": 0.52,
-+          "band": "possible",
-+          "shared_media_count": 0
-+        }
-+      ]
-+    }
-+  ]
-+}
++Verdict: pass_with_findings

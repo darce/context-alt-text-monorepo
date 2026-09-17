@@ -95,6 +95,10 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('representative_id', $clustersSql);
         $this->assertStringContainsString('is_pinned', $clustersSql);
         $this->assertStringContainsString('identity_count', $clustersSql);
+        $this->assertStringContainsString('representative_quality', $clustersSql);
+        $this->assertStringContainsString('quality_components', $clustersSql);
+        $this->assertStringContainsString('representative_media_id', $clustersSql);
+        $this->assertStringContainsString('undoable_merge_receipt_id', $clustersSql);
         $this->assertStringContainsString('created_at', $clustersSql);
         $this->assertStringContainsString('updated_at', $clustersSql);
         $this->assertStringContainsString('last_synced_at', $clustersSql);
@@ -1113,6 +1117,25 @@ class LifecycleManagerTest extends TestCase
             $this->manager->compute_projection_schema_fingerprint(),
             get_option('acx_schema_fingerprint')
         );
+    }
+
+    public function testClusterProjectionSchemaStoresSnapshotExportColumnsAsNullable(): void
+    {
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $clustersSql = $statements['acx_clusters'] ?? '';
+
+        $this->assertIsString($clustersSql);
+        $this->assertStringContainsString('representative_quality double NULL', $clustersSql);
+        $this->assertStringContainsString('quality_components longtext NULL', $clustersSql);
+        $this->assertStringContainsString('representative_media_id bigint(20) unsigned DEFAULT NULL', $clustersSql);
+        $this->assertStringContainsString('undoable_merge_receipt_id varchar(64) NULL', $clustersSql);
+
+        $columns = LifecycleManager::parse_create_table_column_names($clustersSql);
+        $this->assertIsArray($columns);
+        $this->assertContains('representative_quality', $columns);
+        $this->assertContains('quality_components', $columns);
+        $this->assertContains('representative_media_id', $columns);
+        $this->assertContains('undoable_merge_receipt_id', $columns);
     }
 
     /**

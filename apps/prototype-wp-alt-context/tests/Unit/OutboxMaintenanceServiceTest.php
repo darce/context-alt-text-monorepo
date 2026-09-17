@@ -39,10 +39,9 @@ class OutboxMaintenanceServiceTest extends TestCase
 
     public function testBulkRetryRequeuesOnlyFailedRowsForTenantWithCasGuard(): void
     {
-        // E15-35 Slice 2: one guarded action requeues every failed push for the tenant —
-        // failed rows for other tenants and non-failed rows for this tenant are untouched,
-        // and every per-row UPDATE re-checks status='failed' (CAS) so a concurrent status
-        // transition is never double-applied.
+        // E15-35 Slice 2: one guarded action requeues every selected failed push for the
+        // tenant. The CAS is expressed once in the set-based UPDATE, so tenant, failed
+        // status, and selected IDs are all checked by the same statement.
         global $wpdb;
 
         $tenantId = 'tenant-test-123';
@@ -51,40 +50,33 @@ class OutboxMaintenanceServiceTest extends TestCase
             'failed' => 0,
             'conflicts' => 0,
         ]);
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildOutboxRow(1, $tenantId, 'failed'),
-            $this->buildOutboxRow(2, $tenantId, 'failed'),
-            $this->buildOutboxRow(3, 'tenant-other', 'failed'),
-            $this->buildOutboxRow(4, $tenantId, 'pending', 1),
-            $this->buildOutboxRow(5, $tenantId, 'conflict', 2),
+        // The wpdb double supplies the repository's selected IDs; the integer query
+        // result models two affected rows without relying on the double to interpret
+        // CASE/JSON expressions in a raw UPDATE.
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
         ];
+        $wpdb->defaultQueryResult = 2;
 
         $service = new OutboxMaintenanceService();
         $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
 
-        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
-        foreach ([1, 2] as $requeuedId) {
-            $this->assertSame('pending', $rowsById[$requeuedId]['status']);
-            $this->assertSame(0, $rowsById[$requeuedId]['attempts']);
-            $this->assertNull($rowsById[$requeuedId]['last_error_code']);
-            $this->assertNull($rowsById[$requeuedId]['last_error_message']);
-            $this->assertNull($rowsById[$requeuedId]['last_attempted_at']);
-            $this->assertNull($rowsById[$requeuedId]['first_failed_at']);
-        }
-
-        $this->assertSame('failed', $rowsById[3]['status']);
-        $this->assertSame('pending', $rowsById[4]['status']);
-        $this->assertSame(1, $rowsById[4]['attempts']);
-        $this->assertSame('conflict', $rowsById[5]['status']);
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'SELECT id FROM `wp_acx_sync_outbox`');
+        $this->assertStringContainsString("tenant_id = '{$tenantId}'", $selectQuery);
+        $this->assertStringContainsString("status = 'failed'", $selectQuery);
 
         $updates = array_values(array_filter(
             $wpdb->queries,
-            static fn (string $query): bool => str_starts_with($query, 'UPDATE wp_acx_sync_outbox SET')
+            static fn (string $query): bool => str_starts_with($query, 'UPDATE `wp_acx_sync_outbox` SET')
         ));
-        $this->assertCount(2, $updates);
-        foreach ($updates as $update) {
-            $this->assertStringContainsString("AND status = 'failed'", $update);
-        }
+        $this->assertCount(1, $updates);
+        $update = $updates[0];
+        $this->assertStringContainsString("tenant_id = '{$tenantId}'", $update);
+        $this->assertStringContainsString("status = 'failed'", $update);
+        $this->assertStringContainsString('id IN (1, 2)', $update);
+        $this->assertStringContainsString("payload = JSON_REMOVE(payload, '$.acx_auto_attempts')", $update);
+        $this->assertSame([1 => null, 2 => null], $this->parseBulkRetryCase($update));
 
         $syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
         $this->assertStringContainsString('pending_curation_operations = 2', $syncStateUpdate);
@@ -107,28 +99,33 @@ class OutboxMaintenanceServiceTest extends TestCase
         ]);
         add_filter('acx_outbox_drain_batch_size', static fn (): int => 2);
 
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildOutboxRow(1, $tenantId, 'failed'),
-            $this->buildOutboxRow(2, $tenantId, 'failed'),
-            $this->buildOutboxRow(3, $tenantId, 'failed'),
-            $this->buildOutboxRow(4, $tenantId, 'failed'),
-            $this->buildOutboxRow(5, $tenantId, 'failed'),
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+            ['id' => 3],
+            ['id' => 4],
+            ['id' => 5],
         ];
+        $wpdb->defaultQueryResult = 5;
 
         $service = new OutboxMaintenanceService();
         $before = (int) current_time('timestamp');
         $this->assertSame(5, $service->retry_failed_operations_bulk($tenantId));
 
-        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $update = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_sync_outbox` SET');
+        $this->assertStringContainsString("tenant_id = '{$tenantId}'", $update);
+        $this->assertStringContainsString("status = 'failed'", $update);
+        $this->assertStringContainsString('id IN (1, 2, 3, 4, 5)', $update);
+        $cases = $this->parseBulkRetryCase($update);
 
         // First chunk (drain batch size 2) is due immediately.
-        $this->assertNull($rowsById[1]['next_attempt_at']);
-        $this->assertNull($rowsById[2]['next_attempt_at']);
+        $this->assertNull($cases[1]);
+        $this->assertNull($cases[2]);
 
         // Later chunks are strictly in the future — a single drain cycle claims < N.
-        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[3]['next_attempt_at']);
-        $chunkThree = $this->parseWpTimestamp((string) $rowsById[5]['next_attempt_at']);
-        $this->assertSame($rowsById[3]['next_attempt_at'], $rowsById[4]['next_attempt_at']);
+        $chunkTwo = $this->parseWpTimestamp((string) $cases[3]);
+        $chunkThree = $this->parseWpTimestamp((string) $cases[5]);
+        $this->assertSame($cases[3], $cases[4]);
         $this->assertGreaterThan($before, $chunkTwo);
         $this->assertGreaterThanOrEqual($before + 60, $chunkTwo);
         $this->assertLessThanOrEqual($before + 62, $chunkTwo);
@@ -152,11 +149,12 @@ class OutboxMaintenanceServiceTest extends TestCase
         add_filter('acx_outbox_bulk_retry_max_rows', static fn (): bool => false);
         add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): float => INF);
 
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildOutboxRow(1, $tenantId, 'failed'),
-            $this->buildOutboxRow(2, $tenantId, 'failed'),
-            $this->buildOutboxRow(3, $tenantId, 'failed'),
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+            ['id' => 3],
         ];
+        $wpdb->defaultQueryResult = 3;
 
         $service = new OutboxMaintenanceService();
         $before = (int) current_time('timestamp');
@@ -164,9 +162,12 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertSame(3, $service->retry_failed_operations_bulk($tenantId));
 
         // Default stride (60s) despite the INF filter.
-        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
-        $this->assertNull($rowsById[1]['next_attempt_at']);
-        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'SELECT id FROM `wp_acx_sync_outbox`');
+        $this->assertStringContainsString('LIMIT 1000', $selectQuery);
+        $update = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_sync_outbox` SET');
+        $cases = $this->parseBulkRetryCase($update);
+        $this->assertNull($cases[1]);
+        $chunkTwo = $this->parseWpTimestamp((string) $cases[2]);
         $this->assertGreaterThanOrEqual($before + 60, $chunkTwo);
         $this->assertLessThanOrEqual($before + 62, $chunkTwo);
     }
@@ -187,17 +188,22 @@ class OutboxMaintenanceServiceTest extends TestCase
         add_filter('acx_outbox_bulk_retry_max_rows', static fn (): string => 'garbage');
         add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): int => 0);
 
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildOutboxRow(1, $tenantId, 'failed'),
-            $this->buildOutboxRow(2, $tenantId, 'failed'),
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
         ];
+        $wpdb->defaultQueryResult = 2;
 
         $service = new OutboxMaintenanceService();
         $before = (int) current_time('timestamp');
         $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
 
-        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
-        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'SELECT id FROM `wp_acx_sync_outbox`');
+        $this->assertStringContainsString('LIMIT 1000', $selectQuery);
+        $update = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_sync_outbox` SET');
+        $cases = $this->parseBulkRetryCase($update);
+        $this->assertNull($cases[1]);
+        $chunkTwo = $this->parseWpTimestamp((string) $cases[2]);
         $this->assertGreaterThanOrEqual($before + 60, $chunkTwo);
         $this->assertLessThanOrEqual($before + 62, $chunkTwo);
     }
@@ -217,19 +223,26 @@ class OutboxMaintenanceServiceTest extends TestCase
         add_filter('acx_outbox_bulk_retry_max_rows', static fn (): int => 2);
         add_filter('acx_outbox_bulk_retry_pacing_stride_seconds', static fn (): int => 120);
 
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
-            $this->buildOutboxRow(1, $tenantId, 'failed'),
-            $this->buildOutboxRow(2, $tenantId, 'failed'),
-            $this->buildOutboxRow(3, $tenantId, 'failed'),
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
         ];
+        $wpdb->defaultQueryResult = 2;
 
         $service = new OutboxMaintenanceService();
         $before = (int) current_time('timestamp');
         $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
 
-        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
-        $this->assertSame('failed', $rowsById[3]['status']);
-        $chunkTwo = $this->parseWpTimestamp((string) $rowsById[2]['next_attempt_at']);
+        $selectQuery = $this->findQueryContaining($wpdb->queries, 'SELECT id FROM `wp_acx_sync_outbox`');
+        $this->assertStringContainsString('LIMIT 2', $selectQuery);
+        $update = $this->findQueryContaining($wpdb->queries, 'UPDATE `wp_acx_sync_outbox` SET');
+        $this->assertStringContainsString('id IN (1, 2)', $update);
+        $cases = $this->parseBulkRetryCase($update);
+        // Batch size 1 means exactly one selected ID is immediately due; the second
+        // selected ID receives the configured 120-second pacing offset.
+        $this->assertSame([1, 2], array_keys($cases));
+        $this->assertNull($cases[1]);
+        $chunkTwo = $this->parseWpTimestamp((string) $cases[2]);
         $this->assertGreaterThanOrEqual($before + 120, $chunkTwo);
         $this->assertLessThanOrEqual($before + 122, $chunkTwo);
     }
@@ -276,6 +289,40 @@ class OutboxMaintenanceServiceTest extends TestCase
             'first_failed_at' => 'failed' === $status ? '2026-07-16 00:00:00' : null,
             'next_attempt_at' => null,
         ];
+    }
+
+    /**
+     * Parse the prepared CASE expression used by the set-based bulk requeue.
+     *
+     * @return array<int,string|null>
+     */
+    private function parseBulkRetryCase(string $query): array
+    {
+        $matched = preg_match(
+            '/next_attempt_at\s*=\s*CASE\s+id\s+(.*?)\s+ELSE\s+next_attempt_at\s+END/is',
+            $query,
+            $caseMatch
+        );
+        $this->assertSame(1, $matched, 'Expected a prepared next_attempt_at CASE expression.');
+
+        $matched = preg_match_all(
+            "/WHEN\s+(\d+)\s+THEN\s+(NULL|'[^']*')/i",
+            $caseMatch[1],
+            $whenMatches,
+            PREG_SET_ORDER
+        );
+        $this->assertIsInt($matched);
+        $this->assertGreaterThan(0, $matched);
+
+        $cases = [];
+        foreach ($whenMatches as $whenMatch) {
+            $value = strtoupper($whenMatch[2]) === 'NULL'
+                ? null
+                : trim($whenMatch[2], "'");
+            $cases[(int) $whenMatch[1]] = $value;
+        }
+
+        return $cases;
     }
 
     private function parseWpTimestamp(string $value): int

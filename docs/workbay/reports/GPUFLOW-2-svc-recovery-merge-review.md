@@ -131,3 +131,37 @@ declared owner, or amend ownership before merging.
 
 - Required composer-lock test: passed (`1 passed`).
 - Lane-row recovery/suggestion tests: passed (`18 passed`).
+
+## Re-review r2c (d8a2c749f..7092a36d8)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-01 | fixed | `discovery_pipeline.py:699-707` moves the old body behind a helper, and `:825-851` wraps every return path in `try/finally` with one `run_recovery_merge` call. The added `test_singleton_hac_runs_recovery_once_for_each_early_exit` covers the three normal early exits (`test_recovery_merge.py:363-406`). |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-02 | fixed | `recovery_merge.py:692-736` loads persisted `MediaIdentityModel.quality_score`, `:797-817` carries that value into `RecoveryMember`, and `:983-995` uses this query in the session-backed path. The fallback conversion now assigns `quality_score=None` at `:800-805` rather than substituting `identity.confidence`. |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-03 | fixed | `recovery_merge.py:361-401` validates every member's model id, vector rank, and dimensionality before `_rank_destinations`; rejected residual members are abstained at `:513-535`, so mixed or malformed residuals never reach centroid/cosine math. The new foreign-model and wrong-dimension tests exercise those paths (`test_recovery_merge.py:235-306`). |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-04 | fixed | `_apply_recovery_receipt` locks both clusters and applies a source-member CAS in `recovery_merge.py:861-941`: source count, exact update rowcount, and zero remaining source rows are required before destination update/source deletion. Receipt insertion and flush follow the mutation inside the savepoint at `:943-946`. |
+| GPUFLOW-2-SVCRECOVERYMERGE-R-05 | fixed | `recovery_merge.py:404-422` builds non-expired reverted-receipt exclusions before evaluation and `:552-576` abstains/emits a suggestion before admission. The added regression test blocks the same restored identity set until expiry (`test_recovery_merge.py:310-360`). The mutable-set limitation is recorded separately as R-08. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCRECOVERYMERGE-R-07 — high
+
+File: `apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:161-173,679-686,617-625`; `apps/prototype-description-service/recognition/tests/unit/test_recovery_merge.py:621-677`
+
+Evidence: Both receipt stores now purge only `expires_at <= now`; `reverted_at` is no longer a purge predicate. The changed test named `test_expired_and_reverted_receipts_are_purged` now expects `purged_receipts == 1` and retains the reverted row. This contradicts the identity-merge contract's last-step requirement to purge reverted or expired receipts ([RES-07]).
+
+Impact: The fix keeps reverted receipts as an exclusion mechanism but silently weakens the reclaimer contract and its observable purge count. There is no separate durable recovery-block record that would justify dropping the reverted-row purge, so the changed test codifies a release-contract regression.
+
+#### GPUFLOW-2-SVCRECOVERYMERGE-R-08 — high
+
+File: `apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:404-437,552-576`
+
+Evidence: `_reverted_receipt_exclusions` records only the moved-identity set or `(source_label, survivor_id)`, and `_residual_is_reverted_excluded` checks only those mutable values. It never compares the receipt's `source_cluster_id` with `residual.cluster_id`. After a revert, a normal membership change to the restored unnamed cluster changes the identity set and still leaves no label key, so the next run can admit the same restored cluster again. The regression test covers only the unchanged identity set (`test_recovery_merge.py:331-360`). This violates the contract's API-05 guard that a second recovery run must not re-attach the restored cluster solely because it was previously merged ([CON-11]).
+
+#### GPUFLOW-2-SVCRECOVERYMERGE-R-09 — medium
+
+File: `apps/prototype-description-service/recognition/application/orchestration/clustering/recovery_merge.py:476-480,861-946`; `apps/prototype-description-service/recognition/tests/unit/test_recovery_merge.py:569-616,681-716`
+
+Evidence: The delta moves durable work into the new session-backed `_apply_recovery_receipt`, while `run_recovery_merge_on_clusters` is explicitly plan-only. The updated tests now assert the in-memory store remains empty and manually add the planned receipt, and the admitted-merge test inspects only the returned receipt; no added test invokes `run_recovery_merge` or verifies the lock/count/CAS/receipt ordering. The high-risk durable path can therefore regress while the targeted suite remains green ([TEST-03]).
+
+Verdict: fail

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -25,8 +25,10 @@ import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeR
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
   cancel: ReturnType<typeof useMutation<DescribeRunResponse, Error, string>>;
-  /** run_id of the currently active run; null before submit and after terminal cleanup. */
+  /** The active run id, or the most recently terminal run id for the summary. */
   runId: string | null;
+  /** Store-backed id of the currently active run; null after terminal cleanup. */
+  activeRunId: string | null;
   /** Live honest-progress state polled from the run status endpoint. */
   progress: DescribeRunProgress;
   /**
@@ -100,38 +102,41 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   // summary after the active store entry is cleared.
   const activeRunIdRef = useRef<string | null>(null);
   const lastTerminalRunIdRef = useRef<string | null>(null);
+  const [lastTerminalRunId, setLastTerminalRunId] = useState<string | null>(null);
   if (storedRunId !== activeRunIdRef.current) {
     // The store is the source of truth for whether a run is active. A terminal
     // summary may continue polling through lastTerminalRunIdRef, but it must
-    // never keep the public active runId alive after the store is cleared.
+    // never keep the activeRunId alive after the store is cleared.
     activeRunIdRef.current = storedRunId;
     if (storedRunId !== null) {
       lastTerminalRunIdRef.current = null;
     }
   }
-  const runId = activeRunIdRef.current;
-  const progressRunId = runId ?? lastTerminalRunIdRef.current;
+  const activeRunId = activeRunIdRef.current;
+  const runId = activeRunId ?? lastTerminalRunId;
+  const progressRunId = activeRunId ?? lastTerminalRunIdRef.current;
   const progress = useDescribeRunProgress(progressRunId);
   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (runId === null || !progress.isTerminal) {
+    if (activeRunId === null || !progress.isTerminal) {
       return;
     }
-    if (invalidatedWorkbenchRunIdRef.current === runId) {
+    if (invalidatedWorkbenchRunIdRef.current === activeRunId) {
       return;
     }
-    invalidatedWorkbenchRunIdRef.current = runId;
+    invalidatedWorkbenchRunIdRef.current = activeRunId;
     invalidateWorkbenchListPages(queryClient);
-  }, [runId, progress.isTerminal, queryClient]);
+  }, [activeRunId, progress.isTerminal, queryClient]);
 
   useEffect(() => {
-    if (runId !== null && progress.isTerminal) {
-      lastTerminalRunIdRef.current = runId;
-      clearActiveDescribeRunId(runId);
+    if (activeRunId !== null && progress.isTerminal) {
+      lastTerminalRunIdRef.current = activeRunId;
+      setLastTerminalRunId(activeRunId);
+      clearActiveDescribeRunId(activeRunId);
       activeRunIdRef.current = null;
     }
-  }, [progress.isTerminal, runId]);
+  }, [activeRunId, progress.isTerminal]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)
@@ -139,5 +144,5 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
       ? formatBulkDescribeErrorMessage(cancel.error, CANCEL_ERROR_FALLBACK)
       : null;
 
-  return { submit, cancel, runId, progress, errorMessage };
+  return { submit, cancel, runId, activeRunId, progress, errorMessage };
 };

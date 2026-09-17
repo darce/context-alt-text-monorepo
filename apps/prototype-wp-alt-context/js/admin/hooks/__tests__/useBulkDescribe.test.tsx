@@ -221,15 +221,22 @@ describe('useBulkDescribe', () => {
     cancelBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-2', status: 'cancelled', phase: 'cancelled', skipped: 2, cancel_requested: true }),
     );
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-2', status: 'running' }));
+    fetchBulkDescribeRunMock
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-2', status: 'running' }))
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-2', status: 'cancelled', phase: 'cancelled' }));
     setActiveDescribeRunId('run-2');
 
     const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    await waitFor(() => expect(result.current.progress.status).toBe('running'));
     result.current.cancel.mutate('run-2');
 
     await waitFor(() => expect(result.current.cancel.isSuccess).toBe(true));
     expect(cancelBulkDescribeRunMock).toHaveBeenCalledWith('run-2');
-    await waitFor(() => expect(result.current.runId).toBe('run-2'));
+    result.current.progress.retry();
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.runId).toBe('run-2');
+    expect(result.current.progress.run).toMatchObject({ run_id: 'run-2', status: 'cancelled' });
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull();
   });
 
   it('persists startup_id from the submit response for resume', async () => {
@@ -283,8 +290,9 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([1, 2, 3, 4]);
 
     await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
-    await waitFor(() => expect(result.current.runId).toBeNull());
-    expect(result.current.progress.run?.run_id).toBe('run-done');
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.runId).toBe('run-done');
+    expect(result.current.progress.run).toMatchObject({ run_id: 'run-done', status: 'completed' });
     await waitFor(() =>
       expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull(),
     );

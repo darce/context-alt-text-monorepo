@@ -44,3 +44,26 @@ Verdict: fail
 - Changed-path audit: the inlined delta contains five paths; the three production paths are owned and the two test paths are outside the declared owned list (R-04).
 - Required lane test: `"$resolved_python" -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — `1 passed`.
 - Assigned Vitest proof was attempted with `apps/prototype-wp-alt-context/node_modules/.bin/vitest`; this worktree has no local Vitest dependency, so no JavaScript test pass is claimed.
+
+## Re-review r5 (2bb8e1121..6b7f51450)
+
+VERIFIED: {"GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"not_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-02":"not_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-03":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | not_fixed | The delta leaves `writeStorageItem` and `removeStorageItem` swallowing every storage exception (`describeOperationStore.ts:191-205`). `putDescribeOperationContext` still updates the tenant cache and emits before/without confirming the write (`:384-405`), so a run can still look durable only in memory. |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-02 | not_fixed | The fix delta has no `useBulkDescribe.ts` hunk. The hook still retains `storedRunId` in `retainedRunIdRef` and derives `runId` from that fallback (`useBulkDescribe.ts:97-105`), while terminal cleanup only clears the store (`:119-123`). |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-03 | fixed | Run and suggestion snapshots are now keyed by `TenantScope`; hydration and both live fast paths resolve the current tenant (`describeOperationStore.ts:243-317`), and put/clear operations address only that tenant (`:383-435`). The added tenant-switch test exercises both caches (`describeOperationStore.test.ts:122-145`). |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-05","severity":"high","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts","line":356,"summary":"Transient storage read failure can delete a valid resumable run","evidence":"The new purgeInvalid branch treats readStoredContext(runKey)===null as malformed whenever a second read is non-null. readStoredContext returns null for any getItem exception because readStorageItem catches it, so a transient first-read failure followed by a successful second read removes the valid run key and silently destroys reload state."}]
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-05 — high
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/describeOperationStore.ts:349-359`
+- Evidence: The fix adds a second `readStorageItem(runKey)` after `readStoredContext(runKey)` returned `null`. The latter also returns `null` when the first `sessionStorage.getItem` throws (`:184-188`), so an intermittent read failure followed by a successful read enters the new branch and calls `removeStorageItem(runKey)` on an otherwise valid resumable run.
+- Impact: A transient storage read failure during subscription can silently delete durable operation state, so reload recovery is lost even though the stored payload was valid. This is a new data-loss path in the fix delta, distinct from the unchanged swallowed-write/removal path above.
+- Fix: Preserve the distinction between “storage read failed” and “no value/invalid value”; only remove a key after a successful, validated read proves it is malformed or expired.
+
+Verdict: fail

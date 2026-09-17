@@ -18,6 +18,7 @@ use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\SyncPullResult;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -62,13 +63,27 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 		);
 	}
 
-	public function get_sync_health( WP_REST_Request $request ): WP_REST_Response {
+	public function get_sync_health( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
 		$base_url = $this->get_recognition_base_url();
 		$circuit_key = RecognitionCircuitKeys::for_base_url( $base_url );
 		$is_open = false !== get_transient( $circuit_key );
 		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
 		$open_conflicts = $this->sync_state_repository->get_conflict_count( $tenant_id );
+		$outbox = $this->project_outbox_health_counters(
+			$this->outbox_maintenance_service->get_health_counters( $tenant_id )
+		);
+		if ( false === $outbox ) {
+			return new WP_Error(
+				'sync_health_outbox_unavailable',
+				'Outbox health counters are temporarily unavailable.',
+				array(
+					'status' => 503,
+					'component' => 'outbox',
+					'state' => 'degraded',
+				)
+			);
+		}
 
 		return new WP_REST_Response(
 			array(
@@ -77,9 +92,7 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'base_url' => $base_url,
 					'opened_at' => null,
 				),
-				'outbox' => $this->project_outbox_health_counters(
-					$this->outbox_maintenance_service->get_health_counters( $tenant_id )
-				),
+				'outbox' => $outbox,
 				'conflicts' => array(
 					'open' => $open_conflicts,
 				),
@@ -99,20 +112,14 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 
 	/**
 	 * Project OBS-05 outbox counters. Missing/non-int keys or a failed read
-	 * become all-null (rg-015: do not fabricate zeros).
+	 * return false so the endpoint can emit an explicit degraded error envelope.
 	 *
 	 * @param mixed $counters
-	 * @return array{pending:?int,failed:?int,dead_lettered:?int,oldest_age_seconds:?int}
+	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}|false
 	 */
-	private function project_outbox_health_counters( mixed $counters ): array {
-		$unavailable = array(
-			'pending' => null,
-			'failed' => null,
-			'dead_lettered' => null,
-			'oldest_age_seconds' => null,
-		);
+	private function project_outbox_health_counters( mixed $counters ): array|false {
 		if ( ! is_array( $counters ) ) {
-			return $unavailable;
+			return false;
 		}
 
 		$pending = $counters['pending'] ?? null;
@@ -120,7 +127,7 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 		$dead_lettered = $counters['dead_lettered'] ?? null;
 		$oldest_age_seconds = $counters['oldest_age_seconds'] ?? null;
 		if ( ! is_int( $pending ) || ! is_int( $failed ) || ! is_int( $dead_lettered ) || ! is_int( $oldest_age_seconds ) ) {
-			return $unavailable;
+			return false;
 		}
 
 		return array(

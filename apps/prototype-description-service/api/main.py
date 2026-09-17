@@ -64,6 +64,7 @@ from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
 from scene.config.settings import _parse_allowlist
 from scene.domain.description import DescriptionAdapterKind
+from scene.interface_adapters.http import deps as scene_http_deps
 from scene.interface_adapters.http.deps import (
     _DEFAULT_GPU_ENDPOINT_ALLOWLIST,
     _hostname_matches_allowlist,
@@ -292,7 +293,7 @@ async def _description_adapter_readiness() -> dict[str, object]:
     vlm_dependencies_missing = (
         spec.available
         and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU
-        and bool(http_deps._missing_vlm_dependencies())
+        and bool(scene_http_deps._missing_vlm_dependencies())
     )
     if not spec.available:
         usable = False

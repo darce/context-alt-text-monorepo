@@ -262,3 +262,10 @@ States (all zones and screens): default loading empty error degraded
 - Showing a guessed representative image when representative_face is absent
 - Auto-merging people from a matching label without a preview
 - Pixel or token design; implementation uses the existing --acx-* system
+
+## Code references
+- `screen:workbench-media-row-person-chips` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterList.tsx`
+- `screen:workbench-media-row-face-group-badge` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`
+- `screen:workbench-media-row-current-face-fallback` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`
+- `screen:workbench-person-chip-expanded` — `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx`
+- `screen:exit-roster` — `apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx`

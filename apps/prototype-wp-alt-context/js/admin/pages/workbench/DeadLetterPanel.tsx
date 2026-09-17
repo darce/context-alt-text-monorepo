@@ -87,6 +87,7 @@ const DEAD_LETTER_STATUS = {
   testId: 'acx-dead-letter-status',
 } as const;
 const DEAD_LETTER_PENDING_REASON_ID = 'acx-dead-letter-pending-reason';
+const DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID = 'acx-dead-letter-age-unavailable-reason';
 const NOTICE_VARIANTS = {
   info: 'acx-notice acx-notice--info',
   warning: 'acx-notice acx-notice--warning',
@@ -207,10 +208,7 @@ const formatOperationIdentity = (operation: OutboxOperation): string =>
 
 const MYSQL_WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
 const HAS_EXPLICIT_TZ = /(?:Z|[+-]\d{2}:?\d{2})$/i;
-const AGE_CLOCK_UNAVAILABLE = __(
-  'Failed-change age is unavailable because php-outbox-reclaimer did not project first_failed_at, last_attempted_at, created_at, or age_seconds.',
-  'alt-context',
-);
+const AGE_CLOCK_UNAVAILABLE = __('Failure age unavailable from server', 'alt-context');
 
 const getSiteGmtOffsetHours = (): number => {
   const wpDate = (window as Window & { wp?: WpDateBootstrap }).wp?.date;
@@ -342,47 +340,36 @@ const readOptionalNonEmptyString = (value: unknown): string | null =>
 const readOptionalFiniteNumber = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
-const readFailureClockStamp = (operation: FailureAgeOperation): string | null =>
-  readOptionalNonEmptyString(operation.first_failed_at) ??
-  readOptionalNonEmptyString(operation.last_attempted_at) ??
-  readOptionalNonEmptyString(operation.created_at);
-
-const readFailureAgeMs = (
+const readEligibilityAgeMs = (
   operation: FailureAgeOperation,
-  nowMs: number,
+  nowMs: number | null,
   siteGmtOffsetHours: number,
 ): number | null => {
-  const stamp = readFailureClockStamp(operation);
-  if (stamp !== null) {
-    const thenMs = parseWpTimestampMs(stamp, siteGmtOffsetHours);
-    if (thenMs !== null) {
-      return Math.max(0, nowMs - thenMs);
-    }
-  }
-
   const ageSeconds = readOptionalFiniteNumber(operation.age_seconds);
   if (ageSeconds !== null) {
     return Math.max(0, ageSeconds * 1000);
   }
 
-  const oldestAgeSeconds = readOptionalFiniteNumber(operation.oldest_age_seconds);
-  if (oldestAgeSeconds !== null) {
-    return Math.max(0, oldestAgeSeconds * 1000);
+  const firstFailedAt = readOptionalNonEmptyString(operation.first_failed_at);
+  if (firstFailedAt === null || nowMs === null) {
+    return null;
   }
 
-  return null;
+  const thenMs = parseWpTimestampMs(firstFailedAt, siteGmtOffsetHours);
+  if (thenMs === null) {
+    return null;
+  }
+
+  return Math.max(0, nowMs - thenMs);
 };
 
-const resolveNowMs = (list: FailureAgeList | undefined, siteGmtOffsetHours: number): number => {
+const resolveNowMs = (list: FailureAgeList | undefined, siteGmtOffsetHours: number): number | null => {
   const serverNow = readOptionalNonEmptyString(list?.now);
-  if (serverNow !== null) {
-    const parsed = parseWpTimestampMs(serverNow, siteGmtOffsetHours);
-    if (parsed !== null) {
-      return parsed;
-    }
+  if (serverNow === null) {
+    return null;
   }
 
-  return Date.now();
+  return parseWpTimestampMs(serverNow, siteGmtOffsetHours);
 };
 
 const asFailureAgeList = (list: OutboxListResponse | undefined): FailureAgeList | undefined => list;
@@ -403,10 +390,10 @@ const isTerminalOperation = (operation: OutboxOperation): boolean =>
 
 const isOlderThanRetention = (
   operation: FailureAgeOperation,
-  nowMs: number,
+  nowMs: number | null,
   siteGmtOffsetHours: number,
 ): boolean => {
-  const ageMs = readFailureAgeMs(operation, nowMs, siteGmtOffsetHours);
+  const ageMs = readEligibilityAgeMs(operation, nowMs, siteGmtOffsetHours);
   if (ageMs === null) {
     return false;
   }
@@ -486,14 +473,18 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const failedTotal = operationsQuery.data?.total;
   const siteGmtOffsetHours = getSiteGmtOffsetHours();
   const eligibilityList = asFailureAgeList(bulkDiscardPageQuery.data);
-  const nowMs = resolveNowMs(eligibilityList ?? asFailureAgeList(operationsQuery.data), siteGmtOffsetHours);
+  const eligibilityNowMs = resolveNowMs(
+    eligibilityList ?? asFailureAgeList(operationsQuery.data),
+    siteGmtOffsetHours,
+  );
+  const displayNowMs = eligibilityNowMs ?? Date.now();
   const eligibilityReady = Boolean(
     bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError && eligibilityList,
   );
   const eligibleOperations =
     eligibilityList && bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError
       ? eligibilityList.items
-          .filter((operation) => isOlderThanRetention(operation, nowMs, siteGmtOffsetHours))
+          .filter((operation) => isOlderThanRetention(operation, eligibilityNowMs, siteGmtOffsetHours))
           .slice(0, BULK_DISCARD_PAGE_SIZE)
       : [];
   const eligibleCount = eligibleOperations.length;
@@ -503,7 +494,9 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       bulkDiscardPageQuery.isSuccess &&
       !bulkDiscardPageQuery.isError &&
       eligibilityList.items.length > 0 &&
-      eligibilityList.items.every((operation) => readFailureAgeMs(operation, nowMs, siteGmtOffsetHours) === null),
+      eligibilityList.items.every(
+        (operation) => readEligibilityAgeMs(operation, eligibilityNowMs, siteGmtOffsetHours) === null,
+      ),
   );
 
   React.useEffect(() => {
@@ -853,7 +846,13 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           }}
           disabled={!canBulkDiscard || mutationPending}
           aria-disabled={!canBulkDiscard || mutationPending ? true : undefined}
-          aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+          aria-describedby={
+            mutationPending
+              ? DEAD_LETTER_PENDING_REASON_ID
+              : missingAgeClock
+                ? DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID
+                : undefined
+          }
         >
           {bulkDiscardRunning
             ? __('Discarding failed older than 7 days…', 'alt-context')
@@ -862,11 +861,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
               : sprintf(__('Discard %d eligible', 'alt-context'), eligibleCount)}
         </button>
       </div>
-      {missingAgeClock ? (
-        <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
-          <span aria-hidden="true">⚠</span>
-          <p>{AGE_CLOCK_UNAVAILABLE}</p>
-        </div>
+      {missingAgeClock && !mutationPending ? (
+        <p id={DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID}>{AGE_CLOCK_UNAVAILABLE}</p>
       ) : null}
       {mutationError ? (
         <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
@@ -944,7 +940,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                           )}
                         </p>
                         <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
-                        <p>{formatAge(operation.created_at, nowMs)}</p>
+                        <p>{formatAge(operation.created_at, displayNowMs)}</p>
                         {isTerminalOperation(operation) ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                         {operation.last_attempted_at ? (
                           <p>
@@ -1013,7 +1009,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       {sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}
                     </p>
                     <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
-                    <p>{formatAge(operation.created_at, nowMs)}</p>
+                    <p>{formatAge(operation.created_at, displayNowMs)}</p>
                     {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                     <p>
                       {sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}

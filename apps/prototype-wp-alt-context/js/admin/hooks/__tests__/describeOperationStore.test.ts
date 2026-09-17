@@ -60,6 +60,8 @@ const installTenant = (tenantId: string): void => {
 
 describe('describeOperationStore', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_700_000_000_000);
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     installTenant(TENANT);
@@ -142,6 +144,19 @@ describe('describeOperationStore', () => {
     vi.setSystemTime(1_700_000_000_000 + 30_000);
     _resetDescribeOperationStoreForTests();
     expect(getDescribeSuggestContext(42)).toBeNull();
+  });
+
+  it('does not store a suggest context whose startup budget has already elapsed at put time', () => {
+    putDescribeOperationContext(
+      suggestContext({
+        started_at: 1_700_000_000_000 - 511_000,
+        warming_started_at: 1_700_000_000_000 - 511_000,
+        startup_budget_seconds: 510,
+      }),
+    );
+
+    expect(getDescribeSuggestContext(42)).toBeNull();
+    expect(sessionStorage.getItem(describeOperationMediaStorageKey(TENANT, 42))).toBeNull();
   });
 
   it('does not expire a run that has no service-advertised startup budget', () => {

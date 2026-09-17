@@ -1,1 +1,1 @@
-1b04228e0e5f docs(pg19): retarget PostgreSQL upgrade evaluation to 17 -> 19 (skip 18)
+5f05f3df99d1 offload: Landed GPUFLOW-2 contracts-roster B2/B6/C3 schemas and

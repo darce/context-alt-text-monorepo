@@ -22,6 +22,14 @@ class QualitySettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    representative_quality_composite_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable the composite representative-quality policy; enable only once "
+            "the C1 calibration assessment is accepted by the operator."
+        ),
+    )
+
     # Size factor settings
     min_face_size: float = Field(
         default=80.0,

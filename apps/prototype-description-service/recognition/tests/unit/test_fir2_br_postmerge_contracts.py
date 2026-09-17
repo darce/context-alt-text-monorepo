@@ -479,7 +479,7 @@ class TestFir2Br03PoseNeutralQuality:
             occlusion_severity=0.9,
         )
         assert clear.score == occluded.score
-        settings = QualitySettings(oact_coefficient=1.0)
+        settings = QualitySettings(oact_coefficient=1.0, representative_quality_composite_enabled=True)
         clear_rep = compute_representative_quality(
             confidence=0.9,
             bbox_width=100,

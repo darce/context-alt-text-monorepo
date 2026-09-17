@@ -157,10 +157,12 @@ class TestComputeRepresentativeQuality:
 
     def test_composite_is_geometric_mean_of_confidence_and_bbox_term(self) -> None:
         # min_face_size default 80 → min_bbox_area 6400; 80×80 saturates bbox_term.
+        settings = QualitySettings(representative_quality_composite_enabled=True)
         quality = compute_representative_quality(
             confidence=0.81,
             bbox_width=80,
             bbox_height=80,
+            settings=settings,
         )
         assert quality.bbox_term == pytest.approx(1.0)
         assert quality.composite == pytest.approx(0.9, abs=0.001)
@@ -168,32 +170,37 @@ class TestComputeRepresentativeQuality:
         assert quality.components()["confidence"] == pytest.approx(0.81)
 
     def test_small_bbox_lowers_bbox_term(self) -> None:
+        settings = QualitySettings(representative_quality_composite_enabled=True)
         quality = compute_representative_quality(
             confidence=1.0,
             bbox_width=40,
             bbox_height=40,
+            settings=settings,
         )
         assert quality.bbox_term == pytest.approx(1600.0 / 6400.0)
         assert quality.composite == pytest.approx(0.5, abs=0.001)
 
     def test_default_k_occ_zero_does_not_change_composite(self) -> None:
+        settings = QualitySettings(representative_quality_composite_enabled=True)
         clear = compute_representative_quality(
             confidence=0.9,
             bbox_width=100,
             bbox_height=100,
             occlusion_severity=0.0,
+            settings=settings,
         )
         occluded = compute_representative_quality(
             confidence=0.9,
             bbox_width=100,
             bbox_height=100,
             occlusion_severity=0.9,
+            settings=settings,
         )
         assert occluded.composite == clear.composite
         assert occluded.k_occ == pytest.approx(0.0)
 
     def test_positive_k_occ_penalizes_occlusion_in_composite(self) -> None:
-        settings = QualitySettings(oact_coefficient=1.0)
+        settings = QualitySettings(oact_coefficient=1.0, representative_quality_composite_enabled=True)
         clear = compute_representative_quality(
             confidence=0.9,
             bbox_width=100,
@@ -212,7 +219,10 @@ class TestComputeRepresentativeQuality:
         assert occluded.occlusion_term == pytest.approx(0.5)
 
     def test_active_sharpness_floor_scales_sharpness_term(self) -> None:
-        settings = QualitySettings(factor_floor_sharpness=10.0)
+        settings = QualitySettings(
+            factor_floor_sharpness=10.0,
+            representative_quality_composite_enabled=True,
+        )
         dull = compute_representative_quality(
             confidence=1.0,
             bbox_width=80,

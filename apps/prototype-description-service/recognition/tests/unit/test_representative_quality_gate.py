@@ -227,7 +227,7 @@ class TestRepresentativeQualityMultiplier:
             settings=settings.quality,
         ).composite
         assert _compute_identity_quality(identity, settings) == expected
-        assert expected == pytest.approx(0.949)
+        assert expected == pytest.approx(0.9)
 
     def test_score_parity_with_factors_under_noop_floors(self) -> None:
         settings = _noop_settings()
@@ -246,8 +246,8 @@ class TestRepresentativeQualityMultiplier:
             settings=settings.quality,
         ).composite
         assert _compute_identity_quality(identity, settings) == expected
-        # k_occ=0 and no-op sharpness floor → occlusion/sharpness do not move composite.
-        assert expected == pytest.approx(0.949)
+        # The default-off composite policy keeps the legacy confidence×bbox score.
+        assert expected == pytest.approx(0.9)
 
     def test_score_uses_c4_composite_when_floors_active(self) -> None:
         """C4 composite, not FIR-6 multiplier, is the persisted representative score.
@@ -257,7 +257,13 @@ class TestRepresentativeQualityMultiplier:
         k_occ default 0 → occlusion_term = 1. scored = round(0.974679 * 0.5, 3) = 0.487.
         Threshold quality stays confidence×size = 0.95.
         """
-        settings = _active_settings()
+        settings = _active_settings().model_copy(
+            update={
+                "quality": _active_settings().quality.model_copy(
+                    update={"representative_quality_composite_enabled": True}
+                )
+            }
+        )
         identity = _identity(
             confidence=0.95,
             sharpness=10.0,
@@ -460,7 +466,13 @@ class TestCreateAndAddRepresentativeGate:
     async def test_create_quality_score_uses_multiplier_when_active(self) -> None:
         cluster_repo = AsyncMock(spec=ClusterRepository)
         member_repo = AsyncMock(spec=MemberRepository)
-        settings = _active_settings()
+        settings = _active_settings().model_copy(
+            update={
+                "quality": _active_settings().quality.model_copy(
+                    update={"representative_quality_composite_enabled": True}
+                )
+            }
+        )
         writer = AssignmentWriter(settings, cluster_repo, member_repo)
         identity = _identity(
             sharpness=10.0,

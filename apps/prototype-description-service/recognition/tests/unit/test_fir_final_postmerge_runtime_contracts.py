@@ -32,7 +32,7 @@ from recognition.application.assignment.quality import (
     compute_representative_quality,
 )
 from recognition.application.health import CheckResult, check_database
-from recognition.application.settings import ClusteringSettings
+from recognition.application.settings import ClusteringSettings, QualitySettings
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, ClusterMaturityLevel
 from recognition.shared.ids import generate_id
@@ -488,6 +488,7 @@ class TestFinalB01ConfidenceCheckPoseSafety:
             confidence=0.99,
             bbox_width=200,
             bbox_height=200,
+            settings=QualitySettings(representative_quality_composite_enabled=True),
         )
         assert frontal.score == pytest.approx(0.99, abs=0.001)
         assert composite.composite == pytest.approx(0.995, abs=0.001)

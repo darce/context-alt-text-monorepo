@@ -34,6 +34,7 @@ def _cluster(
     label: str | None,
     embedding: np.ndarray | None,
     created_at: datetime | None = None,
+    updated_at: datetime | None = None,
     cluster_id: str | None = None,
     embedding_model: str | None = None,
     representative_identity_id: str | None = None,
@@ -46,6 +47,7 @@ def _cluster(
         is_labeled=bool(label),
         identity_count=1 if embedding is not None else 0,
         created_at=created_at or datetime.now(tz=UTC),
+        updated_at=updated_at,
         representative_identity_id=representative_identity_id,
         centroid=centroid,
         embedding_model=embedding_model,
@@ -179,7 +181,7 @@ async def test_bands_follow_each_injected_setting_boundary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
+async def test_ranks_similarity_desc_then_name_asc() -> None:
     tenant_id = str(uuid4())
     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
     probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec)
@@ -195,10 +197,8 @@ async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
         settings=ClusteringSettings(suggestion_floor=0.10, suggestion_ceiling=0.95),
     )
 
-    assert [row.cluster_id for row in result.candidates] == [
-        str(best.id),
-        *sorted((str(ada.id), str(zed.id))),
-    ]
+    assert [row.name for row in result.candidates] == ["Best", "Ada", "Zed"]
+    assert [row.cluster_id for row in result.candidates] == [str(best.id), str(ada.id), str(zed.id)]
     assert result.cluster_id == str(probe.id)
 
 
@@ -288,14 +288,15 @@ async def test_similarity_uses_fresh_pending_with_matching_membership() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_pending_suggestion_is_ignored() -> None:
+async def test_pending_observed_before_cluster_updated_at_is_ignored() -> None:
     tenant_id = str(uuid4())
-    older = datetime(2026, 1, 1, tzinfo=UTC)
-    newer = datetime(2026, 6, 1, tzinfo=UTC)
+    created = datetime(2026, 1, 1, tzinfo=UTC)
+    updated = datetime(2026, 6, 1, tzinfo=UTC)
+    observed = datetime(2026, 3, 1, tzinfo=UTC)
     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
     other_vec = _normalize(np.array([0.0, 1.0, 0.0]))
-    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=newer)
-    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=newer)
+    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=created, updated_at=updated)
+    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=created, updated_at=updated)
 
     result = await list_merge_candidates(
         tenant_id,
@@ -307,7 +308,7 @@ async def test_stale_pending_suggestion_is_ignored() -> None:
                     cluster_a_id=str(probe.id),
                     cluster_b_id=str(other.id),
                     similarity=0.99,
-                    created_at=older,
+                    created_at=observed,
                     cluster_a_identity_count=1,
                     cluster_b_identity_count=1,
                 )
@@ -421,6 +422,7 @@ async def test_refreshed_pending_after_representative_mutation_is_accepted() -> 
         label="Ada",
         embedding=_normalize(np.array([0.0, 1.0, 0.0])),
         created_at=now,
+        updated_at=mutation,
         representative_identity_id=other_rep,
     )
 

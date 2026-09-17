@@ -55,8 +55,8 @@ async def list_merge_candidates(
 
     The returned similarity is the merged centroid/pending score, optionally
     raised by a pending suggestion whose timestamp and membership evidence are
-    current. Ranking uses that returned score, then the raw centroid cosine as
-    a deterministic tie-breaker. Band cuts come from the injected
+    current. Ranking uses that returned score, then the candidate name and id
+    as deterministic tie-breakers. Band cuts come from the injected
     ClusteringSettings.
     Missing embeddings omit the candidate (rg-015).
     """
@@ -117,7 +117,7 @@ def _rank_candidates(
     ranked.sort(
         key=lambda row: (
             -row.candidate.similarity,
-            -row.raw_similarity,
+            row.candidate.name.casefold(),
             row.candidate.cluster_id,
         )
     )
@@ -244,7 +244,7 @@ def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime
     stamps = [
         _as_utc(stamp)
         for cluster in (probe, other)
-        for stamp in (cluster.created_at, getattr(cluster, "updated_at", None))
+        for stamp in (cluster.created_at, cluster.updated_at)
         if isinstance(stamp, datetime)
     ]
     return max(stamps) if stamps else None

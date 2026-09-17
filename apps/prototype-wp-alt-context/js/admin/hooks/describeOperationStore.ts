@@ -34,8 +34,15 @@ export interface DescribeOperationContext {
   startup_budget_seconds?: number;
   request: DescribeOperationRequest;
   /** Whether this snapshot was written to sessionStorage or only kept in memory. */
-  persistence?: DescribeOperationPersistence;
+  persistence: DescribeOperationPersistence;
 }
+
+/** Input accepted by the store before it attaches the persistence outcome. */
+export type DescribeOperationContextInput = Omit<DescribeOperationContext, 'persistence'> & {
+  persistence?: DescribeOperationPersistence;
+};
+
+type DescribeOperationContextData = Omit<DescribeOperationContext, 'persistence'>;
 
 export const DESCRIBE_OPERATION_STORAGE_PREFIX = 'acx_describe_op_v1';
 
@@ -95,7 +102,7 @@ const parsePositiveInt = (value: unknown): number | undefined => {
   return value;
 };
 
-const parseContext = (value: unknown): DescribeOperationContext | null => {
+const parseContext = (value: unknown): DescribeOperationContextData | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return null;
   }
@@ -171,11 +178,11 @@ const parseContext = (value: unknown): DescribeOperationContext | null => {
   };
 };
 
-const budgetStartMs = (context: DescribeOperationContext): number =>
+const budgetStartMs = (context: DescribeOperationContextData): number =>
   context.warming_started_at ?? context.started_at;
 
 export const isDescribeOperationExpired = (
-  context: DescribeOperationContext,
+  context: DescribeOperationContextData,
   nowMs: number = Date.now(),
 ): boolean => {
   const budgetSeconds = context.startup_budget_seconds;
@@ -242,7 +249,9 @@ type StoredContextReadResult =
 const readStoredContext = (key: string): StoredContextReadResult => {
   const storage = readStorageItem(key);
   if (storage.kind === 'error') {
-    return storage;
+    // A storage read failure is not the same as an absent key. In particular,
+    // do not enter either purge path: the old value may still be resumable.
+    return { kind: 'error' };
   }
   if (storage.kind === 'absent') {
     return storage;
@@ -262,7 +271,7 @@ const readStoredContext = (key: string): StoredContextReadResult => {
   }
 };
 
-const serializeContext = (context: DescribeOperationContext): string =>
+const serializeContext = (context: DescribeOperationContextData): string =>
   JSON.stringify({
     version: context.version,
     kind: context.kind,
@@ -430,7 +439,7 @@ export const getDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 
 const emptySnapshot = (): DescribeOperationContext | null => null;
 
-export const putDescribeOperationContext = (context: DescribeOperationContext): void => {
+export const putDescribeOperationContext = (context: DescribeOperationContextInput): void => {
   const parsed = parseContext(context);
   if (parsed === null || isDescribeOperationExpired(parsed)) {
     return;

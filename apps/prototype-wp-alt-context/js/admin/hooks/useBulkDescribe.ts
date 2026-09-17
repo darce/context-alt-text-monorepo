@@ -25,7 +25,7 @@ import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeR
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
   cancel: ReturnType<typeof useMutation<DescribeRunResponse, Error, string>>;
-  /** run_id of the run this session started/cancelled, or null before submit. */
+  /** run_id of the currently active run; null before submit and after terminal cleanup. */
   runId: string | null;
   /** Live honest-progress state polled from the run status endpoint. */
   progress: DescribeRunProgress;
@@ -100,16 +100,14 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   // summary after the active store entry is cleared.
   const activeRunIdRef = useRef<string | null>(null);
   const lastTerminalRunIdRef = useRef<string | null>(null);
-  if (storedRunId !== null && storedRunId !== activeRunIdRef.current) {
+  if (storedRunId !== activeRunIdRef.current) {
+    // The store is the source of truth for whether a run is active. A terminal
+    // summary may continue polling through lastTerminalRunIdRef, but it must
+    // never keep the public active runId alive after the store is cleared.
     activeRunIdRef.current = storedRunId;
-    lastTerminalRunIdRef.current = null;
-  } else if (
-    storedRunId === null &&
-    activeRunIdRef.current !== null &&
-    lastTerminalRunIdRef.current !== activeRunIdRef.current
-  ) {
-    // A non-terminal explicit clear must not fall back to an older active run.
-    activeRunIdRef.current = null;
+    if (storedRunId !== null) {
+      lastTerminalRunIdRef.current = null;
+    }
   }
   const runId = activeRunIdRef.current;
   const progressRunId = runId ?? lastTerminalRunIdRef.current;

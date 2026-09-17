@@ -18,7 +18,7 @@ import {
   DESCRIBE_OPERATION_CONTEXT_VERSION,
   DESCRIBE_OPERATION_KIND,
   describeOperationRunStorageKey,
-  type DescribeOperationContext,
+  type DescribeOperationContextInput,
 } from '../describeOperationStore';
 import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
@@ -122,8 +122,8 @@ const createWrapper = (): { wrapper: typeof wrapper; queryClient: QueryClient } 
 const TENANT = 'tenant';
 
 const storedRunContext = (
-  overrides: Partial<DescribeOperationContext> = {},
-): DescribeOperationContext => ({
+  overrides: Partial<DescribeOperationContextInput> = {},
+): DescribeOperationContextInput => ({
   version: DESCRIBE_OPERATION_CONTEXT_VERSION,
   kind: DESCRIBE_OPERATION_KIND.RUN,
   id: 'run-seeded',
@@ -171,6 +171,9 @@ describe('useBulkDescribe', () => {
 
   it('submits media ids and captures the run id', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-1', status: 'pending' }));
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-1', status: 'running', phase: 'describing' }),
+    );
 
     const { result } = renderHook(() => useBulkDescribe(), { wrapper });
     result.current.submit.mutate([101, 202]);
@@ -218,7 +221,7 @@ describe('useBulkDescribe', () => {
     cancelBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-2', status: 'cancelled', phase: 'cancelled', skipped: 2, cancel_requested: true }),
     );
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-2', status: 'cancelled' }));
+    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-2', status: 'running' }));
     setActiveDescribeRunId('run-2');
 
     const { result } = renderHook(() => useBulkDescribe(), { wrapper });
@@ -460,7 +463,7 @@ describe('useBulkDescribe', () => {
       }),
     );
     result.current.submit.mutate([1, 2]);
-    await waitFor(() => expect(result.current.runId).toBe('run-a'));
+    await waitFor(() => expect(result.current.progress.run?.run_id).toBe('run-a'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
     expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
@@ -482,7 +485,7 @@ describe('useBulkDescribe', () => {
       }),
     );
     result.current.submit.mutate([3, 4]);
-    await waitFor(() => expect(result.current.runId).toBe('run-b'));
+    await waitFor(() => expect(result.current.progress.run?.run_id).toBe('run-b'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
     expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);

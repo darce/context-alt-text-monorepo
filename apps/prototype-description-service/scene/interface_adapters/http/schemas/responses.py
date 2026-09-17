@@ -12,6 +12,7 @@ svc-cold-gpu consumes ``MultipartDescribeResponse`` as ``response_model`` on
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
@@ -21,6 +22,20 @@ from scene.application.identity_merge import NamingRealizer
 from scene.application.identity_merge import NamingStatus as NamingProvenanceStatus
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
+
+
+class UnavailableReason(StrEnum):
+    """Why POST /scene/describe/multipart cannot accept this operation (sr-007)."""
+
+    ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
+    ENDPOINT_NOT_PRIVATE = "endpoint_not_private"
+    ENDPOINT_RESOLUTION_PENDING = "endpoint_resolution_pending"
+    STATE_MISSING = "state_missing"
+    STATE_STALE = "state_stale"
+    DEGRADED = "degraded"
+    OPERATOR_STOP = "operator_stop"
+    CIRCUIT_OPEN = "circuit_open"
+    AUTH_REJECTED = "auth_rejected"
 
 
 class VisualFacts(BaseModel):
@@ -125,6 +140,38 @@ class DescribeTiming(BaseModel):
     processing_ms: MeasuredMilliseconds | None
     startup_ms: MeasuredMilliseconds | None
     server_elapsed_ms: MeasuredMilliseconds | None
+
+
+class DescribeOperationErrorDetail(BaseModel):
+    """Typed multipart operation-error detail. Code-specific fields are omitted, never null-filled (rg-015)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    startup_id: str | None = None
+    timing: DescribeTiming
+    warmup_eta_seconds: float | None = Field(default=None, ge=0)
+    startup_budget_seconds: float | None = Field(default=None, gt=0)
+    reason: UnavailableReason | None = None
+    lifecycle_reason: str | None = Field(default=None, min_length=1)
+
+    @model_serializer(mode="wrap")
+    def _emit_code_specific_fields(self, handler):
+        payload = handler(self)
+        if not isinstance(payload, dict):
+            return payload
+        code = payload.get("code")
+        if code != "description_service_starting":
+            payload.pop("warmup_eta_seconds", None)
+            payload.pop("startup_budget_seconds", None)
+        if code != "description_service_unavailable":
+            payload.pop("reason", None)
+            payload.pop("lifecycle_reason", None)
+        elif not payload.get("lifecycle_reason"):
+            payload.pop("lifecycle_reason", None)
+        return payload
 
 
 class DescribeRunTiming(BaseModel):

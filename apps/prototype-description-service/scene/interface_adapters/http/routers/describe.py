@@ -46,7 +46,13 @@ from scene.application.describe_operation_repository import DescribeOperationRep
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.gpu_intent import IntentAction, read_gpu_intent, resolve_gpu_intent_path
-from scene.application.gpu_state import GpuState, read_gpu_state, resolve_gpu_state_path
+from scene.application.gpu_state import (
+    GPU_STATE_FUTURE_SKEW_SECONDS,
+    GpuState,
+    read_gpu_state,
+    resolve_gpu_state_path,
+    resolve_gpu_state_stale_seconds,
+)
 from scene.application.hashing import compute_context_hash, compute_image_hash
 from scene.application.naming_preview_service import (
     faces_for_naming_preview as _faces_for_naming_preview,
@@ -77,7 +83,10 @@ from scene.domain.describe_run import (
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
-from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
+from scene.infrastructure.vlm.unavailable_adapter import (
+    DescriptionAdapterUnavailableError,
+    UnavailableDescriptionAdapter,
+)
 from scene.interface_adapters.http.deps import (
     get_async_gpu_description_adapter,
     get_cpu_description_adapter,
@@ -87,8 +96,10 @@ from scene.interface_adapters.http.deps import (
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
 from scene.interface_adapters.http.schemas.responses import (
     DescribeJobResult,
+    DescribeOperationErrorDetail,
     DescribeTiming,
     MultipartDescribeResponse,
+    UnavailableReason,
 )
 
 router = APIRouter(tags=["describe"])
@@ -314,10 +325,6 @@ def _multipart_request_digest(*, media_id: int, image_bytes: bytes, context: Map
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _timing_payload(timing: DescribeTiming) -> dict[str, float | None]:
-    return timing.model_dump(mode="json")
-
-
 class _LifecycleHoldHTTPException(HTTPException):
     """Readiness-gate 503 that must keep the demand lease for retry."""
 
@@ -331,6 +338,24 @@ _MULTIPART_TYPED_ERROR_CODES = frozenset(
         "operation_expired",
     }
 )
+_MULTIPART_TYPED_ERROR_REQUIRED_KEYS = frozenset(
+    {
+        "code",
+        "message",
+        "operation_id",
+        "startup_id",
+        "timing",
+    }
+)
+_MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
+    "description_service_starting": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
+    | frozenset({"warmup_eta_seconds", "startup_budget_seconds"}),
+    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS | frozenset({"reason", "lifecycle_reason"}),
+    "description_service_error": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+    "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+    "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+}
+_DEFAULT_UNAVAILABLE_REASON = UnavailableReason.STATE_MISSING
 
 
 def _typed_describe_error(
@@ -342,18 +367,27 @@ def _typed_describe_error(
     operation_id: str | None = None,
     startup_id: str | None = None,
     warmup_eta_seconds: float | None = None,
+    startup_budget_seconds: float | None = None,
+    reason: UnavailableReason | None = None,
+    lifecycle_reason: str | None = None,
     retry_after: int | None = None,
     preserve_lease: bool = False,
 ) -> HTTPException:
-    detail: dict[str, Any] = {
-        "code": code,
-        "message": message,
-        "operation_id": operation_id,
-        "startup_id": startup_id,
-        "timing": _timing_payload(timing),
-    }
-    if code == "description_service_starting":
-        detail["warmup_eta_seconds"] = warmup_eta_seconds
+    if code == "description_service_starting" and startup_budget_seconds is None:
+        startup_budget_seconds = DescriptionSettings().gpu_warmup_timeout_seconds
+    if code == "description_service_unavailable" and reason is None:
+        reason = _DEFAULT_UNAVAILABLE_REASON
+    detail = DescribeOperationErrorDetail(
+        code=code,
+        message=message,
+        operation_id=operation_id,
+        startup_id=startup_id,
+        timing=timing,
+        warmup_eta_seconds=warmup_eta_seconds,
+        startup_budget_seconds=startup_budget_seconds,
+        reason=reason,
+        lifecycle_reason=lifecycle_reason,
+    ).model_dump(mode="json")
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
     exc_cls = _LifecycleHoldHTTPException if preserve_lease else HTTPException
     return exc_cls(status_code=status_code, detail=detail, headers=headers)
@@ -389,55 +423,192 @@ def _retry_after_header(exc: HTTPException) -> int | None:
     return value
 
 
-def _plain_typed_error_missing_operation_fields(exc: HTTPException) -> bool:
-    """True when a post-accept typed-error code lacks the multipart envelope."""
-    if isinstance(exc, _LifecycleHoldHTTPException):
-        return False
+def _coerce_unavailable_reason(raw_reason: Any) -> UnavailableReason | None:
+    """Return a contract reason only when the value is already recognized."""
+    if isinstance(raw_reason, UnavailableReason):
+        return raw_reason
+    if not isinstance(raw_reason, str):
+        return None
+    try:
+        return UnavailableReason(raw_reason)
+    except ValueError:
+        return None
+
+
+def _unavailable_reason_from_adapter(adapter, *, settings: DescriptionSettings) -> UnavailableReason | None:
+    """Return the typed reason carried by a fail-closed GPU adapter.
+
+    The resolver's adapter is the source of truth for endpoint usability. Older
+    resolver paths carry the machine reason as text, so accept both the typed
+    enum and its textual form while retaining the existing endpoint fallback.
+    """
+    if not isinstance(adapter, UnavailableDescriptionAdapter):
+        return None
+    for attribute in ("reason_code", "unavailable_reason", "reason"):
+        raw_reason = getattr(adapter, attribute, None)
+        parsed_reason = _coerce_unavailable_reason(raw_reason)
+        if parsed_reason is not None:
+            return parsed_reason
+        if not isinstance(raw_reason, str):
+            continue
+        normalized = raw_reason.strip().casefold().replace("-", "_").replace(" ", "_")
+        for candidate in UnavailableReason:
+            if normalized == candidate.value or candidate.value in normalized:
+                return candidate
+    if not settings.gpu_endpoint_url:
+        return UnavailableReason.ENDPOINT_UNCONFIGURED
+    return UnavailableReason.ENDPOINT_NOT_PRIVATE
+
+
+def _typed_error_detail_needs_rebuild(
+    exc: HTTPException,
+    *,
+    accepted_operation_id: str | None = None,
+) -> bool:
+    """True when a recognized typed error cannot satisfy the multipart schema."""
     detail = exc.detail
     code = _http_exception_code(detail)
     if code not in _MULTIPART_TYPED_ERROR_CODES:
         return False
     if not isinstance(detail, dict):
         return True
-    return any(key not in detail for key in ("operation_id", "startup_id", "timing"))
+    allowed_keys = _MULTIPART_TYPED_ERROR_ALLOWED_KEYS[code]
+    if set(detail) - allowed_keys or _MULTIPART_TYPED_ERROR_REQUIRED_KEYS - set(detail):
+        return True
+    try:
+        validated = DescribeOperationErrorDetail.model_validate_json(json.dumps(detail), strict=True)
+    except (TypeError, ValueError, ValidationError):
+        return True
+    # Validate the wire representation as well as the Python model. The model's
+    # serializer owns code-specific omission/nullability rules; checking every
+    # upstream key against that representation rejects a present null for a
+    # contract-non-nullable field without duplicating those rules here.
+    normalized = validated.model_dump(mode="json")
+    if any(key not in normalized or normalized[key] != value for key, value in detail.items()):
+        return True
+    if accepted_operation_id is not None and detail.get("operation_id") != accepted_operation_id:
+        _logger.warning(
+            "post-accept describe error operation_id mismatch accepted_operation_id=%s upstream_operation_id=%s code=%s",
+            accepted_operation_id,
+            detail.get("operation_id"),
+            code,
+        )
+        return True
+    if code == "description_service_starting":
+        if detail.get("operation_id") is None:
+            return True
+        budget = detail.get("startup_budget_seconds")
+        return not (
+            isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0
+        )
+    return code == "description_service_unavailable" and _coerce_unavailable_reason(detail.get("reason")) is None
 
 
 def _rebuild_post_accept_typed_error(
     exc: HTTPException,
     *,
     op,
+    settings: DescriptionSettings,
     server_start: float,
 ) -> HTTPException:
     detail = exc.detail
     code = _http_exception_code(detail)
     if code not in _MULTIPART_TYPED_ERROR_CODES:
         return exc
+    operation_id = getattr(op, "operation_id", None)
+    if not isinstance(operation_id, str) or not operation_id:
+        operation_id = None
+    startup_id = getattr(op, "startup_id", None)
+    if not isinstance(startup_id, str):
+        startup_id = None
     warmup_eta_seconds = None
+    startup_budget_seconds = None
+    reason = None
+    lifecycle_reason = None
     retry_after = None
-    if code == "description_service_starting" and isinstance(detail, dict):
+    rebuilt_code = code
+    if isinstance(detail, dict) and code == "description_service_starting":
         eta = detail.get("warmup_eta_seconds")
-        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
+        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta) and eta >= 0:
             warmup_eta_seconds = float(eta)
+        budget = detail.get("startup_budget_seconds")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0:
+            startup_budget_seconds = float(budget)
+        else:
+            # The route's resolved settings are the source of truth for the
+            # advertised budget; never preserve an invalid upstream value or
+            # invent a client-facing ceiling during normalization.
+            startup_budget_seconds = settings.gpu_warmup_timeout_seconds
         retry_after = _retry_after_header(exc)
-    return _typed_describe_error(
-        status_code=exc.status_code,
-        code=code,
-        message=_http_exception_message(detail, fallback="Description service error"),
-        operation_id=op.operation_id,
-        startup_id=op.startup_id,
-        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-        warmup_eta_seconds=warmup_eta_seconds,
-        retry_after=retry_after,
-    )
+        if operation_id is None:
+            rebuilt_code = "description_service_unavailable"
+            warmup_eta_seconds = None
+            startup_budget_seconds = None
+            reason = _DEFAULT_UNAVAILABLE_REASON
+    elif isinstance(detail, dict) and code == "description_service_unavailable":
+        reason = _coerce_unavailable_reason(detail.get("reason"))
+        if reason is None:
+            reason = _DEFAULT_UNAVAILABLE_REASON
+        raw_lifecycle = detail.get("lifecycle_reason")
+        if isinstance(raw_lifecycle, str) and raw_lifecycle.strip():
+            lifecycle_reason = raw_lifecycle
+
+    message = _http_exception_message(detail, fallback="Description service error")
+    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
+
+    def _build(code_to_emit: str, *, reason_to_emit: UnavailableReason | None = reason) -> HTTPException:
+        rebuilt = _typed_describe_error(
+            status_code=exc.status_code,
+            code=code_to_emit,
+            message=message,
+            operation_id=operation_id,
+            startup_id=startup_id,
+            timing=timing,
+            warmup_eta_seconds=warmup_eta_seconds,
+            startup_budget_seconds=startup_budget_seconds,
+            reason=reason_to_emit,
+            lifecycle_reason=lifecycle_reason,
+            retry_after=retry_after,
+            preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
+        )
+        if isinstance(rebuilt.detail, dict):
+            for optional_key in (
+                "warmup_eta_seconds",
+                "startup_budget_seconds",
+                "reason",
+                "lifecycle_reason",
+            ):
+                if rebuilt.detail.get(optional_key) is None:
+                    rebuilt.detail.pop(optional_key, None)
+        return rebuilt
+
+    try:
+        return _build(rebuilt_code)
+    except ValidationError:
+        warmup_eta_seconds = None
+        startup_budget_seconds = None
+        lifecycle_reason = None
+        return _build(
+            "description_service_unavailable",
+            reason_to_emit=_DEFAULT_UNAVAILABLE_REASON,
+        )
 
 
-def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
+def _load_gpu_snapshot_payload() -> dict[str, Any] | None:
     path = Path(resolve_gpu_state_path())
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None, None
+        return None
     if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _gpu_snapshot_fields(payload: dict[str, Any] | None = None) -> tuple[str | None, float | None]:
+    if payload is None:
+        payload = _load_gpu_snapshot_payload()
+    if payload is None:
         return None, None
     instance_id = payload.get("instance_id")
     if not isinstance(instance_id, str) or not instance_id.strip() or len(instance_id) > 128:
@@ -450,13 +621,64 @@ def _gpu_snapshot_fields() -> tuple[str | None, float | None]:
     return instance_id, since
 
 
-def _max_lease_reached() -> bool:
-    path = Path(resolve_gpu_state_path())
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
+def _max_lease_reached(payload: dict[str, Any] | None = None) -> bool:
+    if payload is None:
+        payload = _load_gpu_snapshot_payload()
     return isinstance(payload, dict) and payload.get("last_transition_reason") == _MAX_LEASE_REASON
+
+
+def _snapshot_written_at_valid(payload: dict[str, Any]) -> bool:
+    written_at = payload.get("written_at")
+    return not isinstance(written_at, bool) and isinstance(written_at, (int, float)) and math.isfinite(written_at)
+
+
+def _snapshot_is_stale(payload: dict[str, Any], *, now: float) -> bool:
+    written_at = payload.get("written_at")
+    if not _snapshot_written_at_valid(payload):
+        return False
+    written_at_f = float(written_at)
+    if written_at_f - now > GPU_STATE_FUTURE_SKEW_SECONDS:
+        return True
+    return now - written_at_f > resolve_gpu_state_stale_seconds()
+
+
+def _lifecycle_reason_from_snapshot(payload: dict[str, Any] | None) -> str | None:
+    if payload is None:
+        return None
+    reason = payload.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason
+    return None
+
+
+def _unavailable_from_gpu_gate(
+    *,
+    now: datetime,
+    settings: DescriptionSettings,
+    state: GpuState,
+    payload: dict[str, Any] | None,
+    adapter=None,
+) -> tuple[UnavailableReason | None, str | None]:
+    adapter_reason = _unavailable_reason_from_adapter(adapter, settings=settings)
+    if adapter_reason is not None:
+        return adapter_reason, None
+    if _stop_requested(now=now):
+        return UnavailableReason.OPERATOR_STOP, None
+    if not settings.gpu_endpoint_url:
+        return UnavailableReason.ENDPOINT_UNCONFIGURED, None
+    if payload is None:
+        return UnavailableReason.STATE_MISSING, None
+    if not _snapshot_written_at_valid(payload):
+        return UnavailableReason.STATE_MISSING, None
+    if _snapshot_is_stale(payload, now=now.timestamp()):
+        return UnavailableReason.STATE_STALE, None
+    if state is GpuState.DEGRADED:
+        return UnavailableReason.DEGRADED, _lifecycle_reason_from_snapshot(payload)
+    if state is GpuState.UNKNOWN:
+        return UnavailableReason.STATE_MISSING, None
+    if _max_lease_reached(payload):
+        return UnavailableReason.DEGRADED, None
+    return None, None
 
 
 def _stop_requested(*, now: datetime) -> bool:
@@ -688,6 +910,7 @@ async def _cached_gpu_description_row(
             operation_id=None,
             startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+            reason=UnavailableReason.STATE_MISSING,
         )
 
 
@@ -709,6 +932,7 @@ async def _accept_operation(
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
                 operation_id=None,
                 startup_id=None,
+                reason=UnavailableReason.STATE_MISSING,
             )
         # CPU/hosted/default stay usable without demand when the DB is down.
         return None, None
@@ -759,6 +983,7 @@ async def _accept_operation(
             operation_id=None,
             startup_id=None,
             timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+            reason=UnavailableReason.STATE_MISSING,
         )
 
 
@@ -768,21 +993,22 @@ async def _ensure_gpu_ready(
     tenant_uuid: uuid.UUID,
     op,
     settings: DescriptionSettings,
+    adapter,
     session_factory: async_sessionmaker[AsyncSession] | None,
     server_start: float,
 ) -> None:
     now = datetime.now(UTC)
+    payload = _load_gpu_snapshot_payload()
     state = read_gpu_state(now=now.timestamp())
-    instance_id, since = _gpu_snapshot_fields()
-    blocked = (
-        _stop_requested(now=now)
-        or _max_lease_reached()
-        or state
-        in (
-            GpuState.UNKNOWN,
-            GpuState.DEGRADED,
-        )
+    instance_id, since = _gpu_snapshot_fields(payload)
+    reason, lifecycle_reason = _unavailable_from_gpu_gate(
+        now=now,
+        settings=settings,
+        state=state,
+        payload=payload,
+        adapter=adapter,
     )
+    blocked = reason is not None
     waiting = state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING)
     repo = _operation_repo(session)
     # Warm READY arrivals must not join a startup; only waits through
@@ -811,6 +1037,8 @@ async def _ensure_gpu_ready(
             operation_id=op.operation_id,
             startup_id=startup_id,
             timing=timing,
+            reason=reason,
+            lifecycle_reason=lifecycle_reason,
             preserve_lease=True,
         )
     if state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING):
@@ -829,6 +1057,7 @@ async def _ensure_gpu_ready(
             startup_id=startup_id,
             timing=timing,
             warmup_eta_seconds=eta,
+            startup_budget_seconds=settings.gpu_warmup_timeout_seconds,
             retry_after=_retry_after_seconds(eta),
             preserve_lease=True,
         )
@@ -845,6 +1074,7 @@ async def _ensure_gpu_ready(
         operation_id=op.operation_id,
         startup_id=startup_id,
         timing=timing,
+        reason=UnavailableReason.STATE_MISSING,
         preserve_lease=True,
     )
 
@@ -1044,10 +1274,25 @@ async def describe_image_multipart(
     else:
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
+    unavailable_fast_path = False
+    adapter_reason = None
+    if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
+        adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
+        if adapter_reason is not None and submission.operation_id is None:
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=None,
+                startup_id=None,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                reason=adapter_reason,
+            )
+        unavailable_fast_path = adapter_reason is not None
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
     cached_row = None
     op = None
-    if gpu_compute:
+    if gpu_compute and not unavailable_fast_path:
         cached_row = await _cached_gpu_description_row(
             repository=repository,
             tenant_uuid=tenant_uuid,
@@ -1096,12 +1341,14 @@ async def describe_image_multipart(
                     operation_id=None,
                     startup_id=None,
                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                    reason=UnavailableReason.STATE_MISSING,
                 )
             await _ensure_gpu_ready(
                 session=session,
                 tenant_uuid=tenant_uuid,
                 op=op,
                 settings=settings,
+                adapter=effective_adapter,
                 session_factory=session_factory,
                 server_start=server_start,
             )
@@ -1125,6 +1372,18 @@ async def describe_image_multipart(
         terminalized = True
 
     try:
+        if unavailable_fast_path:
+            await _cleanup_accepted()
+            await dump_load_snapshot(session_factory)
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=operation_id,
+                startup_id=None if op is None else op.startup_id,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                reason=adapter_reason,
+            )
         if cached_row is not None:
             response = await _response_from_cached_row(
                 service=service,
@@ -1221,8 +1480,16 @@ async def describe_image_multipart(
     except HTTPException as exc:
         if not _preserves_demand_lease(exc):
             await _cleanup_accepted()
-        if op is not None and _plain_typed_error_missing_operation_fields(exc):
-            raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
+        if op is not None and _typed_error_detail_needs_rebuild(
+            exc,
+            accepted_operation_id=getattr(op, "operation_id", None),
+        ):
+            raise _rebuild_post_accept_typed_error(
+                exc,
+                op=op,
+                settings=settings,
+                server_start=server_start,
+            ) from exc
         raise
     except TimeoutError as exc:
         await _cleanup_accepted()
@@ -1233,6 +1500,13 @@ async def describe_image_multipart(
     except DescriptionAdapterUnavailableError as exc:
         await _cleanup_accepted()
         if gpu_compute:
+            adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
+            if adapter_reason is None:
+                adapter_reason = (
+                    UnavailableReason.ENDPOINT_UNCONFIGURED
+                    if not settings.gpu_endpoint_url
+                    else UnavailableReason.ENDPOINT_NOT_PRIVATE
+                )
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
@@ -1240,6 +1514,7 @@ async def describe_image_multipart(
                 operation_id=operation_id,
                 startup_id=None if op is None else op.startup_id,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                reason=adapter_reason,
             ) from exc
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except (GpuRemoteAdapterError, HostedProviderError) as exc:

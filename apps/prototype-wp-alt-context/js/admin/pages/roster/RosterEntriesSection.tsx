@@ -381,9 +381,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
         <div className="acx-roster-section__title-group">
           <h2 id={NAMED_PEOPLE_HEADING_ID}>
             {sprintf(
-              /* translators: %d: count of people returned by the roster entries query */
+              /* translators: %d: count of people currently listed (after search and queue filters) */
               __('Named people (%d)', 'alt-context'),
-              entries.length,
+              visibleEntries.length,
             )}
           </h2>
           {activeFilterBadge && (

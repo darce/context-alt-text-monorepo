@@ -9,7 +9,7 @@ from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[4] / "packages/shared-contracts/schemas"
-NAMES = ("image-description-response", "scene-describe-multipart", "scene-describe-run")
+NAMES = ("image-description-response", "scene-describe-multipart", "scene-describe-run", "scene-health-detailed")
 
 
 def validator(name, definition=None):
@@ -69,6 +69,21 @@ RUN = dict(
         server_elapsed_ms=10,
     ),
 )
+HEALTH = {
+    "status": "ok",
+    "timestamp": "2026-09-17T00:00:00Z",
+    "description_adapter": {
+        "profile": "gpu_qwen30b",
+        "kind": "gpu",
+        "endpoint_configured": True,
+        "endpoint_allowlisted": True,
+        "endpoint_private": True,
+        "checked_at": 1789603200.0,
+        "fresh": True,
+        "usable": True,
+        "reason": None,
+    },
+}
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -100,6 +115,10 @@ def test_typed_errors(code):
     detail = dict(
         code=code, message="Description service status", operation_id="opaque operation", startup_id=None, timing=TIMING
     )
+    if code == "description_service_starting":
+        detail["startup_budget_seconds"] = 510
+    elif code == "description_service_unavailable":
+        detail["reason"] = "state_stale"
     v = validator("scene-describe-multipart")
     v.validate({"detail": detail})
     assert not v.is_valid({"detail": {k: value for k, value in detail.items() if k != "timing"}})
@@ -108,6 +127,22 @@ def test_typed_errors(code):
     detail["warmup_eta_seconds"] = 4
     assert v.is_valid({"detail": detail}) == (code == "description_service_starting")
     assert not v.is_valid(detail)
+
+
+def test_health_detailed_adapter_readiness_document():
+    validator("scene-health-detailed").validate(HEALTH)
+    adapter = HEALTH["description_adapter"]
+    assert set(adapter) == {
+        "profile",
+        "kind",
+        "endpoint_configured",
+        "endpoint_allowlisted",
+        "endpoint_private",
+        "checked_at",
+        "fresh",
+        "usable",
+        "reason",
+    }
 
 
 def test_run_and_items():

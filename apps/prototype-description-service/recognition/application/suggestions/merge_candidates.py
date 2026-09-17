@@ -7,9 +7,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 
-from recognition.application.clustering.centroid_utils import compute_similarity
 from recognition.application.settings import ClusteringSettings
-from recognition.application.settings import clustering as clustering_settings
 from recognition.application.suggestions.embedding_space import (
     cluster_embedding_model,
     models_are_same_space,
@@ -20,18 +18,7 @@ from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository, MergeSuggestionRepository
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.domain.suggestion_details import MergeSuggestionDetails
-
-# GPUFLOW-2-C1-provisional-20260916 suggestion_band_cuts. svc-recovery-merge
-# owns settings/clustering.py; read that constant when present.
-SUGGESTION_BAND_CUTS: dict[str, float] = getattr(
-    clustering_settings,
-    "SUGGESTION_BAND_CUTS",
-    {
-        "low_confidence_floor": 0.30,
-        "suggestion_floor": 0.35,
-        "suggestion_ceiling": 0.55,
-    },
-)
+from recognition.shared.similarity import extract_face_embedding
 
 _PAGE_SIZE = 1000
 
@@ -50,6 +37,12 @@ class MergeCandidatesResult:
     candidates: list[MergeCandidate]
 
 
+@dataclass(frozen=True)
+class _RankedMergeCandidate:
+    raw_similarity: float
+    candidate: MergeCandidate
+
+
 async def list_merge_candidates(
     tenant_id: str,
     cluster_id: str,
@@ -58,10 +51,12 @@ async def list_merge_candidates(
     merge_suggestion_repository: MergeSuggestionRepository,
     settings: ClusteringSettings | None = None,
 ) -> MergeCandidatesResult:
-    """Rank other clusters by max(centroid cosine, fresh pending suggestion).
+    """Rank other clusters by raw centroid cosine and current pending evidence.
 
-    Band cuts come from injected ClusteringSettings (policy names
-    suggestion_floor / suggestion_ceiling), not from literals in the HTTP route.
+    The returned similarity is the non-negative display value, optionally raised
+    by a pending suggestion whose timestamp and membership evidence are current.
+    Ranking itself uses the unclamped centroid cosine so dissimilar clusters do
+    not all tie at zero. Band cuts come from the injected ClusteringSettings.
     Missing embeddings omit the candidate (rg-015).
     """
     inference_settings = settings or resolve_effective_clustering_settings()
@@ -113,13 +108,19 @@ def _rank_candidates(
     if probe_centroid is None:
         return []
     probe_model = cluster_embedding_model(probe)
-    ranked: list[MergeCandidate] = []
+    ranked: list[_RankedMergeCandidate] = []
     for cluster in clusters:
         candidate = _score_candidate(probe_id, probe_centroid, probe_model, cluster, pending_by_peer, settings)
         if candidate is not None:
             ranked.append(candidate)
-    ranked.sort(key=lambda row: (-row.similarity, row.name.casefold(), row.cluster_id))
-    return ranked
+    ranked.sort(
+        key=lambda row: (
+            -row.raw_similarity,
+            row.candidate.name.casefold(),
+            row.candidate.cluster_id,
+        )
+    )
+    return [row.candidate for row in ranked]
 
 
 def _score_candidate(
@@ -129,7 +130,7 @@ def _score_candidate(
     cluster: IdentityCluster,
     pending_by_peer: dict[str, float],
     settings: ClusteringSettings,
-) -> MergeCandidate | None:
+) -> _RankedMergeCandidate | None:
     other_id = str(cluster.id or "")
     if not other_id or other_id == probe_id:
         return None
@@ -138,15 +139,20 @@ def _score_candidate(
     centroid = _centroid_vector(cluster)
     if centroid is None:
         return None
-    similarity = float(compute_similarity(probe_centroid, centroid))
+    raw_similarity = _raw_cosine_similarity(probe_centroid, centroid)
+    similarity = raw_similarity
     pending_similarity = pending_by_peer.get(other_id)
     if pending_similarity is not None:
         similarity = max(similarity, pending_similarity)
-    return MergeCandidate(
-        cluster_id=other_id,
-        name=_cluster_name(cluster),
-        similarity=similarity,
-        band=band_for(similarity, settings),
+    display_similarity = max(0.0, min(1.0, float(similarity)))
+    return _RankedMergeCandidate(
+        raw_similarity=raw_similarity,
+        candidate=MergeCandidate(
+            cluster_id=other_id,
+            name=_cluster_name(cluster),
+            similarity=display_similarity,
+            band=band_for(display_similarity, settings),
+        ),
     )
 
 
@@ -165,7 +171,11 @@ def _fresh_pending_by_peer(
         observed = _suggestion_observed_at(row)
         if peer_id is None or other is None or observed is None:
             continue
-        if not _is_usable_pending(row, now) or not _is_fresh(observed, probe, other):
+        if (
+            not _is_usable_pending(row, now)
+            or not _is_fresh(observed, probe, other)
+            or not _membership_matches_live(row, probe, other)
+        ):
             continue
         previous = best.get(peer_id)
         if (
@@ -189,6 +199,37 @@ def _is_usable_pending(row: MergeSuggestionDetails, now: datetime) -> bool:
 def _is_fresh(observed: datetime, probe: IdentityCluster, other: IdentityCluster) -> bool:
     mutation = _latest_mutation(probe, other)
     return mutation is None or _as_utc(observed) >= mutation
+
+
+def _membership_matches_live(
+    row: MergeSuggestionDetails,
+    probe: IdentityCluster,
+    other: IdentityCluster,
+) -> bool:
+    """Require the suggestion's per-cluster counts to match live membership.
+
+    ``created_at`` only identifies when a cluster was created, not when its
+    membership changed. A pending score without count or version evidence is
+    therefore unsafe to blend into the live centroid result.
+    """
+    probe_id = str(probe.id).casefold()
+    left_id = str(row.cluster_a_id).casefold()
+    right_id = str(row.cluster_b_id).casefold()
+    if left_id == probe_id:
+        observed_probe_count = row.cluster_a_identity_count
+        observed_other_count = row.cluster_b_identity_count
+    elif right_id == probe_id:
+        observed_probe_count = row.cluster_b_identity_count
+        observed_other_count = row.cluster_a_identity_count
+    else:
+        return False
+
+    return (
+        observed_probe_count is not None
+        and observed_other_count is not None
+        and observed_probe_count == probe.identity_count
+        and observed_other_count == other.identity_count
+    )
 
 
 def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime | None:
@@ -235,6 +276,19 @@ def _centroid_vector(cluster: IdentityCluster) -> np.ndarray | None:
     if vector.size == 0:
         return None
     return vector
+
+
+def _raw_cosine_similarity(embedding_a: np.ndarray, embedding_b: np.ndarray) -> float:
+    """Compute unclamped cosine over the shared face-embedding slice."""
+    face_a = np.asarray(extract_face_embedding(embedding_a), dtype=np.float32).reshape(-1)
+    face_b = np.asarray(extract_face_embedding(embedding_b), dtype=np.float32).reshape(-1)
+    norm_a = float(np.linalg.norm(face_a))
+    norm_b = float(np.linalg.norm(face_b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    normalized_a = face_a / norm_a
+    normalized_b = face_b / norm_b
+    return float(np.dot(normalized_a, normalized_b))
 
 
 def _as_utc(value: datetime) -> datetime:

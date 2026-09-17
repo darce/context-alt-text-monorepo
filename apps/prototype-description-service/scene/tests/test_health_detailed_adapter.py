@@ -229,6 +229,7 @@ def test_cpu_profile_has_no_gpu_endpoint_reason(tmp_path: Path, monkeypatch: pyt
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ())
     spec = get_profile_spec(DescriptionProfile.FLORENCE_SMALL)
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["profile"] == spec.profile.value
@@ -262,7 +263,10 @@ def test_unavailable_profile_is_not_usable(
     assert adapter["model_version"] == (None if adapter["model_id"] is None else spec.model_version)
 
 
-@pytest.mark.parametrize("endpoint_url", ["gpu.oraclevcn.com", "ftp://10.0.0.5"])
+@pytest.mark.parametrize(
+    "endpoint_url",
+    ["gpu.oraclevcn.com", "ftp://10.0.0.5", "http://[", "http://gpu.oraclevcn.com:bad"],
+)
 def test_invalid_gpu_endpoint_url_skips_dns(
     endpoint_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -305,6 +309,7 @@ def test_health_detailed_does_not_read_secrets(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr("shared.secrets.get_secret_provider", _raise_provider)
     monkeypatch.setattr("scene.config.settings.get_secret_provider", _raise_provider)
+    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ())
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
     adapter = _get_adapter(_build_client(tmp_path))
@@ -378,16 +383,30 @@ def test_privacy_cache_single_flight_on_concurrent_stalled_resolutions(monkeypat
     asyncio.run(_run())
 
 
-def test_seeded_profile_model_identity_is_null(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_seeded_profile_model_identity_matches_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from api.main import wire_model_id
+    from scene.application.seeded_adapter import SeededDescriptionAdapter
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
     monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv("ACX_DESCRIPTION_MODEL_VERSION", "health-seeded-v2")
+    seeded_adapter = SeededDescriptionAdapter(model_version="health-seeded-v2")
     spec = get_profile_spec(DescriptionProfile.SEEDED)
     adapter = _get_adapter(_build_client(tmp_path))
     assert spec.model_id is None
-    assert wire_model_id(spec) is None
-    assert adapter["model_id"] is None
-    assert adapter["model_version"] is None
+    assert wire_model_id(spec) == seeded_adapter.model_id
+    assert adapter["model_id"] == seeded_adapter.model_id
+    assert adapter["model_version"] == seeded_adapter.model_version
     assert adapter["usable"] is True
     assert adapter["reason"] is None
+
+
+def test_local_vlm_missing_dependencies_is_not_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import AdapterReadinessReason
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "florence_small")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    monkeypatch.setattr("api.main.http_deps._missing_vlm_dependencies", lambda: ("torch",))
+    adapter = _get_adapter(_build_client(tmp_path))
+    assert adapter["usable"] is False
+    assert adapter["reason"] == AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value

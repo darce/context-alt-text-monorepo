@@ -1,6 +1,6 @@
- .../hooks/__tests__/describeOperationStore.test.ts |  19 +++
- .../admin/hooks/__tests__/useBulkDescribe.test.tsx |  56 +++++++++
- .../js/admin/hooks/describeOperationStore.ts       |  11 +-
- .../js/admin/hooks/useBulkDescribe.ts              |  48 ++++++--
- .../GPUFLOW-2-spa-operation-store-review.md        | 137 +++++++++++++++++++++
- 5 files changed, 260 insertions(+), 11 deletions(-)
+ docs/workbay/contracts/identity-merge.md           | 190 +++++++++++++++++++++
+ ...n-cluster-merge-candidates-response.schema.json |  64 +++++++
+ .../recognition-cluster-snapshot.schema.json       | 113 +++++++++++-
+ .../schemas/roster-entry.schema.json               |  43 +++++
+ .../roster-merge-candidates-response.schema.json   |  72 ++++++++
+ 5 files changed, 481 insertions(+), 1 deletion(-)

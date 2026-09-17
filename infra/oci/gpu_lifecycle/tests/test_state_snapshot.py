@@ -563,6 +563,27 @@ def test_steady_running_cycle_reprobes_warming_instance_to_ready(
     assert json.loads(path.read_text())["state"] == "ready"
 
 
+def test_operator_stop_with_work_writes_degraded_snapshot_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "STOPPED", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        intent="stop",
+    )
+
+    payload = json.loads(path.read_text())
+    assert result.fallbacks[0].reason == "operator_stop_with_work"
+    assert payload["state"] == "degraded"
+    assert payload["reason"] == "operator_stop_with_work"
+
+
 def test_steady_running_cycle_reprobes_ready_instance_to_degraded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

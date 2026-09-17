@@ -83,7 +83,10 @@ from scene.domain.describe_run import (
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.provider.hosted_provider_adapter import HostedProviderError
 from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
-from scene.infrastructure.vlm.unavailable_adapter import DescriptionAdapterUnavailableError
+from scene.infrastructure.vlm.unavailable_adapter import (
+    DescriptionAdapterUnavailableError,
+    UnavailableDescriptionAdapter,
+)
 from scene.interface_adapters.http.deps import (
     get_async_gpu_description_adapter,
     get_cpu_description_adapter,
@@ -335,6 +338,24 @@ _MULTIPART_TYPED_ERROR_CODES = frozenset(
         "operation_expired",
     }
 )
+_MULTIPART_TYPED_ERROR_REQUIRED_KEYS = frozenset(
+    {
+        "code",
+        "message",
+        "operation_id",
+        "startup_id",
+        "timing",
+    }
+)
+_MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
+    "description_service_starting": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
+    | frozenset({"warmup_eta_seconds", "startup_budget_seconds"}),
+    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
+    | frozenset({"reason", "lifecycle_reason"}),
+    "description_service_error": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+    "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+    "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+}
 
 
 def _typed_describe_error(
@@ -402,17 +423,62 @@ def _retry_after_header(exc: HTTPException) -> int | None:
     return value
 
 
-def _plain_typed_error_missing_operation_fields(exc: HTTPException) -> bool:
-    """True when a post-accept typed-error code lacks the multipart envelope."""
-    if isinstance(exc, _LifecycleHoldHTTPException):
-        return False
+def _unavailable_reason_from_adapter(adapter, *, settings: DescriptionSettings) -> UnavailableReason | None:
+    """Return the typed reason carried by a fail-closed GPU adapter.
+
+    The resolver's adapter is the source of truth for endpoint usability. Older
+    resolver paths carry the machine reason as text, so accept both the typed
+    enum and its textual form while retaining the existing endpoint fallback.
+    """
+    if not isinstance(adapter, UnavailableDescriptionAdapter):
+        return None
+    for attribute in ("reason_code", "unavailable_reason", "reason"):
+        raw_reason = getattr(adapter, attribute, None)
+        if isinstance(raw_reason, UnavailableReason):
+            return raw_reason
+        if not isinstance(raw_reason, str):
+            continue
+        normalized = raw_reason.strip().casefold().replace("-", "_").replace(" ", "_")
+        for candidate in UnavailableReason:
+            if normalized == candidate.value or candidate.value in normalized:
+                return candidate
+    if not settings.gpu_endpoint_url:
+        return UnavailableReason.ENDPOINT_UNCONFIGURED
+    return UnavailableReason.ENDPOINT_NOT_PRIVATE
+
+
+def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
+    """True when a recognized typed error cannot satisfy the multipart schema."""
     detail = exc.detail
     code = _http_exception_code(detail)
     if code not in _MULTIPART_TYPED_ERROR_CODES:
         return False
     if not isinstance(detail, dict):
         return True
-    return any(key not in detail for key in ("operation_id", "startup_id", "timing"))
+    allowed_keys = _MULTIPART_TYPED_ERROR_ALLOWED_KEYS[code]
+    if set(detail) - allowed_keys or _MULTIPART_TYPED_ERROR_REQUIRED_KEYS - set(detail):
+        return True
+    try:
+        DescribeOperationErrorDetail.model_validate(detail)
+    except ValidationError:
+        return True
+    if code == "description_service_starting":
+        budget = detail.get("startup_budget_seconds")
+        return not (
+            isinstance(budget, (int, float))
+            and not isinstance(budget, bool)
+            and math.isfinite(budget)
+            and budget > 0
+        )
+    if code == "description_service_unavailable":
+        raw_reason = detail.get("reason")
+        if not isinstance(raw_reason, str):
+            return True
+        try:
+            UnavailableReason(raw_reason)
+        except ValueError:
+            return True
+    return False
 
 
 def _rebuild_post_accept_typed_error(
@@ -460,6 +526,7 @@ def _rebuild_post_accept_typed_error(
         reason=reason,
         lifecycle_reason=lifecycle_reason,
         retry_after=retry_after,
+        preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
     )
 
 
@@ -526,7 +593,11 @@ def _unavailable_from_gpu_gate(
     settings: DescriptionSettings,
     state: GpuState,
     payload: dict[str, Any] | None,
+    adapter=None,
 ) -> tuple[UnavailableReason | None, str | None]:
+    adapter_reason = _unavailable_reason_from_adapter(adapter, settings=settings)
+    if adapter_reason is not None:
+        return adapter_reason, None
     if _stop_requested(now=now):
         return UnavailableReason.OPERATOR_STOP, None
     if not settings.gpu_endpoint_url:
@@ -858,6 +929,7 @@ async def _ensure_gpu_ready(
     tenant_uuid: uuid.UUID,
     op,
     settings: DescriptionSettings,
+    adapter,
     session_factory: async_sessionmaker[AsyncSession] | None,
     server_start: float,
 ) -> None:
@@ -870,6 +942,7 @@ async def _ensure_gpu_ready(
         settings=settings,
         state=state,
         payload=payload,
+        adapter=adapter,
     )
     blocked = reason is not None
     waiting = state in (GpuState.STOPPED, GpuState.STARTING, GpuState.WARMING)
@@ -1137,6 +1210,18 @@ async def describe_image_multipart(
     else:
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
+    if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
+        adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
+        if adapter_reason is not None:
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=None,
+                startup_id=None,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                reason=adapter_reason,
+            )
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
     cached_row = None
     op = None
@@ -1196,6 +1281,7 @@ async def describe_image_multipart(
                 tenant_uuid=tenant_uuid,
                 op=op,
                 settings=settings,
+                adapter=effective_adapter,
                 session_factory=session_factory,
                 server_start=server_start,
             )
@@ -1315,7 +1401,7 @@ async def describe_image_multipart(
     except HTTPException as exc:
         if not _preserves_demand_lease(exc):
             await _cleanup_accepted()
-        if op is not None and _plain_typed_error_missing_operation_fields(exc):
+        if op is not None and _typed_error_detail_needs_rebuild(exc):
             raise _rebuild_post_accept_typed_error(exc, op=op, server_start=server_start) from exc
         raise
     except TimeoutError as exc:
@@ -1327,11 +1413,13 @@ async def describe_image_multipart(
     except DescriptionAdapterUnavailableError as exc:
         await _cleanup_accepted()
         if gpu_compute:
-            adapter_reason = (
-                UnavailableReason.ENDPOINT_UNCONFIGURED
-                if not settings.gpu_endpoint_url
-                else UnavailableReason.ENDPOINT_NOT_PRIVATE
-            )
+            adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
+            if adapter_reason is None:
+                adapter_reason = (
+                    UnavailableReason.ENDPOINT_UNCONFIGURED
+                    if not settings.gpu_endpoint_url
+                    else UnavailableReason.ENDPOINT_NOT_PRIVATE
+                )
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",

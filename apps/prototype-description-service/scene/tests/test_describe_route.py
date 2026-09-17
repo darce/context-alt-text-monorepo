@@ -1071,6 +1071,53 @@ class _GpuAdapter:
         )
 
 
+def _raise_post_accept_http_error(monkeypatch, detail_factory):
+    """Raise a typed upstream error after accepting the durable operation."""
+    from fastapi import HTTPException, status
+
+    from scene.application.describe_operation_repository import DescribeOperationRepository
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    accepted: dict[str, str] = {}
+    real_accept = DescribeOperationRepository.accept
+
+    async def capture_accept(self, **kwargs):
+        operation = await real_accept(self, **kwargs)
+        accepted["operation_id"] = operation.operation_id
+        return operation
+
+    monkeypatch.setattr(DescribeOperationRepository, "accept", capture_accept)
+
+    async def reject_quota(*args, **kwargs):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail_factory(accepted["operation_id"]),
+        )
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_quota)
+    return accepted
+
+
+def _upstream_typed_detail(operation_id, *, code="description_service_unavailable", **overrides):
+    detail = {
+        "code": code,
+        "message": "dependency unavailable",
+        "operation_id": operation_id,
+        "startup_id": None,
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": 3,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+    }
+    if code == "description_service_unavailable":
+        detail["reason"] = "state_missing"
+    detail.update(overrides)
+    return detail
+
+
 def _write_gpu_state(
     path,
     *,
@@ -1457,6 +1504,106 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
         assert adapter.kind is DescriptionAdapterKind.GPU
         assert _lease_state(client, detail["operation_id"]) == "completed"
         assert _active_lease_count(client) == 0
+
+
+def test_post_accept_route_rebuilds_strict_invalid_warmup_eta(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    accepted = _raise_post_accept_http_error(
+        monkeypatch,
+        lambda operation_id: _upstream_typed_detail(
+            operation_id,
+            code="description_service_starting",
+            message="dependency starting",
+            startup_id="upstream-startup",
+            warmup_eta_seconds="30",
+            startup_budget_seconds=17.5,
+        ),
+    )
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    _multipart_schema_validator().validate(body)
+    detail = body["detail"]
+    assert detail["code"] == "description_service_starting"
+    assert detail["operation_id"] == accepted["operation_id"]
+    assert "warmup_eta_seconds" not in detail
+    assert detail["startup_budget_seconds"] > 0
+
+
+def test_post_accept_route_rebuilds_null_lifecycle_reason(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    accepted = _raise_post_accept_http_error(
+        monkeypatch,
+        lambda operation_id: _upstream_typed_detail(operation_id, lifecycle_reason=None),
+    )
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    _multipart_schema_validator().validate(body)
+    detail = body["detail"]
+    assert detail["code"] == "description_service_unavailable"
+    assert detail["operation_id"] == accepted["operation_id"]
+    assert detail["reason"] == "state_missing"
+    assert "lifecycle_reason" not in detail
+
+
+@pytest.mark.parametrize("upstream_operation_id", ["foreign-operation", None])
+def test_post_accept_route_rebuilds_foreign_or_null_operation_id(
+    monkeypatch, tmp_path, caplog, upstream_operation_id
+):
+    import logging
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    accepted = _raise_post_accept_http_error(
+        monkeypatch,
+        lambda _operation_id: _upstream_typed_detail(upstream_operation_id),
+    )
+    with caplog.at_level(logging.WARNING, logger="scene.interface_adapters.http.routers.describe"), _client(
+        adapter=_GpuAdapter()
+    ) as client:
+        response = _post(client, TENANT_ID)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    _multipart_schema_validator().validate(body)
+    detail = body["detail"]
+    assert detail["operation_id"] == accepted["operation_id"]
+    mismatch_records = [
+        record
+        for record in caplog.records
+        if "post-accept describe error operation_id mismatch" in record.getMessage()
+    ]
+    assert mismatch_records
+    mismatch_message = mismatch_records[-1].getMessage()
+    assert accepted["operation_id"] in mismatch_message
+    assert str(upstream_operation_id) in mismatch_message
+
+
+def test_post_accept_route_passes_through_valid_correlated_envelope(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+    accepted = _raise_post_accept_http_error(
+        monkeypatch,
+        lambda operation_id: _upstream_typed_detail(
+            operation_id,
+            reason="degraded",
+            lifecycle_reason="readiness_timeout",
+        ),
+    )
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    _multipart_schema_validator().validate(body)
+    assert body["detail"] == _upstream_typed_detail(
+        accepted["operation_id"],
+        reason="degraded",
+        lifecycle_reason="readiness_timeout",
+    )
 
 
 class _RaisingOperationRepo:

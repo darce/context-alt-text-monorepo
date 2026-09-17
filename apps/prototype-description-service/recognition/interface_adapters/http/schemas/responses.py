@@ -656,6 +656,17 @@ class ClusterSnapshotMemberResponse(BaseModel):
     similarity: float
 
 
+class ClusterSnapshotQualityComponents(BaseModel):
+    """Parts of representative_quality (UXR-15). Missing signals are null, never omitted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confidence: float | None = None
+    bbox_area: float | None = None
+    sharpness: float | None = None
+    occlusion_severity: float | None = None
+
+
 class ClusterSnapshotClusterResponse(BaseModel):
     """Cluster summary in the snapshot payload.
 
@@ -674,6 +685,10 @@ class ClusterSnapshotClusterResponse(BaseModel):
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
     suggested_target_cluster_id: str | None = None
+    representative_quality: float | None = None
+    quality_components: ClusterSnapshotQualityComponents | None = None
+    representative_media_id: int | None = None
+    undoable_merge_receipt_id: str | None = None
 
 
 class ClusterSnapshotResponse(BaseModel):
@@ -711,6 +726,7 @@ __all__ = [
     "ClusteringJobStatusResponse",
     "ClusterSnapshotClusterResponse",
     "ClusterSnapshotMemberResponse",
+    "ClusterSnapshotQualityComponents",
     "ClusterSnapshotResponse",
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",

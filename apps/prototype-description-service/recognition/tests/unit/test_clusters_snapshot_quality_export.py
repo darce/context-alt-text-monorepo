@@ -6,12 +6,15 @@ representative / receipt; nothing is recomputed here (rg-015, API-10, UXR-15).
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import jsonschema
 import pytest
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -22,11 +25,17 @@ from db.models.identity import (
 )
 from db.models.identity import IdentityCluster as ClusterModel
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.job import JobStatus, JobType
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.interface_adapters.http.routers.clusters_snapshot import (
     _build_cluster_responses,
     _export_representative_quality,
+)
+from recognition.interface_adapters.http.schemas.responses import (
+    ClusterDeltaResponse,
+    JobProgressResponse,
+    JobStatusResponse,
 )
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
@@ -210,6 +219,57 @@ def test_export_copies_quality_score_components_media_and_undoable_receipt() -> 
     assert payload["undoable_merge_receipt_id"] == str(RECEIPT_NEW)
     assert payload["representative_id"] == str(IDENTITY_ID)
     assert payload["representative_thumb_path"] == f"acx://cluster/{CLUSTER_ID}/media/501"
+
+
+def test_job_status_projection_preserves_quality_fields_and_matches_contract() -> None:
+    [cluster_row] = _build_cluster_responses(
+        [
+            _domain_cluster(
+                merge_receipts=[
+                    _receipt(receipt_id=RECEIPT_NEW, sequence_no=2),
+                ],
+            )
+        ],
+        now=NOW,
+    )
+    projection = ClusterDeltaResponse(
+        tenant_id=str(TENANT_ID),
+        snapshot_version=105,
+        generated_at=NOW,
+        clusters=[cluster_row],
+        members=[],
+    )
+    response = JobStatusResponse(
+        id=str(RECEIPT_NEW),
+        type=JobType.CLUSTERING,
+        status=JobStatus.COMPLETED,
+        progress=JobProgressResponse(completed=1, total=1),
+        started_at=NOW,
+        finished_at=NOW,
+        projection_payload=projection,
+    )
+
+    payload = response.model_dump(mode="json")
+    projected_cluster = payload["projection_payload"]["clusters"][0]
+
+    assert projected_cluster["representative_quality"] == 0.82
+    assert projected_cluster["quality_components"] == {
+        "confidence": 0.94,
+        "bbox_area": 7680.0,
+        "sharpness": 42.5,
+        "occlusion_severity": 0.12,
+    }
+    assert projected_cluster["representative_media_id"] == 501
+    assert projected_cluster["undoable_merge_receipt_id"] == str(RECEIPT_NEW)
+
+    schema_path = (
+        Path(__file__).resolve().parents[5]
+        / "packages"
+        / "shared-contracts"
+        / "schemas"
+        / "recognition-cluster-snapshot.schema.json"
+    )
+    jsonschema.validate(payload["projection_payload"], json.loads(schema_path.read_text()))
 
 
 def test_export_includes_co_required_quality_keys_as_null_without_representative() -> None:

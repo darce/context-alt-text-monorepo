@@ -6,6 +6,9 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from sqlalchemy import inspect as inspect_instance
+from sqlalchemy.orm.exc import DetachedInstanceError
+
 from db.models.base_imports import (
     _DB_SETTINGS,
     ARRAY,
@@ -70,15 +73,40 @@ class ReceiptNotTopError(ValueError):
         super().__init__("Receipt is not the top unreverted merge")
 
 
+class ReceiptExpiredError(ValueError):
+    """Revert refused: now is past expires_at (API-05 receipt_expired)."""
+
+    code = "receipt_expired"
+
+    def __init__(self, receipt_id: uuid.UUID) -> None:
+        self.receipt_id = receipt_id
+        super().__init__("Merge receipt has expired")
+
+
+class ReceiptStackUnavailableError(ValueError):
+    """Revert refused: LIFO stack is not loaded; fail closed, never treat self as top."""
+
+    code = "receipt_stack_unavailable"
+
+    def __init__(self, receipt_id: uuid.UUID) -> None:
+        self.receipt_id = receipt_id
+        super().__init__("Merge receipt stack is not loaded")
+
+
 def require_top_unreverted_receipt(
     receipts: Sequence[ClusterMergeReceipt],
     receipt_id: uuid.UUID,
 ) -> ClusterMergeReceipt:
-    """Return the receipt only when it is the survivor's newest unreverted row."""
+    """Return the receipt only when it is the survivor's newest unreverted row.
+
+    Stack order is ``(created_at, sequence_no)`` ascending; top is max. Equal
+    ``created_at`` (Postgres ``now()`` is transaction-start time) is broken by
+    ``sequence_no``, the per-survivor insert ordinal.
+    """
     unreverted = [receipt for receipt in receipts if receipt.reverted_at is None]
     if not unreverted:
         raise ReceiptNotTopError(receipt_id)
-    top = max(unreverted, key=lambda receipt: receipt.created_at)
+    top = max(unreverted, key=lambda receipt: (receipt.created_at, receipt.sequence_no))
     if top.receipt_id != receipt_id:
         raise ReceiptNotTopError(receipt_id)
     return top
@@ -200,7 +228,7 @@ class IdentityCluster(Base):
     merge_receipts: Mapped[list[ClusterMergeReceipt]] = relationship(
         back_populates="survivor_cluster",
         cascade="all, delete-orphan",
-        order_by="ClusterMergeReceipt.created_at.desc()",
+        order_by="ClusterMergeReceipt.created_at.desc(), ClusterMergeReceipt.sequence_no.desc()",
         foreign_keys="ClusterMergeReceipt.survivor_cluster_id",
     )
     # Relationship to materialized view for centroid loading
@@ -354,6 +382,9 @@ class ClusterMergeReceipt(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # Per-survivor insert ordinal (max+1 under the survivor row lock). Tie-breaks
+    # LIFO when several receipts share transaction-start created_at.
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
 
     tenant: Mapped[Tenant] = relationship()
     survivor_cluster: Mapped[IdentityCluster] = relationship(
@@ -366,20 +397,44 @@ class ClusterMergeReceipt(Base):
             "kind IN ('auto', 'operator')",
             name="cluster_merge_receipt_valid_kind",
         ),
+        UniqueConstraint(
+            "survivor_cluster_id",
+            "sequence_no",
+            name="uq_cluster_merge_receipts_survivor_seq",
+        ),
         Index("idx_cluster_merge_receipts_tenant", "tenant_id"),
         Index("idx_cluster_merge_receipts_survivor", "survivor_cluster_id", "created_at"),
     )
 
+    @staticmethod
+    def next_sequence_no(sibling_receipts: Sequence[ClusterMergeReceipt]) -> int:
+        """Return max(sequence_no)+1. Callers must hold the survivor row lock."""
+        if not sibling_receipts:
+            return 1
+        return max(receipt.sequence_no for receipt in sibling_receipts) + 1
+
+    def _loaded_receipt_stack(
+        self, sibling_receipts: Sequence[ClusterMergeReceipt] | None
+    ) -> Sequence[ClusterMergeReceipt]:
+        if sibling_receipts is not None:
+            return sibling_receipts
+        state = inspect_instance(self)
+        if "survivor_cluster" in state.unloaded and not (state.persistent or state.pending):
+            raise ReceiptStackUnavailableError(self.receipt_id)
+        try:
+            cluster = self.survivor_cluster
+        except DetachedInstanceError as exc:
+            raise ReceiptStackUnavailableError(self.receipt_id) from exc
+        if cluster is None:
+            raise ReceiptStackUnavailableError(self.receipt_id)
+        return cluster.merge_receipts
+
     def revert(self, *, now: datetime, sibling_receipts: Sequence[ClusterMergeReceipt] | None = None) -> None:
         """Mark reverted only when this row is the survivor's newest unreverted receipt."""
-        stack: Sequence[ClusterMergeReceipt]
-        if sibling_receipts is not None:
-            stack = sibling_receipts
-        elif self.survivor_cluster is not None:
-            stack = self.survivor_cluster.merge_receipts
-        else:
-            stack = (self,)
+        stack = self._loaded_receipt_stack(sibling_receipts)
         require_top_unreverted_receipt(stack, self.receipt_id)
+        if now > self.expires_at:
+            raise ReceiptExpiredError(self.receipt_id)
         self.reverted_at = now
 
 
@@ -441,7 +496,9 @@ __all__ = [
     "IdentityClusterRepresentative",
     "ClusterMergeKind",
     "ClusterMergeReceipt",
+    "ReceiptExpiredError",
     "ReceiptNotTopError",
+    "ReceiptStackUnavailableError",
     "require_top_unreverted_receipt",
     "IdentityMember",
     "IdentityNameSuppression",

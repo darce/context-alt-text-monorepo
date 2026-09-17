@@ -85,7 +85,9 @@ class OutboxMaintenanceServiceTest extends TestCase
             static fn (string $query): bool => str_starts_with($query, 'UPDATE wp_acx_sync_outbox SET')
         ));
         $this->assertCount(1, $updates);
-        $this->assertStringContainsString('attempts = 6', $updates[0]);
+        // CAS pins the stale snapshot it read, so it matches zero rows against the newer failure.
+        $this->assertStringContainsString('AND attempts = 5', $updates[0]);
+        $this->assertStringContainsString("AND last_error_code = 'remote_error'", $updates[0]);
     }
 
     public function testRetryFailedOperationReturnsFalseForMissingRowWithoutUpdate(): void

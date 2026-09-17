@@ -307,10 +307,41 @@ before changing `Verdict` to `accepted`:
 5. Keep a stratum abstained when `labelled_pairs < min_pairs`, when a floor or
    interval is missing, or when its false-name gate fails. Noise is unassigned;
    it is not a true negative manufactured to improve FAR.
-6. Accept the policy only if every non-abstained stratum has a floor and no
-   automatic false-name acceptance. On acceptance, C2 may copy the policy
-   block verbatim and issue a revertible receipt; until then, consumers must
-   leave recovery merge disabled [docs/tasks/v0.5.0/GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:346-349,455-466].
+6. Accept the policy only if at least one stratum is non-abstained and has a
+   floor, every non-abstained stratum has a floor, and there is no automatic
+   false-name acceptance. An all-abstained policy is invalid: `apply_mode` must
+   remain `disabled_until_accepted` until the minimum one non-abstained stratum
+   with a floor exists and the other gates pass. On acceptance, C2 may copy the
+   policy block verbatim and issue a revertible receipt; until then, consumers
+   must leave recovery merge disabled [docs/tasks/v0.5.0/GPUFLOW-2-durable-describe-roster-identity-and-cluster-recovery-task-plan.md:346-349,455-466].
+
+### Cross-product stratum key and precedence
+
+The quality and operating tables above are axis defaults, not independent
+policy strata. The policy stratum key is the cross product
+`<quality_band>×<operating_condition>` (for example, `mediocre×masked`). An
+exact cell floor is more specific than either axis default, and the most
+specific available floor wins; when only both axis defaults are available, the
+higher candidate floor is the conservative tie-break. If either axis is
+abstained, the cross-product cell is abstained, regardless of its floor or any
+aggregate metric. This makes the sparse-cell disposition deterministic rather
+than flattening quality and operating conditions into one shared list.
+
+### Policy/runtime name mapping
+
+The policy names below are deliberately mapped to the current runtime behavior
+so proposed calibration metadata cannot be mistaken for settings already in
+use:
+
+| Policy field | Current runtime name/behavior | Status in this report |
+| --- | --- | --- |
+| `representative.weights.detector_confidence` + `face_size` (`0.6`/`0.4`) | `quality_score` is `confidence × face-size factor`; the runtime does not use these as additive weights | Proposed policy weights, not current runtime behavior |
+| `representative.weights.occlusion` | Occlusion is a separate threshold-adjustment input and is not part of `quality_score` | Proposed policy metadata, not a current quality weight |
+| `k_occ` | The current occlusion coefficient is named `oact_coefficient` (currently `0.0`); there is no runtime field named `k_occ` | Policy alias/proposal only; not a promoted runtime setting |
+
+The `0.6`/`0.4` values therefore remain review inputs. They must not be
+described as the current scoring formula, and `k_occ` must not be copied into
+runtime without an explicit name-and-sign decision.
 
 ## Machine-readable calibration policy
 
@@ -318,8 +349,9 @@ The following YAML is intentionally provisional. Its numeric values are
 derived from the current settings: discovery `0.55`, complete-link `0.45`,
 low-confidence width `0.05`, suggestion floor `0.35`, suggestion ceiling
 `0.55`, quality cuts `0.90/0.80/0.60`, quality adjustments
-`-0.05/0.00/0.02/0.05`, `oact_coefficient=0.0`, and quality weights
-`0.6/0.4` [apps/prototype-description-service/recognition/application/settings/clustering.py:31-70,91-99,226-280]. `min_pairs=2` is a
+`-0.05/0.00/0.02/0.05`, `oact_coefficient=0.0`, and proposed (not current-runtime)
+quality weights `0.6/0.4`
+[apps/prototype-description-service/recognition/application/settings/clustering.py:31-70,91-99,226-280]. `min_pairs=2` is a
 deliberate minimum-evidence sentinel aligned with the current two-member
 cluster minimum, not a claim of statistical power [apps/prototype-description-service/recognition/application/settings/clustering.py:294-300]. All
 values are named provisional because no disjoint C1 measurements were supplied.
@@ -332,6 +364,18 @@ schema_version: 1
 rule_version: "GPUFLOW-2-C1-provisional-20260916"
 status: "needs_operator"
 apply_mode: "disabled_until_accepted"
+
+# Thresholds are portable only inside the exact embedding/calibration binding.
+# "unbound" means the evidence needed to populate that field was not captured.
+binding:
+  embedding_model_id: "unbound"
+  embedding_model_revision: "unbound"
+  embedding_dimensionality: "unbound"
+  distance_metric: "cosine"
+  dataset_manifest_digest: "unbound"
+  calibration_run_digest: "unbound"
+  require_all_runtime_fields_match: true
+  apply_only_when: "all binding fields match the runtime embedding space and calibration artifacts"
 
 # Recovery admission: similarity is cosine in the single pinned face space.
 tau_pair: 0.55
@@ -360,29 +404,54 @@ suggestion_band_cuts:
   suggestion_floor: 0.35
   suggestion_ceiling: 0.55
 
+stratum_resolution:
+  key: "<quality_band>×<operating_condition>"
+  floor_precedence:
+    - "exact cell floor"
+    - "both quality-band and operating-condition defaults"
+    - "one quality-band or operating-condition default"
+    - "base floor"
+  rule: "most specific floor wins; if both axis defaults apply without an exact cell floor, use the higher floor"
+  abstention: "any abstained quality or operating axis abstains the cell"
+
 per_stratum_floors:
-  high: 0.55
-  neutral: 0.55
-  mediocre: 0.57
-  poor: 0.60
-  clear: 0.55
-  profile: 0.55
-  sunglasses: 0.55
-  masked: 0.60
-  occlusion_other: 0.60
-  low_res: 0.60
-  blur: 0.60
-  similar_people: 0.60
-  unknown: 0.60
+  key_format: "<quality_band>×<operating_condition>"
+  base: 0.55
+  quality_band_defaults:
+    high: 0.55
+    neutral: 0.55
+    mediocre: 0.57
+    poor: 0.60
+  operating_condition_defaults:
+    clear: 0.55
+    profile: 0.55
+    sunglasses: 0.55
+    masked: 0.60
+    occlusion_other: 0.60
+    low_res: 0.60
+    blur: 0.60
+    similar_people: 0.60
+    unknown: 0.60
+  cell_overrides: {}
+
+acceptance:
+  reject_all_abstained: true
+  minimum_non_abstained_strata_with_floor: 1
+  apply_mode_exit_requires: "at least one non-abstained <quality_band>×<operating_condition> cell with a floor and all acceptance gates passing"
 
 min_pairs: 2
 abstain:
-  rule: "abstain the whole residual when any member is in an abstained stratum, has fewer than min_pairs labelled pairs, fails its per-stratum floor, lacks k distinct-media exemplars, fails tau_intra, misses recovery_margin against the runner-up, or conflicts with a confirmed named identity"
-  strata:
+  rule: "abstain the whole residual when any member is in an abstained <quality_band>×<operating_condition> cell, has fewer than min_pairs labelled pairs, fails its cell floor, lacks k distinct-media exemplars, fails tau_intra, misses recovery_margin against the runner-up, or conflicts with a confirmed named identity"
+
+abstained_strata:
+  key_format: "<quality_band>×<operating_condition>"
+  selection: "cartesian_product"
+  quality_bands:
     - high
     - neutral
     - mediocre
     - poor
+  operating_conditions:
     - clear
     - profile
     - sunglasses
@@ -393,21 +462,6 @@ abstain:
     - similar_people
     - unknown
 
-abstained_strata:
-  - high
-  - neutral
-  - mediocre
-  - poor
-  - clear
-  - profile
-  - sunglasses
-  - masked
-  - occlusion_other
-  - low_res
-  - blur
-  - similar_people
-  - unknown
-
 false_name_acceptance_gate:
   max_automatic_false_name_accepts: 0
   max_observed_rate: 0.0
@@ -415,8 +469,10 @@ false_name_acceptance_gate:
   fail_if: "any non-abstained stratum has an observed automatic false-name acceptance or lacks its interval"
 
 # OACT remains dark until an impostor/unknown-probe experiment proves its sign.
+# This policy field is not the current runtime name; see the mapping table.
 k_occ: 0.0
 representative:
+  status: "proposed_not_current_runtime"
   weights:
     occlusion: 0.0
     detector_confidence: 0.6

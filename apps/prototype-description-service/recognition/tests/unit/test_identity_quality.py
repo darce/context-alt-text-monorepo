@@ -5,6 +5,8 @@ import pytest
 from recognition.application.assignment.quality import (
     compute_identity_quality,
     compute_quality_adjustment,
+    compute_representative_quality,
+    representative_sort_key,
 )
 from recognition.application.embedding.detector import _compute_detection_quality
 from recognition.application.settings import QualitySettings
@@ -148,3 +150,100 @@ class TestComputeQualityAdjustment:
         )
 
         assert with_occlusion > without_occlusion
+
+
+class TestComputeRepresentativeQuality:
+    """C4 composite is separate from threshold IdentityQualityInfo.score."""
+
+    def test_composite_is_geometric_mean_of_confidence_and_bbox_term(self) -> None:
+        # min_face_size default 80 → min_bbox_area 6400; 80×80 saturates bbox_term.
+        quality = compute_representative_quality(
+            confidence=0.81,
+            bbox_width=80,
+            bbox_height=80,
+        )
+        assert quality.bbox_term == pytest.approx(1.0)
+        assert quality.composite == pytest.approx(0.9, abs=0.001)
+        assert quality.components()["bbox_area"] == pytest.approx(6400.0)
+        assert quality.components()["confidence"] == pytest.approx(0.81)
+
+    def test_small_bbox_lowers_bbox_term(self) -> None:
+        quality = compute_representative_quality(
+            confidence=1.0,
+            bbox_width=40,
+            bbox_height=40,
+        )
+        assert quality.bbox_term == pytest.approx(1600.0 / 6400.0)
+        assert quality.composite == pytest.approx(0.5, abs=0.001)
+
+    def test_default_k_occ_zero_does_not_change_composite(self) -> None:
+        clear = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.0,
+        )
+        occluded = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.9,
+        )
+        assert occluded.composite == clear.composite
+        assert occluded.k_occ == pytest.approx(0.0)
+
+    def test_positive_k_occ_penalizes_occlusion_in_composite(self) -> None:
+        settings = QualitySettings(oact_coefficient=1.0)
+        clear = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.0,
+            settings=settings,
+        )
+        occluded = compute_representative_quality(
+            confidence=0.9,
+            bbox_width=100,
+            bbox_height=100,
+            occlusion_severity=0.5,
+            settings=settings,
+        )
+        assert occluded.composite < clear.composite
+        assert occluded.occlusion_term == pytest.approx(0.5)
+
+    def test_active_sharpness_floor_scales_sharpness_term(self) -> None:
+        settings = QualitySettings(factor_floor_sharpness=10.0)
+        dull = compute_representative_quality(
+            confidence=1.0,
+            bbox_width=80,
+            bbox_height=80,
+            sharpness=10.0,
+            settings=settings,
+        )
+        sharp = compute_representative_quality(
+            confidence=1.0,
+            bbox_width=80,
+            bbox_height=80,
+            sharpness=20.0,
+            settings=settings,
+        )
+        assert dull.sharpness_term == pytest.approx(0.5)
+        assert sharp.sharpness_term == pytest.approx(1.0)
+        assert dull.composite < sharp.composite
+
+    def test_unoccluded_sorts_ahead_of_higher_confidence_occluded(self) -> None:
+        occluded = representative_sort_key(
+            confidence=0.99,
+            bbox_width=200,
+            bbox_height=200,
+            occlusion_severity=0.8,
+            identity_id="occluded",
+        )
+        clear = representative_sort_key(
+            confidence=0.55,
+            bbox_width=80,
+            bbox_height=80,
+            occlusion_severity=0.0,
+            identity_id="clear",
+        )
+        assert clear < occluded

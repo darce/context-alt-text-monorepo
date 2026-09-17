@@ -18,7 +18,10 @@ import pytest
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
-from recognition.application.assignment.quality import compute_identity_quality
+from recognition.application.assignment.quality import (
+    compute_identity_quality,
+    compute_representative_quality,
+)
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.persistence.representative_selector import (
     REPRESENTATIVE_MULTIPLIER_WEIGHT_EMBEDDING_NORM,
@@ -133,9 +136,7 @@ class TestEnrollmentFloors:
 
     def test_active_floors_accept_passing_observation(self) -> None:
         floors = EnrollmentFloors(floor_sharpness=10.0, floor_embedding_norm=3.0, ceiling_occlusion=0.5)
-        assert passes_enrollment_floors(
-            _identity(sharpness=50.0, embedding_norm=10.0, occlusion_severity=0.2), floors
-        )
+        assert passes_enrollment_floors(_identity(sharpness=50.0, embedding_norm=10.0, occlusion_severity=0.2), floors)
 
     def test_none_factors_never_fail_active_floors(self) -> None:
         """Insightface path: missing factors must not exclude (dark parity)."""
@@ -219,13 +220,14 @@ class TestRepresentativeQualityMultiplier:
     def test_score_parity_with_base_when_factorless(self) -> None:
         settings = _noop_settings()
         identity = _identity(confidence=0.9)
-        base = compute_identity_quality(
+        expected = compute_representative_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             settings=settings.quality,
-        ).score
-        assert _compute_identity_quality(identity, settings) == base
+        ).composite
+        assert _compute_identity_quality(identity, settings) == expected
+        assert expected == pytest.approx(0.949)
 
     def test_score_parity_with_factors_under_noop_floors(self) -> None:
         settings = _noop_settings()
@@ -235,22 +237,25 @@ class TestRepresentativeQualityMultiplier:
             embedding_norm=1.0,
             occlusion_severity=0.8,
         )
-        base = compute_identity_quality(
+        expected = compute_representative_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
-            settings=settings.quality,
+            sharpness=identity.sharpness,
             occlusion_severity=identity.occlusion_severity,
-        ).score
-        assert _compute_identity_quality(identity, settings) == base
+            settings=settings.quality,
+        ).composite
+        assert _compute_identity_quality(identity, settings) == expected
+        # k_occ=0 and no-op sharpness floor → occlusion/sharpness do not move composite.
+        assert expected == pytest.approx(0.949)
 
-    def test_score_multiplied_when_floors_active(self) -> None:
-        """Pin expected f and scored value with literals (not the multiplier under test).
+    def test_score_uses_c4_composite_when_floors_active(self) -> None:
+        """C4 composite, not FIR-6 multiplier, is the persisted representative score.
 
-        floors s=10, n=3, o=0.5; factors at floor (10, 3) and o=0.4:
-        s_term=10/(2*10)=0.5, n_term=3/(2*3)=0.5, o_term=1-0.4/0.5=0.2
-        equal 1/3 weights → f = (0.5+0.5+0.2)/3 = 0.4 exactly.
-        base score = conf*size = 0.95*1.0 = 0.95 → scored = round(0.95*0.4, 3) = 0.38.
+        bbox 120×120 saturates min_bbox_area=80². geomean(0.95, 1.0) ≈ 0.974679.
+        Active sharpness floor 10 → sharpness_term = 10 / 20 = 0.5.
+        k_occ default 0 → occlusion_term = 1. scored = round(0.974679 * 0.5, 3) = 0.487.
+        Threshold quality stays confidence×size = 0.95.
         """
         settings = _active_settings()
         identity = _identity(
@@ -259,24 +264,23 @@ class TestRepresentativeQualityMultiplier:
             embedding_norm=3.0,
             occlusion_severity=0.4,
         )
-        base = compute_identity_quality(
+        threshold = compute_identity_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             settings=settings.quality,
             occlusion_severity=identity.occlusion_severity,
         ).score
-        assert base == pytest.approx(0.95)
+        assert threshold == pytest.approx(0.95)
         scored = _compute_identity_quality(identity, settings)
-        # Literal pins — must not call representative_quality_multiplier for expected.
         assert representative_quality_multiplier(
             sharpness=10.0,
             embedding_norm=3.0,
             occlusion_severity=0.4,
             floors=EnrollmentFloors(floor_sharpness=10.0, floor_embedding_norm=3.0, ceiling_occlusion=0.5),
         ) == pytest.approx(0.4)
-        assert scored == pytest.approx(0.38)
-        assert scored < base
+        assert scored == pytest.approx(0.487)
+        assert scored < threshold
 
     def test_f_can_reach_zero_when_all_soft_terms_bottom_out(self) -> None:
         """Soft terms clamp to 0 → f ∈ [0, 1], not (0, 1]."""
@@ -441,15 +445,15 @@ class TestCreateAndAddRepresentativeGate:
         )
 
         assert rep is not None
-        # f≡1 under no-op → quality matches pose-neutral base score.
-        base = compute_identity_quality(
+        expected = compute_representative_quality(
             confidence=weak.confidence,
             bbox_width=weak.bbox_width,
             bbox_height=weak.bbox_height,
-            settings=_noop_settings().quality,
+            sharpness=weak.sharpness,
             occlusion_severity=weak.occlusion_severity,
-        ).score
-        assert rep.quality_score == base
+            settings=_noop_settings().quality,
+        ).composite
+        assert rep.quality_score == expected
         cluster_repo.add_representative.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -474,11 +478,11 @@ class TestCreateAndAddRepresentativeGate:
         assert rep is not None
         expected = _compute_identity_quality(identity, settings)
         assert rep.quality_score == expected
-        base = compute_identity_quality(
+        threshold = compute_identity_quality(
             confidence=identity.confidence,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
             settings=settings.quality,
             occlusion_severity=identity.occlusion_severity,
         ).score
-        assert expected < base
+        assert expected < threshold

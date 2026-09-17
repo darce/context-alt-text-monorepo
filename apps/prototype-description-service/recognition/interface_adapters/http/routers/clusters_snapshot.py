@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
@@ -42,6 +41,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterResponse,
     ClusterSnapshotClusterResponse,
     ClusterSnapshotMemberResponse,
+    ClusterSnapshotQualityComponents,
     ClusterSnapshotResponse,
     FaceBoxResponse,
 )
@@ -55,34 +55,6 @@ _INFERENCE_CAP = 20
 
 _QUALITY_COMPONENT_KEYS = ("confidence", "bbox_area", "sharpness", "occlusion_severity")
 _UNIT_INTERVAL_KEYS = frozenset({"confidence", "occlusion_severity"})
-
-
-class ClusterSnapshotQualityComponents(BaseModel):
-    """Parts of representative_quality (UXR-15). Missing signals are null, never omitted."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    confidence: float | None = None
-    bbox_area: float | None = None
-    sharpness: float | None = None
-    occlusion_severity: float | None = None
-
-
-class ClusterSnapshotQualityClusterResponse(ClusterSnapshotClusterResponse):
-    """Snapshot cluster row with B2a quality/undo fields (API-10 rename at export)."""
-
-    representative_quality: float | None = None
-    quality_components: ClusterSnapshotQualityComponents | None = None
-    representative_media_id: int | None = None
-    undoable_merge_receipt_id: str | None = None
-
-
-class ClusterSnapshotQualityResponse(ClusterSnapshotResponse):
-    clusters: list[ClusterSnapshotQualityClusterResponse]
-
-
-class ClusterDeltaQualityResponse(ClusterDeltaResponse):
-    clusters: list[ClusterSnapshotQualityClusterResponse]
 
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
@@ -197,9 +169,9 @@ def _build_cluster_responses(
     clusters: list[IdentityCluster],
     *,
     now: datetime | None = None,
-) -> list[ClusterSnapshotQualityClusterResponse]:
+) -> list[ClusterSnapshotClusterResponse]:
     """Build cluster snapshot responses from domain cluster objects."""
-    responses: list[ClusterSnapshotQualityClusterResponse] = []
+    responses: list[ClusterSnapshotClusterResponse] = []
     for cluster in clusters:
         curation_state = "dismissed" if cluster.dismissed_at else ("confirmed" if cluster.user_confirmed else "active")
 
@@ -219,7 +191,7 @@ def _build_cluster_responses(
             representative_media_id = _representative_media_id(rep)
 
         responses.append(
-            ClusterSnapshotQualityClusterResponse(
+            ClusterSnapshotClusterResponse(
                 cluster_uuid=str(cluster.id),
                 label=cluster.label,
                 curation_state=curation_state,
@@ -330,14 +302,14 @@ async def list_clusters(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotQualityResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotResponse)
 async def get_tenant_cluster_snapshot(
     tenant_uuid: str,
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
     session=Depends(get_session),
-) -> ClusterSnapshotQualityResponse:
+) -> ClusterSnapshotResponse:
     """Get complete cluster snapshot for WordPress plugin projection.
 
     Returns all clusters and members for a tenant in a single response,
@@ -370,7 +342,7 @@ async def get_tenant_cluster_snapshot(
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
     member_responses = _build_member_responses(members_with_identities)
 
-    return ClusterSnapshotQualityResponse(
+    return ClusterSnapshotResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         snapshot_generation_id=snapshot_generation_id,
@@ -381,14 +353,14 @@ async def get_tenant_cluster_snapshot(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/targeted-snapshot", response_model=ClusterSnapshotQualityResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/targeted-snapshot", response_model=ClusterSnapshotResponse)
 async def get_tenant_targeted_cluster_snapshot(
     tenant_uuid: str,
     cluster_ids: list[str] = Query(default_factory=list),
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
-) -> ClusterSnapshotQualityResponse:
+) -> ClusterSnapshotResponse:
     """Get a targeted cluster snapshot for a subset of cluster ids."""
     tenant_id = tenant_uuid
 
@@ -406,7 +378,7 @@ async def get_tenant_targeted_cluster_snapshot(
     if not clusters and not members_with_identities:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for requested ids")
 
-    return ClusterSnapshotQualityResponse(
+    return ClusterSnapshotResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
@@ -416,14 +388,14 @@ async def get_tenant_targeted_cluster_snapshot(
     )
 
 
-@router.get("/tenants/{tenant_uuid}/clusters/delta", response_model=ClusterDeltaQualityResponse)
+@router.get("/tenants/{tenant_uuid}/clusters/delta", response_model=ClusterDeltaResponse)
 async def get_tenant_cluster_delta(
     tenant_uuid: str,
     since_version: int = Query(..., ge=0),
     auth=Depends(require_auth),
     repo: ClusterRepository = Depends(get_cluster_repository),
     session=Depends(get_session),
-) -> ClusterDeltaQualityResponse:
+) -> ClusterDeltaResponse:
     """Get version-filtered cluster updates for incremental projection sync."""
     tenant_id = tenant_uuid
 
@@ -438,7 +410,7 @@ async def get_tenant_cluster_delta(
     clustering_settings = resolve_effective_clustering_settings()
     await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
 
-    return ClusterDeltaQualityResponse(
+    return ClusterDeltaResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         generated_at=datetime.now(tz=UTC),

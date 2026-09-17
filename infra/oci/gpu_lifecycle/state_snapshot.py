@@ -78,6 +78,22 @@ def state_for_instance(instance_state: str) -> GpuLifecycleState:
     return _INSTANCE_STATE_MAP[state]
 
 
+def instance_state_is_explicitly_stopped(instance_state: str) -> bool:
+    """True only for a positively observed STOPPED instance."""
+    try:
+        return GpuInstanceState(instance_state) is GpuInstanceState.STOPPED
+    except (TypeError, ValueError):
+        return False
+
+
+def instance_state_is_unknown(instance_state: str) -> bool:
+    """True for UNKNOWN, unrecognised, or unreadable instance states."""
+    try:
+        return GpuInstanceState(instance_state) is GpuInstanceState.UNKNOWN
+    except (TypeError, ValueError):
+        return True
+
+
 def _validate_expected_instance_id(expected_instance_id: str | None) -> None:
     """Own validation of the optional instance identity required for reuse."""
     if expected_instance_id is not None and (

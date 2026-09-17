@@ -81,6 +81,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(0, $purged['retried']);
         $this->assertSame(0, $purged['dead_lettered']);
         $this->assertSame(1, $purged['purged_failed']);
+        $this->assertSame(1, $purged['outbox']);
         $this->assertSame(1, $syncState->refreshCount);
 
         $selectQuery = $this->findQueryContaining($wpdb->queries, 'last_error_code IN');
@@ -114,6 +115,7 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(0, $purged['retried']);
         $this->assertSame(0, $purged['dead_lettered']);
         $this->assertSame(1, $purged['purged_failed']);
+        $this->assertSame(1, $purged['outbox']);
         $this->assertSame(1, $syncState->refreshCount);
         $this->assertSame($tenantId, $syncState->lastTenantId);
         $this->assertSame([], $wpdb->tableRows['wp_acx_sync_outbox']);
@@ -194,6 +196,80 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertStringContainsString('age 3600 seconds', (string) $updated['last_error_message']);
     }
 
+    public function testOperatorRetryClearsAutoAttemptMarkerBeforeNextMaintenanceFailure(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-operator-retry';
+        $wpdb->defaultQueryResult = 0;
+        $row = $this->buildFailedOutboxRow(81, $tenantId, 'transport_error');
+        $row['payload'] = wp_json_encode([
+            'cluster_uuid' => 'cluster-81',
+            'acx_auto_attempts' => 3,
+        ]);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$row];
+        $syncState = $this->trackingSyncStateRepository();
+        $service = new OutboxMaintenanceService(null, $syncState, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+
+        $this->assertTrue($service->retry_failed_operation(81, $tenantId));
+        $requeued = $wpdb->tableRows['wp_acx_sync_outbox'][0];
+        $payload = json_decode((string) $requeued['payload'], true);
+        $this->assertSame(OutboxStatus::PENDING, $requeued['status']);
+        $this->assertIsArray($payload);
+        $this->assertSame('cluster-81', $payload['cluster_uuid']);
+        $this->assertArrayNotHasKey('acx_auto_attempts', $payload);
+
+        // Model the next dispatch failure after the operator's clean requeue.
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['status'] = OutboxStatus::FAILED;
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['attempts'] = 1;
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_code'] = 'transport_error';
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['first_failed_at'] = gmdate('Y-m-d H:i:s', current_time('timestamp'));
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload'] = wp_json_encode($payload);
+
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(1, $purged['retried']);
+        $this->assertSame(0, $purged['dead_lettered']);
+        $this->assertSame(OutboxStatus::PENDING, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $nextPayload = json_decode((string) $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload'], true);
+        $this->assertIsArray($nextPayload);
+        $this->assertSame(1, $nextPayload['acx_auto_attempts']);
+    }
+
+    public function testBulkOperatorRetryUsesJsonRemoveAndResetsFutureAutoRetryWindow(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-bulk-operator-retry';
+        $wpdb->defaultQueryResult = 0;
+        $row = $this->buildFailedOutboxRow(91, $tenantId, 'transport_error');
+        $row['payload'] = wp_json_encode([
+            'cluster_uuid' => 'cluster-91',
+            'acx_auto_attempts' => 3,
+        ]);
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$row];
+        $syncState = $this->trackingSyncStateRepository();
+        $service = new OutboxMaintenanceService(null, $syncState, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+
+        $this->assertSame(1, $service->retry_failed_operations_bulk($tenantId));
+        $bulkUpdate = $this->findQueryContaining($wpdb->queries, 'JSON_REMOVE(payload');
+        $this->assertStringContainsString("payload = JSON_REMOVE(payload, '$.acx_auto_attempts')", $bulkUpdate);
+        $this->assertSame(OutboxStatus::PENDING, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+
+        // Model the next dispatch failure with the marker removed by the SQL update.
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['status'] = OutboxStatus::FAILED;
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['attempts'] = 1;
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['last_error_code'] = 'transport_error';
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['first_failed_at'] = gmdate('Y-m-d H:i:s', current_time('timestamp'));
+        $wpdb->tableRows['wp_acx_sync_outbox'][0]['payload'] = '{}';
+
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(1, $purged['retried']);
+        $this->assertSame(0, $purged['dead_lettered']);
+        $this->assertSame(OutboxStatus::PENDING, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+    }
+
     public function testPurgeCountsZeroRowCasMissOnRetryAsSkippedConcurrent(): void
     {
         global $wpdb;
@@ -234,40 +310,40 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(0, $syncState->refreshCount);
     }
 
+    public function testPurgeDoesNotCountCasSqlErrorAsTransition(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-cas-error';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(72, $tenantId, 'transport_error'),
+        ];
+        $wpdb->updateResultsByTable['wp_acx_sync_outbox'] = false;
+
+        $syncState = $this->trackingSyncStateRepository();
+        $service = new OutboxMaintenanceService(null, $syncState, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['retried']);
+        $this->assertSame(0, $purged['dead_lettered']);
+        $this->assertSame(0, $purged['skipped_concurrent']);
+        $this->assertSame(OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertSame(0, $syncState->refreshCount);
+    }
+
     public function testHealthCountersExposePendingFailedDeadLetteredAndOldestAge(): void
     {
         global $wpdb;
 
         $tenantId = 'tenant-health-counters';
         $oldestCreated = gmdate('Y-m-d H:i:s', current_time('timestamp') - 7200);
-        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+        $wpdb->mockResults = [
             [
-                'id' => 31,
-                'tenant_id' => $tenantId,
-                'status' => OutboxStatus::FAILED,
-                'last_error_code' => 'remote_error',
-                'created_at' => $oldestCreated,
-            ],
-            [
-                'id' => 32,
-                'tenant_id' => $tenantId,
-                'status' => OutboxStatus::PENDING,
-                'last_error_code' => null,
-                'created_at' => gmdate('Y-m-d H:i:s', current_time('timestamp') - 60),
-            ],
-            [
-                'id' => 33,
-                'tenant_id' => $tenantId,
-                'status' => OutboxStatus::FAILED,
-                'last_error_code' => 'auto_retry_exhausted',
-                'created_at' => gmdate('Y-m-d H:i:s', current_time('timestamp') - 30),
-            ],
-            [
-                'id' => 34,
-                'tenant_id' => $tenantId,
-                'status' => OutboxStatus::FAILED,
-                'last_error_code' => 'invalid_payload',
-                'created_at' => gmdate('Y-m-d H:i:s', current_time('timestamp') - 15),
+                'pending' => '1',
+                'failed' => '1',
+                'dead_lettered' => '2',
+                'oldest_created_at' => $oldestCreated,
             ],
         ];
 
@@ -279,6 +355,9 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame(1, $counters['failed']);
         $this->assertSame(2, $counters['dead_lettered']);
         $this->assertSame(7200, $counters['oldest_age_seconds']);
+        $healthQuery = $this->findQueryContaining($wpdb->queries, 'SUM(CASE');
+        $this->assertStringContainsString('MIN(created_at)', $healthQuery);
+        $this->assertStringNotContainsString('ORDER BY', $healthQuery);
     }
 
     public function testHealthCountersReturnFalseWhenQueryFails(): void

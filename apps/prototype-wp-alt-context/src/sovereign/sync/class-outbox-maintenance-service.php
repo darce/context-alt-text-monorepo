@@ -104,9 +104,12 @@ class OutboxMaintenanceService {
 			function () use ( $normalized_tenant_id ): array {
 				$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id );
 				$purged_failed = $this->purge_failed_non_retryable_batch( $normalized_tenant_id );
+				$purged_acknowledged = $this->purge_acknowledged_outbox_batch( $normalized_tenant_id );
 
 				return array(
-					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id ),
+					// Keep the established aggregate meaning: all acknowledged and failed
+					// outbox deletions. The failed-only breakdown remains available below.
+					'outbox' => $purged_acknowledged + $purged_failed,
 					'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
 					'retried' => $reclaim['retried'],
 					'dead_lettered' => $reclaim['dead_lettered'],
@@ -168,50 +171,41 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
+		$terminal_error_codes = array_merge(
+			self::NON_RETRYABLE_ERROR_CODES,
+			array( self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED )
+		);
+		$terminal_error_placeholders = implode( ', ', array_fill( 0, count( $terminal_error_codes ), '%s' ) );
+		$health_sql =
+			'SELECT
+				SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) AS pending,
+				SUM(CASE WHEN status = %s AND (last_error_code IS NULL OR last_error_code NOT IN (' . $terminal_error_placeholders . ')) THEN 1 ELSE 0 END) AS failed,
+				SUM(CASE WHEN status = %s AND last_error_code IN (' . $terminal_error_placeholders . ') THEN 1 ELSE 0 END) AS dead_lettered,
+				MIN(created_at) AS oldest_created_at
+			FROM %i
+			WHERE tenant_id = %s AND status IN (%s, %s)';
+		$health_args = array_merge(
+			array( OutboxStatus::PENDING, OutboxStatus::FAILED ),
+			$terminal_error_codes,
+			array( OutboxStatus::FAILED ),
+			$terminal_error_codes,
+			array( $this->table_name, $normalized_tenant_id, OutboxStatus::PENDING, OutboxStatus::FAILED )
+		);
 		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				'SELECT status, last_error_code, created_at, first_failed_at, last_attempted_at FROM %i WHERE tenant_id = %s AND status IN (%s, %s) ORDER BY created_at ASC',
-				$this->table_name,
-				$normalized_tenant_id,
-				OutboxStatus::PENDING,
-				OutboxStatus::FAILED
-			),
+			$wpdb->prepare( $health_sql, ...$health_args ),
 			ARRAY_A
 		);
-		if ( ! is_array( $rows ) ) {
+		if ( ! is_array( $rows ) || ! isset( $rows[0] ) || ! is_array( $rows[0] ) ) {
 			return false;
 		}
 
-		$pending = 0;
-		$failed = 0;
-		$dead_lettered = 0;
-		$oldest_created_at = '';
-		foreach ( $rows as $row ) {
-			if ( ! is_array( $row ) ) {
-				continue;
-			}
-
-			$status = trim( (string) ( $row['status'] ?? '' ) );
-			if ( OutboxStatus::PENDING === $status ) {
-				++$pending;
-			} elseif ( OutboxStatus::FAILED === $status ) {
-				if ( $this->is_terminal_failed_row( $row ) ) {
-					++$dead_lettered;
-				} else {
-					++$failed;
-				}
-			}
-
-			$created_at = trim( (string) ( $row['created_at'] ?? '' ) );
-			if ( '' !== $created_at && ( '' === $oldest_created_at || $created_at < $oldest_created_at ) ) {
-				$oldest_created_at = $created_at;
-			}
-		}
+		$aggregate = $rows[0];
+		$oldest_created_at = trim( (string) ( $aggregate['oldest_created_at'] ?? '' ) );
 
 		return array(
-			'pending' => $pending,
-			'failed' => $failed,
-			'dead_lettered' => $dead_lettered,
+			'pending' => max( 0, (int) ( $aggregate['pending'] ?? 0 ) ),
+			'failed' => max( 0, (int) ( $aggregate['failed'] ?? 0 ) ),
+			'dead_lettered' => max( 0, (int) ( $aggregate['dead_lettered'] ?? 0 ) ),
 			'oldest_age_seconds' => '' === $oldest_created_at
 				? 0
 				: $this->row_age_seconds( array( 'created_at' => $oldest_created_at ) ),
@@ -737,6 +731,14 @@ class OutboxMaintenanceService {
 	}
 
 	public function retry_failed_operation( int $outbox_id, string $tenant_id ): bool {
+		$operation = $this->query_repository->find_operation_by_id( $outbox_id, $tenant_id );
+		$payload = $this->decode_payload( is_array( $operation ) ? ( $operation['payload'] ?? null ) : null );
+		unset( $payload[ self::AUTO_ATTEMPT_PAYLOAD_KEY ] );
+		$payload_json = wp_json_encode( $payload );
+		if ( ! is_string( $payload_json ) || '' === $payload_json ) {
+			$payload_json = '{}';
+		}
+
 		$updated = $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
@@ -744,6 +746,7 @@ class OutboxMaintenanceService {
 			array(
 				'status' => OutboxStatus::PENDING,
 				'attempts' => 0,
+				'payload' => $payload_json,
 				'last_error_code' => null,
 				'last_error_message' => null,
 				'last_attempted_at' => null,
@@ -752,7 +755,7 @@ class OutboxMaintenanceService {
 				'first_failed_at' => null,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 		if ( ! $updated ) {
 			return false;
@@ -767,10 +770,11 @@ class OutboxMaintenanceService {
 	/**
 	 * Requeue every failed push for a tenant in one guarded action (E15-35 Slice 2).
 	 *
-	 * Each row is reset failed -> pending with attempts 0, cleared error fields, and a
-	 * fresh retry window (first_failed_at NULL — see retry_failed_operation). The UPDATE
-	 * is CAS-guarded per row (WHERE status = 'failed'), so a row that transitioned since
-	 * the id read matches 0 rows and bulk requeue never double-applies.
+	 * Every selected row is reset failed -> pending with attempts 0, cleared error fields,
+	 * a fresh retry window (first_failed_at NULL — see retry_failed_operation), and the
+	 * auto-attempt marker removed in SQL. The single set-based UPDATE is CAS-guarded by
+	 * tenant, status, and the selected id set, so rows that transitioned since the id read
+	 * are not requeued.
 	 *
 	 * Paced requeue (PA-05): rather than making every row due immediately, the first
 	 * drain-batch-sized chunk gets next_attempt_at NULL and each later chunk is deferred
@@ -789,7 +793,8 @@ class OutboxMaintenanceService {
 			'' === $normalized_tenant_id
 			|| ! isset( $wpdb )
 			|| ! is_object( $wpdb )
-			|| ! method_exists( $wpdb, 'update' )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'query' )
 		) {
 			return false;
 		}
@@ -803,38 +808,70 @@ class OutboxMaintenanceService {
 			return 0;
 		}
 
-		$now_timestamp = (int) current_time( 'timestamp' );
-		$requeued = 0;
-		foreach ( array_values( $outbox_ids ) as $index => $outbox_id ) {
-			$chunk_index = intdiv( $index, $chunk_size );
-			$next_attempt_at = 0 === $chunk_index
-				? null
-				: gmdate( 'Y-m-d H:i:s', $now_timestamp + ( $chunk_index * $stride_seconds ) );
-
-			$updated = $wpdb->update(
-				$this->table_name,
-				array(
-					'status' => OutboxStatus::PENDING,
-					'attempts' => 0,
-					'last_error_code' => null,
-					'last_error_message' => null,
-					'last_attempted_at' => null,
-					'first_failed_at' => null,
-					'next_attempt_at' => $next_attempt_at,
-				),
-				array(
-					'id' => $outbox_id,
-					'tenant_id' => $normalized_tenant_id,
-					'status' => OutboxStatus::FAILED,
-				),
-				array( '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
-				array( '%d', '%s', '%s' )
-			);
-
-			if ( is_numeric( $updated ) && (int) $updated > 0 ) {
-				++$requeued;
-			}
+		$normalized_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map( 'intval', $outbox_ids ),
+					static fn( int $outbox_id ): bool => $outbox_id > 0
+				)
+			)
+		);
+		if ( array() === $normalized_ids ) {
+			return 0;
 		}
+
+		$now_timestamp = (int) current_time( 'timestamp' );
+		$next_attempt_at_values = array_map(
+			static function ( int $index ) use ( $chunk_size, $now_timestamp, $stride_seconds ): ?string {
+				$chunk_index = intdiv( $index, $chunk_size );
+				return 0 === $chunk_index
+					? null
+					: gmdate( 'Y-m-d H:i:s', $now_timestamp + ( $chunk_index * $stride_seconds ) );
+			},
+			array_keys( $normalized_ids )
+		);
+		$case_fragments = array_map(
+			static function ( int $outbox_id, ?string $next_attempt_at ): string {
+				return null === $next_attempt_at ? 'WHEN %d THEN NULL' : 'WHEN %d THEN %s';
+			},
+			$normalized_ids,
+			$next_attempt_at_values
+		);
+		$case_argument_parts = array_map(
+			static function ( int $outbox_id, ?string $next_attempt_at ): array {
+				return null === $next_attempt_at
+					? array( $outbox_id )
+					: array( $outbox_id, $next_attempt_at );
+			},
+			$normalized_ids,
+			$next_attempt_at_values
+		);
+		$case_args = array_merge( ...$case_argument_parts );
+		$id_placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
+		$bulk_sql =
+			'UPDATE %i
+			SET status = %s,
+				attempts = %d,
+				payload = JSON_REMOVE(payload, %s),
+				last_error_code = NULL,
+				last_error_message = NULL,
+				last_attempted_at = NULL,
+				first_failed_at = NULL,
+				next_attempt_at = CASE id ' . implode( ' ', $case_fragments ) . ' ELSE next_attempt_at END
+			WHERE tenant_id = %s
+				AND status = %s
+				AND id IN (' . $id_placeholders . ')';
+		$bulk_args = array_merge(
+			array( $this->table_name, OutboxStatus::PENDING, 0, '$.' . self::AUTO_ATTEMPT_PAYLOAD_KEY ),
+			$case_args,
+			array( $normalized_tenant_id, OutboxStatus::FAILED ),
+			$normalized_ids
+		);
+		$updated = $wpdb->query( $wpdb->prepare( $bulk_sql, ...$bulk_args ) );
+		if ( false === $updated ) {
+			return false;
+		}
+		$requeued = is_int( $updated ) ? max( 0, $updated ) : 0;
 
 		if ( $requeued > 0 ) {
 			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
@@ -985,10 +1022,10 @@ class OutboxMaintenanceService {
 			$format,
 			array( '%d', '%s', '%s' )
 		);
-		if ( false === $updated ) {
-			return false;
+		if ( ! is_int( $updated ) || $updated <= 0 ) {
+			return 0;
 		}
 
-		return max( 0, (int) $updated );
+		return $updated;
 	}
 }

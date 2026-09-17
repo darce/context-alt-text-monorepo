@@ -62,6 +62,8 @@ export interface SyncHealthResponse {
   outbox: {
     pending: number;
     failed: number;
+    dead_lettered: number;
+    oldest_age_seconds: number | null;
   };
   conflicts: {
     open: number;

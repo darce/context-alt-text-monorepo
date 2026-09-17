@@ -103,9 +103,9 @@ describe('GpuTierStatus', () => {
   });
 
   it.each([
-    [GPU_STATE.STOPPED, 'Description Service: idle (GPU starts on first run)'],
-    [GPU_STATE.STARTING, 'Warming GPU…'],
-    [GPU_STATE.WARMING, 'Warming GPU…'],
+    [GPU_STATE.STOPPED, 'Description Service is off — it starts when you describe'],
+    [GPU_STATE.STARTING, 'Description Service is starting…'],
+    [GPU_STATE.WARMING, 'Description Service is starting…'],
     [GPU_STATE.READY, 'Description Service is ready'],
     [GPU_STATE.DEGRADED, 'Description Service is unavailable'],
     [GPU_STATE.UNKNOWN, 'Description Service status is out of date'],
@@ -129,7 +129,9 @@ describe('GpuTierStatus', () => {
     renderGpu(createElement(GpuTierStatus, { isRunPending: false }));
 
     expect(
-      await screen.findByRole('status', { name: 'Description Service: idle (GPU starts on first run)' }),
+      await screen.findByRole('status', {
+        name: 'Description Service is off — it starts when you describe',
+      }),
     ).toBeInTheDocument();
   });
 
@@ -142,7 +144,7 @@ describe('GpuTierStatus', () => {
     );
 
     const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent('Warming GPU…');
+    expect(status).toHaveTextContent('Description Service is starting…');
     expect(status.textContent).not.toMatch(/\d+s/);
   });
 
@@ -155,7 +157,9 @@ describe('GpuTierStatus', () => {
       }),
     );
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Warming GPU… up to 90s');
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Description Service is starting… up to 90s',
+    );
   });
 
   it('prefers warmup_eta_seconds over startup_budget_seconds when both are supplied', async () => {
@@ -168,7 +172,29 @@ describe('GpuTierStatus', () => {
       }),
     );
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Warming GPU… about 12s');
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Description Service is starting… about 12s',
+    );
+  });
+
+  it('names the deferred Describe effect with a service wait while stopped', async () => {
+    renderGpu(createElement(GpuTierStatus, { startupBudgetSeconds: 90 }));
+
+    expect(
+      await screen.findByRole('status', {
+        name: 'Description Service is off — it starts when you describe (up to 2 min)',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a sub-minute stopped wait in seconds instead of inventing 0 min', async () => {
+    renderGpu(createElement(GpuTierStatus, { warmupEtaSeconds: 12 }));
+
+    expect(
+      await screen.findByRole('status', {
+        name: 'Description Service is off — it starts when you describe (about 12s)',
+      }),
+    ).toBeInTheDocument();
   });
 
   it('renders ready tier and model only when the service supplies them', async () => {
@@ -229,8 +255,21 @@ describe('GpuTierStatus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(
-      await screen.findByRole('status', { name: 'Description Service: idle (GPU starts on first run)' }),
+      await screen.findByRole('status', {
+        name: 'Description Service is off — it starts when you describe',
+      }),
     ).toBeInTheDocument();
+  });
+
+  it('does not render a raw degraded lifecycle reason from the status payload', async () => {
+    fetchGpuStatusMock.mockResolvedValue(
+      statusResponse({ gpu_state: { state: GPU_STATE.DEGRADED, reason: 'readiness_timeout' } }),
+    );
+    renderGpu(createElement(GpuTierStatus));
+
+    const status = await screen.findByRole('status', { name: 'Description Service is unavailable' });
+    expect(status).toHaveTextContent('Description Service is unavailable');
+    expect(status.textContent).not.toContain('readiness_timeout');
   });
 
   it('announces politely only after a GPU state change', async () => {
@@ -252,7 +291,7 @@ describe('GpuTierStatus', () => {
     renderGpu(createElement(GpuTierStatus));
 
     const status = await screen.findByRole('status', {
-      name: 'Description Service: idle (GPU starts on first run)',
+      name: 'Description Service is off — it starts when you describe',
     });
     expect(status).toHaveClass('acx-sync-status');
     expect(status).toHaveClass('acx-sync-status--info');

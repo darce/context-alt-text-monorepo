@@ -15,7 +15,6 @@ import { useGpuServiceStatus } from '../../hooks/useGpuServiceStatus';
 import {
   GPU_STATE_ICON,
   GPU_STATE_TONE,
-  gpuStateNotice,
   gpuStatePresentation,
   type GpuStateIcon,
   type GpuStateTone,
@@ -63,19 +62,49 @@ const positiveWaitSeconds = (value: number | null | undefined): number | null =>
   return Math.round(value);
 };
 
-const warmingHeadline = (
+const formatStoppedWait = (seconds: number, kind: 'about' | 'up to'): string => {
+  if (seconds >= 60) {
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    return kind === 'about'
+      ? sprintf(__('about %d min', 'alt-context'), minutes)
+      : sprintf(__('up to %d min', 'alt-context'), minutes);
+  }
+  return kind === 'about'
+    ? sprintf(__('about %ds', 'alt-context'), seconds)
+    : sprintf(__('up to %ds', 'alt-context'), seconds);
+};
+
+const startingHeadline = (
   warmupEtaSeconds: number | null | undefined,
   startupBudgetSeconds: number | null | undefined,
 ): string => {
   const eta = positiveWaitSeconds(warmupEtaSeconds);
   if (eta !== null) {
-    return sprintf(__('Warming GPU… about %ds', 'alt-context'), eta);
+    return sprintf(__('Description Service is starting… about %ds', 'alt-context'), eta);
   }
   const budget = positiveWaitSeconds(startupBudgetSeconds);
   if (budget !== null) {
-    return sprintf(__('Warming GPU… up to %ds', 'alt-context'), budget);
+    return sprintf(__('Description Service is starting… up to %ds', 'alt-context'), budget);
   }
-  return __('Warming GPU…', 'alt-context');
+  return __('Description Service is starting…', 'alt-context');
+};
+
+const stoppedHeadline = (
+  warmupEtaSeconds: number | null | undefined,
+  startupBudgetSeconds: number | null | undefined,
+): string => {
+  const eta = positiveWaitSeconds(warmupEtaSeconds);
+  const budget = eta === null ? positiveWaitSeconds(startupBudgetSeconds) : null;
+  const wait =
+    eta !== null
+      ? formatStoppedWait(eta, 'about')
+      : budget !== null
+        ? formatStoppedWait(budget, 'up to')
+        : null;
+  if (wait === null) {
+    return __('Description Service is off — it starts when you describe', 'alt-context');
+  }
+  return sprintf(__('Description Service is off — it starts when you describe (%s)', 'alt-context'), wait);
 };
 
 const readyHeadline = (computeTier: string | null | undefined, modelId: string | null | undefined): string => {
@@ -123,7 +152,6 @@ interface GpuIdleRunInput {
 interface GpuIdlePollInput {
   gpuState: GpuState;
   snapshotFresh: boolean;
-  reason: string | null;
   isLoading: boolean;
   isError: boolean;
   hasPayload: boolean;
@@ -166,7 +194,7 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
     case GPU_STATE.STOPPED:
       return {
         displayedState,
-        headline: __('Description Service: idle (GPU starts on first run)', 'alt-context'),
+        headline: stoppedHeadline(run.warmupEtaSeconds, run.startupBudgetSeconds),
         detail: null,
         action: GPU_IDLE_STATUS_ACTION.NONE,
       };
@@ -174,7 +202,7 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
     case GPU_STATE.WARMING:
       return {
         displayedState,
-        headline: warmingHeadline(run.warmupEtaSeconds, run.startupBudgetSeconds),
+        headline: startingHeadline(run.warmupEtaSeconds, run.startupBudgetSeconds),
         detail: null,
         action: GPU_IDLE_STATUS_ACTION.NONE,
       };
@@ -189,7 +217,7 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
       return {
         displayedState,
         headline: __('Description Service is unavailable', 'alt-context'),
-        detail: poll.reason && poll.reason.trim() !== '' ? poll.reason : gpuStateNotice(GPU_STATE.DEGRADED),
+        detail: null,
         action: GPU_IDLE_STATUS_ACTION.NONE,
       };
     case GPU_STATE.UNKNOWN:
@@ -227,7 +255,6 @@ export const GpuTierStatus = ({
     {
       gpuState: status.gpuState,
       snapshotFresh: status.snapshotFresh,
-      reason: status.reason,
       isLoading: status.isLoading,
       isError: status.isError,
       hasPayload: status.data !== undefined,

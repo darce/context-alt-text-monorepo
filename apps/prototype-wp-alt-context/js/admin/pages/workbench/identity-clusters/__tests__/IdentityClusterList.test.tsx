@@ -28,6 +28,7 @@ import type { DetectedIdentity } from '../../../../api/recognition/types';
 import { IdentityClusterItem } from '../IdentityClusterItem';
 import { IdentityClusterList } from '../IdentityClusterList';
 import type { ClusterGroup } from '../types';
+import { unlabeledSuggestionBatchIds } from '../utils';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -205,7 +206,7 @@ describe('IdentityClusterList split affordance (WBUX6-W3-L6-03)', () => {
     });
   });
 
-  it('offers no Split for an identity with no cluster', async () => {
+  it('offers Find similar / Name for an identity with no cluster (no Split)', async () => {
     renderList([identity({ cluster_id: null, cluster_label: null })]);
 
     await waitFor(() => {
@@ -213,7 +214,7 @@ describe('IdentityClusterList split affordance (WBUX6-W3-L6-03)', () => {
     });
     expect(screen.queryByRole('button', { name: SPLIT_LABEL })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Unnamed person' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Find similar / Name' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Find similar / Name' })).toBeInTheDocument();
   });
 });
 
@@ -253,6 +254,56 @@ describe('IdentityClusterList ungrouped residue (GPUFLOW-2 C5)', () => {
 
     const residue = screen.getByRole('region', { name: 'Not yet grouped (3)' });
     expect(within(residue).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(residue).getAllByRole('button', { name: 'Find similar / Name' })).toHaveLength(3);
+  });
+
+  it('issues one suggestions batch for residue faces and renders an inline prompt per match', async () => {
+    vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mockResolvedValue({
+      matches: {
+        'watson-1': [{ cluster_id: 'c-1', label: 'Emma Watson', similarity: 0.9, identity_count: 2 }],
+      },
+    });
+
+    renderList([watsonFace('watson-1', 10), watsonFace('watson-2', 11)]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Emma Watson')).toBeInTheDocument();
+    });
+    expect(recognitionApi.fetchIdentitiesSuggestions).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.fetchIdentitiesSuggestions).toHaveBeenCalledWith(['watson-1', 'watson-2'], 5);
+    expect(screen.getAllByRole('button', { name: 'Yes' })).toHaveLength(1);
+  });
+
+  it('keeps unlabeled grouped anchors and residue members in the same batch id list', () => {
+    const unlabeledClustered = identity({
+      identity_id: 'clustered-unlabeled',
+      cluster_id: CLUSTER_ID,
+      cluster_label: null,
+    });
+    const residue = [
+      watsonFace('watson-1', 10),
+      watsonFace('watson-2', 11),
+    ];
+    const groups = [
+      clusterGroup({
+        key: `cluster:${CLUSTER_ID}`,
+        clusterId: CLUSTER_ID,
+        label: null,
+        members: [unlabeledClustered],
+      }),
+      clusterGroup({
+        key: 'ungrouped',
+        clusterId: null,
+        label: null,
+        members: residue,
+      }),
+    ];
+
+    expect(unlabeledSuggestionBatchIds(groups)).toEqual([
+      'clustered-unlabeled',
+      'watson-1',
+      'watson-2',
+    ]);
   });
 });
 

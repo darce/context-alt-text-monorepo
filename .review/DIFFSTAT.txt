@@ -1,3 +1,6 @@
- .../orchestration/clustering/recovery_merge.py     |   6 +-
- .../reports/GPUFLOW-2-svc-recovery-merge-review.md | 208 +++++++++++++++++++++
- 2 files changed, 211 insertions(+), 3 deletions(-)
+ .../hooks/__tests__/describeOperationStore.test.ts |  19 +++
+ .../admin/hooks/__tests__/useBulkDescribe.test.tsx |  56 +++++++++
+ .../js/admin/hooks/describeOperationStore.ts       |  11 +-
+ .../js/admin/hooks/useBulkDescribe.ts              |  48 ++++++--
+ .../GPUFLOW-2-spa-operation-store-review.md        | 137 +++++++++++++++++++++
+ 5 files changed, 260 insertions(+), 11 deletions(-)

@@ -5,15 +5,24 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
-import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
-import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
+import { registerConfig, resetConfigCache } from '../../api/config';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
+import { setActiveDescribeRunId } from '../activeDescribeRun';
+import {
+  _resetDescribeOperationStoreForTests,
+  DESCRIBE_OPERATION_CONTEXT_VERSION,
+  DESCRIBE_OPERATION_KIND,
+  describeOperationRunStorageKey,
+  type DescribeOperationContextInput,
+} from '../describeOperationStore';
+import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
+import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
+import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
@@ -110,11 +119,41 @@ const createWrapper = (): { wrapper: typeof wrapper; queryClient: QueryClient } 
   return { wrapper: scopedWrapper, queryClient };
 };
 
+const TENANT = 'tenant';
+
+const storedRunContext = (
+  overrides: Partial<DescribeOperationContextInput> = {},
+): DescribeOperationContextInput => ({
+  version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+  kind: DESCRIBE_OPERATION_KIND.RUN,
+  id: 'run-seeded',
+  startup_id: 'startup-seeded',
+  started_at: 1_700_000_000_000,
+  request: { writeAlt: false, force: false },
+  ...overrides,
+});
+
 describe('useBulkDescribe', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
+    _resetDescribeOperationStoreForTests();
+    resetConfigCache();
+    registerConfig({
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      tenant_id: TENANT,
+    });
     // Default: a terminal poll response so no test leaves the interval polling.
     fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'completed' }));
+  });
+
+  afterEach(() => {
+    setActiveDescribeRunId(null);
+    sessionStorage.clear();
+    _resetDescribeOperationStoreForTests();
+    resetConfigCache();
   });
 
   it('does not duplicate the describe-run phase table or terminal set (WBUX-6 F7 / sr-007)', () => {
@@ -127,10 +166,14 @@ describe('useBulkDescribe', () => {
     const rest = source.replace(/import(?:[\s\S]*?)from\s+['"][^'"]+['"];?/g, '');
     expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
     expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
+    expect(rest).not.toMatch(/submit\.data\?\.run_id\s*\?\?\s*cancel\.data\?\.run_id/);
   });
 
   it('submits media ids and captures the run id', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-1', status: 'pending' }));
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-1', status: 'running', phase: 'describing' }),
+    );
 
     const { result } = renderHook(() => useBulkDescribe(), { wrapper });
     result.current.submit.mutate([101, 202]);
@@ -178,14 +221,187 @@ describe('useBulkDescribe', () => {
     cancelBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-2', status: 'cancelled', phase: 'cancelled', skipped: 2, cancel_requested: true }),
     );
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-2', status: 'cancelled' }));
+    fetchBulkDescribeRunMock
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-2', status: 'running' }))
+      .mockResolvedValueOnce(runResponse({ run_id: 'run-2', status: 'cancelled', phase: 'cancelled' }));
+    setActiveDescribeRunId('run-2');
 
     const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    await waitFor(() => expect(result.current.progress.status).toBe('running'));
     result.current.cancel.mutate('run-2');
 
     await waitFor(() => expect(result.current.cancel.isSuccess).toBe(true));
     expect(cancelBulkDescribeRunMock).toHaveBeenCalledWith('run-2');
-    await waitFor(() => expect(result.current.runId).toBe('run-2'));
+    result.current.progress.retry();
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.runId).toBe('run-2');
+    expect(result.current.progress.run).toMatchObject({ run_id: 'run-2', status: 'cancelled' });
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull();
+  });
+
+  it('persists startup_id from the submit response for resume', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-persist', status: 'pending', startup_id: 'startup-from-run' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-persist', status: 'running', phase: 'warming', total: 2 }),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2]);
+
+    await waitFor(() => expect(result.current.runId).toBe('run-persist'));
+    const raw = sessionStorage.getItem(describeOperationRunStorageKey(TENANT));
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw ?? '{}')).toMatchObject({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-persist',
+      startup_id: 'startup-from-run',
+    });
+  });
+
+  it('resumes a seeded run from sessionStorage without a new submit', async () => {
+    sessionStorage.setItem(
+      describeOperationRunStorageKey(TENANT),
+      JSON.stringify(storedRunContext({ id: 'run-seeded' })),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-seeded', status: 'running', phase: 'warming', total: 2 }),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+
+    await waitFor(() => expect(result.current.runId).toBe('run-seeded'));
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledWith('run-seeded'));
+    expect(result.current.progress.isTerminal).toBe(false);
+  });
+
+  it('clears persisted storage on terminal status while retaining only the terminal summary id', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-done', status: 'pending', startup_id: 'startup-done' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-done', status: 'completed', completed: 4, total: 4, eta_seconds: 0 }),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.runId).toBe('run-done');
+    expect(result.current.progress.run).toMatchObject({ run_id: 'run-done', status: 'completed' });
+    await waitFor(() =>
+      expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull(),
+    );
+
+    submitBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-fresh', status: 'pending', startup_id: 'startup-fresh' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValueOnce(
+      runResponse({ run_id: 'run-fresh', status: 'running', phase: 'describing' }),
+    );
+    result.current.submit.mutate([5, 6]);
+
+    await waitFor(() => expect(result.current.runId).toBe('run-fresh'));
+    expect(result.current.runId).not.toBe('run-done');
+  });
+
+  it('does not expose or poll a terminal summary across tenant changes', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-tenant-a', status: 'pending' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-tenant-a', status: 'completed', completed: 2, total: 2 }),
+    );
+
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2]);
+
+    await waitFor(() => expect(result.current.runId).toBe('run-tenant-a'));
+    await waitFor(() => expect(result.current.activeRunId).toBeNull());
+    expect(result.current.progress.run?.run_id).toBe('run-tenant-a');
+    const callsBeforeTenantSwitch = fetchBulkDescribeRunMock.mock.calls.length;
+
+    registerConfig({
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      tenant_id: 'tenant-b',
+    });
+    // Create and clear a transient B context to exercise the store's existing
+    // subscription path while leaving tenant B with no active run.
+    setActiveDescribeRunId('run-tenant-b');
+    setActiveDescribeRunId(null);
+
+    await waitFor(() => {
+      expect(result.current.runId).toBeNull();
+      expect(result.current.activeRunId).toBeNull();
+      expect(result.current.progress.isPolling).toBe(false);
+    });
+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
+      'run-tenant-a',
+    ]);
+
+    registerConfig({
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      tenant_id: TENANT,
+    });
+    // Emit again after switching back. The terminal summary was cleared for B,
+    // so returning to A must not resurrect it as an active run.
+    setActiveDescribeRunId('run-tenant-a-new');
+    setActiveDescribeRunId(null);
+
+    await waitFor(() => {
+      expect(result.current.runId).toBeNull();
+      expect(result.current.activeRunId).toBeNull();
+    });
+    expect(fetchBulkDescribeRunMock.mock.calls.slice(callsBeforeTenantSwitch)).not.toContainEqual([
+      'run-tenant-a',
+    ]);
+  });
+
+  it('does not resume a completed run after remount once storage is cleared', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(runResponse({ run_id: 'run-done', status: 'pending' }));
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-done', status: 'completed', completed: 2, total: 2, eta_seconds: 0 }),
+    );
+
+    const { result, unmount } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2]);
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    unmount();
+    _resetDescribeOperationStoreForTests();
+
+    const callsBeforeReload = fetchBulkDescribeRunMock.mock.calls.length;
+    const remounted = renderHook(() => useBulkDescribe(), { wrapper });
+    expect(remounted.result.current.runId).toBeNull();
+    expect(fetchBulkDescribeRunMock.mock.calls.length).toBe(callsBeforeReload);
+    remounted.unmount();
+  });
+
+  it('keeps a pending warmup across remount so navigation does not drop the run', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-warm', status: 'pending', startup_id: 'startup-warm' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-warm', status: 'running', phase: 'warming', total: 2 }),
+    );
+
+    const { result, unmount } = renderHook(() => useBulkDescribe(), { wrapper });
+    result.current.submit.mutate([1, 2]);
+    await waitFor(() => expect(result.current.runId).toBe('run-warm'));
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).not.toBeNull();
+    unmount();
+
+    const remounted = renderHook(() => useBulkDescribe(), { wrapper });
+    expect(remounted.result.current.runId).toBe('run-warm');
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledOnce();
+    remounted.unmount();
   });
 
   it('surfaces a stranded run id in the error notice without starting a progress poll (BR-143)', async () => {
@@ -311,7 +527,7 @@ describe('useBulkDescribe', () => {
       }),
     );
     result.current.submit.mutate([1, 2]);
-    await waitFor(() => expect(result.current.runId).toBe('run-a'));
+    await waitFor(() => expect(result.current.progress.run?.run_id).toBe('run-a'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
     expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
@@ -333,7 +549,7 @@ describe('useBulkDescribe', () => {
       }),
     );
     result.current.submit.mutate([3, 4]);
-    await waitFor(() => expect(result.current.runId).toBe('run-b'));
+    await waitFor(() => expect(result.current.progress.run?.run_id).toBe('run-b'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
     expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);

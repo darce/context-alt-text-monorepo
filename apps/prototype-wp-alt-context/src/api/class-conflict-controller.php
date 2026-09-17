@@ -16,8 +16,6 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionService;
 use AltContext\Sovereign\Sync\OutboxDrain;
-use DateTimeImmutable;
-use DateTimeZone;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -372,33 +370,17 @@ class ConflictController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * D1 failure clock: first_failed_at ?? last_attempted_at ?? created_at.
-	 * Null when no stamp parses — never fabricate an age (rg-015).
+	 * D1 failure clock: use the repository-projected age_seconds value.
+	 * Null when the projection is missing or non-numeric — never fabricate an age (rg-015).
 	 *
 	 * @param array<string,mixed> $operation
 	 */
 	private function operation_age_seconds( array $operation ): ?int {
-		// OutboxQueryRepository projects this value with the persisted failure clock. Keep
-		// the local fallback for injected/legacy drains that predate that projection; the
-		// production repository path always takes the server-computed value.
-		if ( array_key_exists( 'age_seconds', $operation ) ) {
-			$age_seconds = $operation['age_seconds'];
-			if ( ! is_numeric( $age_seconds ) ) {
-				return null;
-			}
-
-			return max( 0, (int) $age_seconds );
-		}
-
-		$stamp = $this->normalize_mysql_datetime( $operation['first_failed_at'] ?? null )
-			?? $this->normalize_mysql_datetime( $operation['last_attempted_at'] ?? null )
-			?? $this->normalize_mysql_datetime( $operation['created_at'] ?? null );
-		$epoch = $this->wp_datetime_to_epoch( $stamp ?? '' );
-		if ( null === $epoch ) {
+		if ( ! array_key_exists( 'age_seconds', $operation ) || ! is_numeric( $operation['age_seconds'] ) ) {
 			return null;
 		}
 
-		return max( 0, (int) current_time( 'timestamp' ) - $epoch );
+		return max( 0, (int) $operation['age_seconds'] );
 	}
 
 	private function normalize_mysql_datetime( mixed $value ): ?string {
@@ -408,16 +390,6 @@ class ConflictController extends AbstractRecognitionProxyController {
 
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
-	}
-
-	private function wp_datetime_to_epoch( string $datetime ): ?int {
-		$normalized = trim( $datetime );
-		if ( '' === $normalized ) {
-			return null;
-		}
-
-		$parsed = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', $normalized, new DateTimeZone( 'UTC' ) );
-		return false !== $parsed ? $parsed->getTimestamp() : null;
 	}
 
 	/**

@@ -501,7 +501,7 @@ class ConflictControllerTest extends TestCase
         $this->assertNull($data['items'][0]['acknowledged_at']);
     }
 
-    public function testListFailedOutboxOperationsReturnsNullAgeWhenNoStampParses(): void
+    public function testListFailedOutboxOperationsReturnsNullAgeWhenProjectionIsMissing(): void
     {
         $GLOBALS['__ac_current_time'] = (new \DateTimeImmutable('2026-03-11 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
 
@@ -521,9 +521,9 @@ class ConflictControllerTest extends TestCase
                     'last_error_code' => 'dispatch_failed',
                     'last_error_message' => 'Remote curation replay failed.',
                     'payload' => ['cluster_uuid' => 'cluster-2'],
-                    'created_at' => 'not-a-datetime',
-                    'last_attempted_at' => '',
-                    'first_failed_at' => null,
+                    'created_at' => '2026-03-11 09:00:00',
+                    'last_attempted_at' => '2026-03-11 11:55:00',
+                    'first_failed_at' => '2026-03-11 10:00:00',
                     'acknowledged_at' => null,
                 ],];
             }
@@ -546,7 +546,7 @@ class ConflictControllerTest extends TestCase
         $data = $response->get_data();
 
         $this->assertSame('2026-03-11 12:00:00', $data['now']);
-        $this->assertNull($data['items'][0]['first_failed_at']);
+        $this->assertSame('2026-03-11 10:00:00', $data['items'][0]['first_failed_at']);
         $this->assertNull($data['items'][0]['age_seconds']);
     }
 

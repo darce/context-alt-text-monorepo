@@ -73,6 +73,12 @@ EXPECTED_PROFILE = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
 if EXPECTED_PROFILE.model_id != EXPECTED_MODEL_ID or not EXPECTED_PROFILE.model_revision:
     raise RuntimeError("gpu_qwen30b profile is missing its expected model identity pin")
 EXPECTED_REVISION = EXPECTED_PROFILE.model_revision
+EXPECTED_HEALTH_MODEL_ID = (
+    f"{EXPECTED_PROFILE.hub_repo}@{EXPECTED_REVISION}"
+    if EXPECTED_PROFILE.hub_repo
+    else EXPECTED_PROFILE.model_id
+)
+EXPECTED_HEALTH_MODEL_VERSION = EXPECTED_PROFILE.model_version
 
 TERMINAL_RUN_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled"}
 SUCCESS_RUN_STATUSES = {"completed"}
@@ -627,7 +633,13 @@ def _default_dry_gpu_states() -> list[dict[str, Any]]:
 
 @dataclass
 class DryScenario:
-    health_adapter: str = "gpu_qwen30b"
+    health_adapter: dict[str, Any] | str = field(
+        default_factory=lambda: {
+            "profile": EXPECTED_PROFILE.profile.value,
+            "model_id": EXPECTED_HEALTH_MODEL_ID,
+            "model_version": EXPECTED_HEALTH_MODEL_VERSION,
+        }
+    )
     health_statuses: list[str] = field(default_factory=lambda: ["ok"])
     service_api_key: str = "dry-service-key"
     caption: str = "A red bicycle leans beside a brick library wall."
@@ -724,11 +736,27 @@ def make_mock_transport(
                 return httpx.Response(401, json={"detail": "unauthorized"})
             health_status = scenario.health_statuses[min(health_polls, len(scenario.health_statuses) - 1)]
             health_polls += 1
+            if isinstance(scenario.health_adapter, Mapping):
+                health_adapter = dict(scenario.health_adapter)
+            else:
+                health_adapter = {
+                    "profile": scenario.health_adapter,
+                    "model_id": (
+                        EXPECTED_HEALTH_MODEL_ID
+                        if scenario.health_adapter == EXPECTED_PROFILE.profile.value
+                        else None
+                    ),
+                    "model_version": (
+                        EXPECTED_HEALTH_MODEL_VERSION
+                        if scenario.health_adapter == EXPECTED_PROFILE.profile.value
+                        else None
+                    ),
+                }
             return httpx.Response(
                 200,
                 json={
                     "status": health_status,
-                    "description_adapter": scenario.health_adapter,
+                    "description_adapter": health_adapter,
                 },
             )
         if request.method == "POST" and path == "/wp-json/acx/v1/recognition/describe/runs":
@@ -1546,14 +1574,35 @@ class _SmokeExecution:
         self.checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
 
+def _description_adapter_identity(health: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+    adapter = health.get("description_adapter")
+    if not isinstance(adapter, Mapping):
+        return None, None, None
+    return adapter.get("profile"), adapter.get("model_id"), adapter.get("model_version")
+
+
 def _record_health(run: _SmokeExecution, phase: str, health: dict[str, Any]) -> bool:
-    healthy = health.get("status") == "ok" and health.get("description_adapter") == "gpu_qwen30b"
+    profile, model_id, model_version = _description_adapter_identity(health)
+    healthy = (
+        health.get("status") == "ok"
+        and profile == EXPECTED_PROFILE.profile.value
+        and isinstance(model_id, str)
+        and bool(model_id.strip())
+        and isinstance(model_version, str)
+        and bool(model_version.strip())
+        and model_id == EXPECTED_HEALTH_MODEL_ID
+        and model_version == EXPECTED_HEALTH_MODEL_VERSION
+    )
     run.service_health_samples.append(
         {
             "elapsed_seconds": round(run.deadline.elapsed(), 3),
             "phase": phase,
             "status": str(health.get("status") or "unknown"),
-            "description_adapter": str(health.get("description_adapter") or "unknown"),
+            "description_adapter": {
+                "profile": profile,
+                "model_id": model_id,
+                "model_version": model_version,
+            },
             "healthy": healthy,
         }
     )
@@ -1575,16 +1624,22 @@ def _poll_health(run: _SmokeExecution, phase: str, *, request_deadline: Deadline
                 "elapsed_seconds": round(run.deadline.elapsed(), 3),
                 "phase": phase,
                 "status": "request_failed",
-                "description_adapter": "unknown",
+                "description_adapter": {
+                    "profile": "unknown",
+                    "model_id": None,
+                    "model_version": None,
+                },
                 "healthy": False,
                 "detail": str(exc),
             }
         )
         raise
     if not _record_health(run, phase, health):
+        profile, model_id, model_version = _description_adapter_identity(health)
         raise SmokeFailure(
             f"description service unhealthy during {phase}: "
-            f"status={health.get('status')}, adapter={health.get('description_adapter')}"
+            f"status={health.get('status')}, profile={profile!r}, "
+            f"model_id={model_id!r}, model_version={model_version!r}"
         )
 
 
@@ -1653,11 +1708,25 @@ def _preflight(run: _SmokeExecution) -> None:
             raise
         health_ok = _record_health(run, "preflight", health)
         run.check("service_auth", True, "bearer authentication accepted")
-        adapter_ok = health.get("description_adapter") == "gpu_qwen30b"
-        run.check("health_adapter_gpu_qwen30b", adapter_ok, str(health.get("description_adapter")))
+        profile, model_id, model_version = _description_adapter_identity(health)
+        adapter_ok = (
+            profile == EXPECTED_PROFILE.profile.value
+            and isinstance(model_id, str)
+            and bool(model_id.strip())
+            and isinstance(model_version, str)
+            and bool(model_version.strip())
+            and model_id == EXPECTED_HEALTH_MODEL_ID
+            and model_version == EXPECTED_HEALTH_MODEL_VERSION
+        )
+        adapter_detail = (
+            f"profile={profile!r}, model_id={model_id!r}, model_version={model_version!r}"
+        )
+        run.check("health_adapter_gpu_qwen30b", adapter_ok, adapter_detail)
         if not adapter_ok:
             run.preflight_refused = True
-            raise PreflightRefusal("description service is not using gpu_qwen30b")
+            raise PreflightRefusal(
+                f"description service adapter identity mismatch: {adapter_detail}"
+            )
         run.check("service_health_preflight", health_ok, str(health.get("status")))
         if not health_ok:
             run.preflight_refused = True
@@ -2469,7 +2538,11 @@ def _compensate_and_audit_stop(run: _SmokeExecution) -> None:
                 "elapsed_seconds": round(run.deadline.elapsed(), 3),
                 "phase": "after_stop",
                 "status": "skipped_deadline",
-                "description_adapter": "unknown",
+                "description_adapter": {
+                    "profile": "unknown",
+                    "model_id": None,
+                    "model_version": None,
+                },
                 "healthy": True,
                 "skipped": True,
             }

@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/roster-merge-candidates-response.schema.json",
+  "title": "Roster Merge Candidates Response",
+  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. similarity is the max over pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
+  "type": "object",
+  "required": ["person_id", "candidates"],
+  "additionalProperties": false,
+  "properties": {
+    "person_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Loser roster person id from the request path (acx_persons.id)."
+    },
+    "candidates": {
+      "type": "array",
+      "description": "Ranked survivor persons. Similarity DESC, then name ASC within band. SPA step 2 renders this order; step 1 MUST NOT fetch or display it.",
+      "items": {
+        "type": "object",
+        "required": ["person_id", "name", "similarity", "band", "shared_media_count"],
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Survivor roster person id."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Display name from the bound person row."
+          },
+          "similarity": {
+            "type": "number",
+            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters. Ranking cosine only; not a calibrated probability. May be negative (band none)."
+          },
+          "band": {
+            "type": "string",
+            "enum": ["strong", "possible", "none"],
+            "description": "Band of the max-similarity pair, copied from the service candidate. Same vocabulary as recognition-cluster-merge-candidates-response. Unknown values MUST be treated as none."
+          },
+          "shared_media_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Count of projected media rows shared between the loser and this survivor. From the projection, never count(payload) (rg-015)."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "person_id": 12,
+      "candidates": [
+        {
+          "person_id": 34,
+          "name": "Alice Example",
+          "similarity": 0.87,
+          "band": "strong",
+          "shared_media_count": 3
+        },
+        {
+          "person_id": 56,
+          "name": "Bob Example",
+          "similarity": 0.52,
+          "band": "possible",
+          "shared_media_count": 0
+        }
+      ]
+    }
+  ]
+}

@@ -207,6 +207,142 @@ def test_item_status_vocabulary():
     assert not item_validator.is_valid(dict(media_id=42, status="cancelled", processing_ms=None))
 
 
+ROSTER_SCHEMAS = (
+    "recognition-cluster-snapshot",
+    "roster-entry",
+    "recognition-cluster-merge-candidates-response",
+    "roster-merge-candidates-response",
+)
+
+
+def _schema(name):
+    return json.loads((ROOT / f"{name}.schema.json").read_text())
+
+
+def _draft7_without_dependent_required(schema):
+    """Draft-07 metaschema rejects dependentRequired; instance validation still uses dependencies."""
+    cloned = copy.deepcopy(schema)
+    stack = [cloned]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            node.pop("dependentRequired", None)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return cloned
+
+
+SNAPSHOT_CLUSTER = {
+    "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
+    "label": "Alice Example",
+    "curation_state": "confirmed",
+    "is_user_confirmed": True,
+    "identity_count": 2,
+    "representative_quality": 0.82,
+    "quality_components": {
+        "confidence": 0.94,
+        "bbox_area": 7680,
+        "sharpness": 42.5,
+        "occlusion_severity": 0.12,
+    },
+}
+
+ROSTER_IDENTITY = {
+    "identity_id": "id-1",
+    "media_id": 1,
+    "media_url": None,
+    "bbox": {"x": 0, "y": 0, "width": 10, "height": 10},
+    "similarity": 0.9,
+    "representative_quality": 0.82,
+    "quality_components": {
+        "confidence": 0.94,
+        "bbox_area": 7680,
+        "sharpness": 77.0,
+        "occlusion_severity": 0.12,
+    },
+}
+
+
+@pytest.mark.parametrize("name", ROSTER_SCHEMAS)
+def test_gpuflow_roster_schema_is_well_formed(name):
+    Draft7Validator.check_schema(_draft7_without_dependent_required(_schema(name)))
+
+
+def test_snapshot_sharpness_is_unbounded_variance_of_laplacian():
+    cluster_schema = _schema("recognition-cluster-snapshot")["properties"]["clusters"]["items"]
+    validator = Draft7Validator(cluster_schema)
+    payload = copy.deepcopy(SNAPSHOT_CLUSTER)
+    validator.validate(payload)
+    payload["quality_components"]["sharpness"] = 77.0
+    validator.validate(payload)
+    payload["quality_components"]["sharpness"] = -0.1
+    assert not validator.is_valid(payload)
+    payload["quality_components"]["sharpness"] = 42.5
+    payload["quality_components"]["confidence"] = 1.1
+    assert not validator.is_valid(payload)
+    sharpness = cluster_schema["properties"]["quality_components"]["properties"]["sharpness"]
+    assert sharpness.get("minimum") == 0
+    assert "maximum" not in sharpness
+
+
+def test_snapshot_quality_fields_are_co_required():
+    cluster_schema = _schema("recognition-cluster-snapshot")["properties"]["clusters"]["items"]
+    validator = Draft7Validator(cluster_schema)
+    missing_components = copy.deepcopy(SNAPSHOT_CLUSTER)
+    del missing_components["quality_components"]
+    assert not validator.is_valid(missing_components)
+    missing_quality = copy.deepcopy(SNAPSHOT_CLUSTER)
+    del missing_quality["representative_quality"]
+    assert not validator.is_valid(missing_quality)
+    omitted = copy.deepcopy(SNAPSHOT_CLUSTER)
+    del omitted["representative_quality"]
+    del omitted["quality_components"]
+    validator.validate(omitted)
+    assert cluster_schema["dependencies"] == {
+        "representative_quality": ["quality_components"],
+        "quality_components": ["representative_quality"],
+    }
+    assert cluster_schema["dependentRequired"] == cluster_schema["dependencies"]
+    assert cluster_schema["properties"]["quality_components"]["required"] == [
+        "confidence",
+        "bbox_area",
+        "sharpness",
+        "occlusion_severity",
+    ]
+
+
+def test_roster_entry_quality_fields_are_co_required_and_sharpness_unbounded():
+    identity_schema = _schema("roster-entry")["properties"]["clusters"]["items"]["properties"][
+        "representative_identity"
+    ]
+    validator = Draft7Validator(identity_schema)
+    validator.validate(ROSTER_IDENTITY)
+    missing_components = copy.deepcopy(ROSTER_IDENTITY)
+    del missing_components["quality_components"]
+    assert not validator.is_valid(missing_components)
+    missing_quality = copy.deepcopy(ROSTER_IDENTITY)
+    del missing_quality["representative_quality"]
+    assert not validator.is_valid(missing_quality)
+    sharpness = identity_schema["properties"]["quality_components"]["properties"]["sharpness"]
+    assert sharpness.get("minimum") == 0
+    assert "maximum" not in sharpness
+    assert identity_schema["dependencies"] == {
+        "representative_quality": ["quality_components"],
+        "quality_components": ["representative_quality"],
+    }
+    assert identity_schema["dependentRequired"] == identity_schema["dependencies"]
+
+
+def test_merge_candidate_schemas_document_similarity_and_self_exclusion():
+    cluster_text = json.dumps(_schema("recognition-cluster-merge-candidates-response"))
+    roster_text = json.dumps(_schema("roster-merge-candidates-response"))
+    assert "max(centroid cosine, latest pending ClusterMergeSuggestion similarity)" in cluster_text
+    assert "canonical unordered pair (min uuid, max uuid)" in cluster_text
+    assert "Person aggregation excludes candidates whose person_id equals the probe person_id" in roster_text
+    assert "the service drops them" in roster_text
+
+
 @pytest.mark.parametrize("status", ["queued", "running", "completed", "failed", "skipped"])
 def test_item_requires_explicit_processing_timing(status):
     v = validator("scene-describe-run", "item")
@@ -255,6 +391,23 @@ def test_cache_timing_consistency(name):
             "REQUIRED on every `description_service_starting` 503",
             "integer delta-seconds in [1, 120]",
             "MUST be absent on all other typed errors",
+        )),
+        ("identity-merge", (
+            "`representative_quality` normalizes sharpness before weighting",
+            "Receipts carry `tenant_id` (`NOT NULL`, RLS like sibling identity tables).",
+            "`revert_merge(tenant_id, receipt_id, path cluster id)`",
+            "merge_receipt_stale",
+            "The receipt revert is the only recognition undo surface",
+            "POST /recognition/clusters/revert-merge",
+            "revert_merge_cluster",
+            "## Retired surfaces",
+            "Restore the source cluster under its stored `source_cluster_id`",
+            "Return the restored `source_cluster_id`",
+            "max(centroid cosine, latest pending ClusterMergeSuggestion similarity)",
+            "canonical unordered pair",
+            "Person aggregation excludes candidates whose person_id equals the probe person_id",
+            "`operator_initial_choice` is required on commit",
+            "invalid_initial_choice",
         )),
     ],
 )

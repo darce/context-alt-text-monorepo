@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/roster-merge-candidates-response.schema.json",
   "title": "Roster Merge Candidates Response",
-  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. similarity is the max over pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
+  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. Person aggregation excludes candidates whose person_id equals the probe person_id; the service drops them. similarity is the max over remaining pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
   "type": "object",
   "required": ["person_id", "candidates"],
   "additionalProperties": false,
@@ -23,7 +23,7 @@
           "person_id": {
             "type": "integer",
             "minimum": 1,
-            "description": "Survivor roster person id."
+            "description": "Survivor roster person id. Person aggregation excludes candidates whose person_id equals the probe person_id; the service drops them."
           },
           "name": {
             "type": "string",
@@ -32,7 +32,7 @@
           },
           "similarity": {
             "type": "number",
-            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters. Ranking cosine only; not a calibrated probability. May be negative (band none)."
+            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters after dropping self-person_id candidates. Service similarity is max(centroid cosine, latest pending ClusterMergeSuggestion similarity) over the canonical unordered pair (min uuid, max uuid); only pending suggestions not older than the latest cluster mutation. Ranking cosine only; not a calibrated probability. May be negative (band none). The band rule applies after that max."
           },
           "band": {
             "type": "string",

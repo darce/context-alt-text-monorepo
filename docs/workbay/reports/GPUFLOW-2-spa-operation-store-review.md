@@ -67,3 +67,38 @@ FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-05","severity":"high","file_path
 - Fix: Preserve the distinction between “storage read failed” and “no value/invalid value”; only remove a key after a successful, validated read proves it is malformed or expired.
 
 Verdict: fail
+
+## Re-review r6 (6b7f51450..ad71a35cf)
+
+VERIFIED: {"GPUFLOW-2-SPAOPERATIONSTORE-R4-01":"partially_fixed","GPUFLOW-2-SPAOPERATIONSTORE-R4-02":"fixed","GPUFLOW-2-SPAOPERATIONSTORE-R5-05":"fixed"}
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-01 | partially_fixed | `describeOperationStore.ts:199-240,442-461,485-505` now distinguishes read/write/remove outcomes, marks failed writes `memory_only`, and uses a tombstone to suppress a failed delete in the current process. The tombstone is only a module-local `Set` (`:66-69`), so a failed `removeItem` still leaves the old key to be rehydrated after a real page reload; the new persistence marker is also not consumed by the active-run/UI path. |
+| GPUFLOW-2-SPAOPERATIONSTORE-R4-02 | fixed | `useBulkDescribe.ts:97-114,128-134` separates `activeRunIdRef` from `lastTerminalRunIdRef`, clears the former after terminal progress, and returns only the active id. A terminal run therefore no longer remains a non-null active `runId`, although the downstream terminal-summary regression is reported below. |
+| GPUFLOW-2-SPAOPERATIONSTORE-R5-05 | fixed | `describeOperationStore.ts:199-211,243-271,417-425` preserves `error` versus `absent` versus validated `value`; `purgeInvalid` removes only an actually read invalid/expired value and no longer performs the destructive second read. The added one-shot read-error test exercises retry without removal (`describeOperationStore.test.ts:118-135`). |
+
+### FINDINGS
+
+FINDINGS: [{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-06","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx","line":224,"summary":"Cancellation test removes terminal-cleanup coverage","evidence":"The fix changes the status returned by fetchBulkDescribeRunMock from cancelled to running while cancelBulkDescribeRunMock still returns cancelled, then asserts a non-null runId. The test no longer drives the terminal cancellation path that should clear the active run."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-07","severity":"low","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts","line":1,"summary":"The fix delta still changes paths outside the lane-owned list","evidence":"The current delta edits both hooks/__tests__/describeOperationStore.test.ts and hooks/__tests__/useBulkDescribe.test.tsx, while the spa-operation-store lane row owns only describeOperationStore.ts, activeDescribeRun.ts, and useBulkDescribe.ts. This repeats a current-delta ownership violation rather than being a change to an owned production path."},{"id":"GPUFLOW-2-SPAOPERATIONSTORE-R-08","severity":"medium","file_path":"apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts","line":113,"summary":"Terminal summary identity is private, so the workbench hides terminal review UI","evidence":"The fix feeds lastTerminalRunIdRef only into useDescribeRunProgress and returns the active-only runId. Existing MediaSelection computes hasDescribeActivity/isPanelVisible from that runId and passes it to BulkDescribeReviewLink; after terminal cleanup it becomes null, so the terminal progress panel and failed/cancelled Review & apply drafts link disappear even though progress.run still contains the terminal result."}]
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-06 — medium
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:220-232`
+- Evidence: The fix changes `fetchBulkDescribeRunMock` from a `cancelled` response to `running`, while the cancel mutation still resolves `cancelled`. The assertion consequently continues to expect a non-null active `runId` and never exercises terminal cleanup for cancellation. This weakens the proof for the exact lifecycle changed by R4-02 (CARD-06).
+- Fix: Keep the status poll terminal for this test and assert `runId` becomes null while the terminal summary remains available; add a separate non-terminal cancellation assertion if needed.
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-07 — low
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/describeOperationStore.test.ts:1`; `apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useBulkDescribe.test.tsx:1`
+- Evidence: The fix delta changes both hook test paths, but the declared spa-operation-store lane list owns only the three production hook paths. The current fix therefore still crosses the lane boundary with test edits.
+- Fix: Move the test changes to their owning lane or update the ownership manifest before merge.
+
+#### GPUFLOW-2-SPAOPERATIONSTORE-R-08 — medium
+
+- File: `apps/prototype-wp-alt-context/js/admin/hooks/useBulkDescribe.ts:97-114,142`; downstream `apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx:133-145,564,653-657,717-725`
+- Evidence: The fix keeps `lastTerminalRunIdRef` private to progress polling and returns only the active `runId`. The existing workbench uses that returned id for `hasDescribeActivity`, terminal panel visibility, GPU relevance, and `BulkDescribeReviewLink`. Once the terminal effect clears the store, the returned id is null, so the panel and review link are suppressed even though the hook still has `progress.run` for the terminal summary.
+- Impact: A completed/failed/cancelled run no longer drives active/GPU indicators as intended, but terminal outcome UI and review navigation are lost as a side effect.
+- Fix: Expose a separate terminal-summary id/state to the workbench, or base panel/review rendering on the retained terminal progress while continuing to use active `runId` only for activity and GPU relevance.
+
+Verdict: pass_with_findings

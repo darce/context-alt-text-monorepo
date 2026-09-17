@@ -92,7 +92,7 @@ class OutboxMaintenanceService {
 	}
 
 	/**
-	 * @return array{outbox:int,conflicts:int,retried:int,dead_lettered:int}|false
+	 * @return array{outbox:int,conflicts:int,retried:int,dead_lettered:int,purged_failed:int,skipped_concurrent:int}|false
 	 */
 	public function purge_terminal_rows( string $tenant_id ): array|false {
 		$normalized_tenant_id = trim( $tenant_id );
@@ -103,13 +103,15 @@ class OutboxMaintenanceService {
 		$result = $this->run_transactional(
 			function () use ( $normalized_tenant_id ): array {
 				$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id );
+				$purged_failed = $this->purge_failed_non_retryable_batch( $normalized_tenant_id );
 
 				return array(
-					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id )
-						+ $this->purge_failed_non_retryable_batch( $normalized_tenant_id ),
+					'outbox' => $this->purge_acknowledged_outbox_batch( $normalized_tenant_id ),
 					'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
 					'retried' => $reclaim['retried'],
 					'dead_lettered' => $reclaim['dead_lettered'],
+					'purged_failed' => $purged_failed,
+					'skipped_concurrent' => $reclaim['skipped_concurrent'],
 				);
 			}
 		);
@@ -122,7 +124,7 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		if ( $result['retried'] > 0 || $result['dead_lettered'] > 0 ) {
+		if ( ( $result['retried'] + $result['dead_lettered'] + $result['purged_failed'] ) > 0 ) {
 			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
 		}
 		if ( $result['retried'] > 0 ) {
@@ -133,12 +135,17 @@ class OutboxMaintenanceService {
 	}
 
 	/**
-	 * OBS-05 counters for spa-deadletter /sync/health. Age is created_at of the oldest
-	 * pending, failed, or discarded row; 0 when the tenant has none.
+	 * OBS-05 counters for spa-deadletter /sync/health.
 	 *
-	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}
+	 * `failed` is FAILED rows still eligible for automatic retry.
+	 * `dead_lettered` is FAILED rows with a terminal reason (auto_retry_exhausted
+	 * or a non-retryable dispatcher code). Both remain operator-visible/retryable.
+	 * Age is created_at of the oldest pending or failed row; 0 when the tenant has none.
+	 * Returns false when the adapter is unavailable so callers do not fabricate zeros.
+	 *
+	 * @return array{pending:int,failed:int,dead_lettered:int,oldest_age_seconds:int}|false
 	 */
-	public function get_health_counters( string $tenant_id ): array {
+	public function get_health_counters( string $tenant_id ): array|false {
 		$empty = array(
 			'pending' => 0,
 			'failed' => 0,
@@ -150,11 +157,64 @@ class OutboxMaintenanceService {
 			return $empty;
 		}
 
+		global $wpdb;
+
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return false;
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT status, last_error_code, created_at, first_failed_at, last_attempted_at FROM %i WHERE tenant_id = %s AND status IN (%s, %s) ORDER BY created_at ASC',
+				$this->table_name,
+				$normalized_tenant_id,
+				OutboxStatus::PENDING,
+				OutboxStatus::FAILED
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return false;
+		}
+
+		$pending = 0;
+		$failed = 0;
+		$dead_lettered = 0;
+		$oldest_created_at = '';
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$status = trim( (string) ( $row['status'] ?? '' ) );
+			if ( OutboxStatus::PENDING === $status ) {
+				++$pending;
+			} elseif ( OutboxStatus::FAILED === $status ) {
+				if ( $this->is_terminal_failed_row( $row ) ) {
+					++$dead_lettered;
+				} else {
+					++$failed;
+				}
+			}
+
+			$created_at = trim( (string) ( $row['created_at'] ?? '' ) );
+			if ( '' !== $created_at && ( '' === $oldest_created_at || $created_at < $oldest_created_at ) ) {
+				$oldest_created_at = $created_at;
+			}
+		}
+
 		return array(
-			'pending' => $this->query_repository->count_operations_by_status( $normalized_tenant_id, OutboxStatus::PENDING ),
-			'failed' => $this->query_repository->count_operations_by_status( $normalized_tenant_id, OutboxStatus::FAILED ),
-			'dead_lettered' => $this->query_repository->count_operations_by_status( $normalized_tenant_id, OutboxStatus::DISCARDED ),
-			'oldest_age_seconds' => $this->oldest_unresolved_age_seconds( $normalized_tenant_id ),
+			'pending' => $pending,
+			'failed' => $failed,
+			'dead_lettered' => $dead_lettered,
+			'oldest_age_seconds' => '' === $oldest_created_at
+				? 0
+				: $this->row_age_seconds( array( 'created_at' => $oldest_created_at ) ),
 		);
 	}
 
@@ -228,11 +288,16 @@ class OutboxMaintenanceService {
 	public function purge_failed_non_retryable_batch( string $tenant_id ): int {
 		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
 		$total_deleted = 0;
+		$after_id = 0;
 
 		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
-			$deleted = $this->purge_failed_non_retryable_batch_once( $tenant_id, $batch_size );
-			$total_deleted += $deleted;
-			if ( $deleted < $batch_size ) {
+			$batch = $this->purge_failed_non_retryable_batch_once( $tenant_id, $batch_size, $after_id );
+			$total_deleted += $batch['deleted'];
+			$after_id = $batch['after_id'];
+			if ( $batch['scanned'] < $batch_size ) {
+				break;
+			}
+			if ( $after_id <= 0 ) {
 				break;
 			}
 		}
@@ -241,12 +306,13 @@ class OutboxMaintenanceService {
 	}
 
 	/**
-	 * @return array{retried:int,dead_lettered:int}
+	 * @return array{retried:int,dead_lettered:int,skipped_concurrent:int}
 	 */
 	private function reclaim_retryable_failed_batch( string $tenant_id ): array {
 		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
 		$retried = 0;
 		$dead_lettered = 0;
+		$skipped_concurrent = 0;
 		$after_id = 0;
 
 		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
@@ -268,6 +334,8 @@ class OutboxMaintenanceService {
 					++$retried;
 				} elseif ( 'dead_lettered' === $outcome ) {
 					++$dead_lettered;
+				} elseif ( 'skipped_concurrent' === $outcome ) {
+					++$skipped_concurrent;
 				}
 			}
 
@@ -279,6 +347,7 @@ class OutboxMaintenanceService {
 		return array(
 			'retried' => $retried,
 			'dead_lettered' => $dead_lettered,
+			'skipped_concurrent' => $skipped_concurrent,
 		);
 	}
 
@@ -356,7 +425,10 @@ class OutboxMaintenanceService {
 		return max( 0, (int) $deleted );
 	}
 
-	private function purge_failed_non_retryable_batch_once( string $tenant_id, int $batch_size ): int {
+	/**
+	 * @return array{deleted:int,scanned:int,after_id:int}
+	 */
+	private function purge_failed_non_retryable_batch_once( string $tenant_id, int $batch_size, int $after_id ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -364,36 +436,81 @@ class OutboxMaintenanceService {
 			'' === $normalized_tenant_id
 			|| ! isset( $wpdb )
 			|| ! is_object( $wpdb )
-			|| ! method_exists( $wpdb, 'query' )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+			|| ! method_exists( $wpdb, 'delete' )
 		) {
-			return 0;
+			return array(
+				'deleted' => 0,
+				'scanned' => 0,
+				'after_id' => $after_id,
+			);
 		}
 
 		$retention_days = $this->resolve_positive_int_tunable( 'acx_sync_purge_failed_days', self::DEFAULT_FAILED_RETENTION_DAYS );
 		$day_seconds = defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400;
-		$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * $day_seconds ) );
+		$cutoff_epoch = (int) current_time( 'timestamp' ) - ( $retention_days * $day_seconds );
 		$codes = self::NON_RETRYABLE_ERROR_CODES;
 		$placeholders = implode( ', ', array_fill( 0, count( $codes ), '%s' ) );
 		$prepare_args = array_merge(
-			array( $this->table_name, $normalized_tenant_id, OutboxStatus::FAILED ),
+			array( $this->table_name, $normalized_tenant_id, OutboxStatus::FAILED, max( 0, $after_id ) ),
 			$codes,
-			array( $cutoff, $batch_size )
+			array( max( 1, $batch_size ) )
 		);
 
-		$deleted = $wpdb->query(
+		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"DELETE FROM %i
-				WHERE tenant_id = %s
-					AND status = %s
-					AND last_error_code IN ({$placeholders})
-					AND COALESCE(first_failed_at, last_attempted_at, created_at) < %s
-				ORDER BY id ASC
-				LIMIT %d",
+				"SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code FROM %i WHERE tenant_id = %s AND status = %s AND id > %d AND last_error_code IN ({$placeholders}) ORDER BY id ASC LIMIT %d",
 				...$prepare_args
-			)
+			),
+			ARRAY_A
 		);
+		if ( ! is_array( $rows ) ) {
+			return array(
+				'deleted' => 0,
+				'scanned' => 0,
+				'after_id' => $after_id,
+			);
+		}
 
-		return max( 0, (int) $deleted );
+		$deleted = 0;
+		$scanned = 0;
+		$last_id = $after_id;
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			++$scanned;
+			$last_id = max( $last_id, (int) ( $row['id'] ?? 0 ) );
+			if ( ! $this->failed_row_is_past_retention( $row, $cutoff_epoch ) ) {
+				continue;
+			}
+
+			$outbox_id = (int) ( $row['id'] ?? 0 );
+			if ( $outbox_id <= 0 ) {
+				continue;
+			}
+
+			$removed = $wpdb->delete(
+				$this->table_name,
+				array(
+					'id' => $outbox_id,
+					'tenant_id' => $normalized_tenant_id,
+					'status' => OutboxStatus::FAILED,
+				),
+				array( '%d', '%s', '%s' )
+			);
+			if ( is_numeric( $removed ) && (int) $removed > 0 ) {
+				++$deleted;
+			}
+		}
+
+		return array(
+			'deleted' => $deleted,
+			'scanned' => $scanned,
+			'after_id' => $last_id,
+		);
 	}
 
 	/**
@@ -452,7 +569,12 @@ class OutboxMaintenanceService {
 		$max_auto_attempts = $this->resolve_positive_int_tunable( 'acx_sync_max_auto_attempts', self::DEFAULT_MAX_AUTO_ATTEMPTS );
 
 		if ( $auto_attempts >= $max_auto_attempts ) {
-			return $this->dead_letter_failed_row( $outbox_id, $tenant_id, $row ) ? 'dead_lettered' : 'skipped';
+			$updated = $this->dead_letter_failed_row( $outbox_id, $tenant_id, $row, $auto_attempts );
+			if ( false === $updated ) {
+				return 'skipped';
+			}
+
+			return $updated > 0 ? 'dead_lettered' : 'skipped_concurrent';
 		}
 
 		$next_auto_attempts = $auto_attempts + 1;
@@ -478,32 +600,43 @@ class OutboxMaintenanceService {
 			),
 			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
+		if ( false === $updated ) {
+			return 'skipped';
+		}
 
-		return $updated ? 'retried' : 'skipped';
+		return $updated > 0 ? 'retried' : 'skipped_concurrent';
 	}
 
 	/**
+	 * Exhausted automatic retries stay FAILED (contract dead-letter). DISCARDED is
+	 * reserved for the operator discard transition.
+	 *
 	 * @param array<string,mixed> $row
+	 * @return int|false Affected rows, or false on SQL failure.
 	 */
-	private function dead_letter_failed_row( int $outbox_id, string $tenant_id, array $row ): bool {
+	private function dead_letter_failed_row( int $outbox_id, string $tenant_id, array $row, int $auto_attempts ): int|false {
 		$age_seconds = $this->row_age_seconds( $row );
+		$max_auto_attempts = $this->resolve_positive_int_tunable( 'acx_sync_max_auto_attempts', self::DEFAULT_MAX_AUTO_ATTEMPTS );
 		$message = sprintf(
 			'Dead-lettered after %d auto-retry attempts; age %d seconds.',
-			$this->resolve_positive_int_tunable( 'acx_sync_max_auto_attempts', self::DEFAULT_MAX_AUTO_ATTEMPTS ),
+			$max_auto_attempts,
 			$age_seconds
 		);
+		$exhausted_at = gmdate( 'Y-m-d H:i:s', (int) current_time( 'timestamp' ) );
+		$attempt_count = max( (int) ( $row['attempts'] ?? 0 ), $auto_attempts, $max_auto_attempts );
 
 		return $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
 			OutboxStatus::FAILED,
 			array(
-				'status' => OutboxStatus::DISCARDED,
 				'last_error_code' => self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
 				'last_error_message' => $message,
+				'attempts' => $attempt_count,
+				'last_attempted_at' => $exhausted_at,
 				'next_attempt_at' => null,
 			),
-			array( '%s', '%s', '%s', '%s' )
+			array( '%s', '%s', '%d', '%s', '%s' )
 		);
 	}
 
@@ -522,7 +655,38 @@ class OutboxMaintenanceService {
 			return true;
 		}
 
+		if ( self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED === $normalized ) {
+			return false;
+		}
+
 		return ! in_array( $normalized, self::NON_RETRYABLE_ERROR_CODES, true );
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function is_terminal_failed_row( array $row ): bool {
+		return ! $this->is_retryable_error_code( $row['last_error_code'] ?? null );
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function failed_row_is_past_retention( array $row, int $cutoff_epoch ): bool {
+		$stamp = trim( (string) ( $row['first_failed_at'] ?? '' ) );
+		if ( '' === $stamp ) {
+			$stamp = trim( (string) ( $row['last_attempted_at'] ?? '' ) );
+		}
+		if ( '' === $stamp ) {
+			$stamp = trim( (string) ( $row['created_at'] ?? '' ) );
+		}
+
+		$epoch = $this->wp_datetime_to_epoch( $stamp );
+		if ( null === $epoch ) {
+			return false;
+		}
+
+		return $epoch < $cutoff_epoch;
 	}
 
 	/**
@@ -560,36 +724,6 @@ class OutboxMaintenanceService {
 		}
 
 		return max( 0, (int) current_time( 'timestamp' ) - $epoch );
-	}
-
-	private function oldest_unresolved_age_seconds( string $tenant_id ): int {
-		global $wpdb;
-
-		if (
-			! isset( $wpdb )
-			|| ! is_object( $wpdb )
-			|| ! method_exists( $wpdb, 'prepare' )
-			|| ! method_exists( $wpdb, 'get_row' )
-		) {
-			return 0;
-		}
-
-		$row = $wpdb->get_row(
-			$wpdb->prepare(
-				'SELECT created_at FROM %i WHERE tenant_id = %s AND status IN (%s, %s, %s) ORDER BY created_at ASC LIMIT 1',
-				$this->table_name,
-				$tenant_id,
-				OutboxStatus::PENDING,
-				OutboxStatus::FAILED,
-				OutboxStatus::DISCARDED
-			),
-			ARRAY_A
-		);
-		if ( ! is_array( $row ) ) {
-			return 0;
-		}
-
-		return $this->row_age_seconds( $row );
 	}
 
 	private function wp_datetime_to_epoch( string $datetime ): ?int {
@@ -818,10 +952,14 @@ class OutboxMaintenanceService {
 	}
 
 	/**
+	 * CAS-guarded status write. Success is an affected-row count > 0.
+	 * 0 is a concurrent miss; false is a SQL/adapter failure.
+	 *
 	 * @param array<string,mixed> $data
 	 * @param string[] $format
+	 * @return int|false
 	 */
-	private function update_operation_status( int $outbox_id, string $tenant_id, string $expected_status, array $data, array $format ): bool {
+	private function update_operation_status( int $outbox_id, string $tenant_id, string $expected_status, array $data, array $format ): int|false {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -847,7 +985,10 @@ class OutboxMaintenanceService {
 			$format,
 			array( '%d', '%s', '%s' )
 		);
+		if ( false === $updated ) {
+			return false;
+		}
 
-		return false !== $updated;
+		return max( 0, (int) $updated );
 	}
 }

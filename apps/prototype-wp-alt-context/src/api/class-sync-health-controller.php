@@ -10,13 +10,13 @@ require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-reposito
 require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-conflict-repository.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-query-repository.php';
-require_once __DIR__ . '/../sovereign/sync/class-outbox-status.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-maintenance-service.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\ConflictRepository;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
-use AltContext\Sovereign\Sync\OutboxStatus;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -24,6 +24,7 @@ use WP_REST_Response;
 use function apply_filters;
 use function get_transient;
 use function is_array;
+use function is_int;
 use function max;
 
 class SyncHealthController extends AbstractRecognitionProxyController {
@@ -31,16 +32,19 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private OutboxQueryRepository $outbox_query_repository;
 	private ConflictRepository $conflict_repository;
+	private OutboxMaintenanceService $outbox_maintenance_service;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?OutboxQueryRepository $outbox_query_repository = null,
 		?RecognitionEndpointResolver $endpoint_resolver = null,
-		?ConflictRepository $conflict_repository = null
+		?ConflictRepository $conflict_repository = null,
+		?OutboxMaintenanceService $outbox_maintenance_service = null
 	) {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->outbox_query_repository = $outbox_query_repository ?? new OutboxQueryRepository();
 		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
+		$this->outbox_maintenance_service = $outbox_maintenance_service ?? new OutboxMaintenanceService( $this->outbox_query_repository );
 		if ( null !== $endpoint_resolver ) {
 			$this->set_endpoint_resolver( $endpoint_resolver );
 		}
@@ -73,9 +77,8 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 					'base_url' => $base_url,
 					'opened_at' => null,
 				),
-				'outbox' => array(
-					'pending' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::PENDING ),
-					'failed' => $this->outbox_query_repository->count_operations_by_status( $tenant_id, OutboxStatus::FAILED ),
+				'outbox' => $this->project_outbox_health_counters(
+					$this->outbox_maintenance_service->get_health_counters( $tenant_id )
 				),
 				'conflicts' => array(
 					'open' => $open_conflicts,
@@ -91,6 +94,40 @@ class SyncHealthController extends AbstractRecognitionProxyController {
 				'warnings' => $this->build_warnings( $tenant_id, $open_conflicts ),
 			),
 			200
+		);
+	}
+
+	/**
+	 * Project OBS-05 outbox counters. Missing/non-int keys or a failed read
+	 * become all-null (rg-015: do not fabricate zeros).
+	 *
+	 * @param mixed $counters
+	 * @return array{pending:?int,failed:?int,dead_lettered:?int,oldest_age_seconds:?int}
+	 */
+	private function project_outbox_health_counters( mixed $counters ): array {
+		$unavailable = array(
+			'pending' => null,
+			'failed' => null,
+			'dead_lettered' => null,
+			'oldest_age_seconds' => null,
+		);
+		if ( ! is_array( $counters ) ) {
+			return $unavailable;
+		}
+
+		$pending = $counters['pending'] ?? null;
+		$failed = $counters['failed'] ?? null;
+		$dead_lettered = $counters['dead_lettered'] ?? null;
+		$oldest_age_seconds = $counters['oldest_age_seconds'] ?? null;
+		if ( ! is_int( $pending ) || ! is_int( $failed ) || ! is_int( $dead_lettered ) || ! is_int( $oldest_age_seconds ) ) {
+			return $unavailable;
+		}
+
+		return array(
+			'pending' => $pending,
+			'failed' => $failed,
+			'dead_lettered' => $dead_lettered,
+			'oldest_age_seconds' => $oldest_age_seconds,
 		);
 	}
 

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from db.models.base_imports import (
     _DB_SETTINGS,
+    ARRAY,
+    JSON,
+    JSONB,
     TIMESTAMP,
     UUID,
     Base,
@@ -36,6 +41,47 @@ if TYPE_CHECKING:
 def _postgres_only_check(sqltext: str, *, name: str) -> CheckConstraint:
     """Keep PostgreSQL-only vector checks out of SQLite test metadata."""
     return CheckConstraint(sqltext, name=name).ddl_if(dialect="postgresql")
+
+
+def _jsonb_compatible() -> JSONB:
+    """JSONB on Postgres, JSON on sqlite (test) — a fresh type per column."""
+    return JSONB().with_variant(JSON(), "sqlite")
+
+
+def _uuid_array_compatible() -> ARRAY:
+    """UUID[] on Postgres, JSON on sqlite (test) — a fresh type per column."""
+    return ARRAY(UUID(as_uuid=True)).with_variant(JSON(), "sqlite")
+
+
+class ClusterMergeKind(StrEnum):
+    """Vocabulary for cluster_merge_receipts.kind (sr-007)."""
+
+    AUTO = "auto"
+    OPERATOR = "operator"
+
+
+class ReceiptNotTopError(ValueError):
+    """LIFO revert refused: receipt is not the newest unreverted merge (API-05)."""
+
+    code = "receipt_not_top"
+
+    def __init__(self, receipt_id: uuid.UUID) -> None:
+        self.receipt_id = receipt_id
+        super().__init__("Receipt is not the top unreverted merge")
+
+
+def require_top_unreverted_receipt(
+    receipts: Sequence[ClusterMergeReceipt],
+    receipt_id: uuid.UUID,
+) -> ClusterMergeReceipt:
+    """Return the receipt only when it is the survivor's newest unreverted row."""
+    unreverted = [receipt for receipt in receipts if receipt.reverted_at is None]
+    if not unreverted:
+        raise ReceiptNotTopError(receipt_id)
+    top = max(unreverted, key=lambda receipt: receipt.created_at)
+    if top.receipt_id != receipt_id:
+        raise ReceiptNotTopError(receipt_id)
+    return top
 
 
 class MediaIdentity(Base):
@@ -151,6 +197,12 @@ class IdentityCluster(Base):
     representatives: Mapped[list[IdentityClusterRepresentative]] = relationship(
         back_populates="cluster", cascade="all, delete-orphan"
     )
+    merge_receipts: Mapped[list[ClusterMergeReceipt]] = relationship(
+        back_populates="survivor_cluster",
+        cascade="all, delete-orphan",
+        order_by="ClusterMergeReceipt.created_at.desc()",
+        foreign_keys="ClusterMergeReceipt.survivor_cluster_id",
+    )
     # Relationship to materialized view for centroid loading
     centroid_data: Mapped[ClusterCentroid | None] = relationship(
         "ClusterCentroid",
@@ -259,6 +311,7 @@ class IdentityClusterRepresentative(Base):
     pose_yaw: Mapped[float | None] = mapped_column(Float)
     pose_roll: Mapped[float | None] = mapped_column(Float)
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    quality_components: Mapped[dict[str, float] | None] = mapped_column(_jsonb_compatible(), nullable=True)
     diversity_score: Mapped[float | None] = mapped_column(Float)
     is_user_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_provisional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
@@ -278,6 +331,56 @@ class IdentityClusterRepresentative(Base):
             name="cluster_rep_embedding_unit_norm",
         ),
     )
+
+
+class ClusterMergeReceipt(Base):
+    """One automatic or operator cluster merge; LIFO undo stack per survivor."""
+
+    __tablename__ = "cluster_merge_receipts"
+
+    receipt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    survivor_cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+    # Historical id only: merge deletes the source cluster, so this is not an FK.
+    source_cluster_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    moved_identity_ids: Mapped[list[uuid.UUID]] = mapped_column(_uuid_array_compatible(), nullable=False)
+    rule_version: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    reverted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    tenant: Mapped[Tenant] = relationship()
+    survivor_cluster: Mapped[IdentityCluster] = relationship(
+        back_populates="merge_receipts",
+        foreign_keys=[survivor_cluster_id],
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('auto', 'operator')",
+            name="cluster_merge_receipt_valid_kind",
+        ),
+        Index("idx_cluster_merge_receipts_tenant", "tenant_id"),
+        Index("idx_cluster_merge_receipts_survivor", "survivor_cluster_id", "created_at"),
+    )
+
+    def revert(self, *, now: datetime, sibling_receipts: Sequence[ClusterMergeReceipt] | None = None) -> None:
+        """Mark reverted only when this row is the survivor's newest unreverted receipt."""
+        stack: Sequence[ClusterMergeReceipt]
+        if sibling_receipts is not None:
+            stack = sibling_receipts
+        elif self.survivor_cluster is not None:
+            stack = self.survivor_cluster.merge_receipts
+        else:
+            stack = (self,)
+        require_top_unreverted_receipt(stack, self.receipt_id)
+        self.reverted_at = now
 
 
 class IdentityMember(Base):
@@ -336,6 +439,10 @@ __all__ = [
     "CurationReplayRecord",
     "ClusterCentroid",
     "IdentityClusterRepresentative",
+    "ClusterMergeKind",
+    "ClusterMergeReceipt",
+    "ReceiptNotTopError",
+    "require_top_unreverted_receipt",
     "IdentityMember",
     "IdentityNameSuppression",
 ]

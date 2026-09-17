@@ -819,4 +819,12 @@ async def run_singleton_hac_refinement(
                 exc_info=True,
             )
 
+    from recognition.application.orchestration.clustering.recovery_merge import run_recovery_merge
+
+    await run_recovery_merge(
+        tenant_id=tenant_id,
+        assignment_writer=assignment_writer,
+        merge_suggestion_service=merge_suggestion_service,
+    )
+
     return merged_clusters

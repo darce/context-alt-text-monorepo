@@ -750,7 +750,13 @@ class _SessionReceiptStore:
         return int(result.rowcount or 0)
 
 
-async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now: datetime) -> int:
+async def _persist_reverted_receipt_blocks(
+    *,
+    session: Any,
+    tenant_id: str,
+    now: datetime,
+    settings: ClusteringSettings | None = None,
+) -> int:
     """Carry reverted receipts into durable identity-to-cluster blocks.
 
     Receipts are intentionally purged later in the recovery run, so this
@@ -810,6 +816,8 @@ async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now:
     }
 
     persisted = 0
+    retention_days = (settings or ClusteringSettings()).revert_block_retention_window_days
+    expires_at = now + timedelta(days=retention_days)
     for survivor_id, receipt_identity_ids in receipt_pairs.items():
         for identity_id in receipt_identity_ids & existing_identity_ids:
             block = existing_blocks.get((identity_id, survivor_id))
@@ -821,7 +829,7 @@ async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now:
                         identity_id=identity_id,
                         blocked_cluster_id=survivor_id,
                         reason=RECOVERY_REVERT_BLOCK_REASON,
-                        expires_at=None,
+                        expires_at=expires_at,
                     )
                 )
                 persisted += 1
@@ -839,7 +847,7 @@ async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now:
                     identity_id=identity_id,
                     blocked_cluster_id=survivor_id,
                     reason=RECOVERY_REVERT_BLOCK_REASON,
-                    expires_at=None,
+                    expires_at=expires_at,
                 )
             )
             persisted += 1
@@ -1129,7 +1137,12 @@ async def run_recovery_merge(
     if store is None:
         store = _SessionReceiptStore(session, tenant_id) if session is not None else InMemoryReceiptStore()
     if session is not None:
-        await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=clock)
+        await _persist_reverted_receipt_blocks(
+            session=session,
+            tenant_id=tenant_id,
+            now=clock,
+            settings=clustering,
+        )
 
     if runtime_binding is None:
         logger.warning(

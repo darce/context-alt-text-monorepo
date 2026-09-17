@@ -578,6 +578,64 @@ async def test_active_block_only_rejects_its_destination_and_expired_block_is_ig
 
 
 @pytest.mark.asyncio
+async def test_revert_block_window_blocks_inside_and_allows_reproposal_after_expiry() -> None:
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    tenant_id = str(uuid4())
+    destination_id = str(uuid4())
+    residual_id = str(uuid4())
+    residual_identity_id = str(uuid4())
+    settings = ClusteringSettings(
+        recovery_merge_enabled=True,
+        revert_block_retention_window_days=1,
+    )
+    destination, residual = _recovery_clusters_for_revert(
+        destination_id,
+        residual_id,
+        residual_identity_id,
+    )
+    store = InMemoryReceiptStore()
+    await store.add_block(
+        tenant_id=tenant_id,
+        identity_id=residual_identity_id,
+        blocked_cluster_id=destination_id,
+        expires_at=now + timedelta(days=settings.revert_block_retention_window_days),
+    )
+
+    blocked = await run_recovery_merge_on_clusters(
+        tenant_id=tenant_id,
+        clusters=[destination, residual],
+        settings=settings,
+        policy=_accepted_policy(),
+        runtime_binding=_binding(),
+        receipt_store=store,
+        now=now + timedelta(hours=23),
+    )
+    assert blocked.merged == 0
+    assert blocked.abstentions[0].failing_clause is RecoveryAbstainClause.REVERTED_MERGE_EXCLUDED
+    assert await store.active_block_pairs(
+        [residual_identity_id],
+        tenant_id=tenant_id,
+        now=now + timedelta(hours=23),
+    ) == {(residual_identity_id, destination_id)}
+
+    expired = await run_recovery_merge_on_clusters(
+        tenant_id=tenant_id,
+        clusters=[destination, residual],
+        settings=settings,
+        policy=_accepted_policy(),
+        runtime_binding=_binding(),
+        receipt_store=store,
+        now=now + timedelta(days=1),
+    )
+    assert await store.active_block_pairs(
+        [residual_identity_id],
+        tenant_id=tenant_id,
+        now=now + timedelta(days=1),
+    ) == set()
+    assert expired.merged == 1
+
+
+@pytest.mark.asyncio
 async def test_singleton_hac_runs_recovery_once_for_each_early_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.orchestration.clustering import recovery_merge
 
@@ -1230,10 +1288,14 @@ async def test_durable_run_materializes_revert_block_before_planning_and_purges_
         AsyncMock(return_value=persisted_fields),
     )
 
+    settings = ClusteringSettings(
+        recovery_merge_enabled=True,
+        revert_block_retention_window_days=3,
+    )
     result = await run_recovery_merge(
         tenant_id=tenant_id,
         assignment_writer=assignment_writer,
-        settings=_enabled_settings(),
+        settings=settings,
         policy=_accepted_policy(),
         runtime_binding=_binding(),
         now=now,
@@ -1247,7 +1309,7 @@ async def test_durable_run_materializes_revert_block_before_planning_and_purges_
     assert str(added_blocks[0].identity_id) == blocked_identity_id
     assert str(added_blocks[0].blocked_cluster_id) == destination_id
     assert added_blocks[0].reason == RECOVERY_REVERT_BLOCK_REASON
-    assert added_blocks[0].expires_at is None
+    assert added_blocks[0].expires_at == now + timedelta(days=3)
     execute_labels = [value for kind, value in session.events if kind == "execute"]
     assert execute_labels[:3] == ["reverted_receipts", "identity_rows", "existing_blocks"]
     assert execute_labels[-1] == "purge"
@@ -1333,14 +1395,20 @@ async def test_reverted_receipt_replaces_expired_block_with_recovery_block() -> 
         now=now,
     )
 
-    persisted = await _persist_reverted_receipt_blocks(session=session, tenant_id=tenant_id, now=now)
+    settings = ClusteringSettings(revert_block_retention_window_days=4)
+    persisted = await _persist_reverted_receipt_blocks(
+        session=session,
+        tenant_id=tenant_id,
+        now=now,
+        settings=settings,
+    )
 
     assert persisted == 1
     assert [model for kind, model in session.events if kind == "delete"] == [block]
     added_blocks = [model for kind, model in session.events if kind == "add"]
     assert len(added_blocks) == 1
     assert added_blocks[0].reason == RECOVERY_REVERT_BLOCK_REASON
-    assert added_blocks[0].expires_at is None
+    assert added_blocks[0].expires_at == now + timedelta(days=4)
 
 
 @pytest.mark.asyncio

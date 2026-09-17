@@ -6,7 +6,9 @@
   },
   "outbox": {
     "pending": 5,
-    "failed": 2
+    "failed": 2,
+    "dead_lettered": 1,
+    "oldest_age_seconds": 7200
   },
   "conflicts": {
     "open": 3

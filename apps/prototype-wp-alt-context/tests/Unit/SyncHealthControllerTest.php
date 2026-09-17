@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Api\RecognitionEndpointResolver;
 use AltContext\Api\SyncHealthController;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -77,9 +78,37 @@ class SyncHealthControllerTest extends TestCase
             }
         };
 
+        $maintenance = new class($fixture) extends OutboxMaintenanceService {
+            /** @var array<string,mixed> */
+            private array $fixture;
+
+            /**
+             * @param array<string,mixed> $fixture
+             */
+            public function __construct(array $fixture)
+            {
+                $this->fixture = $fixture;
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                $outbox = $this->fixture['outbox'] ?? [];
+                if (!is_array($outbox)) {
+                    return false;
+                }
+
+                return [
+                    'pending' => (int) ($outbox['pending'] ?? 0),
+                    'failed' => (int) ($outbox['failed'] ?? 0),
+                    'dead_lettered' => (int) ($outbox['dead_lettered'] ?? 0),
+                    'oldest_age_seconds' => (int) ($outbox['oldest_age_seconds'] ?? 0),
+                ];
+            }
+        };
+
         $this->setOption('acx_recognition_source', 'service');
         $this->setOption('acx_recognition_url', $baseUrl);
-        $controller = new SyncHealthController($syncRepo, $outboxRepo, new RecognitionEndpointResolver());
+        $controller = new SyncHealthController($syncRepo, $outboxRepo, new RecognitionEndpointResolver(), null, $maintenance);
         $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
@@ -88,10 +117,73 @@ class SyncHealthControllerTest extends TestCase
 
         $this->assertSame($fixture['breaker'], $data['breaker']);
         $this->assertSame($fixture['outbox'], $data['outbox']);
+        $this->assertArrayHasKey('pending', $data['outbox']);
+        $this->assertArrayHasKey('failed', $data['outbox']);
+        $this->assertArrayHasKey('dead_lettered', $data['outbox']);
+        $this->assertArrayHasKey('oldest_age_seconds', $data['outbox']);
         $this->assertSame($fixture['conflicts'], $data['conflicts']);
         $this->assertSame($fixture['replays'], $data['replays']);
         $this->assertSame($fixture['last_pull'], $data['last_pull']);
         $this->assertSame($fixture['warnings'], $data['warnings']);
+    }
+
+    public function testGetSyncHealthNullsOutboxCountersWhenMaintenanceReadFails(): void
+    {
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return false;
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertSame(
+            [
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+            ],
+            $data['outbox']
+        );
+    }
+
+    public function testGetSyncHealthDoesNotFabricateOutboxCountersFromPartialPayload(): void
+    {
+        $maintenance = new class() extends OutboxMaintenanceService {
+            public function __construct()
+            {
+            }
+
+            public function get_health_counters(string $tenant_id): array|false
+            {
+                return [
+                    'pending' => 9,
+                    'failed' => 2,
+                ];
+            }
+        };
+
+        $controller = new SyncHealthController(new NullSyncStateRepository(), null, null, null, $maintenance);
+        $response = $controller->get_sync_health(new WP_REST_Request('GET', '/acx/v1/recognition/sync/health'));
+        $data = $response->get_data();
+
+        $this->assertSame(
+            [
+                'pending' => null,
+                'failed' => null,
+                'dead_lettered' => null,
+                'oldest_age_seconds' => null,
+            ],
+            $data['outbox']
+        );
     }
 
     public function testGetSyncHealthIncludesConflictThresholdWarning(): void

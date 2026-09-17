@@ -64,21 +64,14 @@ if str(SERVICE_ROOT) not in sys.path:
 _profiles = import_module("scene.config.profiles")
 _settings = import_module("scene.config.settings")
 _describe_load = import_module("scene.application.describe_load")
+_description_domain = import_module("scene.domain.description")
 DescriptionProfile = _profiles.DescriptionProfile
+DescriptionAdapterKind = _description_domain.DescriptionAdapterKind
+ProfileSpec = _profiles.ProfileSpec
 get_profile_spec = _profiles.get_profile_spec
 DescribeRunItemResponse = import_module("scene.interface_adapters.http.schemas.responses").DescribeRunItemResponse
 
-EXPECTED_MODEL_ID = "Qwen3-VL-30B-A3B-Instruct"
-EXPECTED_PROFILE = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
-if EXPECTED_PROFILE.model_id != EXPECTED_MODEL_ID or not EXPECTED_PROFILE.model_revision:
-    raise RuntimeError("gpu_qwen30b profile is missing its expected model identity pin")
-EXPECTED_REVISION = EXPECTED_PROFILE.model_revision
-EXPECTED_HEALTH_MODEL_ID = (
-    f"{EXPECTED_PROFILE.hub_repo}@{EXPECTED_REVISION}"
-    if EXPECTED_PROFILE.hub_repo
-    else EXPECTED_PROFILE.model_id
-)
-EXPECTED_HEALTH_MODEL_VERSION = EXPECTED_PROFILE.model_version
+DEFAULT_EXPECTED_PROFILE_NAME = DescriptionProfile.GPU_QWEN30B.value
 
 TERMINAL_RUN_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled"}
 SUCCESS_RUN_STATUSES = {"completed"}
@@ -143,6 +136,56 @@ class SmokeFailure(RuntimeError):  # noqa: N818 - public smoke contract name
 
 class PreflightRefusal(RuntimeError):  # noqa: N818 - public smoke contract name
     """The operator or environment did not satisfy the live safety gate."""
+
+
+@dataclass(frozen=True)
+class _ExpectedProfile:
+    profile: DescriptionProfile
+    spec: ProfileSpec
+    health_model_id: str
+    health_model_version: str
+
+
+def _health_model_id(spec: ProfileSpec) -> str | None:
+    """Return the health identity stamped by the description service."""
+
+    if spec.hub_repo:
+        return f"{spec.hub_repo}@{spec.model_revision}" if spec.model_revision else None
+    return spec.model_id
+
+
+def _resolve_expected_profile(value: object) -> _ExpectedProfile:
+    """Validate and resolve the GPU profile this smoke run is proving."""
+
+    raw_value = value.value if isinstance(value, DescriptionProfile) else str(value)
+    try:
+        profile = DescriptionProfile(raw_value)
+    except (TypeError, ValueError) as exc:
+        choices = ", ".join(profile.value for profile in DescriptionProfile)
+        raise PreflightRefusal(
+            f"invalid expected description profile {raw_value!r}; choose one of: {choices}"
+        ) from exc
+    spec = get_profile_spec(profile)
+    if spec.adapter_kind is not DescriptionAdapterKind.GPU:
+        raise PreflightRefusal(
+            f"expected description profile {profile.value!r} is not a GPU adapter; "
+            "gpu_burst_smoke requires a GPU profile"
+        )
+    if not spec.model_revision:
+        raise PreflightRefusal(
+            f"expected GPU description profile {profile.value!r} has no pinned model revision"
+        )
+    health_model_id = _health_model_id(spec)
+    if not health_model_id:
+        raise PreflightRefusal(
+            f"expected GPU description profile {profile.value!r} has no model identity"
+        )
+    return _ExpectedProfile(
+        profile=profile,
+        spec=spec,
+        health_model_id=health_model_id,
+        health_model_version=spec.model_version,
+    )
 
 
 class SmokeTerminated(KeyboardInterrupt):
@@ -633,19 +676,14 @@ def _default_dry_gpu_states() -> list[dict[str, Any]]:
 
 @dataclass
 class DryScenario:
-    health_adapter: dict[str, Any] | str = field(
-        default_factory=lambda: {
-            "profile": EXPECTED_PROFILE.profile.value,
-            "model_id": EXPECTED_HEALTH_MODEL_ID,
-            "model_version": EXPECTED_HEALTH_MODEL_VERSION,
-        }
-    )
+    profile: DescriptionProfile | str | None = None
+    health_adapter: dict[str, Any] | str | None = None
     health_statuses: list[str] = field(default_factory=lambda: ["ok"])
     service_api_key: str = "dry-service-key"
     caption: str = "A red bicycle leans beside a brick library wall."
     alt_text_draft: str = "Red bicycle beside a brick library wall"
-    model_id: str = EXPECTED_PROFILE.hub_repo
-    revision: str = EXPECTED_REVISION
+    model_id: str | None = None
+    revision: str | None = None
     run_statuses: list[str] = field(default_factory=lambda: ["running", "completed"])
     returned_media_ids: list[int] = field(default_factory=lambda: [101])
     item_statuses: list[str] = field(default_factory=lambda: ["queued", "running", "running", "completed"])
@@ -677,6 +715,37 @@ class DryScenario:
     )
     submitted_at: datetime | None = field(default=None, init=False)
     transport_counts: dict[str, int] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        profile_name = self.profile
+        if profile_name is None:
+            profile_name = (
+                self.health_adapter
+                if isinstance(self.health_adapter, str)
+                else os.environ.get("ACX_DESCRIPTION_ADAPTER", DEFAULT_EXPECTED_PROFILE_NAME)
+            )
+        try:
+            profile = DescriptionProfile(profile_name)
+        except (TypeError, ValueError):
+            # Keep the fixture constructible so an invalid deployment value is
+            # refused by the run's preflight, rather than by fixture setup.
+            profile = DescriptionProfile(DEFAULT_EXPECTED_PROFILE_NAME)
+        spec = get_profile_spec(profile)
+        self.profile = profile.value
+        if self.health_adapter is None:
+            self.health_adapter = {
+                "profile": profile.value,
+                "model_id": _health_model_id(spec),
+                "model_version": spec.model_version,
+                "usable": True,
+                "fresh": True,
+                "endpoint_configured": True,
+                "endpoint_allowlisted": True,
+            }
+        if self.model_id is None:
+            self.model_id = spec.hub_repo or spec.model_id or ""
+        if self.revision is None:
+            self.revision = spec.model_revision or ""
 
 
 def _dry_item_payload(
@@ -739,18 +808,24 @@ def make_mock_transport(
             if isinstance(scenario.health_adapter, Mapping):
                 health_adapter = dict(scenario.health_adapter)
             else:
+                scenario_profile = DescriptionProfile(str(scenario.profile))
+                scenario_spec = get_profile_spec(scenario_profile)
                 health_adapter = {
                     "profile": scenario.health_adapter,
                     "model_id": (
-                        EXPECTED_HEALTH_MODEL_ID
-                        if scenario.health_adapter == EXPECTED_PROFILE.profile.value
+                        _health_model_id(scenario_spec)
+                        if scenario.health_adapter == scenario_profile.value
                         else None
                     ),
                     "model_version": (
-                        EXPECTED_HEALTH_MODEL_VERSION
-                        if scenario.health_adapter == EXPECTED_PROFILE.profile.value
+                        scenario_spec.model_version
+                        if scenario.health_adapter == scenario_profile.value
                         else None
                     ),
+                    "usable": scenario.health_adapter == scenario_profile.value,
+                    "fresh": scenario.health_adapter == scenario_profile.value,
+                    "endpoint_configured": scenario.health_adapter == scenario_profile.value,
+                    "endpoint_allowlisted": scenario.health_adapter == scenario_profile.value,
                 }
             return httpx.Response(
                 200,
@@ -1514,6 +1589,7 @@ class _SmokeExecution:
     sleep: Callable[[float], None]
     now: Callable[[], datetime]
     load_snapshot_reader: Callable[[str], dict[str, Any]]
+    expected_profile: _ExpectedProfile | None = field(init=False, default=None)
     deadline: Deadline = field(init=False)
     checks: list[dict[str, Any]] = field(default_factory=list)
     transitions: list[dict[str, Any]] = field(default_factory=list)
@@ -1575,23 +1651,64 @@ class _SmokeExecution:
 
 
 def _description_adapter_identity(health: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+    adapter = _description_adapter_details(health)
+    return adapter["profile"], adapter["model_id"], adapter["model_version"]
+
+
+def _description_adapter_details(health: Mapping[str, Any]) -> dict[str, Any]:
     adapter = health.get("description_adapter")
     if not isinstance(adapter, Mapping):
-        return None, None, None
-    return adapter.get("profile"), adapter.get("model_id"), adapter.get("model_version")
+        return {
+            "profile": None,
+            "model_id": None,
+            "model_version": None,
+            "usable": None,
+            "fresh": None,
+            "endpoint_configured": None,
+            "endpoint_allowlisted": None,
+        }
+    return {
+        "profile": adapter.get("profile"),
+        "model_id": adapter.get("model_id"),
+        "model_version": adapter.get("model_version"),
+        "usable": adapter.get("usable"),
+        "fresh": adapter.get("fresh"),
+        "endpoint_configured": adapter.get("endpoint_configured"),
+        "endpoint_allowlisted": adapter.get("endpoint_allowlisted"),
+    }
 
 
-def _record_health(run: _SmokeExecution, phase: str, health: dict[str, Any]) -> bool:
+def _health_identity_matches(run: _SmokeExecution, health: Mapping[str, Any]) -> bool:
+    expected = run.expected_profile
     profile, model_id, model_version = _description_adapter_identity(health)
-    healthy = (
-        health.get("status") == "ok"
-        and profile == EXPECTED_PROFILE.profile.value
+    return bool(
+        expected
+        and profile == expected.profile.value
         and isinstance(model_id, str)
         and bool(model_id.strip())
         and isinstance(model_version, str)
         and bool(model_version.strip())
-        and model_id == EXPECTED_HEALTH_MODEL_ID
-        and model_version == EXPECTED_HEALTH_MODEL_VERSION
+        and model_id == expected.health_model_id
+        and model_version == expected.health_model_version
+    )
+
+
+def _record_health(run: _SmokeExecution, phase: str, health: dict[str, Any]) -> bool:
+    adapter = _description_adapter_details(health)
+    readiness_fields = (
+        "usable",
+        "fresh",
+        "endpoint_configured",
+        "endpoint_allowlisted",
+    )
+    identity_matches = _health_identity_matches(run, health)
+    readiness_ok = phase == "preflight" or all(
+        adapter[field_name] is True for field_name in readiness_fields
+    )
+    healthy = (
+        health.get("status") == "ok"
+        and identity_matches
+        and readiness_ok
     )
     run.service_health_samples.append(
         {
@@ -1599,9 +1716,7 @@ def _record_health(run: _SmokeExecution, phase: str, health: dict[str, Any]) -> 
             "phase": phase,
             "status": str(health.get("status") or "unknown"),
             "description_adapter": {
-                "profile": profile,
-                "model_id": model_id,
-                "model_version": model_version,
+                **adapter,
             },
             "healthy": healthy,
         }
@@ -1628,6 +1743,10 @@ def _poll_health(run: _SmokeExecution, phase: str, *, request_deadline: Deadline
                     "profile": "unknown",
                     "model_id": None,
                     "model_version": None,
+                    "usable": None,
+                    "fresh": None,
+                    "endpoint_configured": None,
+                    "endpoint_allowlisted": None,
                 },
                 "healthy": False,
                 "detail": str(exc),
@@ -1692,6 +1811,14 @@ def _poll_items(run: _SmokeExecution, *, record_timeline: bool = True) -> list[d
 
 def _preflight(run: _SmokeExecution) -> None:
     try:
+        run.expected_profile = _resolve_expected_profile(
+            getattr(run.args, "expected_profile", DEFAULT_EXPECTED_PROFILE_NAME)
+        )
+    except PreflightRefusal as exc:
+        run.check("health_adapter_expected_profile", False, str(exc))
+        run.preflight_refused = True
+        raise
+    try:
         try:
             health = _request_json(
                 run.client,
@@ -1709,19 +1836,15 @@ def _preflight(run: _SmokeExecution) -> None:
         health_ok = _record_health(run, "preflight", health)
         run.check("service_auth", True, "bearer authentication accepted")
         profile, model_id, model_version = _description_adapter_identity(health)
-        adapter_ok = (
-            profile == EXPECTED_PROFILE.profile.value
-            and isinstance(model_id, str)
-            and bool(model_id.strip())
-            and isinstance(model_version, str)
-            and bool(model_version.strip())
-            and model_id == EXPECTED_HEALTH_MODEL_ID
-            and model_version == EXPECTED_HEALTH_MODEL_VERSION
-        )
+        expected = run.expected_profile
+        adapter_ok = _health_identity_matches(run, health)
         adapter_detail = (
-            f"profile={profile!r}, model_id={model_id!r}, model_version={model_version!r}"
+            f"expected_profile={expected.profile.value!r}, "
+            f"profile={profile!r}, model_id={model_id!r}, model_version={model_version!r}, "
+            f"expected_model_id={expected.health_model_id!r}, "
+            f"expected_model_version={expected.health_model_version!r}"
         )
-        run.check("health_adapter_gpu_qwen30b", adapter_ok, adapter_detail)
+        run.check("health_adapter_expected_profile", adapter_ok, adapter_detail)
         if not adapter_ok:
             run.preflight_refused = True
             raise PreflightRefusal(
@@ -1976,6 +2099,9 @@ def _check_item_provenance(
     requested_items: Sequence[Mapping[str, Any]],
     missing_ids: set[int],
 ) -> None:
+    expected = run.expected_profile
+    expected_model_id = expected.spec.hub_repo or expected.spec.model_id if expected else None
+    expected_revision = expected.spec.model_revision if expected else None
     wrong_tier_ids: set[int] = set(missing_ids)
     wrong_model_ids: set[int] = set(missing_ids)
     wrong_revision_ids: set[int] = set(missing_ids)
@@ -1986,20 +2112,20 @@ def _check_item_provenance(
             wrong_tier_ids.add(media_id)
         model_identity = str(provenance.get("model_id") or "")
         hub_repo, separator, revision = model_identity.rpartition("@")
-        if not separator or hub_repo != EXPECTED_PROFILE.hub_repo:
+        if not separator or hub_repo != expected_model_id:
             wrong_model_ids.add(media_id)
-        if not separator or revision != EXPECTED_REVISION:
+        if not separator or revision != expected_revision:
             wrong_revision_ids.add(media_id)
     run.check("tier_final_gpu", not wrong_tier_ids, f"offending media_ids: {sorted(wrong_tier_ids)}")
     run.check(
-        "model_id_qwen30b",
+        "model_id_expected_profile",
         not wrong_model_ids,
-        f"offending media_ids: {sorted(wrong_model_ids)}; expected {EXPECTED_MODEL_ID}",
+        f"offending media_ids: {sorted(wrong_model_ids)}; expected {expected_model_id}",
     )
     run.check(
         "model_revision_pinned",
         not wrong_revision_ids,
-        f"offending media_ids: {sorted(wrong_revision_ids)}; expected {EXPECTED_REVISION}",
+        f"offending media_ids: {sorted(wrong_revision_ids)}; expected {expected_revision}",
     )
 
 
@@ -2542,6 +2668,10 @@ def _compensate_and_audit_stop(run: _SmokeExecution) -> None:
                     "profile": "unknown",
                     "model_id": None,
                     "model_version": None,
+                    "usable": None,
+                    "fresh": None,
+                    "endpoint_configured": None,
+                    "endpoint_allowlisted": None,
                 },
                 "healthy": True,
                 "skipped": True,
@@ -2783,6 +2913,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--media-ids", type=_media_ids, default=_media_ids("101"))
     parser.add_argument("--service-base-url", default="https://description-service.invalid")
     parser.add_argument("--service-api-key-env", default="ACX_DESCRIPTION_API_KEY", metavar="NAME")
+    parser.add_argument(
+        "--expected-profile",
+        default=os.environ.get("ACX_DESCRIPTION_ADAPTER", DEFAULT_EXPECTED_PROFILE_NAME),
+        metavar="PROFILE",
+        help=(
+            "GPU description profile to verify; defaults to ACX_DESCRIPTION_ADAPTER, "
+            f"or {DEFAULT_EXPECTED_PROFILE_NAME!r} when unset"
+        ),
+    )
     parser.add_argument("--instance-id", default="<burst-instance-ocid>")
     parser.add_argument("--oci-bin", default="oci")
     parser.add_argument(
@@ -2847,6 +2986,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
+    _resolve_expected_profile(getattr(args, "expected_profile", DEFAULT_EXPECTED_PROFILE_NAME))
     if args.max_seconds <= 0 or args.max_seconds > MAX_LIVE_SECONDS:
         raise PreflightRefusal(f"--max-seconds must be between 1 and {MAX_LIVE_SECONDS}")
     expected_stop_principals = getattr(args, "expected_stop_principal", [DEFAULT_STOP_PRINCIPAL])
@@ -2923,7 +3063,7 @@ def main(
         clock = None
     else:
         clock = FastClock()
-        scenario = DryScenario()
+        scenario = DryScenario(profile=args.expected_profile)
         client = client_factory(transport=make_mock_transport(scenario, now=clock.now), follow_redirects=False)
         oci = FakeOci(gpu_states=scenario.gpu_states)
 

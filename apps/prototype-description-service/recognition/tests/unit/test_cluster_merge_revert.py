@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from starlette.testclient import TestClient
 
 from db.models.identity import ClusterMergeKind, ClusterMergeReceipt, ReceiptExpiredError, ReceiptNotTopError
@@ -462,6 +462,46 @@ async def test_revert_maps_deadlock_to_receipt_not_top(revert_world: dict[str, o
             raise OperationalError("SELECT", {}, SimpleNamespace(pgcode="40P01"))
 
     session = DeadlockSession()
+    revert_world["session"] = session
+
+    with pytest.raises(ReceiptNotTopError) as exc_info:
+        await _run_revert(revert_world)
+
+    assert exc_info.value.code == "receipt_not_top"
+    assert session.rollback_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_revert_reraises_operational_error_without_sqlstate(revert_world: dict[str, object]) -> None:
+    error = OperationalError("SELECT", {}, SimpleNamespace())
+
+    class FailedSession(FakeSession):
+        async def execute(self, stmt: object) -> object:
+            self.statements.append(stmt)
+            raise error
+
+    session = FailedSession()
+    revert_world["session"] = session
+
+    with pytest.raises(OperationalError) as exc_info:
+        await _run_revert(revert_world)
+
+    assert exc_info.value is error
+    assert session.rollback_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_revert_maps_serialization_failure_to_receipt_not_top(
+    revert_world: dict[str, object],
+) -> None:
+    error = DBAPIError("SELECT", {}, SimpleNamespace(pgcode="40001"))
+
+    class FailedSession(FakeSession):
+        async def execute(self, stmt: object) -> object:
+            self.statements.append(stmt)
+            raise error
+
+    session = FailedSession()
     revert_world["session"] = session
 
     with pytest.raises(ReceiptNotTopError) as exc_info:

@@ -476,8 +476,6 @@ _REVERT_CONCURRENCY_CODES = frozenset({"40P01", "40001"})
 
 def _is_revert_concurrency_error(exc: DBAPIError) -> bool:
     """Return whether a database failure should be exposed as a deterministic refusal."""
-    if isinstance(exc, OperationalError):
-        return True
     for candidate in (exc, getattr(exc, "orig", None), getattr(exc, "__cause__", None)):
         for attribute in ("pgcode", "sqlstate"):
             code = getattr(candidate, attribute, None)

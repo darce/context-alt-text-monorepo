@@ -2614,18 +2614,30 @@ describe('MediaAltSuggest', () => {
 
   it('shows un-mark control only when isDecorative at the idle (no-draft) site [A-02][INT-06]', () => {
     // Idle branch is the second render site (Suggest + decorative, no draft).
-    // [TEST-15]: goes RED if MARK_DECORATIVE_LABEL is shown when isDecorative,
-    // or if UNMARK_DECORATIVE_LABEL appears when not marked.
+    // Compact toggle keeps visible "Decorative"; description + pressed distinguish
+    // mark vs un-mark [GPUFLOW-2 B7][INT-06].
     const { unmount } = renderSuggest(
       <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />,
     );
-    expect(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: MARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+    const unmark = screen.getByRole('button', {
+      name: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      pressed: true,
+    });
+    expect(unmark).toHaveAccessibleDescription(UNMARK_DECORATIVE_LABEL);
+    expect(
+      screen.queryByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: false }),
+    ).not.toBeInTheDocument();
     unmount();
 
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
-    expect(screen.getByRole('button', { name: MARK_DECORATIVE_LABEL })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: UNMARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+    const mark = screen.getByRole('button', {
+      name: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      pressed: false,
+    });
+    expect(mark).toHaveAccessibleDescription(MARK_DECORATIVE_LABEL);
+    expect(
+      screen.queryByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    ).not.toBeInTheDocument();
   });
 
   it('shows un-mark control at the draft review site when isDecorative [A-02][INT-06]', async () => {
@@ -2636,8 +2648,14 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
 
-    expect(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: MARK_DECORATIVE_LABEL })).not.toBeInTheDocument();
+    const unmark = screen.getByRole('button', {
+      name: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      pressed: true,
+    });
+    expect(unmark).toHaveAccessibleDescription(UNMARK_DECORATIVE_LABEL);
+    expect(
+      screen.queryByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: false }),
+    ).not.toBeInTheDocument();
   });
 
   it('un-mark posts decorative:false with empty alt from the idle site [A-02][INT-09]', async () => {
@@ -2646,7 +2664,9 @@ describe('MediaAltSuggest', () => {
     correctMock.mockResolvedValue(sampleHistoryItem('', false));
     renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
 
-    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    fireEvent.click(
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    );
 
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
@@ -2660,7 +2680,9 @@ describe('MediaAltSuggest', () => {
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
 
-    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    fireEvent.click(
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    );
 
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     expect(correctMock).toHaveBeenCalledWith(42, '', { decorative: false });
@@ -2677,7 +2699,9 @@ describe('MediaAltSuggest', () => {
       <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={committed} />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    fireEvent.click(
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    );
 
     await waitFor(() => expect(correctMock).toHaveBeenCalledTimes(1));
     expect(correctMock).toHaveBeenCalledWith(42, committed, { decorative: false });
@@ -2695,7 +2719,10 @@ describe('MediaAltSuggest', () => {
     );
     renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
 
-    const unmarkBtn = screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL });
+    const unmarkBtn = screen.getByRole('button', {
+      name: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      pressed: true,
+    });
     unmarkBtn.focus();
     fireEvent.click(unmarkBtn);
     parkFocusOnBody();
@@ -2705,7 +2732,7 @@ describe('MediaAltSuggest', () => {
     // Prefer server message when structured; fallback is un-mark-specific.
     expect(alert).toHaveTextContent(/could not clear the decorative marker/i);
     expect(
-      screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }),
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
     ).toHaveFocus();
   });
 
@@ -2726,7 +2753,9 @@ describe('MediaAltSuggest', () => {
       client,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    fireEvent.click(
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    );
     expect(await screen.findByRole('button', { name: /removing decorative mark/i })).toBeDisabled();
 
     // Mid-flight: parent re-renders with isDecorative false (success-path cache
@@ -2749,7 +2778,9 @@ describe('MediaAltSuggest', () => {
     correctMock.mockResolvedValue(sampleHistoryItem('', false));
     renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
 
-    fireEvent.click(screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL }));
+    fireEvent.click(
+      screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL, pressed: true }),
+    );
 
     await waitFor(() => {
       expect(screen.getByTestId('media-alt-suggest-status')).toHaveTextContent(
@@ -2766,8 +2797,9 @@ describe('MediaAltSuggest', () => {
   it('renders a compact Decorative toggle with accessible name and description [GPUFLOW-2 B7]', () => {
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
 
-    const toggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
-    expect(toggle).toHaveAccessibleName(MARK_DECORATIVE_LABEL);
+    const toggle = screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL });
+    expect(toggle).toHaveAccessibleName(DECORATIVE_TOGGLE_VISIBLE_LABEL);
+    expect(toggle.getAttribute('aria-label')).toBeNull();
     expect(toggle).toHaveAccessibleDescription(MARK_DECORATIVE_LABEL);
     const describedBy = toggle.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
@@ -2786,8 +2818,12 @@ describe('MediaAltSuggest', () => {
   it('presses the compact toggle when the row is decorative [GPUFLOW-2 B7][sr-004]', () => {
     renderSuggest(<MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />);
 
-    const toggle = screen.getByRole('button', { name: UNMARK_DECORATIVE_LABEL });
-    expect(toggle).toHaveAccessibleName(UNMARK_DECORATIVE_LABEL);
+    const toggle = screen.getByRole('button', {
+      name: DECORATIVE_TOGGLE_VISIBLE_LABEL,
+      pressed: true,
+    });
+    expect(toggle).toHaveAccessibleName(DECORATIVE_TOGGLE_VISIBLE_LABEL);
+    expect(toggle.getAttribute('aria-label')).toBeNull();
     expect(toggle).toHaveAccessibleDescription(UNMARK_DECORATIVE_LABEL);
     const describedBy = toggle.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
@@ -2810,7 +2846,7 @@ describe('MediaAltSuggest', () => {
 
     const idleRow = document.querySelector('.acx-media-selection__media-alt-suggest');
     expect(idleRow).not.toBeNull();
-    const idleToggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
+    const idleToggle = screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL });
     const idleVisible = (idleToggle.textContent ?? '').replace(/\s+/g, ' ').trim();
     expect(idleVisible.split(/\s+/).length).toBeLessThanOrEqual(2);
     expect(idleVisible.length).toBeLessThan(MARK_DECORATIVE_LABEL.length);
@@ -2834,7 +2870,7 @@ describe('MediaAltSuggest', () => {
     await screen.findByText(draft);
 
     const draftRow = document.querySelector('.acx-media-selection__media-alt-suggest');
-    const draftToggle = screen.getByRole('button', { name: MARK_DECORATIVE_LABEL });
+    const draftToggle = screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL });
     const draftVisible = (draftToggle.textContent ?? '').replace(/\s+/g, ' ').trim();
     expect({
       site: 'draft-review',
@@ -2849,6 +2885,19 @@ describe('MediaAltSuggest', () => {
       longSentenceInButton: false,
       rowClassName: 'acx-media-selection__media-alt-suggest',
     });
+  });
+
+  it('keeps Decorative visible text while the toggle is busy [GPUFLOW-2-SPADECORATIVECONTROL-R-02]', async () => {
+    correctMock.mockReturnValue(new Promise<DescriptionHistoryItem>(() => undefined));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: DECORATIVE_TOGGLE_VISIBLE_LABEL }));
+    const toggle = await screen.findByRole('button', { name: /marking as decorative/i });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute('aria-busy', 'true');
+    expect((toggle.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe(
+      DECORATIVE_TOGGLE_VISIBLE_LABEL,
+    );
   });
 });
 

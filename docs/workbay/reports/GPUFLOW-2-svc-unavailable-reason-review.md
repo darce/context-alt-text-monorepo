@@ -35,3 +35,23 @@ Verdict: fail
 - Focused fixture/schema coverage passed: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python -m pytest apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py -k 'fixture or typed_error_envelopes' -q -p no:cacheprovider` — `3 passed, 5 deselected`.
 - Direct probes confirmed the full-envelope normalizer predicate is false for a typed unavailable detail without `reason`, and the readiness gate returns `(None, None)` for a configured non-private endpoint with a stopped snapshot.
 - The complete lane-row route-suite invocation was attempted with the resolved lane interpreter. Collection/initial execution hit the documented DB-backed sandbox hang (the unconstrained attempt also hit OpenBLAS thread creation limits), so it was interrupted; no pass is claimed for that suite.
+
+## Re-review r3 (720af8ab8..bbd4013fa)
+
+| finding | verdict | evidence |
+| --- | --- | --- |
+| GPUFLOW-2-SVCUNAVAILABLEREASON-R-01 | fixed | `describe.py:1216-1234` rejects a GPU-kind `UnavailableDescriptionAdapter` before digest lookup or operation acceptance; `describe.py:439-461` maps its resolver reason or endpoint fallback, and `describe.py:603-608,963-967` also carries the adapter into the lifecycle gate. |
+| GPUFLOW-2-SVCUNAVAILABLEREASON-R-02 | fixed | `describe.py:464-490` validates recognized typed envelopes and code-specific required fields; `describe.py:1411-1424` rebuilds any invalid post-accept detail, while `describe.py:509-520,522-526` supplies the service settings budget or a contract reason. |
+
+### FINDINGS
+
+#### GPUFLOW-2-SVCUNAVAILABLEREASON-R-04 — high
+
+- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:475-512`; model constraint `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:155-156`.
+- Evidence: A full-envelope `description_service_starting` exception with `warmup_eta_seconds=-1` makes `DescribeOperationErrorDetail.model_validate()` fail at `describe.py:475-478`, so the new normalizer runs. Its `describe.py:510-512` guard accepts every finite numeric ETA, including the negative value, and passes it to `_typed_describe_error()`. The response model rejects that value because `warmup_eta_seconds` has `Field(ge=0)`, turning malformed upstream detail into an unhandled validation error instead of a schema-valid starting envelope.
+- Impact: The new full-envelope normalization path can return a 500 for an invalid but recognized upstream typed error, violating the fail-closed multipart error contract precisely on the path added to repair R-02.
+- Fix: Preserve `warmup_eta_seconds` only when it is finite and non-negative; otherwise omit it (or clamp only if the contract explicitly permits that behavior) before rebuilding the envelope. Add a full-envelope negative-ETA regression.
+
+VERIFIED: {"GPUFLOW-2-SVCUNAVAILABLEREASON-R-01": "fixed", "GPUFLOW-2-SVCUNAVAILABLEREASON-R-02": "fixed"}
+FINDINGS: [{"id":"GPUFLOW-2-SVCUNAVAILABLEREASON-R-04","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":511,"summary":"Full-envelope starting-error normalization preserves negative warmup ETA and then fails response validation","evidence":"_typed_error_detail_needs_rebuild() rebuilds invalid typed details, but _rebuild_post_accept_typed_error() accepts any finite warmup_eta_seconds, including -1; DescribeOperationErrorDetail requires warmup_eta_seconds >= 0, so the rebuild can raise instead of returning a typed error."}]
+Verdict: fail

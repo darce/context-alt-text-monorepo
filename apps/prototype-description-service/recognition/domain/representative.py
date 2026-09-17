@@ -39,3 +39,6 @@ class ClusterRepresentative:
     # FIR23-01 / R3-G2-2: provenance for the embedding space this vector belongs to.
     # Appended last so existing positional construction sites keep working.
     embedding_model: str | None = None
+    # Persisted quality factors paired with quality_score at the snapshot export boundary.
+    # Appended last so existing positional construction sites keep working.
+    quality_components: dict[str, float] | None = None

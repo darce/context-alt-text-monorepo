@@ -68,6 +68,7 @@ class IntentStatus(StrEnum):
     PENDING = "pending"
     HONOURED = "honoured"
     BLOCKED_WORK_IN_FLIGHT = "blocked_work_in_flight"
+    STOPPED_WITH_WORK = "stopped_with_work"
     EXPIRED = "expired"
 
 

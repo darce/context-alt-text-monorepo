@@ -961,10 +961,32 @@ class OutboxDrainTest extends TestCase
 		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
 		$this->assertStringContainsString("status = 'failed'", $outboxUpdate);
 		$this->assertStringContainsString("last_error_code = 'remote_error'", $outboxUpdate);
+		$this->assertStringContainsString('last_error_retryable = 1', $outboxUpdate);
 
 		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
 		$this->assertStringContainsString('failed_curation_operations = 1', $syncStateUpdate);
 		$this->assertStringContainsString("last_curation_failed_at = '2026-03-10 14:10:00'", $syncStateUpdate);
+	}
+
+	public function testDrainPersistsNonRetryableDecisionForUnauthorizedResponse(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [$this->pendingOperationRow()];
+		$this->setOption('acx_recognition_url', 'http://localhost:8000');
+		$this->queueHttpResponse([
+			'response' => ['code' => 401, 'message' => 'Unauthorized'],
+			'body' => wp_json_encode([
+				'message' => 'authentication failed',
+			]),
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$drain->drain();
+
+		$outboxUpdate = $this->findOutboxStatusUpdate($wpdb->queries);
+		$this->assertStringContainsString("status = 'failed'", $outboxUpdate);
+		$this->assertStringContainsString("last_error_code = 'remote_error'", $outboxUpdate);
+		$this->assertStringContainsString('last_error_retryable = 0', $outboxUpdate);
 	}
 
 	public function testFindFailedOperationsReturnsDecodedRowsOrderedByDate(): void
@@ -1273,6 +1295,7 @@ class OutboxDrainTest extends TestCase
 			'local_revision' => 4,
 			'payload' => '{"cluster_uuid":"cluster-1","person_uuid":"person-1"}',
 			'attempts' => 0,
+			'last_error_retryable' => null,
 			'first_failed_at' => null,
 			'next_attempt_at' => null,
 			'created_at' => '2026-03-10 12:00:00',

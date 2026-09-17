@@ -21,8 +21,11 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function current_time;
 use function is_array;
+use function is_numeric;
 use function is_string;
+use function max;
 use function sanitize_key;
 use function sanitize_text_field;
 use function trim;
@@ -213,6 +216,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 				'total' => $total,
 				'limit' => $limit,
 				'offset' => $offset,
+				'now' => current_time( 'mysql' ),
 			),
 			200
 		);
@@ -236,6 +240,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 				'total' => $total,
 				'limit' => $limit,
 				'offset' => $offset,
+				'now' => current_time( 'mysql' ),
 			),
 			200
 		);
@@ -341,6 +346,8 @@ class ConflictController extends AbstractRecognitionProxyController {
 	 * @return array<string,mixed>
 	 */
 	private function map_operation_record( array $operation ): array {
+		$first_failed_at = $this->normalize_mysql_datetime( $operation['first_failed_at'] ?? null );
+
 		return array(
 			'id' => absint( $operation['id'] ?? 0 ),
 			'tenant_id' => (string) ( $operation['tenant_id'] ?? '' ),
@@ -356,8 +363,33 @@ class ConflictController extends AbstractRecognitionProxyController {
 			'payload' => $operation['payload'] ?? array(),
 			'created_at' => $operation['created_at'] ?? null,
 			'last_attempted_at' => $operation['last_attempted_at'] ?? null,
+			'first_failed_at' => $first_failed_at,
 			'acknowledged_at' => $operation['acknowledged_at'] ?? null,
+			'age_seconds' => $this->operation_age_seconds( $operation ),
 		);
+	}
+
+	/**
+	 * D1 failure clock: use the repository-projected age_seconds value.
+	 * Null when the projection is missing or non-numeric — never fabricate an age (rg-015).
+	 *
+	 * @param array<string,mixed> $operation
+	 */
+	private function operation_age_seconds( array $operation ): ?int {
+		if ( ! array_key_exists( 'age_seconds', $operation ) || ! is_numeric( $operation['age_seconds'] ) ) {
+			return null;
+		}
+
+		return max( 0, (int) $operation['age_seconds'] );
+	}
+
+	private function normalize_mysql_datetime( mixed $value ): ?string {
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
 	}
 
 	/**

@@ -1,6 +1,6 @@
- apps/prototype-description-service/api/main.py     |  34 ++++--
- .../scene/tests/test_health_detailed_adapter.py    |   8 ++
- .../reports/GPUFLOW-2-svc-health-adapter-review.md | 125 +++++++++++++++++++++
- infra/oci/demo/lib/describe-gate.sh                |  17 ++-
- infra/oci/demo/tests/test-describe-gate.sh         |  13 ++-
- 5 files changed, 181 insertions(+), 16 deletions(-)
+ docs/workbay/contracts/identity-merge.md           | 190 +++++++++++++++++++++
+ ...n-cluster-merge-candidates-response.schema.json |  64 +++++++
+ .../recognition-cluster-snapshot.schema.json       | 113 +++++++++++-
+ .../schemas/roster-entry.schema.json               |  43 +++++
+ .../roster-merge-candidates-response.schema.json   |  72 ++++++++
+ 5 files changed, 481 insertions(+), 1 deletion(-)

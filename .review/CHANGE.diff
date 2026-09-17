@@ -1,314 +1,529 @@
-diff --git a/apps/prototype-description-service/api/main.py b/apps/prototype-description-service/api/main.py
---- a/apps/prototype-description-service/api/main.py
-+++ b/apps/prototype-description-service/api/main.py
-@@ -269,9 +269,19 @@ def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
-     return None if model_id is None else spec.model_version
- 
- 
--async def _description_adapter_readiness() -> dict[str, object]:
-+def _resolve_description_profile() -> DescriptionProfile:
-+    """Validate the configured description profile before registering routes."""
-+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.SEEDED.value)
-+    try:
-+        return DescriptionProfile(raw)
-+    except ValueError as exc:
-+        allowed = ", ".join(profile.value for profile in DescriptionProfile)
-+        raise ValueError(f"ACX_DESCRIPTION_ADAPTER must be one of: {allowed} (got {raw!r})") from exc
-+
-+
-+async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[str, object]:
-     """Per-request GPU adapter readiness; DNS never runs inline on the loop."""
--    spec = get_profile_spec(DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded")))
-+    spec = get_profile_spec(profile)
-     endpoint_url = os.environ.get("ACX_GPU_ENDPOINT_URL") or None
-     endpoint_configured = bool(endpoint_url)
-     url_valid = endpoint_url is not None and _gpu_endpoint_url_is_valid(endpoint_url)
-@@ -530,6 +540,7 @@ async def _lifespan(app: FastAPI):
- 
- 
- def create_app() -> FastAPI:
-+    description_profile = _resolve_description_profile()
-     # Log version info at startup
-     _log_startup_info()
- 
-@@ -604,7 +615,7 @@ def create_app() -> FastAPI:
- 
-     register_exception_handlers(app)
- 
--    register_health_probes(app)
-+    register_health_probes(app, description_profile=description_profile)
-     register_metrics_route(app)
-     register_version_route(app)
- 
-@@ -656,7 +667,12 @@ def register_metrics_route(app: FastAPI) -> None:
-         )
- 
- 
--def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
-+def register_health_probes(
-+    app: FastAPI,
-+    *,
-+    model_cache_dir: Path | None = None,
-+    description_profile: DescriptionProfile | None = None,
-+) -> None:
-     """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
- 
-     /health is NOT a liveness probe (HEALTHOBS-1-BR-07): it does a bounded
-@@ -674,10 +690,12 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
-     existing onnx-count check; face_pipeline uses eager sha256 verification
-     with mtime/size drift re-verify ([EMB-05]).
- 
--    Settings are constructed once at registration (S3CR-06); only the profile
--    env key is re-read per probe (cheap). Invalid profile yields aggregated
--    UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
-+    Settings are constructed once at registration (S3CR-06), including the
-+    description profile validation; the request path uses that validated
-+    profile instead of re-parsing the environment.
-     """
-+    if description_profile is None:
-+        description_profile = _resolve_description_profile()
-     commit_sha = _resolve_version_commit_sha() or "unknown"
-     # Baked at image build (/app/.image-variant); resolve once like commit_sha.
-     image_variant = _resolve_image_variant()
-@@ -860,7 +878,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
-                 "profile": profile,
-             },
-             "embedding_runtime": embedding_runtime,
--            "description_adapter": await _description_adapter_readiness(),
-+            "description_adapter": await _description_adapter_readiness(description_profile),
-             "disk_headroom": disk_headroom_check.payload or {},
-         }
- 
-diff --git a/apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py b/apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py
---- a/apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py
-+++ b/apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py
-@@ -104,6 +104,14 @@ def _patch_getaddrinfo(monkeypatch: pytest.MonkeyPatch, impl: Any) -> None:
-     monkeypatch.setattr("api.main.socket.getaddrinfo", impl)
- 
- 
-+def test_invalid_description_adapter_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
-+    from api.main import create_app
-+
-+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "not-a-description-profile")
-+    with pytest.raises(ValueError, match=r"ACX_DESCRIPTION_ADAPTER.*seeded.*florence_small"):
-+        create_app()
-+
-+
- @pytest.fixture(autouse=True)
- def _reset_privacy_cache() -> None:
-     from api import main as main_module
-diff --git a/docs/workbay/reports/GPUFLOW-2-svc-health-adapter-review.md b/docs/workbay/reports/GPUFLOW-2-svc-health-adapter-review.md
+diff --git a/docs/workbay/contracts/identity-merge.md b/docs/workbay/contracts/identity-merge.md
 new file mode 100644
 --- /dev/null
-+++ b/docs/workbay/reports/GPUFLOW-2-svc-health-adapter-review.md
-@@ -0,0 +1,125 @@
-+VERIFIED: {"DIAGNO-H-06":"not_fixed","DIAGNO-b54e2b152c2135f4-H-5aa9f6692d839e169eee66bb":"not_fixed","DIAGNO-b54e2b152c2135f4-H-0b8d323dccc48fd331ee798e":"not_fixed"}
-+FINDINGS: [{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-01","severity":"high","file_path":"apps/prototype-description-service/api/main.py","line":205,"summary":"Readiness accepts a non-HTTP(S) GPU endpoint as usable.","evidence":"_endpoint_hostname() extracts only the hostname and _description_adapter_readiness() gates usable on nonempty URL, allowlist, private DNS, and freshness; it never checks the URL scheme. The existing adapter resolver rejects schemes other than http/https, so a value such as gpu.oraclevcn.com can produce usable=true for an adapter that will fail closed."},{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-02","severity":"high","file_path":"apps/prototype-description-service/api/main.py","line":236,"summary":"Readiness reports profiles marked unavailable as usable.","evidence":"The non-GPU branch unconditionally sets usable=True, and the GPU branch does not test ProfileSpec.available. The registry marks florence_large, gpu_phi4, and hosted_gpt4o unavailable while get_description_adapter() returns UnavailableDescriptionAdapter for them; the new health contract can therefore publish a false release-readiness signal."},{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-03","severity":"medium","file_path":"apps/prototype-description-service/api/main.py","line":142,"summary":"A real DNS gaierror is cached as a fresh non-private result instead of stale/pending evidence.","evidence":"_resolve_blocking() only preserves stale state when the imported helper raises, but scene/interface_adapters/http/deps.py catches socket.gaierror and returns False. The worker then stores value=False and checked_at, making fresh=true and reason=endpoint_not_private; the added gaierror test monkeypatches api.main._resolved_addresses_are_private to raise and bypasses this production path."},{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-04","severity":"medium","file_path":"apps/prototype-description-service/api/main.py","line":221,"summary":"Per-request readiness construction can perform blocking OCI Vault I/O on the event loop.","evidence":"Each /health/detailed request constructs DescriptionSettings(), whose gpu_endpoint_api_key default calls get_secret_provider().get_secret_optional(); an OCI provider cache miss performs synchronous get_secret_bundle calls and retry sleeps. The readiness hunk bounds DNS but leaves this unrelated external call inline, so the supposedly bounded diagnostic can stall well beyond the CARD-09/RES-02 timeout budget."}]
-+Verdict: fail
++++ b/docs/workbay/contracts/identity-merge.md
+@@ -0,0 +1,190 @@
++---
++title: Identity merge and cluster recovery
++boundary_owner: recognition
++status: draft (GPUFLOW-2)
++since: GPUFLOW-2
++---
 +
-+# GPUFLOW-2 svc-health-adapter re-review
++# Identity merge and cluster recovery
 +
-+## Re-review r1 (284616c05..63a79bcc3)
++Recognition-side cluster merge receipts, pairwise recovery admission, LIFO
++revert, and the operator-merge audit field. Not the WordPress person-merge
++undo stack. Machine-readable companion schemas:
 +
-+| finding | verdict | evidence |
++- [recognition-cluster-snapshot.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json)
++- [roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
++- [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
++- [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
++
++## Two undo stacks, never conflated (INT-09)
++
++| Surface | Token | Reverts | Owner |
++| --- | --- | --- | --- |
++| Roster "Merged from N groups · Undo" | WP `PersonMergeService` `undo_token`, `UNDO_TOKEN_TTL_SECONDS` (24 h) | A WP person merge via `POST /roster/persons/merge/undo` | PHP person merge |
++| Workbench "Merged automatically · Undo" | `undoable_merge_receipt_id` from the cluster snapshot → projection | A recognition cluster merge via `POST /recognition/clusters/{id}/revert-merge` | Recognition receipts |
++
++Neither surface reads the other's token. No lane bridges them.
++
++## `cluster_merge_receipts`
++
++One row per merge (automatic or operator). Greenfield table in
++`001_identity_schema.py` (C0). ORM: `IdentityCluster.merge_receipts` ordered
++by `created_at` desc.
++
++| Column | Type | Meaning |
 +| --- | --- | --- |
-+| DIAGNO-H-06 | not_fixed | The A1 hunk adds `profile` and `kind` plus endpoint/readiness fields to the return object (`apps/prototype-description-service/api/main.py:+251-260`), but no canonical `model_id` or `model_version`. The new tests resolve the profile spec and assert model constants (`scene/tests/test_health_detailed_adapter.py:+107-116`, `+153-171`) without asserting those identities in the health payload, so the release proof still cannot compare response identity to readiness. This violates the contract-metadata boundary in `[rg-015]` and the test discrimination requirement in `[TEST-15]`. |
-+| DIAGNO-b54e2b152c2135f4-H-5aa9f6692d839e169eee66bb | not_fixed | The fix still emits the profile token `gpu_qwen30b`/`gpu_qwen30b_ensemble` in `description_adapter.profile`; it adds no mapping or concrete model identity in the A1 return hunk (`api/main.py:+251-260`). The test's `get_profile_spec(...).model_id` assertions are local constants, not response-vs-model equality evidence. The vocabulary mismatch in the release gate therefore remains. |
-+| DIAGNO-b54e2b152c2135f4-H-0b8d323dccc48fd331ee798e | not_fixed | The delta changes the producer payload at `api/main.py:+787` and adds only the new adapter test; it does not touch the existing string consumers. `infra/oci/demo/lib/describe-gate.sh:84-115` still accepts `description_adapter` only when it is a JSON string, `scripts/gpu_burst_smoke.py:1549-1557,1654-1660` still compares the field to `"gpu_qwen30b"`, and `bootstrap-wp.sh:364-406` still routes through that string parser. The new object therefore blocks/rejects those consumers as previously found. |
++| `receipt_id` | UUID PK | Stable receipt id; the undo handle |
++| `survivor_cluster_id` | UUID | Cluster that kept the members |
++| `source_cluster_id` | UUID | Cluster that was absorbed |
++| `source_label` | string \| null | Label to restore on revert |
++| `moved_identity_ids` | UUID[] | Exact membership moved; revert restores this set |
++| `rule_version` | string | Calibration / merge-rule version that admitted the merge |
++| `kind` | `auto` \| `operator` | Vocabulary is this enum only (sr-007) |
++| `created_at` | timestamptz | Receipt push time |
++| `expires_at` | timestamptz | `created_at + ACX_MERGE_UNDO_WINDOW_DAYS` |
++| `reverted_at` | timestamptz \| null | Set on successful revert; unreverted while null |
 +
-+### FINDINGS
++`ACX_MERGE_UNDO_WINDOW_DAYS` default **7**. Undo window is this setting, never
++a client constant.
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-01 — high
++Receipts for a survivor form an ordered stack. Only the newest unreverted
++receipt is undoable (LIFO).
 +
-+`_endpoint_hostname()` (`apps/prototype-description-service/api/main.py:205-208`) parses only `.hostname`; `_description_adapter_readiness()` treats any nonempty URL as configured and computes `usable` from allowlisting, privacy, and freshness (`:223-240`) without validating `http`/`https`. The actual GPU adapter predicate rejects other schemes (`scene/interface_adapters/http/deps.py:65-83`). Thus `ACX_GPU_ENDPOINT_URL=gpu.oraclevcn.com` can resolve as private and publish `usable: true` while the describe adapter returns its fail-closed unavailable adapter. This is a release-facing false readiness signal under `[CARD-09]` and `[rg-015]`; scheme and URL validity must be part of the same fail-closed predicate.
++## Pairwise admission rule (GRPH-22)
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-02 — high
++Recovery merge runs after `run_singleton_hac_refinement`, gated by
++`ACX_RECOVERY_MERGE_ENABLED` (default `false` until the C1 policy block is
++accepted). For residual singleton/small cluster R and candidate destination D
++(by centroid cosine), admit **only if every clause holds for every moved
++member**:
 +
-+The new readiness branch sets every non-GPU profile `usable=True` (`api/main.py:236-238`) and the GPU branch does not consult `spec.available` (`:239-250`). However, the profile registry marks `florence_large`, `gpu_phi4`, and `hosted_gpt4o` unavailable (`scene/config/profiles.py:79-103,131-141`), and the adapter resolver returns `UnavailableDescriptionAdapter` for unavailable profiles (`scene/interface_adapters/http/deps.py:200-232`). Those configurations can therefore pass a consumer's readiness check despite being deliberately fail-closed, violating the release invariant that `usable` describe the active adapter.
++1. Every member of R has cosine ≥ `τ_pair` to ≥ k destination exemplars from
++   k distinct source media.
++2. R is internally coherent (all intra-R pairs ≥ `τ_intra`).
++3. The runner-up destination's best pairwise score trails by ≥ δ for every
++   member (competing-identity margin).
++4. Neither R nor D is bound to a different named person.
++5. The member's quality stratum is not abstained.
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-03 — medium
++Any member failing any clause → the whole residual is abstained and a merge
++suggestion is emitted. There is no partial move. Never merge by best edge.
++Never use UMAP/t-SNE projections for merge decisions. Complete-link
++safeguards stay. Numbers (`τ_pair`, `τ_intra`, δ, k ≥ 2, per-stratum floors,
++suggestion-band cuts) come only from the accepted C1 calibration policy
++block; this contract does not invent them.
 +
-+The fix intends a `gaierror` to leave the prior result stale (`api/main.py:142-152`), but the imported `_resolved_addresses_are_private()` catches `socket.gaierror` and returns `False` (`scene/interface_adapters/http/deps.py:40-47`). The worker consequently records `checked_at` for a DNS failure, and the handler reports `fresh=true`, `endpoint_private=false`, and `reason=endpoint_not_private` (`api/main.py:234-250`) for up to the 60-second attempt window. The new test at `scene/tests/test_health_detailed_adapter.py:282-298` replaces the helper with a raising stub, so it does not discriminate this production behavior. This loses the required pending/stale distinction and can unnecessarily delay recovery; it is a `[TEST-15]`/`[RES-13]` failure-mode gap.
++On admission the producer writes one `cluster_merge_receipts` row
++(`kind: auto`, `rule_version`, `expires_at = now + ACX_MERGE_UNDO_WINDOW_DAYS`).
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-04 — medium
++## Housekeeping purge (RES-07)
 +
-+The per-request call to `DescriptionSettings()` (`api/main.py:219-227`) is not configuration-only: its `gpu_endpoint_api_key` field calls `get_secret_provider().get_secret_optional()` (`scene/config/settings.py:105-110`). With the OCI backend, a cache miss performs synchronous Vault network calls (`shared/secrets.py:164-172,190-213`) and blocking retry sleeps on the event-loop thread. The fix bounds the DNS worker but leaves this new health-path I/O unbounded relative to the stated sub-second diagnostic behavior, violating `[CARD-09]`/`[RES-02]`; readiness should read only the needed non-secret config or isolate/bound secret access.
++The clustering run's last step purges receipts that are reverted
++(`reverted_at` set) or expired (`expires_at` in the past). Same-rate
++reclaimer: the writer of receipts is the writer of the purge. Clients never
++delete receipts.
 +
-+Verdict: fail
++## LIFO revert
 +
-+## Re-review r3 (63a79bcc3..b2f35ea73)
++`revert_merge(receipt_id)`:
 +
-+| finding | verdict | evidence |
++- Refuse `receipt_not_top` unless the receipt is the survivor's newest
++  unreverted one.
++- Refuse `receipt_expired` past `expires_at`.
++- Otherwise restore `moved_identity_ids` to a cluster labelled `source_label`
++  when that label is non-empty, else `"<name> (restored)"` where `<name>` is
++  the survivor's current display name (4.2.3 semantics). Set `reverted_at`.
++- Mirror `merge_cluster` step for step: move members, clear
++  `moved_by_merge_id` on them, `recompute_representatives` +
++  `recompute_centroid` for both clusters, best-effort `refresh_centroids_view`
++  (warn, never roll back), delete stale `ClusterMergeSuggestion` rows for
++  both clusters, set `identity_count` from a member count, broadcast
++  `cluster_merge_reverted`.
++
++Refusals are `409` problem-details with `code` (API-05). A second recovery
++run MUST NOT re-attach the restored cluster solely because it was previously
++merged.
++
++```json
++{
++  "type": "https://context-alt-text.dev/problems/receipt-not-top",
++  "title": "Receipt is not the top unreverted merge",
++  "status": 409,
++  "code": "receipt_not_top"
++}
++```
++
++```json
++{
++  "type": "https://context-alt-text.dev/problems/receipt-expired",
++  "title": "Merge receipt has expired",
++  "status": 409,
++  "code": "receipt_expired"
++}
++```
++
++## HTTP
++
++Recognition (mounted by `svc-route-registry`; `_tenant_id = Depends(get_tenant_id)`):
++
++- `GET /recognition/clusters/{cluster_id}/merge-candidates` →
++  [recognition-cluster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json)
++- `POST /recognition/clusters/{id}/revert-merge` body `{ "receipt_id": "<uuid>" }`
++
++WordPress:
++
++- `GET acx/v1/roster/persons/{id}/merge-candidates` →
++  [roster-merge-candidates-response.schema.json](../../../packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json)
++- `POST acx/v1/workbench/clusters/{id}/revert-merge` proxies the recognition
++  revert body `{ "receipt_id": "<uuid>" }`
++
++Band cuts are read from the accepted calibration policy block. No route
++embeds literal similarity thresholds.
++
++## Projection path for quality and undo (B2, rg-015)
++
++The snapshot `clusters[]` object is the only path by which quality and undo
++availability reach WordPress. Four fields, stored as-is, never derived:
++
++| Snapshot / projection column | Wire type | Source |
 +| --- | --- | --- |
-+| GPUFLOW-2-SVCHEALTHADAPTER-R-01 | fixed | `_gpu_endpoint_url_is_valid()` now requires an `http`/`https` scheme and a hostname (`apps/prototype-description-service/api/main.py:228-230`); the readiness path gates DNS and usability on `url_valid` and returns `endpoint_invalid_url` otherwise (`:253-254`, `:278-280`). The added parameterized test covers a bare hostname and `ftp://` and asserts DNS is skipped (`scene/tests/test_health_detailed_adapter.py:265-281`). |
-+| GPUFLOW-2-SVCHEALTHADAPTER-R-02 | fixed | The new `not spec.available` branch precedes the non-GPU/GPU usability branches and returns `usable: false` with `profile_unavailable` (`apps/prototype-description-service/api/main.py:269-271`); the added test enumerates every unavailable registry profile (`scene/tests/test_health_detailed_adapter.py:246-262`). |
-+| GPUFLOW-2-SVCHEALTHADAPTER-R-03 | fixed | `_resolve_blocking()` now owns the `socket.getaddrinfo()` call and returns on `socket.gaierror` before changing cached value or timestamp (`apps/prototype-description-service/api/main.py:143-149`), preserving stale/pending evidence. The new test patches that exact resolver (`scene/tests/test_health_detailed_adapter.py:284-299`). |
-+| GPUFLOW-2-SVCHEALTHADAPTER-R-04 | fixed | `_description_adapter_readiness()` reads the profile, endpoint, and allowlist directly from environment/spec data without constructing `DescriptionSettings` (`apps/prototype-description-service/api/main.py:248-255`); the added test makes both secret-provider entry points raise and still exercises health successfully (`scene/tests/test_health_detailed_adapter.py:302-312`). |
-+| DIAGNO-H-06 | partially_fixed | The delta adds `wire_model_id()` and emits `model_id`/`model_version` from the active profile (`apps/prototype-description-service/api/main.py:241-245`, `:267-304`), with schema/test coverage (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:210-221`, `scene/tests/test_health_detailed_adapter.py:116-126`). However, the task plan and GPU smoke/release comparison are not changed in this delta, so the newly available identity is not yet wired into the stated proof. |
-+| DIAGNO-b54e2b152c2135f4-H-5aa9f6692d839e169eee66bb | not_fixed | The added identity fields make a correct comparison possible, but the delta does not change the release proof from the profile token to `description_adapter.model_id`/`model_version`; `profile` remains `gpu_qwen30b`-style vocabulary (`apps/prototype-description-service/api/main.py:293-304`, `packages/shared-contracts/schemas/scene-health-detailed.schema.json:306-317`). The hardcoded smoke/plan mismatch therefore remains. |
++| `representative_quality` | number \| null | Representative row `quality_score`, renamed at export (API-10) |
++| `quality_components` | object \| null | Representative row `quality_components` (`confidence`, `bbox_area`, `sharpness`, `occlusion_severity`) |
++| `representative_media_id` | integer \| null | Persisted representative identity's WP attachment ID |
++| `undoable_merge_receipt_id` | uuid string \| null | Newest unreverted, unexpired receipt for that cluster |
 +
-+### FINDINGS
++Absent fields stay null. Re-running bootstrap/targeted sync on the same
++`snapshot_version` is a no-op (COR-1 / FLOW-06). Heal by reprocessing into a
++fresh version. No PHP backfill. Roster
++[roster-entry.schema.json](../../../packages/shared-contracts/schemas/roster-entry.schema.json)
++reads those columns: `clusters[].representative_identity` carries
++`representative_quality` and `quality_components`; `clusters[]` carries
++`representative_media_id` and `undoable_merge_receipt_id`.
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-05 — high
++Workbench "Merged automatically · Undo" shows only while projected
++`undoable_merge_receipt_id` is non-null, and submits that id.
 +
-+The schema fix makes `model_id` and `model_version` required (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:210-221`), but the existing shared-schema `HEALTH` fixture still contains only the old readiness keys (`apps/prototype-description-service/scene/tests/test_shared_schema_documents.py:75-85`). `test_health_detailed_adapter_readiness_document` consequently fails with `'model_id' is a required property`. This is a release-contract regression left by the fix delta.
++The composite always ships with its parts (UXR-15). No tier recomputes
++quality. `representative_media_id` is the attachment integer, not a UUID and
++not parsed from `representative_thumb_path`.
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-06 — high
++## Operator merge audit (HAI-15)
 +
-+`wire_model_id()` falls back to `ProfileSpec.model_id` for non-GPU profiles (`apps/prototype-description-service/api/main.py:241-245`); the seeded spec has `model_id=None` (`apps/prototype-description-service/scene/config/profiles.py:62-67`), and readiness then forces `model_version=None` when that identity is absent (`api/main.py:267-268`). The actual `SeededDescriptionAdapter` stamps `model_id="seeded-fixtures"` and a non-null configured model version (`apps/prototype-description-service/scene/application/seeded_adapter.py:39-45`). The new seeded test asserts the incorrect null identity (`scene/tests/test_health_detailed_adapter.py:381-392`), so health provenance cannot reliably match seeded responses.
++Person merge is two-step. Step 1 shows `#merge-survivor` as an unranked,
++score-free list in `name ASC`, filtered by `#merge-search` typeahead, and
++requires a pick. The pick is committed to dialog state and sent as
++`operator_initial_choice`. Step 2 (only after the pick) fetches merge
++candidates and re-renders `#merge-survivor` sorted by similarity desc (name
++asc within band). The merge request carries both `operator_initial_choice`
++and the final survivor.
 +
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-07 — high
++`POST acx/v1/roster/persons/merge` (commit) fields:
 +
-+The non-GPU branch still sets `usable=True` for every registry profile whose `available` flag is true (`apps/prototype-description-service/api/main.py:272-274`). `florence_small` is marked available, but its resolver explicitly raises when the optional VLM dependencies are missing (`apps/prototype-description-service/scene/interface_adapters/http/deps.py:122-132`) and converts that failure into `UnavailableDescriptionAdapter` (`:234-248`). The new CPU test only asserts the readiness boolean (`scene/tests/test_health_detailed_adapter.py:227-243`) and does not resolve the adapter, leaving a false release-readiness signal for an available-but-unresolvable deployment.
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-08 — high
-+
-+`_gpu_endpoint_url_is_valid()` calls `urlparse()` without handling parse errors and validates only scheme plus hostname (`apps/prototype-description-service/api/main.py:228-230`). An unmatched IPv6 authority such as `http://[` raises `ValueError` instead of returning `endpoint_invalid_url`, while `http://gpu.oraclevcn.com:bad` has a valid hostname and passes this predicate even though its port is malformed. The added invalid-URL test covers only a missing scheme and `ftp://` (`scene/tests/test_health_detailed_adapter.py:265-281`), so malformed endpoint configuration can still crash health or publish readiness for an unusable adapter.
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-09 — low
-+
-+The fix delta edits `packages/shared-contracts/schemas/scene-health-detailed.schema.json`, while the lane row assigns `api/main.py` and the new scene test to `svc-health-adapter` and assigns that schema to `contracts-service`. This crosses the declared lane ownership boundary and should be routed to the schema owner.
-+
-+Verdict: fail
-+
-+## Re-review r4 (b2f35ea73..f07634674)
-+
-+VERIFIED: {"SVCHEA-0feee8f56b32d713-H-c1256b829ad577bd18c7693c":"fixed","SVCHEA-0feee8f56b32d713-H-f6bf1fc4861d3c8a95432829":"fixed","SVCHEA-0feee8f56b32d713-H-2bcba9707a7bea22ae8efc9d":"fixed","SVCHEA-0feee8f56b32d713-H-4c7afde184e3acbfdde31a78":"fixed"}
-+FINDINGS: [{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-10","severity":"low","file_path":"apps/prototype-description-service/scene/tests/test_shared_schema_documents.py","line":82,"summary":"The fix delta edits a shared-schema fixture outside the svc-health-adapter lane ownership.","evidence":"The delta adds model_id/model_version to HEALTH and its required-key assertion in scene/tests/test_shared_schema_documents.py (+82-89, +144-152), but the A1 lane row owns only api/main.py and scene/tests/test_health_detailed_adapter.py; the shared contract fixture should remain with contracts-service."}]
-+Verdict: pass_with_findings
-+
-+| finding | verdict | evidence |
++| Field | Type | Meaning |
 +| --- | --- | --- |
-+| SVCHEA-0feee8f56b32d713-H-c1256b829ad577bd18c7693c (high) | fixed | The shared `HEALTH.description_adapter` fixture now supplies `model_id` and `model_version` (`apps/prototype-description-service/scene/tests/test_shared_schema_documents.py:+82-89`), and the expected-key assertion includes both fields (`:+144-152`), so the required schema document can validate. |
-+| SVCHEA-0feee8f56b32d713-H-f6bf1fc4861d3c8a95432829 (high) | fixed | `wire_model_id()` returns `SeededDescriptionAdapter.model_id` for the seeded profile and `_wire_model_version()` reads the configured seeded model version (`apps/prototype-description-service/api/main.py:+256-270`); the readiness payload uses both values (`:+291-292`), with a matching configured-version test (`scene/tests/test_health_detailed_adapter.py:+383-401`). |
-+| SVCHEA-0feee8f56b32d713-H-2bcba9707a7bea22ae8efc9d (high) | fixed | Readiness now checks `spec.available` and, for available local-CPU profiles, `_missing_vlm_dependencies()` before setting `usable` (`apps/prototype-description-service/api/main.py:+293-304`); missing VLM dependencies produce `vlm_dependencies_missing`, pinned by the added test (`scene/tests/test_health_detailed_adapter.py:+409-415`). |
-+| SVCHEA-0feee8f56b32d713-H-4c7afde184e3acbfdde31a78 (high) | fixed | `_parse_endpoint_url()` catches malformed `urlparse()`/port errors and `_gpu_endpoint_url_is_valid()` requires HTTP(S) plus a hostname (`apps/prototype-description-service/api/main.py:+223-245`); the new cases cover an unmatched bracket and malformed port and assert DNS is skipped (`scene/tests/test_health_detailed_adapter.py:+263-281`). |
++| `survivor_id` | integer | Final confirmed survivor (`acx_persons.id`) |
++| `loser_id` | integer | Absorbed person |
++| `operator_initial_choice` | integer | Step-1 pick (`acx_persons.id`). Audit only; never a ranking input |
 +
-+### FINDINGS
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-10 — low
-+
-+The fix delta edits `apps/prototype-description-service/scene/tests/test_shared_schema_documents.py` (`+82-89`, `+144-152`) to repair the shared `HEALTH` fixture. The A1 lane row assigns `api/main.py` and `scene/tests/test_health_detailed_adapter.py` to `svc-health-adapter`, while the shared schema is assigned to `contracts-service`; this additional fixture path crosses the declared one-owner boundary and should be routed to the contract owner (`[sr-007]`).
-+
-+Verdict: pass_with_findings
-+
-+## Re-review r5 (cab42a114..607994cea)
-+
-+| finding | verdict | evidence |
-+| --- | --- | --- |
-+| SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f (high) | fixed | `extract_probed_description_adapter()` now requires a top-level `description_adapter` object and returns its profile (`infra/oci/demo/lib/describe-gate.sh:+84-122`); the demo-gate tests replace string fixtures and reject a legacy string (`infra/oci/demo/tests/test-describe-gate.sh:+154-198`), while the GPU smoke path reads object identity and checks the expected profile/model ID/version (`scripts/gpu_burst_smoke.py:+1574-1612,+1708-1733`). |
-+
-+### FINDINGS
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-11 — high
-+
-+`extract_probed_description_adapter()` validates `model_id` and `model_version` only when those keys are present (`infra/oci/demo/lib/describe-gate.sh:+110-122`). An object containing only a nonempty `profile`, or empty identity strings, is therefore accepted and reduced to a profile; the changed tests cover non-string identity values but not omitted or empty values (`infra/oci/demo/tests/test-describe-gate.sh:+164-174`). The demo/bootstrap gate can consequently accept a schema-invalid or non-identifiable readiness payload even though the GPU smoke consumer now requires nonempty exact identity fields (`scripts/gpu_burst_smoke.py:+1588-1604`), leaving inconsistent release checks and a fail-open path for required metadata (`[rg-015]`, `[CARD-09]`).
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-12 — low
-+
-+The fix delta changes `infra/oci/demo/lib/describe-gate.sh`, `infra/oci/demo/tests/test-describe-gate.sh`, `scripts/deploy/tests/test-smoke-gate.sh`, and `scripts/gpu_burst_smoke.py` (`:+84-122`, `:+154-198`, `:+923-926`, `:+73-82`, `:+1574-1733`), but the lane row assigns `svc-health-adapter` only `api/main.py` and `apps/prototype-description-service/scene/tests/test_health_detailed_adapter.py`. These consumer and fixture edits cross the declared single-owner boundary and should be routed to their owning lanes (`[sr-007]`).
-+
-+Verdict: fail
-+
-+## Re-review r6 (607994cea..db5eb118d)
-+
-+VERIFIED: {"SVCHEA-0feee8f56b32d713-H-1ab3ae3ba4b23b879dba88f2":"fixed","SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f":"not_fixed"}
-+FINDINGS: [{"id":"GPUFLOW-2-SVCHEALTHADAPTER-R-13","severity":"high","file_path":"infra/oci/demo/lib/describe-gate.sh","line":118,"summary":"The adapter extractor accepts a payload that is not valid detailed-health schema.","evidence":"The fix hunk validates only profile plus model_id/model_version presence and value shape (infra/oci/demo/lib/describe-gate.sh:112-120), while descriptionAdapterReadiness also requires kind, endpoint_configured, endpoint_allowlisted, endpoint_private, checked_at, fresh, usable, and reason (packages/shared-contracts/schemas/scene-health-detailed.schema.json:218-231). The new null-identity test passes only profile/model_id/model_version and calls it schema-valid (infra/oci/demo/tests/test-describe-gate.sh:176), so a malformed 2xx health body can still be admitted by the bootstrap gate [RLSE-05][TEST-15]."}]
-+
-+| finding | verdict | evidence |
-+| --- | --- | --- |
-+| SVCHEA-0feee8f56b32d713-H-1ab3ae3ba4b23b879dba88f2 (high) | fixed | The extractor now rejects either missing identity key and rejects non-null values unless they are non-empty strings (`infra/oci/demo/lib/describe-gate.sh:116-120`); the added cases cover missing keys and an empty model_id (`infra/oci/demo/tests/test-describe-gate.sh:173-176`). Null remains allowed by the schema's identity types, so the claimed omitted/empty acceptance path is closed. |
-+| SVCHEA-0feee8f56b32d713-H-e773a7622485644b567bfd6f (high) | not_fixed | This delta only adds identity validation to the already-object extractor (`infra/oci/demo/lib/describe-gate.sh:112-120`); it does not change the health producer or the other consumers from string handling to object handling. The direct extractor tests (`infra/oci/demo/tests/test-describe-gate.sh:173-176`) do not prove the cross-consumer contract, so the listed object/string release break is not fixed by this diff. |
-+
-+### FINDINGS
-+
-+#### GPUFLOW-2-SVCHEALTHADAPTER-R-13 — high
-+
-+The fix validates only `profile`, `model_id`, and `model_version` (`infra/oci/demo/lib/describe-gate.sh:112-120`), but the shared `descriptionAdapterReadiness` definition requires the complete readiness block, including `kind`, endpoint evidence, freshness, usability, and reason (`packages/shared-contracts/schemas/scene-health-detailed.schema.json:218-231`). The new test explicitly accepts `{"profile":"seeded","model_id":null,"model_version":null}` as “schema-valid” (`infra/oci/demo/tests/test-describe-gate.sh:176`), although that object omits every other required readiness field. A malformed HTTP-2xx health response can therefore still yield a trusted profile and pass the bootstrap gate, violating fail-closed release behavior (`[RLSE-05]`, `[TEST-15]`).
-+
-+Verdict: fail
-diff --git a/infra/oci/demo/lib/describe-gate.sh b/infra/oci/demo/lib/describe-gate.sh
---- a/infra/oci/demo/lib/describe-gate.sh
-+++ b/infra/oci/demo/lib/describe-gate.sh
-@@ -85,9 +85,10 @@ php_define_value() {
- # Returns description_adapter.profile from the top-level JSON readiness object
- # when HTTP is 2xx, the body is parseable, and description_adapter matches the
- # full descriptionAdapterReadiness shape. Empty on probe failure, non-2xx,
--# missing or invalid shape fields (including required, non-empty model identity
--# strings or null), unparseable body,
--# nested-only key, non-object value, or missing python3.
-+# missing or invalid shape fields (including non-empty model identity strings
-+# for trusted profiles), unparseable body,
-+# nested-only key, non-object value, untrusted model identity, or missing
-+# python3.
- # NEVER invents a fallback profile. python3 is required; fail closed if absent.
- extract_probed_description_adapter() {
-     local code="$1"
-@@ -111,6 +112,8 @@ except Exception:
-     raise SystemExit(0)
- if not isinstance(data, dict):
-     raise SystemExit(0)
-+if data.get("status") not in {"ok", "degraded"}:
-+    raise SystemExit(0)
- value = data.get("description_adapter")
- if not isinstance(value, dict):
-     raise SystemExit(0)
-@@ -153,8 +156,14 @@ if value["reason"] is not None and not isinstance(value["reason"], str):
- for key in ("model_id", "model_version"):
-     if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
-         raise SystemExit(0)
-+trusted_profiles = set(sys.argv[1].split()) if len(sys.argv) > 1 else set()
-+if profile in trusted_profiles and any(
-+    not isinstance(value[key], str) or not value[key]
-+    for key in ("model_id", "model_version")
-+):
-+    raise SystemExit(0)
- sys.stdout.write(profile)
--' 2>/dev/null) || value=""
-+' "$ACX_TRUSTED_DESCRIBE_PROFILES" 2>/dev/null) || value=""
-     printf '%s' "$value"
++`operator_initial_choice` is stored on the WP merge record. It is not a
++recognition receipt field. PHP MUST persist the submitted value and MUST NOT
++replace it with the top ranked candidate.
+diff --git a/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
+new file mode 100644
+--- /dev/null
++++ b/packages/shared-contracts/schemas/recognition-cluster-merge-candidates-response.schema.json
+@@ -0,0 +1,64 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-merge-candidates-response.schema.json",
++  "title": "Recognition Cluster Merge Candidates Response",
++  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Similarity is centroid cosine merged with pending ClusterMergeSuggestion similarity. band is cut from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Same shape family as GET /recognition/clusters/{cluster_id}/roster-candidates. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
++  "type": "object",
++  "required": ["cluster_id", "candidates"],
++  "additionalProperties": false,
++  "properties": {
++    "cluster_id": {
++      "type": "string",
++      "format": "uuid",
++      "description": "Probe cluster UUID from the request path."
++    },
++    "candidates": {
++      "type": "array",
++      "description": "Server-ranked other clusters. Similarity DESC, then name ASC within band. Browser/SPA clients must render in payload order.",
++      "items": {
++        "type": "object",
++        "required": ["cluster_id", "name", "similarity", "band"],
++        "additionalProperties": false,
++        "properties": {
++          "cluster_id": {
++            "type": "string",
++            "format": "uuid",
++            "description": "Candidate cluster UUID."
++          },
++          "name": {
++            "type": "string",
++            "description": "Cluster label used for display and within-band name ASC. Empty string when the cluster is unlabeled; never fabricated from another cluster."
++          },
++          "similarity": {
++            "type": "number",
++            "description": "Ranking cosine only; not a calibrated probability. May be negative (band none)."
++          },
++          "band": {
++            "type": "string",
++            "enum": ["strong", "possible", "none"],
++            "description": "Suggestion band from the accepted calibration policy block. Same vocabulary as roster-candidates-response. Unknown values MUST be treated as none."
++          }
++        }
++      }
++    }
++  },
++  "examples": [
++    {
++      "cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++      "candidates": [
++        {
++          "cluster_id": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
++          "name": "Alice Example",
++          "similarity": 0.87,
++          "band": "strong"
++        },
++        {
++          "cluster_id": "c0ffee00-0000-4000-8000-000000000001",
++          "name": "",
++          "similarity": 0.41,
++          "band": "none"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
+--- a/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
++++ b/packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json
+@@ -92,6 +92,53 @@
+             "type": ["string", "null"],
+             "format": "uuid",
+             "description": "Target cluster ID for a pending merge suggestion. Null when the source is not similar_cluster."
++          },
++          "representative_quality": {
++            "type": ["number", "null"],
++            "minimum": 0,
++            "maximum": 1,
++            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
++          },
++          "quality_components": {
++            "type": ["object", "null"],
++            "description": "Parts of representative_quality (UXR-15). Null when the snapshot omits them. When present, all four keys are required; a missing signal is null, never omitted. Consumers MUST NOT invent components.",
++            "additionalProperties": false,
++            "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
++            "properties": {
++              "confidence": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Detector confidence in [0,1]."
++              },
++              "bbox_area": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "description": "Face bounding-box area in pixel-squared units."
++              },
++              "sharpness": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Sharpness term in [0,1] when computed; null while the producer has no sharpness signal."
++              },
++              "occlusion_severity": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Occlusion severity in [0,1] (eye-patch activity deficit today). Cheap shortlist ranker, not a calibrated occluder measure."
++              }
++            }
++          },
++          "representative_media_id": {
++            "type": ["integer", "null"],
++            "minimum": 1,
++            "description": "WP attachment ID of the persisted representative identity. Integer on the wire (same grain as members[].attachment_id). Null when absent. Consumers MUST NOT parse it from representative_thumb_path (rg-015)."
++          },
++          "undoable_merge_receipt_id": {
++            "type": ["string", "null"],
++            "format": "uuid",
++            "description": "Receipt id of this cluster's newest unreverted, unexpired cluster_merge_receipts row. Null when none is undoable. This is the only path by which workbench undo availability reaches WordPress."
+           }
+         }
+       }
+@@ -149,5 +196,69 @@
+         }
+       }
+     }
+-  }
++  },
++  "examples": [
++    {
++      "tenant_id": "cc42f496-c7e1-5631-b3b5-cfa270c763f8",
++      "snapshot_version": 105,
++      "snapshot_generation_id": "70e7f684-7228-4b4d-9594-c3ca024478f6",
++      "source_job_id": "6e2b534b-c5f1-4d3d-a6d1-1f0b8d8ab7ec",
++      "generated_at": "2026-03-27T18:00:00Z",
++      "clusters": [
++        {
++          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "label": "Alice Example",
++          "curation_state": "confirmed",
++          "is_user_confirmed": true,
++          "identity_count": 2,
++          "representative_thumb_path": "acx://cluster/6c1a2e32-31b2-4d54-a4de-98b1a73d77a1/media/501",
++          "representative_id": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
++          "is_pinned": true,
++          "suggested_label": null,
++          "suggested_label_source": null,
++          "suggested_label_confidence": null,
++          "suggested_target_cluster_id": null,
++          "representative_quality": 0.82,
++          "quality_components": {
++            "confidence": 0.94,
++            "bbox_area": 7680,
++            "sharpness": 0.71,
++            "occlusion_severity": 0.12
++          },
++          "representative_media_id": 501,
++          "undoable_merge_receipt_id": "b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44"
++        },
++        {
++          "cluster_uuid": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
++          "label": null,
++          "curation_state": "active",
++          "is_user_confirmed": false,
++          "identity_count": 1,
++          "representative_thumb_path": "acx://cluster/28f91a5d-0a26-48cc-ab25-f1ad9ac74367/media/777",
++          "representative_id": null,
++          "is_pinned": false,
++          "suggested_label": "Alice Example",
++          "suggested_label_source": "similar_cluster",
++          "suggested_label_confidence": 0.91,
++          "suggested_target_cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "representative_quality": null,
++          "quality_components": null,
++          "representative_media_id": null,
++          "undoable_merge_receipt_id": null
++        }
++      ],
++      "members": [
++        {
++          "identity_uuid": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
++          "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
++          "attachment_id": 501,
++          "bbox": { "x": 12, "y": 20, "width": 80, "height": 96 },
++          "image_width": 1200,
++          "image_height": 1600,
++          "thumb_path": "acx://identity/4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb/thumb",
++          "similarity": 0.98
++        }
++      ]
++    }
++  ]
  }
- 
-diff --git a/infra/oci/demo/tests/test-describe-gate.sh b/infra/oci/demo/tests/test-describe-gate.sh
---- a/infra/oci/demo/tests/test-describe-gate.sh
-+++ b/infra/oci/demo/tests/test-describe-gate.sh
-@@ -171,6 +171,8 @@ assert_eq "probe 200 spaced json" gpu_qwen30b "$(extract_probed_description_adap
-     "model_version": "Q4_K_M"
-   }
- }')"
-+assert_eq "probe 200 missing top-level status empty" "" "$(extract_probed_description_adapter 200 "{\"description_adapter\":${valid_readiness}}")"
-+assert_eq "probe 200 unhealthy top-level status empty" "" "$(extract_probed_description_adapter 200 "{\"status\":\"unhealthy\",\"description_adapter\":${valid_readiness}}")"
- assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
- assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
- assert_eq "probe 000 curl-fail empty" "" "$(extract_probed_description_adapter 000 '')"
-@@ -183,14 +185,17 @@ assert_eq "probe 200 object non-string model_version empty" "" "$(extract_probed
- assert_eq "probe 200 object missing model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_version":"v"}}')"
- assert_eq "probe 200 object missing model_version empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"m"}}')"
- assert_eq "probe 200 object empty model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"","model_version":"v"}}')"
--assert_eq "probe 200 object null identity (schema-valid)" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":null,"model_version":null}}')"
-+assert_eq "probe 200 trusted null model_id empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":null,"model_version":"v"}}')"
-+assert_eq "probe 200 trusted null model_version empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":null}}')"
-+assert_eq "probe 200 non-trusted null identity extracts profile" seeded "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":null,"model_version":null}}')"
-+assert_eq "probe 200 non-trusted null identity classifies BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":null,"model_version":null}}')" 100 0)"
- assert_eq "probe 200 object missing kind empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
- assert_eq "probe 200 object extra key empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v","extra":true}}')"
- assert_eq "probe 200 object string usable empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":"true","reason":null,"model_id":"m","model_version":"v"}}')"
- assert_eq "probe 200 object boolean checked_at empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":true,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
- assert_eq "probe 200 object string endpoint_private empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":"yes","checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
- assert_eq "probe 200 object invalid kind empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"not-a-kind","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
--assert_eq "probe 200 cold gpu full object accepted" gpu_qwen30b "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":false,"reason":"endpoint_resolution_pending","model_id":"m","model_version":"v"}}')"
-+assert_eq "probe 200 cold gpu degraded full object accepted" gpu_qwen30b "$(extract_probed_description_adapter 200 '{"status":"degraded","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":false,"reason":"endpoint_resolution_pending","model_id":"m","model_version":"v"}}')"
- assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
- assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
- assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
-@@ -199,8 +204,8 @@ assert_eq "probe 200 boolean field empty" "" "$(extract_probed_description_adapt
- assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}]')"
- assert_eq "probe 200 HTML page empty" "" "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')"
- assert_eq "probe 200 HTML page classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')" 100 0)"
--assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')"
--assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')" 100 0)"
-+assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')"
-+assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')" 100 0)"
- assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}}')"
- assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
- assert_eq "probe 200 genuine health-like payload" gpu_qwen30b "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
+diff --git a/packages/shared-contracts/schemas/roster-entry.schema.json b/packages/shared-contracts/schemas/roster-entry.schema.json
+--- a/packages/shared-contracts/schemas/roster-entry.schema.json
++++ b/packages/shared-contracts/schemas/roster-entry.schema.json
+@@ -67,6 +67,16 @@
+             "minimum": 0,
+             "description": "Number of identities currently assigned to this cluster."
+           },
++          "representative_media_id": {
++            "type": ["integer", "null"],
++            "minimum": 1,
++            "description": "Projected WP attachment ID of the cluster representative. Read from the projection column; never derived from representative_identity.media_id (rg-015). Null when the snapshot omitted it."
++          },
++          "undoable_merge_receipt_id": {
++            "type": ["string", "null"],
++            "format": "uuid",
++            "description": "Projected newest unreverted, unexpired cluster-merge receipt id. Read from the projection column; never computed in PHP (rg-015). Null when none is undoable."
++          },
+           "representative_identity": {
+             "type": ["object", "null"],
+             "description": "Representative face evidence for the cluster when available.",
+@@ -106,6 +116,39 @@
+               "similarity_threshold": {
+                 "type": ["number", "null"],
+                 "description": "Threshold used for this projected evidence item when available."
++              },
++              "representative_quality": {
++                "type": ["number", "null"],
++                "minimum": 0,
++                "maximum": 1,
++                "description": "Projected composite quality in [0,1]. Read from the projection column; never recomputed in PHP (rg-015). Null when the snapshot omitted it."
++              },
++              "quality_components": {
++                "type": ["object", "null"],
++                "description": "Projected parts of representative_quality (UXR-15). Null when omitted. When present, all four keys are required; a missing signal is null, never omitted.",
++                "additionalProperties": false,
++                "required": ["confidence", "bbox_area", "sharpness", "occlusion_severity"],
++                "properties": {
++                  "confidence": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  },
++                  "bbox_area": {
++                    "type": ["number", "null"],
++                    "minimum": 0
++                  },
++                  "sharpness": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  },
++                  "occlusion_severity": {
++                    "type": ["number", "null"],
++                    "minimum": 0,
++                    "maximum": 1
++                  }
++                }
+               }
+             }
+           },
+diff --git a/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
+new file mode 100644
+--- /dev/null
++++ b/packages/shared-contracts/schemas/roster-merge-candidates-response.schema.json
+@@ -0,0 +1,72 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://context-alt-text.dev/schemas/roster-merge-candidates-response.schema.json",
++  "title": "Roster Merge Candidates Response",
++  "description": "GET acx/v1/roster/persons/{id}/merge-candidates. Ranked survivor persons for a loser person. PHP resolves loser person → bound cluster UUIDs, calls GET /recognition/clusters/{cluster_id}/merge-candidates once per bound cluster, maps candidate clusters → bound persons through the projection, and aggregates per person. similarity is the max over pairs; band is the band of that max; shared_media_count is the projection media-row count. A candidate cluster with no bound person is dropped. Every emitted number traces to a service value or a projection count; PHP invents none (rg-015).",
++  "type": "object",
++  "required": ["person_id", "candidates"],
++  "additionalProperties": false,
++  "properties": {
++    "person_id": {
++      "type": "integer",
++      "minimum": 1,
++      "description": "Loser roster person id from the request path (acx_persons.id)."
++    },
++    "candidates": {
++      "type": "array",
++      "description": "Ranked survivor persons. Similarity DESC, then name ASC within band. SPA step 2 renders this order; step 1 MUST NOT fetch or display it.",
++      "items": {
++        "type": "object",
++        "required": ["person_id", "name", "similarity", "band", "shared_media_count"],
++        "additionalProperties": false,
++        "properties": {
++          "person_id": {
++            "type": "integer",
++            "minimum": 1,
++            "description": "Survivor roster person id."
++          },
++          "name": {
++            "type": "string",
++            "minLength": 1,
++            "description": "Display name from the bound person row."
++          },
++          "similarity": {
++            "type": "number",
++            "description": "Max service similarity across the loser person's bound clusters and this person's bound clusters. Ranking cosine only; not a calibrated probability. May be negative (band none)."
++          },
++          "band": {
++            "type": "string",
++            "enum": ["strong", "possible", "none"],
++            "description": "Band of the max-similarity pair, copied from the service candidate. Same vocabulary as recognition-cluster-merge-candidates-response. Unknown values MUST be treated as none."
++          },
++          "shared_media_count": {
++            "type": "integer",
++            "minimum": 0,
++            "description": "Count of projected media rows shared between the loser and this survivor. From the projection, never count(payload) (rg-015)."
++          }
++        }
++      }
++    }
++  },
++  "examples": [
++    {
++      "person_id": 12,
++      "candidates": [
++        {
++          "person_id": 34,
++          "name": "Alice Example",
++          "similarity": 0.87,
++          "band": "strong",
++          "shared_media_count": 3
++        },
++        {
++          "person_id": 56,
++          "name": "Bob Example",
++          "similarity": 0.52,
++          "band": "possible",
++          "shared_media_count": 0
++        }
++      ]
++    }
++  ]
++}

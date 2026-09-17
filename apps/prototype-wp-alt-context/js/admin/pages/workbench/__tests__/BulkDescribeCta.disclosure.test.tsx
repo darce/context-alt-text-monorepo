@@ -1,9 +1,18 @@
-import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as renderBare, screen } from '@testing-library/react';
+import type { PropsWithChildren, ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import { BulkDescribeCta } from '../MediaSelection';
 import { RECOGNITION_POLICY } from '../mediaFooterCtaState';
+
+const queryClientWrapper = ({ children }: PropsWithChildren): ReactElement => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    {children}
+  </QueryClientProvider>
+);
+const render = (ui: ReactElement) => renderBare(ui, { wrapper: queryClientWrapper });
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,

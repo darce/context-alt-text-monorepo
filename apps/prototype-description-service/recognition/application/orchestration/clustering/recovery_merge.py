@@ -823,9 +823,9 @@ async def _persist_reverted_receipt_blocks(*, session: Any, tenant_id: str, now:
                         reason=RECOVERY_REVERT_BLOCK_REASON,
                         expires_at=None,
                     )
-            )
-            persisted += 1
-            continue
+                )
+                persisted += 1
+                continue
             if block.reason == RECOVERY_REVERT_BLOCK_REASON:
                 continue
             if block.expires_at is None or block.expires_at > now:

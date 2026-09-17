@@ -21,7 +21,10 @@ from typing import cast
 import numpy as np
 
 from recognition.application.assignment.decision import AssignmentDecision
-from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
+from recognition.application.assignment.quality import (
+    compute_representative_quality,
+    representative_sort_key,
+)
 from recognition.application.settings.clustering import (
     ENROLLMENT_NOOP_CEILING_OCCLUSION,
     ENROLLMENT_NOOP_FLOOR_EMBEDDING_NORM,
@@ -172,40 +175,70 @@ def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     return face_vec.astype(np.float32) / norm
 
 
-def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
-    """Compute quality score for a media identity.
+def _quality_settings(
+    settings: ClusteringSettings | QualitySettings | None,
+) -> QualitySettings | None:
+    if isinstance(settings, ClusteringSettings):
+        return settings.quality
+    return settings
 
-    Base score from compute_identity_quality (confidence × size, pose-neutral,
-    FIR2-BR-03). Multiplied by representative_quality_multiplier when floors are
-    active and all S1 factors are present; otherwise f≡1.0 (dark parity).
 
-    Args:
-        identity: MediaIdentity with confidence, bbox, and optional quality factors.
-        settings: Clustering settings containing quality parameters + enrollment floors.
-
-    Returns:
-        Quality score between 0.0 and 1.0.
-    """
-    info = _compute_quality_info(
+def representative_quality_components(
+    identity: MediaIdentity,
+    settings: ClusteringSettings | QualitySettings | None = None,
+) -> dict[str, float]:
+    """quality_components JSON for the representative row (svc-rep-recompute)."""
+    return compute_representative_quality(
         confidence=identity.confidence,
         bbox_width=identity.bbox_width,
         bbox_height=identity.bbox_height,
-        settings=settings.quality,
-        occlusion_severity=identity.occlusion_severity,
-    )
-    floors = enrollment_floors_from_settings(settings)
-    multiplier = representative_quality_multiplier(
         sharpness=identity.sharpness,
-        embedding_norm=identity.embedding_norm,
         occlusion_severity=identity.occlusion_severity,
-        floors=floors,
+        settings=_quality_settings(settings),
+    ).components()
+
+
+def sort_identities_for_representative(
+    identities: Sequence[MediaIdentity],
+    settings: ClusteringSettings | QualitySettings | None = None,
+) -> list[MediaIdentity]:
+    """Unoccluded-first, then highest C4 composite. Public for assignment_writer."""
+    quality_settings = _quality_settings(settings)
+    return sorted(
+        identities,
+        key=lambda identity: representative_sort_key(
+            confidence=identity.confidence,
+            bbox_width=identity.bbox_width,
+            bbox_height=identity.bbox_height,
+            sharpness=identity.sharpness,
+            occlusion_severity=identity.occlusion_severity,
+            identity_id=identity.id,
+            settings=quality_settings,
+        ),
     )
-    return round(max(0.0, min(1.0, info.score * multiplier)), 3)
+
+
+def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
+    """C4 composite written to quality_score (0..1).
+
+    Geometric mean(confidence, bbox term) × (1 − occlusion·k_occ) × sharpness
+    term. Enrollment floors still gate admission separately. The FIR-6
+    multiplier is not mixed in — that would double-count occlusion/sharpness.
+    """
+    return compute_representative_quality(
+        confidence=identity.confidence,
+        bbox_width=identity.bbox_width,
+        bbox_height=identity.bbox_height,
+        sharpness=identity.sharpness,
+        occlusion_severity=identity.occlusion_severity,
+        settings=settings.quality,
+    ).composite
 
 
 def _select_diverse_representatives(
     identities: list[MediaIdentity],
     max_reps: int,
+    settings: ClusteringSettings | QualitySettings | None = None,
 ) -> list[MediaIdentity]:
     """Select representatives via Farthest-Point Sampling for diversity.
 
@@ -216,19 +249,20 @@ def _select_diverse_representatives(
     Args:
         identities: Pool of candidate identities.
         max_reps: Maximum number of representatives to select.
+        settings: Optional quality settings for C4 ranking of the FPS seed.
 
     Returns:
-        Selected representatives in insertion order (first is highest confidence).
+        Selected representatives in insertion order (first is unoccluded-first
+        then highest composite).
     """
     if not identities:
         return []
     k = min(max_reps, len(identities))
 
-    # Seed with highest-confidence face
-    sorted_by_conf = sorted(identities, key=lambda i: i.confidence, reverse=True)
-    selected: list[MediaIdentity] = [sorted_by_conf[0]]
-    selected_vecs: list[np.ndarray] = [_normalize_embedding(np.asarray(sorted_by_conf[0].embedding, dtype=np.float32))]
-    remaining = set(range(1, len(sorted_by_conf)))
+    ranked = sort_identities_for_representative(identities, settings)
+    selected: list[MediaIdentity] = [ranked[0]]
+    selected_vecs: list[np.ndarray] = [_normalize_embedding(np.asarray(ranked[0].embedding, dtype=np.float32))]
+    remaining = set(range(1, len(ranked)))
 
     for _ in range(k - 1):
         if not remaining:
@@ -236,7 +270,7 @@ def _select_diverse_representatives(
         best_idx: int | None = None
         best_min_dist = -1.0
         for idx in remaining:
-            vec = _normalize_embedding(np.asarray(sorted_by_conf[idx].embedding, dtype=np.float32))
+            vec = _normalize_embedding(np.asarray(ranked[idx].embedding, dtype=np.float32))
             # Distance = 1 - cosine_similarity (since embeddings are normalized)
             min_dist = min(float(1 - np.dot(vec, sv)) for sv in selected_vecs)
             if min_dist > best_min_dist:
@@ -244,8 +278,8 @@ def _select_diverse_representatives(
                 best_idx = idx
         if best_idx is None:
             break
-        selected.append(sorted_by_conf[best_idx])
-        selected_vecs.append(_normalize_embedding(np.asarray(sorted_by_conf[best_idx].embedding, dtype=np.float32)))
+        selected.append(ranked[best_idx])
+        selected_vecs.append(_normalize_embedding(np.asarray(ranked[best_idx].embedding, dtype=np.float32)))
         remaining.remove(best_idx)
 
     return selected
@@ -420,9 +454,7 @@ class RepresentativeSelector:
                 floors.floor_embedding_norm,
                 floors.ceiling_occlusion,
             )
-            return RepAdmission(
-                False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False
-            )
+            return RepAdmission(False, existing_reps, current_count, was_upgrade=False, was_novel_pose=False)
 
         # Track which rep was removed so cached_reps reflects current DB state.
         removed_rep_id: str | None = None

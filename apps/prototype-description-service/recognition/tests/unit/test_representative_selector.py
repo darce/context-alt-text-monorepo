@@ -21,6 +21,7 @@ from recognition.application.persistence.representative_selector import (
     RepAdmission,
     RepresentativeSelector,
     _select_diverse_representatives,
+    sort_identities_for_representative,
 )
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
@@ -63,15 +64,25 @@ def _accept(candidate: AssignmentCandidate) -> AssignmentDecision:
     )
 
 
-def _identity(index: int, *, confidence: float = 0.9) -> MediaIdentity:
+def _identity(
+    index: int,
+    *,
+    confidence: float = 0.9,
+    occlusion_severity: float | None = None,
+    sharpness: float | None = None,
+    bbox_width: int = 100,
+    bbox_height: int = 100,
+) -> MediaIdentity:
     return MediaIdentity(
         id=f"id-{index}",
         tenant_id="tenant-1",
         media_id="media-1",
         embedding=_unit_vector(index),
         confidence=confidence,
-        bbox_width=100,
-        bbox_height=100,
+        bbox_width=bbox_width,
+        bbox_height=bbox_height,
+        occlusion_severity=occlusion_severity,
+        sharpness=sharpness,
     )
 
 
@@ -183,9 +194,21 @@ def test_select_diverse_representatives_seeded_picks_orthogonal(selector: Repres
 
 
 def test_select_diverse_representatives_seeds_highest_confidence_first() -> None:
-    """Unseeded FPS starts from the highest-confidence identity."""
+    """Unseeded FPS starts from the highest-composite identity when occlusion ties."""
     low, high = _identity(1, confidence=0.2), _identity(2, confidence=0.99)
 
     picked = _select_diverse_representatives([low, high], max_reps=1)
 
     assert [p.id for p in picked] == [high.id]
+
+
+def test_select_diverse_representatives_prefers_unoccluded_over_higher_confidence() -> None:
+    """C4: occluded high-confidence face loses to an unoccluded same-identity candidate."""
+    occluded = _identity(1, confidence=0.99, occlusion_severity=0.85, bbox_width=200, bbox_height=200)
+    clear = _identity(2, confidence=0.55, occlusion_severity=0.0, bbox_width=80, bbox_height=80)
+
+    picked = _select_diverse_representatives([occluded, clear], max_reps=1)
+
+    assert [p.id for p in picked] == [clear.id]
+    ranked = sort_identities_for_representative([occluded, clear])
+    assert [p.id for p in ranked] == [clear.id, occluded.id]

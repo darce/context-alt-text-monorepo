@@ -55,11 +55,61 @@ const gpuStateToneClass = (tone: GpuStateTone): string => {
   }
 };
 
-const positiveWaitSeconds = (value: number | null | undefined): number | null => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return null;
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Schema `warmup_eta_seconds`: finite, including 0. `-0` normalizes to `0`. */
+const finiteEtaSeconds = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined;
   }
-  return Math.round(value);
+  return value === 0 ? 0 : value;
+};
+
+/** Schema `startup_budget_seconds`: finite and strictly positive. */
+const finiteBudgetSeconds = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
+};
+
+const etaWaitSeconds = (value: number | null | undefined): number | null => {
+  const seconds = finiteEtaSeconds(value);
+  return seconds === undefined ? null : Math.round(seconds);
+};
+
+const budgetWaitSeconds = (value: number | null | undefined): number | null => {
+  const seconds = finiteBudgetSeconds(value);
+  return seconds === undefined ? null : Math.round(seconds);
+};
+
+export interface GpuWaitFromOperationDetail {
+  warmupEtaSeconds?: number;
+  startupBudgetSeconds?: number;
+}
+
+/**
+ * Map scene-describe-multipart operation-error `detail` wait fields.
+ * Returns undefined when both fields are absent or invalid; never invents ceilings.
+ */
+export const gpuWaitFromOperationDetail = (detail: unknown): GpuWaitFromOperationDetail | undefined => {
+  if (!isPlainObject(detail)) {
+    return undefined;
+  }
+  const warmupEtaSeconds = finiteEtaSeconds(detail.warmup_eta_seconds);
+  const startupBudgetSeconds = finiteBudgetSeconds(detail.startup_budget_seconds);
+  if (warmupEtaSeconds === undefined && startupBudgetSeconds === undefined) {
+    return undefined;
+  }
+  const wait: GpuWaitFromOperationDetail = {};
+  if (warmupEtaSeconds !== undefined) {
+    wait.warmupEtaSeconds = warmupEtaSeconds;
+  }
+  if (startupBudgetSeconds !== undefined) {
+    wait.startupBudgetSeconds = startupBudgetSeconds;
+  }
+  return wait;
 };
 
 const formatStoppedWait = (seconds: number, kind: 'about' | 'up to'): string => {
@@ -78,11 +128,11 @@ const startingHeadline = (
   warmupEtaSeconds: number | null | undefined,
   startupBudgetSeconds: number | null | undefined,
 ): string => {
-  const eta = positiveWaitSeconds(warmupEtaSeconds);
+  const eta = etaWaitSeconds(warmupEtaSeconds);
   if (eta !== null) {
     return sprintf(__('Description Service is starting… about %ds', 'alt-context'), eta);
   }
-  const budget = positiveWaitSeconds(startupBudgetSeconds);
+  const budget = budgetWaitSeconds(startupBudgetSeconds);
   if (budget !== null) {
     return sprintf(__('Description Service is starting… up to %ds', 'alt-context'), budget);
   }
@@ -93,8 +143,8 @@ const stoppedHeadline = (
   warmupEtaSeconds: number | null | undefined,
   startupBudgetSeconds: number | null | undefined,
 ): string => {
-  const eta = positiveWaitSeconds(warmupEtaSeconds);
-  const budget = eta === null ? positiveWaitSeconds(startupBudgetSeconds) : null;
+  const eta = etaWaitSeconds(warmupEtaSeconds);
+  const budget = eta === null ? budgetWaitSeconds(startupBudgetSeconds) : null;
   const wait =
     eta !== null
       ? formatStoppedWait(eta, 'about')
@@ -178,8 +228,9 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
     };
   }
 
-  const displayedState: GpuState = run.isRunPending ? (run.gpuState ?? GPU_STATE.UNKNOWN) : poll.gpuState;
-  const treatAsStale = !run.isRunPending && (!poll.snapshotFresh || displayedState === GPU_STATE.UNKNOWN);
+  const idleState: GpuState = poll.snapshotFresh ? poll.gpuState : GPU_STATE.UNKNOWN;
+  const displayedState: GpuState = run.isRunPending ? (run.gpuState ?? GPU_STATE.UNKNOWN) : idleState;
+  const treatAsStale = !run.isRunPending && displayedState === GPU_STATE.UNKNOWN;
 
   if (treatAsStale) {
     return {

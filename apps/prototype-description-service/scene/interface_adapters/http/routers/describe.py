@@ -1255,9 +1255,11 @@ async def describe_image_multipart(
     else:
         effective_adapter = adapter
     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
+    unavailable_fast_path = False
+    adapter_reason = None
     if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
         adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
-        if adapter_reason is not None:
+        if adapter_reason is not None and submission.operation_id is None:
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",
@@ -1267,10 +1269,11 @@ async def describe_image_multipart(
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
                 reason=adapter_reason,
             )
+        unavailable_fast_path = adapter_reason is not None
     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
     cached_row = None
     op = None
-    if gpu_compute:
+    if gpu_compute and not unavailable_fast_path:
         cached_row = await _cached_gpu_description_row(
             repository=repository,
             tenant_uuid=tenant_uuid,
@@ -1350,6 +1353,18 @@ async def describe_image_multipart(
         terminalized = True
 
     try:
+        if unavailable_fast_path:
+            await _cleanup_accepted()
+            await dump_load_snapshot(session_factory)
+            raise _typed_describe_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="description_service_unavailable",
+                message="Description service is unavailable",
+                operation_id=operation_id,
+                startup_id=None if op is None else op.startup_id,
+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                reason=adapter_reason,
+            )
         if cached_row is not None:
             response = await _response_from_cached_row(
                 service=service,

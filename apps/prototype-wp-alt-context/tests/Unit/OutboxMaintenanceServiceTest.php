@@ -30,6 +30,7 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertStringContainsString("status = 'pending'", $updateQuery);
         $this->assertStringContainsString('attempts = 0', $updateQuery);
         $this->assertStringContainsString('last_error_code = NULL', $updateQuery);
+        $this->assertStringContainsString('last_error_retryable = NULL', $updateQuery);
 
         $syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
         $this->assertStringContainsString('pending_curation_operations = 1', $syncStateUpdate);
@@ -285,6 +286,7 @@ class OutboxMaintenanceServiceTest extends TestCase
             'attempts' => $attempts,
             'last_error_code' => 'failed' === $status ? 'remote_error' : null,
             'last_error_message' => 'failed' === $status ? 'Remote curation replay failed.' : null,
+            'last_error_retryable' => 'failed' === $status ? 1 : null,
             'last_attempted_at' => '2026-07-16 01:00:00',
             'first_failed_at' => 'failed' === $status ? '2026-07-16 00:00:00' : null,
             'next_attempt_at' => null,

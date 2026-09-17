@@ -57,8 +57,7 @@ class OutboxQueryRepository {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, payload, created_at, last_attempted_at, acknowledged_at
-				FROM %i
+				$this->operation_select_sql() . '
 				WHERE tenant_id = %s AND id IN (' . implode( ',', array_fill( 0, count( $normalized_ids ), '%d' ) ) . ')',
 				$this->table_name,
 				$normalized_tenant_id,
@@ -106,8 +105,7 @@ class OutboxQueryRepository {
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, payload, created_at, last_attempted_at, acknowledged_at
-				FROM %i
+				$this->operation_select_sql() . '
 				WHERE id = %d AND tenant_id = %s
 				LIMIT 1',
 				$this->table_name,
@@ -144,8 +142,7 @@ class OutboxQueryRepository {
 		if ( '' === $normalized_status ) {
 			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, payload, created_at, last_attempted_at, acknowledged_at
-					FROM %i
+					$this->operation_select_sql() . '
 					WHERE tenant_id = %s
 					ORDER BY created_at DESC, id DESC
 					LIMIT %d OFFSET %d',
@@ -159,8 +156,7 @@ class OutboxQueryRepository {
 		} else {
 			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, payload, created_at, last_attempted_at, acknowledged_at
-					FROM %i
+					$this->operation_select_sql() . '
 					WHERE tenant_id = %s AND status = %s
 					ORDER BY created_at DESC, id DESC
 					LIMIT %d OFFSET %d',
@@ -435,6 +431,20 @@ class OutboxQueryRepository {
 		);
 
 		return (int) $value > 0;
+	}
+
+	/**
+	 * Shared outbox read projection for operator-facing operation records.
+	 *
+	 * The failure clock belongs to the persisted row: an operation that has been retried
+	 * recently can still have an older first failure. Compute its age in SQL so every
+	 * consumer uses the same COALESCE(first_failed_at, last_attempted_at, created_at)
+	 * precedence, while still returning first_failed_at for the API timeline.
+	 */
+	private function operation_select_sql(): string {
+		return 'SELECT id, tenant_id, operation_type, entity_type, entity_key, status, attempts, expected_base_version, local_revision, last_error_code, last_error_message, last_error_retryable, payload, created_at, last_attempted_at, first_failed_at, acknowledged_at, '
+			. 'GREATEST(0, TIMESTAMPDIFF(SECOND, COALESCE(first_failed_at, last_attempted_at, created_at), UTC_TIMESTAMP())) AS age_seconds '
+			. 'FROM %i';
 	}
 
 	/**

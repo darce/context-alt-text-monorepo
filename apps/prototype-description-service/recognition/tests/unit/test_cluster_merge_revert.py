@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.exc import IntegrityError
 from starlette.testclient import TestClient
 
 from db.models.identity import ClusterMergeKind, ClusterMergeReceipt, ReceiptExpiredError, ReceiptNotTopError
@@ -124,15 +125,23 @@ class FakeMergeSuggestions:
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(self, *, receipt_update_rowcount: int = 1) -> None:
         self.statements: list[object] = []
+        self.receipt_update_rowcount = receipt_update_rowcount
+        self.rollback_calls = 0
 
     async def execute(self, stmt: object) -> object:
         self.statements.append(stmt)
+        rendered = str(stmt).lower()
+        if rendered.startswith("update") and "cluster_merge_receipts" in rendered:
+            return SimpleNamespace(rowcount=self.receipt_update_rowcount)
         return SimpleNamespace(scalar_one_or_none=lambda: None, scalars=lambda: SimpleNamespace(all=list))
 
     async def flush(self) -> None:
         return None
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
 
 
 def _receipt(
@@ -326,11 +335,7 @@ async def test_revert_restores_partition_and_matches_fresh_recompute(revert_worl
         (str(revert_world["tenant_id"]), source_id),
         (str(revert_world["tenant_id"]), survivor_id),
     ]
-    revert_world["broadcaster"].broadcast.assert_awaited_once()
-    event, payload = revert_world["broadcaster"].broadcast.await_args.args[:2]
-    assert event == "cluster_merge_reverted"
-    assert payload["source_cluster_id"] == source_id
-    assert payload["survivor_cluster_id"] == survivor_id
+    revert_world["broadcaster"].broadcast.assert_not_awaited()
     lookups: list[tuple[str, UUID, UUID]] = revert_world["lookups"]
     assert lookups[0][0] == "receipt"
     assert lookups[0][1] == revert_world["tenant_id"]
@@ -349,6 +354,35 @@ async def test_mv_refresh_failure_leaves_revert_committed(revert_world: dict[str
     assert restored_ids == {str(item) for item in revert_world["moved"]}
     assert revert_world["receipt"].reverted_at == NOW
     writer.refresh_centroids_view.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_conditional_receipt_claim_refuses_when_row_was_already_claimed(
+    revert_world: dict[str, object],
+) -> None:
+    session: FakeSession = revert_world["session"]
+    session.receipt_update_rowcount = 0
+
+    with pytest.raises(ReceiptNotTopError):
+        await _run_revert(revert_world)
+
+    assert str(revert_world["source_id"]) not in revert_world["cluster_repo"].clusters
+    assert revert_world["receipt"].reverted_at is None
+
+
+@pytest.mark.asyncio
+async def test_source_insert_integrity_error_is_a_deterministic_refusal(
+    revert_world: dict[str, object],
+) -> None:
+    duplicate = IntegrityError("insert", {}, RuntimeError("duplicate source cluster"))
+    revert_world["cluster_repo"].save = AsyncMock(side_effect=duplicate)
+
+    with pytest.raises(ReceiptNotTopError):
+        await _run_revert(revert_world)
+
+    assert revert_world["session"].rollback_calls == 1
+    assert revert_world["receipt"].reverted_at is None
+    revert_world["broadcaster"].broadcast.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -521,26 +555,37 @@ async def test_restored_label_uses_source_or_survivor_name(revert_world: dict[st
     assert restored.label == "Ada (restored)"
 
 
-def _revert_client(monkeypatch: pytest.MonkeyPatch, *, tenant_id: str, impl) -> TestClient:
+def _revert_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tenant_id: str,
+    impl,
+    resolved_tenant_id: str | None = None,
+    builder=None,
+    session: SimpleNamespace | None = None,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
     app = FastAPI()
     app.include_router(revert_router, prefix="/recognition")
     auth = AuthContext(token=None, tenant_claim=tenant_id, enabled=False)
     app.dependency_overrides[require_auth] = lambda: auth
     app.dependency_overrides[require_write_access] = lambda: auth
     app.dependency_overrides[enforce_rate_limit] = lambda: auth
-    app.dependency_overrides[get_tenant_id] = lambda: tenant_id
+    app.dependency_overrides[get_tenant_id] = lambda: resolved_tenant_id or tenant_id
+
+    session = session or SimpleNamespace(flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
 
     async def _session():
-        yield SimpleNamespace()
+        yield session
 
     app.dependency_overrides[get_session] = _session
 
     async def _builder(_tid: str) -> SimpleNamespace:
         return SimpleNamespace(assignment_writer=object(), merge_suggestion_service=None)
 
-    app.dependency_overrides[get_cluster_service_builder] = lambda: _builder
+    app.dependency_overrides[get_cluster_service_builder] = lambda: builder or _builder
     monkeypatch.setattr(cluster_revert_module, "revert_merge", impl)
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def test_revert_route_is_post_on_cluster_id_not_legacy_collection() -> None:
@@ -576,6 +621,110 @@ def test_revert_route_returns_source_cluster_id(monkeypatch: pytest.MonkeyPatch)
     assert seen["tenant_id"] == tenant_id
     assert seen["receipt_id"] == str(receipt_id)
     assert seen["path_cluster_id"] == str(cluster_id)
+
+
+def test_revert_route_rejects_auth_tenant_mismatch_before_building_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_tenant_id = str(uuid4())
+    requested_tenant_id = str(uuid4())
+    builder_called = False
+
+    async def builder(_tid: str) -> SimpleNamespace:
+        nonlocal builder_called
+        builder_called = True
+        return SimpleNamespace(assignment_writer=object(), merge_suggestion_service=None)
+
+    async def impl(**kwargs: object) -> IdentityCluster:
+        pytest.fail("revert service must not be built for an auth tenant mismatch")
+
+    client = _revert_client(
+        monkeypatch,
+        tenant_id=auth_tenant_id,
+        resolved_tenant_id=requested_tenant_id,
+        builder=builder,
+        impl=impl,
+    )
+    response = client.post(
+        f"/recognition/clusters/{uuid4()}/revert-merge?tenant_id={requested_tenant_id}",
+        json={"receipt_id": str(uuid4())},
+    )
+
+    assert response.status_code == 403
+    assert not builder_called
+
+
+def test_revert_route_broadcasts_only_after_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    tenant_id = str(uuid4())
+    source_id = uuid4()
+    order: list[str] = []
+    session = SimpleNamespace(
+        flush=AsyncMock(side_effect=lambda: order.append("flush")),
+        commit=AsyncMock(side_effect=lambda: order.append("commit")),
+        rollback=AsyncMock(),
+    )
+    broadcaster = SimpleNamespace(
+        broadcast=AsyncMock(side_effect=lambda *args, **kwargs: order.append("broadcast")),
+    )
+    monkeypatch.setattr(cluster_revert_module, "get_event_broadcaster", lambda: broadcaster)
+
+    async def impl(**kwargs: object) -> tuple[IdentityCluster, dict[str, object]]:
+        order.append("service")
+        return (
+            IdentityCluster(
+                id=str(source_id),
+                tenant_id=tenant_id,
+                is_labeled=True,
+                identity_count=2,
+                label="Source",
+            ),
+            {"source_cluster_id": str(source_id), "moved_count": 2},
+        )
+
+    client = _revert_client(monkeypatch, tenant_id=tenant_id, impl=impl, session=session)
+    response = client.post(
+        f"/recognition/clusters/{uuid4()}/revert-merge",
+        json={"receipt_id": str(uuid4())},
+    )
+
+    assert response.status_code == 200
+    assert order == ["service", "flush", "commit", "broadcast"]
+    broadcaster.broadcast.assert_awaited_once()
+
+
+def test_revert_route_does_not_broadcast_when_commit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    tenant_id = str(uuid4())
+    broadcaster = SimpleNamespace(broadcast=AsyncMock())
+    monkeypatch.setattr(cluster_revert_module, "get_event_broadcaster", lambda: broadcaster)
+    session = SimpleNamespace(
+        flush=AsyncMock(),
+        commit=AsyncMock(side_effect=RuntimeError("commit failed")),
+        rollback=AsyncMock(),
+    )
+
+    async def impl(**kwargs: object) -> IdentityCluster:
+        return IdentityCluster(
+            id=str(uuid4()),
+            tenant_id=tenant_id,
+            is_labeled=True,
+            identity_count=2,
+            label="Source",
+        )
+
+    client = _revert_client(
+        monkeypatch,
+        tenant_id=tenant_id,
+        impl=impl,
+        session=session,
+        raise_server_exceptions=False,
+    )
+    response = client.post(
+        f"/recognition/clusters/{uuid4()}/revert-merge",
+        json={"receipt_id": str(uuid4())},
+    )
+
+    assert response.status_code == 500
+    broadcaster.broadcast.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

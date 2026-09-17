@@ -52,6 +52,26 @@ if TYPE_CHECKING:
 _choose_embedding_model = choose_embedding_model
 
 
+async def touch_cluster_updated_at(
+    session: AsyncSession,
+    cluster_id: str | uuid.UUID | None,
+    *,
+    tenant_id: str | uuid.UUID | None = None,
+) -> None:
+    """Stamp a cluster after a membership, representative, or centroid-input write."""
+    cluster_uuid = _coerce_uuid(str(cluster_id)) if cluster_id is not None else None
+    if cluster_uuid is None:
+        return
+
+    stmt = update(ClusterModel).where(ClusterModel.id == cluster_uuid)
+    if tenant_id is not None:
+        tenant_uuid = _coerce_uuid(str(tenant_id))
+        if tenant_uuid is None:
+            return
+        stmt = stmt.where(ClusterModel.tenant_id == tenant_uuid)
+    await session.execute(stmt.values(updated_at=datetime.now(tz=UTC)))
+
+
 def _filter_embedding_pairs_to_single_model(
     rows: Sequence[tuple[np.ndarray, str | None]],
 ) -> list[tuple[np.ndarray, str | None]]:
@@ -1435,12 +1455,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
     async def _touch_cluster_updated_at(self, cluster_id: str) -> None:
         """Stamp a cluster when a child write changes membership or centroid inputs."""
-        stmt = (
-            update(ClusterModel)
-            .where(ClusterModel.id == _coerce_uuid(cluster_id))
-            .values(updated_at=datetime.now(tz=UTC))
-        )
-        await self._session.execute(stmt)
+        await touch_cluster_updated_at(self._session, cluster_id)
 
     async def count_labeled(self) -> int:
         """Count clusters with user-provided labels (not auto-generated like 'cluster-xxx').
@@ -1570,8 +1585,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
         # Extract centroid from materialized view relationship if available
         centroid = None
+        centroid_refreshed_at = None
         if hasattr(model, "centroid_data") and model.centroid_data is not None:
             centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
+            if isinstance(model.centroid_data.refreshed_at, datetime):
+                centroid_refreshed_at = model.centroid_data.refreshed_at
 
         undoable_merge_receipt_id = _loaded_undoable_merge_receipt_id(
             model,
@@ -1596,6 +1614,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             embedding_model=_choose_embedding_model([rep.embedding_model for rep in domain_reps]),
             undoable_merge_receipt_id=undoable_merge_receipt_id,
             updated_at=model.updated_at if isinstance(model.updated_at, datetime) else None,
+            centroid_refreshed_at=centroid_refreshed_at,
         )
 
     async def get_snapshot(

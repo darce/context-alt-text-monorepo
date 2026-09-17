@@ -20,6 +20,7 @@ from sqlalchemy.sql.dml import Insert
 from db.models import IdentityMember as MemberModel
 from recognition.domain.repositories import IdentityMember, MemberRepository
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
+from recognition.infrastructure.repositories.cluster_repository import touch_cluster_updated_at
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 
@@ -74,6 +75,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
         )
         self._session.add(model)
         await self._session.flush()
+        await touch_cluster_updated_at(self._session, cluster_uuid, tenant_id=tenant_uuid)
         await self._session.refresh(model)
         return self._to_domain(model)
 
@@ -114,6 +116,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if get_rowcount(result) == 0:
             return None
 
+        await touch_cluster_updated_at(self._session, cluster_uuid, tenant_id=tenant_uuid)
         model = await self._session.get(MemberModel, member_id)
         if model is None:
             return None
@@ -145,6 +148,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
         ]
         self._session.add_all(models)
         await self._session.flush()
+        await touch_cluster_updated_at(self._session, cluster_uuid, tenant_id=tenant_uuid)
         for model in models:
             await self._session.refresh(model)
         return [self._to_domain(model) for model in models]
@@ -218,6 +222,8 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if not inserted_ids:
             return [], len(members)
 
+        await touch_cluster_updated_at(self._session, cluster_uuid, tenant_id=tenant_uuid)
+
         # Fetch fully populated models for inserted rows only (single round-trip).
         fetch_stmt = (
             select(MemberModel).where(MemberModel.id.in_(inserted_ids)).where(MemberModel.cluster_id == cluster_uuid)
@@ -255,7 +261,12 @@ class SqlAlchemyMemberRepository(MemberRepository):
             try:
                 result = await execute_dml(self._session, stmt)
                 await self._session.flush()
-                return get_rowcount(result)
+                moved = get_rowcount(result)
+                if moved > 0:
+                    await touch_cluster_updated_at(self._session, source_uuid, tenant_id=tenant_uuid)
+                    if target_uuid != source_uuid:
+                        await touch_cluster_updated_at(self._session, target_uuid, tenant_id=tenant_uuid)
+                return moved
             except DBAPIError as exc:
                 last_error = exc
                 if _is_deadlock_error(exc) and attempt < max_attempts - 1:
@@ -275,6 +286,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if model:
             await self._session.delete(model)
             await self._session.flush()
+            await touch_cluster_updated_at(self._session, model.cluster_id, tenant_id=self._tenant_id)
 
     async def get_by_identity_id(self, identity_id: str) -> list[IdentityMember]:
         """Fetch all member records for an identity (usually 0 or 1)."""
@@ -306,11 +318,15 @@ class SqlAlchemyMemberRepository(MemberRepository):
         result = await self._session.execute(stmt)
         models = result.scalars().all()
         removed = False
+        cluster_ids: set[uuid.UUID] = set()
         for model in models:
             await self._session.delete(model)
+            cluster_ids.add(model.cluster_id)
             removed = True
         if removed:
             await self._session.flush()
+            for cluster_id in cluster_ids:
+                await touch_cluster_updated_at(self._session, cluster_id, tenant_id=tenant_uuid)
         return removed
 
     def _to_domain(self, model: MemberModel) -> IdentityMember:

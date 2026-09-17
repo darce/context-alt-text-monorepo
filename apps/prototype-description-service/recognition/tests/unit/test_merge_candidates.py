@@ -38,6 +38,7 @@ def _cluster(
     cluster_id: str | None = None,
     embedding_model: str | None = None,
     representative_identity_id: str | None = None,
+    centroid_refreshed_at: datetime | None = None,
 ) -> IdentityCluster:
     centroid = compute_centroid([embedding]) if embedding is not None else None
     return IdentityCluster(
@@ -51,6 +52,7 @@ def _cluster(
         representative_identity_id=representative_identity_id,
         centroid=centroid,
         embedding_model=embedding_model,
+        centroid_refreshed_at=centroid_refreshed_at,
     )
 
 
@@ -318,6 +320,46 @@ async def test_pending_observed_before_cluster_updated_at_is_ignored() -> None:
     )
 
     assert len(result.candidates) == 1
+    assert result.candidates[0].similarity == pytest.approx(compute_similarity(probe_vec, other_vec))
+    assert result.candidates[0].band is SimilarityBand.NONE
+
+
+@pytest.mark.asyncio
+async def test_pending_observed_before_centroid_refresh_is_ignored() -> None:
+    tenant_id = str(uuid4())
+    created = datetime(2026, 1, 1, tzinfo=UTC)
+    centroid_refreshed = datetime(2026, 6, 1, tzinfo=UTC)
+    observed = datetime(2026, 3, 1, tzinfo=UTC)
+    probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
+    other_vec = _normalize(np.array([0.0, 1.0, 0.0]))
+    probe = _cluster(
+        tenant_id=tenant_id,
+        label=None,
+        embedding=probe_vec,
+        created_at=created,
+        centroid_refreshed_at=centroid_refreshed,
+    )
+    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=created)
+
+    result = await list_merge_candidates(
+        tenant_id,
+        str(probe.id),
+        cluster_repository=_FakeClusterRepo([probe, other]),
+        merge_suggestion_repository=_FakeMergeRepo(
+            [
+                _pending(
+                    cluster_a_id=str(probe.id),
+                    cluster_b_id=str(other.id),
+                    similarity=0.99,
+                    created_at=observed,
+                    cluster_a_identity_count=1,
+                    cluster_b_identity_count=1,
+                )
+            ]
+        ),
+        settings=ClusteringSettings(suggestion_floor=0.35, suggestion_ceiling=0.55),
+    )
+
     assert result.candidates[0].similarity == pytest.approx(compute_similarity(probe_vec, other_vec))
     assert result.candidates[0].band is SimilarityBand.NONE
 

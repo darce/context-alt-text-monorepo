@@ -64,6 +64,18 @@ describe('parseGpuStatusResponse', () => {
     expect(() => parseGpuStatusResponse(payload)).toThrowError(new MalformedGpuStatusError('gpu_state.intent_status'));
   });
 
+  it('accepts stopped_with_work and rejects unknown intent statuses', () => {
+    const stoppedWithWork = statusResponse();
+    nestedRecord(stoppedWithWork, 'gpu_state').intent_status = 'stopped_with_work';
+
+    expect(parseGpuStatusResponse(stoppedWithWork).gpu_state.intent_status).toBe('stopped_with_work');
+
+    const unknownStatus = statusResponse();
+    nestedRecord(unknownStatus, 'gpu_state').intent_status = 'not-a-contract-status';
+
+    expect(() => parseGpuStatusResponse(unknownStatus)).toThrow(/gpu_state\.intent_status/);
+  });
+
   it('rejects malformed nested metadata instead of passing it to the control card', () => {
     const payload = statusResponse();
     nestedRecord(payload, 'gpu_state').last_transition_reason = 'backend-invented';

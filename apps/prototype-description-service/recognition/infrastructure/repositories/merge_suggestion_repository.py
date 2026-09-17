@@ -227,15 +227,18 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             status=str(model.resolution),
             confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
             created_at=model.created_at,
+            refreshed_at=model.refreshed_at,
             expires_at=model.expires_at,
             source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
             cluster_a_label=details_a["label"],
             cluster_b_label=details_b["label"],
             cluster_a_identity_count=details_a["identity_count"],
             cluster_b_identity_count=details_b["identity_count"],
+            cluster_a_representative_identity_id=details_a["representative_identity_id"],
             cluster_a_representative_media_id=details_a["representative_media_id"],
             cluster_a_representative_media_url=details_a["representative_media_url"],
             cluster_a_representative_bbox=details_a["representative_bbox"],
+            cluster_b_representative_identity_id=details_b["representative_identity_id"],
             cluster_b_representative_media_id=details_b["representative_media_id"],
             cluster_b_representative_media_url=details_b["representative_media_url"],
             cluster_b_representative_bbox=details_b["representative_bbox"],
@@ -252,6 +255,11 @@ def _build_cluster_details(
     return {
         "label": cluster.label if cluster else None,
         "identity_count": int(cluster.identity_count) if cluster and cluster.identity_count is not None else None,
+        "representative_identity_id": (
+            str(cluster.representative_identity_id)
+            if cluster and cluster.representative_identity_id is not None
+            else None
+        ),
         "representative_media_id": int(rep.media_id) if rep and rep.media_id is not None else None,
         "representative_media_url": rep.media_url if rep else None,
         "representative_bbox": build_bbox(rep),

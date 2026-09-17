@@ -53,15 +53,18 @@ class MergeSuggestionDetails:
     status: str
     confidence_score: float | None = None
     created_at: datetime | None = None
+    refreshed_at: datetime | None = None
     expires_at: datetime | None = None
     source_job_id: str | None = None
     cluster_a_label: str | None = None
     cluster_b_label: str | None = None
     cluster_a_identity_count: int | None = None
     cluster_b_identity_count: int | None = None
+    cluster_a_representative_identity_id: str | None = None
     cluster_a_representative_media_id: int | None = None
     cluster_a_representative_media_url: str | None = None
     cluster_a_representative_bbox: FaceBox | None = None
+    cluster_b_representative_identity_id: str | None = None
     cluster_b_representative_media_id: int | None = None
     cluster_b_representative_media_url: str | None = None
     cluster_b_representative_bbox: FaceBox | None = None

@@ -10,10 +10,11 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 from fastapi import FastAPI
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.testclient import TestClient
 
 from db.models.identity import ClusterMergeKind, ClusterMergeReceipt, ReceiptExpiredError, ReceiptNotTopError
+from recognition.application.orchestration import cluster_merge as cluster_merge_module
 from recognition.application.orchestration.cluster_merge import (
     MergeReceiptNotFoundError,
     MergeReceiptStaleError,
@@ -35,6 +36,9 @@ from recognition.interface_adapters.http.routers import cluster_revert as cluste
 from recognition.interface_adapters.http.routers.cluster_revert import router as revert_router
 
 NOW = datetime(2026, 9, 17, tzinfo=UTC)
+
+_ORIGINAL_LOAD_RECEIPT = cluster_merge_module._load_receipt
+_ORIGINAL_LOAD_SIBLING_RECEIPTS = cluster_merge_module._load_sibling_receipts
 
 
 class FakeClusterRepo:
@@ -142,6 +146,25 @@ class FakeSession:
 
     async def rollback(self) -> None:
         self.rollback_calls += 1
+
+
+class LockRecordingSession(FakeSession):
+    """Return a receipt stack while retaining the SQL lock statements for inspection."""
+
+    def __init__(self, receipts: list[ClusterMergeReceipt]) -> None:
+        super().__init__()
+        self.locked_receipts = receipts
+
+    async def execute(self, stmt: object) -> object:
+        self.statements.append(stmt)
+        rendered = str(stmt).lower()
+        if rendered.startswith("update") and "cluster_merge_receipts" in rendered:
+            return SimpleNamespace(rowcount=self.receipt_update_rowcount)
+        if "cluster_merge_receipts" in rendered and "order by" in rendered and "for update" in rendered:
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.locked_receipts))
+        if "cluster_merge_receipts" in rendered and "for update" not in rendered:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.locked_receipts[0])
+        return SimpleNamespace(scalar_one_or_none=lambda: None, scalars=lambda: SimpleNamespace(all=lambda: []))
 
 
 def _receipt(
@@ -368,6 +391,84 @@ async def test_conditional_receipt_claim_refuses_when_row_was_already_claimed(
 
     assert str(revert_world["source_id"]) not in revert_world["cluster_repo"].clusters
     assert revert_world["receipt"].reverted_at is None
+
+
+@pytest.mark.asyncio
+async def test_revert_locks_survivor_before_ordered_receipt_stack(
+    revert_world: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt: ClusterMergeReceipt = revert_world["receipt"]
+    session = LockRecordingSession([receipt])
+    revert_world["session"] = session
+    monkeypatch.setattr(cluster_merge_module, "_load_receipt", _ORIGINAL_LOAD_RECEIPT)
+    monkeypatch.setattr(cluster_merge_module, "_load_sibling_receipts", _ORIGINAL_LOAD_SIBLING_RECEIPTS)
+
+    await _run_revert(revert_world)
+
+    rendered = [str(statement).lower() for statement in session.statements]
+    survivor_lock = next(
+        index for index, statement in enumerate(rendered) if "identity_clusters" in statement and "for update" in statement
+    )
+    stack_locks = [
+        index
+        for index, statement in enumerate(rendered)
+        if "cluster_merge_receipts" in statement and "order by" in statement and "for update" in statement
+    ]
+    assert stack_locks == [survivor_lock + 1]
+    assert "order by" in rendered[stack_locks[0]]
+    assert all(
+        not ("cluster_merge_receipts" in statement and "for update" in statement)
+        for statement in rendered[:survivor_lock]
+    )
+
+
+@pytest.mark.asyncio
+async def test_revert_refuses_when_locked_receipt_survivor_changed(
+    revert_world: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt: ClusterMergeReceipt = revert_world["receipt"]
+    changed_survivor_id = uuid4()
+    changed_receipt = _receipt(
+        tenant_id=receipt.tenant_id,
+        survivor_id=changed_survivor_id,
+        source_id=receipt.source_cluster_id,
+        moved=list(receipt.moved_identity_ids),
+        sequence_no=receipt.sequence_no,
+        created_at=receipt.created_at,
+        source_label=receipt.source_label,
+        expires_at=receipt.expires_at,
+        receipt_id=receipt.receipt_id,
+    )
+
+    async def load_changed_stack(
+        session: object, *, tenant_id: UUID, survivor_cluster_id: UUID
+    ) -> list[ClusterMergeReceipt]:
+        return [changed_receipt]
+
+    monkeypatch.setattr(cluster_merge_module, "_load_sibling_receipts", load_changed_stack)
+
+    with pytest.raises(MergeReceiptStaleError):
+        await _run_revert(revert_world)
+
+    assert revert_world["session"].rollback_calls == 0
+    assert str(revert_world["source_id"]) not in revert_world["cluster_repo"].clusters
+
+
+@pytest.mark.asyncio
+async def test_revert_maps_deadlock_to_receipt_not_top(revert_world: dict[str, object]) -> None:
+    class DeadlockSession(FakeSession):
+        async def execute(self, stmt: object) -> object:
+            self.statements.append(stmt)
+            raise OperationalError("SELECT", {}, SimpleNamespace(pgcode="40P01"))
+
+    session = DeadlockSession()
+    revert_world["session"] = session
+
+    with pytest.raises(ReceiptNotTopError) as exc_info:
+        await _run_revert(revert_world)
+
+    assert exc_info.value.code == "receipt_not_top"
+    assert session.rollback_calls == 1
 
 
 @pytest.mark.asyncio

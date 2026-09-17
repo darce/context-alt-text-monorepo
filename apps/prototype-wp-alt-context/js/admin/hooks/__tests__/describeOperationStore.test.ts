@@ -16,14 +16,15 @@ import {
   useDescribeRunContext,
   useDescribeSuggestContext,
   type DescribeOperationContext,
+  type DescribeOperationContextInput,
 } from '../describeOperationStore';
 
 const TENANT = 'tenant-a';
 const FOREIGN_TENANT = 'tenant-b';
 
 const runContext = (
-  overrides: Partial<DescribeOperationContext> = {},
-): DescribeOperationContext => ({
+  overrides: Partial<DescribeOperationContextInput> = {},
+): DescribeOperationContextInput => ({
   version: DESCRIBE_OPERATION_CONTEXT_VERSION,
   kind: DESCRIBE_OPERATION_KIND.RUN,
   id: 'run-1',
@@ -34,8 +35,8 @@ const runContext = (
 });
 
 const suggestContext = (
-  overrides: Partial<DescribeOperationContext> = {},
-): DescribeOperationContext => ({
+  overrides: Partial<DescribeOperationContextInput> = {},
+): DescribeOperationContextInput => ({
   version: DESCRIBE_OPERATION_CONTEXT_VERSION,
   kind: DESCRIBE_OPERATION_KIND.SUGGEST,
   id: 'op-lease-1',
@@ -48,7 +49,7 @@ const suggestContext = (
   ...overrides,
 });
 
-const durableContext = (context: DescribeOperationContext): DescribeOperationContext => ({
+const durableContext = (context: DescribeOperationContextInput): DescribeOperationContext => ({
   ...context,
   persistence: 'durable',
 });
@@ -116,19 +117,21 @@ describe('describeOperationStore', () => {
 
   it('keeps a run resumable when a storage read errors once', () => {
     const context = runContext({ id: 'run-read-retry' });
-    sessionStorage.setItem(describeOperationRunStorageKey(TENANT), JSON.stringify(context));
+    const key = describeOperationRunStorageKey(TENANT);
+    sessionStorage.setItem(key, JSON.stringify(context));
     _resetDescribeOperationStoreForTests();
 
+    const removeItem = vi.spyOn(sessionStorage, 'removeItem');
     const getItem = vi.spyOn(sessionStorage, 'getItem').mockImplementationOnce(() => {
       throw new Error('sessionStorage unavailable');
     });
     expect(getDescribeRunContext()).toBeNull();
-    getItem.mockRestore();
+    expect(removeItem).not.toHaveBeenCalled();
 
-    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBe(
-      JSON.stringify(context),
-    );
+    expect(sessionStorage.getItem(key)).toBe(JSON.stringify(context));
     expect(getDescribeRunContext()).toEqual(durableContext(context));
+    getItem.mockRestore();
+    removeItem.mockRestore();
   });
 
   it('marks a snapshot memory_only when sessionStorage cannot write', () => {
@@ -313,7 +316,7 @@ describe('describeOperationStore', () => {
     _resetDescribeOperationStoreForTests();
 
     expect(getDescribeRunContext()).toEqual(
-      runContext({ id: 'run-no-startup', startup_id: null }),
+      durableContext(runContext({ id: 'run-no-startup', startup_id: null })),
     );
   });
 

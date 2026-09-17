@@ -13,6 +13,7 @@ from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAd
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SCHEMA_DIR = _REPO_ROOT / "packages/shared-contracts/schemas"
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "gpuflow-multipart.json"
+_UNAVAILABLE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "gpuflow2-unavailable.json"
 _SCHEMA_FILES = (
     "image-description-response.schema.json",
     "scene-describe-multipart.schema.json",
@@ -60,6 +61,7 @@ def test_typed_error_envelopes_validate():
             "operation_id": "opaque operation",
             "startup_id": "ocid1.instance.test",
             "warmup_eta_seconds": 45,
+            "startup_budget_seconds": 510,
             "timing": TIMING,
         }
     }
@@ -70,6 +72,7 @@ def test_typed_error_envelopes_validate():
             "message": "Description service is unavailable",
             "operation_id": "opaque operation",
             "startup_id": None,
+            "reason": "state_missing",
             "timing": TIMING,
         }
     }
@@ -80,6 +83,7 @@ def test_typed_error_envelopes_validate():
             "message": "Description service is unavailable",
             "operation_id": None,
             "startup_id": None,
+            "reason": "state_missing",
             "timing": TIMING,
         }
     }
@@ -99,6 +103,29 @@ def test_typed_error_envelopes_validate():
             }
         }
     )
+    assert not validator.is_valid(
+        {"detail": {k: value for k, value in starting["detail"].items() if k != "startup_budget_seconds"}}
+    )
+    assert not validator.is_valid({"detail": {k: value for k, value in unavailable["detail"].items() if k != "reason"}})
+
+
+def test_gpuflow2_unavailable_fixture_round_trips():
+    payload = json.loads(_UNAVAILABLE_FIXTURE.read_text())
+    validator = _multipart_validator()
+    starting = payload["starting"]["body"]
+    validator.validate(starting)
+    assert starting["detail"]["startup_budget_seconds"] == 510
+    assert "reason" not in starting["detail"]
+    degraded = payload["unavailable_degraded"]["body"]
+    validator.validate(degraded)
+    assert degraded["detail"]["reason"] == "degraded"
+    assert degraded["detail"]["lifecycle_reason"] == "readiness_timeout"
+    for key, example in payload.items():
+        if key == "starting":
+            continue
+        validator.validate(example["body"])
+        assert example["body"]["detail"]["reason"]
+        assert "startup_budget_seconds" not in example["body"]["detail"]
 
 
 def test_success_envelope_allows_absent_operation_id_and_rejects_null():
@@ -162,6 +189,8 @@ def test_production_route_starting_error_validates_against_shared_schema(monkeyp
         assert body["detail"]["operation_id"]
         assert "startup_id" in body["detail"]
         assert "timing" in body["detail"]
+        assert body["detail"]["startup_budget_seconds"] > 0
+        assert "reason" not in body["detail"]
 
 
 def test_production_route_unavailable_error_validates_against_shared_schema(monkeypatch, tmp_path):
@@ -179,6 +208,8 @@ def test_production_route_unavailable_error_validates_against_shared_schema(monk
         assert body["detail"]["startup_id"] is None
         assert "timing" in body["detail"]
         assert "warmup_eta_seconds" not in body["detail"]
+        assert body["detail"]["reason"] == "state_missing"
+        assert "startup_budget_seconds" not in body["detail"]
 
 
 def test_production_cpu_no_session_success_omits_operation_id():

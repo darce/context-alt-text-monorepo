@@ -1070,20 +1070,30 @@ class _GpuAdapter:
         )
 
 
-def _write_gpu_state(path, *, state, now, instance_id="ocid1.instance.test", reason=None, last_transition_reason=None):
+def _write_gpu_state(
+    path,
+    *,
+    state,
+    now,
+    instance_id="ocid1.instance.test",
+    reason=None,
+    last_transition_reason=None,
+    written_at=None,
+):
+    effective_written = now if written_at is None else written_at
     payload = {
         "state": state,
         "instance_id": instance_id,
-        "written_at": now,
+        "written_at": effective_written,
         "reason": reason,
-        "since": now - 10,
+        "since": effective_written - 10,
     }
     if last_transition_reason is not None:
         payload["last_transition_reason"] = last_transition_reason
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=None):
+def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=None, reason=None, written_at=None):
     now = time.time()
     state_path = tmp_path / "gpu-state.json"
     load_path = tmp_path / "describe-load.json"
@@ -1091,6 +1101,7 @@ def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=N
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
     monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(load_path))
     monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
     from scene.application import gpu_state as gpu_state_mod
 
     monkeypatch.setattr(gpu_state_mod, "_GPU_STATE_SETTINGS", gpu_state_mod.GpuStateSettings(stale_seconds=240.0))
@@ -1101,6 +1112,8 @@ def _gpu_env(monkeypatch, tmp_path, *, state="stopped", last_transition_reason=N
             state=state,
             now=now,
             last_transition_reason=last_transition_reason,
+            reason=reason,
+            written_at=written_at,
         )
     return state_path, load_path, intent_path, now
 
@@ -1132,6 +1145,8 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
         assert "startup_id" in detail
         assert "timing" in detail
         assert "warmup_eta_seconds" in detail
+        assert detail["startup_budget_seconds"] > 0
+        assert "reason" not in detail
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "active"
         retry = _post(client, TENANT_ID, extra_data={"operation_id": detail["operation_id"]})
@@ -1161,7 +1176,10 @@ def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tm
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "operator_stop"
+        assert "lifecycle_reason" not in detail
         assert "warmup_eta_seconds" not in detail
+        assert "startup_budget_seconds" not in detail
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "active"
 
@@ -1175,6 +1193,55 @@ def test_gpu_unknown_state_returns_unavailable(monkeypatch, tmp_path):
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "state_missing"
+        assert "lifecycle_reason" not in detail
+        assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
+
+
+def test_gpu_stale_snapshot_returns_state_stale(monkeypatch, tmp_path):
+    now = time.time()
+    _gpu_env(monkeypatch, tmp_path, state="ready", written_at=now - 300)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "state_stale"
+        assert "lifecycle_reason" not in detail
+        assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
+
+
+def test_gpu_degraded_forwards_lifecycle_reason(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="degraded", reason="readiness_timeout")
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "degraded"
+        assert detail["lifecycle_reason"] == "readiness_timeout"
+        assert "warmup_eta_seconds" not in detail
+        assert adapter.calls == 0
+        assert _lease_state(client, detail["operation_id"]) == "active"
+
+
+def test_gpu_endpoint_unconfigured_returns_unavailable(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.delenv("ACX_GPU_ENDPOINT_URL", raising=False)
+    adapter = _GpuAdapter()
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_unconfigured"
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "active"
 
@@ -1205,6 +1272,7 @@ def test_gpu_cold_wait_then_ready_records_startup_and_ramp_up(monkeypatch, tmp_p
         detail = first.json()["detail"]
         operation_id = detail["operation_id"]
         assert detail["code"] == "description_service_starting"
+        assert detail["startup_budget_seconds"] > 0
         assert detail["startup_id"] == "ocid1.instance.test"
         time.sleep(0.02)
         from scene.application import gpu_state as gpu_state_mod
@@ -1290,6 +1358,7 @@ def test_gpu_adapter_unavailable_is_typed_503(monkeypatch, tmp_path):
         _multipart_schema_validator().validate(body)
         detail = body["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
         assert "warmup_eta_seconds" not in detail
         assert detail["operation_id"]
         assert "startup_id" in detail
@@ -1340,6 +1409,7 @@ def test_gpu_accept_failure_is_typed_503_without_adapter_work(monkeypatch, tmp_p
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "state_missing"
         assert "operation_id" in detail
         assert detail["operation_id"] is None
         assert "startup_id" in detail
@@ -1471,6 +1541,7 @@ def test_gpu_cache_exception_does_not_leak_active_operation(monkeypatch, tmp_pat
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "state_missing"
         assert "operation_id" in detail
         assert detail["operation_id"] is None
         assert "startup_id" in detail
@@ -1489,6 +1560,7 @@ def test_gpu_no_session_unavailable_omits_durable_operation_id(monkeypatch, tmp_
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "state_missing"
         assert "operation_id" in detail
         assert detail["operation_id"] is None
         assert "startup_id" in detail
@@ -1521,6 +1593,7 @@ def test_non_gpu_accept_failure_is_typed_503_without_minted_id(monkeypatch, capl
     assert response.status_code == 503, response.text
     detail = response.json()["detail"]
     assert detail["code"] == "description_service_unavailable"
+    assert detail["reason"] == "state_missing"
     assert "operation_id" in detail
     assert detail["operation_id"] is None
     assert detail["startup_id"] is None
@@ -1591,7 +1664,9 @@ def test_gpu_starting_uses_canonical_dump_load_snapshot(monkeypatch, tmp_path):
     with _client(adapter=adapter) as client:
         response = _post(client, TENANT_ID)
         assert response.status_code == 503, response.text
-        assert response.json()["detail"]["code"] == "description_service_starting"
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_starting"
+        assert detail["startup_budget_seconds"] > 0
     assert calls
     assert adapter.calls == 0
 
@@ -1763,6 +1838,7 @@ def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_p
             detail={
                 "code": "description_service_unavailable",
                 "message": "dependency unavailable",
+                "reason": "state_missing",
             },
         )
 
@@ -1777,6 +1853,7 @@ def test_downstream_unavailable_http_exception_releases_lease(monkeypatch, tmp_p
         detail = body["detail"]
         assert detail["code"] == "description_service_unavailable"
         assert detail["message"] == "dependency unavailable"
+        assert detail["reason"] == "state_missing"
         assert detail["operation_id"]
         assert "startup_id" in detail
         assert "timing" in detail

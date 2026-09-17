@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft7Validator
+import pytest
 from referencing import Registry, Resource
 
 from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
@@ -191,6 +192,98 @@ def test_production_route_starting_error_validates_against_shared_schema(monkeyp
         assert "timing" in body["detail"]
         assert body["detail"]["startup_budget_seconds"] > 0
         assert "reason" not in body["detail"]
+
+
+@pytest.mark.parametrize("reason", ["__missing__", None, "not-a-contract-reason"])
+def test_post_accept_unavailable_reason_is_normalized(monkeypatch, tmp_path, reason):
+    from fastapi import HTTPException, status
+
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+
+    detail = {
+        "code": "description_service_unavailable",
+        "message": "dependency unavailable",
+        "operation_id": "upstream-operation",
+        "startup_id": "upstream-startup",
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": 3,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+    }
+    if reason != "__missing__":
+        detail["reason"] = reason
+
+    async def reject_quota(*args, **kwargs):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_quota)
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        body = response.json()
+        _multipart_validator().validate(body)
+        normalized = body["detail"]
+        assert normalized["code"] == "description_service_unavailable"
+        assert normalized["message"] == "dependency unavailable"
+        assert normalized["reason"] == "state_missing"
+        assert normalized["operation_id"] != "upstream-operation"
+        assert normalized["startup_id"] is None
+        assert "warmup_eta_seconds" not in normalized
+        assert "startup_budget_seconds" not in normalized
+
+
+@pytest.mark.parametrize("budget", [None, 0])
+def test_post_accept_starting_budget_is_normalized(monkeypatch, tmp_path, budget):
+    from fastapi import HTTPException, status
+
+    from scene.interface_adapters.http.routers import describe as describe_module
+
+    _gpu_env(monkeypatch, tmp_path, state="ready")
+
+    detail = {
+        "code": "description_service_starting",
+        "message": "dependency starting",
+        "operation_id": "upstream-operation",
+        "startup_id": "upstream-startup",
+        "warmup_eta_seconds": 45,
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": None,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+    }
+    if budget is not None:
+        detail["startup_budget_seconds"] = budget
+
+    async def reject_quota(*args, **kwargs):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "45"},
+            detail=detail,
+        )
+
+    monkeypatch.setattr(describe_module, "maybe_consume_demo_quota", reject_quota)
+    with _client(adapter=_GpuAdapter()) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        body = response.json()
+        _multipart_validator().validate(body)
+        normalized = body["detail"]
+        assert normalized["code"] == "description_service_starting"
+        assert normalized["message"] == "dependency starting"
+        assert normalized["operation_id"] != "upstream-operation"
+        assert normalized["startup_id"] is None
+        assert normalized["startup_budget_seconds"] > 0
+        assert normalized["warmup_eta_seconds"] == 45
+        assert "reason" not in normalized
+        assert response.headers.get("Retry-After") == "45"
 
 
 def test_production_route_unavailable_error_validates_against_shared_schema(monkeypatch, tmp_path):

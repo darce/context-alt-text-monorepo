@@ -13,6 +13,7 @@ from typing import cast
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jsonschema import Draft7Validator
+import pytest
 from referencing import Registry, Resource
 from sqlalchemy import Table, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -1244,6 +1245,45 @@ def test_gpu_endpoint_unconfigured_returns_unavailable(monkeypatch, tmp_path):
         assert detail["reason"] == "endpoint_unconfigured"
         assert adapter.calls == 0
         assert _lease_state(client, detail["operation_id"]) == "active"
+
+
+@pytest.mark.parametrize("endpoint_url", ["http://8.8.8.8:8000", "ftp://10.0.1.42:8000"])
+def test_gpu_unusable_endpoint_fails_fast_before_demand(monkeypatch, tmp_path, endpoint_url):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", endpoint_url)
+    with _client() as client:
+        response = _post(
+            client,
+            TENANT_ID,
+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
+        )
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+        assert detail["operation_id"] is None
+        assert "warmup_eta_seconds" not in detail
+        assert "startup_budget_seconds" not in detail
+        assert "Retry-After" not in response.headers
+        assert _lease_rows(client) == []
+
+
+def test_gpu_adapter_reason_fails_fast_before_demand(monkeypatch, tmp_path):
+    from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    adapter = UnavailableDescriptionAdapter(
+        "endpoint_resolution_pending",
+        kind=DescriptionAdapterKind.GPU,
+    )
+    with _client(adapter=adapter) as client:
+        response = _post(client, TENANT_ID)
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_resolution_pending"
+        assert detail["operation_id"] is None
+        assert _lease_rows(client) == []
 
 
 def test_gpu_ready_warm_request_has_no_startup(monkeypatch, tmp_path):

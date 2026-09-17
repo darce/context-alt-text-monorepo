@@ -338,6 +338,25 @@ describe('describeOperationStore', () => {
     expect(getDescribeSuggestContext(42)?.id).toBe('op-alias');
   });
 
+  it('does not treat a Suggest operation_id alias as a bulk run id', () => {
+    const key = describeOperationRunStorageKey(TENANT);
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        kind: 'run',
+        operation_id: 'op-not-a-run',
+        startup_id: null,
+        started_at: 1_700_000_000_000,
+        request: { writeAlt: false, force: false },
+      }),
+    );
+    _resetDescribeOperationStoreForTests();
+
+    expect(getDescribeRunContext()).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
   it('keeps an in-memory run when no tenant is configured so existing callers still work', () => {
     resetConfigCache();
     registerConfig({

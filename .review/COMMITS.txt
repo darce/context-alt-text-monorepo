@@ -1,3 +1,4 @@
-3d5b89f1c698 offload: Appended and committed the svc merge-candidates r3c review.
-16fe6d2062c6 offload: Committed the svc-merge-candidates re-review report.
-c9ce1ef835fd offload: Committed GPUFLOW-2 merge-candidate freshness and deterministic
+3130923735fa offload: R3 review appended and committed; original findings are fixed,
+adc7cab8a957 offload: Committed review 32838f8; A2 fails on invalid-endpoint warmup
+7522d04e9cfc offload: Committed the unavailable-operation retry fix as 077e736.
+ad9366530e35 offload: Committed the scoped GPUFLOW-2 typed-error rebuild fix.

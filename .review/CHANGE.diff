@@ -1,271 +1,433 @@
-diff --git a/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py b/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
---- a/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
-+++ b/apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py
-@@ -55,8 +55,8 @@ async def list_merge_candidates(
- 
-     The returned similarity is the merged centroid/pending score, optionally
-     raised by a pending suggestion whose timestamp and membership evidence are
--    current. Ranking uses that returned score, then the raw centroid cosine as
--    a deterministic tie-breaker. Band cuts come from the injected
-+    current. Ranking uses that returned score, then the candidate name and id
-+    as deterministic tie-breakers. Band cuts come from the injected
-     ClusteringSettings.
-     Missing embeddings omit the candidate (rg-015).
-     """
-@@ -117,7 +117,7 @@ def _rank_candidates(
-     ranked.sort(
-         key=lambda row: (
-             -row.candidate.similarity,
--            -row.raw_similarity,
-+            row.candidate.name.casefold(),
-             row.candidate.cluster_id,
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+@@ -350,8 +350,7 @@ _MULTIPART_TYPED_ERROR_REQUIRED_KEYS = frozenset(
+ _MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
+     "description_service_starting": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
+     | frozenset({"warmup_eta_seconds", "startup_budget_seconds"}),
+-    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
+-    | frozenset({"reason", "lifecycle_reason"}),
++    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS | frozenset({"reason", "lifecycle_reason"}),
+     "description_service_error": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+     "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+     "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
+@@ -477,17 +476,13 @@ def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
+     except ValidationError:
+         return True
+     if code == "description_service_starting":
++        if detail.get("operation_id") is None:
++            return True
+         budget = detail.get("startup_budget_seconds")
+         return not (
+-            isinstance(budget, (int, float))
+-            and not isinstance(budget, bool)
+-            and math.isfinite(budget)
+-            and budget > 0
++            isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0
          )
-     )
-@@ -244,7 +244,7 @@ def _latest_mutation(probe: IdentityCluster, other: IdentityCluster) -> datetime
-     stamps = [
-         _as_utc(stamp)
-         for cluster in (probe, other)
--        for stamp in (cluster.created_at, getattr(cluster, "updated_at", None))
-+        for stamp in (cluster.created_at, cluster.updated_at)
-         if isinstance(stamp, datetime)
-     ]
-     return max(stamps) if stamps else None
-diff --git a/apps/prototype-description-service/recognition/domain/cluster.py b/apps/prototype-description-service/recognition/domain/cluster.py
---- a/apps/prototype-description-service/recognition/domain/cluster.py
-+++ b/apps/prototype-description-service/recognition/domain/cluster.py
-@@ -73,6 +73,9 @@ class IdentityCluster:
-     # Appended last for positional safety; None also means the receipt stack was
-     # not loaded or has no currently undoable receipt.
-     undoable_merge_receipt_id: str | None = None
-+    # Last membership or centroid mutation timestamp used for freshness checks.
-+    # Appended last for positional safety.
-+    updated_at: datetime | None = None
+-    if code == "description_service_unavailable":
+-        if _coerce_unavailable_reason(detail.get("reason")) is None:
+-            return True
+-    return False
++    return code == "description_service_unavailable" and _coerce_unavailable_reason(detail.get("reason")) is None
  
-     @property
-     def is_auto_label(self) -> bool:
-diff --git a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
---- a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
-+++ b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
-@@ -1385,6 +1385,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-         )
-         self._session.add(member)
-         await self._session.flush()
-+        await self._touch_cluster_updated_at(cluster_id)
-+        await self._session.flush()
  
-     async def add_representative(self, representative: ClusterRepresentative) -> None:
-         """Persist a representative embedding for a cluster."""
-@@ -1404,13 +1406,21 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-         )
-         self._session.add(rep)
-         await self._session.flush()
-+        await self._touch_cluster_updated_at(representative.cluster_id)
-+        await self._session.flush()
- 
-     async def remove_representative(self, representative_id: str) -> None:
-         """Remove a specific representative."""
-+        representative = await self._session.get(
-+            IdentityClusterRepresentative,
-+            _coerce_uuid(representative_id),
-+        )
-         stmt = delete(IdentityClusterRepresentative).where(
-             IdentityClusterRepresentative.id == _coerce_uuid(representative_id)
-         )
--        await self._session.execute(stmt)
-+        result = await self._session.execute(stmt)
-+        if get_rowcount(result) > 0 and representative is not None:
-+            await self._touch_cluster_updated_at(str(representative.cluster_id))
-         await self._session.flush()
- 
-     async def clear_representatives(self, cluster_id: str) -> None:
-@@ -1418,9 +1428,20 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-         stmt = delete(IdentityClusterRepresentative).where(
-             IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
-         )
--        await self._session.execute(stmt)
-+        result = await self._session.execute(stmt)
-+        if get_rowcount(result) > 0:
-+            await self._touch_cluster_updated_at(cluster_id)
-         await self._session.flush()
- 
-+    async def _touch_cluster_updated_at(self, cluster_id: str) -> None:
-+        """Stamp a cluster when a child write changes membership or centroid inputs."""
-+        stmt = (
-+            update(ClusterModel)
-+            .where(ClusterModel.id == _coerce_uuid(cluster_id))
-+            .values(updated_at=datetime.now(tz=UTC))
-+        )
-+        await self._session.execute(stmt)
+ def _rebuild_post_accept_typed_error(
+@@ -501,14 +496,21 @@ def _rebuild_post_accept_typed_error(
+     code = _http_exception_code(detail)
+     if code not in _MULTIPART_TYPED_ERROR_CODES:
+         return exc
++    operation_id = getattr(op, "operation_id", None)
++    if not isinstance(operation_id, str) or not operation_id:
++        operation_id = None
++    startup_id = getattr(op, "startup_id", None)
++    if not isinstance(startup_id, str):
++        startup_id = None
+     warmup_eta_seconds = None
+     startup_budget_seconds = None
+     reason = None
+     lifecycle_reason = None
+     retry_after = None
++    rebuilt_code = code
+     if isinstance(detail, dict) and code == "description_service_starting":
+         eta = detail.get("warmup_eta_seconds")
+-        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
++        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta) and eta >= 0:
+             warmup_eta_seconds = float(eta)
+         budget = detail.get("startup_budget_seconds")
+         if isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0:
+@@ -519,25 +521,58 @@ def _rebuild_post_accept_typed_error(
+             # invent a client-facing ceiling during normalization.
+             startup_budget_seconds = settings.gpu_warmup_timeout_seconds
+         retry_after = _retry_after_header(exc)
++        if operation_id is None:
++            rebuilt_code = "description_service_unavailable"
++            warmup_eta_seconds = None
++            startup_budget_seconds = None
++            reason = _DEFAULT_UNAVAILABLE_REASON
+     elif isinstance(detail, dict) and code == "description_service_unavailable":
+         reason = _coerce_unavailable_reason(detail.get("reason"))
++        if reason is None:
++            reason = _DEFAULT_UNAVAILABLE_REASON
+         raw_lifecycle = detail.get("lifecycle_reason")
+         if isinstance(raw_lifecycle, str) and raw_lifecycle.strip():
+             lifecycle_reason = raw_lifecycle
+-    return _typed_describe_error(
+-        status_code=exc.status_code,
+-        code=code,
+-        message=_http_exception_message(detail, fallback="Description service error"),
+-        operation_id=op.operation_id,
+-        startup_id=op.startup_id,
+-        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+-        warmup_eta_seconds=warmup_eta_seconds,
+-        startup_budget_seconds=startup_budget_seconds,
+-        reason=reason,
+-        lifecycle_reason=lifecycle_reason,
+-        retry_after=retry_after,
+-        preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
+-    )
 +
-     async def count_labeled(self) -> int:
-         """Count clusters with user-provided labels (not auto-generated like 'cluster-xxx').
- 
-@@ -1574,6 +1595,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-             centroid=centroid,
-             embedding_model=_choose_embedding_model([rep.embedding_model for rep in domain_reps]),
-             undoable_merge_receipt_id=undoable_merge_receipt_id,
-+            updated_at=model.updated_at if isinstance(model.updated_at, datetime) else None,
-         )
- 
-     async def get_snapshot(
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py b/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
---- a/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py
-@@ -34,6 +34,7 @@ def _cluster(
-     label: str | None,
-     embedding: np.ndarray | None,
-     created_at: datetime | None = None,
-+    updated_at: datetime | None = None,
-     cluster_id: str | None = None,
-     embedding_model: str | None = None,
-     representative_identity_id: str | None = None,
-@@ -46,6 +47,7 @@ def _cluster(
-         is_labeled=bool(label),
-         identity_count=1 if embedding is not None else 0,
-         created_at=created_at or datetime.now(tz=UTC),
-+        updated_at=updated_at,
-         representative_identity_id=representative_identity_id,
-         centroid=centroid,
-         embedding_model=embedding_model,
-@@ -179,7 +181,7 @@ async def test_bands_follow_each_injected_setting_boundary() -> None:
- 
- 
- @pytest.mark.asyncio
--async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
-+async def test_ranks_similarity_desc_then_name_asc() -> None:
-     tenant_id = str(uuid4())
-     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
-     probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec)
-@@ -195,10 +197,8 @@ async def test_ranks_similarity_desc_then_cluster_id_asc() -> None:
-         settings=ClusteringSettings(suggestion_floor=0.10, suggestion_ceiling=0.95),
-     )
- 
--    assert [row.cluster_id for row in result.candidates] == [
--        str(best.id),
--        *sorted((str(ada.id), str(zed.id))),
--    ]
-+    assert [row.name for row in result.candidates] == ["Best", "Ada", "Zed"]
-+    assert [row.cluster_id for row in result.candidates] == [str(best.id), str(ada.id), str(zed.id)]
-     assert result.cluster_id == str(probe.id)
++    message = _http_exception_message(detail, fallback="Description service error")
++    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
++
++    def _build(code_to_emit: str, *, reason_to_emit: UnavailableReason | None = reason) -> HTTPException:
++        rebuilt = _typed_describe_error(
++            status_code=exc.status_code,
++            code=code_to_emit,
++            message=message,
++            operation_id=operation_id,
++            startup_id=startup_id,
++            timing=timing,
++            warmup_eta_seconds=warmup_eta_seconds,
++            startup_budget_seconds=startup_budget_seconds,
++            reason=reason_to_emit,
++            lifecycle_reason=lifecycle_reason,
++            retry_after=retry_after,
++            preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
++        )
++        if isinstance(rebuilt.detail, dict):
++            for optional_key in (
++                "warmup_eta_seconds",
++                "startup_budget_seconds",
++                "reason",
++                "lifecycle_reason",
++            ):
++                if rebuilt.detail.get(optional_key) is None:
++                    rebuilt.detail.pop(optional_key, None)
++        return rebuilt
++
++    try:
++        return _build(rebuilt_code)
++    except ValidationError:
++        warmup_eta_seconds = None
++        startup_budget_seconds = None
++        lifecycle_reason = None
++        return _build(
++            "description_service_unavailable",
++            reason_to_emit=_DEFAULT_UNAVAILABLE_REASON,
++        )
  
  
-@@ -288,14 +288,15 @@ async def test_similarity_uses_fresh_pending_with_matching_membership() -> None:
+ def _load_gpu_snapshot_payload() -> dict[str, Any] | None:
+@@ -1220,9 +1255,11 @@ async def describe_image_multipart(
+     else:
+         effective_adapter = adapter
+     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
++    unavailable_fast_path = False
++    adapter_reason = None
+     if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
+         adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
+-        if adapter_reason is not None:
++        if adapter_reason is not None and submission.operation_id is None:
+             raise _typed_describe_error(
+                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                 code="description_service_unavailable",
+@@ -1232,10 +1269,11 @@ async def describe_image_multipart(
+                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
+                 reason=adapter_reason,
+             )
++        unavailable_fast_path = adapter_reason is not None
+     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
+     cached_row = None
+     op = None
+-    if gpu_compute:
++    if gpu_compute and not unavailable_fast_path:
+         cached_row = await _cached_gpu_description_row(
+             repository=repository,
+             tenant_uuid=tenant_uuid,
+@@ -1315,6 +1353,18 @@ async def describe_image_multipart(
+         terminalized = True
+ 
+     try:
++        if unavailable_fast_path:
++            await _cleanup_accepted()
++            await dump_load_snapshot(session_factory)
++            raise _typed_describe_error(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                code="description_service_unavailable",
++                message="Description service is unavailable",
++                operation_id=operation_id,
++                startup_id=None if op is None else op.startup_id,
++                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
++                reason=adapter_reason,
++            )
+         if cached_row is not None:
+             response = await _response_from_cached_row(
+                 service=service,
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_route.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
+@@ -1157,6 +1157,56 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
+         assert _lease_state(client, detail["operation_id"]) == "active"
  
  
- @pytest.mark.asyncio
--async def test_stale_pending_suggestion_is_ignored() -> None:
-+async def test_pending_observed_before_cluster_updated_at_is_ignored() -> None:
-     tenant_id = str(uuid4())
--    older = datetime(2026, 1, 1, tzinfo=UTC)
--    newer = datetime(2026, 6, 1, tzinfo=UTC)
-+    created = datetime(2026, 1, 1, tzinfo=UTC)
-+    updated = datetime(2026, 6, 1, tzinfo=UTC)
-+    observed = datetime(2026, 3, 1, tzinfo=UTC)
-     probe_vec = _normalize(np.array([1.0, 0.0, 0.0]))
-     other_vec = _normalize(np.array([0.0, 1.0, 0.0]))
--    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=newer)
--    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=newer)
-+    probe = _cluster(tenant_id=tenant_id, label=None, embedding=probe_vec, created_at=created, updated_at=updated)
-+    other = _cluster(tenant_id=tenant_id, label="Ada", embedding=other_vec, created_at=created, updated_at=updated)
++def test_gpu_unavailable_retry_terminalizes_existing_operation(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    adapter = _UnavailableGpuAdapter()
++    with _client(adapter=adapter) as client:
++        first = _post(client, TENANT_ID)
++        assert first.status_code == 503, first.text
++        operation_id = first.json()["detail"]["operation_id"]
++        assert first.json()["detail"]["code"] == "description_service_starting"
++        assert _lease_state(client, operation_id) == "active"
++        assert _active_lease_count(client) == 1
++
++        # The original request was admitted while the GPU was starting. On the
++        # retry the resolver now fails closed, so the known operation must be
++        # correlated and terminalized rather than bypassing operation lookup.
++        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
++        retry = _post(
++            client,
++            TENANT_ID,
++            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
++            extra_data={"operation_id": operation_id},
++        )
++        assert retry.status_code == 503, retry.text
++        detail = retry.json()["detail"]
++        assert detail["code"] == "description_service_unavailable"
++        assert detail["reason"] == "endpoint_not_private"
++        assert detail["operation_id"] == operation_id
++        assert _lease_state(client, operation_id) == "completed"
++        assert _active_lease_count(client) == 0
++        assert adapter.calls == 0
++
++
++def test_gpu_unavailable_retry_unknown_operation_is_mismatch(monkeypatch, tmp_path):
++    _gpu_env(monkeypatch, tmp_path, state="stopped")
++    adapter = _UnavailableGpuAdapter()
++    with _client(adapter=adapter) as client:
++        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
++        response = _post(
++            client,
++            TENANT_ID,
++            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
++            extra_data={"operation_id": "unknown-operation-id"},
++        )
++        assert response.status_code == 409, response.text
++        detail = response.json()["detail"]
++        assert detail["code"] == "operation_mismatch"
++        assert detail["operation_id"] is None
++        assert _lease_rows(client) == []
++        assert adapter.calls == 0
++
++
+ def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
+     _, _, intent_path, now = _gpu_env(monkeypatch, tmp_path, state="stopped")
+     from datetime import UTC, datetime
+diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+--- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
++++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
+@@ -4,9 +4,10 @@ from __future__ import annotations
  
-     result = await list_merge_candidates(
-         tenant_id,
-@@ -307,7 +308,7 @@ async def test_stale_pending_suggestion_is_ignored() -> None:
-                     cluster_a_id=str(probe.id),
-                     cluster_b_id=str(other.id),
-                     similarity=0.99,
--                    created_at=older,
-+                    created_at=observed,
-                     cluster_a_identity_count=1,
-                     cluster_b_identity_count=1,
-                 )
-@@ -421,6 +422,7 @@ async def test_refreshed_pending_after_representative_mutation_is_accepted() ->
-         label="Ada",
-         embedding=_normalize(np.array([0.0, 1.0, 0.0])),
-         created_at=now,
-+        updated_at=mutation,
-         representative_identity_id=other_rep,
-     )
+ import json
+ from pathlib import Path
++from types import SimpleNamespace
  
-diff --git a/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md b/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md
+-from jsonschema import Draft7Validator
+ import pytest
++from jsonschema import Draft7Validator
+ from referencing import Registry, Resource
+ 
+ from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
+@@ -110,6 +111,119 @@ def test_typed_error_envelopes_validate():
+     assert not validator.is_valid({"detail": {k: value for k, value in unavailable["detail"].items() if k != "reason"}})
+ 
+ 
++def _rebuild_test_exception_detail(**overrides):
++    detail = {
++        "code": "description_service_starting",
++        "message": "dependency starting",
++        "operation_id": "upstream-operation",
++        "startup_id": "upstream-startup",
++        "warmup_eta_seconds": 45,
++        "startup_budget_seconds": 510,
++        "timing": {
++            "queue_ms": 1,
++            "ramp_up_ms": 2,
++            "processing_ms": None,
++            "startup_ms": None,
++            "server_elapsed_ms": 4,
++        },
++    }
++    detail.update(overrides)
++    return detail
++
++
++@pytest.mark.parametrize("eta", [-1, float("nan"), float("inf"), "30", None])
++def test_post_accept_rebuild_drops_invalid_warmup_eta(eta):
++    from fastapi import HTTPException, status
++
++    from scene.config.settings import DescriptionSettings
++    from scene.interface_adapters.http.routers import describe as describe_module
++
++    rebuilt = describe_module._rebuild_post_accept_typed_error(
++        HTTPException(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++            detail=_rebuild_test_exception_detail(warmup_eta_seconds=eta),
++        ),
++        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
++        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
++        server_start=0,
++    )
++
++    _multipart_validator().validate({"detail": rebuilt.detail})
++    assert rebuilt.detail["code"] == "description_service_starting"
++    assert "warmup_eta_seconds" not in rebuilt.detail
++    assert rebuilt.detail["operation_id"] == "accepted-operation"
++
++
++def test_post_accept_starting_rebuild_falls_back_when_operation_id_unavailable():
++    from fastapi import HTTPException, status
++
++    from scene.config.settings import DescriptionSettings
++    from scene.interface_adapters.http.routers import describe as describe_module
++
++    detail = _rebuild_test_exception_detail(operation_id=None)
++    rebuilt = describe_module._rebuild_post_accept_typed_error(
++        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
++        op=SimpleNamespace(operation_id=None, startup_id="accepted-startup"),
++        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
++        server_start=0,
++    )
++
++    _multipart_validator().validate({"detail": rebuilt.detail})
++    assert rebuilt.detail["code"] == "description_service_unavailable"
++    assert rebuilt.detail["reason"] == "state_missing"
++    assert "warmup_eta_seconds" not in rebuilt.detail
++    assert "startup_budget_seconds" not in rebuilt.detail
++
++
++def test_post_accept_starting_rebuild_uses_accepted_operation_id_when_upstream_id_null():
++    from fastapi import HTTPException, status
++
++    from scene.config.settings import DescriptionSettings
++    from scene.interface_adapters.http.routers import describe as describe_module
++
++    rebuilt = describe_module._rebuild_post_accept_typed_error(
++        HTTPException(
++            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++            detail=_rebuild_test_exception_detail(operation_id=None),
++        ),
++        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
++        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
++        server_start=0,
++    )
++
++    _multipart_validator().validate({"detail": rebuilt.detail})
++    assert rebuilt.detail["code"] == "description_service_starting"
++    assert rebuilt.detail["operation_id"] == "accepted-operation"
++
++
++def test_post_accept_unavailable_rebuild_uses_contract_reason_for_null_reason():
++    from fastapi import HTTPException, status
++
++    from scene.config.settings import DescriptionSettings
++    from scene.interface_adapters.http.routers import describe as describe_module
++
++    detail = _rebuild_test_exception_detail(
++        code="description_service_unavailable",
++        operation_id="upstream-operation",
++        startup_id="upstream-startup",
++        warmup_eta_seconds=None,
++        startup_budget_seconds=None,
++        reason=None,
++    )
++    rebuilt = describe_module._rebuild_post_accept_typed_error(
++        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
++        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
++        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
++        server_start=0,
++    )
++
++    _multipart_validator().validate({"detail": rebuilt.detail})
++    assert rebuilt.detail["code"] == "description_service_unavailable"
++    assert rebuilt.detail["reason"] == "state_missing"
++    assert "warmup_eta_seconds" not in rebuilt.detail
++    assert "startup_budget_seconds" not in rebuilt.detail
++
++
+ def test_gpuflow2_unavailable_fixture_round_trips():
+     payload = json.loads(_UNAVAILABLE_FIXTURE.read_text())
+     validator = _multipart_validator()
+diff --git a/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md b/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md
 new file mode 100644
 --- /dev/null
-+++ b/docs/workbay/reports/GPUFLOW-2-svc-merge-candidates-review.md
-@@ -0,0 +1,77 @@
-+VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-01":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-03":"partially_fixed"}
-+FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-04","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":116,"summary":"The merged pending score is ignored by the final ranking order.","evidence":"The fix raises similarity to max(raw_similarity, pending_similarity) at lines 142-147, but ranked.sort() keys only on -row.raw_similarity at lines 116-123. A candidate with raw cosine 0.10 and fresh pending score 0.91 can therefore appear below a candidate with raw cosine 0.80 while displaying the lower score first."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-05","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":100,"summary":"The fix keeps a second ranking implementation instead of reusing the roster ranking path required by B6.","evidence":"The delta retains _rank_candidates() and adds _raw_cosine_similarity() (lines 100-123 and 281-291); it does not call list_roster_candidates() or SimilaritySearch. The two paths can diverge in representative selection, thresholds, and score semantics, and this fix already introduces raw-centroid ordering separately from the roster path."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-06","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":310,"summary":"The negative-cosine regression test accepts non-discriminating display scores instead of proving the contract value.","evidence":"The new test asserts both negative candidates return similarity [0.0, 0.0] at lines 310-312. It proves raw ordering only; it does not fail when the API still clamps valid negative cosine values, so the test encodes the remaining display-contract gap."}]
-+Verdict: pass_with_findings
++++ b/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md
+@@ -0,0 +1,57 @@
++# GPUFLOW-2 svc-unavailable-reason review
 +
-+# GPUFLOW-2 svc-merge-candidates review
++Verdict: fail
 +
-+The review is limited to the supplied fix delta `d55cc2fa5..0a19a3eed` for the `svc-merge-candidates` B6 slice. The aggregate router mount is owned by `svc-route-registry` and is not reassigned here.
++| Base | Tip | Files |
++| --- | --- | --- |
++| `284616c05` | `720af8ab8` | `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py`; `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py`; `apps/prototype-description-service/scene/tests/fixtures/gpuflow2-unavailable.json`; `apps/prototype-description-service/scene/tests/test_describe_route.py` (outside declared owned list); `apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py` (outside declared owned list) |
 +
-+## Re-review r2 (d55cc2fa5..0a19a3eed)
++## FINDINGS
++
++### GPUFLOW-2-SVCUNAVAILABLEREASON-R-01 — high
++
++- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:523-546,1133-1139,907-925`; adapter resolver `apps/prototype-description-service/scene/interface_adapters/http/deps.py:91-119`.
++- Evidence: The new `_unavailable_from_gpu_gate()` treats an endpoint as configured whenever `settings.gpu_endpoint_url` is truthy; it never checks endpoint privacy or whether the selected GPU adapter is `UnavailableDescriptionAdapter`. `get_gpu_description_adapter()` returns that unavailable GPU-kind adapter for a non-private endpoint. Therefore an explicit GPU request with a stopped snapshot and `ACX_GPU_ENDPOINT_URL=http://8.8.8.8:8000` has `gpu_compute=True`, `blocked=False`, and enters the `description_service_starting` branch. The later `DescriptionAdapterUnavailableError` mapping to `endpoint_not_private` at `:1327-1343` is reached only after the service has waited/retried and invoked the unusable adapter.
++- Impact: A known-invalid endpoint is advertised as starting and its demand can cause the lifecycle controller to start/wait for a GPU that cannot serve requests. The SPA receives a warmup promise instead of the actionable `endpoint_not_private` failure, so the fail-closed endpoint boundary is bypassed.
++- Fix: Carry the effective adapter’s availability/endpoint-readiness decision into `_ensure_gpu_ready()` (or reject the unavailable GPU adapter before accepting lifecycle demand), returning `endpoint_not_private`/`endpoint_resolution_pending` before any starting response. Add a stopped-snapshot regression with a non-private or invalid-scheme endpoint.
++
++### GPUFLOW-2-SVCUNAVAILABLEREASON-R-02 — high
++
++- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:405-415,1315-1320`; contract `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:125-150`.
++- Evidence: `_plain_typed_error_missing_operation_fields()` triggers `_rebuild_post_accept_typed_error()` only when one of `operation_id`, `startup_id`, or `timing` is absent. A downstream/upstream `HTTPException` with a complete operation envelope but a `description_service_unavailable` detail lacking `reason` (or a `description_service_starting` detail lacking `startup_budget_seconds`) returns `False` from this predicate, and the outer handler re-raises the original detail unchanged. The schema requires `reason` for unavailable and `startup_budget_seconds` for starting. The new tests cover an upstream unavailable detail with missing operation fields plus `reason`, not the full-envelope case.
++- Impact: A typed post-accept failure can cross the service boundary with a schema-invalid detail and no machine-readable unavailable reason (or no service-owned warmup budget). PHP/SPA consumers cannot safely classify or resume it, violating the release response contract.
++- Fix: Normalize every recognized typed code after acceptance, not only details missing operation metadata; validate code-specific required fields and closed-key/value shape before preserving an upstream exception. Add regressions for full envelopes with missing, null, and invalid reason/budget fields, while preserving only contract-valid source metadata.
++
++### GPUFLOW-2-SVCUNAVAILABLEREASON-R-03 — low
++
++- File: `apps/prototype-description-service/scene/tests/test_describe_route.py:1073-1118,1145-1246`; `apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py:1-16,103-128`.
++- Evidence: The supplied delta changes both test files, while the declared `svc-unavailable-reason` owned list contains only `describe.py`, `responses.py`, and the new `scene/tests/fixtures/gpuflow2-unavailable.json`. The two test paths are not in that list.
++- Impact: The delta crosses the lane boundary and can be merged with sibling-owned test changes, obscuring ownership and creating avoidable merge conflicts even though the assertions are relevant.
++- Fix: Move these test edits to their owning lane or update the orchestration ownership before landing; enforce the changed-path allow-list mechanically.
++
++## VERIFICATION
++
++- The required lock verification passed with the lane interpreter: `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — `1 passed`.
++- Focused fixture/schema coverage passed: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python -m pytest apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py -k 'fixture or typed_error_envelopes' -q -p no:cacheprovider` — `3 passed, 5 deselected`.
++- Direct probes confirmed the full-envelope normalizer predicate is false for a typed unavailable detail without `reason`, and the readiness gate returns `(None, None)` for a configured non-private endpoint with a stopped snapshot.
++- The complete lane-row route-suite invocation was attempted with the resolved lane interpreter. Collection/initial execution hit the documented DB-backed sandbox hang (the unconstrained attempt also hit OpenBLAS thread creation limits), so it was interrupted; no pass is claimed for that suite.
++
++## Re-review r3 (720af8ab8..bbd4013fa)
 +
 +| finding | verdict | evidence |
 +| --- | --- | --- |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R-01 | fixed | The delta removes the `clustering_settings` import and the `SUGGESTION_BAND_CUTS` fallback with literal provisional thresholds. `band_for(display_similarity, settings)` remains the only band decision in the changed implementation (`merge_candidates.py:142-155`), and the added test verifies the shim symbols are absent (`test_merge_candidates.py:128-130`). |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta adds `_membership_matches_live()` and rejects pending rows whose two stored identity counts do not equal the live counts (`merge_candidates.py:174-177,204-232`); the new stale-membership test exercises that rejection (`test_merge_candidates.py:257-288`). It still treats freshness as `max(probe.created_at, other.created_at)` (`merge_candidates.py:199-201,235-237`), while `_suggestion_observed_at()` can only see `refreshed_at` through `getattr` and `MergeSuggestionDetails`/`_to_details()` do not carry it (`merge_candidates.py:240-243`; `suggestion_details.py:45-61`; `merge_suggestion_repository.py:222-243`). Same-count membership or representative/centroid mutations can therefore still admit stale evidence. |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R-03 | partially_fixed | The fix computes an unclamped raw cosine and sorts negative candidates by that value (`merge_candidates.py:116-123,142,281-291`), closing the original all-zero ordering tie; the added test proves `less_negative` precedes `more_negative` (`test_merge_candidates.py:292-312`). However, `display_similarity` still clamps every negative merged score to `0.0` (`merge_candidates.py:143-154`), and the test explicitly accepts `[0.0, 0.0]`, so the contract-visible score remains non-discriminating. |
++| GPUFLOW-2-SVCUNAVAILABLEREASON-R-01 | fixed | `describe.py:1216-1234` rejects a GPU-kind `UnavailableDescriptionAdapter` before digest lookup or operation acceptance; `describe.py:439-461` maps its resolver reason or endpoint fallback, and `describe.py:603-608,963-967` also carries the adapter into the lifecycle gate. |
++| GPUFLOW-2-SVCUNAVAILABLEREASON-R-02 | fixed | `describe.py:464-490` validates recognized typed envelopes and code-specific required fields; `describe.py:1411-1424` rebuilds any invalid post-accept detail, while `describe.py:509-520,522-526` supplies the service settings budget or a contract reason. |
 +
 +### FINDINGS
 +
-+#### GPUFLOW-2-SVCMERGECANDIDATES-R-04 — medium
++#### GPUFLOW-2-SVCUNAVAILABLEREASON-R-04 — high
 +
-+- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:116-123,142-150`.
-+- **Evidence:** `_score_candidate()` computes the merged score with `max(raw_similarity, pending_similarity)`, but `_rank_candidates()` sorts on `raw_similarity` alone. The fix therefore ranks by a different value than it returns. A fresh pending score can be higher than the centroid score while its candidate remains below a candidate with a lower returned score.
-+- **Impact:** The endpoint can present a lower-scored candidate ahead of the best merged candidate, defeating the ranked merge-candidate contract and downstream operator ordering.
-+- **Fix:** Store the merged score as the primary ranking key while preserving the unclamped raw cosine as a deterministic secondary key for none-band ties, or route the merged score through the shared ranking implementation.
++- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:475-512`; model constraint `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:155-156`.
++- Evidence: A full-envelope `description_service_starting` exception with `warmup_eta_seconds=-1` makes `DescribeOperationErrorDetail.model_validate()` fail at `describe.py:475-478`, so the new normalizer runs. Its `describe.py:510-512` guard accepts every finite numeric ETA, including the negative value, and passes it to `_typed_describe_error()`. The response model rejects that value because `warmup_eta_seconds` has `Field(ge=0)`, turning malformed upstream detail into an unhandled validation error instead of a schema-valid starting envelope.
++- Impact: The new full-envelope normalization path can return a 500 for an invalid but recognized upstream typed error, violating the fail-closed multipart error contract precisely on the path added to repair R-02.
++- Fix: Preserve `warmup_eta_seconds` only when it is finite and non-negative; otherwise omit it (or clamp only if the contract explicitly permits that behavior) before rebuilding the envelope. Add a full-envelope negative-ETA regression.
 +
-+#### GPUFLOW-2-SVCMERGECANDIDATES-R-05 — medium
-+
-+- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:100-123,281-291`.
-+- **Evidence:** The fix retains a private `_rank_candidates()` loop and adds a private `_raw_cosine_similarity()` implementation. It does not reuse the mandated `list_roster_candidates()`/`SimilaritySearch` ranking path. The duplicated path has independent representative/centroid selection, score handling, and ordering rules; the raw-centroid sort versus merged pending score is already a concrete divergence.
-+- **Impact:** B6 consumers can receive ranking semantics different from the existing roster surface, and future changes to the accepted ranking path can silently leave merge candidates inconsistent.
-+- **Fix:** Extract or call one shared ranking primitive that accepts the pending-evidence merge policy, then use it from both surfaces rather than maintaining a second ranker.
-+
-+#### GPUFLOW-2-SVCMERGECANDIDATES-R-06 — low
-+
-+- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:292-312`.
-+- **Evidence:** The new negative-cosine test asserts `[0.0, 0.0]` for the two returned similarities. It proves only that raw ordering differs; it would stay green if valid negative values were silently clamped, so it does not protect the response contract or the user-visible match score.
-+- **Impact:** The regression suite can report the negative-cosine fix as complete while preserving a non-discriminating score payload.
-+- **Fix:** Assert the returned negative cosine values (and the none band) or explicitly amend the contract to prohibit negative output before accepting the clamp.
-+
-+Verdict: pass_with_findings
-+
-+## Verification
-+
-+- `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — 1 passed.
-+- `.venv/bin/python -m pytest apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py -q -p no:cacheprovider` — 15 passed.
-+- Import-origin control was skipped because this lane owns only the report artifact, not an importable Python package.
-+
-+## Re-review r3c (0a19a3eed..106d5b743)
-+
-+VERIFIED: {"GPUFLOW-2-SVCMERGECANDIDATES-R-02":"partially_fixed","GPUFLOW-2-SVCMERGECANDIDATES-R-03":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-04":"fixed","GPUFLOW-2-SVCMERGECANDIDATES-R2-06":"not_fixed"}
-+
-+| finding | verdict | evidence |
-+| --- | --- | --- |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R-02 | partially_fixed | The delta carries `refreshed_at` and representative identity ids through `MergeSuggestionDetails` and `_to_details()` (`suggestion_details.py:53-67`; `merge_suggestion_repository.py:227-242`), then checks live counts and representative ids (`merge_candidates.py:207-241`). `_latest_mutation()` still reads only `created_at` plus `getattr(cluster, "updated_at", None)` (`merge_candidates.py:243-251`); the delta does not add or map `updated_at` on `IdentityCluster`, so same-count membership or centroid changes with an unchanged representative can still admit stale pending evidence. |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R-03 | fixed | The endpoint no longer applies a lower clamp: `display_similarity = min(1.0, float(similarity))` (`merge_candidates.py:143-155`). The new regression test expects `[-0.2, -1.0]` and the `none` band (`test_merge_candidates.py:453-469`), so valid negative cosine values are now returned and ordered distinctly. |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R2-04 | fixed | `_rank_candidates()` now uses the returned merged score as its primary key (`-row.candidate.similarity`) before raw cosine (`merge_candidates.py:116-123`), and the added test places a fresh pending `0.91` candidate ahead of a raw `0.80` candidate (`test_merge_candidates.py:208-251`). |
-+| GPUFLOW-2-SVCMERGECANDIDATES-R2-06 | not_fixed | The supplied brief gives this identifier with no finding text or acceptance criterion. The fix delta therefore contains no evidence that can establish a behavioral change for this unspecified item; treating it as fixed would fabricate an acceptance claim ([AGT-02]). |
-+
-+### FINDINGS
-+
-+FINDINGS: [{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-07","severity":"medium","file_path":"apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py","line":116,"summary":"Equal returned scores are tie-broken by raw cosine and cluster ID before the required name ordering.","evidence":"The sort key is (-row.candidate.similarity, -row.raw_similarity, row.candidate.cluster_id) at lines 116-123, while B6 requires name ASC within a band. The changed test at lines 182-199 is renamed to cluster_id ordering and asserts UUID order, codifying the contract regression ([API-09])."},{"id":"GPUFLOW-2-SVCMERGECANDIDATES-R-08","severity":"low","file_path":"apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py","line":406,"summary":"The post-mutation freshness test does not model a cluster mutation timestamp.","evidence":"The test declares mutation at lines 409-410 and puts refreshed_at after it at lines 438-442, but the _cluster fixture only adds representative_identity_id and never accepts or assigns updated_at at lines 27-49. The assertion therefore proves only that a newer refreshed suggestion is accepted; it cannot prove the intended cluster-mutation freshness behavior ([TEST-03])."}]
-+
-+#### GPUFLOW-2-SVCMERGECANDIDATES-R-07 — medium
-+
-+- **File:line:** `apps/prototype-description-service/recognition/application/suggestions/merge_candidates.py:116-123`; `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:182-199`.
-+- **Evidence:** The fix sorts equal returned scores by raw cosine, then cluster ID, before considering name. B6 requires similarity descending with name ASC within a band. The changed test is explicitly renamed to `test_ranks_similarity_desc_then_cluster_id_asc` and asserts UUID order, making the wrong tie-break executable ([API-09]).
-+- **Impact:** Two candidates with the same displayed similarity and band can appear in non-name order, changing the operator-visible result order and violating the merge-candidate response contract.
-+- **Fix:** Keep merged similarity as the primary key, then sort by `name.casefold()` (and use cluster ID only as the final deterministic tie-break); do not place raw cosine ahead of name for equal returned scores.
-+
-+#### GPUFLOW-2-SVCMERGECANDIDATES-R-08 — low
-+
-+- **File:line:** `apps/prototype-description-service/recognition/tests/unit/test_merge_candidates.py:27-49,406-450`.
-+- **Evidence:** The test creates `mutation` and sets `refreshed_at` after it, but the `_cluster` helper has no `updated_at` parameter or assignment. It therefore verifies only that a refreshed suggestion newer than `created_at` is accepted; it does not exercise the cluster mutation timestamp that `_latest_mutation()` claims to use ([TEST-03]).
-+- **Impact:** The regression suite can stay green while the intended stale-after-mutation gate is absent or wired to a field that production clusters do not expose.
-+- **Fix:** Populate a real `updated_at`/centroid-refresh timestamp in the fixture, assert an older pending observation is rejected, and separately assert a refresh after that timestamp is accepted.
-+
-+Verdict: pass_with_findings
++VERIFIED: {"GPUFLOW-2-SVCUNAVAILABLEREASON-R-01": "fixed", "GPUFLOW-2-SVCUNAVAILABLEREASON-R-02": "fixed"}
++FINDINGS: [{"id":"GPUFLOW-2-SVCUNAVAILABLEREASON-R-04","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":511,"summary":"Full-envelope starting-error normalization preserves negative warmup ETA and then fails response validation","evidence":"_typed_error_detail_needs_rebuild() rebuilds invalid typed details, but _rebuild_post_accept_typed_error() accepts any finite warmup_eta_seconds, including -1; DescribeOperationErrorDetail requires warmup_eta_seconds >= 0, so the rebuild can raise instead of returning a typed error."}]
++Verdict: fail

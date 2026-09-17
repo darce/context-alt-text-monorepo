@@ -13,7 +13,7 @@ import {
   GPU_SERVICE_STATUS_WARMUP_POLL_INTERVAL_MS,
   useGpuServiceStatus,
 } from '../../../hooks/useGpuServiceStatus';
-import { GpuTierStatus } from '../GpuTierStatus';
+import { GpuTierStatus, gpuWaitFromOperationDetail } from '../GpuTierStatus';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -177,6 +177,21 @@ describe('GpuTierStatus', () => {
     );
   });
 
+  it('renders a zero warmup ETA instead of falling through to the startup budget', async () => {
+    renderGpu(
+      createElement(GpuTierStatus, {
+        isRunPending: true,
+        gpuState: GPU_STATE.STARTING,
+        warmupEtaSeconds: 0,
+        startupBudgetSeconds: 120,
+      }),
+    );
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('Description Service is starting… about 0s');
+    expect(status.textContent).not.toContain('up to 120s');
+  });
+
   it('names the deferred Describe effect with a service wait while stopped', async () => {
     renderGpu(createElement(GpuTierStatus, { startupBudgetSeconds: 90 }));
 
@@ -236,7 +251,9 @@ describe('GpuTierStatus', () => {
     renderGpu(createElement(GpuTierStatus));
 
     const status = await screen.findByRole('status', { name: 'Description Service status is out of date' });
-    expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.READY);
+    expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.UNKNOWN);
+    expect(status).toHaveAttribute('data-gpu-terminal', 'false');
+    expect(status).not.toHaveClass('acx-sync-status--success');
     expect(status).toHaveTextContent('Description Service status is out of date');
     expect(status.textContent).not.toContain('GPU tier: not reported');
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
@@ -339,5 +356,78 @@ describe('useGpuServiceStatus (owned GpuTierStatus proof)', () => {
     rerender({ isRunPending: false });
     await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(2));
     expect(result.current.isPolling).toBe(true);
+  });
+});
+
+describe('gpuWaitFromOperationDetail', () => {
+  const startingDetail = {
+    code: 'description_service_starting',
+    message: 'Description service is starting.',
+    operation_id: 'op-lease-1',
+    startup_id: null,
+    warmup_eta_seconds: 12,
+    startup_budget_seconds: 120,
+    timing: {
+      queue_ms: 0,
+      ramp_up_ms: null,
+      processing_ms: null,
+      startup_ms: null,
+      server_elapsed_ms: 1,
+    },
+  };
+
+  it('reads warmup_eta_seconds and startup_budget_seconds from a schema-shaped detail', () => {
+    expect(gpuWaitFromOperationDetail(startingDetail)).toEqual({
+      warmupEtaSeconds: 12,
+      startupBudgetSeconds: 120,
+    });
+    expect(gpuWaitFromOperationDetail(startingDetail)).not.toHaveProperty('modelId');
+  });
+
+  it('accepts warmup_eta_seconds of 0 without dropping the budget', () => {
+    expect(gpuWaitFromOperationDetail({ ...startingDetail, warmup_eta_seconds: 0 })).toEqual({
+      warmupEtaSeconds: 0,
+      startupBudgetSeconds: 120,
+    });
+  });
+
+  it('returns undefined when wait fields are absent', () => {
+    expect(
+      gpuWaitFromOperationDetail({
+        code: startingDetail.code,
+        message: startingDetail.message,
+        operation_id: startingDetail.operation_id,
+        startup_id: startingDetail.startup_id,
+        timing: startingDetail.timing,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined for non-objects and invalid wait fields', () => {
+    expect(gpuWaitFromOperationDetail(null)).toBeUndefined();
+    expect(gpuWaitFromOperationDetail(undefined)).toBeUndefined();
+    expect(gpuWaitFromOperationDetail('starting')).toBeUndefined();
+    expect(
+      gpuWaitFromOperationDetail({
+        ...startingDetail,
+        warmup_eta_seconds: -1,
+        startup_budget_seconds: 0,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('omits a single invalid field while keeping the valid one', () => {
+    expect(
+      gpuWaitFromOperationDetail({
+        ...startingDetail,
+        warmup_eta_seconds: Number.NaN,
+      }),
+    ).toEqual({ startupBudgetSeconds: 120 });
+    expect(
+      gpuWaitFromOperationDetail({
+        ...startingDetail,
+        startup_budget_seconds: Number.POSITIVE_INFINITY,
+      }),
+    ).toEqual({ warmupEtaSeconds: 12 });
   });
 });

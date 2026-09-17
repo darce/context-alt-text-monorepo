@@ -552,11 +552,12 @@ def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
 
 @pytest.mark.parametrize("profile", ["seeded", "florence_small"])
 def test_health_detailed_reports_description_adapter(profile: str, tmp_path, monkeypatch) -> None:
-    """Auth-gated diagnostic must expose the active description profile.
+    """Auth-gated diagnostic must expose the active description readiness.
 
     model_cache.profile is the face_pipeline profile. The demo describe gate
-    needs the caption producer — DescriptionSettings.profile — as a top-level
-    string. Parametrize two real profiles so a hardcoded field fails.
+    needs the caption producer — DescriptionSettings.profile — as the
+    description_adapter.profile field. Parametrize two real profiles so a
+    hardcoded field or legacy string shape fails.
     """
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
     from scene.config.settings import DescriptionSettings
@@ -578,8 +579,26 @@ def test_health_detailed_reports_description_adapter(profile: str, tmp_path, mon
     resp = client.get("/health/detailed")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["description_adapter"] == profile
-    assert body["description_adapter"] == DescriptionSettings().profile.value
+    adapter = body["description_adapter"]
+    assert set(adapter) == {
+        "profile",
+        "kind",
+        "endpoint_configured",
+        "endpoint_allowlisted",
+        "endpoint_private",
+        "checked_at",
+        "fresh",
+        "usable",
+        "reason",
+        "model_id",
+        "model_version",
+    }
+    assert adapter["profile"] == profile
+    assert adapter["profile"] == DescriptionSettings().profile.value
+    assert adapter["usable"] is True
+    assert adapter["reason"] is None
+    assert isinstance(adapter["model_id"], str) and adapter["model_id"] != ""
+    assert isinstance(adapter["model_version"], str) and adapter["model_version"] != ""
 
     live = client.get("/health")
     assert live.status_code == 200, live.text

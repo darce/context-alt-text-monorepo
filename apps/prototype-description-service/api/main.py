@@ -288,7 +288,7 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
     host = _endpoint_hostname(endpoint_url) if url_valid else None
     parsed_allowlist = _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
     effective_allowlist = parsed_allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
-    endpoint_allowlisted = bool(host) and _endpoint_is_allowlisted(host, effective_allowlist)
+    endpoint_allowlisted = host is not None and _endpoint_is_allowlisted(host, effective_allowlist)
     endpoint_private: bool | None = None
     checked_at: float | None = None
     may_resolve = spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU and url_valid

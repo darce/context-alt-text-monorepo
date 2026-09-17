@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
@@ -471,6 +471,29 @@ def _norm_uuid_str(value: object) -> str:
     return str(uuid.UUID(str(value)))
 
 
+_REVERT_CONCURRENCY_CODES = frozenset({"40P01", "40001"})
+
+
+def _is_revert_concurrency_error(exc: DBAPIError) -> bool:
+    """Return whether a database failure should be exposed as a deterministic refusal."""
+    if isinstance(exc, OperationalError):
+        return True
+    for candidate in (exc, getattr(exc, "orig", None), getattr(exc, "__cause__", None)):
+        for attribute in ("pgcode", "sqlstate"):
+            code = getattr(candidate, attribute, None)
+            if code is not None and str(code).upper() in _REVERT_CONCURRENCY_CODES:
+                return True
+    return False
+
+
+async def _rollback_revert_concurrency_failure(session: AsyncSession) -> None:
+    """Leave the session usable after PostgreSQL aborts a deadlocked transaction."""
+    try:
+        await session.rollback()
+    except Exception:
+        logger.warning("Failed to roll back a rejected cluster-merge revert", exc_info=True)
+
+
 def _restored_cluster_label(receipt: ClusterMergeReceipt, survivor: IdentityCluster) -> str:
     source_label = (receipt.source_label or "").strip()
     if source_label:
@@ -484,14 +507,13 @@ def _restored_cluster_label(receipt: ClusterMergeReceipt, survivor: IdentityClus
 async def _load_receipt(
     session: AsyncSession, *, tenant_id: uuid.UUID, receipt_id: uuid.UUID
 ) -> ClusterMergeReceipt | None:
-    """Look up a receipt by (tenant_id, receipt_id) only (CALIBR-H-03)."""
+    """Look up a receipt by (tenant_id, receipt_id) without taking a row lock."""
     result = await session.execute(
         select(ClusterMergeReceipt)
         .where(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.receipt_id == receipt_id,
         )
-        .with_for_update()
     )
     return result.scalar_one_or_none()
 
@@ -505,6 +527,8 @@ async def _load_sibling_receipts(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.survivor_cluster_id == survivor_cluster_id,
         )
+        .order_by(ClusterMergeReceipt.receipt_id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     return list(result.scalars().all())
@@ -524,7 +548,7 @@ async def _lock_survivor_cluster(
     )
 
 
-async def revert_merge(
+async def _revert_merge_impl(
     *,
     tenant_id: str,
     receipt_id: str,
@@ -545,14 +569,37 @@ async def revert_merge(
     if receipt is None:
         raise MergeReceiptNotFoundError(receipt_uuid)
 
-    if _norm_uuid_str(receipt.survivor_cluster_id) != path_id:
+    requested_survivor_id = uuid.UUID(str(receipt.survivor_cluster_id))
+    if _norm_uuid_str(requested_survivor_id) != path_id:
         raise MergeReceiptStaleError(receipt.receipt_id)
 
     await _lock_survivor_cluster(
         session,
         tenant_id=tenant_uuid,
-        survivor_cluster_id=receipt.survivor_cluster_id,
+        survivor_cluster_id=requested_survivor_id,
     )
+
+    siblings = await _load_sibling_receipts(
+        session,
+        tenant_id=tenant_uuid,
+        survivor_cluster_id=requested_survivor_id,
+    )
+    receipt = next(
+        (
+            sibling
+            for sibling in siblings
+            if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)
+        ),
+        None,
+    )
+    if receipt is None:
+        raise ReceiptNotTopError(receipt_uuid)
+    if _norm_uuid_str(receipt.survivor_cluster_id) != _norm_uuid_str(requested_survivor_id):
+        raise MergeReceiptStaleError(receipt.receipt_id)
+    if receipt.reverted_at is not None:
+        raise ReceiptNotTopError(receipt.receipt_id)
+    if clock > receipt.expires_at:
+        raise ReceiptExpiredError(receipt.receipt_id)
 
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     member_repo: MemberRepository = assignment_writer.member_repository
@@ -561,17 +608,8 @@ async def revert_merge(
     if survivor is None or _norm_uuid_str(survivor.tenant_id) != _norm_uuid_str(tenant_uuid):
         raise MergeReceiptStaleError(receipt.receipt_id)
 
-    siblings = await _load_sibling_receipts(
-        session,
-        tenant_id=tenant_uuid,
-        survivor_cluster_id=receipt.survivor_cluster_id,
-    )
     stack = list(siblings)
-    if all(sibling.receipt_id != receipt.receipt_id for sibling in stack):
-        stack.append(receipt)
     require_top_unreverted_receipt(stack, receipt.receipt_id)
-    if clock > receipt.expires_at:
-        raise ReceiptExpiredError(receipt.receipt_id)
 
     source_cluster_id = _norm_uuid_str(receipt.source_cluster_id)
     occupied = await cluster_repo.get_by_id(source_cluster_id)
@@ -670,3 +708,33 @@ async def revert_merge(
             "moved_count": len(moved_uuids),
         }
     return restored
+
+
+async def revert_merge(
+    *,
+    tenant_id: str,
+    receipt_id: str,
+    path_cluster_id: str,
+    assignment_writer: AssignmentWriter,
+    session: AsyncSession,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
+    now: datetime | None = None,
+    return_event_payload: bool = False,
+) -> IdentityCluster | tuple[IdentityCluster, dict[str, object]]:
+    """Revert a merge, mapping deadlock/serialization failures to a stable refusal."""
+    try:
+        return await _revert_merge_impl(
+            tenant_id=tenant_id,
+            receipt_id=receipt_id,
+            path_cluster_id=path_cluster_id,
+            assignment_writer=assignment_writer,
+            session=session,
+            merge_suggestion_service=merge_suggestion_service,
+            now=now,
+            return_event_payload=return_event_payload,
+        )
+    except DBAPIError as exc:
+        if not _is_revert_concurrency_error(exc):
+            raise
+        await _rollback_revert_concurrency_failure(session)
+        raise ReceiptNotTopError(uuid.UUID(str(receipt_id))) from exc

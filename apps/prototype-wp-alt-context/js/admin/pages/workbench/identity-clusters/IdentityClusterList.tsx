@@ -6,17 +6,18 @@
  */
 
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types';
 import { type DetectedIdentity } from '../../../api/recognition';
 import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 import { APP_LINK_VALUES, toWorkbench } from '../../../navigation/appLinks';
+import { ClusterPreview } from './ClusterPreview';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { pendingMergeTwinForCluster } from './pendingMergeTwin';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { TWIN_CHIP_PENDING_STATUS } from './twinChipCopy';
-import { groupIdentitiesByClusters } from './utils';
+import { groupIdentitiesByClusters, isUngroupedGroup } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
 import { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
 import { usePendingMergeTwins } from './usePendingMergeTwins';
@@ -27,6 +28,30 @@ interface IdentityClusterListProps {
   dataSource?: DataSource;
   onRetry?: () => void;
 }
+
+const UngroupedResidueSection = ({ members }: { members: DetectedIdentity[] }): React.JSX.Element => {
+  const headingId = React.useId();
+  const heading = sprintf(__('Not yet grouped (%d)', 'alt-context'), members.length);
+
+  return (
+    <section className="acx-identity-clusters__ungrouped" aria-labelledby={headingId}>
+      <h3 id={headingId} className="acx-identity-clusters__ungrouped-heading">
+        {heading}
+      </h3>
+      <ul className="acx-identity-clusters__ungrouped-faces">
+        {members.map((member) => (
+          <li key={member.identity_id} className="acx-identity-clusters__ungrouped-face">
+            <ClusterPreview
+              representative={member}
+              representativeFace={member.representative_face}
+              memberCount={1}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
 
 /**
  * Groups identities by cluster and renders them as a list of editable items.
@@ -45,6 +70,14 @@ export const IdentityClusterList = ({
   onRetry,
 }: IdentityClusterListProps): React.JSX.Element => {
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
+  const identityGroups = React.useMemo(
+    () => clusters.filter((cluster) => !isUngroupedGroup(cluster)),
+    [clusters],
+  );
+  const ungroupedGroup = React.useMemo(
+    () => clusters.find((cluster) => isUngroupedGroup(cluster)),
+    [clusters],
+  );
   const isLabelOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
   const canMutate = !isLabelOnly;
   const { mergeSuggestions, truncated, scheduleAcceptMerge, scheduleRejectMerge, isCardPending } =
@@ -52,17 +85,17 @@ export const IdentityClusterList = ({
 
   // Same predicate as IdentityClusterItem's render gate:
   // `!cluster.label && anchorIdentityId && canMutate`, with anchorIdentityId
-  // derived from the shared grouped data (members[0]). Label-only mode yields
-  // an empty set, so the batch fetches nothing.
+  // derived from the shared grouped data (members[0]). Residue is not a person
+  // card, so it is excluded from the inline-suggestion batch.
   const batchIdentityIds = React.useMemo(() => {
     if (!canMutate) {
       return [];
     }
-    return clusters
+    return identityGroups
       .filter((cluster) => !cluster.label)
       .map((cluster) => cluster.members[0]?.identity_id)
       .filter((identityId): identityId is string => Boolean(identityId));
-  }, [clusters, canMutate]);
+  }, [identityGroups, canMutate]);
 
   const { getMatch } = useInlineSuggestionBatch(batchIdentityIds);
 
@@ -125,7 +158,7 @@ export const IdentityClusterList = ({
           )}
         </p>
       )}
-      {clusters.map((cluster) => {
+      {identityGroups.map((cluster) => {
         const twin = canMutate
           ? pendingMergeTwinForCluster(cluster.clusterId, mergeSuggestions)
           : null;
@@ -175,6 +208,7 @@ export const IdentityClusterList = ({
           </React.Fragment>
         );
       })}
+      {ungroupedGroup ? <UngroupedResidueSection members={ungroupedGroup.members} /> : null}
     </div>
   );
 };

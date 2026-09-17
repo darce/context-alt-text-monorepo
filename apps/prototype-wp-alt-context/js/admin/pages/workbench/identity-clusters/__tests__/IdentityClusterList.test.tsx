@@ -18,7 +18,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
@@ -209,9 +209,50 @@ describe('IdentityClusterList split affordance (WBUX6-W3-L6-03)', () => {
     renderList([identity({ cluster_id: null, cluster_label: null })]);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Find similar / Name' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Not yet grouped (1)' })).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: SPLIT_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Unnamed person' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Find similar / Name' })).not.toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterList ungrouped residue (GPUFLOW-2 C5)', () => {
+  const watsonFace = (identityId: string, mediaId: number): DetectedIdentity =>
+    identity({
+      identity_id: identityId,
+      representative_id: `rep-${identityId}`,
+      media_id: mediaId,
+      cluster_id: null,
+      cluster_label: null,
+      person_id: null,
+      media_url: `https://example.test/watson/${identityId}.jpg`,
+    });
+
+  it('renders one Not yet grouped section for Watson faces, never N Unnamed person cards', async () => {
+    // Watson ×3 residue: two faces share media 10 so a visual dedupe would drop one.
+    renderList([
+      identity({
+        identity_id: 'perry-1',
+        cluster_label: 'Katy Perry',
+        person_id: 'perry',
+        media_url: 'https://example.test/perry.jpg',
+      }),
+      watsonFace('watson-1', 10),
+      watsonFace('watson-2', 10),
+      watsonFace('watson-3', 11),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Not yet grouped (3)' })).toBeInTheDocument();
+    });
+
+    expect(screen.getAllByRole('heading', { name: /Not yet grouped/ })).toHaveLength(1);
+    expect(screen.queryByText('Unnamed person')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Katy Perry' })).toBeInTheDocument();
+
+    const residue = screen.getByRole('region', { name: 'Not yet grouped (3)' });
+    expect(within(residue).getAllByRole('listitem')).toHaveLength(3);
   });
 });
 

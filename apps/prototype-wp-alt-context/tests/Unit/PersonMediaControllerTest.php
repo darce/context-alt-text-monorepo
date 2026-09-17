@@ -235,6 +235,124 @@ class PersonMediaControllerTest extends TestCase
         $this->assertFalse($response->get_data()['truncated']);
     }
 
+    public function testIdentifierPlaceholderCompatPreparesTenantScopedQueries(): void
+    {
+        global $wpdb;
+        $original = $wpdb;
+        $wpdb = new class extends \WPDBStub {
+            public function has_cap(string $cap): bool
+            {
+                return false;
+            }
+        };
+
+        try {
+            $this->seedPerson(7);
+            $captured = [];
+            $wpdb->onGetResults = static function (string $sql) use (&$captured): array {
+                $captured[] = $sql;
+                return [[
+                    'total_count' => 1,
+                    'identity_uuid' => 'id-1',
+                    'attachment_id' => 22,
+                    'cluster_uuid' => 'cluster-a',
+                    'bbox_json' => null,
+                    'thumb_path' => '',
+                ]];
+            };
+            $GLOBALS['__ac_attachment_urls'][22] = 'https://example.test/media/22.jpg';
+
+            $response = (new PersonMediaController())->get_media(
+                $this->mediaRequest(['id' => 7, 'limit' => 10, 'offset' => 2])
+            );
+
+            $this->assertInstanceOf(WP_REST_Response::class, $response);
+            $this->assertSame(200, $response->get_status());
+            $this->assertSame(1, $response->get_data()['total']);
+            $this->assertCount(1, $response->get_data()['media']);
+            $this->assertNotSame([], $wpdb->queries);
+            $this->assertNotSame([], $captured);
+
+            $personSql = $wpdb->queries[0];
+            $mediaSql = $captured[0];
+            foreach ([$personSql, $mediaSql] as $sql) {
+                $this->assertStringNotContainsString('%i', $sql);
+                $this->assertStringContainsString('tenant_id', $sql);
+                $this->assertStringContainsString("'" . addslashes(self::currentTenantId()) . "'", $sql);
+            }
+            $this->assertStringContainsString('`wp_acx_persons`', $personSql);
+            $this->assertStringContainsString('`wp_acx_identity_members`', $mediaSql);
+            $this->assertStringContainsString('`wp_acx_clusters`', $mediaSql);
+            $this->assertStringContainsString('person_id', $mediaSql);
+        } finally {
+            $wpdb = $original;
+        }
+    }
+
+    public function testUnavailableAdapterReturns500NotEmpty200(): void
+    {
+        global $wpdb;
+        $original = $wpdb;
+        $this->seedPerson(7);
+        $wpdb = new class ($original) {
+            public string $prefix;
+            public string $last_error = '';
+
+            public function __construct(private object $inner)
+            {
+                $this->prefix = $inner->prefix;
+            }
+
+            public function has_cap(string $cap): bool
+            {
+                return $this->inner->has_cap($cap);
+            }
+
+            public function prepare(string $query, ...$args): string
+            {
+                return $this->inner->prepare($query, ...$args);
+            }
+
+            public function get_row($query, $output = \ARRAY_A)
+            {
+                return $this->inner->get_row($query, $output);
+            }
+        };
+
+        try {
+            $result = (new PersonMediaController())->get_media($this->mediaRequest(['id' => 7]));
+
+            $this->assertInstanceOf(WP_Error::class, $result);
+            $this->assertNotInstanceOf(WP_REST_Response::class, $result);
+            $this->assertSame('acx_projection_query_failed', $result->get_error_code());
+            $this->assertSame(500, $result->get_error_data()['status']);
+            $this->assertStringContainsString('get_person_media', $result->get_error_message());
+        } finally {
+            $wpdb = $original;
+        }
+    }
+
+    public function testThumbPathFallbackNullsBbox(): void
+    {
+        $this->seedPerson(7);
+        $source = $this->source([[
+            'total_count' => 1,
+            'identity_uuid' => 'id-1',
+            'attachment_id' => 22,
+            'cluster_uuid' => 'cluster-a',
+            'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+            'thumb_path' => 'https://example.test/thumbs/face.jpg',
+        ]]);
+
+        $response = (new PersonMediaController($source))->get_media($this->mediaRequest(['id' => 7]));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $item = $response->get_data()['media'][0];
+        $this->assertSame('https://example.test/thumbs/face.jpg', $item['media_url']);
+        $this->assertNull($item['bbox']);
+    }
+
     /**
      * @param array<int, array<string, mixed>> $rows
      */

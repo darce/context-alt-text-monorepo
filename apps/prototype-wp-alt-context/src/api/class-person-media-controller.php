@@ -7,10 +7,12 @@ namespace AltContext\Api;
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/class-blob-url-rewriter.php';
 require_once dirname( __DIR__ ) . '/sovereign/class-projection-query-exception.php';
+require_once dirname( __DIR__ ) . '/sovereign/repositories/trait-prepares-sql-queries.php';
 require_once dirname( __DIR__ ) . '/sovereign/repositories/class-identity-members-read-repository.php';
 
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersReadRepository;
+use AltContext\Sovereign\Repositories\PreparesSqlQueries;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -46,27 +48,31 @@ interface PersonMediaRowsSource {
  * Default read adapter: IdentityMembersReadRepository tables, windowed page.
  */
 final class IdentityMembersPersonMediaReadRepository extends IdentityMembersReadRepository implements PersonMediaRowsSource {
+	use PreparesSqlQueries;
+
 	public function list_projected_cluster_rows_by_person( string $tenant_id, int $person_id, int $limit, int $offset ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
-			return array();
+			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: wpdb is unavailable' );
 		}
 
 		$prefix = ( isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) ? $wpdb->prefix : 'wp_';
-		$sql    = $wpdb->prepare(
+		$sql    = $this->prepare_query(
 			'SELECT COUNT(*) OVER() AS total_count, m.identity_uuid, m.attachment_id, m.cluster_uuid, m.bbox_json, m.thumb_path, m.similarity
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s AND c.person_id = %d
 			ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
-			$prefix . 'acx_identity_members',
-			$prefix . 'acx_clusters',
-			$normalized_tenant_id,
-			$person_id,
-			$limit,
-			$offset
+			array(
+				$prefix . 'acx_identity_members',
+				$prefix . 'acx_clusters',
+				$normalized_tenant_id,
+				$person_id,
+				$limit,
+				$offset,
+			)
 		);
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: wpdb could not prepare query' );
@@ -80,15 +86,17 @@ final class IdentityMembersPersonMediaReadRepository extends IdentityMembersRead
 			$wpdb->last_error = '';
 			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: ' . $error );
 		}
-		if ( null === $rows ) {
+		if ( ! is_array( $rows ) ) {
 			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: query did not execute (wpdb not ready or query filtered)' );
 		}
 
-		return is_array( $rows ) ? $rows : array();
+		return $rows;
 	}
 }
 
 class PersonMediaController {
+	use PreparesSqlQueries;
+
 	public const DEFAULT_LIMIT = 50;
 	public const MAX_LIMIT     = 500;
 
@@ -243,11 +251,13 @@ class PersonMediaController {
 		}
 
 		$prefix = ( isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) ? $wpdb->prefix : 'wp_';
-		$sql    = $wpdb->prepare(
+		$sql    = $this->prepare_query(
 			'SELECT id FROM %i WHERE id = %d AND tenant_id = %s',
-			$prefix . 'acx_persons',
-			$person_id,
-			$tenant_id
+			array(
+				$prefix . 'acx_persons',
+				$person_id,
+				$tenant_id,
+			)
 		);
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			return new WP_Error( 'acx_db_error', 'Database is unavailable.', array( 'status' => 500 ) );
@@ -299,31 +309,56 @@ class PersonMediaController {
 			$similarity = (float) $row['similarity'];
 		}
 
+		$resolved = $this->resolve_media_and_bbox( $row, $media_id );
+
 		return array(
 			'identity_id' => $identity_id,
 			'media_id'    => $media_id,
-			'media_url'   => $this->resolve_media_url( $row, $media_id ),
-			'bbox'        => $this->extract_bbox( $row ),
+			'media_url'   => $resolved['media_url'],
+			'bbox'        => $resolved['bbox'],
 			'similarity'  => $similarity,
 			'cluster_id'  => $cluster_id,
 		);
 	}
 
 	/**
+	 * Resolve media_url and bbox as one pair (original_image space only).
+	 *
+	 * Bbox is emitted only when media_url came from wp_get_attachment_url
+	 * (or an explicit original media_url). On the thumb_path fallback path
+	 * bbox is always null — the stored thumb is not original_image space.
+	 *
 	 * @param array<string,mixed> $row
+	 * @return array{media_url:?string,bbox:?array{x:int,y:int,width:int,height:int}}
 	 */
-	private function resolve_media_url( array $row, int $media_id ): ?string {
+	private function resolve_media_and_bbox( array $row, int $media_id ): array {
 		if ( isset( $row['media_url'] ) && is_string( $row['media_url'] ) && '' !== trim( $row['media_url'] ) ) {
-			return $row['media_url'];
+			return array(
+				'media_url' => $row['media_url'],
+				'bbox'      => $this->extract_bbox( $row ),
+			);
 		}
 
 		if ( $media_id > 0 ) {
 			$attachment_url = wp_get_attachment_url( $media_id );
 			if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
-				return $attachment_url;
+				return array(
+					'media_url' => $attachment_url,
+					'bbox'      => $this->extract_bbox( $row ),
+				);
 			}
 		}
 
+		return array(
+			'media_url' => $this->resolve_thumb_path_media_url( $row ),
+			'bbox'      => null,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function resolve_thumb_path_media_url( array $row ): ?string {
 		$thumb_path = isset( $row['thumb_path'] ) ? trim( (string) $row['thumb_path'] ) : '';
 		if ( '' === $thumb_path ) {
 			return null;

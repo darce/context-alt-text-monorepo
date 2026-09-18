@@ -17,7 +17,6 @@ import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
 import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
-import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { useJobPipeline } from './JobPipelineContext';
 
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -38,7 +37,6 @@ import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
-import { GpuTierStatus } from './GpuTierStatus';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import {
   ACCENT_PRIMARY_ATTR,
@@ -491,10 +489,6 @@ export const BulkDescribeCta = ({
   isSubmitting,
   isCancelling,
   isRunning,
-  runId,
-  activeRunId = runId,
-  progress,
-  isPanelVisible,
   errorMessage,
   remoteActionTitle,
   remoteActionAriaDisabled,
@@ -503,26 +497,8 @@ export const BulkDescribeCta = ({
   isIdentifying = false,
   onSubmit,
   onCancel,
-  onDismiss,
-  onReviewDrafts,
-  onRetryPolling,
 }: BulkDescribeCtaProps) => {
-  const progressPhase = progress.run?.phase;
-  const progressOwnsCancel =
-    isPanelVisible &&
-    (progressPhase === DESCRIBE_RUN_PHASE.QUEUED ||
-      progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
-      progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
-  const canCancelDescribe =
-    isRunning && activeRunId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
-  // Identifying is a cancellable wait of its own: the footer owns Cancel while the
-  // describe progress panel is not yet mounted to own it.
-  const canCancel = isIdentifying || canCancelDescribe;
-  // Cannot cancel an errored/finished run — offer to clear the panel instead so a
-  // new run can start from the terminal state (FE-01, rg-003). Complete-phase
-  // dismiss lives on the named done-state in BulkDescribeProgress.
-  const canDismiss =
-    isPanelVisible && (progress.isTerminal || progress.isError) && progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
+  const canCancel = isIdentifying;
   const offlineGated = Boolean(remoteActionAriaDisabled);
   // rg-003: an empty selection HOLDS the primary (aria-disabled + no-op click) but
   // never removes it from the tab order, so the control and its reason stay
@@ -550,11 +526,9 @@ export const BulkDescribeCta = ({
   // In-flight identification and an unresolved recognition policy hold the primary for
   // the same reason: acting now would either double-submit or act on an unknown policy.
   const submitHeld = offlineGated || emptySelectionHeld || isIdentifying || isSettingsPending;
-  const gpuState = progress.gpuState ?? null;
 
   return (
     <div className="acx-media-selection__bulk-describe">
-      <GpuTierStatus gpuState={gpuState} isRunPending={isRunning} />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -622,33 +596,10 @@ export const BulkDescribeCta = ({
           </span>
         ) : null}
         {canCancel ? (
-          // WBUX6-W4-R-02: ONE Cancel control spans both waits, but its label names the
-          // operation actually in flight — identification and the describe run are
-          // different objects with different consequences, and while identifying this
-          // button aborts the scan, never a describe run (there is none yet). A label
-          // that names the wrong operation makes the user act on the wrong object
-          // [INT-06 lexicons/interaction-ux.md:163] and gives voice-control users a
-          // phrase for something that is not happening [A11Y-04 accessibility.md:72].
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-            {isCancelling
-              ? __('Cancelling…', 'alt-context')
-              : isIdentifying
-                ? __('Cancel people identification', 'alt-context')
-                : __('Cancel describe run', 'alt-context')}
+            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel people identification', 'alt-context')}
           </button>
         ) : null}
-        {canDismiss ? (
-          <button type="button" className="button button-link" onClick={onDismiss}>
-            {__('Dismiss', 'alt-context')}
-          </button>
-        ) : null}
-        {progress.run?.phase === DESCRIBE_RUN_PHASE.COMPLETE ? null : (
-          <BulkDescribeReviewLink
-            runId={runId}
-            isTerminal={progress.isTerminal}
-            appliedCount={progress.run ? progress.run.completed : 0}
-          />
-        )}
       </div>
       <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
         {/* sr-007: exhaustive switch over the centralized policy — no bare string compares. */}
@@ -707,16 +658,6 @@ export const BulkDescribeCta = ({
       <span role="status" aria-live="polite" className="screen-reader-text">
         {recognitionUnavailableNotice}
       </span>
-      {isPanelVisible ? (
-        <BulkDescribeProgress
-          progress={progress}
-          onRetry={onRetryPolling}
-          onCancel={onCancel}
-          onDismiss={onDismiss}
-          onReviewDrafts={onReviewDrafts}
-          isCancelling={isCancelling}
-        />
-      ) : null}
       {errorMessage ? (
         // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
         <div className="acx-media-selection__bulk-describe-error" role="alert">

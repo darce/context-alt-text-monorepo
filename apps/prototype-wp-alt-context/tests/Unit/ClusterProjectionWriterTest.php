@@ -209,9 +209,9 @@ class ClusterProjectionWriterTest extends TestCase
                 'representative_quality' => 0.82,
                 'quality_components' => array(
                     'confidence' => 0.94,
-                    'bbox_area' => 7680,
-                    'sharpness' => 0.71,
-                    'occlusion_severity' => 0.12,
+                    'bbox_area' => 77.0,
+                    'sharpness' => 42.5,
+                    'occlusion_severity' => null,
                 ),
                 'representative_media_id' => 501,
                 'undoable_merge_receipt_id' => 'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44',
@@ -233,9 +233,40 @@ class ClusterProjectionWriterTest extends TestCase
         $components = json_decode((string) $row['quality_components'], true);
         $this->assertIsArray($components);
         $this->assertSame(0.94, $components['confidence']);
-        $this->assertSame(7680, $components['bbox_area']);
-        $this->assertSame(0.71, $components['sharpness']);
-        $this->assertSame(0.12, $components['occlusion_severity']);
+        $this->assertSame(77, $components['bbox_area']);
+        $this->assertSame(42.5, $components['sharpness']);
+        $this->assertNull($components['occlusion_severity']);
+    }
+
+    public function testUpsertProjectionClusterRejectsOutOfRangeUnitIntervalQualityComponent(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $this->writer->upsert_projection_cluster(
+            self::currentTenantId(),
+            'cluster-proj',
+            'Projection Label',
+            4,
+            9,
+            null,
+            null,
+            false,
+            array(
+                'representative_quality' => 0.82,
+                'quality_components' => array(
+                    'confidence' => 1.5,
+                    'bbox_area' => 77.0,
+                    'sharpness' => 42.5,
+                    'occlusion_severity' => 0.12,
+                ),
+                'representative_media_id' => null,
+                'undoable_merge_receipt_id' => null,
+            )
+        );
+
+        $row = $wpdb->tableRows['wp_acx_clusters'][0];
+        $this->assertNull($row['quality_components']);
     }
 
     public function testUpsertProjectionClusterDoesNotInventSnapshotExportFields(): void

@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/class-cluster-curation-writer.php';
+require_once __DIR__ . '/class-cluster-projection-writer.php';
 require_once __DIR__ . '/../../support/trait-detects-system-defined-labels.php';
 require_once dirname( __DIR__, 2 ) . '/api/services/class-person-resolution-service.php';
 
@@ -117,12 +118,13 @@ class ClusterSnapshotMerger {
 			$persisted_cleared_rev   = $keep_cleared ? $cleared_rev : 0;
 			$thumb_path              = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
 			$inserted_at             = $now_utc;
+			$export                  = ClusterProjectionWriter::normalize_snapshot_export( $cluster );
 
 			// Tombstone is decided in PHP (cleared-label match). SQL stays dumb.
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
-				VALUES (%s, %s, NULLIF(%s, \'\'), %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
+				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)
+				VALUES (%s, %s, NULLIF(%s, \'\'), %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
 					label = IF(is_user_confirmed = 1, label, VALUES(label)),
 					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, VALUES(label_cleared_label)),
@@ -141,7 +143,11 @@ class ClusterSnapshotMerger {
 					suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label),
 					suggested_label_source = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_source), suggested_label_source),
 					suggested_label_confidence = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_confidence), suggested_label_confidence),
-					suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)',
+					suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id),
+					representative_quality = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_quality), representative_quality),
+					quality_components = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(quality_components), quality_components),
+					representative_media_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_media_id), representative_media_id),
+					undoable_merge_receipt_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)',
 				array(
 					$this->table_name,
 					$cluster_uuid,
@@ -163,6 +169,10 @@ class ClusterSnapshotMerger {
 					trim( (string) ( $cluster['suggested_label_source'] ?? '' ) ),
 					isset( $cluster['suggested_label_confidence'] ) ? (string) (float) ( $cluster['suggested_label_confidence'] ) : '',
 					trim( (string) ( $cluster['suggested_target_cluster_id'] ?? '' ) ),
+					$export['representative_quality'],
+					$export['quality_components'],
+					$export['representative_media_id'],
+					$export['undoable_merge_receipt_id'],
 				)
 			);
 

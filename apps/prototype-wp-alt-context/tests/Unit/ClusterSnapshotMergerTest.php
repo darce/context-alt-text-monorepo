@@ -40,8 +40,45 @@ class ClusterSnapshotMergerTest extends TestCase
         global $wpdb;
         $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $query);
+        $this->assertStringContainsString(
+            '(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)',
+            $query
+        );
+        $this->assertStringContainsString("NULLIF('', ''), NULLIF('', ''), NULLIF('', ''), NULLIF('', '')", $query);
         $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
+    }
+
+    public function testMergeSnapshotBatchPersistsSnapshotExportFields(): void
+    {
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-quality',
+                    'label' => 'Quality',
+                    'identity_count' => 4,
+                    'representative_quality' => 0.82,
+                    'quality_components' => [
+                        'confidence' => 0.94,
+                        'bbox_area' => 77.0,
+                        'sharpness' => 42.5,
+                        'occlusion_severity' => null,
+                    ],
+                    'representative_media_id' => 501,
+                    'undoable_merge_receipt_id' => 'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44',
+                ],
+            ],
+            14
+        );
+
+        global $wpdb;
+        $query = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
+        $this->assertStringContainsString("'0.82'", $query);
+        $this->assertStringContainsString('42.5', $query);
+        $this->assertStringContainsString('77', $query);
+        $this->assertStringContainsString("'501'", $query);
+        $this->assertStringContainsString("'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44'", $query);
     }
 
     public function testMergeSnapshotBatchGatesOverwrittenDataColumnsOnIncomingVersion(): void
@@ -70,6 +107,10 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned)', $query);
         $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $query);
         $this->assertStringContainsString('suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)', $query);
+        $this->assertStringContainsString('representative_quality = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_quality), representative_quality)', $query);
+        $this->assertStringContainsString('quality_components = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(quality_components), quality_components)', $query);
+        $this->assertStringContainsString('representative_media_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
+        $this->assertStringContainsString('undoable_merge_receipt_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
         // The monotonic version column itself stays GREATEST and the curation
         // guard on label is preserved.
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);

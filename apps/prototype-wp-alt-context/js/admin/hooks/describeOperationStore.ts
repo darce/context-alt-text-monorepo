@@ -14,6 +14,33 @@ export const DESCRIBE_OPERATION_KIND = {
 export type DescribeOperationKind =
   (typeof DESCRIBE_OPERATION_KIND)[keyof typeof DESCRIBE_OPERATION_KIND];
 
+/** Resume lifecycle for a persisted bulk run (sr-007). Omitted while the run is active. */
+export const DESCRIBE_RUN_RESUME_STATUS = {
+  ACTIVE: 'active',
+  NEEDS_TERMINAL_CHECK: 'needs_terminal_check',
+} as const;
+
+export type DescribeRunResumeStatus =
+  (typeof DESCRIBE_RUN_RESUME_STATUS)[keyof typeof DESCRIBE_RUN_RESUME_STATUS];
+
+/** Outcome the consumer reports after one GET describe/run/{id} poll (sr-007). */
+export const DESCRIBE_RUN_SETTLE_OUTCOME = {
+  COMPLETED: 'completed',
+  COMPLETED_WITH_ERRORS: 'completed_with_errors',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+  MISSING: 'missing',
+  UNRESOLVED: 'unresolved',
+} as const;
+
+export type DescribeRunSettleOutcome =
+  (typeof DESCRIBE_RUN_SETTLE_OUTCOME)[keyof typeof DESCRIBE_RUN_SETTLE_OUTCOME];
+
+export interface SettledDescribeRun {
+  id: string;
+  outcome: DescribeRunSettleOutcome;
+}
+
 export const DESCRIBE_OPERATION_CONTEXT_VERSION = 1 as const;
 
 export interface DescribeOperationRequest {
@@ -35,6 +62,8 @@ export interface DescribeOperationContext {
   request: DescribeOperationRequest;
   /** Whether this snapshot was written to sessionStorage or only kept in memory. */
   persistence: DescribeOperationPersistence;
+  status?: DescribeRunResumeStatus;
+  progress_mounted?: boolean;
 }
 
 /** Input accepted by the store before it attaches the persistence outcome. */
@@ -62,6 +91,7 @@ type TenantScope = string | null;
 // tenant's active operation into the next tenant until storage rehydration.
 const runContextByTenant = new Map<TenantScope, DescribeOperationContext | null>();
 const suggestByTenant = new Map<TenantScope, Map<number, DescribeOperationContext>>();
+const lastSettledByTenant = new Map<TenantScope, SettledDescribeRun | null>();
 
 // A failed remove can leave the old storage value in place. Keep a process-local
 // tombstone for that key so a later hydration cannot resurrect the cleared run.
@@ -85,6 +115,18 @@ export const resolveDescribeOperationTenantId = resolveTenantId;
 
 const isDescribeOperationKind = (value: unknown): value is DescribeOperationKind =>
   value === DESCRIBE_OPERATION_KIND.SUGGEST || value === DESCRIBE_OPERATION_KIND.RUN;
+
+const isDescribeRunResumeStatus = (value: unknown): value is DescribeRunResumeStatus =>
+  value === DESCRIBE_RUN_RESUME_STATUS.ACTIVE ||
+  value === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK;
+
+const isDescribeRunSettleOutcome = (value: unknown): value is DescribeRunSettleOutcome =>
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED ||
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED_WITH_ERRORS ||
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.FAILED ||
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.CANCELLED ||
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.MISSING ||
+  value === DESCRIBE_RUN_SETTLE_OUTCOME.UNRESOLVED;
 
 const parseRequest = (value: unknown): DescribeOperationRequest | null => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -174,6 +216,24 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
     }
     startupBudgetSeconds = record.startup_budget_seconds;
   }
+  let status: DescribeRunResumeStatus | undefined;
+  if (record.status !== undefined) {
+    if (!isDescribeRunResumeStatus(record.status)) {
+      return null;
+    }
+    if (record.status !== DESCRIBE_RUN_RESUME_STATUS.ACTIVE) {
+      status = record.status;
+    }
+  }
+  let progressMounted: true | undefined;
+  if (record.progress_mounted !== undefined) {
+    if (typeof record.progress_mounted !== 'boolean') {
+      return null;
+    }
+    if (record.progress_mounted) {
+      progressMounted = true;
+    }
+  }
   return {
     version: DESCRIBE_OPERATION_CONTEXT_VERSION,
     kind: record.kind,
@@ -184,6 +244,8 @@ const parseContext = (value: unknown): DescribeOperationContextData | null => {
     ...(warmingStartedAt !== undefined ? { warming_started_at: warmingStartedAt } : {}),
     ...(startupBudgetSeconds !== undefined ? { startup_budget_seconds: startupBudgetSeconds } : {}),
     request,
+    ...(status !== undefined ? { status } : {}),
+    ...(progressMounted !== undefined ? { progress_mounted: progressMounted } : {}),
   };
 };
 
@@ -295,7 +357,36 @@ const serializeContext = (context: DescribeOperationContextData): string =>
       ? { startup_budget_seconds: context.startup_budget_seconds }
       : {}),
     request: context.request,
+    ...(context.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK
+      ? { status: context.status }
+      : {}),
+    ...(context.progress_mounted === true ? { progress_mounted: true } : {}),
   });
+
+const isPendingTerminalRun = (context: DescribeOperationContext): boolean =>
+  context.kind === DESCRIBE_OPERATION_KIND.RUN &&
+  (context.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK ||
+    isDescribeOperationExpired(context));
+
+const markRunNeedsTerminalCheck = (
+  tenantId: TenantScope,
+  context: DescribeOperationContext,
+): DescribeOperationContext => {
+  const marked: DescribeOperationContext = {
+    ...context,
+    status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+  };
+  if (tenantId !== null) {
+    const key = describeOperationRunStorageKey(tenantId);
+    const durable = writeStorageItem(key, serializeContext(marked));
+    marked.persistence = durable ? 'durable' : 'memory_only';
+    if (durable) {
+      storageTombstones.delete(key);
+    }
+  }
+  runContextByTenant.set(tenantId, marked);
+  return marked;
+};
 
 const hydrateRunFromStorage = (): void => {
   const tenantId = resolveTenantId();
@@ -317,8 +408,12 @@ const hydrateRunFromStorage = (): void => {
     removeStorageWithTombstone(key);
     return;
   }
+  if (stored.context.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK) {
+    runContextByTenant.set(tenantId, stored.context);
+    return;
+  }
   if (isDescribeOperationExpired(stored.context)) {
-    removeStorageWithTombstone(key);
+    markRunNeedsTerminalCheck(tenantId, stored.context);
     return;
   }
   runContextByTenant.set(tenantId, stored.context);
@@ -331,14 +426,11 @@ const liveRunContext = (): DescribeOperationContext | null => {
   if (current === undefined || current === null) {
     return null;
   }
+  if (current.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK) {
+    return null;
+  }
   if (isDescribeOperationExpired(current)) {
-    runContextByTenant.delete(tenantId);
-    if (tenantId !== null) {
-      const key = describeOperationRunStorageKey(tenantId);
-      if (!removeStorageWithTombstone(key)) {
-        runContextByTenant.set(tenantId, null);
-      }
-    }
+    markRunNeedsTerminalCheck(tenantId, current);
     return null;
   }
   return current;
@@ -390,14 +482,13 @@ const liveSuggestContext = (mediaId: number): DescribeOperationContext | null =>
 const purgeInvalid = (): void => {
   const tenantId = resolveTenantId();
   const cachedRun = runContextByTenant.get(tenantId);
-  if (cachedRun !== undefined && cachedRun !== null && isDescribeOperationExpired(cachedRun)) {
-    runContextByTenant.delete(tenantId);
-    if (tenantId !== null) {
-      const key = describeOperationRunStorageKey(tenantId);
-      if (!removeStorageWithTombstone(key)) {
-        runContextByTenant.set(tenantId, null);
-      }
-    }
+  if (
+    cachedRun !== undefined &&
+    cachedRun !== null &&
+    cachedRun.status !== DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK &&
+    isDescribeOperationExpired(cachedRun)
+  ) {
+    markRunNeedsTerminalCheck(tenantId, cachedRun);
   }
 
   const cachedSuggest = suggestByTenant.get(tenantId);
@@ -424,12 +515,18 @@ const purgeInvalid = (): void => {
     return;
   }
   const storedRun = readStoredContext(runKey);
-  if (
-    storedRun.kind === 'value' &&
-    (storedRun.context.kind !== DESCRIBE_OPERATION_KIND.RUN ||
-      isDescribeOperationExpired(storedRun.context))
-  ) {
+  if (storedRun.kind !== 'value') {
+    return;
+  }
+  if (storedRun.context.kind !== DESCRIBE_OPERATION_KIND.RUN) {
     removeStorageWithTombstone(runKey);
+    return;
+  }
+  if (
+    storedRun.context.status !== DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK &&
+    isDescribeOperationExpired(storedRun.context)
+  ) {
+    markRunNeedsTerminalCheck(tenantId, storedRun.context);
   }
 };
 
@@ -445,6 +542,41 @@ export const getDescribeRunContext = (): DescribeOperationContext | null => live
 
 export const getDescribeSuggestContext = (mediaId: number): DescribeOperationContext | null =>
   liveSuggestContext(mediaId);
+
+export const pendingTerminalRuns = (): DescribeOperationContext[] => {
+  const tenantId = resolveTenantId();
+  hydrateRunFromStorage();
+  const current = runContextByTenant.get(tenantId);
+  if (current === undefined || current === null || !isPendingTerminalRun(current)) {
+    return [];
+  }
+  if (current.status !== DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK) {
+    return [markRunNeedsTerminalCheck(tenantId, current)];
+  }
+  return [current];
+};
+
+export const getLastSettledRun = (): SettledDescribeRun | null => {
+  const tenantId = resolveTenantId();
+  return lastSettledByTenant.get(tenantId) ?? null;
+};
+
+export const settleRun = (id: string, outcome: DescribeRunSettleOutcome): void => {
+  if (!isDescribeRunSettleOutcome(outcome)) {
+    return;
+  }
+  const tenantId = resolveTenantId();
+  hydrateRunFromStorage();
+  const current = runContextByTenant.get(tenantId);
+  if (current === undefined || current === null || current.id !== id) {
+    return;
+  }
+  if (!isPendingTerminalRun(current)) {
+    return;
+  }
+  lastSettledByTenant.set(tenantId, { id, outcome });
+  clearDescribeRunContext();
+};
 
 const emptySnapshot = (): DescribeOperationContext | null => null;
 
@@ -548,6 +680,7 @@ export const useDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 export const _resetDescribeOperationStoreForTests = (): void => {
   runContextByTenant.clear();
   suggestByTenant.clear();
+  lastSettledByTenant.clear();
   // Preserve tombstones while the failed delete's old storage value remains;
   // clear them when the backing key is gone so each test can start cleanly.
   for (const key of storageTombstones) {

@@ -15,18 +15,18 @@ use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function absint;
 use function array_chunk;
-use function array_fill;
+use function array_fill_keys;
 use function array_filter;
+use function array_key_exists;
 use function array_map;
-use function array_merge;
 use function array_unique;
 use function array_values;
 use function count;
 use function gmdate;
-use function implode;
 use function in_array;
 use function is_array;
 use function is_bool;
+use function is_int;
 use function is_numeric;
 use function is_object;
 use function is_string;
@@ -35,6 +35,7 @@ use function max;
 use function method_exists;
 use function preg_match;
 use function sprintf;
+use function str_replace;
 use function trim;
 
 class ClusterSnapshotMerger {
@@ -48,37 +49,45 @@ class ClusterSnapshotMerger {
 	}
 
 	/**
-	 * @param array<int,array<string,mixed>> $clusters
+	 * @param array<int,array<string,mixed>>|array<string,mixed> $clusters Cluster list or envelope with completeness flags.
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
-		$normalized_clusters = $this->normalize_snapshot_clusters( $clusters );
+	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false ): array {
+		$parsed              = $this->parse_snapshot_clusters_payload( $clusters );
+		$normalized_clusters = $this->normalize_snapshot_clusters( $parsed['clusters'] );
 		$incoming_ids        = $this->extract_snapshot_cluster_ids( $normalized_clusters );
+		$complete            = $is_complete || $parsed['is_complete'];
 
-		$this->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_ids );
+		$counts = $this->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_ids, $complete );
 
-		// Stale-row pruning is still payload-wide; only the upsert phase is chunked.
 		foreach ( array_chunk( $normalized_clusters, ClustersRepositoryInterface::MAX_SNAPSHOT_MERGE_BATCH ) as $cluster_batch ) {
 			$this->merge_snapshot_batch_for_tenant( $tenant_id, $cluster_batch, $snapshot_version );
 		}
+
+		return $counts;
 	}
 
 	/**
 	 * @param string[] $incoming_cluster_ids
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
 	 */
-	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void {
-		global $wpdb;
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false ): array {
+		$empty_counts = array(
+			'tombstoned_clusters' => 0,
+			'tombstoned_members'  => 0,
+		);
 
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
 			$this->log_empty_tenant_id_guard( __METHOD__ );
-			return;
+			return $empty_counts;
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+		if ( ! $is_complete ) {
+			return $empty_counts;
 		}
 
-		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_cluster_ids );
+		return $this->tombstone_absent_clusters_for_tenant( $normalized_tenant_id, $incoming_cluster_ids );
 	}
 
 	/**
@@ -284,56 +293,169 @@ class ClusterSnapshotMerger {
 	}
 
 	/**
-	 * @param string[] $incoming_cluster_ids
+	 * @param array<int|string,mixed> $clusters
+	 * @return array{clusters:array<int,array<string,mixed>>,is_complete:bool}
 	 */
-	private function delete_stale_non_curated_rows( string $tenant_id, array $incoming_cluster_ids ): void {
-		global $wpdb;
+	private function parse_snapshot_clusters_payload( array $clusters ): array {
+		$has_nested_clusters = isset( $clusters['clusters'] ) && is_array( $clusters['clusters'] );
+		if ( $has_nested_clusters || $this->has_completeness_key( $clusters ) ) {
+			$nested = $has_nested_clusters ? $clusters['clusters'] : array();
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
-		}
-
-		if ( empty( $incoming_cluster_ids ) ) {
-			$sql = $this->prepare_query(
-				'DELETE FROM %i WHERE tenant_id = %s AND is_user_confirmed = 0',
-				array(
-					$this->table_name,
-					$tenant_id,
-				)
+			return array(
+				'clusters'    => is_array( $nested ) ? $nested : array(),
+				'is_complete' => $this->payload_declares_complete( $clusters ),
 			);
-
-			if ( is_string( $sql ) && '' !== $sql ) {
-				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-				$wpdb->query( $sql );
-			}
-
-			return;
 		}
 
-		$valid_cluster_ids = $this->sanitize_uuid_list( $incoming_cluster_ids );
-		if ( empty( $valid_cluster_ids ) ) {
-			return;
+		return array(
+			'clusters'    => $clusters,
+			'is_complete' => false,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function has_completeness_key( array $payload ): bool {
+		return array_key_exists( 'is_complete', $payload )
+			|| array_key_exists( 'complete', $payload )
+			|| array_key_exists( 'is_full', $payload )
+			|| array_key_exists( 'has_more', $payload )
+			|| array_key_exists( 'partial', $payload );
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function payload_declares_complete( array $payload ): bool {
+		if ( array_key_exists( 'is_complete', $payload ) ) {
+			return $this->to_bool( $payload['is_complete'] );
 		}
 
-		$placeholders = implode( ', ', array_fill( 0, count( $valid_cluster_ids ), '%s' ) );
-		$sql = $this->prepare_query(
-			"DELETE FROM %i
-			WHERE tenant_id = %s
-				AND is_user_confirmed = 0
-				AND cluster_uuid NOT IN ($placeholders)",
-			array_merge(
-				array(
-					$this->table_name,
-					$tenant_id,
-				),
-				$valid_cluster_ids
-			)
+		if ( array_key_exists( 'complete', $payload ) ) {
+			return $this->to_bool( $payload['complete'] );
+		}
+
+		if ( array_key_exists( 'is_full', $payload ) ) {
+			return $this->to_bool( $payload['is_full'] );
+		}
+
+		if ( array_key_exists( 'has_more', $payload ) ) {
+			return ! $this->to_bool( $payload['has_more'] );
+		}
+
+		if ( array_key_exists( 'partial', $payload ) ) {
+			return ! $this->to_bool( $payload['partial'] );
+		}
+
+		return false;
+	}
+
+	private function to_bool( mixed $value ): bool {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+
+		if ( is_numeric( $value ) ) {
+			return (int) $value === 1;
+		}
+
+		return in_array( trim( (string) $value ), array( '1', 'true', 'yes', 'on' ), true );
+	}
+
+	/**
+	 * @param string[] $incoming_cluster_ids
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
+	 */
+	private function tombstone_absent_clusters_for_tenant( string $tenant_id, array $incoming_cluster_ids ): array {
+		$counts = array(
+			'tombstoned_clusters' => 0,
+			'tombstoned_members'  => 0,
 		);
 
-		if ( is_string( $sql ) && '' !== $sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) || ! method_exists( $wpdb, 'delete' ) ) {
+			return $counts;
 		}
+
+		$local_sql = $this->prepare_query(
+			'SELECT cluster_uuid FROM %i WHERE tenant_id = %s',
+			array(
+				$this->table_name,
+				$tenant_id,
+			)
+		);
+		if ( ! is_string( $local_sql ) || '' === $local_sql ) {
+			return $counts;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$local_rows = $wpdb->get_results( $local_sql, ARRAY_A );
+		if ( ! is_array( $local_rows ) ) {
+			return $counts;
+		}
+
+		$incoming_set = array_fill_keys( $this->sanitize_uuid_list( $incoming_cluster_ids ), true );
+		$absent_ids   = array();
+		foreach ( $local_rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid || isset( $incoming_set[ $cluster_uuid ] ) ) {
+				continue;
+			}
+
+			$absent_ids[] = $cluster_uuid;
+		}
+
+		$absent_ids = $this->sanitize_uuid_list( $absent_ids );
+		if ( empty( $absent_ids ) ) {
+			return $counts;
+		}
+
+		$members_table   = $this->resolve_related_table_name( 'acx_identity_members' );
+		$conflicts_table = $this->resolve_related_table_name( 'acx_sync_conflicts' );
+
+		foreach ( $absent_ids as $cluster_uuid ) {
+			$deleted_members = $wpdb->delete(
+				$members_table,
+				array(
+					'cluster_uuid' => $cluster_uuid,
+				)
+			);
+			if ( is_int( $deleted_members ) && $deleted_members > 0 ) {
+				$counts['tombstoned_members'] += $deleted_members;
+			}
+
+			$deleted_clusters = $wpdb->delete(
+				$this->table_name,
+				array(
+					'cluster_uuid' => $cluster_uuid,
+					'tenant_id'    => $tenant_id,
+				)
+			);
+			if ( is_int( $deleted_clusters ) && $deleted_clusters > 0 ) {
+				$counts['tombstoned_clusters'] += $deleted_clusters;
+			}
+
+			$wpdb->delete(
+				$conflicts_table,
+				array(
+					'tenant_id'     => $tenant_id,
+					'conflict_code' => 'cluster_not_found',
+					'entity_key'    => $cluster_uuid,
+				)
+			);
+		}
+
+		return $counts;
+	}
+
+	private function resolve_related_table_name( string $logical_suffix ): string {
+		return str_replace( 'acx_clusters', $logical_suffix, $this->table_name );
 	}
 
 	/**

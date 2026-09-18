@@ -115,6 +115,13 @@ describe('DeadLetterPanel', () => {
     );
   };
 
+  const getTimelinePanel = (): HTMLElement => {
+    const heading = screen.getByRole('heading', { name: 'Pending changes timeline' });
+    const panel = heading.parentElement;
+    expect(panel).not.toBeNull();
+    return panel!;
+  };
+
   const mockFailedPages = (
     primary: DeadLetterList,
     eligibility: { data?: DeadLetterList; status?: 'pending' | 'error'; error?: Error } = {},
@@ -361,6 +368,150 @@ describe('DeadLetterPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Next timeline page' }));
     expect(screen.getByText('Entity: cluster-42 (cluster)')).toBeInTheDocument();
+  });
+
+  it('keeps non-failed timeline rows without error, attempts, or recovery actions', () => {
+    renderPanel();
+
+    const timeline = within(getTimelinePanel());
+    expect(timeline.getByText('Status: acknowledged')).toBeInTheDocument();
+    expect(timeline.queryByText(/Attempts:/)).not.toBeInTheDocument();
+    expect(timeline.queryByText(/^Error:/)).not.toBeInTheDocument();
+    expect(timeline.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(timeline.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+  });
+
+  it('shows error code, attempts, and Retry/Discard on failed timeline rows', () => {
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 51,
+              status: 'failed',
+              attempts: 4,
+              entity_key: 'cluster-51',
+              last_error_code: 'dispatch_failed',
+              last_error_message: 'Remote curation replay failed.',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    const timeline = within(getTimelinePanel());
+    expect(timeline.getByText('Status: failed')).toBeInTheDocument();
+    expect(timeline.getByText('Attempts: 4')).toBeInTheDocument();
+    expect(timeline.getByText('Error: dispatch_failed: Remote curation replay failed.')).toBeInTheDocument();
+    expect(timeline.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expect(timeline.getByRole('button', { name: 'Discard' })).toBeEnabled();
+  });
+
+  it('retries a failed timeline row through the shared retry mutation', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ operation: null });
+    mockedUseRetryOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({
+        mutateAsync,
+      }),
+    );
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 51,
+              status: 'failed',
+              entity_key: 'cluster-51',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(within(getTimelinePanel()).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(51);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Cluster label update for cluster-51 (operation 51) queued to retry.',
+    );
+  });
+
+  it('discards a failed timeline row through the shared discard mutation', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ operation: null });
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({
+        mutateAsync,
+      }),
+    );
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 51,
+              status: 'failed',
+              entity_key: 'cluster-51',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    const timeline = within(getTimelinePanel());
+    fireEvent.click(timeline.getByRole('button', { name: 'Discard' }));
+    expect(mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(timeline.getByRole('button', { name: 'Confirm discard' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(51);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Cluster label update for cluster-51 (operation 51) discarded.',
+    );
+  });
+
+  it('hides Retry on terminal failed timeline rows and keeps Discard', () => {
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 52,
+              status: 'failed',
+              entity_key: 'cluster-52',
+              last_error_code: 'unauthorized',
+              last_error_message: 'Session expired.',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    const timeline = within(getTimelinePanel());
+    expect(timeline.getByText('Will not retry')).toBeInTheDocument();
+    expect(timeline.getByText('Error: unauthorized: Session expired.')).toBeInTheDocument();
+    expect(timeline.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(timeline.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
   });
 
   it('surfaces topology command status via pending-work vocabulary (no Sync backlog)', () => {

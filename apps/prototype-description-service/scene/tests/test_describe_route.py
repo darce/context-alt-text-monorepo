@@ -1060,7 +1060,7 @@ class _GpuAdapter:
         if self.fail:
             from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteAdapterError
 
-            raise GpuRemoteAdapterError("GPU endpoint call failed")
+            raise GpuRemoteAdapterError("endpoint_unreachable", raw_diagnostic="GPU endpoint call failed")
         return AdapterResult(
             caption="A GPU caption.",
             objects=(),
@@ -1735,6 +1735,7 @@ def test_gpu_ready_adapter_failure_is_typed_502(monkeypatch, tmp_path):
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["code"] == "description_service_error"
+        assert detail["message"] == "The description service endpoint could not be reached."
         assert detail["operation_id"]
         assert "warmup_eta_seconds" not in detail
         assert adapter.calls == 1

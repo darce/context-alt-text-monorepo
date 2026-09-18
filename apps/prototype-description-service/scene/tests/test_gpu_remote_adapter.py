@@ -16,6 +16,7 @@ from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm import gpu_remote_adapter
 from scene.infrastructure.vlm.gpu_remote_adapter import (
     GpuRemoteAdapterError,
+    GpuRemoteAdapterErrorReason,
     GpuRemoteDescriptionAdapter,
     GpuRemoteTokenTrace,
     reset_gpu_remote_adapter_state_for_tests,
@@ -141,9 +142,10 @@ def test_gpu_remote_adapter_rejects_webp_over_pixel_ceiling() -> None:
             image_bytes=source.getvalue(), context=None
         )
 
-    message = str(exc_info.value)
-    assert "4096x4096" in message
-    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in message
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "4096x4096" in exc_info.value.raw_diagnostic
+    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in exc_info.value.raw_diagnostic
+    assert "4096x4096" not in str(exc_info.value)
 
 
 def test_gpu_remote_adapter_rejects_oversized_webp_before_decoder_construction(monkeypatch) -> None:
@@ -162,9 +164,9 @@ def test_gpu_remote_adapter_rejects_oversized_webp_before_decoder_construction(m
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
         gpu_remote_adapter._image_payload(bytes(image_bytes))
 
-    message = str(exc_info.value)
-    assert "4096x4096" in message
-    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in message
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "4096x4096" in exc_info.value.raw_diagnostic
+    assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in exc_info.value.raw_diagnostic
 
 
 def test_webp_canvas_size_matches_pillow_for_real_webp() -> None:
@@ -212,9 +214,11 @@ def test_gpu_remote_adapter_rejects_png_output_over_byte_ceiling(monkeypatch) ->
         captured.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "unreachable"}}]})
 
-    with pytest.raises(GpuRemoteAdapterError, match="PNG output"):
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
         _adapter(handler).describe(image_bytes=source.getvalue(), context=None)
 
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "PNG output" in exc_info.value.raw_diagnostic
     assert captured == []
 
 
@@ -348,8 +352,10 @@ def test_gpu_remote_adapter_rejects_empty_caption() -> None:
         ),
     )
 
-    with pytest.raises(GpuRemoteAdapterError, match="empty caption"):
+    with pytest.raises(GpuRemoteAdapterError, match="empty caption") as exc_info:
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.EMPTY_CAPTION
 
 
 def test_gpu_remote_adapter_rejects_http_5xx() -> None:
@@ -360,8 +366,65 @@ def test_gpu_remote_adapter_rejects_http_5xx() -> None:
         transport=httpx.MockTransport(lambda request: httpx.Response(503, json={"error": "busy"})),
     )
 
-    with pytest.raises(GpuRemoteAdapterError, match="GPU endpoint call failed"):
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED
+    assert exc_info.value.status_code == 503
+
+
+def test_gpu_remote_adapter_rejects_auth_body_without_leaking_upstream_details() -> None:
+    endpoint_url = "http://gpu.test:8000"
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url=endpoint_url,
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(401, json={"error": {"message": "invalid api key"}})
+        ),
+    )
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        adapter.describe(image_bytes=b"jpeg", context=None)
+
+    error = exc_info.value
+    assert error.reason == "endpoint_rejected"
+    assert error.status_code == 401
+    assert error.upstream_status == 401
+    assert "invalid api key" not in str(error)
+    assert "invalid api key" not in error.message
+    assert endpoint_url not in str(error)
+    assert endpoint_url not in error.message
+    assert "invalid api key" in error.raw_diagnostic
+
+
+@pytest.mark.parametrize(
+    ("error_type", "detail"),
+    [
+        (httpx.ConnectError, "connect failed for gpu.test:8000"),
+        (httpx.ReadTimeout, "read timed out for gpu.test:8000"),
+    ],
+)
+def test_gpu_remote_adapter_classifies_transport_failures_without_leaking_details(error_type, detail) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error_type(detail, request=request)
+
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        adapter.describe(image_bytes=b"jpeg", context=None)
+
+    error = exc_info.value
+    assert error.reason == "endpoint_unreachable"
+    assert "ConnectError" not in error.message
+    assert "ReadTimeout" not in error.message
+    assert "gpu.test:8000" not in error.message
+    assert detail in error.raw_diagnostic
 
 
 def test_gpu_remote_adapter_rejects_non_json_body() -> None:
@@ -372,8 +435,11 @@ def test_gpu_remote_adapter_rejects_non_json_body() -> None:
         transport=httpx.MockTransport(lambda request: httpx.Response(200, text="not-json")),
     )
 
-    with pytest.raises(GpuRemoteAdapterError, match="GPU endpoint call failed"):
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
+    assert "not-json" in exc_info.value.raw_diagnostic
 
 
 def test_gpu_remote_adapter_rejects_missing_choices_shape() -> None:
@@ -381,11 +447,41 @@ def test_gpu_remote_adapter_rejects_missing_choices_shape() -> None:
         endpoint_url="http://gpu.test:8000",
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_version="Q4_K_M",
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": []})),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": [], "body": "secret-body"})),
     )
 
-    with pytest.raises(GpuRemoteAdapterError, match="missing choices"):
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
+    assert "missing choices" in exc_info.value.raw_diagnostic
+    assert "secret-body" not in exc_info.value.message
+
+
+def test_gpu_remote_adapter_rejects_response_without_text_parts_without_leaking_body() -> None:
+    response_body = {
+        "choices": [
+            {
+                "message": {
+                    "content": [{"type": "image_url", "image_url": {"url": "secret-body"}}],
+                }
+            }
+        ]
+    }
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response_body)),
+    )
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        adapter.describe(image_bytes=b"jpeg", context=None)
+
+    error = exc_info.value
+    assert error.reason == "response_malformed"
+    assert "secret-body" not in error.message
+    assert "secret-body" in error.raw_diagnostic
 
 
 def test_gpu_remote_adapter_joins_list_content_parts() -> None:
@@ -438,8 +534,11 @@ def test_gpu_remote_adapter_surfaces_reasoning_only_response() -> None:
         ),
     )
 
-    with pytest.raises(GpuRemoteAdapterError, match="reasoning_content"):
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
         adapter.describe(image_bytes=b"jpeg", context=None)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
+    assert "reasoning_content" in exc_info.value.raw_diagnostic
 
 
 # ------------------------------------------ per-token logprobs (VLM-4 Slice 2b)
@@ -606,6 +705,13 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
     sentinel = 123456789
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", sentinel)
 
-    importlib.reload(gpu_remote_adapter)
+    # Reload rebinds every class in the module namespace; callers that imported
+    # GpuRemoteAdapterError by value (the describe router) would stop matching it.
+    snapshot = dict(vars(gpu_remote_adapter))
+    try:
+        importlib.reload(gpu_remote_adapter)
 
-    assert sentinel == Image.MAX_IMAGE_PIXELS
+        assert sentinel == Image.MAX_IMAGE_PIXELS
+    finally:
+        vars(gpu_remote_adapter).clear()
+        vars(gpu_remote_adapter).update(snapshot)

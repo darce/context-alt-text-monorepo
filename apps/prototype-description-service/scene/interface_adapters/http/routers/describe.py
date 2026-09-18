@@ -1520,6 +1520,7 @@ async def describe_image_multipart(
     except (GpuRemoteAdapterError, HostedProviderError) as exc:
         processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
         server_elapsed_ms = _elapsed_ms(server_start)
+        safe_message = exc.message if isinstance(exc, GpuRemoteAdapterError) else str(exc)
         if gpu_compute:
             try:
                 completed = await _complete_operation(
@@ -1544,12 +1545,12 @@ async def describe_image_multipart(
             raise _typed_describe_error(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 code="description_service_error",
-                message=str(exc),
+                message=safe_message,
                 operation_id=operation_id,
                 startup_id=None if completed is None else completed.startup_id,
                 timing=timing,
             ) from exc
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, safe_message) from exc
     except Exception as exc:
         await _cleanup_accepted()
         raise _typed_describe_error(

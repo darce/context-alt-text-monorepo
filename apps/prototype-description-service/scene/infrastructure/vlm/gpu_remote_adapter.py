@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from io import BytesIO
 from typing import Any
 
@@ -23,6 +25,9 @@ _DEFAULT_MAX_IMAGE_PIXELS = 16_000_000
 _DEFAULT_MAX_ENCODED_IMAGE_BYTES = 25 * 1024 * 1024
 # Per-token top-k logprob width requested from llama.cpp (VLM-4 Slice 2b).
 _DEFAULT_N_PROBS = 10
+_MAX_LOGGED_GPU_DIAGNOSTIC = 4096
+
+logger = logging.getLogger(__name__)
 
 # Keep in lockstep with scripts/eval_harness/bakeoff.py (VLMRP-HARM-01). Bump
 # ACX_GPU_PROMPT_VERSION / default prompt_or_task_version when this contract changes.
@@ -77,19 +82,28 @@ def _media_type(image_bytes: bytes) -> str:
 def _webp_canvas_size(image_bytes: bytes) -> tuple[int, int]:
     """Read a WebP canvas size without constructing a Pillow decoder."""
     if len(image_bytes) < 16 or image_bytes[:4] != b"RIFF" or image_bytes[8:12] != b"WEBP":
-        raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+            raw_diagnostic="GPU adapter could not parse image/webp container header",
+        )
 
     chunk_fourcc = image_bytes[12:16]
     if chunk_fourcc == b"VP8X":
         if len(image_bytes) < 30:
-            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+                raw_diagnostic="GPU adapter could not parse image/webp container header",
+            )
         width = int.from_bytes(image_bytes[24:27], "little") + 1
         height = int.from_bytes(image_bytes[27:30], "little") + 1
         return width, height
 
     if chunk_fourcc == b"VP8L":
         if len(image_bytes) < 25 or image_bytes[20] != 0x2F:
-            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+                raw_diagnostic="GPU adapter could not parse image/webp container header",
+            )
         dimensions = int.from_bytes(image_bytes[21:25], "little")
         width = (dimensions & 0x3FFF) + 1
         height = ((dimensions >> 14) & 0x3FFF) + 1
@@ -97,12 +111,18 @@ def _webp_canvas_size(image_bytes: bytes) -> tuple[int, int]:
 
     if chunk_fourcc == b"VP8 ":
         if len(image_bytes) < 30 or image_bytes[23:26] != b"\x9d\x01\x2a":
-            raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+                raw_diagnostic="GPU adapter could not parse image/webp container header",
+            )
         width = int.from_bytes(image_bytes[26:28], "little") & 0x3FFF
         height = int.from_bytes(image_bytes[28:30], "little") & 0x3FFF
         return width, height
 
-    raise GpuRemoteAdapterError("GPU adapter could not parse image/webp container header")
+    raise GpuRemoteAdapterError(
+        GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+        raw_diagnostic="GPU adapter could not parse image/webp container header",
+    )
 
 
 def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
@@ -121,9 +141,12 @@ def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
         pixel_count = width * height
         if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
             raise GpuRemoteAdapterError(
-                "GPU adapter rejected image/webp dimensions "
-                f"{width}x{height} ({pixel_count} pixels); maximum is "
-                f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
+                GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+                raw_diagnostic=(
+                    "GPU adapter rejected image/webp dimensions "
+                    f"{width}x{height} ({pixel_count} pixels); maximum is "
+                    f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
+                ),
             )
         with Image.open(BytesIO(image_bytes)) as image:
             image.load()
@@ -132,16 +155,20 @@ def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
             encoded_size = len(encoded.getbuffer())
             if encoded_size > _DEFAULT_MAX_ENCODED_IMAGE_BYTES:
                 raise GpuRemoteAdapterError(
-                    "GPU adapter rejected image/webp PNG output of "
-                    f"{encoded_size} bytes; maximum is "
-                    f"{_DEFAULT_MAX_ENCODED_IMAGE_BYTES} bytes"
+                    GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+                    raw_diagnostic=(
+                        "GPU adapter rejected image/webp PNG output of "
+                        f"{encoded_size} bytes; maximum is "
+                        f"{_DEFAULT_MAX_ENCODED_IMAGE_BYTES} bytes"
+                    ),
                 )
             encoded_image = encoded.getvalue()
     except GpuRemoteAdapterError:
         raise
     except Exception as exc:  # noqa: BLE001 - malformed WebP must never reach the endpoint
         raise GpuRemoteAdapterError(
-            f"GPU adapter could not transcode image/webp to PNG: {type(exc).__name__}: {exc}"
+            GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+            raw_diagnostic=f"GPU adapter could not transcode image/webp to PNG: {type(exc).__name__}: {exc}",
         ) from exc
     return "image/png", encoded_image
 
@@ -177,8 +204,49 @@ def _user_text(context: Mapping[str, Any] | None) -> tuple[str, tuple[str, ...],
     return "\n".join(lines), sources, bool(rendered)
 
 
+class GpuRemoteAdapterErrorReason(StrEnum):
+    """Classified GPU adapter failures exposed to the HTTP boundary."""
+
+    ENDPOINT_UNREACHABLE = "endpoint_unreachable"
+    ENDPOINT_REJECTED = "endpoint_rejected"
+    RESPONSE_MALFORMED = "response_malformed"
+    EMPTY_CAPTION = "empty_caption"
+    IMAGE_UNSUPPORTED = "image_unsupported"
+
+
+_GPU_ERROR_MESSAGES: dict[GpuRemoteAdapterErrorReason, str] = {
+    GpuRemoteAdapterErrorReason.ENDPOINT_UNREACHABLE: "The description service endpoint could not be reached.",
+    GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED: "The description service endpoint rejected the request.",
+    GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED: "The description service endpoint returned an invalid response.",
+    GpuRemoteAdapterErrorReason.EMPTY_CAPTION: "The description service endpoint returned an empty caption.",
+    GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED: "The image format is not supported by the description service.",
+}
+
+
 class GpuRemoteAdapterError(RuntimeError):
-    """The GPU endpoint failed or returned an invalid adapter payload."""
+    """A classified GPU failure with a safe operator-facing message."""
+
+    def __init__(
+        self,
+        reason: GpuRemoteAdapterErrorReason,
+        *,
+        raw_diagnostic: str = "",
+        status_code: int | None = None,
+    ) -> None:
+        self.reason = GpuRemoteAdapterErrorReason(reason)
+        self.message = _GPU_ERROR_MESSAGES[self.reason]
+        self.raw_diagnostic = raw_diagnostic
+        self.status_code = status_code
+        self.upstream_status = status_code
+        logger.warning(
+            "GPU remote adapter failure reason=%s diagnostic=%s",
+            self.reason.value,
+            raw_diagnostic[:_MAX_LOGGED_GPU_DIAGNOSTIC],
+        )
+        super().__init__(self.message)
+
+    def __str__(self) -> str:
+        return self.message
 
 
 @dataclass(frozen=True)
@@ -295,12 +363,45 @@ class GpuRemoteDescriptionAdapter:
                     payload["logprobs"] = True
                     payload["top_logprobs"] = n_probs
                 response = self._post(json=payload, headers=headers)
-                response.raise_for_status()
-                body = response.json()
+                if not 200 <= response.status_code < 300:
+                    raise GpuRemoteAdapterError(
+                        GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED,
+                        raw_diagnostic=(
+                            f"GPU endpoint returned HTTP {response.status_code}: {response.text}"
+                        ),
+                        status_code=response.status_code,
+                    )
+                try:
+                    body = response.json()
+                except (TypeError, ValueError) as exc:
+                    raise GpuRemoteAdapterError(
+                        GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+                        raw_diagnostic=(
+                            f"GPU endpoint returned invalid JSON: {type(exc).__name__}: {exc}; "
+                            f"body={response.text!r}"
+                        ),
+                    ) from exc
         except GpuRemoteAdapterError:
             raise
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED,
+                raw_diagnostic=(
+                    f"GPU endpoint returned HTTP {response.status_code}: {response.text}"
+                ),
+                status_code=response.status_code,
+            ) from exc
+        except httpx.RequestError as exc:
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.ENDPOINT_UNREACHABLE,
+                raw_diagnostic=f"GPU endpoint request failed: {type(exc).__name__}: {exc}",
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - fail closed on endpoint faults
-            raise GpuRemoteAdapterError(f"GPU endpoint call failed: {type(exc).__name__}: {exc}") from exc
+            raise GpuRemoteAdapterError(
+                GpuRemoteAdapterErrorReason.ENDPOINT_UNREACHABLE,
+                raw_diagnostic=f"GPU endpoint call failed: {type(exc).__name__}: {exc}",
+            ) from exc
 
         caption = _extract_caption(body)
         traces = _extract_token_traces(body) if n_probs is not None else ()
@@ -400,22 +501,47 @@ def _extract_caption(body: dict[str, Any]) -> str:
     try:
         message = body["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise GpuRemoteAdapterError(f"GPU endpoint response missing choices[0].message: {body!r}") from exc
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+            raw_diagnostic=f"GPU endpoint response missing choices[0].message: {body!r}",
+        ) from exc
     content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, list):
-        text = " ".join(
-            part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
-        ).strip()
+        text_parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "text":
+                continue
+            part_text = part.get("text")
+            if not isinstance(part_text, str):
+                raise GpuRemoteAdapterError(
+                    GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+                    raw_diagnostic=f"GPU endpoint returned an invalid text part: {body!r}",
+                )
+            text_parts.append(part_text)
+        text = " ".join(text_parts).strip()
         if text:
             return text
-        raise GpuRemoteAdapterError(f"GPU endpoint returned no text content parts: {body!r}")
-    if not isinstance(content, str) or not content.strip():
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+            raw_diagnostic=f"GPU endpoint returned no text content parts: {body!r}",
+        )
+    if not isinstance(content, str):
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+            raw_diagnostic=f"GPU endpoint returned unexpected content shape: {body!r}",
+        )
+    if not content.strip():
         reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
         if isinstance(reasoning, str) and reasoning.strip():
             raise GpuRemoteAdapterError(
-                "GPU endpoint emitted reasoning_content but empty content — the model never "
-                "exited thinking mode (budget consumed as reasoning); retry with /no_think or a "
-                f"chat template that disables reasoning. payload: {body!r}"
+                GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
+                raw_diagnostic=(
+                    "GPU endpoint emitted reasoning_content but empty content: "
+                    f"{body!r}"
+                ),
             )
-        raise GpuRemoteAdapterError("GPU endpoint returned an empty caption")
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.EMPTY_CAPTION,
+            raw_diagnostic=f"GPU endpoint returned an empty caption: {body!r}",
+        )
     return content.strip()

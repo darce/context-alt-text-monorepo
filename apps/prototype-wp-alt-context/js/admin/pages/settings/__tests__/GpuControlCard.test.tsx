@@ -447,4 +447,118 @@ describe('GpuControlCard', () => {
     render(<GpuControlCard />);
     expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeEnabled();
   });
+
+  const unavailableError = (
+    checkedAt: string,
+    overrides: {
+      reason?: string;
+      service?: string;
+      http_status?: number | null;
+      retry_after_seconds?: number | null;
+    } = {},
+  ) =>
+    Object.assign(new Error('502 Bad Gateway'), {
+      unavailable: {
+        reason: 'circuit_open',
+        service: 'scene',
+        http_status: 502,
+        retry_after_seconds: 30,
+        checked_at: checkedAt,
+        ...overrides,
+      },
+    });
+
+  it('names the service, reason, fix, last checked, and retry countdown from unavailable', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      refetch,
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.queryByText(/Could not reach the description service/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Description service is unavailable because the circuit breaker is open.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Wait for the cooldown, then Retry.')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.getByText('Retry in 30 s')).toBeInTheDocument();
+    expect(screen.getByTestId('gpu-unavailable-icon')).toBeInTheDocument();
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveAttribute('data-tone', 'warning');
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveClass('acx-sync-status--warning');
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it('updates last checked after Retry and keeps Retry pending while fetching', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      refetch,
+    });
+    const { rerender } = render(<GpuControlCard />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledOnce();
+
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      isFetching: true,
+      refetch,
+    });
+    rerender(<GpuControlCard />);
+    expect(screen.getByRole('button', { name: 'Fetching…' })).toBeDisabled();
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveTextContent('Checking service status…');
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:04:05Z'),
+      refetch,
+    });
+    rerender(<GpuControlCard />);
+    expect(screen.getByText('Last checked 14:04:05')).toBeInTheDocument();
+    expect(screen.queryByText('Last checked 14:03:22')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('omits a retry countdown when unavailable retry_after_seconds is absent', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z', { retry_after_seconds: null }),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.queryByText(/Retry in /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retrying in 15 s/)).not.toBeInTheDocument();
+  });
+
+  it('uses generic copy plus the reason code for an unknown unavailable reason', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z', { reason: 'mystery_code', retry_after_seconds: null }),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(
+      screen.getByText('Description service is unavailable because an unexpected error occurred (mystery_code).'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Retry. If it continues, check Settings and the service logs.')).toBeInTheDocument();
+  });
 });

@@ -11,22 +11,26 @@ import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 
 interface ClusterPreviewProps {
-  /** Member used when the reference crop is unavailable. */
+  /** Per-media row or roster representative; cropped when it has a bbox. */
   representative: DetectedIdentity | undefined;
+  /** Cluster representative crop; used only when the row has no bbox. */
   representativeFace?: RepresentativeFace | null;
   /** Total number of members in the cluster */
   memberCount: number;
 }
 
 /**
- * Displays the cluster's representative thumbnail with an optional count badge.
- * The thumbnail shows the face cropped from the original image using InsightFace bbox.
+ * Displays a face thumbnail with an optional count badge.
+ * Per-image cards crop this row; the cluster representative is fallback only.
  * Pin control removed (UXA-07) — mutation/API retained for a deferred relocation.
  */
-export const ClusterPreview = ({ representative, representativeFace = representative?.representative_face, memberCount }: ClusterPreviewProps): React.JSX.Element => {
-  // Select the source as a unit: bbox coordinates belong to that source image.
-  const referenceUrl = representativeFace?.media_url || representativeFace?.attachment_url;
-  const source = referenceUrl && representativeFace?.bbox ? representativeFace : representative;
+export const ClusterPreview = ({
+  representative,
+  representativeFace = representative?.representative_face,
+  memberCount,
+}: ClusterPreviewProps): React.JSX.Element => {
+  // Bbox coordinates belong to that source image; do not mix a row bbox with a representative URL.
+  const source = representative?.bbox ? representative : representativeFace;
   const mediaUrl = source?.media_url || source?.attachment_url;
   const bbox = source?.bbox;
   const hasValidThumbnail = Boolean(mediaUrl && bbox);

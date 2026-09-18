@@ -13,13 +13,17 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function get_transient;
+use function gmdate;
 use function in_array;
 use function is_array;
+use function is_int;
 use function is_string;
 use function register_rest_route;
 use function rest_sanitize_boolean;
 use function sanitize_key;
 use function set_transient;
+use function str_contains;
+use function strtolower;
 use function trim;
 
 class RetentionController extends AbstractRecognitionProxyController {
@@ -184,13 +188,21 @@ class RetentionController extends AbstractRecognitionProxyController {
 		$audit_response = $this->proxy_request( 'GET', '/retention/audit', array(), array( 'limit' => 5 ), 'ui_read' );
 
 		if ( ! $this->is_successful_rest_response( $policy_response ) || ! $this->is_successful_rest_response( $audit_response ) ) {
-			return new WP_REST_Response( $this->build_unavailable_status_payload(), 200 );
+			$failed = ! $this->is_successful_rest_response( $policy_response )
+				? $policy_response
+				: $audit_response;
+
+			return new WP_REST_Response( $this->build_unavailable_status_payload( $failed ), 200 );
 		}
 
 		$policy = $policy_response->get_data();
 		$audit_payload = $audit_response->get_data();
 		if ( ! $this->is_valid_policy_payload( $policy ) || ! $this->is_valid_audit_payload( $audit_payload ) ) {
-			return new WP_REST_Response( $this->build_unavailable_status_payload(), 200 );
+			$mismatch = ! $this->is_valid_policy_payload( $policy )
+				? $policy_response
+				: $audit_response;
+
+			return new WP_REST_Response( $this->build_unavailable_status_payload( $mismatch, true ), 200 );
 		}
 
 		$recent_audit_events = array_values( $audit_payload['items'] );
@@ -377,12 +389,124 @@ class RetentionController extends AbstractRecognitionProxyController {
 		return $this->proxy_request( 'GET', '/retention/audit', array(), $query_params, 'ui_read' );
 	}
 
-	private function build_unavailable_status_payload(): array {
+	/**
+	 * @return array{
+	 *   available: bool,
+	 *   policy: null,
+	 *   recent_audit_events: array<int, mixed>,
+	 *   unavailable: array{
+	 *     reason: string,
+	 *     service: string,
+	 *     http_status: int|null,
+	 *     retry_after_seconds: int|null,
+	 *     checked_at: string
+	 *   }
+	 * }
+	 */
+	private function build_unavailable_status_payload( WP_REST_Response|WP_Error $response, bool $contract_mismatch = false ): array {
 		return array(
 			'available' => false,
 			'policy' => null,
 			'recent_audit_events' => array(),
+			'unavailable' => $this->build_unavailable_envelope( $response, 'recognition', $contract_mismatch ),
 		);
+	}
+
+	/**
+	 * @return array{
+	 *   reason: string,
+	 *   service: string,
+	 *   http_status: int|null,
+	 *   retry_after_seconds: int|null,
+	 *   checked_at: string
+	 * }
+	 */
+	private function build_unavailable_envelope( WP_REST_Response|WP_Error $response, string $service, bool $contract_mismatch = false ): array {
+		return array(
+			'reason' => $this->map_unavailable_reason( $response, $contract_mismatch ),
+			'service' => $service,
+			'http_status' => $this->proxy_http_status( $response ),
+			'retry_after_seconds' => $this->unavailable_retry_after_seconds( $response ),
+			'checked_at' => gmdate( 'Y-m-d\TH:i:s\Z' ),
+		);
+	}
+
+	private function map_unavailable_reason( WP_REST_Response|WP_Error $response, bool $contract_mismatch ): string {
+		if ( $contract_mismatch ) {
+			return 'contract_mismatch';
+		}
+
+		if ( $response instanceof WP_Error ) {
+			$code = $response->get_error_code();
+			if ( 'recognition_not_configured' === $code ) {
+				return 'not_configured';
+			}
+			if ( 'recognition_api_key_missing' === $code ) {
+				return 'api_key_missing';
+			}
+			if ( 'recognition_circuit_open' === $code ) {
+				return 'circuit_open';
+			}
+			if ( $this->is_timeout_proxy_error( $response ) ) {
+				return 'timeout';
+			}
+		}
+
+		$status = $this->proxy_http_status( $response );
+		if ( null !== $status && $status >= 400 && $status < 500 ) {
+			return 'upstream_4xx';
+		}
+
+		return 'upstream_5xx';
+	}
+
+	private function proxy_http_status( WP_REST_Response|WP_Error $response ): ?int {
+		if ( $response instanceof WP_REST_Response ) {
+			$status = $response->get_status();
+
+			return $status > 0 ? $status : null;
+		}
+
+		$data = $response->get_error_data();
+		if ( ! is_array( $data ) ) {
+			return null;
+		}
+
+		$status = $data['status'] ?? $data['http_status'] ?? null;
+		if ( is_int( $status ) && $status > 0 ) {
+			return $status;
+		}
+
+		return null;
+	}
+
+	private function unavailable_retry_after_seconds( WP_REST_Response|WP_Error $response ): ?int {
+		if ( $response instanceof WP_REST_Response ) {
+			return $this->get_retry_after_seconds( $response );
+		}
+
+		$data = $response->get_error_data();
+		if ( ! is_array( $data ) ) {
+			return null;
+		}
+
+		$raw = $data['retry_after_seconds'] ?? $data['retry_after'] ?? null;
+		if ( is_int( $raw ) && $raw > 0 ) {
+			return $raw;
+		}
+
+		return null;
+	}
+
+	private function is_timeout_proxy_error( WP_Error $response ): bool {
+		$code = strtolower( $response->get_error_code() );
+		if ( str_contains( $code, 'timeout' ) || str_contains( $code, 'timed_out' ) ) {
+			return true;
+		}
+
+		$message = strtolower( $response->get_error_message() );
+
+		return str_contains( $message, 'timed out' ) || str_contains( $message, 'timeout' );
 	}
 
 	private function invalidate_status_cache(): void {

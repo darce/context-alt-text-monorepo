@@ -24,26 +24,57 @@ export type DescribeWarmingState = {
   warmupEtaSeconds: number | null;
 };
 
-/**
- * Public Suggest warming retry ceiling. The SPA clears the pending lease on
- * terminal success, failure, or this ceiling (gpu-lifecycle.md:347); advertised
- * Retry-After must be at most 120 s (gpu-lifecycle.md:426).
- */
-export const SUGGEST_WARMING_CEILING_MS = 120_000;
-
 /** Wait when a starting 503 has no warmup_eta_seconds and no parsed Retry-After. */
 const SUGGEST_WARMING_FALLBACK_MS = 5_000;
 
+/**
+ * Hard Suggest warming retry ceiling so a bad payload cannot wait forever.
+ * The per-attempt window is startup_budget_seconds plus one retry gap,
+ * never above this bound.
+ */
+export const SUGGEST_WARMING_HARD_CEILING_MS = 900_000;
+
+/**
+ * Total Suggest warming wait: the server's startup budget plus one retry gap,
+ * clamped to SUGGEST_WARMING_HARD_CEILING_MS. Absent or invalid budget waits
+ * only the retry gap (do not invent a client constant).
+ */
+export const suggestWarmingCeilingMs = (startupBudgetSeconds: number | null, retryGapMs: number): number => {
+  const boundedRetryGapMs =
+    Number.isFinite(retryGapMs) && retryGapMs > 0
+      ? Math.min(retryGapMs, SUGGEST_WARMING_HARD_CEILING_MS)
+      : SUGGEST_WARMING_FALLBACK_MS;
+  if (startupBudgetSeconds === null || !Number.isFinite(startupBudgetSeconds) || !(startupBudgetSeconds > 0)) {
+    return boundedRetryGapMs;
+  }
+  const budgetMs = startupBudgetSeconds * 1000;
+  if (!Number.isFinite(budgetMs)) {
+    return boundedRetryGapMs;
+  }
+  const ceilingMs = budgetMs + boundedRetryGapMs;
+  if (!Number.isFinite(ceilingMs)) {
+    return SUGGEST_WARMING_HARD_CEILING_MS;
+  }
+  return Math.min(ceilingMs, SUGGEST_WARMING_HARD_CEILING_MS);
+};
+
 type DescribeMutateOptions = MutateOptions<VisualFactsResponse, Error, DescribeMediaMutationInput>;
 
-const mediaIdOf = (input: DescribeMediaMutationInput): number =>
-  typeof input === 'number' ? input : input.mediaId;
+const mediaIdOf = (input: DescribeMediaMutationInput): number => (typeof input === 'number' ? input : input.mediaId);
 
 const writeOptionsOf = (input: DescribeMediaMutationInput): DescribeMediaWriteOptions =>
   typeof input === 'number' ? {} : { writeAlt: input.writeAlt, force: input.force ?? false };
 
 const isMismatchOrExpired = (code: string | null): boolean =>
   code === DESCRIBE_OPERATION_ERROR_CODE.MISMATCH || code === DESCRIBE_OPERATION_ERROR_CODE.EXPIRED;
+
+const startupBudgetSecondsFromError = (error: unknown): number | null => {
+  const value = resolveDescribeErrorDetailNumberField(error, 'startup_budget_seconds');
+  if (value === null || !(value > 0)) {
+    return null;
+  }
+  return value;
+};
 
 const retryAfterSecondsFromError = (error: unknown): number | undefined => {
   if (typeof error !== 'object' || error === null || !('retryAfterSeconds' in error)) {
@@ -80,7 +111,8 @@ const describeWithLease = (
  * mutation: callers `mutate(mediaId)` or `mutate({ mediaId, writeAlt })`.
  * GPUFLOW-1 lease: starting errors store operation_id for retry(); mismatch
  * and expired drop the id and retry once without it. Auto-retry honours the
- * warmup ETA (else Retry-After, else 5 s) until the 120 s public ceiling.
+ * warmup ETA (else Retry-After, else 5 s) until the server startup budget
+ * plus one retry gap, hard-capped at 900 s.
  */
 export const useDescribeMedia = () => {
   const lastInputRef = useRef<DescribeMediaMutationInput | null>(null);
@@ -88,6 +120,7 @@ export const useDescribeMedia = () => {
   const leaseOperationIdRef = useRef<string | null>(null);
   const mismatchRetriedRef = useRef(false);
   const warmingStartedAtRef = useRef<number | null>(null);
+  const warmingCeilingMsRef = useRef(SUGGEST_WARMING_HARD_CEILING_MS);
   const warmingRetryDelayMsRef = useRef(SUGGEST_WARMING_FALLBACK_MS);
   const mutateForRetryRef = useRef<() => void>(() => undefined);
   const enterWarmingTimeoutRef = useRef<() => void>(() => undefined);
@@ -99,6 +132,7 @@ export const useDescribeMedia = () => {
     leaseOperationIdRef.current = null;
     mismatchRetriedRef.current = false;
     warmingStartedAtRef.current = null;
+    warmingCeilingMsRef.current = SUGGEST_WARMING_HARD_CEILING_MS;
     setWarming(null);
     setWarmingTimedOut(false);
   };
@@ -132,11 +166,16 @@ export const useDescribeMedia = () => {
         warmingRetryDelayMsRef.current = warmingRetryDelayMs(error, warmupEtaSeconds);
         if (warmingStartedAtRef.current === null) {
           warmingStartedAtRef.current = Date.now();
+          warmingCeilingMsRef.current = suggestWarmingCeilingMs(
+            startupBudgetSecondsFromError(error),
+            warmingRetryDelayMsRef.current,
+          );
         }
-        if (Date.now() - warmingStartedAtRef.current >= SUGGEST_WARMING_CEILING_MS) {
+        if (Date.now() - warmingStartedAtRef.current >= warmingCeilingMsRef.current) {
           leaseOperationIdRef.current = null;
           mismatchRetriedRef.current = false;
           warmingStartedAtRef.current = null;
+          warmingCeilingMsRef.current = SUGGEST_WARMING_HARD_CEILING_MS;
           setWarming(null);
           setWarmingTimedOut(true);
           setTiming(null);
@@ -164,6 +203,7 @@ export const useDescribeMedia = () => {
     leaseOperationIdRef.current = null;
     mismatchRetriedRef.current = false;
     warmingStartedAtRef.current = null;
+    warmingCeilingMsRef.current = SUGGEST_WARMING_HARD_CEILING_MS;
     setWarming(null);
     setWarmingTimedOut(true);
   };
@@ -176,14 +216,14 @@ export const useDescribeMedia = () => {
     if (startedAt === null) {
       return undefined;
     }
-    const remaining = SUGGEST_WARMING_CEILING_MS - (Date.now() - startedAt);
+    const remaining = warmingCeilingMsRef.current - (Date.now() - startedAt);
     if (remaining <= 0) {
       enterWarmingTimeoutRef.current();
       return undefined;
     }
     const waitMs = Math.min(warmingRetryDelayMsRef.current, remaining);
     const timer = setTimeout(() => {
-      if (Date.now() - startedAt >= SUGGEST_WARMING_CEILING_MS) {
+      if (Date.now() - startedAt >= warmingCeilingMsRef.current) {
         enterWarmingTimeoutRef.current();
         return;
       }
@@ -194,10 +234,7 @@ export const useDescribeMedia = () => {
     };
   }, [warming, mutation.isPending]);
 
-  const mutate = (
-    input: DescribeMediaMutationInput,
-    options?: DescribeMutateOptions,
-  ): void => {
+  const mutate = (input: DescribeMediaMutationInput, options?: DescribeMutateOptions): void => {
     leaseOperationIdRef.current = null;
     warmingStartedAtRef.current = null;
     lastMutateOptionsRef.current = options;

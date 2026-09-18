@@ -11,9 +11,11 @@ from db.models.base_imports import Base
 from db.models.scene import ImageDescription
 from scene.application.description_adapter import AdapterResult
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.identity_merge import NamingPolicy, NamingStatus, NormalizedBox, PhraseBox
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
 from scene.domain.description import DescriptionAdapterKind
+from scene.tests.identity_merge_helpers import make_face
 
 IMG = b"\x89PNG service test bytes"
 CTX = {"title": "Cat", "caption": "x"}
@@ -343,12 +345,14 @@ def test_processing_measures_dispatch_only_and_records_failed_retries(monkeypatc
         for attempt in range(2):
             if attempt == 0:
                 with pytest.raises(RuntimeError, match="retry") as failed:
-                    await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                                       image_bytes=IMG, context=None, before_compute=readiness)
+                    await svc.describe(
+                        tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None, before_compute=readiness
+                    )
             else:
                 clock[0] += 60  # Retry backoff is outside adapter processing.
-                response = await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                                              image_bytes=IMG, context=None, before_compute=readiness)
+                response = await svc.describe(
+                    tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None, before_compute=readiness
+                )
                 assert response.attempt_timing.processing_ms == 2000
                 assert response.duration_ms == 42000
             assert failed.value.attempt_timing.processing_ms == 2000
@@ -358,8 +362,9 @@ def test_processing_measures_dispatch_only_and_records_failed_retries(monkeypatc
             raise RuntimeError("not ready")
 
         with pytest.raises(RuntimeError, match="not ready") as unavailable_error:
-            await svc.describe(tenant_id=uuid.uuid4(), media_id=1,
-                               image_bytes=IMG, context=None, before_compute=unavailable)
+            await svc.describe(
+                tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None, before_compute=unavailable
+            )
         assert unavailable_error.value.attempt_timing.processing_ms is None
         assert unavailable_error.value.attempt_timing.entered_adapter is False
         assert len(metrics.adapter_durations) == 2
@@ -388,9 +393,14 @@ def test_cancelled_dispatch_is_measured_once(monkeypatch):
                 return super().describe(**kwargs)
 
         svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
-        task = asyncio.create_task(svc.describe(
-            tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None,
-        ))
+        task = asyncio.create_task(
+            svc.describe(
+                tenant_id=uuid.uuid4(),
+                media_id=1,
+                image_bytes=IMG,
+                context=None,
+            )
+        )
         try:
             await asyncio.wait_for(started.wait(), timeout=2)
             clock[0] = 3
@@ -434,9 +444,14 @@ def test_cancel_before_worker_start_marker_still_publishes_once(monkeypatch):
 
     async def body():
         svc = VisualFactsService(adapter=Adapter(), metrics=metrics)
-        task = asyncio.create_task(svc.describe(
-            tenant_id=uuid.uuid4(), media_id=1, image_bytes=IMG, context=None,
-        ))
+        task = asyncio.create_task(
+            svc.describe(
+                tenant_id=uuid.uuid4(),
+                media_id=1,
+                image_bytes=IMG,
+                context=None,
+            )
+        )
         try:
             async with asyncio.timeout(2):
                 while not gated.is_set():
@@ -456,3 +471,200 @@ def test_cancel_before_worker_start_marker_still_publishes_once(monkeypatch):
     assert timing.entered_adapter is True
     assert timing.processing_ms == 2000
     assert metrics.adapter_durations == [("hosted_provider", 2.0)]
+
+
+REREALIZE_CAPTION = "A man stands by the window."
+REREALIZE_NAMED = "Daniel stands by the window."
+REREALIZE_PERSON = PhraseBox(
+    phrase="A man",
+    span_start=0,
+    span_end=5,
+    box=NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7),
+)
+REREALIZE_FACE = make_face(
+    "Daniel",
+    box=NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08),
+    roster_id="roster-daniel",
+)
+
+
+class _GroundedCaptionAdapter:
+    """Fixed caption + phrase boxes so cache-hit naming can re-merge without a VLM."""
+
+    kind = DescriptionAdapterKind.SEEDED
+    model_id = "rerealize-test"
+    model_version = "1"
+    prompt_or_task_version = "1"
+
+    def __init__(self, *, caption: str = REREALIZE_CAPTION, phrase_boxes=()):
+        self._caption = caption
+        self._phrase_boxes = tuple(phrase_boxes)
+        self.calls = 0
+
+    def describe(self, *, image_bytes, context):
+        self.calls += 1
+        return AdapterResult(
+            caption=self._caption,
+            objects=("person",),
+            ocr_text=None,
+            alt_text_draft=self._caption,
+            context_sources=(),
+            context_applied=False,
+            phrase_boxes=self._phrase_boxes,
+        )
+
+
+class _MemoryRepo:
+    """In-memory cache-key repo matching VisualFactsService lookup/insert."""
+
+    def __init__(self):
+        self._rows: dict = {}
+
+    def _key(self, *, tenant_id, image_hash, adapter, model_id, model_version, prompt_or_task_version, context_hash):
+        return (
+            str(tenant_id),
+            image_hash,
+            adapter,
+            model_id,
+            model_version,
+            prompt_or_task_version,
+            context_hash,
+        )
+
+    async def get_by_cache_key(self, **kwargs):
+        return self._rows.get(self._key(**kwargs))
+
+    async def insert_or_get_existing(self, record):
+        key = self._key(
+            tenant_id=record.tenant_id,
+            image_hash=record.image_hash,
+            adapter=record.adapter,
+            model_id=record.model_id,
+            model_version=record.model_version,
+            prompt_or_task_version=record.prompt_or_task_version,
+            context_hash=record.context_hash,
+        )
+        if key in self._rows:
+            return self._rows[key], False
+        self._rows[key] = record
+        return record, True
+
+
+def test_cache_hit_rerealizes_names_from_current_confirmed_faces():
+    """TRIAGE0918-M-02: naming a face after the draft was cached reaches alt text."""
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=(REREALIZE_PERSON,))
+    repo = _MemoryRepo()
+    policy = NamingPolicy(agreement_enabled=True)
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        first = await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX, naming_policy=policy)
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        second = await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=CTX,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=policy,
+        )
+        return first, second
+
+    first, second = asyncio.run(body())
+    assert first.cached is False
+    assert first.alt_text_draft == REREALIZE_CAPTION
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert second.alt_text_draft == REREALIZE_NAMED
+    assert second.named_draft == REREALIZE_NAMED
+    assert second.generic_draft == REREALIZE_CAPTION
+    assert second.naming_provenance is not None
+    assert second.naming_provenance.status is NamingStatus.APPLIED
+    assert "Daniel" in second.naming_provenance.names_applied
+
+
+def test_cache_hit_does_not_insert_name_when_policy_rejects():
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=(REREALIZE_PERSON,))
+    repo = _MemoryRepo()
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        return await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=CTX,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=NamingPolicy(agreement_enabled=False),
+        )
+
+    second = asyncio.run(body())
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert second.alt_text_draft == REREALIZE_CAPTION
+    assert "Daniel" not in second.alt_text_draft
+    assert second.named_draft == REREALIZE_CAPTION
+
+
+def test_cache_hit_rerealizes_from_stored_caption_when_draft_already_named():
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=(REREALIZE_PERSON,))
+    repo = _MemoryRepo()
+    policy = NamingPolicy(agreement_enabled=True)
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        first = await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+        stored = next(iter(repo._rows.values()))
+        stored.alt_text_draft = "Someone stands by the window."
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        second = await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=CTX,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=policy,
+        )
+        return first, second
+
+    first, second = asyncio.run(body())
+    assert first.alt_text_draft == REREALIZE_CAPTION
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert second.alt_text_draft == REREALIZE_NAMED
+    assert second.generic_draft == REREALIZE_CAPTION
+
+
+def test_cache_hit_without_base_caption_keeps_cached_draft_and_naming_status():
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=(REREALIZE_PERSON,))
+    repo = _MemoryRepo()
+    named_only = "Alex stands by the window."
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        await svc.describe(tenant_id=tenant, media_id=7, image_bytes=IMG, context=CTX)
+        stored = next(iter(repo._rows.values()))
+        stored.alt_text_draft = named_only
+        stored.visual_facts = {**dict(stored.visual_facts or {}), "caption": ""}
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        return await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=CTX,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=NamingPolicy(agreement_enabled=True),
+        )
+
+    second = asyncio.run(body())
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert second.alt_text_draft == named_only
+    assert second.named_draft is None
+    assert second.naming_provenance is None

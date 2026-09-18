@@ -12,12 +12,12 @@ use AltContext\Tests\TestCase;
  */
 class RecognitionPolicyTest extends TestCase
 {
-    public function testEnabledDefaultsToTrue(): void
+    public function testEnabledDefaultsToFalse(): void
     {
-        $this->assertTrue(RecognitionPolicy::DEFAULT);
+        $this->assertFalse(RecognitionPolicy::DEFAULT);
         $this->assertSame('acx_recognition_enabled', RecognitionPolicy::OPTION);
         $this->assertNull(get_option(RecognitionPolicy::OPTION, null));
-        $this->assertTrue(RecognitionPolicy::enabled());
+        $this->assertFalse(RecognitionPolicy::enabled());
     }
 
     public function testSetFalseOnFreshInstallPersistsZeroString(): void
@@ -46,9 +46,9 @@ class RecognitionPolicyTest extends TestCase
     {
         $GLOBALS['__ac_update_option_fail'] = [RecognitionPolicy::OPTION => true];
 
-        $this->assertFalse(RecognitionPolicy::set(false));
+        $this->assertFalse(RecognitionPolicy::set(true));
         $this->assertNull(get_option(RecognitionPolicy::OPTION, null));
-        $this->assertTrue(RecognitionPolicy::enabled());
+        $this->assertFalse(RecognitionPolicy::enabled());
     }
 
     public function testStringZeroNormalisesToFalse(): void

@@ -277,6 +277,20 @@ echo "==> Cycle plugin activation so activation-hook dbDelta applies schema chan
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
+# Plugin default is off; the demo tenant opts in explicitly (idempotent).
+echo "==> Enabling people recognition for the demo tenant (explicit opt-in; plugin default is off)"
+wpcli wp option update acx_recognition_enabled '1'
+recognition_enabled="$(wpcli wp option get acx_recognition_enabled 2>/dev/null | tr -d '[:space:]' || true)"
+case "$recognition_enabled" in
+  1|true|TRUE|True)
+    echo "acx_recognition_enabled=${recognition_enabled}"
+    ;;
+  *)
+    echo "ERROR: failed to persist acx_recognition_enabled=1 for the demo tenant (got ${recognition_enabled:-empty})" >&2
+    exit 2
+    ;;
+esac
+
 # The plugin registers its own rules (notably ^guide/?$ for the signed-out
 # public guide) during activation. Flush after activation cycling, then assert
 # the guide rule is present whenever the public guide option is on, so a
@@ -287,11 +301,18 @@ wpcli wp rewrite flush --hard
 public_guide_enabled="$(wpcli wp option get acx_public_guide_enabled 2>/dev/null | tr -d '[:space:]' || true)"
 case "$public_guide_enabled" in
   1|true|TRUE|True)
-    if wpcli wp rewrite list --format=csv 2>/dev/null | grep -q '\^guide'; then
+    rewrite_rules="$(wpcli wp option get rewrite_rules --format=json 2>/dev/null || true)"
+    if grep -q '\^guide' <<<"$rewrite_rules"; then
       echo "public guide rewrite rule present"
     else
-      echo "ERROR: acx_public_guide_enabled=${public_guide_enabled} but no ^guide/?$ rewrite rule after flush; /guide/ would 404." >&2
-      exit 6
+      sleep 2
+      rewrite_rules="$(wpcli wp option get rewrite_rules --format=json 2>/dev/null || true)"
+      if grep -q '\^guide' <<<"$rewrite_rules"; then
+        echo "public guide rewrite rule present"
+      else
+        echo "ERROR: acx_public_guide_enabled=${public_guide_enabled} but no ^guide/?$ rewrite rule after flush; /guide/ would 404." >&2
+        exit 6
+      fi
     fi
     ;;
   *)

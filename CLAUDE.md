@@ -172,11 +172,9 @@ See the installed `workbay-handoff-mcp` package documentation for the full set o
 
 > **Symbol lookups in `apps/` and `packages/` go through the codemap index, not grep.**
 
-`codebase-memory-mcp` holds the symbol graph for this repo's code roots. Use `search_graph` (find a symbol), `get_code_snippet` (exact source by qualified name), `trace_path` (call chains), `search_code` (graph-augmented text). A `PreToolUse` hook (`scripts/guard_codemap_first.py`, wired into `.claude/settings.json` and `.codex/hooks.json`) blocks `Grep`/`rg`/`grep` only when the pattern is a bare identifier or a `def`/`class`/`function` definition hunt *and* the scope lands in `apps/` or `packages/`.
+`codebase-memory-mcp` holds the symbol graph for this repo's code roots. Use `search_graph` (find a symbol), `get_code_snippet` (exact source by qualified name), `trace_path` (call chains), `search_code` (graph-augmented text). The workbay-managed `PreToolUse` hook `scripts/hooks/guard-codemap-first.py` (wired into `.claude/settings.json` for `Bash|Grep|Glob`) classifies source-discovery queries; its behaviour follows the `codemap_mode` ledger key in `.workbay-bootstrap.json` (`available` = advisory context, `enforced` = refuse, `off` = disabled).
 
-Not indexed, so grep stays correct there: `docs/`, `scripts/`, `benchmarks/`, `Makefile.d/`, `config/`. Free-text and regex patterns, single-file reads, piped `grep`, and non-code glob/type filters are never blocked. The guard fails open when the codemap CLI is absent.
-
-Escapes: prefix the command with `CODEMAP_OK=1` when raw text search is genuinely what you need (regex sweep, string literal, comment archaeology); `CODEMAP_FIRST_DISABLE=1` in the environment is the repo-wide kill switch.
+Not indexed, so grep stays correct there: `docs/`, `scripts/`, `benchmarks/`, `Makefile.d/`, `config/`.
 
 ### Git Commit Rules
 

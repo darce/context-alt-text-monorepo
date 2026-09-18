@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin": "workbay-system",
-  "base_remote_sha": "9d5090c7579510b418a72c31f8185c32e77fee50",
+  "base_remote_sha": "e82639d0eaa9b615205234796587e2a20c582614",
   "components": [
     {
       "component_kind": "skill",

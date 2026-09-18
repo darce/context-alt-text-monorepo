@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once __DIR__ . '/class-cluster-merge-service.php';
+
 use WP_Error;
+use WP_REST_Request;
+use WP_REST_Response;
 
 /**
  * Shared cluster→person bind used by commit_roster_cluster and create-for-identity.
@@ -12,6 +16,12 @@ use WP_Error;
  * Transaction-agnostic: the caller owns START/COMMIT/ROLLBACK.
  */
 class ClusterPersonBindService {
+
+	private ?ClusterMergeService $merge_service;
+
+	public function __construct( ?ClusterMergeService $merge_service = null ) {
+		$this->merge_service = $merge_service;
+	}
 
 	/**
 	 * @return array{person_id:int,person_uuid:string,person_name:?string}|WP_Error
@@ -82,6 +92,32 @@ class ClusterPersonBindService {
 			$person_name = $this->get_person_name_by_id( $person_id, $wpdb->prefix . 'acx_persons' );
 		}
 
+		if ( ! is_string( $person_uuid ) || '' === trim( $person_uuid ) ) {
+			return new WP_Error(
+				'acx_db_error',
+				__( 'Could not resolve person UUID for cluster assignment.', 'alt-context' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$trimmed_name = is_string( $person_name ) ? trim( $person_name ) : '';
+		$person_name  = '' !== $trimmed_name ? $trimmed_name : null;
+
+		$survivor_id = $this->find_person_survivor_cluster_uuid(
+			$wpdb->prefix . 'acx_clusters',
+			$person_id,
+			$cluster_id
+		);
+		if ( is_string( $survivor_id ) && $survivor_id !== $cluster_id ) {
+			return $this->merge_into_person_survivor(
+				$cluster_id,
+				$survivor_id,
+				$person_id,
+				$person_uuid,
+				$person_name
+			);
+		}
+
 		$now          = current_time( 'mysql' );
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
 		$update_data    = array(
@@ -92,13 +128,9 @@ class ClusterPersonBindService {
 		);
 		$update_fmt = array( '%d', '%s', '%d', '%s' );
 
-		$trimmed_name = is_string( $person_name ) ? trim( $person_name ) : '';
-		if ( '' !== $trimmed_name ) {
-			$update_data['label'] = $trimmed_name;
+		if ( is_string( $person_name ) ) {
+			$update_data['label'] = $person_name;
 			$update_fmt[]         = '%s';
-			$person_name          = $trimmed_name;
-		} else {
-			$person_name = null;
 		}
 
 		$cluster_updated = $wpdb->update(
@@ -153,6 +185,78 @@ class ClusterPersonBindService {
 			'cluster_uuid' => $cluster_id,
 			'person_uuid'  => $person_uuid,
 			'person_name'  => $person_name,
+		);
+	}
+
+	private function find_person_survivor_cluster_uuid( string $table_clusters, int $person_id, string $cluster_id ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return null;
+		}
+
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT cluster_uuid FROM %i WHERE person_id = %d AND cluster_uuid != %s AND curation_state != %s ORDER BY cluster_uuid ASC LIMIT 1',
+				$table_clusters,
+				$person_id,
+				$cluster_id,
+				'dismissed'
+			)
+		);
+
+		return is_string( $found ) && '' !== trim( $found ) ? trim( $found ) : null;
+	}
+
+	/**
+	 * @return array{person_id:int,person_uuid:string,person_name:?string,updated_at:string}|WP_Error
+	 */
+	private function merge_into_person_survivor(
+		string $loser_cluster_id,
+		string $survivor_cluster_id,
+		int $person_id,
+		string $person_uuid,
+		?string $person_name
+	): array|WP_Error {
+		if ( ! $this->merge_service instanceof ClusterMergeService ) {
+			return new WP_Error(
+				'acx_cluster_merge_unavailable',
+				__( 'Could not merge cluster into the person\'s existing cluster.', 'alt-context' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/clusters/' . $loser_cluster_id . '/merge' );
+		$request->set_param( 'source_id', $loser_cluster_id );
+		$request->set_param( 'target_cluster_id', $survivor_cluster_id );
+
+		$merged = $this->merge_service->merge_cluster( $request );
+		if ( is_wp_error( $merged ) ) {
+			return $merged;
+		}
+
+		if ( ! $merged instanceof WP_REST_Response ) {
+			return new WP_Error(
+				'acx_cluster_merge_failed',
+				__( 'Could not merge cluster into the person\'s existing cluster.', 'alt-context' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$status = $merged->get_status();
+		if ( $status < 200 || $status >= 300 ) {
+			return new WP_Error(
+				'acx_cluster_merge_failed',
+				__( 'Could not merge cluster into the person\'s existing cluster.', 'alt-context' ),
+				array( 'status' => $status > 0 ? $status : 500 )
+			);
+		}
+
+		return array(
+			'person_id'   => $person_id,
+			'person_uuid' => $person_uuid,
+			'person_name' => $person_name,
+			'updated_at'  => current_time( 'mysql' ),
 		);
 	}
 

@@ -13,18 +13,19 @@ use function update_option;
 /**
  * Canonical store for the `acx_recognition_enabled` operator setting.
  *
- * Default ON: this plugin is installed to identify people. The WP option is
- * the only store; readers go through {@see enabled()}. Persist only the
- * strings '1' / '0' — never a PHP bool. Core `update_option()` no-ops when
- * the incoming value === `get_option()` whose default is false, so writing
- * `false` on a fresh install never inserts a row (Trac r56788).
+ * Default OFF: face recognition stays disabled until an operator opts in.
+ * The WP option is the only store; readers go through {@see enabled()}.
+ * Persist only the strings '1' / '0' — never a PHP bool. Core
+ * `update_option()` no-ops when the incoming value === `get_option()` whose
+ * default is false, so writing `false` on a fresh install never inserts a
+ * row (Trac r56788).
  *
  * Unknown stored values fail closed to false. DEFAULT applies only when the
  * option row is missing (`get_option( OPTION, null ) === null`).
  */
 final class RecognitionPolicy {
 	public const OPTION  = 'acx_recognition_enabled';
-	public const DEFAULT = true;
+	public const DEFAULT = false;
 
 	public static function enabled(): bool {
 		$stored = get_option( self::OPTION, null );

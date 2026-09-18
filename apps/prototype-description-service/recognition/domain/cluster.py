@@ -69,6 +69,16 @@ class IdentityCluster:
     # FIR23-01: majority embedding_model of loaded representatives. None when
     # unresolved (legacy unstamped rows). Appended last for positional safety.
     embedding_model: str | None = None
+    # Newest loaded, unreverted, unexpired merge receipt available to undo.
+    # Appended last for positional safety; None also means the receipt stack was
+    # not loaded or has no currently undoable receipt.
+    undoable_merge_receipt_id: str | None = None
+    # Last membership or centroid mutation timestamp used for freshness checks.
+    # Appended last for positional safety.
+    updated_at: datetime | None = None
+    # Last refresh timestamp for the persisted centroid materialization.
+    # Appended last for positional safety.
+    centroid_refreshed_at: datetime | None = None
 
     @property
     def is_auto_label(self) -> bool:

@@ -225,10 +225,11 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(suggest).toBeInTheDocument();
     expect(suggest).toHaveTextContent('Suggest alt text');
 
-    const decorative = screen.getByRole('button', { name: 'Mark as decorative for Ornamental border' });
+    // Visible word first so label-in-name holds for the compact "Decorative" toggle.
+    const decorative = screen.getByRole('button', { name: 'Decorative: Ornamental border' });
     expect(decorative).toBeInTheDocument();
-    // Visible copy keeps the longer outcome-oriented phrase.
-    expect(decorative.textContent).toMatch(/Mark as decorative/);
+    expect(decorative).toHaveAccessibleName('Decorative: Ornamental border');
+    expect((decorative.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe('Decorative');
   });
 
   it('falls back to bare visible names when title is empty [B-03]', () => {
@@ -239,9 +240,7 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(suggest).toBeInTheDocument();
     expect(suggest.getAttribute('aria-label')).toBeNull();
 
-    const decorative = screen.getByRole('button', {
-      name: /Mark as decorative — screen readers will announce nothing/,
-    });
+    const decorative = screen.getByRole('button', { name: 'Decorative' });
     expect(decorative).toBeInTheDocument();
     expect(decorative.getAttribute('aria-label')).toBeNull();
   });

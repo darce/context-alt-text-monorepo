@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { HTTPError } from '../../../utils/http';
 import type {
   BulkRetryResponse,
   OutboxListResponse,
@@ -52,7 +53,24 @@ vi.mock('../../../hooks/useSyncStatus', () => ({
   useSyncStatus: vi.fn(),
 }));
 
-const buildOperation = (overrides: Partial<OutboxOperation> = {}): OutboxOperation => ({
+type DeadLetterRow = OutboxOperation & {
+  first_failed_at?: string | null;
+  age_seconds?: number | null;
+};
+
+type DeadLetterList = OutboxListResponse & {
+  now?: string | null;
+  oldest_age_seconds?: number | null;
+  items: DeadLetterRow[];
+};
+
+type WpDateBootstrap = {
+  date?: {
+    getSettings?: () => { timezone?: { offset?: number } };
+  };
+};
+
+const buildOperation = (overrides: Partial<DeadLetterRow> = {}): DeadLetterRow => ({
   id: 11,
   tenant_id: 'tenant-1',
   operation_type: 'cluster_label_updated',
@@ -68,6 +86,14 @@ const buildOperation = (overrides: Partial<OutboxOperation> = {}): OutboxOperati
   last_attempted_at: '2026-03-11T10:05:00Z',
   acknowledged_at: null,
   payload: { label: 'Renamed' },
+  ...overrides,
+});
+
+const listResponse = (overrides: Partial<DeadLetterList> = {}): DeadLetterList => ({
+  items: [buildOperation()],
+  total: 1,
+  limit: 20,
+  offset: 0,
   ...overrides,
 });
 
@@ -89,8 +115,42 @@ describe('DeadLetterPanel', () => {
     );
   };
 
+  const mockFailedPages = (
+    primary: DeadLetterList,
+    eligibility: { data?: DeadLetterList; status?: 'pending' | 'error'; error?: Error } = {},
+  ) => {
+    mockedUseDeadLetterOperations.mockImplementation((params) => {
+      if (params?.limit === 50) {
+        if (eligibility.status === 'pending') {
+          return createMockQuery<OutboxListResponse>({ status: 'pending' });
+        }
+        if (eligibility.status === 'error') {
+          return createMockQuery<OutboxListResponse>({
+            status: 'error',
+            isError: true,
+            error: eligibility.error ?? new Error('Boom'),
+          });
+        }
+        return createMockQuery<OutboxListResponse>({
+          data: eligibility.data ?? primary,
+        });
+      }
+
+      return createMockQuery<OutboxListResponse>({ data: primary });
+    });
+  };
+
+  const setSiteGmtOffsetHours = (offset: number): void => {
+    (window as Window & { wp?: WpDateBootstrap }).wp = {
+      date: {
+        getSettings: () => ({ timezone: { offset } }),
+      },
+    };
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
+    delete (window as Window & { wp?: WpDateBootstrap }).wp;
     mockedUseBulkRetryOperations.mockReturnValue(
       createMockMutation<BulkRetryResponse, Error, void>({
         mutateAsync: vi.fn().mockResolvedValue({ requeued: 1, failed_remaining: 0 }),
@@ -757,5 +817,433 @@ describe('DeadLetterPanel', () => {
       expect(reasonId).toBeTruthy();
       expect(document.getElementById(reasonId!)).toHaveTextContent('Failed-change action in progress. Please wait.');
     }
+  });
+
+  it('shows age per failed row and timeline entry', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-19T10:00:00Z'));
+    try {
+      renderPanel();
+
+      expect(screen.getAllByText('Age: 8 days')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Will not retry for terminal failed rows and hides Retry', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              last_error_code: 'unauthorized',
+              last_error_message: 'Session expired.',
+            }),
+          ],
+          total: 1,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Will not retry')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('shows Will not retry for discarded timeline rows', () => {
+    mockedUseOutboxOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 44,
+              status: 'discarded',
+              last_error_code: 'auto_retry_exhausted',
+            }),
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByText('Will not retry')).toBeInTheDocument();
+  });
+
+  it('keeps Discard 0 eligible visible and disabled at zero failed changes', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: { items: [], total: 0, limit: 20, offset: 0 },
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard 0 eligible' })).toBeDisabled();
+  });
+
+  it('requests a bulk-discard page of at most 50 failed changes', () => {
+    renderPanel();
+
+    expect(mockedUseDeadLetterOperations).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+  });
+
+  it('requires confirmation before discarding failed changes older than 7 days', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({ operation: null });
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 11,
+              first_failed_at: '2026-09-01T00:00:00Z',
+              last_attempted_at: '2026-09-01T00:00:00Z',
+              created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
+            }),
+            buildOperation({
+              id: 12,
+              entity_key: 'cluster-2',
+              first_failed_at: '2026-09-16T00:00:00Z',
+              last_attempted_at: '2026-09-16T00:00:00Z',
+              created_at: '2026-09-16T00:00:00Z',
+              age_seconds: 1 * 24 * 3600,
+            }),
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard 1 eligible' }));
+
+    expect(screen.getByRole('button', { name: 'Confirm discard 1 eligible' })).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Discard 1 eligible is armed. Activate Confirm discard 1 eligible to continue.',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard 1 eligible' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(1);
+    });
+    expect(mutateAsync).toHaveBeenCalledWith(11);
+
+    expect(screen.getByTestId('acx-bulk-discard-results')).toHaveTextContent(
+      'Cluster label update for cluster-1 (operation 11) discarded.',
+    );
+    expect(
+      screen.getByText('Discarded 1 failed changes older than 7 days. 1 remain — run again for the next page.'),
+    ).toBeInTheDocument();
+  });
+
+  it('stops the bulk discard on the first auth or 4xx and shows per-row results', async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValueOnce({ operation: null })
+      .mockRejectedValueOnce(
+        new HTTPError({
+          status: 403,
+          retryAfterSeconds: undefined,
+          endpoint: '/acx/v1/recognition/outbox/12/discard',
+          bodyPreview: '',
+          message: 'forbidden',
+        }),
+      )
+      .mockResolvedValue({ operation: null });
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [
+            buildOperation({
+              id: 11,
+              first_failed_at: '2026-09-01T00:00:00Z',
+              last_attempted_at: '2026-09-01T00:00:00Z',
+              created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
+            }),
+            buildOperation({
+              id: 12,
+              entity_key: 'cluster-2',
+              first_failed_at: '2026-09-01T00:00:00Z',
+              last_attempted_at: '2026-09-01T00:00:00Z',
+              created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
+            }),
+            buildOperation({
+              id: 13,
+              entity_key: 'cluster-3',
+              first_failed_at: '2026-09-01T00:00:00Z',
+              last_attempted_at: '2026-09-01T00:00:00Z',
+              created_at: '2026-09-01T00:00:00Z',
+              age_seconds: 16 * 24 * 3600,
+            }),
+          ],
+          total: 3,
+          limit: 50,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard 3 eligible' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard 3 eligible' }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledTimes(2);
+    });
+    expect(mutateAsync).not.toHaveBeenCalledWith(13);
+
+    const results = screen.getByTestId('acx-bulk-discard-results');
+    expect(results).toHaveTextContent('Cluster label update for cluster-1 (operation 11) discarded.');
+    expect(results).toHaveTextContent(
+      'Stopped before discarding Cluster label update for cluster-2 (operation 12) (authorization or client error).',
+    );
+    expect(
+      screen.getByText(
+        'Stopped after an authorization or client error. 1 discarded. 2 remain — run again for the next page.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('treats an old first failure with a recent retry as eligible via age_seconds', () => {
+    mockFailedPages(
+      listResponse({
+        items: [
+          buildOperation({
+            id: 11,
+            first_failed_at: '2026-09-01T00:00:00Z',
+            last_attempted_at: '2026-09-16T00:00:00Z',
+            created_at: '2026-08-01T00:00:00Z',
+            age_seconds: 16 * 24 * 3600,
+          }),
+          buildOperation({
+            id: 12,
+            entity_key: 'cluster-2',
+            first_failed_at: '2026-09-16T00:00:00Z',
+            last_attempted_at: '2026-09-16T00:00:00Z',
+            created_at: '2026-08-01T00:00:00Z',
+            age_seconds: 1 * 24 * 3600,
+          }),
+        ],
+        total: 2,
+        limit: 50,
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
+  });
+
+  it('derives eligibility from age_seconds when the failure-age stamps are missing', () => {
+    mockFailedPages(
+      listResponse({
+        items: [
+          buildOperation({
+            id: 11,
+            created_at: null,
+            last_attempted_at: null,
+            first_failed_at: null,
+            age_seconds: 8 * 24 * 3600,
+          }),
+          buildOperation({
+            id: 12,
+            entity_key: 'cluster-2',
+            created_at: null,
+            last_attempted_at: null,
+            first_failed_at: null,
+            age_seconds: 2 * 24 * 3600,
+          }),
+        ],
+        total: 2,
+        limit: 50,
+      }),
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
+  });
+
+  it('disables bulk discard while the 50-row eligibility query is loading', () => {
+    mockFailedPages(
+      listResponse({
+        items: [buildOperation({ created_at: '2026-09-01T00:00:00Z' })],
+        total: 1,
+      }),
+      { status: 'pending' },
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard 0 eligible' })).toBeDisabled();
+  });
+
+  it('disables bulk discard when the 50-row eligibility query errors and does not fall back to the 20-row page', () => {
+    mockFailedPages(
+      listResponse({
+        items: [buildOperation({ created_at: '2026-09-01T00:00:00Z' })],
+        total: 1,
+      }),
+      { status: 'error', error: new Error('Boom') },
+    );
+
+    renderPanel();
+
+    expect(screen.getByRole('button', { name: 'Discard 0 eligible' })).toBeDisabled();
+    expect(screen.getByText('Showing 1-1 of 1 failed changes.')).toBeInTheDocument();
+  });
+
+  it('enables bulk discard from the 50-row eligibility page even when the 20-row page has no eligible rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-17T12:00:00Z'));
+    try {
+      mockFailedPages(
+        listResponse({
+          items: [
+            buildOperation({
+              id: 21,
+              first_failed_at: '2026-09-16T00:00:00Z',
+              last_attempted_at: '2026-09-16T00:00:00Z',
+              created_at: '2026-09-16T00:00:00Z',
+              age_seconds: 1 * 24 * 3600,
+            }),
+          ],
+          total: 2,
+          limit: 20,
+        }),
+        {
+          data: listResponse({
+            items: [
+              buildOperation({
+                id: 21,
+                first_failed_at: '2026-09-16T00:00:00Z',
+                last_attempted_at: '2026-09-16T00:00:00Z',
+                created_at: '2026-09-16T00:00:00Z',
+                age_seconds: 1 * 24 * 3600,
+              }),
+              buildOperation({
+                id: 11,
+                entity_key: 'cluster-old',
+                first_failed_at: '2026-09-01T00:00:00Z',
+                last_attempted_at: '2026-09-01T00:00:00Z',
+                created_at: '2026-09-01T00:00:00Z',
+                age_seconds: 16 * 24 * 3600,
+              }),
+            ],
+            total: 2,
+            limit: 50,
+          }),
+        },
+      );
+
+      renderPanel();
+
+      expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not shift the 7-day boundary when the browser zone differs from the site zone', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-17T08:00:00Z'));
+    const getTimezoneOffset = vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(480);
+    setSiteGmtOffsetHours(9);
+    try {
+      mockFailedPages(
+        listResponse({
+          items: [
+            buildOperation({
+              first_failed_at: '2026-09-10 12:00:00',
+              last_attempted_at: '2026-09-10 12:00:00',
+              created_at: '2026-09-10 12:00:00',
+            }),
+          ],
+          total: 1,
+          limit: 50,
+          now: '2026-09-17T08:00:00Z',
+        }),
+      );
+
+      renderPanel();
+
+      expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
+    } finally {
+      getTimezoneOffset.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('compares site-local timestamps against a server-anchored now when the list carries one', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-16T12:00:00Z'));
+    setSiteGmtOffsetHours(0);
+    try {
+      mockFailedPages(
+        listResponse({
+          items: [
+            buildOperation({
+              first_failed_at: '2026-09-10 12:00:00',
+              last_attempted_at: '2026-09-10 12:00:00',
+              created_at: '2026-09-10 12:00:00',
+            }),
+          ],
+          total: 1,
+          limit: 50,
+          now: '2026-09-17 12:00:00',
+        }),
+      );
+
+      renderPanel();
+
+      expect(screen.getByRole('button', { name: 'Discard 1 eligible' })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never treats a row without age_seconds, first_failed_at, and now as eligible', () => {
+    mockFailedPages(
+      listResponse({
+        items: [
+          buildOperation({
+            created_at: '2026-08-01T00:00:00Z',
+            last_attempted_at: '2026-08-01T00:00:00Z',
+            first_failed_at: null,
+            age_seconds: null,
+          }),
+        ],
+        total: 1,
+        limit: 50,
+      }),
+    );
+
+    renderPanel();
+
+    const button = screen.getByRole('button', { name: 'Discard 0 eligible' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('Failure age unavailable from server')).toBeInTheDocument();
+    expect(button).toHaveAttribute('aria-describedby', 'acx-dead-letter-age-unavailable-reason');
   });
 });

@@ -38,6 +38,12 @@ def _args(tmp_path: Path, *extra: str):
     )
 
 
+def _expected(
+    profile: smoke.DescriptionProfile = smoke.DescriptionProfile.GPU_QWEN30B,
+) -> smoke._ExpectedProfile:
+    return smoke._resolve_expected_profile(profile)
+
+
 def _run(
     tmp_path: Path,
     *,
@@ -104,6 +110,7 @@ def _detail(result: smoke.SmokeResult, name: str) -> str:
 
 
 def _valid_boundary_item(**overrides: object) -> dict[str, object]:
+    expected = _expected()
     item: dict[str, object] = {
         "media_id": 101,
         "status": "completed",
@@ -112,7 +119,7 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
         "caption": "A red bicycle leans beside a brick library wall.",
         "alt_text_draft": "Red bicycle beside a brick library wall",
         "provenance": {
-            "model_id": f"{smoke.EXPECTED_PROFILE.hub_repo}@{smoke.EXPECTED_REVISION}",
+            "model_id": f"{expected.spec.hub_repo}@{expected.spec.model_revision}",
         },
     }
     item.update(overrides)
@@ -139,7 +146,7 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
         ),
         ([_valid_boundary_item(provenance=None)], r"items\[0\]\.provenance.*object"),
         (
-            [_valid_boundary_item(provenance={"model_id": smoke.EXPECTED_PROFILE.hub_repo})],
+            [_valid_boundary_item(provenance={"model_id": _expected().spec.hub_repo})],
             r"items\[0\]\.provenance\.model_id.*@",
         ),
     ],
@@ -188,10 +195,11 @@ def test_service_router_items_satisfy_smoke_contract() -> None:
         media_ids=[101],
         total_items=1,
     )
+    expected = _expected()
     provenance = {
         "adapter": "gpu_remote",
-        "model_id": f"{smoke.EXPECTED_PROFILE.hub_repo}@{smoke.EXPECTED_REVISION}",
-        "model_version": smoke.EXPECTED_MODEL_ID,
+        "model_id": f"{expected.spec.hub_repo}@{expected.spec.model_revision}",
+        "model_version": expected.health_model_version,
         "prompt_or_task_version": "3",
         "image_hash": "image-hash",
         "context_hash": "context-hash",
@@ -471,8 +479,8 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
         {
             "media_id": 101,
             "tier": "final_gpu",
-            "model_id": smoke.EXPECTED_PROFILE.hub_repo,
-            "revision": smoke.EXPECTED_REVISION,
+            "model_id": _expected().spec.hub_repo,
+            "revision": _expected().spec.model_revision,
             "result_generation": 1,
         }
     ]
@@ -763,10 +771,121 @@ def test_red_health_adapter_preflight_refuses(tmp_path: Path) -> None:
     result, oci = _run(tmp_path, scenario=smoke.DryScenario(health_adapter="seeded"))
 
     assert result.exit_code == 2
-    assert not _check(result, "health_adapter_gpu_qwen30b")
+    assert not _check(result, "health_adapter_expected_profile")
     assert oci.stop_calls == 0
     assert _check(result, "finally_stop_skipped")
     assert "instance was not validated" in _detail(result, "finally_stop_skipped")
+
+
+def test_ensemble_profile_from_environment_drives_the_dry_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = smoke.DescriptionProfile.GPU_QWEN30B_ENSEMBLE
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", profile.value)
+
+    result, _ = _run(tmp_path)
+
+    assert result.exit_code == 0
+    assert _check(result, "health_adapter_expected_profile")
+    assert profile.value in _detail(result, "health_adapter_expected_profile")
+    assert all(
+        sample["description_adapter"]["profile"] == profile.value
+        for sample in result.evidence["service_health_samples"]
+        if sample["phase"] != "after_stop" or not sample.get("skipped")
+    )
+
+
+def test_ensemble_profile_flag_drives_the_dry_transport(tmp_path: Path) -> None:
+    profile = smoke.DescriptionProfile.GPU_QWEN30B_ENSEMBLE
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(profile=profile),
+        extra=("--expected-profile", profile.value),
+    )
+
+    assert result.exit_code == 0
+    assert _check(result, "health_adapter_expected_profile")
+    expected = _expected(profile)
+    assert all(
+        sample["description_adapter"]["model_id"] == expected.health_model_id
+        for sample in result.evidence["service_health_samples"]
+        if sample["phase"] != "after_stop" or not sample.get("skipped")
+    )
+
+
+@pytest.mark.parametrize(
+    ("expected_profile", "message"),
+    [
+        ("not-a-description-profile", "invalid expected description profile"),
+        (smoke.DescriptionProfile.SEEDED.value, "is not a GPU adapter"),
+    ],
+)
+def test_invalid_or_non_gpu_expected_profile_is_a_preflight_refusal(
+    tmp_path: Path,
+    expected_profile: str,
+    message: str,
+) -> None:
+    result, oci = _run(tmp_path, extra=("--expected-profile", expected_profile))
+
+    assert result.exit_code == 2
+    assert not _check(result, "health_adapter_expected_profile")
+    assert message in _detail(result, "health_adapter_expected_profile")
+    assert oci.stop_calls == 0
+
+
+@pytest.mark.parametrize(
+    "unhealthy_field",
+    ["usable", "fresh", "endpoint_configured", "endpoint_allowlisted"],
+)
+def test_post_warmup_health_requires_every_adapter_readiness_field(
+    tmp_path: Path,
+    unhealthy_field: str,
+) -> None:
+    scenario = smoke.DryScenario()
+    assert isinstance(scenario.health_adapter, dict)
+    scenario.health_adapter[unhealthy_field] = False
+
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "service_health_throughout")
+    warmup_sample = next(
+        sample for sample in result.evidence["service_health_samples"] if sample["phase"] == "warm_up"
+    )
+    assert warmup_sample["healthy"] is False
+    assert warmup_sample["description_adapter"][unhealthy_field] is False
+
+
+def test_preflight_allows_an_unusable_scaled_to_zero_adapter(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+    health_requests = 0
+
+    def scaled_to_zero_at_preflight(request: httpx.Request) -> httpx.Response:
+        nonlocal health_requests
+        response = base_transport.handle_request(request)
+        if request.method == "GET" and request.url.path == "/health/detailed":
+            health_requests += 1
+            if health_requests == 1:
+                payload = response.json()
+                payload["description_adapter"]["usable"] = False
+                return httpx.Response(response.status_code, json=payload)
+        return response
+
+    result, _ = _run(
+        tmp_path,
+        scenario=scenario,
+        transport=httpx.MockTransport(scaled_to_zero_at_preflight),
+    )
+
+    assert result.exit_code == 0
+    preflight_sample = next(
+        sample for sample in result.evidence["service_health_samples"] if sample["phase"] == "preflight"
+    )
+    assert preflight_sample["healthy"] is True
+    assert preflight_sample["description_adapter"]["usable"] is False
+    assert _check(result, "service_health_throughout")
 
 
 def test_service_health_preflight_sends_bearer_auth(tmp_path: Path) -> None:
@@ -834,7 +953,7 @@ def test_red_service_auth_refusal_is_distinct_and_does_not_stop(
 
     assert result.exit_code == 2
     assert not _check(result, "service_auth")
-    assert all(check["name"] != "health_adapter_gpu_qwen30b" for check in result.evidence["checks"])
+    assert all(check["name"] != "health_adapter_expected_profile" for check in result.evidence["checks"])
     assert fake_oci.stop_calls == 0
     assert _check(result, "finally_stop_skipped")
 
@@ -937,7 +1056,7 @@ def test_red_wrong_model_id(tmp_path: Path) -> None:
     result, _ = _run(tmp_path, scenario=smoke.DryScenario(model_id="wrong-model"))
 
     assert result.exit_code == 1
-    assert not _check(result, "model_id_qwen30b")
+    assert not _check(result, "model_id_expected_profile")
 
 
 def test_red_unpinned_revision(tmp_path: Path) -> None:

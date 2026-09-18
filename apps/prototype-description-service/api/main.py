@@ -2,10 +2,16 @@ import asyncio
 import logging
 import math
 import os
+import socket
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from enum import StrEnum
+from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +60,15 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
-from scene.config.settings import DescriptionSettings
+from scene.application.seeded_adapter import SeededDescriptionAdapter
+from scene.config.profiles import DescriptionProfile, ProfileSpec, get_profile_spec
+from scene.config.settings import _parse_allowlist
+from scene.domain.description import DescriptionAdapterKind
+from scene.interface_adapters.http import deps as scene_http_deps
+from scene.interface_adapters.http.deps import (
+    _DEFAULT_GPU_ENDPOINT_ALLOWLIST,
+    _hostname_matches_allowlist,
+)
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.gpu import router as gpu_router
 from shared.health import HealthStatus
@@ -76,6 +90,261 @@ _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS = 1.0
 _LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS = 60.0
 
 _DEFAULT_HEALTH_DB_TIMEOUT_SECONDS = 2.0
+
+_ENDPOINT_PRIVACY_TTL_SECONDS = 60.0
+
+_ENDPOINT_PRIVACY_RESOLVE_TIMEOUT_SECONDS = 0.5
+
+
+class AdapterReadinessReason(StrEnum):
+    """Machine-readable /health/detailed description_adapter.reason values (sr-007)."""
+
+    PROFILE_UNAVAILABLE = "profile_unavailable"
+    VLM_DEPENDENCIES_MISSING = "vlm_dependencies_missing"
+    ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
+    ENDPOINT_INVALID_URL = "endpoint_invalid_url"
+    ENDPOINT_NOT_ALLOWLISTED = "endpoint_not_allowlisted"
+    ENDPOINT_NOT_PRIVATE = "endpoint_not_private"
+    ENDPOINT_RESOLUTION_PENDING = "endpoint_resolution_pending"
+
+
+class EndpointPrivacyCache:
+    """Bounded single-flight cache of GPU endpoint privacy (CARD-09, DIAGNO-M-11)."""
+
+    TTL_SECONDS = _ENDPOINT_PRIVACY_TTL_SECONDS
+    RESOLVE_TIMEOUT_SECONDS = _ENDPOINT_PRIVACY_RESOLVE_TIMEOUT_SECONDS
+
+    def __init__(self) -> None:
+        self._guard = asyncio.Lock()
+        self._host: str | None = None
+        self._value: bool | None = None
+        self._checked_at: float | None = None
+        self._last_attempt_at: float | None = None
+        self._in_flight: asyncio.Future[None] | None = None
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="endpoint-privacy")
+
+    def seed(
+        self,
+        *,
+        host: str,
+        value: bool | None,
+        checked_at: float | None,
+        last_attempt_at: float | None = None,
+    ) -> None:
+        """Install a cached resolution result (tests + timeout fallback)."""
+        self._host = host
+        self._value = value
+        self._checked_at = checked_at
+        self._last_attempt_at = last_attempt_at
+        self._in_flight = None
+
+    def snapshot(self, host: str) -> tuple[bool | None, float | None]:
+        if self._host != host:
+            return None, None
+        return self._value, self._checked_at
+
+    def _resolve_blocking(self, host: str) -> None:
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except socket.gaierror:
+            return
+        except Exception:
+            logger.warning("endpoint privacy resolution failed for %s", host, exc_info=True)
+            return
+        if not infos:
+            self._value = False
+            self._checked_at = time.time()
+            self._host = host
+            return
+        value = True
+        for info in infos:
+            sockaddr = info[4]
+            try:
+                addr = ip_address(sockaddr[0])
+            except ValueError:
+                value = False
+                break
+            if not (addr.is_private or addr.is_loopback):
+                value = False
+                break
+        self._value = bool(value)
+        self._checked_at = time.time()
+        self._host = host
+
+    async def refresh(self, host: str) -> tuple[bool | None, float | None]:
+        now = time.time()
+        async with self._guard:
+            if host != self._host:
+                self._host = host
+                self._value = None
+                self._checked_at = None
+                self._last_attempt_at = None
+                self._in_flight = None
+            in_flight = self._in_flight
+            if in_flight is not None and in_flight.done():
+                in_flight = None
+                self._in_flight = None
+            fresh_hit = self._checked_at is not None and (now - self._checked_at) < self.TTL_SECONDS
+            can_attempt = self._last_attempt_at is None or (now - self._last_attempt_at) >= self.TTL_SECONDS
+            if not fresh_hit and in_flight is None and can_attempt:
+                self._last_attempt_at = now
+                in_flight = asyncio.get_running_loop().run_in_executor(self._pool, self._resolve_blocking, host)
+                self._in_flight = in_flight
+            should_wait = in_flight is not None and not in_flight.done() and not fresh_hit
+
+        if should_wait and in_flight is not None:
+            await self._await_resolution(in_flight)
+        return self.snapshot(host)
+
+    async def _await_resolution(self, in_flight: asyncio.Future[None]) -> None:
+        """Bound the health wait without cancelling the executor job.
+
+        ``asyncio.wait_for`` on ``run_in_executor`` waits out the worker on
+        timeout (the thread is not cancellable). Wait on an Event instead so
+        the handler can return in RESOLVE_TIMEOUT_SECONDS (CARD-09).
+        """
+        if in_flight.done():
+            return
+        finished = asyncio.Event()
+        in_flight.add_done_callback(lambda _fut: finished.set())
+        if in_flight.done():
+            return
+        try:
+            await asyncio.wait_for(finished.wait(), timeout=self.RESOLVE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("endpoint privacy resolution wait failed", exc_info=True)
+
+
+_endpoint_privacy_cache = EndpointPrivacyCache()
+
+
+def _endpoint_hostname(endpoint_url: str | None) -> str | None:
+    parsed = _parse_endpoint_url(endpoint_url)
+    return parsed.hostname if parsed is not None else None
+
+
+def _parse_endpoint_url(endpoint_url: str | None):
+    if not endpoint_url:
+        return None
+    try:
+        parsed = urlparse(endpoint_url)
+        # Accessing ``port`` is validation: urllib.parse defers malformed-port
+        # errors until this property is read.
+        _ = parsed.port
+    except ValueError:
+        return None
+    return parsed
+
+
+def _gpu_endpoint_url_is_valid(endpoint_url: str) -> bool:
+    parsed = _parse_endpoint_url(endpoint_url)
+    return parsed is not None and parsed.scheme in {"http", "https"} and parsed.hostname is not None
+
+
+def _endpoint_is_allowlisted(host: str, allowlist: tuple[str, ...]) -> bool:
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return _hostname_matches_allowlist(host, allowlist)
+    return addr.is_private or addr.is_loopback
+
+
+def wire_model_id(spec: ProfileSpec) -> str | None:
+    """Wire identity the GPU adapter stamps; otherwise the profile model_id."""
+    if spec.profile is DescriptionProfile.SEEDED:
+        return SeededDescriptionAdapter.model_id
+    if spec.adapter_kind is DescriptionAdapterKind.GPU and spec.model_revision:
+        return f"{spec.hub_repo or spec.model_id}@{spec.model_revision}"
+    return spec.model_id
+
+
+def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
+    """Return the version stamped by the active adapter without loading settings."""
+    if spec.profile is DescriptionProfile.SEEDED:
+        return os.environ.get("ACX_DESCRIPTION_MODEL_VERSION", "1")
+    return None if model_id is None else spec.model_version
+
+
+def _resolve_description_profile() -> DescriptionProfile:
+    """Validate the configured description profile before registering routes."""
+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.SEEDED.value)
+    try:
+        return DescriptionProfile(raw)
+    except ValueError as exc:
+        allowed = ", ".join(profile.value for profile in DescriptionProfile)
+        raise ValueError(f"ACX_DESCRIPTION_ADAPTER must be one of: {allowed} (got {raw!r})") from exc
+
+
+async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[str, object]:
+    """Per-request GPU adapter readiness; DNS never runs inline on the loop."""
+    spec = get_profile_spec(profile)
+    endpoint_url = os.environ.get("ACX_GPU_ENDPOINT_URL") or None
+    endpoint_configured = bool(endpoint_url)
+    url_valid = endpoint_url is not None and _gpu_endpoint_url_is_valid(endpoint_url)
+    host = _endpoint_hostname(endpoint_url) if url_valid else None
+    parsed_allowlist = _parse_allowlist(os.environ.get("ACX_GPU_ENDPOINT_ALLOWLIST"))
+    effective_allowlist = parsed_allowlist or _DEFAULT_GPU_ENDPOINT_ALLOWLIST
+    endpoint_allowlisted = host is not None and _endpoint_is_allowlisted(host, effective_allowlist)
+    endpoint_private: bool | None = None
+    checked_at: float | None = None
+    may_resolve = spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU and url_valid
+    if may_resolve and host is not None and endpoint_allowlisted:
+        endpoint_private, checked_at = await _endpoint_privacy_cache.refresh(host)
+    elif may_resolve and host is not None:
+        endpoint_private, checked_at = _endpoint_privacy_cache.snapshot(host)
+    now = time.time()
+    fresh = checked_at is not None and (now - checked_at) < EndpointPrivacyCache.TTL_SECONDS
+    model_id = wire_model_id(spec)
+    model_version = _wire_model_version(spec, model_id)
+    vlm_dependencies_missing = (
+        spec.available
+        and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU
+        and bool(scene_http_deps._missing_vlm_dependencies())
+    )
+    if not spec.available:
+        usable = False
+        reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value
+    elif vlm_dependencies_missing:
+        usable = False
+        reason = AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value
+    elif spec.adapter_kind is not DescriptionAdapterKind.GPU:
+        usable = True
+        reason = None
+    elif not endpoint_configured:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_UNCONFIGURED.value
+    elif not url_valid:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_INVALID_URL.value
+    elif not endpoint_allowlisted:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_NOT_ALLOWLISTED.value
+    elif endpoint_private is False:
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_NOT_PRIVATE.value
+    elif not (endpoint_private is True and fresh):
+        usable = False
+        reason = AdapterReadinessReason.ENDPOINT_RESOLUTION_PENDING.value
+    else:
+        usable = True
+        reason = None
+    return {
+        "profile": spec.profile.value,
+        "kind": spec.adapter_kind.value,
+        "endpoint_configured": endpoint_configured,
+        "endpoint_allowlisted": endpoint_allowlisted,
+        "endpoint_private": endpoint_private,
+        "checked_at": checked_at,
+        "fresh": fresh,
+        "usable": usable,
+        "reason": reason,
+        "model_id": model_id,
+        "model_version": model_version,
+    }
 
 
 def _resolve_health_db_timeout_seconds() -> float:
@@ -271,6 +540,7 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    description_profile = _resolve_description_profile()
     # Log version info at startup
     _log_startup_info()
 
@@ -345,7 +615,7 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
-    register_health_probes(app)
+    register_health_probes(app, description_profile=description_profile)
     register_metrics_route(app)
     register_version_route(app)
 
@@ -397,7 +667,12 @@ def register_metrics_route(app: FastAPI) -> None:
         )
 
 
-def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
+def register_health_probes(
+    app: FastAPI,
+    *,
+    model_cache_dir: Path | None = None,
+    description_profile: DescriptionProfile | None = None,
+) -> None:
     """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
 
     /health is NOT a liveness probe (HEALTHOBS-1-BR-07): it does a bounded
@@ -415,18 +690,18 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     existing onnx-count check; face_pipeline uses eager sha256 verification
     with mtime/size drift re-verify ([EMB-05]).
 
-    Settings are constructed once at registration (S3CR-06); only the profile
-    env key is re-read per probe (cheap). Invalid profile yields aggregated
-    UNHEALTHY 503 on /ready (S3CR-04); create_app still hard-fails on boot.
+    Settings are constructed once at registration (S3CR-06), including the
+    description profile validation; the request path uses that validated
+    profile instead of re-parsing the environment.
     """
+    if description_profile is None:
+        description_profile = _resolve_description_profile()
     commit_sha = _resolve_version_commit_sha() or "unknown"
     # Baked at image build (/app/.image-variant); resolve once like commit_sha.
     image_variant = _resolve_image_variant()
     health_db_timeout_seconds = _resolve_health_db_timeout_seconds()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
-    description_settings = DescriptionSettings()
-    description_adapter = description_settings.profile.value
     insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
     insightface_model_name = settings.insightface.model_name
     face_pipeline_models_dir = settings.face_pipeline.resolved_models_dir
@@ -551,10 +826,10 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         operators can see the active face_pipeline profile without a second
         settings parse (reuses registration-time paths + cheap env profile).
 
-        ``description_adapter`` is the active caption producer
-        (``DescriptionSettings.profile``), not the face_pipeline profile.
-        Resolved once at registration from the settings object; not re-read
-        from the environment per request.
+        ``description_adapter`` is per-request readiness for the active
+        caption producer (``DescriptionSettings.profile`` / kind), not the
+        face_pipeline profile. Configuration fields are computed on each
+        request; ``endpoint_private`` is a bounded cached DNS result.
         """
         # Returns pool stats + breaker state + model-cache inventory for
         # operators; never hit by load-balancer probes. Shares aggregator +
@@ -603,7 +878,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "profile": profile,
             },
             "embedding_runtime": embedding_runtime,
-            "description_adapter": description_adapter,
+            "description_adapter": await _description_adapter_readiness(description_profile),
             "disk_headroom": disk_headroom_check.payload or {},
         }
 

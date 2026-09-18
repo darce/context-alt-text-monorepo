@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/scene-describe-multipart.schema.json",
   "title": "Scene describe multipart success and typed operation error",
-  "description": "POST /scene/describe/multipart response body. 200 success; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field, never a header or query parameter.",
+  "description": "POST /scene/describe/multipart response body. 200 success; 503 starting/unavailable; 502 service error after ready; 409 operation_mismatch; 410 operation_expired. Retry-After is an HTTP header, never a body field. Validation/auth/upload errors retain their existing envelopes and are outside this operation-response schema. Request operation_id is an optional multipart form field, never a header or query parameter. Unavailable responses name a typed reason; starting responses expose the service-owned warmup budget.",
   "oneOf": [
     {
       "$ref": "#/definitions/success"
@@ -48,6 +48,31 @@
               ],
               "minimum": 0
             },
+            "startup_budget_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Service-owned end-to-end GPU warmup budget in seconds. Required only on description_service_starting; the client must not substitute its own fixed ceiling."
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "endpoint_unconfigured",
+                "endpoint_not_private",
+                "endpoint_resolution_pending",
+                "state_missing",
+                "state_stale",
+                "degraded",
+                "operator_stop",
+                "circuit_open",
+                "auth_rejected"
+              ],
+              "description": "Why the description service cannot accept this operation. Required only on description_service_unavailable."
+            },
+            "lifecycle_reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The lifecycle snapshot's reason, copied verbatim when present (for example readiness_timeout or readiness_stall). Only emitted for description_service_unavailable."
+            },
             "timing": {
               "$ref": "image-description-response.schema.json#/properties/timing"
             }
@@ -74,12 +99,54 @@
                   "operation_id": {
                     "type": "string"
                   }
-                }
+                },
+                "required": [
+                  "startup_budget_seconds"
+                ]
               },
               "else": {
                 "not": {
-                  "required": [
-                    "warmup_eta_seconds"
+                  "anyOf": [
+                    {
+                      "required": [
+                        "warmup_eta_seconds"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "startup_budget_seconds"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "code": {
+                    "const": "description_service_unavailable"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "reason"
+                ]
+              },
+              "else": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "reason"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "lifecycle_reason"
+                      ]
+                    }
                   ]
                 }
               }

@@ -120,9 +120,10 @@ const renderRosterPage = (route = '/'): ReturnType<typeof render> => {
 
 const expectListAndAddPerson = (): void => {
   expect(screen.getByTestId('roster-entries-section')).toBeInTheDocument();
-  // Tab panel + section both use the People label after UXP-4 slice 5.
   expect(
-    within(screen.getByTestId('roster-entries-section')).getByRole('heading', { name: 'People' }),
+    within(screen.getByTestId('roster-entries-section')).getByRole('heading', {
+      name: /^Named people \(\d+\)$/,
+    }),
   ).toBeInTheDocument();
   expect(screen.getAllByRole('button', { name: /Add Person/ }).length).toBeGreaterThanOrEqual(1);
 };

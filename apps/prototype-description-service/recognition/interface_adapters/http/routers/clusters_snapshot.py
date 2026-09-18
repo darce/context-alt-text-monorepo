@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +19,9 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.config.security import get_security_settings
 from recognition.config.settings import resolve_effective_clustering_settings
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 from recognition.interface_adapters.http.blob_url import build_face_thumb_path
 from recognition.interface_adapters.http.deps import (
     get_cluster_repository,
@@ -38,6 +41,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterResponse,
     ClusterSnapshotClusterResponse,
     ClusterSnapshotMemberResponse,
+    ClusterSnapshotQualityComponents,
     ClusterSnapshotResponse,
     FaceBoxResponse,
 )
@@ -48,6 +52,10 @@ _logger = logging.getLogger(__name__)
 CLUSTER_MEMBERS_PAGE_LIMIT = 500
 
 _INFERENCE_CAP = 20
+
+_QUALITY_COMPONENT_KEYS = ("confidence", "bbox_area", "sharpness", "occlusion_severity")
+_UNIT_INTERVAL_KEYS = frozenset({"confidence", "occlusion_severity"})
+
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
@@ -77,31 +85,117 @@ def _face_thumb_url_for_identity(identity, bbox: FaceBoxResponse | None) -> str 
     )
 
 
+def _optional_float(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return number if isfinite(number) else None
+    return None
+
+
+def _component_value(key: str, value: object) -> float | None:
+    number = _optional_float(value)
+    if number is None or number < 0:
+        return None
+    if key in _UNIT_INTERVAL_KEYS and number > 1:
+        return None
+    return number
+
+
+def _export_quality_components(raw: dict[str, float] | None) -> ClusterSnapshotQualityComponents | None:
+    # Pass through stored parts only; never derive from identity bbox/confidence (rg-015).
+    if not isinstance(raw, dict) or not raw:
+        return None
+    if any(_optional_float(value) is None for value in raw.values()):
+        return None
+
+    components: dict[str, float | None] = {}
+    has_component = False
+    for key in _QUALITY_COMPONENT_KEYS:
+        if key not in raw:
+            components[key] = None
+            continue
+        component = _component_value(key, raw[key])
+        if component is None:
+            return None
+        components[key] = component
+        has_component = True
+
+    if not has_component:
+        return None
+    return ClusterSnapshotQualityComponents(
+        **components,
+    )
+
+
+def _export_representative_quality(
+    rep: ClusterRepresentative,
+) -> tuple[float | None, ClusterSnapshotQualityComponents | None]:
+    score = _optional_float(rep.quality_score)
+    if score is None or score < 0 or score > 1:
+        return None, None
+    components = _export_quality_components(rep.quality_components)
+    if components is None:
+        return None, None
+    return score, components
+
+
+def _representative_media_id(rep: ClusterRepresentative) -> int | None:
+    raw = rep.media_id
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        media_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if media_id < 1:
+        return None
+    return media_id
+
+
+def _select_snapshot_representative(cluster: IdentityCluster) -> ClusterRepresentative | None:
+    representatives = cluster.representatives
+    if not representatives:
+        return None
+    candidates = [rep for rep in representatives if rep.is_user_selected] or list(representatives)
+
+    def _quality_key(rep: ClusterRepresentative) -> tuple[bool, float, str]:
+        score = _optional_float(rep.quality_score)
+        if score is None or not isfinite(score) or score < 0 or score > 1:
+            score = float("-inf")
+        return rep.quality_components is None, -score, str(rep.id)
+
+    return min(candidates, key=_quality_key)
+
+
 def _build_cluster_responses(
-    clusters: list,
+    clusters: list[IdentityCluster],
+    *,
+    now: datetime | None = None,
 ) -> list[ClusterSnapshotClusterResponse]:
     """Build cluster snapshot responses from domain cluster objects."""
     responses: list[ClusterSnapshotClusterResponse] = []
     for cluster in clusters:
         curation_state = "dismissed" if cluster.dismissed_at else ("confirmed" if cluster.user_confirmed else "active")
 
-        # Get representative thumb path
         representative_thumb_path = None
         representative_id = None
         is_pinned = False
-        if cluster.representatives and len(cluster.representatives) > 0:
-            # Sort by id for stable fallback if no user-selected representative exists
-            # ( mitigates RSWR-IMPL-007: non-deterministic collection ordering )
-            reps = sorted(cluster.representatives, key=lambda r: str(r.id))
-            rep = next(
-                (candidate for candidate in reps if candidate.is_user_selected),
-                reps[0],
-            )
-            if rep.identity_id:
+        representative_quality = None
+        quality_components = None
+        representative_media_id = None
+        rep = _select_snapshot_representative(cluster)
+        if rep is not None:
+            if getattr(rep, "identity_id", None):
                 representative_id = str(rep.identity_id)
                 is_pinned = bool(rep.is_user_selected)
-                # Format: acx://cluster/{cluster_uuid}/media/{media_id}
                 representative_thumb_path = f"acx://cluster/{cluster.id}/media/{rep.media_id}"
+            representative_quality, quality_components = _export_representative_quality(rep)
+            representative_media_id = _representative_media_id(rep)
 
         responses.append(
             ClusterSnapshotClusterResponse(
@@ -113,6 +207,10 @@ def _build_cluster_responses(
                 representative_thumb_path=representative_thumb_path,
                 representative_id=representative_id,
                 is_pinned=is_pinned,
+                representative_quality=representative_quality,
+                quality_components=quality_components,
+                representative_media_id=representative_media_id,
+                undoable_merge_receipt_id=cluster.undoable_merge_receipt_id,
             )
         )
     return responses

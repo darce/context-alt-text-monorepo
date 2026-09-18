@@ -1,1 +1,4 @@
-1b04228e0e5f docs(pg19): retarget PostgreSQL upgrade evaluation to 17 -> 19 (skip 18)
+3130923735fa offload: R3 review appended and committed; original findings are fixed,
+adc7cab8a957 offload: Committed review 32838f8; A2 fails on invalid-endpoint warmup
+7522d04e9cfc offload: Committed the unavailable-operation retry fix as 077e736.
+ad9366530e35 offload: Committed the scoped GPUFLOW-2 typed-error rebuild fix.

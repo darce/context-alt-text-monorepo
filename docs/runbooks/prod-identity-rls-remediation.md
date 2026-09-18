@@ -36,7 +36,7 @@ SELECT t.relname,
 FROM unnest(ARRAY[
   'describe_operations','describe_demand_leases',
     'media_identities','identity_clusters','identity_members','identity_name_suppressions',
-    'identity_scan_jobs','identity_scan_job_items','identity_cluster_representatives','identity_clustering_jobs',
+    'identity_scan_jobs','identity_scan_job_items','identity_cluster_representatives','cluster_merge_receipts','identity_clustering_jobs',
     'identity_suggestions','cluster_merge_suggestions','name_suggestions',
     'identity_cluster_blocks','identity_constraints','recognition_runs','recognition_events',
     'clustering_feedback','audit_events','curation_replay_records','export_jobs',

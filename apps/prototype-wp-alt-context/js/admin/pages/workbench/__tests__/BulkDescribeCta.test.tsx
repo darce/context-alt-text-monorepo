@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as renderBare, screen, waitFor } from '@testing-library/react';
+import type { PropsWithChildren, ReactElement } from 'react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +9,13 @@ import type { DescribeRunResponse } from '../../../api/describeApi';
 import { _resetCooldownForTests, openCooldown } from '../../../utils/recognitionCooldown';
 import { BulkDescribeCta, MediaSelection } from '../MediaSelection';
 import { RECOGNITION_POLICY } from '../mediaFooterCtaState';
+
+const queryClientWrapper = ({ children }: PropsWithChildren): ReactElement => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    {children}
+  </QueryClientProvider>
+);
+const render = (ui: ReactElement) => renderBare(ui, { wrapper: queryClientWrapper });
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,

@@ -696,7 +696,7 @@ async def run_hac_refinement(
     return clusters_created
 
 
-async def run_singleton_hac_refinement(
+async def _run_singleton_hac_refinement_body(
     *,
     tenant_id: str,
     constrained_hac: ConstrainedHACProtocol | None,
@@ -820,3 +820,32 @@ async def run_singleton_hac_refinement(
             )
 
     return merged_clusters
+
+
+async def run_singleton_hac_refinement(
+    *,
+    tenant_id: str,
+    constrained_hac: ConstrainedHACProtocol | None,
+    hac_settings: HACSettings | None,
+    assignment_writer: AssignmentWriter,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
+    clustering_logger: ClusteringLogger | None = None,
+) -> int:
+    """Run singleton HAC and invoke recovery exactly once for every exit path."""
+    try:
+        return await _run_singleton_hac_refinement_body(
+            tenant_id=tenant_id,
+            constrained_hac=constrained_hac,
+            hac_settings=hac_settings,
+            assignment_writer=assignment_writer,
+            merge_suggestion_service=merge_suggestion_service,
+            clustering_logger=clustering_logger,
+        )
+    finally:
+        from recognition.application.orchestration.clustering.recovery_merge import run_recovery_merge
+
+        await run_recovery_merge(
+            tenant_id=tenant_id,
+            assignment_writer=assignment_writer,
+            merge_suggestion_service=merge_suggestion_service,
+        )

@@ -38,6 +38,7 @@ const WORKBENCH_SCAN_ROUTE = toWorkbench({ tab: 'scan' });
 
 /** URL key for directory text search — same short `s` convention as workbench. */
 const SEARCH_PARAM = 's';
+const NAMED_PEOPLE_HEADING_ID = 'acx-roster-named-title';
 
 /** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
 export const SEARCH_STATUS_DEBOUNCE_MS = 300;
@@ -363,7 +364,11 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   );
 
   return (
-    <div className="acx-roster-section" data-testid="roster-entries-section">
+    <section
+      className="acx-roster-section"
+      data-testid="roster-entries-section"
+      aria-labelledby={NAMED_PEOPLE_HEADING_ID}
+    >
       {mergeSessions.map((session) => (
         <PersonMergeFlow
           key={session.id}
@@ -374,7 +379,13 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       ))}
       <header className="acx-roster-section__header">
         <div className="acx-roster-section__title-group">
-          <h2>{__('People', 'alt-context')}</h2>
+          <h2 id={NAMED_PEOPLE_HEADING_ID}>
+            {sprintf(
+              /* translators: %d: count of people currently listed (after search and queue filters) */
+              __('Named people (%d)', 'alt-context'),
+              visibleEntries.length,
+            )}
+          </h2>
           {activeFilterBadge && (
             <span className="acx-roster-section__filter-badge" data-testid="roster-filter-badge">
               <Filter size={12} aria-hidden="true" data-testid="roster-filter-badge-icon" />
@@ -555,7 +566,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
             }}
           />
         ))}
-    </div>
+    </section>
   );
 };
 

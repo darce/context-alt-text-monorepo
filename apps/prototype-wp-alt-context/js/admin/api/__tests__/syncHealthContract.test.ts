@@ -13,7 +13,13 @@ describe('sync health response contract', () => {
     expect(Object.keys(fixture).sort()).toEqual([...SYNC_HEALTH_KEYS].sort());
     expect(fixture.replays.source).toBe('unavailable_local');
     expect(fixture.breaker.state).toBe('closed');
-    expect(fixture.outbox).toEqual({ pending: 5, failed: 2 });
+    expect(fixture.outbox).toEqual({
+      state: 'ok',
+      pending: 5,
+      failed: 2,
+      dead_lettered: 1,
+      oldest_age_seconds: 7200,
+    });
     expect(fixture.conflicts).toEqual({ open: 3 });
     expect(fixture.last_pull).toEqual({ at: '2026-06-11 12:00:00', ok: true });
     expect(fixture.warnings).toEqual([]);

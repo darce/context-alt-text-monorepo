@@ -63,7 +63,16 @@ Timeout expectations:
       "suggested_label": null,
       "suggested_label_source": null,
       "suggested_label_confidence": null,
-      "suggested_target_cluster_id": null
+      "suggested_target_cluster_id": null,
+      "representative_quality": 0.82,
+      "quality_components": {
+        "confidence": 0.94,
+        "bbox_area": 7680,
+        "sharpness": 42.5,
+        "occlusion_severity": 0.12
+      },
+      "representative_media_id": 101,
+      "undoable_merge_receipt_id": null
     }
   ],
   "members": [

@@ -206,15 +206,24 @@ def merge_identities(
         PositionalFallbackRealizer,
     )
 
+    def _status_for_skip_reason(reason: Any) -> Any:
+        # C4 / OBS-08: a more specific skip must not collapse into NO_FACES.
+        # AGREEMENT_DISABLED is the one skip whose status name differs (DISABLED).
+        if reason is NamingSkipReason.AGREEMENT_DISABLED:
+            return NamingStatus.DISABLED
+        member = NamingStatus.__members__.get(getattr(reason, "name", ""))
+        if member is not None:
+            return member
+        return reason
+
     def _generic(reason: Any) -> MergeResult:
         if policy is None:
             provenance = None
         else:
-            status = NamingStatus.DISABLED if reason is NamingSkipReason.AGREEMENT_DISABLED else NamingStatus.NO_FACES
             provenance = NamingProvenance(
                 naming_allowed=False,
                 reason=reason,
-                status=status,
+                status=_status_for_skip_reason(reason),
                 realizer=None,
                 names_applied=(),
             )
@@ -282,9 +291,7 @@ def merge_identities(
                 mode=mode,
                 status=NamingStatus.APPLIED,
                 realizer=(
-                    NamingRealizer.GROUNDED
-                    if mode is NamingMode.GROUNDED
-                    else NamingRealizer.POSITIONAL_FALLBACK
+                    NamingRealizer.GROUNDED if mode is NamingMode.GROUNDED else NamingRealizer.POSITIONAL_FALLBACK
                 ),
                 names_applied=tuple(f.label for f in named_faces),
             )
@@ -292,7 +299,7 @@ def merge_identities(
             provenance = NamingProvenance(
                 naming_allowed=False,
                 reason=NamingSkipReason.AMBIGUOUS_GROUNDING,
-                status=NamingStatus.NO_FACES,
+                status=_status_for_skip_reason(NamingSkipReason.AMBIGUOUS_GROUNDING),
                 realizer=None,
                 names_applied=(),
             )

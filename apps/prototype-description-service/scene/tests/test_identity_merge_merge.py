@@ -9,6 +9,9 @@ import pytest
 from scene.application.identity_merge import (
     ConfirmedFace,
     MergeResult,
+    NamingPolicy,
+    NamingSkipReason,
+    NamingStatus,
     NormalizedBox,
     PhraseBox,
     containment_match,
@@ -100,3 +103,86 @@ class TestMergeIdentitiesSkeleton:
         assert result.associations == ()
         assert result.named_draft == caption
         assert result.generic_draft == caption
+
+
+def _enabled_policy(*, suppressed_roster_ids: frozenset = frozenset()) -> NamingPolicy:
+    return NamingPolicy(agreement_enabled=True, suppressed_roster_ids=suppressed_roster_ids)
+
+
+class TestNamingSkipStatusDistinctFromNoFaces:
+    """C4: skip reasons keep their own status wire values; they do not collapse to no_faces."""
+
+    def test_no_confirmed_identities_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.NO_CONFIRMED_IDENTITIES
+        assert result.provenance.status is not NamingStatus.NO_FACES
+        assert result.provenance.status.value == NamingSkipReason.NO_CONFIRMED_IDENTITIES.value
+        assert result.provenance.status.name == "NO_CONFIRMED_IDENTITIES"
+
+    def test_no_eligible_identities_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=_enabled_policy(suppressed_roster_ids=frozenset({face.roster_id})),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.NO_ELIGIBLE_IDENTITIES
+        assert result.provenance.status is not NamingStatus.NO_FACES
+        assert result.provenance.status.value == NamingSkipReason.NO_ELIGIBLE_IDENTITIES.value
+        assert result.provenance.status.name == "NO_ELIGIBLE_IDENTITIES"
+
+    def test_ambiguous_grounding_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.8))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[
+                _face("Daniel", NormalizedBox(x=0.35, y=0.2, width=0.04, height=0.06)),
+                _face("Sarah", NormalizedBox(x=0.5, y=0.2, width=0.04, height=0.06)),
+            ],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert result.provenance.status is not NamingStatus.NO_FACES
+        assert result.provenance.status.value == NamingSkipReason.AMBIGUOUS_GROUNDING.value
+        assert result.provenance.status.name == "AMBIGUOUS_GROUNDING"
+
+    def test_agreement_disabled_status_stays_disabled(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=NamingPolicy(agreement_enabled=False, suppressed_roster_ids=frozenset()),
+        )
+        assert result.provenance.reason is NamingSkipReason.AGREEMENT_DISABLED
+        assert result.provenance.status is NamingStatus.DISABLED
+
+    def test_applied_status_unchanged_when_a_name_is_woven(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft != caption
+        assert result.provenance.reason is None
+        assert result.provenance.status is NamingStatus.APPLIED

@@ -420,9 +420,20 @@ EOF
         return 1
     fi
 
+    if [ "$usable" = false ] && [ "$reason" = "null" ]; then
+        return 1
+    fi
+    if [ "$usable" = true ] && [ "$reason" != "null" ]; then
+        return 1
+    fi
+
     if [ "$kind" = "gpu" ]; then
         [ "$endpoint_configured" = true ] || return 1
         [ "$endpoint_allowlisted" = true ] || return 1
+        if [ "$usable" = true ]; then
+            [ "$endpoint_private" = true ] || return 1
+            [ "$fresh" = true ] || return 1
+        fi
     fi
     return 0
 }

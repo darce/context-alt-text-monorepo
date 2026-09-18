@@ -777,6 +777,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         reps = []
         for model_rep, phash, media_id, emb_model in result:
+            raw_quality_components = model_rep.quality_components
             reps.append(
                 ClusterRepresentative(
                     id=str(model_rep.id),
@@ -786,6 +787,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     created_at=model_rep.created_at,
                     tenant_id=str(model_rep.tenant_id),
                     quality_score=float(model_rep.quality_score),
+                    quality_components=dict(raw_quality_components)
+                    if isinstance(raw_quality_components, dict)
+                    else None,
                     diversity_score=float(model_rep.diversity_score) if model_rep.diversity_score else None,
                     media_id=media_id,
                     image_phash=phash,
@@ -1417,6 +1421,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             identity_id=_coerce_uuid(representative.identity_id),
             embedding=list(representative.embedding),
             quality_score=float(getattr(representative, "quality_score", 1.0)),
+            quality_components=representative.quality_components,
             diversity_score=getattr(representative, "diversity_score", None),
             is_user_selected=getattr(representative, "is_user_selected", False),
             is_provisional=getattr(representative, "is_provisional", False),

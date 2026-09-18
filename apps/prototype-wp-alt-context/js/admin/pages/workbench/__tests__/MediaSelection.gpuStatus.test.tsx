@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as gpuApi from '../../../api/gpuApi';
@@ -216,7 +216,7 @@ const renderSelection = () => {
   );
 };
 
-describe('MediaSelection GPU status wiring [GPUFLOW-2-F6BI-08][GPUFLOW-2-SPAOPERATIONSTORE-R-10]', () => {
+describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
@@ -250,17 +250,21 @@ describe('MediaSelection GPU status wiring [GPUFLOW-2-F6BI-08][GPUFLOW-2-SPAOPER
     cleanup();
   });
 
-  it('mounts the shared GPU status and polls while idle', async () => {
+  it('keeps only the Describe CTA in the library footer and does not poll GPU (C7)', async () => {
     renderSelection();
 
-    const status = await screen.findByRole('status', {
-      name: 'Description Service is off — it starts when you describe',
-    });
-    expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.STOPPED);
-    await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('button', { name: 'Describe selected' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('status', {
+        name: 'Description Service is off — it starts when you describe',
+      }),
+    ).not.toBeInTheDocument();
+    expect(document.querySelector('[data-gpu-state]')).toBeNull();
+    expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 
-  it('keeps terminal summary/review visible without offering cancel or treating GPU as run-pending', async () => {
+  it('does not keep terminal progress/review chrome in the footer', async () => {
     const terminalRun = runResponse({
       status: DESCRIBE_RUN_STATUS.COMPLETED,
       phase: DESCRIBE_RUN_PHASE.COMPLETE,
@@ -276,14 +280,15 @@ describe('MediaSelection GPU status wiring [GPUFLOW-2-F6BI-08][GPUFLOW-2-SPAOPER
 
     renderSelection();
 
-    expect(await screen.findByText('✔ 2 drafts ready to review')).toBeInTheDocument();
-    const reviewLink = screen.getByRole('link', { name: 'Review drafts' });
-    expect(reviewLink).toHaveAttribute('href', '#/description-history?run=run-terminal');
+    expect(await screen.findByRole('button', { name: 'Describe selected' })).toBeInTheDocument();
+    expect(screen.queryByText('✔ 2 drafts ready to review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Review drafts' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
-    await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
+    expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 
-  it('pauses the idle status query while a run is in flight', async () => {
+  it('does not mount GPU/progress status in the footer while a run is in flight', async () => {
     const activeRun = runResponse({
       run_id: 'run-active',
       status: DESCRIBE_RUN_STATUS.RUNNING,
@@ -298,7 +303,10 @@ describe('MediaSelection GPU status wiring [GPUFLOW-2-F6BI-08][GPUFLOW-2-SPAOPER
 
     renderSelection();
 
-    expect(await screen.findByRole('status', { name: 'Description Service is starting…' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Describe selected' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Description Service is starting…' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
+    expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 });

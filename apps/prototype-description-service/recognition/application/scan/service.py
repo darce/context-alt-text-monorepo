@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
@@ -37,6 +40,65 @@ ObjectStoreFactory = Callable[[str], ObjectStore]
 logger = logging.getLogger(__name__)
 
 _DB_SETTINGS = get_database_settings()
+
+_PG_INT32_MIN = -2_147_483_648
+_PG_INT32_MAX = 2_147_483_647
+_IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], asyncio.Lock] = {}
+_IN_PROCESS_PERSIST_LOCKS_GUARD = asyncio.Lock()
+
+
+def _advisory_lock_keys(tenant_uuid: uuid.UUID, media_id: int) -> tuple[int, int]:
+    """Map (tenant, media) to pg_advisory_xact_lock's two int4 keys."""
+    tenant_key = int.from_bytes(hashlib.sha256(tenant_uuid.bytes).digest()[:4], "big", signed=True)
+    media_key = int(media_id)
+    if media_key < _PG_INT32_MIN or media_key > _PG_INT32_MAX:
+        media_key = int.from_bytes(
+            hashlib.sha256(str(media_key).encode("utf-8")).digest()[:4],
+            "big",
+            signed=True,
+        )
+    return tenant_key, media_key
+
+
+def _session_is_postgres(session: AsyncSession) -> bool:
+    bind = session.bind if hasattr(session, "bind") else None
+    if bind is None and hasattr(session, "get_bind") and callable(session.get_bind):
+        try:
+            bind = session.get_bind()
+        except (AttributeError, RuntimeError):
+            return False
+    dialect = getattr(bind, "dialect", None)
+    return getattr(dialect, "name", None) == "postgresql"
+
+
+async def _in_process_persist_lock(tenant_uuid: uuid.UUID, media_id: int) -> asyncio.Lock:
+    key = (str(tenant_uuid), int(media_id))
+    async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        lock = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _IN_PROCESS_PERSIST_LOCKS[key] = lock
+        return lock
+
+
+@asynccontextmanager
+async def _media_persist_lock(
+    session: AsyncSession,
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+) -> AsyncIterator[None]:
+    """Serialize persist per (tenant, media): pg xact lock, else asyncio (RES-13)."""
+    if _session_is_postgres(session):
+        key1, key2 = _advisory_lock_keys(tenant_uuid, media_id)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+            {"k1": key1, "k2": key2},
+        )
+        yield
+        return
+    lock = await _in_process_persist_lock(tenant_uuid, media_id)
+    async with lock:
+        yield
 
 
 class PersistIntegrityError(ValueError):
@@ -419,6 +481,22 @@ class ScanService:
         ``matched`` / ``new`` are re-scan row recycling counts, not assignment or
         unknown labels (those live in clustering / FIR-6).
         """
+        async with _media_persist_lock(self._session, tenant_uuid, media_id):
+            return await self._persist_identities_unlocked(
+                tenant_uuid=tenant_uuid,
+                media_id=media_id,
+                detections=detections,
+                media_url=media_url,
+            )
+
+    async def _persist_identities_unlocked(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        media_id: int,
+        detections: list[FaceDetection],
+        media_url: str | None = None,
+    ) -> ReconcileResult:
         # 1. Fetch existing identities for this media item
         stmt = select(MediaIdentity).where(
             MediaIdentity.tenant_id == tenant_uuid,

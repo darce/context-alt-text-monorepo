@@ -168,10 +168,15 @@ assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate fl
 
 # --- R1-06: classify from warmth-independent readiness evidence ---
 # A cold but correctly configured GPU is admitted so the burst can warm it.
-ready_gpu_cold='gpu_qwen30b|gpu|true|true|null|false|false|null'
 ready_gpu_pending='gpu_qwen30b|gpu|true|true|null|false|false|endpoint_resolution_pending'
-assert_eq "cold trusted GPU remains RUN" RUN \
-    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$ready_gpu_cold")"
+assert_eq "unusable GPU without reason blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|null|false|false|null')"
+assert_eq "usable GPU with fault reason blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|true|true|true|endpoint_not_private')"
+assert_eq "usable GPU without private endpoint blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|null|true|true|null')"
+assert_eq "usable GPU without fresh endpoint blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|true|false|true|null')"
 assert_eq "pending endpoint resolution remains RUN" RUN \
     "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$ready_gpu_pending")"
 for fault_reason in profile_unavailable vlm_dependencies_missing endpoint_unconfigured \

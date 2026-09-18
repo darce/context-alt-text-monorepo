@@ -122,9 +122,9 @@ class TestNamingSkipStatusDistinctFromNoFaces:
         )
         assert result.named_draft == caption
         assert result.provenance.reason is NamingSkipReason.NO_CONFIRMED_IDENTITIES
+        assert result.provenance.status is NamingStatus.NO_CONFIRMED_IDENTITIES
+        assert type(result.provenance.status) is NamingStatus
         assert result.provenance.status is not NamingStatus.NO_FACES
-        assert result.provenance.status.value == NamingSkipReason.NO_CONFIRMED_IDENTITIES.value
-        assert result.provenance.status.name == "NO_CONFIRMED_IDENTITIES"
 
     def test_no_eligible_identities_status_is_the_reason_not_no_faces(self):
         caption = "A man stands by the window."
@@ -138,9 +138,9 @@ class TestNamingSkipStatusDistinctFromNoFaces:
         )
         assert result.named_draft == caption
         assert result.provenance.reason is NamingSkipReason.NO_ELIGIBLE_IDENTITIES
+        assert result.provenance.status is NamingStatus.NO_ELIGIBLE_IDENTITIES
+        assert type(result.provenance.status) is NamingStatus
         assert result.provenance.status is not NamingStatus.NO_FACES
-        assert result.provenance.status.value == NamingSkipReason.NO_ELIGIBLE_IDENTITIES.value
-        assert result.provenance.status.name == "NO_ELIGIBLE_IDENTITIES"
 
     def test_ambiguous_grounding_status_is_the_reason_not_no_faces(self):
         caption = "A man stands by the window."
@@ -156,9 +156,9 @@ class TestNamingSkipStatusDistinctFromNoFaces:
         )
         assert result.named_draft == caption
         assert result.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert result.provenance.status is NamingStatus.AMBIGUOUS_GROUNDING
+        assert type(result.provenance.status) is NamingStatus
         assert result.provenance.status is not NamingStatus.NO_FACES
-        assert result.provenance.status.value == NamingSkipReason.AMBIGUOUS_GROUNDING.value
-        assert result.provenance.status.name == "AMBIGUOUS_GROUNDING"
 
     def test_agreement_disabled_status_stays_disabled(self):
         caption = "A man stands by the window."
@@ -186,3 +186,20 @@ class TestNamingSkipStatusDistinctFromNoFaces:
         assert result.named_draft != caption
         assert result.provenance.reason is None
         assert result.provenance.status is NamingStatus.APPLIED
+
+    def test_http_schema_round_trips_new_skip_statuses(self):
+        from scene.interface_adapters.http.schemas.responses import (
+            NamingProvenance as HttpNamingProvenance,
+        )
+
+        for status in (
+            NamingStatus.NO_CONFIRMED_IDENTITIES,
+            NamingStatus.NO_ELIGIBLE_IDENTITIES,
+            NamingStatus.AMBIGUOUS_GROUNDING,
+        ):
+            model = HttpNamingProvenance(status=status)
+            dumped = model.model_dump()
+            restored = HttpNamingProvenance.model_validate(dumped)
+            assert restored.status is status
+            assert type(restored.status) is NamingStatus
+            assert model.model_dump(mode="json")["status"] == status.value

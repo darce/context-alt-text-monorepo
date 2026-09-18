@@ -18,8 +18,13 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_fill;
+use function array_merge;
+use function array_unique;
+use function array_values;
 use function count;
 use function filter_var;
+use function implode;
 use function is_array;
 use function is_int;
 use function is_numeric;
@@ -35,13 +40,15 @@ use function wp_get_attachment_url;
 
 interface PersonMediaRowsSource {
 	/**
-	 * Paged identity-member rows for one person. Each row must carry
-	 * `total_count` from the query window (rg-015); never derive total from
-	 * PHP `count()`.
+	 * Paged identity-member rows for one person. When $with_person_ids is
+	 * non-empty, only media that also contain all named people are returned.
+	 * Each row must carry `total_count` from the query window (rg-015); never
+	 * derive total from PHP `count()`.
 	 *
+	 * @param array<int,int> $with_person_ids
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_projected_cluster_rows_by_person( string $tenant_id, int $person_id, int $limit, int $offset ): array;
+	public function list_projected_cluster_rows_by_person( string $tenant_id, int $person_id, int $limit, int $offset, array $with_person_ids = array() ): array;
 }
 
 /**
@@ -50,7 +57,7 @@ interface PersonMediaRowsSource {
 final class IdentityMembersPersonMediaReadRepository extends IdentityMembersReadRepository implements PersonMediaRowsSource {
 	use PreparesSqlQueries;
 
-	public function list_projected_cluster_rows_by_person( string $tenant_id, int $person_id, int $limit, int $offset ): array {
+	public function list_projected_cluster_rows_by_person( string $tenant_id, int $person_id, int $limit, int $offset, array $with_person_ids = array() ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -58,22 +65,44 @@ final class IdentityMembersPersonMediaReadRepository extends IdentityMembersRead
 			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: wpdb is unavailable' );
 		}
 
-		$prefix = ( isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) ? $wpdb->prefix : 'wp_';
-		$sql    = $this->prepare_query(
-			'SELECT COUNT(*) OVER() AS total_count, m.identity_uuid, m.attachment_id, m.cluster_uuid, m.bbox_json, m.thumb_path, m.similarity
+		$prefix         = ( isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) ? $wpdb->prefix : 'wp_';
+		$members_table  = $prefix . 'acx_identity_members';
+		$clusters_table = $prefix . 'acx_clusters';
+		$sql_template   = 'SELECT COUNT(*) OVER() AS total_count, m.identity_uuid, m.attachment_id, m.cluster_uuid, m.bbox_json, m.thumb_path, m.similarity
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
-			WHERE c.tenant_id = %s AND c.person_id = %d
-			ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d',
-			array(
-				$prefix . 'acx_identity_members',
-				$prefix . 'acx_clusters',
-				$normalized_tenant_id,
-				$person_id,
-				$limit,
-				$offset,
-			)
+			WHERE c.tenant_id = %s AND c.person_id = %d';
+		$args           = array(
+			$members_table,
+			$clusters_table,
+			$normalized_tenant_id,
+			$person_id,
 		);
+
+		if ( array() !== $with_person_ids ) {
+			$required_ids = array_values( array_unique( array_merge( array( $person_id ), $with_person_ids ) ) );
+			$placeholders = implode( ', ', array_fill( 0, count( $required_ids ), '%d' ) );
+			$sql_template .= ' AND m.attachment_id IN (
+			SELECT mx.attachment_id
+			FROM %i mx
+			INNER JOIN %i cx ON cx.cluster_uuid = mx.cluster_uuid
+			WHERE cx.tenant_id = %s AND cx.person_id IN (' . $placeholders . ')
+			GROUP BY mx.attachment_id
+			HAVING COUNT(DISTINCT cx.person_id) = %d
+		)';
+			$args[]        = $members_table;
+			$args[]        = $clusters_table;
+			$args[]        = $normalized_tenant_id;
+			foreach ( $required_ids as $required_id ) {
+				$args[] = $required_id;
+			}
+			$args[] = count( $required_ids );
+		}
+
+		$sql_template .= ' ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d';
+		$args[]        = $limit;
+		$args[]        = $offset;
+		$sql           = $this->prepare_query( $sql_template, $args );
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			throw new ProjectionQueryException( 'Projection query failed [identity_members.list_projected_cluster_rows_by_person]: wpdb could not prepare query' );
 		}
@@ -97,8 +126,9 @@ final class IdentityMembersPersonMediaReadRepository extends IdentityMembersRead
 class PersonMediaController {
 	use PreparesSqlQueries;
 
-	public const DEFAULT_LIMIT = 50;
-	public const MAX_LIMIT     = 500;
+	public const DEFAULT_LIMIT       = 50;
+	public const MAX_LIMIT           = 500;
+	public const MAX_WITH_PERSON_IDS = 5;
 
 	private PersonMediaRowsSource $members;
 
@@ -125,14 +155,20 @@ class PersonMediaController {
 				'callback'            => array( $this, 'get_media' ),
 				'permission_callback' => $permission,
 				'args'                => array(
-					'limit'  => array(
+					'limit'           => array(
 						'description' => 'Maximum media rows to return.',
 						'type'        => 'integer',
 						'required'    => false,
 					),
-					'offset' => array(
+					'offset'          => array(
 						'description' => 'Number of media rows to skip.',
 						'type'        => 'integer',
+						'required'    => false,
+					),
+					'with_person_ids' => array(
+						'description' => 'Person IDs that must also appear in each returned media item (max 5).',
+						'type'        => 'array',
+						'items'       => array( 'type' => 'integer' ),
 						'required'    => false,
 					),
 				),
@@ -156,6 +192,11 @@ class PersonMediaController {
 			return $offset;
 		}
 
+		$with_person_ids = $this->resolve_with_person_ids( $request );
+		if ( $with_person_ids instanceof WP_Error ) {
+			return $with_person_ids;
+		}
+
 		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
 		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
 			return new WP_Error( 'acx_db_error', 'Tenant identity is unavailable.', array( 'status' => 500 ) );
@@ -171,7 +212,7 @@ class PersonMediaController {
 		}
 
 		try {
-			$rows = $this->members->list_projected_cluster_rows_by_person( $tenant_id, $person_id, $limit, $offset );
+			$rows = $this->members->list_projected_cluster_rows_by_person( $tenant_id, $person_id, $limit, $offset, $with_person_ids );
 		} catch ( ProjectionQueryException ) {
 			return ProjectionQueryException::to_rest_error( 'get_person_media' );
 		}
@@ -238,6 +279,39 @@ class PersonMediaController {
 		}
 
 		return absint( $raw );
+	}
+
+	/**
+	 * @return array<int,int>|WP_Error
+	 */
+	private function resolve_with_person_ids( WP_REST_Request $request ): array|WP_Error {
+		$raw = $request->get_param( 'with_person_ids' );
+		if ( null === $raw || '' === $raw ) {
+			return array();
+		}
+
+		if ( is_int( $raw ) || is_string( $raw ) ) {
+			$raw = array( $raw );
+		}
+
+		if ( ! is_array( $raw ) ) {
+			return new WP_Error( 'invalid_with_person_ids', 'with_person_ids must be an array of positive integers (max 5).', array( 'status' => 400 ) );
+		}
+
+		if ( count( $raw ) > self::MAX_WITH_PERSON_IDS ) {
+			return new WP_Error( 'invalid_with_person_ids', 'with_person_ids must be an array of positive integers (max 5).', array( 'status' => 400 ) );
+		}
+
+		$ids = array();
+		foreach ( $raw as $value ) {
+			if ( ( ! is_int( $value ) && ! is_string( $value ) ) || ! preg_match( '/^[1-9][0-9]*$/D', (string) $value ) || false === filter_var( $value, FILTER_VALIDATE_INT ) ) {
+				return new WP_Error( 'invalid_with_person_ids', 'with_person_ids must be an array of positive integers (max 5).', array( 'status' => 400 ) );
+			}
+
+			$ids[] = (int) $value;
+		}
+
+		return array_values( array_unique( $ids ) );
 	}
 
 	/**

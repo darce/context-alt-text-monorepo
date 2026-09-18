@@ -104,14 +104,9 @@ class RetentionControllerTest extends TestCase
         $controller = new RetentionController();
         $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
 
-        $this->assertSame(
-            [
-                'available' => false,
-                'policy' => null,
-                'recent_audit_events' => [],
-            ],
-            $response->get_data()
-        );
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'upstream_5xx', 'recognition', 503);
+        $this->assertStringNotContainsString('offline', (string) wp_json_encode($response->get_data()));
     }
 
     public function testGetStatusReturnsGracefulFallbackWhenBackendReturnsNonSuccessStatus(): void
@@ -128,14 +123,9 @@ class RetentionControllerTest extends TestCase
         $controller = new RetentionController();
         $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
 
-        $this->assertSame(
-            [
-                'available' => false,
-                'policy' => null,
-                'recent_audit_events' => [],
-            ],
-            $response->get_data()
-        );
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'upstream_5xx', 'recognition', 501);
+        $this->assertStringNotContainsString('not ready', (string) wp_json_encode($response->get_data()));
         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
     }
 
@@ -168,15 +158,134 @@ class RetentionControllerTest extends TestCase
         $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
 
         $this->assertSame(200, $response->get_status());
-        $this->assertSame(
-            [
-                'available' => false,
-                'policy' => null,
-                'recent_audit_events' => [],
-            ],
-            $response->get_data()
+        $this->assertTypedUnavailable($response->get_data(), 'upstream_5xx', 'recognition', 503);
+        $this->assertStringNotContainsString(
+            'Description service is unavailable.',
+            (string) wp_json_encode($response->get_data())
         );
         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
+    }
+
+    public function testGetStatusUnavailableWhenRecognitionNotConfigured(): void
+    {
+        $this->setOption('acx_recognition_url', '');
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'not_configured', 'recognition', 500);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testGetStatusUnavailableWhenApiKeyMissing(): void
+    {
+        $this->setOption('acx_recognition_api_key', '');
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'api_key_missing', 'recognition', 500);
+        $this->assertSame([], $this->getHttpCalls());
+        $this->assertStringNotContainsString('test-key', (string) wp_json_encode($response->get_data()));
+    }
+
+    public function testGetStatusUnavailableWhenCircuitOpen(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1';
+
+        $failure = [
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => json_encode(['detail' => 'boom-secret-detail']),
+        ];
+        $this->queueHttpResponse($failure);
+        $this->queueHttpResponse($failure);
+
+        $controller = new RetentionController();
+        $first = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+        $this->assertTypedUnavailable($first->get_data(), 'upstream_5xx', 'recognition', 500);
+        $this->assertStringNotContainsString('boom-secret-detail', (string) wp_json_encode($first->get_data()));
+
+        $second = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+        $this->assertSame(200, $second->get_status());
+        $this->assertTypedUnavailable($second->get_data(), 'circuit_open', 'recognition', 503);
+        $this->assertCount(2, $this->getHttpCalls());
+    }
+
+    public function testGetStatusUnavailableMapsTimeout(): void
+    {
+        $timeout = new WP_Error(
+            'http_request_failed',
+            'cURL error 28: Operation timed out after 2000 milliseconds'
+        );
+        $this->queueHttpResponse($timeout);
+        $this->queueHttpResponse($timeout);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'timeout', 'recognition', null);
+        $this->assertStringNotContainsString('cURL error 28', (string) wp_json_encode($response->get_data()));
+    }
+
+    public function testGetStatusUnavailableMapsUpstream4xx(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'no such tenant secret']),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'upstream_4xx', 'recognition', 404);
+        $this->assertStringNotContainsString('no such tenant secret', (string) wp_json_encode($response->get_data()));
+    }
+
+    public function testGetStatusUnavailableMapsContractMismatch(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['unexpected' => true]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'contract_mismatch', 'recognition', 200);
+    }
+
+    public function testGetStatusUnavailableSourcesRetryAfterFromProxyHeader(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '30'],
+            'body' => json_encode(['detail' => 'overloaded-secret']),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'upstream_5xx', 'recognition', 503, 30);
+        $this->assertStringNotContainsString('overloaded-secret', (string) wp_json_encode($response->get_data()));
     }
 
     public function testDescribeBreakerDoesNotBlankRetentionStatus(): void
@@ -589,6 +698,39 @@ class RetentionControllerTest extends TestCase
         $controller->apply_preset($request);
 
         $this->assertFalse(isset($GLOBALS['__ac_transients']['acx_retention_status_' . $tenantId]));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function assertTypedUnavailable(
+        array $payload,
+        string $reason,
+        string $service,
+        ?int $httpStatus,
+        ?int $retryAfter = null
+    ): array {
+        $this->assertFalse($payload['available']);
+        $this->assertNull($payload['policy']);
+        $this->assertSame([], $payload['recent_audit_events']);
+        $this->assertArrayHasKey('unavailable', $payload);
+        $unavailable = $payload['unavailable'];
+        $this->assertIsArray($unavailable);
+        $this->assertSame(
+            ['reason', 'service', 'http_status', 'retry_after_seconds', 'checked_at'],
+            array_keys($unavailable)
+        );
+        $this->assertSame($reason, $unavailable['reason']);
+        $this->assertSame($service, $unavailable['service']);
+        $this->assertSame($httpStatus, $unavailable['http_status']);
+        $this->assertSame($retryAfter, $unavailable['retry_after_seconds']);
+        $this->assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/',
+            $unavailable['checked_at']
+        );
+
+        return $unavailable;
     }
 }
 

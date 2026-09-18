@@ -705,6 +705,13 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
     sentinel = 123456789
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", sentinel)
 
-    importlib.reload(gpu_remote_adapter)
+    # Reload rebinds every class in the module namespace; callers that imported
+    # GpuRemoteAdapterError by value (the describe router) would stop matching it.
+    snapshot = dict(vars(gpu_remote_adapter))
+    try:
+        importlib.reload(gpu_remote_adapter)
 
-    assert sentinel == Image.MAX_IMAGE_PIXELS
+        assert sentinel == Image.MAX_IMAGE_PIXELS
+    finally:
+        vars(gpu_remote_adapter).clear()
+        vars(gpu_remote_adapter).update(snapshot)

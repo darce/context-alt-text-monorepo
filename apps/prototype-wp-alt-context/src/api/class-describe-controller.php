@@ -59,6 +59,8 @@ use function strtolower;
 use function time;
 use function update_option;
 use function wp_check_filetype;
+use function wp_get_attachment_image_src;
+use function wp_get_attachment_image_srcset;
 use function wp_json_encode;
 
 use const PATHINFO_EXTENSION;
@@ -509,6 +511,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 	 * status), then annotates each item with `existing_alt` — a WP-side post-meta
 	 * fact the backend cannot know — so the History UI can bucket drafts safe to
 	 * auto-apply (no existing alt) from those that would clobber operator text.
+	 *
+	 * GPUFLOW-3 C5: each item also receives `thumbnail_url` and
+	 * `thumbnail_srcset` from WP attachment image helpers so a draft can sit
+	 * beside its image. Missing attachments yield nulls, never a fabricated URL.
 	 */
 	public function get_describe_run_items( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$run_id = $this->normalize_run_id( $request );
@@ -566,6 +572,24 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 				// unexpected and must not trigger array-to-string notices.
 				$existing_alt = is_string( $alt_raw ) ? trim( $alt_raw ) : '';
 				$item['existing_alt'] = '' !== $existing_alt;
+
+				// C5: WP thumbnails so a draft can sit beside its image.
+				// Missing attachment => nulls; never invent a URL (rg-015).
+				$item['thumbnail_url']    = null;
+				$item['thumbnail_srcset'] = null;
+				if ( $media_id > 0 ) {
+					$src = wp_get_attachment_image_src( $media_id, 'medium' );
+					if ( is_array( $src ) && isset( $src[0] ) && is_string( $src[0] ) && '' !== $src[0] ) {
+						$item['thumbnail_url'] = $src[0];
+						if ( function_exists( 'wp_get_attachment_image_srcset' ) ) {
+							$srcset = wp_get_attachment_image_srcset( $media_id, 'medium' );
+							if ( is_string( $srcset ) && '' !== $srcset ) {
+								$item['thumbnail_srcset'] = $srcset;
+							}
+						}
+					}
+				}
+
 				$data['items'][ $index ] = $item;
 			}
 			$response->set_data( $data );

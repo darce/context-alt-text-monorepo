@@ -22,6 +22,7 @@ from recognition.application.persistence.representative_selector import (
     _select_diverse_representatives,
     enrollment_floors_from_settings,
     passes_enrollment_floors,
+    representative_quality_components,
 )
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
@@ -245,6 +246,7 @@ class AssignmentWriter:
             created_at=datetime.now(tz=UTC),
             tenant_id=identity.tenant_id,
             quality_score=quality,
+            quality_components=representative_quality_components(identity, self._settings),
             image_phash=identity.image_phash,
             pose_pitch=identity.pose_pitch,
             pose_yaw=identity.pose_yaw,

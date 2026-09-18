@@ -1417,6 +1417,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             identity_id=_coerce_uuid(representative.identity_id),
             embedding=list(representative.embedding),
             quality_score=float(getattr(representative, "quality_score", 1.0)),
+            quality_components=representative.quality_components,
             diversity_score=getattr(representative, "diversity_score", None),
             is_user_selected=getattr(representative, "is_user_selected", False),
             is_provisional=getattr(representative, "is_provisional", False),

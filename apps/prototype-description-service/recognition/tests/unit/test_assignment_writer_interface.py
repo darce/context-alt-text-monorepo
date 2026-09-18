@@ -8,6 +8,7 @@ import pytest
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.persistence.assignment_writer import AssignmentWriter, ClusterNotFoundError
+from recognition.application.persistence.representative_selector import representative_quality_components
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -214,6 +215,36 @@ def _make_accept_decision(identity_id: str = "id-1", cluster_id: str = "cluster-
         checks_passed=[],
         checks_failed=[],
     )
+
+
+@pytest.mark.asyncio
+async def test_create_representative_passes_quality_components_to_repository() -> None:
+    settings = ClusteringSettings()
+    cluster_repo = NullClusterRepository()
+    writer = AssignmentWriter(settings, cluster_repo, NullMemberRepo())
+    identity = _make_identity()
+
+    representative = await writer._create_and_add_representative(
+        cluster_id="cluster-1",
+        identity=identity,
+        reason="test",
+        enforce_enrollment_floors=False,
+    )
+
+    assert representative is not None
+    expected_components = representative_quality_components(identity, settings)
+    assert representative.quality_components is not None
+    assert set(representative.quality_components) == {
+        "confidence",
+        "bbox_area",
+        "sharpness",
+        "occlusion_severity",
+    }
+    assert representative.quality_components == expected_components
+
+    persisted = await cluster_repo.get_all_representatives("cluster-1")
+    assert len(persisted) == 1
+    assert persisted[0].quality_components == expected_components
 
 
 @pytest.mark.asyncio

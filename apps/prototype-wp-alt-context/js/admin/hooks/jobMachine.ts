@@ -80,8 +80,22 @@ export const isLiveJobStatus = (value: unknown): value is LiveJobStatus =>
 export const isTerminalJobStatus = (status: JobStatus): status is TerminalJobStatus =>
   (TERMINAL_JOB_STATUSES as readonly string[]).includes(status);
 
-/** The single stall clock for the whole tree (REF-21, FEBT-1-W1-M-08). */
+/** The single stall clock for the processing phase (REF-21, FEBT-1-W1-M-08, G3). */
 export const JOB_MACHINE_STALL_THRESHOLD_MS = 30_000;
+
+/**
+ * Stall-clock phases for `stallThresholdMs`. Callers pass `warming` when the run
+ * is warming or GPU state is not ready; `processing` is describing/scanning.
+ */
+export const STALL_PHASE = {
+  WARMING: 'warming',
+  PROCESSING: 'processing',
+} as const;
+
+export type StallPhase = (typeof STALL_PHASE)[keyof typeof STALL_PHASE];
+
+/** Server startup-budget fallback when the run payload omits a usable value. */
+export const DEFAULT_STARTUP_BUDGET_SECONDS = 510;
 
 /**
  * Max *real* transport reconnect attempts before the job is declared failed (RES-06).
@@ -169,6 +183,35 @@ export const isTerminalJobState = (s: JobMachineState): boolean => isTerminalJob
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled job-machine value: ${JSON.stringify(value)}`);
+};
+
+const resolveStartupBudgetSeconds = (startupBudgetSeconds: number | null | undefined): number => {
+  if (
+    typeof startupBudgetSeconds === 'number' &&
+    Number.isFinite(startupBudgetSeconds) &&
+    startupBudgetSeconds > 0
+  ) {
+    return startupBudgetSeconds;
+  }
+  return DEFAULT_STARTUP_BUDGET_SECONDS;
+};
+
+/**
+ * Processing stays on the 30s clock. Warming / GPU-not-ready follows the server
+ * startup budget so a cold start is not presented as a stall (PERC-03, INT-08).
+ */
+export const stallThresholdMs = (
+  phase: StallPhase,
+  startupBudgetSeconds?: number | null,
+): number => {
+  switch (phase) {
+    case STALL_PHASE.WARMING:
+      return resolveStartupBudgetSeconds(startupBudgetSeconds) * 1000;
+    case STALL_PHASE.PROCESSING:
+      return JOB_MACHINE_STALL_THRESHOLD_MS;
+    default:
+      return assertNever(phase);
+  }
 };
 
 /**
@@ -263,7 +306,7 @@ const stallIfQuiet = (
     return { ...state, lastEventAt: event.now, lastTickAt: event.now };
   }
 
-  if (quietMs < JOB_MACHINE_STALL_THRESHOLD_MS || state.status === JOB_STATUS.STALLED) {
+  if (quietMs < stallThresholdMs(STALL_PHASE.PROCESSING) || state.status === JOB_STATUS.STALLED) {
     return state.lastTickAt === event.now ? state : { ...state, lastTickAt: event.now };
   }
   return { ...state, status: JOB_STATUS.STALLED, lastTickAt: event.now };

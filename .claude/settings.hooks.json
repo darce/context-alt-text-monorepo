@@ -42,6 +42,16 @@
         ]
       },
       {
+        "matcher": "Bash|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/hooks/_launch_python.sh\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/_run_guard.py\" --fail-mode=closed --policy-aware \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-codemap-first.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {

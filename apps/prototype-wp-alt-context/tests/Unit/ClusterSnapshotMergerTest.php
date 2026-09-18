@@ -577,15 +577,333 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertSame(25, $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
     }
 
-    public function testPrepareSnapshotMergeDeletesStaleNonCuratedRows(): void
+    public function testPrepareSnapshotMergeDoesNotTombstoneWithoutCompleteness(): void
     {
-        $this->merger->prepare_snapshot_merge_for_tenant('tenant-prune', ['cluster-keep']);
+        $this->seedTombstoneProjection('tenant-prune');
+
+        $result = $this->merger->prepare_snapshot_merge_for_tenant('tenant-prune', ['cluster-keep']);
 
         global $wpdb;
-        $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
-        $this->assertStringContainsString('DELETE FROM `wp_acx_clusters`', $query);
-        $this->assertStringContainsString('is_user_confirmed = 0', $query);
-        $this->assertStringContainsString('cluster_uuid NOT IN', $query);
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 0,
+                'tombstoned_members' => 0,
+            ),
+            $result
+        );
+        $this->assertCount(3, $this->clusterIdsForTenant('tenant-prune'));
+        $this->assertCount(3, $wpdb->tableRows['wp_acx_identity_members']);
+        $this->assertSame(
+            array(),
+            array_values(
+                array_filter(
+                    $wpdb->queries,
+                    static fn(string $query): bool => str_starts_with($query, 'DELETE FROM wp_acx_')
+                )
+            )
+        );
+    }
+
+    public function testFullSnapshotTombsAbsentClustersAndMembersLeavingOne(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-tombstone',
+            array(
+                array(
+                    'cluster_uuid' => 'cluster-keep',
+                    'label' => 'Keep',
+                    'identity_count' => 1,
+                ),
+            ),
+            21,
+            true
+        );
+
+        global $wpdb;
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 2,
+                'tombstoned_members' => 2,
+            ),
+            $result
+        );
+        $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
+        $this->assertSame(
+            array('cluster-other-tenant'),
+            $this->clusterIdsForTenant('other-tenant')
+        );
+        $this->assertSame(
+            array('id-keep'),
+            array_values(
+                array_map(
+                    static fn(array $row): string => (string) $row['identity_uuid'],
+                    $wpdb->tableRows['wp_acx_identity_members']
+                )
+            )
+        );
+        $this->assertContains(9, $this->personIds());
+        $this->assertSame('Operator Name', $this->personName(9));
+        $this->assertSame(
+            array(),
+            $this->queriesStartingWith('DELETE FROM wp_acx_persons')
+        );
+        $this->assertSame(
+            array('version_conflict:cluster-keep'),
+            $this->conflictKeys()
+        );
+    }
+
+    public function testPartialSnapshotDoesNotTombstone(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-tombstone',
+            array(
+                'clusters' => array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                'has_more' => true,
+            ),
+            21
+        );
+
+        global $wpdb;
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 0,
+                'tombstoned_members' => 0,
+            ),
+            $result
+        );
+        $this->assertSame(
+            array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+            $this->clusterIdsForTenant('tenant-tombstone')
+        );
+        $this->assertCount(3, $wpdb->tableRows['wp_acx_identity_members']);
+        $this->assertCount(3, $wpdb->tableRows['wp_acx_sync_conflicts']);
+        $this->assertContains(9, $this->personIds());
+        $this->assertSame(
+            array(),
+            $this->queriesStartingWith('DELETE FROM wp_acx_persons')
+        );
+    }
+
+    public function testUndeclaredCompletenessDoesNotTombstone(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-tombstone',
+            array(
+                array(
+                    'cluster_uuid' => 'cluster-keep',
+                    'label' => 'Keep',
+                    'identity_count' => 1,
+                ),
+            ),
+            21
+        );
+
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 0,
+                'tombstoned_members' => 0,
+            ),
+            $result
+        );
+        $this->assertSame(
+            array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+            $this->clusterIdsForTenant('tenant-tombstone')
+        );
+    }
+
+    public function testCompleteEnvelopeTombsAndDropsClusterNotFoundConflicts(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-tombstone',
+            array(
+                'clusters' => array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                'is_complete' => true,
+            ),
+            21
+        );
+
+        $this->assertSame(2, $result['tombstoned_clusters']);
+        $this->assertSame(2, $result['tombstoned_members']);
+        $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
+        $this->assertSame(array('version_conflict:cluster-keep'), $this->conflictKeys());
+    }
+
+    /**
+     * @return int[]
+     */
+    private function personIds(): array
+    {
+        global $wpdb;
+
+        $ids = array();
+        foreach ($wpdb->tableRows['wp_acx_persons'] ?? array() as $row) {
+            $ids[] = (int) $row['id'];
+        }
+
+        return $ids;
+    }
+
+    private function personName(int $personId): ?string
+    {
+        global $wpdb;
+
+        foreach ($wpdb->tableRows['wp_acx_persons'] ?? array() as $row) {
+            if ((int) $row['id'] === $personId) {
+                return (string) $row['name'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function queriesStartingWith(string $prefix): array
+    {
+        global $wpdb;
+
+        return array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_starts_with($query, $prefix)
+            )
+        );
+    }
+
+    /**
+     * @return string[]
+     */
+    private function clusterIdsForTenant(string $tenantId): array
+    {
+        global $wpdb;
+
+        $ids = array();
+        foreach ($wpdb->tableRows['wp_acx_clusters'] ?? array() as $row) {
+            if ((string) ($row['tenant_id'] ?? '') !== $tenantId) {
+                continue;
+            }
+            $ids[] = (string) $row['cluster_uuid'];
+        }
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function conflictKeys(): array
+    {
+        global $wpdb;
+
+        $keys = array_map(
+            static fn(array $row): string => (string) $row['conflict_code'] . ':' . (string) $row['entity_key'],
+            $wpdb->tableRows['wp_acx_sync_conflicts'] ?? array()
+        );
+        sort($keys);
+
+        return $keys;
+    }
+
+    private function seedTombstoneProjection(string $tenant): void
+    {
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = array(
+            array(
+                'cluster_uuid' => 'cluster-keep',
+                'tenant_id' => $tenant,
+                'label' => 'Keep',
+                'is_user_confirmed' => 0,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-stale-a',
+                'tenant_id' => $tenant,
+                'label' => 'Stale A',
+                'is_user_confirmed' => 0,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-stale-b',
+                'tenant_id' => $tenant,
+                'label' => 'Operator Name',
+                'is_user_confirmed' => 1,
+                'person_id' => 9,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-other-tenant',
+                'tenant_id' => 'other-tenant',
+                'label' => 'Other',
+                'is_user_confirmed' => 0,
+            ),
+        );
+        $wpdb->tableRows['wp_acx_identity_members'] = array(
+            array(
+                'identity_uuid' => 'id-keep',
+                'cluster_uuid' => 'cluster-keep',
+            ),
+            array(
+                'identity_uuid' => 'id-stale-a',
+                'cluster_uuid' => 'cluster-stale-a',
+            ),
+            array(
+                'identity_uuid' => 'id-stale-b',
+                'cluster_uuid' => 'cluster-stale-b',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_persons'] = array(
+            array(
+                'id' => 9,
+                'name' => 'Operator Name',
+                'tenant_id' => $tenant,
+            ),
+        );
+        $wpdb->tableRows['wp_acx_sync_conflicts'] = array(
+            array(
+                'id' => 1,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-stale-a',
+                'conflict_code' => 'cluster_not_found',
+                'resolution_status' => 'open',
+            ),
+            array(
+                'id' => 2,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-keep',
+                'conflict_code' => 'version_conflict',
+                'resolution_status' => 'open',
+            ),
+            array(
+                'id' => 3,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-stale-b',
+                'conflict_code' => 'cluster_not_found',
+                'resolution_status' => 'open',
+            ),
+        );
     }
 }

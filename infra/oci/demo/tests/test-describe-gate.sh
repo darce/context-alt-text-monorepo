@@ -76,10 +76,16 @@ assert_eq "SEEDED 100 0 (case hole)"     BLOCK "$(classify_describe_gate SEEDED 
 # BLOCKs instead of crashing or skipping.
 assert_eq "seeded empty empty (profile first)" BLOCK "$(classify_describe_gate seeded '' '')"
 
-# Trusted adapters + missing alt -> RUN.
-assert_eq "florence_small 100 0"               RUN "$(classify_describe_gate florence_small 100 0)"
-assert_eq "gpu_qwen30b 100 40 (partial)"        RUN "$(classify_describe_gate gpu_qwen30b 100 40)"
-assert_eq "florence_small 100 99 (one missing)" RUN "$(classify_describe_gate florence_small 100 99)"
+# Trusted adapters + missing alt -> RUN when readiness evidence permits use.
+ready_florence='florence_small|local_cpu|false|false|null|false|true|null'
+ready_gpu='gpu_qwen30b|gpu|true|true|true|true|true|null'
+ready_gpu_ensemble='gpu_qwen30b_ensemble|gpu|true|true|true|true|true|null'
+assert_eq "florence_small 100 0" \
+    RUN "$(classify_describe_gate florence_small 100 0 UNKNOWN "$ready_florence")"
+assert_eq "gpu_qwen30b 100 40 (partial)" \
+    RUN "$(classify_describe_gate gpu_qwen30b 100 40 UNKNOWN "$ready_gpu")"
+assert_eq "florence_small 100 99 (one missing)" \
+    RUN "$(classify_describe_gate florence_small 100 99 UNKNOWN "$ready_florence")"
 
 # Idempotent full coverage / no media -> SKIP.
 # Full coverage SKIPs only when provenance is an explicit PASS (R1-04).
@@ -114,14 +120,20 @@ assert_exit "is_trusted small (not suffix)" 1 is_trusted_describe_profile small
 # Predicate and classifier must not drift: trusted -> RUN at 100/0, else BLOCK.
 assert_predicate_matches_classifier() {
     local profile="$1"
-    local expected
+    local expected readiness
     if is_trusted_describe_profile "$profile"; then
         expected=RUN
+        case "$profile" in
+            florence_small) readiness="$ready_florence" ;;
+            gpu_qwen30b) readiness="$ready_gpu" ;;
+            gpu_qwen30b_ensemble) readiness="$ready_gpu_ensemble" ;;
+        esac
     else
         expected=BLOCK
+        readiness=""
     fi
     assert_eq "predicate/classifier agree '${profile}' 100 0" \
-        "$expected" "$(classify_describe_gate "$profile" 100 0)"
+        "$expected" "$(classify_describe_gate "$profile" 100 0 UNKNOWN "$readiness")"
 }
 
 for p in $ACX_TRUSTED_DESCRIBE_PROFILES; do
@@ -139,43 +151,107 @@ assert_predicate_matches_classifier florence_large
 
 # --- R1-04: 4th arg provenance (PASS|FAIL|UNKNOWN) ---
 # Full coverage + canned alts must not SKIP (that freezes the lie).
-assert_eq "florence_small 10 10 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate florence_small 10 10 FAIL)"
-assert_eq "gpu_qwen30b_ensemble 100 100 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 FAIL)"
+assert_eq "florence_small 10 10 FAIL -> RUN_FORCE" RUN_FORCE \
+    "$(classify_describe_gate florence_small 10 10 FAIL "$ready_florence")"
+assert_eq "gpu_qwen30b_ensemble 100 100 FAIL -> RUN_FORCE" RUN_FORCE \
+    "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 FAIL "$ready_gpu_ensemble")"
 assert_eq "florence_small 10 10 UNKNOWN -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 UNKNOWN)"
 assert_eq "florence_small 10 10 omitted provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10)"
 assert_eq "florence_small 10 10 garbage provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 MAYBE)"
 # Partial coverage stays RUN even when published alts are canned (fill missing first).
-assert_eq "florence_small 100 40 FAIL still RUN" RUN "$(classify_describe_gate florence_small 100 40 FAIL)"
-assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN "$(classify_describe_gate florence_small 100 40 UNKNOWN)"
+assert_eq "florence_small 100 40 FAIL still RUN" RUN \
+    "$(classify_describe_gate florence_small 100 40 FAIL "$ready_florence")"
+assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN \
+    "$(classify_describe_gate florence_small 100 40 UNKNOWN "$ready_florence")"
 # No media still SKIP regardless of provenance.
 assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate florence_small 0 0 FAIL)"
 
+# --- R1-06: classify from warmth-independent readiness evidence ---
+# A cold but correctly configured GPU is admitted so the burst can warm it.
+ready_gpu_cold='gpu_qwen30b|gpu|true|true|null|false|false|null'
+ready_gpu_pending='gpu_qwen30b|gpu|true|true|null|false|false|endpoint_resolution_pending'
+assert_eq "cold trusted GPU remains RUN" RUN \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$ready_gpu_cold")"
+assert_eq "pending endpoint resolution remains RUN" RUN \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$ready_gpu_pending")"
+for fault_reason in profile_unavailable vlm_dependencies_missing endpoint_unconfigured \
+    endpoint_invalid_url endpoint_not_allowlisted endpoint_not_private; do
+    fault_readiness="gpu_qwen30b|gpu|true|true|true|true|false|${fault_reason}"
+    assert_eq "configuration fault ${fault_reason} blocks" BLOCK \
+        "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN "$fault_readiness")"
+done
+assert_eq "private endpoint false blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|false|true|false|null')"
+assert_eq "unallowlisted endpoint blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|false|null|false|false|null')"
+assert_eq "unconfigured endpoint blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|false|true|null|false|false|null')"
+assert_eq "profile kind mismatch blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|local_cpu|true|true|null|false|false|null')"
+assert_eq "unknown readiness reason blocks" BLOCK \
+    "$(classify_describe_gate gpu_qwen30b 100 0 UNKNOWN 'gpu_qwen30b|gpu|true|true|null|false|false|new_reason')"
+
 # --- R1-05: probe the live producer JSON, never a disconnected env var ---
-assert_eq "probe 200 quoted adapter" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":"florence_small"}')"
-assert_eq "probe 200 seeded adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","status":"ok"}')"
+valid_readiness='{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639","model_version":"Q4_K_M"}'
+valid_body="{\"status\":\"ok\",\"description_adapter\":${valid_readiness}}"
+assert_eq "probe 200 full descriptionAdapterReadiness object" gpu_qwen30b "$(extract_probed_description_adapter 200 "$valid_body")"
+assert_eq "probe 200 seeded full object adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"status":"ok"}')"
 assert_eq "probe 200 spaced json" gpu_qwen30b "$(extract_probed_description_adapter 200 '{
   "status": "ok",
-  "description_adapter": "gpu_qwen30b"
+  "description_adapter": {
+    "profile": "gpu_qwen30b",
+    "kind": "gpu",
+    "endpoint_configured": true,
+    "endpoint_allowlisted": true,
+    "endpoint_private": true,
+    "checked_at": 1789603200.0,
+    "fresh": true,
+    "usable": true,
+    "reason": null,
+    "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@revision",
+    "model_version": "Q4_K_M"
+  }
 }')"
-assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":"florence_small"}')"
-assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 200 missing top-level status empty" "" "$(extract_probed_description_adapter 200 "{\"description_adapter\":${valid_readiness}}")"
+assert_eq "probe 200 unhealthy top-level status empty" "" "$(extract_probed_description_adapter 200 "{\"status\":\"unhealthy\",\"description_adapter\":${valid_readiness}}")"
+assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
 assert_eq "probe 000 curl-fail empty" "" "$(extract_probed_description_adapter 000 '')"
 assert_eq "probe 200 missing field empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok"}')"
 assert_eq "probe 200 null field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":null}')"
-assert_eq "probe 200 object field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small"}}')"
+assert_eq "probe 200 legacy string field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 200 object missing profile empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object non-string model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":7,"model_version":"v"}}')"
+assert_eq "probe 200 object non-string model_version empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":false}}')"
+assert_eq "probe 200 object missing model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_version":"v"}}')"
+assert_eq "probe 200 object missing model_version empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"m"}}')"
+assert_eq "probe 200 object empty model_id empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"florence_small","model_id":"","model_version":"v"}}')"
+assert_eq "probe 200 trusted null model_id empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":null,"model_version":"v"}}')"
+assert_eq "probe 200 trusted null model_version empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":null}}')"
+assert_eq "probe 200 non-trusted null identity extracts profile" seeded "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":null,"model_version":null}}')"
+assert_eq "probe 200 non-trusted null identity classifies BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":null,"model_version":null}}')" 100 0)"
+assert_eq "probe 200 object missing kind empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object extra key empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v","extra":true}}')"
+assert_eq "probe 200 object string usable empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":"true","reason":null,"model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object boolean checked_at empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":true,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object string endpoint_private empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":"yes","checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 object invalid kind empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"profile":"gpu_qwen30b","kind":"not-a-kind","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 cold gpu degraded full object accepted" gpu_qwen30b "$(extract_probed_description_adapter 200 '{"status":"degraded","description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":false,"reason":"endpoint_resolution_pending","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 200 readiness captures cold GPU evidence" \
+    "$ready_gpu_pending" "$(extract_probed_description_adapter_readiness gpu_qwen30b)"
 assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
 assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
-assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":"florence_small"}')"
-assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
+assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}')"
 assert_eq "probe 200 boolean field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":true}')"
-assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":"florence_small"}]')"
+assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}]')"
 assert_eq "probe 200 HTML page empty" "" "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')"
 assert_eq "probe 200 HTML page classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')" 100 0)"
-assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')"
-assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')" 100 0)"
-assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')"
+assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":{"profile":"seeded","kind":"seeded","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"seeded-model","model_version":"1"},"meta":{"description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}}')" 100 0)"
+assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":{"profile":"florence_small","model_id":"m","model_version":"v"}}}')"
 assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
-assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":"florence_small"}')"
+assert_eq "probe 200 genuine health-like payload" gpu_qwen30b "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":{"profile":"gpu_qwen30b","kind":"gpu","endpoint_configured":true,"endpoint_allowlisted":true,"endpoint_private":true,"checked_at":1789603200.0,"fresh":true,"usable":true,"reason":null,"model_id":"m","model_version":"v"}}')"
 
 # --- R2-07: claimed WP adapter vs independently probed producer ---
 # classify_claimed_adapter_matches_probe <probed> <claimed_blob>
@@ -448,7 +524,7 @@ assert_eq "block cause: a glob profile does not expand against cwd" \
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
 health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"
 assert_file_grep "service /health/detailed payload includes description_adapter" \
-    "$health_file" '"description_adapter": description_adapter'
+    "$health_file" '"description_adapter": await _description_adapter_readiness()'
 assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
 assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'
 assert_file_not_grep "bootstrap does not env_get ACX_DESCRIPTION_ADAPTER" "$bootstrap_file" 'env_get ACX_DESCRIPTION_ADAPTER'

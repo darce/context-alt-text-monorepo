@@ -104,6 +104,14 @@ def _patch_getaddrinfo(monkeypatch: pytest.MonkeyPatch, impl: Any) -> None:
     monkeypatch.setattr("api.main.socket.getaddrinfo", impl)
 
 
+def test_invalid_description_adapter_fails_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.main import create_app
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "not-a-description-profile")
+    with pytest.raises(ValueError, match=r"ACX_DESCRIPTION_ADAPTER.*seeded.*florence_small"):
+        create_app()
+
+
 @pytest.fixture(autouse=True)
 def _reset_privacy_cache() -> None:
     from api import main as main_module

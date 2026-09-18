@@ -923,7 +923,7 @@ body=""
 while (( $# > 0 )); do
     if [[ "$1" == "-o" ]]; then body="$2"; shift 2; else shift; fi
 done
-printf '%s' '{"description_adapter":"florence_small"}' >"$body"
+printf '%s' '{"status":"ok","description_adapter":{"profile":"florence_small","kind":"local_cpu","endpoint_configured":false,"endpoint_allowlisted":false,"endpoint_private":null,"checked_at":null,"fresh":false,"usable":true,"reason":null,"model_id":"microsoft/Florence-2-base-ft","model_version":"florence-2-base-ft"}}' >"$body"
 printf '200'
 EOF
 chmod 700 "$burst_root/bin/docker" "$burst_root/bin/curl"

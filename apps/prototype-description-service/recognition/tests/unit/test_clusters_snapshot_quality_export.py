@@ -379,6 +379,108 @@ def test_export_uses_pinned_representative_not_highest_quality_score() -> None:
     assert payload["is_pinned"] is True
 
 
+def test_export_uses_highest_quality_representative_not_lexicographically_first() -> None:
+    lower_identity = _identity(media_id=101, identity_id=UUID("11111111-1111-1111-1111-111111111111"))
+    higher_identity = _identity(media_id=202, identity_id=UUID("22222222-2222-2222-2222-222222222222"))
+    lower = _representative(
+        representative_id=UUID("00000000-0000-0000-0000-000000000001"),
+        identity_id=lower_identity.id,
+        quality_score=0.2,
+    )
+    higher = _representative(
+        representative_id=UUID("00000000-0000-0000-0000-000000000002"),
+        identity_id=higher_identity.id,
+        quality_score=0.9,
+    )
+
+    payload = _dump(
+        _domain_cluster(
+            representatives=[lower, higher],
+            identities=[lower_identity, higher_identity],
+        )
+    )
+
+    assert payload["representative_id"] == str(higher_identity.id)
+    assert payload["representative_thumb_path"] == f"acx://cluster/{CLUSTER_ID}/media/202"
+    assert payload["representative_media_id"] == 202
+    assert payload["representative_quality"] == 0.9
+
+
+def test_export_prefers_measured_quality_components_over_defaulted_score() -> None:
+    default_identity = _identity(media_id=303, identity_id=UUID("33333333-3333-3333-3333-333333333333"))
+    measured_identity = _identity(media_id=404, identity_id=UUID("44444444-4444-4444-4444-444444444444"))
+    defaulted = _representative(
+        representative_id=UUID("00000000-0000-0000-0000-000000000003"),
+        identity_id=default_identity.id,
+        quality_score=1.0,
+        quality_components={},
+    )
+    measured = _representative(
+        representative_id=UUID("00000000-0000-0000-0000-000000000004"),
+        identity_id=measured_identity.id,
+        quality_score=0.4,
+    )
+    cluster = _domain_cluster(
+        representatives=[defaulted, measured],
+        identities=[default_identity, measured_identity],
+    )
+    defaulted_domain, measured_domain = cluster.representatives
+    cluster.representatives = [
+        replace(defaulted_domain, quality_score=1.0, quality_components=None),
+        measured_domain,
+    ]
+
+    payload = _dump(cluster)
+
+    assert payload["representative_id"] == str(measured_identity.id)
+    assert payload["representative_media_id"] == 404
+    assert payload["representative_quality"] == 0.4
+
+
+def test_export_breaks_equal_quality_scores_by_representative_id() -> None:
+    lower_rep_id = UUID("00000000-0000-0000-0000-000000000005")
+    higher_rep_id = UUID("00000000-0000-0000-0000-000000000006")
+    lower_identity = _identity(media_id=505, identity_id=UUID("55555555-5555-5555-5555-555555555555"))
+    higher_identity = _identity(media_id=606, identity_id=UUID("66666666-6666-6666-6666-666666666666"))
+
+    for representatives, identities in (
+        (
+            [
+                _representative(
+                    representative_id=higher_rep_id,
+                    identity_id=higher_identity.id,
+                    quality_score=0.7,
+                ),
+                _representative(
+                    representative_id=lower_rep_id,
+                    identity_id=lower_identity.id,
+                    quality_score=0.7,
+                ),
+            ],
+            [higher_identity, lower_identity],
+        ),
+        (
+            [
+                _representative(
+                    representative_id=lower_rep_id,
+                    identity_id=lower_identity.id,
+                    quality_score=0.7,
+                ),
+                _representative(
+                    representative_id=higher_rep_id,
+                    identity_id=higher_identity.id,
+                    quality_score=0.7,
+                ),
+            ],
+            [lower_identity, higher_identity],
+        ),
+    ):
+        payload = _dump(_domain_cluster(representatives=representatives, identities=identities))
+
+        assert payload["representative_id"] == str(lower_identity.id)
+        assert payload["representative_media_id"] == 505
+
+
 def test_undoable_receipt_is_highest_sequence_unreverted_unexpired() -> None:
     expired = _receipt(
         receipt_id=uuid4(),

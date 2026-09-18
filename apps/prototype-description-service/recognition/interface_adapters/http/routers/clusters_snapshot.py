@@ -161,8 +161,15 @@ def _select_snapshot_representative(cluster: IdentityCluster) -> ClusterRepresen
     representatives = cluster.representatives
     if not representatives:
         return None
-    reps = sorted(representatives, key=lambda r: str(r.id))
-    return next((candidate for candidate in reps if candidate.is_user_selected), reps[0])
+    candidates = [rep for rep in representatives if rep.is_user_selected] or list(representatives)
+
+    def _quality_key(rep: ClusterRepresentative) -> tuple[bool, float, str]:
+        score = _optional_float(rep.quality_score)
+        if score is None or not isfinite(score) or score < 0 or score > 1:
+            score = float("-inf")
+        return rep.quality_components is None, -score, str(rep.id)
+
+    return min(candidates, key=_quality_key)
 
 
 def _build_cluster_responses(

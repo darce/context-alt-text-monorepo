@@ -141,7 +141,7 @@ class ClusterProjectionWriter {
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
-		$export = $this->normalize_snapshot_export( $snapshot_export );
+		$export = self::normalize_snapshot_export( $snapshot_export );
 		$sql = $this->prepare_query(
 			'INSERT INTO %i
 				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, local_revision, created_at, updated_at, last_synced_at, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)
@@ -278,8 +278,8 @@ class ClusterProjectionWriter {
 	 * @param array<string,mixed> $snapshot_export
 	 * @return array{representative_quality: string, quality_components: string, representative_media_id: string, undoable_merge_receipt_id: string, apply: int}
 	 */
-	private function normalize_snapshot_export( array $snapshot_export ): array {
-		$apply = $this->snapshot_export_is_present( $snapshot_export ) ? 1 : 0;
+	public static function normalize_snapshot_export( array $snapshot_export ): array {
+		$apply = self::snapshot_export_is_present( $snapshot_export ) ? 1 : 0;
 		if ( 0 === $apply ) {
 			return array(
 				'representative_quality' => '',
@@ -291,16 +291,16 @@ class ClusterProjectionWriter {
 		}
 
 		return array(
-			'representative_quality' => $this->normalize_representative_quality(
+			'representative_quality' => self::normalize_representative_quality(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ] ?? null
 			),
-			'quality_components' => $this->normalize_quality_components(
+			'quality_components' => self::normalize_quality_components(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ] ?? null
 			),
-			'representative_media_id' => $this->normalize_representative_media_id(
+			'representative_media_id' => self::normalize_representative_media_id(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID ] ?? null
 			),
-			'undoable_merge_receipt_id' => $this->normalize_undoable_merge_receipt_id(
+			'undoable_merge_receipt_id' => self::normalize_undoable_merge_receipt_id(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_UNDOABLE_MERGE_RECEIPT_ID ] ?? null
 			),
 			'apply' => 1,
@@ -310,7 +310,7 @@ class ClusterProjectionWriter {
 	/**
 	 * @param array<string,mixed> $snapshot_export
 	 */
-	private function snapshot_export_is_present( array $snapshot_export ): bool {
+	private static function snapshot_export_is_present( array $snapshot_export ): bool {
 		foreach ( array(
 			ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY,
 			ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS,
@@ -325,7 +325,7 @@ class ClusterProjectionWriter {
 		return false;
 	}
 
-	private function normalize_representative_quality( mixed $value ): string {
+	private static function normalize_representative_quality( mixed $value ): string {
 		if ( ! is_int( $value ) && ! is_float( $value ) ) {
 			return '';
 		}
@@ -338,7 +338,7 @@ class ClusterProjectionWriter {
 		return (string) $quality;
 	}
 
-	private function normalize_quality_components( mixed $value ): string {
+	public static function normalize_quality_components( mixed $value ): string {
 		if ( ! is_array( $value ) ) {
 			return '';
 		}
@@ -364,11 +364,11 @@ class ClusterProjectionWriter {
 				return '';
 			}
 			$number = (float) $component;
-			if ( 'bbox_area' === $key ) {
-				if ( $number < 0.0 ) {
+			if ( 'confidence' === $key || 'occlusion_severity' === $key ) {
+				if ( $number < 0.0 || $number > 1.0 ) {
 					return '';
 				}
-			} elseif ( $number < 0.0 || $number > 1.0 ) {
+			} elseif ( $number < 0.0 ) {
 				return '';
 			}
 			$normalized[ $key ] = is_int( $component ) ? $component : $number;
@@ -378,7 +378,7 @@ class ClusterProjectionWriter {
 		return is_string( $encoded ) && '' !== $encoded ? $encoded : '';
 	}
 
-	private function normalize_representative_media_id( mixed $value ): string {
+	private static function normalize_representative_media_id( mixed $value ): string {
 		if ( is_int( $value ) ) {
 			return $value >= 1 ? (string) $value : '';
 		}
@@ -389,7 +389,7 @@ class ClusterProjectionWriter {
 		return '';
 	}
 
-	private function normalize_undoable_merge_receipt_id( mixed $value ): string {
+	private static function normalize_undoable_merge_receipt_id( mixed $value ): string {
 		if ( ! is_string( $value ) ) {
 			return '';
 		}

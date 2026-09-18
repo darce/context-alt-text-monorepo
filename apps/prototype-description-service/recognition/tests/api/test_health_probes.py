@@ -559,8 +559,11 @@ def test_health_detailed_reports_description_adapter(profile: str, tmp_path, mon
     description_adapter.profile field. Parametrize two real profiles so a
     hardcoded field or legacy string shape fails.
     """
+    from api.main import AdapterReadinessReason
     from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
     from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
+    from scene.interface_adapters.http.deps import _missing_vlm_dependencies
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", profile)
 
@@ -595,8 +598,15 @@ def test_health_detailed_reports_description_adapter(profile: str, tmp_path, mon
     }
     assert adapter["profile"] == profile
     assert adapter["profile"] == DescriptionSettings().profile.value
-    assert adapter["usable"] is True
-    assert adapter["reason"] is None
+    # A local-CPU caption profile is only usable where its VLM extras are
+    # installed; asserting usable=True unconditionally couples the contract
+    # test to the runner's optional dependencies.
+    if adapter["kind"] == DescriptionAdapterKind.LOCAL_CPU.value and _missing_vlm_dependencies():
+        assert adapter["usable"] is False
+        assert adapter["reason"] == AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value
+    else:
+        assert adapter["usable"] is True
+        assert adapter["reason"] is None
     assert isinstance(adapter["model_id"], str) and adapter["model_id"] != ""
     assert isinstance(adapter["model_version"], str) and adapter["model_version"] != ""
 

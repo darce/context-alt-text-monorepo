@@ -88,18 +88,19 @@ Frozen for this wave. Producers and consumers implement against this text, not a
 
 **C6. Person media intersection (R4a producer, R4b consumer).** `with_person_ids[]`: up to 5 positive integers; invalid input is a 400. Result is media where the path person and all listed people appear. Pagination metadata comes from the real query.
 
-**C7. SPA internal seams.** `describeOperationStore` exports `pendingTerminalRuns()` and `settleRun(id, outcome)`; `jobMachine` exports `stallThresholdMs(phase, startupBudgetSeconds)`; `useActivityStatus()` returns a discriminated union `{kind: idle|scanning|warming|describing|done|failed, progress, etaSeconds, reason, canCancel}` and owns the only GPU status poll.
+**C7. SPA internal seams.** `describeOperationStore` exports `pendingTerminalRuns()` and `settleRun(id, outcome)`; `jobMachine` exports `stallThresholdMs(phase, startupBudgetSeconds)`; `useGpuStateToasts` reads `useActivityStatus()` and never derives GPU state itself; `setDescribeProgressMounted` tracks whether the strip is on screen; `useActivityStatus()` returns a discriminated union `{kind: idle|scanning|warming|describing|done|failed, progress, etaSeconds, reason, canCancel}` and owns the only GPU status poll.
 
 ### Open decisions
 
 - **Modal or drawer for run details.** Resolved from the canon: non-modal drawer. A warm-up lasts minutes and the operator keeps working, so a blocking modal violates PERC-07, INT-08 and NAV-07. A confirm dialog is used only for Cancel run (INT-10).
+- **Toast for GPU or activity status.** Resolved from the canon: a toast is never the status surface, and is kept as the edge channel. A warm-up lasts minutes; a message that vanishes carries no progress, ETA or Cancel (INT-08, INT-10) and makes the operator remember it (FORM-05), and a status toast on every poll habituates (PERC-07). The persistent strip stays the one surface. Transition toasts (GPU ready, run finished, run failed) fire once per run per edge, from the same `useActivityStatus` value, only while the strip is off screen (PERC-05, A11Y-21); toasts with an action or a failure persist until dismissed (A11Y-16) and never take focus (A11Y-13). The SPA already has this shape in `useGpuStateToasts`; lane `spa-activity-toasts` rewires it to the one authority and adds the finished and failed edges.
 - **n ≥ 2 naming rule.** Not in this wave. Gated on the N4 evaluation verdict (CAL-02).
 - **Removing the Description History menu slug.** Deferred; the slug lands on the filtered queue.
 - **Storing `http_status` on outbox rows.** Out of scope; O2 classifies from persisted codes and reports the residual.
 
 ## Proposed Solution
 
-Eight slice groups, 32 lanes, each lane 1–5 files. Shared files are serialized by dependency edges; everything else is independent. New UI capability is built in new files first (U1a, U2a, R3) and mounted by a separate lane, so the wide level-0 frontier never contends for `MediaSelection.tsx` or `PersonWorkspacePanel.tsx`.
+Eight slice groups, 33 lanes, each lane 1–5 files. Shared files are serialized by dependency edges; everything else is independent. New UI capability is built in new files first (U1a, U2a, R3) and mounted by a separate lane, so the wide level-0 frontier never contends for `MediaSelection.tsx` or `PersonWorkspacePanel.tsx`.
 
 ## Files and Surfaces to Change
 
@@ -407,7 +408,7 @@ One activity-status authority hook (scan + describe + GPU phase, ETA, cancel) an
 
 Closes TRIAGE0918-M-11 (bodies in the handoff DB). Canon: PERC-01, PERC-05, INT-03, INT-10, PERC-07.
 
-Design decision (binding): NEW files only. useActivityStatus composes the scan job pipeline state, useDescribeRunProgress and ONE gpu/status poll (no second poller) into a discriminated union {kind: idle|scanning|warming|describing|done|failed, progress, etaSeconds, reason, canCancel}. ActivityStatusStrip renders it (role=status, polite) with a 'Details' button opening AdvancedDrawer (non-modal: a warm-up is 2-6 minutes, the user keeps working; PERC-07/INT-08/NAV-07 rule out a blocking modal). ConfirmDialog only for Cancel run. Parameters grouped into typed objects (sr-008).
+Design decision (binding): NEW files only. useActivityStatus composes the scan job pipeline state, useDescribeRunProgress and ONE gpu/status poll (no second poller) into a discriminated union {kind: idle|scanning|warming|describing|done|failed, progress, etaSeconds, reason, canCancel}. ActivityStatusStrip renders it (role=status, polite) with a 'Details' button opening AdvancedDrawer (non-modal: a warm-up is 2-6 minutes, the user keeps working; PERC-07/INT-08/NAV-07 rule out a blocking modal). ConfirmDialog only for Cancel run. Parameters grouped into typed objects (sr-008). The strip is the persistent surface (INT-08/INT-10: progress, ETA and Cancel stay visible for the whole wait); toasts are a secondary edge channel owned by lane spa-activity-toasts, so export a stable `ActivityStatus` type and keep every action a toast could carry (Review drafts, Retry, Back to run) available in the strip or drawer.
 
 Acceptance: `npx vitest run js/admin/hooks/__tests__/useActivityStatus.test.ts js/admin/pages/workbench/__tests__/ActivityStatusStrip.test.tsx` passes; changed paths stay inside the lane's owned list.
 
@@ -417,9 +418,19 @@ The strip mounts in the Control pane; the Library footer keeps only the Describe
 
 Closes TRIAGE0918-M-11 (bodies in the handoff DB). Canon: PERC-01, INT-03.
 
-Design decision (binding): Panels.tsx ScanActionPanel replaces its bare <progress> with ActivityStatusStrip. MediaSelection.tsx: remove GpuTierStatus + BulkDescribeProgress from the footer (BulkDescribeCta keeps the button and hands run start to the shared hook); exactly one live region announces status. MediaSelection.tsx is >1000 lines: grep -n, ranged reads, minimal diff.
+Design decision (binding): Panels.tsx ScanActionPanel replaces its bare <progress> with ActivityStatusStrip. MediaSelection.tsx: remove GpuTierStatus + BulkDescribeProgress from the footer (BulkDescribeCta keeps the button and hands run start to the shared hook); exactly one live region announces status. Keep the setDescribeProgressMounted(true/false) effect, now tied to the strip being mounted: it is the signal that suppresses transition toasts while the strip is on screen. MediaSelection.tsx is >1000 lines: grep -n, ranged reads, minimal diff.
 
 Acceptance: `npx vitest run js/admin/pages/workbench/__tests__/Panels.test.tsx js/admin/pages/workbench/__tests__/MediaSelection.gpuStatus.test.tsx js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx` passes; changed paths stay inside the lane's owned list.
+
+### Slice U1c: spa-activity-toasts
+
+Transition toasts (GPU ready, run finished, run failed) driven by the one activity-status authority, shown only when the strip is off screen.
+
+Closes TRIAGE0918-M-11 (bodies in the handoff DB). Canon: PERC-05, PERC-07, A11Y-21, A11Y-13, A11Y-16, FORM-05.
+
+Design decision (binding): A toast is never the status surface: a warm-up lasts minutes and a vanishing message carries no progress, ETA or Cancel (INT-08/INT-10/FORM-05). It is the edge channel for an operator who has navigated away from the strip (PERC-05). Rewire the existing useGpuStateToasts (keep the export name, App.tsx is not owned) to read useActivityStatus instead of deriving GPU state itself, so strip and toast can never disagree. Emit on kind-change edges only, once per run per edge, never on a poll tick and never on the first observation (PERC-07): warming (info, auto-dismiss), ready (persistent, 'Back to run'), done (success, persistent, 'Review N drafts' -> review queue), failed (error, persistent, reason-specific copy; 'Retry' only when the reason is retryable per C2). Keep the existing degraded edge as is. All other edges are suppressed while progressMounted is true so exactly one region announces (A11Y-21). Persistent = durationMs null, user-dismissed (A11Y-16); ToastContext is read-only context and already never moves focus (A11Y-13). Copy lives in GPU_STATE_VOCABULARY (sr-007), no inline strings.
+
+Acceptance: `npx vitest run js/admin/hooks/__tests__/useGpuStateToasts.test.tsx` passes; changed paths stay inside the lane's owned list.
 
 ### Slice U2a: spa-queue-drafts
 
@@ -488,9 +499,10 @@ Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p
 | `svc-n1-substitution` | N2 | `S/scene/application/identity_merge/realizer.py`<br>`S/scene/application/identity_merge/merge.py`<br>`S/scene/tests/test_identity_merge_realizer.py` | `svc-naming-status` (S/scene/application/identity_merge/merge.py) | `python3 -m pytest apps/prototype-description-service/scene/tests/test_identity_merge_realizer.py apps/prototype-description-service/scene/tests/test_identity_merge_merge.py -q -p no:cacheprovider` |
 | `spa-person-card` | R1 | `W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`<br>`W/js/admin/pages/workbench/identity-clusters/representativeVocabulary.ts`<br>`W/js/admin/pages/workbench/identity-clusters/utils.ts`<br>`W/js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx`<br>`W/js/admin/pages/workbench/identity-clusters/__tests__/representativeVocabulary.test.ts` | `spa-cluster-crop` (W/js/admin/pages/workbench/identity-clusters/ClusterPreview.tsx) | `npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/representativeVocabulary.test.ts js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterList.test.tsx` |
 | `spa-status-mount` | U1b | `W/js/admin/pages/workbench/Panels.tsx`<br>`W/js/admin/pages/workbench/MediaSelection.tsx`<br>`W/js/admin/pages/workbench/__tests__/Panels.test.tsx`<br>`W/js/admin/pages/workbench/__tests__/MediaSelection.gpuStatus.test.tsx` | `spa-activity-status` (W/js/admin/hooks/useActivityStatus.ts, W/js/admin/pages/workbench/ActivityStatusStrip.tsx) | `npx vitest run js/admin/pages/workbench/__tests__/Panels.test.tsx js/admin/pages/workbench/__tests__/MediaSelection.gpuStatus.test.tsx js/admin/pages/workbench/__tests__/MediaSelection.statusAnnouncement.test.tsx` |
+| `spa-activity-toasts` | U1c | `W/js/admin/hooks/useGpuStateToasts.ts`<br>`W/js/admin/hooks/__tests__/useGpuStateToasts.test.tsx`<br>`W/js/admin/pages/workbench/gpuStatePresentation.ts` | `spa-activity-status` (W/js/admin/hooks/useActivityStatus.ts, W/js/admin/pages/workbench/ActivityStatusStrip.tsx) | `npx vitest run js/admin/hooks/__tests__/useGpuStateToasts.test.tsx` |
 | `svc-position-eval` | N4 | `docs/assessments/GPUFLOW-3-position-accuracy-eval-20260918.md` | `svc-n1-substitution` (S/scene/application/identity_merge/realizer.py, S/scene/application/identity_merge/merge.py); `svc-qwen-grounding` (S/scene/infrastructure/vlm/gpu_remote_adapter.py) | `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` |
 | `spa-queue-drafts-mount` | U2b | `W/js/admin/pages/workbench/MediaSelectionTableBody.tsx`<br>`W/js/admin/pages/workbench/MediaSelection.tsx`<br>`W/js/admin/App.tsx`<br>`W/js/admin/pages/workbench/__tests__/MediaSelection.filters.test.tsx` | `spa-queue-drafts` (W/js/admin/hooks/useQueueDrafts.ts, W/js/admin/pages/workbench/QueueDraftCell.tsx); `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-apply-view-evidence` (W/js/admin/pages/DescribeRunApplyView.tsx) | `npx vitest run js/admin/pages/workbench/__tests__/MediaSelection.filters.test.tsx js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx` |
-| `ux-maps` | U3 | `docs/ux-maps/workbench-review-queue.md`<br>`docs/ux-maps/roster-people.md` | `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-queue-drafts-mount` (W/js/admin/pages/workbench/MediaSelectionTableBody.tsx, W/js/admin/pages/workbench/MediaSelection.tsx, W/js/admin/App.tsx); `spa-person-card` (W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx, W/js/admin/pages/workbench/identity-clusters/representativeVocabulary.ts, W/js/admin/pages/workbench/identity-clusters/utils.ts); `spa-same-person-prompt` (W/js/admin/pages/roster/SamePersonPrompt.tsx, W/js/admin/pages/RosterPage.tsx); `spa-person-also-with` (W/js/admin/pages/roster/PersonWorkspacePanel.tsx) | `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` |
+| `ux-maps` | U3 | `docs/ux-maps/workbench-review-queue.md`<br>`docs/ux-maps/roster-people.md` | `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-activity-toasts` (W/js/admin/hooks/useGpuStateToasts.ts, W/js/admin/pages/workbench/gpuStatePresentation.ts); `spa-queue-drafts-mount` (W/js/admin/pages/workbench/MediaSelectionTableBody.tsx, W/js/admin/pages/workbench/MediaSelection.tsx, W/js/admin/App.tsx); `spa-person-card` (W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx, W/js/admin/pages/workbench/identity-clusters/representativeVocabulary.ts, W/js/admin/pages/workbench/identity-clusters/utils.ts); `spa-same-person-prompt` (W/js/admin/pages/roster/SamePersonPrompt.tsx, W/js/admin/pages/RosterPage.tsx); `spa-person-also-with` (W/js/admin/pages/roster/PersonWorkspacePanel.tsx) | `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` |
 
 ### Lane summaries
 
@@ -525,6 +537,7 @@ Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p
 | `svc-n1-substitution` | 45 | ATTRIB-02 CAL-02 HAI-04 | With exactly one confirmed face and one leading generic person phrase, the name is woven into the sentence without phrase boxes. |
 | `spa-person-card` | 45 | NAV-14 GRPH-18 COG-02 | One card per person: face-group topology leaves the daily view and moves under a 'Not the same person?' split affordance. |
 | `spa-status-mount` | 40 | PERC-01 INT-03 | The strip mounts in the Control pane; the Library footer keeps only the Describe CTA. |
+| `spa-activity-toasts` | 35 | PERC-05 PERC-07 A11Y-21 A11Y-13 A11Y-16 FORM-05 | Transition toasts (GPU ready, run finished, run failed) driven by the one activity-status authority, shown only when the strip is off screen. |
 | `svc-position-eval` | 40 | CAL-02 EMB-02 | Evaluation protocol and acceptance gate for position accuracy before any n>=2 naming rule or the grounding flag is enabled. |
 | `spa-queue-drafts-mount` | 45 | NAV-05 NAV-06 NAV-07 | Drafts render inline in the review queue with a 'Has draft' / per-run filter; the history route redirects into the filtered queue. |
 | `ux-maps` | 40 | NAV-05 INT-10 | UX maps for the review queue and the roster/person screens as built by this wave. |
@@ -535,11 +548,11 @@ Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p
 | --- | --- | --- |
 | 0 | 23 | `spa-run-resume`, `spa-cluster-crop`, `spa-stall-phase`, `php-cli-detail`, `spa-suggest-ceiling`, `spa-timeline-actions`, `php-run-item-thumb`, `php-recognition-default-off`, `spa-unavailable-reason`, `svc-naming-status`, `php-person-media-with`, `php-unavailable-reason`, `php-bind-merge`, `php-snapshot-tombstone`, `svc-scan-lock`, `svc-rerealize-names`, `svc-warmup-terminal`, `php-outbox-hygiene`, `spa-person-page`, `spa-same-person-prompt`, `infra-gpu-state-starting`, `svc-qwen-grounding`, `spa-queue-drafts` |
 | 1 | 5 | `spa-activity-status`, `spa-apply-view-evidence`, `spa-person-also-with`, `svc-n1-substitution`, `spa-person-card` |
-| 2 | 2 | `spa-status-mount`, `svc-position-eval` |
+| 2 | 3 | `spa-status-mount`, `spa-activity-toasts`, `svc-position-eval` |
 | 3 | 1 | `spa-queue-drafts-mount` |
 | 4 | 1 | `ux-maps` |
 
-Critical path: `spa-run-resume` → `spa-activity-status` → `spa-status-mount` → `spa-queue-drafts-mount` → `ux-maps` = 210 min of estimated lane time. Serial total 1175 min; ideal speed-up 5.6x, bounded in practice by the admission cap below.
+Critical path: `spa-run-resume` → `spa-activity-status` → `spa-status-mount` → `spa-queue-drafts-mount` → `ux-maps` = 210 min of estimated lane time. Serial total 1210 min; ideal speed-up 5.8x, bounded in practice by the admission cap below.
 
 Owned-path conflicts between unordered lanes: 0. Every shared file is covered by a dependency edge (`PersonWorkspacePanel.tsx`: `spa-person-page` → `spa-person-also-with`; `MediaSelection.tsx`: `spa-status-mount` → `spa-queue-drafts-mount`; `merge.py`: `svc-naming-status` → `svc-n1-substitution`).
 
@@ -557,7 +570,7 @@ Topological order of the Lanes table. A lane integrates as soon as it is green a
 
 ### Manifest
 
-`config/lane-orchestration/GPUFLOW-3.json` (gitignored, root checkout only), generated by `.task-state/gpuflow3_gen.py manifest` and validated with `load_manifest`. It holds the 32 lanes plus eight `slice-<group>-review` twins pinned to codex-remote gpt-5.6-luna max.
+`config/lane-orchestration/GPUFLOW-3.json` (gitignored, root checkout only), generated by `.task-state/gpuflow3_gen.py manifest` and validated with `load_manifest`. It holds the 33 lanes plus eight `slice-<group>-review` twins pinned to codex-remote gpt-5.6-luna max.
 
 ### Orchestration Mode
 

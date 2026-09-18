@@ -45,6 +45,9 @@ class NamingStatus(StrEnum):
     DISABLED = "disabled"
     SKIPPED_BUDGET = "skipped_budget"
     NO_FACES = "no_faces"
+    NO_CONFIRMED_IDENTITIES = "no_confirmed_identities"
+    NO_ELIGIBLE_IDENTITIES = "no_eligible_identities"
+    AMBIGUOUS_GROUNDING = "ambiguous_grounding"
 
 
 class NamingRealizer(StrEnum):

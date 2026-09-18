@@ -103,6 +103,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "identity_members",
         "identity_name_suppressions",
         "identity_cluster_representatives",
+        "cluster_merge_receipts",
         "identity_scan_jobs",
         "identity_scan_job_items",
         "identity_clustering_jobs",

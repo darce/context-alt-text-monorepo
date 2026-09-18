@@ -436,6 +436,8 @@ class ConflictControllerTest extends TestCase
 
     public function testListFailedOutboxOperationsReturnsPaginatedEnvelope(): void
     {
+        $GLOBALS['__ac_current_time'] = (new \DateTimeImmutable('2026-03-11 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+
         $outboxDrain = new class() extends OutboxDrain {
             public function find_failed_operations(string $tenant_id, int $limit = 50, int $offset = 0): array
             {
@@ -452,8 +454,10 @@ class ConflictControllerTest extends TestCase
                     'last_error_code' => 'dispatch_failed',
                     'last_error_message' => 'Remote curation replay failed.',
                     'payload' => ['cluster_uuid' => 'cluster-1', 'label' => 'Renamed'],
-                    'created_at' => '2026-03-11 10:00:00',
-                    'last_attempted_at' => '2026-03-11 10:05:00',
+                    'created_at' => '2026-03-11 09:00:00',
+                    'last_attempted_at' => '2026-03-11 11:55:00',
+                    'first_failed_at' => '2026-03-11 10:00:00',
+                    'age_seconds' => '7200',
                     'acknowledged_at' => null,
                 ],];
             }
@@ -478,6 +482,7 @@ class ConflictControllerTest extends TestCase
         $this->assertSame(3, $data['total']);
         $this->assertSame(50, $data['limit']);
         $this->assertSame(0, $data['offset']);
+        $this->assertSame('2026-03-11 12:00:00', $data['now']);
         $this->assertCount(1, $data['items']);
         $this->assertSame(11, $data['items'][0]['id']);
         $this->assertSame('cluster_label_updated', $data['items'][0]['operation_type']);
@@ -490,12 +495,64 @@ class ConflictControllerTest extends TestCase
         $this->assertSame('dispatch_failed', $data['items'][0]['last_error_code']);
         $this->assertSame('Remote curation replay failed.', $data['items'][0]['last_error_message']);
         $this->assertSame(['cluster_uuid' => 'cluster-1', 'label' => 'Renamed'], $data['items'][0]['payload']);
-        $this->assertSame('2026-03-11 10:05:00', $data['items'][0]['last_attempted_at']);
+        $this->assertSame('2026-03-11 11:55:00', $data['items'][0]['last_attempted_at']);
+        $this->assertSame('2026-03-11 10:00:00', $data['items'][0]['first_failed_at']);
+        $this->assertSame(7200, $data['items'][0]['age_seconds']);
         $this->assertNull($data['items'][0]['acknowledged_at']);
+    }
+
+    public function testListFailedOutboxOperationsReturnsNullAgeWhenProjectionIsMissing(): void
+    {
+        $GLOBALS['__ac_current_time'] = (new \DateTimeImmutable('2026-03-11 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+
+        $outboxDrain = new class() extends OutboxDrain {
+            public function find_failed_operations(string $tenant_id, int $limit = 50, int $offset = 0): array
+            {
+                return [[
+                    'id' => 12,
+                    'tenant_id' => $tenant_id,
+                    'operation_type' => 'cluster_label_updated',
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-2',
+                    'status' => 'failed',
+                    'attempts' => 1,
+                    'expected_base_version' => 1,
+                    'local_revision' => 1,
+                    'last_error_code' => 'dispatch_failed',
+                    'last_error_message' => 'Remote curation replay failed.',
+                    'payload' => ['cluster_uuid' => 'cluster-2'],
+                    'created_at' => '2026-03-11 09:00:00',
+                    'last_attempted_at' => '2026-03-11 11:55:00',
+                    'first_failed_at' => '2026-03-11 10:00:00',
+                    'acknowledged_at' => null,
+                ],];
+            }
+
+            public function count_failed_operations(string $tenant_id): int
+            {
+                return 1;
+            }
+        };
+
+        $controller = new ConflictController(
+            new ConflictRepository(),
+            new ConflictResolutionService(),
+            $outboxDrain
+        );
+
+        $response = $controller->list_failed_outbox_operations(
+            new WP_REST_Request('GET', '/acx/v1/recognition/outbox/failed')
+        );
+        $data = $response->get_data();
+
+        $this->assertSame('2026-03-11 12:00:00', $data['now']);
+        $this->assertSame('2026-03-11 10:00:00', $data['items'][0]['first_failed_at']);
+        $this->assertNull($data['items'][0]['age_seconds']);
     }
 
     public function testListOutboxOperationsReturnsTimelineAcrossStatuses(): void
     {
+        $GLOBALS['__ac_current_time'] = (new \DateTimeImmutable('2026-03-11 12:00:00', new \DateTimeZone('UTC')))->getTimestamp();
         $tenantId = self::currentTenantId();
         $outboxDrain = new \AltContext\Tests\Stubs\InMemoryOutboxDrain([
             $this->buildOutboxOperation([
@@ -527,6 +584,9 @@ class ConflictControllerTest extends TestCase
         $this->assertCount(2, $data['items']);
         $this->assertSame(['acknowledged', 'discarded'], array_column($data['items'], 'status'));
         $this->assertSame('2026-03-11 10:06:00', $data['items'][0]['acknowledged_at']);
+        $this->assertSame('2026-03-11 12:00:00', $data['now']);
+        $this->assertArrayHasKey('first_failed_at', $data['items'][0]);
+        $this->assertArrayHasKey('age_seconds', $data['items'][0]);
     }
 
     public function testResolveConflictReturns404WhenConflictIsMissing(): void
@@ -1388,6 +1448,7 @@ class ConflictControllerTest extends TestCase
             'payload' => ['label' => 'Local'],
             'created_at' => '2026-03-11 10:00:00',
             'last_attempted_at' => null,
+            'first_failed_at' => null,
             'acknowledged_at' => null,
         ], $overrides);
     }

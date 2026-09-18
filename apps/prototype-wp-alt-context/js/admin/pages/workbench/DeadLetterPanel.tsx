@@ -1,7 +1,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { OutboxOperation } from '../../api/recognition';
+import type { OutboxListResponse, OutboxOperation } from '../../api/recognition';
 import { useBulkRetryOperations } from '../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../hooks/useDeadLetterOperations';
 import { useDiscardOperation } from '../../hooks/useDiscardOperation';
@@ -13,7 +13,73 @@ import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
+/** DIAGNO-M-10 / CARD-09: one page of <= 50, sequential per-ID discard, no batch route. */
+const BULK_DISCARD_PAGE_SIZE = 50;
 const BULK_RETRY_ARM_TIMEOUT_MS = 8000;
+const FAILED_RETENTION_DAYS = 7;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const FAILED_RETENTION_MS = FAILED_RETENTION_DAYS * DAY_MS;
+const AUTO_ATTEMPT_PAYLOAD_KEY = 'acx_auto_attempts';
+const MAX_AUTO_ATTEMPTS = 3;
+
+const NON_RETRYABLE_ERROR_CODES = {
+  INVALID_PAYLOAD: 'invalid_payload',
+  UNAUTHORIZED: 'unauthorized',
+  FORBIDDEN: 'forbidden',
+  NOT_FOUND: 'not_found',
+} as const;
+
+const TERMINAL_ERROR_CODES = {
+  ...NON_RETRYABLE_ERROR_CODES,
+  AUTO_RETRY_EXHAUSTED: 'auto_retry_exhausted',
+} as const;
+
+const TERMINAL_STATUS = {
+  DISCARDED: 'discarded',
+} as const;
+
+const TERMINAL_ERROR_CODE_SET = new Set<string>(Object.values(TERMINAL_ERROR_CODES));
+
+const BULK_DISCARD_OUTCOME = {
+  DISCARDED: 'discarded',
+  FAILED: 'failed',
+  STOPPED: 'stopped',
+} as const;
+
+type BulkDiscardOutcome = (typeof BULK_DISCARD_OUTCOME)[keyof typeof BULK_DISCARD_OUTCOME];
+
+interface BulkDiscardRowResult {
+  id: number;
+  identity: string;
+  outcome: BulkDiscardOutcome;
+}
+
+/** Optional D1 wire fields not yet on the shared OutboxOperation type. */
+type FailureAgeOperation = OutboxOperation & {
+  first_failed_at?: string | null;
+  age_seconds?: number | null;
+  oldest_age_seconds?: number | null;
+};
+
+type FailureAgeList = OutboxListResponse & {
+  now?: string | null;
+  oldest_age_seconds?: number | null;
+};
+
+interface WpDateSettings {
+  timezone?: {
+    offset?: number;
+  };
+}
+
+interface WpDateBootstrap {
+  date?: {
+    getSettings?: () => WpDateSettings;
+  };
+}
+
 const DEAD_LETTER_STATUS = {
   alertRole: 'alert',
   live: 'polite',
@@ -21,6 +87,7 @@ const DEAD_LETTER_STATUS = {
   testId: 'acx-dead-letter-status',
 } as const;
 const DEAD_LETTER_PENDING_REASON_ID = 'acx-dead-letter-pending-reason';
+const DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID = 'acx-dead-letter-age-unavailable-reason';
 const NOTICE_VARIANTS = {
   info: 'acx-notice acx-notice--info',
   warning: 'acx-notice acx-notice--warning',
@@ -50,6 +117,9 @@ interface DeadLetterPanelState {
   timelineStatus: TimelineStatusFilter;
   pendingDiscardId: number | null;
   bulkRetryArmed: boolean;
+  bulkDiscardArmed: boolean;
+  bulkDiscardRunning: boolean;
+  bulkDiscardResults: readonly BulkDiscardRowResult[];
   actionStatus: string;
   notice: string | null;
   mutationError: string | null;
@@ -61,6 +131,9 @@ type DeadLetterPanelAction =
   | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
   | { type: 'setPendingDiscardId'; id: number | null }
   | { type: 'setBulkRetryArmed'; armed: boolean }
+  | { type: 'setBulkDiscardArmed'; armed: boolean }
+  | { type: 'setBulkDiscardRunning'; running: boolean }
+  | { type: 'setBulkDiscardResults'; results: readonly BulkDiscardRowResult[] }
   | { type: 'setActionStatus'; status: string }
   | { type: 'setNotice'; notice: string | null }
   | { type: 'setMutationError'; error: string | null };
@@ -71,6 +144,9 @@ const INITIAL_STATE: DeadLetterPanelState = {
   timelineStatus: 'all',
   pendingDiscardId: null,
   bulkRetryArmed: false,
+  bulkDiscardArmed: false,
+  bulkDiscardRunning: false,
+  bulkDiscardResults: [],
   actionStatus: '',
   notice: null,
   mutationError: null,
@@ -87,7 +163,25 @@ const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterP
     case 'setPendingDiscardId':
       return { ...state, pendingDiscardId: action.id };
     case 'setBulkRetryArmed':
-      return state.bulkRetryArmed === action.armed ? state : { ...state, bulkRetryArmed: action.armed };
+      return state.bulkRetryArmed === action.armed
+        ? state
+        : {
+            ...state,
+            bulkRetryArmed: action.armed,
+            bulkDiscardArmed: action.armed ? false : state.bulkDiscardArmed,
+          };
+    case 'setBulkDiscardArmed':
+      return state.bulkDiscardArmed === action.armed
+        ? state
+        : {
+            ...state,
+            bulkDiscardArmed: action.armed,
+            bulkRetryArmed: action.armed ? false : state.bulkRetryArmed,
+          };
+    case 'setBulkDiscardRunning':
+      return state.bulkDiscardRunning === action.running ? state : { ...state, bulkDiscardRunning: action.running };
+    case 'setBulkDiscardResults':
+      return { ...state, bulkDiscardResults: action.results };
     case 'setActionStatus':
       return { ...state, actionStatus: action.status };
     case 'setNotice':
@@ -112,17 +206,74 @@ const formatOperationIdentity = (operation: OutboxOperation): string =>
     operation.id,
   );
 
-const formatTimestamp = (value: string | null | undefined): string => {
+const MYSQL_WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
+const HAS_EXPLICIT_TZ = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+const AGE_CLOCK_UNAVAILABLE = __('Failure age unavailable from server', 'alt-context');
+
+const getSiteGmtOffsetHours = (): number => {
+  const wpDate = (window as Window & { wp?: WpDateBootstrap }).wp?.date;
+  const offset = wpDate?.getSettings?.()?.timezone?.offset;
+  if (typeof offset === 'number' && Number.isFinite(offset)) {
+    return offset;
+  }
+
+  const localizedOffset = (window.AltContextAdmin as { gmt_offset?: unknown } | undefined)?.gmt_offset;
+  if (typeof localizedOffset === 'number' && Number.isFinite(localizedOffset)) {
+    return localizedOffset;
+  }
+
+  return 0;
+};
+
+const parseWpTimestampMs = (value: string | null | undefined, siteGmtOffsetHours: number): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const wall = MYSQL_WALL_CLOCK.exec(trimmed);
+  if (wall) {
+    const utcMs = Date.UTC(
+      Number(wall[1]),
+      Number(wall[2]) - 1,
+      Number(wall[3]),
+      Number(wall[4]),
+      Number(wall[5]),
+      Number(wall[6]),
+    );
+    if (!Number.isFinite(utcMs)) {
+      return null;
+    }
+
+    return utcMs - siteGmtOffsetHours * HOUR_MS;
+  }
+
+  if (!HAS_EXPLICIT_TZ.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatTimestamp = (
+  value: string | null | undefined,
+  siteGmtOffsetHours: number = getSiteGmtOffsetHours(),
+): string => {
   if (!value) {
     return __('Unknown time', 'alt-context');
   }
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsedMs = parseWpTimestampMs(value, siteGmtOffsetHours);
+  if (parsedMs === null) {
     return value;
   }
 
-  return parsed.toLocaleString();
+  return new Date(parsedMs).toLocaleString();
 };
 
 const formatErrorSummary = (operation: OutboxOperation): string => {
@@ -157,6 +308,131 @@ const formatPayloadSummary = (payload: Record<string, unknown> | undefined): str
   return JSON.stringify(payload);
 };
 
+const formatAge = (
+  value: string | null | undefined,
+  nowMs: number = Date.now(),
+  siteGmtOffsetHours: number = getSiteGmtOffsetHours(),
+): string => {
+  const thenMs = parseWpTimestampMs(value, siteGmtOffsetHours);
+  if (thenMs === null) {
+    return __('Age: unknown', 'alt-context');
+  }
+
+  const ageMs = Math.max(0, nowMs - thenMs);
+  if (ageMs < MINUTE_MS) {
+    return __('Age: less than a minute', 'alt-context');
+  }
+
+  if (ageMs < HOUR_MS) {
+    return sprintf(__('Age: %d minutes', 'alt-context'), Math.floor(ageMs / MINUTE_MS));
+  }
+
+  if (ageMs < 48 * HOUR_MS) {
+    return sprintf(__('Age: %d hours', 'alt-context'), Math.floor(ageMs / HOUR_MS));
+  }
+
+  return sprintf(__('Age: %d days', 'alt-context'), Math.floor(ageMs / DAY_MS));
+};
+
+const readOptionalNonEmptyString = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() !== '' ? value : null;
+
+const readOptionalFiniteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+const readEligibilityAgeMs = (
+  operation: FailureAgeOperation,
+  nowMs: number | null,
+  siteGmtOffsetHours: number,
+): number | null => {
+  const ageSeconds = readOptionalFiniteNumber(operation.age_seconds);
+  if (ageSeconds !== null) {
+    return Math.max(0, ageSeconds * 1000);
+  }
+
+  const firstFailedAt = readOptionalNonEmptyString(operation.first_failed_at);
+  if (firstFailedAt === null || nowMs === null) {
+    return null;
+  }
+
+  const thenMs = parseWpTimestampMs(firstFailedAt, siteGmtOffsetHours);
+  if (thenMs === null) {
+    return null;
+  }
+
+  return Math.max(0, nowMs - thenMs);
+};
+
+const resolveNowMs = (list: FailureAgeList | undefined, siteGmtOffsetHours: number): number | null => {
+  const serverNow = readOptionalNonEmptyString(list?.now);
+  if (serverNow === null) {
+    return null;
+  }
+
+  return parseWpTimestampMs(serverNow, siteGmtOffsetHours);
+};
+
+const asFailureAgeList = (list: OutboxListResponse | undefined): FailureAgeList | undefined => list;
+
+const readAutoAttempts = (payload: Record<string, unknown> | undefined): number => {
+  if (!payload) {
+    return 0;
+  }
+
+  const value = payload[AUTO_ATTEMPT_PAYLOAD_KEY];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+};
+
+const isTerminalOperation = (operation: OutboxOperation): boolean =>
+  operation.status === TERMINAL_STATUS.DISCARDED ||
+  (operation.last_error_code !== null && TERMINAL_ERROR_CODE_SET.has(operation.last_error_code)) ||
+  readAutoAttempts(operation.payload) >= MAX_AUTO_ATTEMPTS;
+
+const isOlderThanRetention = (
+  operation: FailureAgeOperation,
+  nowMs: number | null,
+  siteGmtOffsetHours: number,
+): boolean => {
+  const ageMs = readEligibilityAgeMs(operation, nowMs, siteGmtOffsetHours);
+  if (ageMs === null) {
+    return false;
+  }
+
+  return ageMs >= FAILED_RETENTION_MS;
+};
+
+const getErrorHttpStatus = (error: unknown): number | null => {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return null;
+  }
+
+  const status = error.status;
+  return typeof status === 'number' && Number.isFinite(status) ? status : null;
+};
+
+const isHaltBulkDiscardError = (error: unknown): boolean => {
+  const status = getErrorHttpStatus(error);
+  return status !== null && status >= 400 && status < 500;
+};
+
+const formatBulkDiscardResult = (result: BulkDiscardRowResult): string => {
+  switch (result.outcome) {
+    case BULK_DISCARD_OUTCOME.DISCARDED:
+      return sprintf(__('%s discarded.', 'alt-context'), result.identity);
+    case BULK_DISCARD_OUTCOME.STOPPED:
+      return sprintf(
+        __('Stopped before discarding %s (authorization or client error).', 'alt-context'),
+        result.identity,
+      );
+    case BULK_DISCARD_OUTCOME.FAILED:
+      return sprintf(__('Unable to discard %s.', 'alt-context'), result.identity);
+    default: {
+      const exhaustive: never = result.outcome;
+      return exhaustive;
+    }
+  }
+};
+
 export const DeadLetterPanel = (): React.JSX.Element => {
   const [state, dispatch] = React.useReducer(deadLetterPanelReducer, INITIAL_STATE);
   const [loadingAnnouncement, setLoadingAnnouncement] = React.useState('');
@@ -166,12 +442,19 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     timelineStatus,
     pendingDiscardId,
     bulkRetryArmed,
+    bulkDiscardArmed,
+    bulkDiscardRunning,
+    bulkDiscardResults,
     actionStatus,
     notice,
     mutationError,
   } = state;
 
   const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
+  const bulkDiscardPageQuery = useDeadLetterOperations({
+    limit: BULK_DISCARD_PAGE_SIZE,
+    offset: 0,
+  });
   const timelineQuery = useOutboxOperations({
     limit: TIMELINE_PAGE_SIZE,
     offset: timelineOffset,
@@ -181,9 +464,40 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const discardMutation = useDiscardOperation();
   const bulkRetryMutation = useBulkRetryOperations();
   const syncStatusQuery = useSyncStatus();
-  const mutationPending = retryMutation.isPending || discardMutation.isPending || bulkRetryMutation.isPending;
+  const mutationPending =
+    retryMutation.isPending ||
+    discardMutation.isPending ||
+    bulkRetryMutation.isPending ||
+    bulkDiscardRunning;
 
   const failedTotal = operationsQuery.data?.total;
+  const siteGmtOffsetHours = getSiteGmtOffsetHours();
+  const eligibilityList = asFailureAgeList(bulkDiscardPageQuery.data);
+  const eligibilityNowMs = resolveNowMs(
+    eligibilityList ?? asFailureAgeList(operationsQuery.data),
+    siteGmtOffsetHours,
+  );
+  const displayNowMs = eligibilityNowMs ?? Date.now();
+  const eligibilityReady = Boolean(
+    bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError && eligibilityList,
+  );
+  const eligibleOperations =
+    eligibilityList && bulkDiscardPageQuery.isSuccess && !bulkDiscardPageQuery.isError
+      ? eligibilityList.items
+          .filter((operation) => isOlderThanRetention(operation, eligibilityNowMs, siteGmtOffsetHours))
+          .slice(0, BULK_DISCARD_PAGE_SIZE)
+      : [];
+  const eligibleCount = eligibleOperations.length;
+  const canBulkDiscard = eligibilityReady && eligibleCount > 0;
+  const missingAgeClock = Boolean(
+    eligibilityList &&
+      bulkDiscardPageQuery.isSuccess &&
+      !bulkDiscardPageQuery.isError &&
+      eligibilityList.items.length > 0 &&
+      eligibilityList.items.every(
+        (operation) => readEligibilityAgeMs(operation, eligibilityNowMs, siteGmtOffsetHours) === null,
+      ),
+  );
 
   React.useEffect(() => {
     if (!operationsQuery.isLoading) {
@@ -204,21 +518,23 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   // backlog it was armed against — it auto-disarms after a short window and whenever the
   // failed total changes, so a stale confirm can never fire against a different backlog.
   React.useEffect(() => {
-    if (!bulkRetryArmed) {
+    if (!bulkRetryArmed && !bulkDiscardArmed) {
       return undefined;
     }
 
     const timeoutId = window.setTimeout(() => {
       dispatch({ type: 'setBulkRetryArmed', armed: false });
+      dispatch({ type: 'setBulkDiscardArmed', armed: false });
     }, BULK_RETRY_ARM_TIMEOUT_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [bulkRetryArmed]);
+  }, [bulkRetryArmed, bulkDiscardArmed]);
 
   React.useEffect(() => {
     dispatch({ type: 'setBulkRetryArmed', armed: false });
+    dispatch({ type: 'setBulkDiscardArmed', armed: false });
   }, [failedTotal]);
 
   const handleRetry = async (operation: OutboxOperation): Promise<void> => {
@@ -319,6 +635,107 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     }
   };
 
+  const handleBulkDiscard = async (): Promise<void> => {
+    if (!bulkDiscardArmed) {
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setBulkDiscardResults', results: [] });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({ type: 'setBulkDiscardArmed', armed: true });
+      return;
+    }
+
+    dispatch({ type: 'setBulkDiscardArmed', armed: false });
+    dispatch({ type: 'setBulkDiscardRunning', running: true });
+    dispatch({ type: 'setBulkDiscardResults', results: [] });
+    dispatch({ type: 'setMutationError', error: null });
+    dispatch({
+      type: 'setActionStatus',
+      status: __('Discarding failed changes older than 7 days…', 'alt-context'),
+    });
+
+    if (!eligibilityReady) {
+      dispatch({ type: 'setBulkDiscardRunning', running: false });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to load eligible failed changes for bulk discard.', 'alt-context'),
+      });
+      return;
+    }
+
+    const candidates = eligibleOperations;
+    const failedTotalAtStart = eligibilityList?.total ?? 0;
+
+    if (candidates.length === 0) {
+      dispatch({ type: 'setBulkDiscardRunning', running: false });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setNotice',
+        notice: __('No failed changes older than 7 days on this page.', 'alt-context'),
+      });
+      return;
+    }
+
+    const results: BulkDiscardRowResult[] = [];
+    let halted = false;
+
+    for (const operation of candidates) {
+      const identity = formatOperationIdentity(operation);
+      dispatch({
+        type: 'setActionStatus',
+        status: sprintf(__('Discarding %s.', 'alt-context'), identity),
+      });
+
+      try {
+        await discardMutation.mutateAsync(operation.id);
+        results.push({
+          id: operation.id,
+          identity,
+          outcome: BULK_DISCARD_OUTCOME.DISCARDED,
+        });
+      } catch (error) {
+        const halt = isHaltBulkDiscardError(error);
+        results.push({
+          id: operation.id,
+          identity,
+          outcome: halt ? BULK_DISCARD_OUTCOME.STOPPED : BULK_DISCARD_OUTCOME.FAILED,
+        });
+        if (halt) {
+          halted = true;
+          break;
+        }
+      }
+    }
+
+    const discardedCount = results.filter((result) => result.outcome === BULK_DISCARD_OUTCOME.DISCARDED).length;
+    const remainingTotal = Math.max(0, failedTotalAtStart - discardedCount);
+    const remainderCopy =
+      remainingTotal > 0
+        ? sprintf(__('%d remain — run again for the next page.', 'alt-context'), remainingTotal)
+        : '';
+    dispatch({ type: 'setBulkDiscardResults', results });
+    dispatch({ type: 'setBulkDiscardRunning', running: false });
+    dispatch({ type: 'setPendingDiscardId', id: null });
+    dispatch({ type: 'setActionStatus', status: '' });
+    dispatch({
+      type: 'setNotice',
+      notice: halted
+        ? sprintf(
+            __('Stopped after an authorization or client error. %d discarded.', 'alt-context'),
+            discardedCount,
+          ) + (remainderCopy ? ` ${remainderCopy}` : '')
+        : discardedCount === results.length
+          ? sprintf(__('Discarded %d failed changes older than 7 days.', 'alt-context'), discardedCount) +
+            (remainderCopy ? ` ${remainderCopy}` : '')
+          : sprintf(
+              __('Discarded %1$d of %2$d failed changes older than 7 days.', 'alt-context'),
+              discardedCount,
+              results.length,
+            ) + (remainderCopy ? ` ${remainderCopy}` : ''),
+    });
+  };
+
   const handleTimelineStatusChange = (status: TimelineStatusFilter): void => {
     dispatch({ type: 'setTimelineStatus', status });
     dispatch({ type: 'setTimelineOffset', offset: 0 });
@@ -328,15 +745,26 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     ? loadingAnnouncement
     : bulkRetryMutation.isPending
       ? __('Retrying all failed changes…', 'alt-context')
-      : actionStatus ||
-        (retryMutation.isPending || discardMutation.isPending
-          ? __('Failed-change action in progress. Please wait.', 'alt-context')
-          : bulkRetryArmed && failedTotal !== undefined
-            ? sprintf(
-                __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
-                failedTotal,
-              )
-            : (notice ?? ''));
+      : bulkDiscardRunning
+        ? __('Discarding failed changes older than 7 days…', 'alt-context')
+        : actionStatus ||
+          (retryMutation.isPending || discardMutation.isPending
+            ? __('Failed-change action in progress. Please wait.', 'alt-context')
+            : bulkRetryArmed && failedTotal !== undefined
+              ? sprintf(
+                  __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
+                  failedTotal,
+                )
+              : bulkDiscardArmed
+                ? sprintf(
+                    __(
+                      'Discard %d eligible is armed. Activate Confirm discard %d eligible to continue.',
+                      'alt-context',
+                    ),
+                    eligibleCount,
+                    eligibleCount,
+                  )
+                : (notice ?? ''));
 
   const statusRegion = (
     <div
@@ -400,7 +828,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           onClick={() => {
             void handleBulkRetry();
           }}
-          disabled={total === 0 || bulkRetryMutation.isPending || retryMutation.isPending || discardMutation.isPending}
+          disabled={total === 0 || mutationPending}
           aria-disabled={mutationPending || total === 0 ? true : undefined}
           aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
         >
@@ -410,12 +838,44 @@ export const DeadLetterPanel = (): React.JSX.Element => {
               ? sprintf(__('Confirm retry all failed (%d)', 'alt-context'), total)
               : sprintf(__('Retry all failed (%d)', 'alt-context'), total)}
         </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => {
+            void handleBulkDiscard();
+          }}
+          disabled={!canBulkDiscard || mutationPending}
+          aria-disabled={!canBulkDiscard || mutationPending ? true : undefined}
+          aria-describedby={
+            mutationPending
+              ? DEAD_LETTER_PENDING_REASON_ID
+              : missingAgeClock
+                ? DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID
+                : undefined
+          }
+        >
+          {bulkDiscardRunning
+            ? __('Discarding failed older than 7 days…', 'alt-context')
+            : bulkDiscardArmed
+              ? sprintf(__('Confirm discard %d eligible', 'alt-context'), eligibleCount)
+              : sprintf(__('Discard %d eligible', 'alt-context'), eligibleCount)}
+        </button>
       </div>
+      {missingAgeClock && !mutationPending ? (
+        <p id={DEAD_LETTER_AGE_UNAVAILABLE_REASON_ID}>{AGE_CLOCK_UNAVAILABLE}</p>
+      ) : null}
       {mutationError ? (
         <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
           <span aria-hidden="true">⚠</span>
           <p>{mutationError}</p>
         </div>
+      ) : null}
+      {bulkDiscardResults.length > 0 ? (
+        <ul className="acx-dashboard__activity-list" data-testid="acx-bulk-discard-results">
+          {bulkDiscardResults.map((result) => (
+            <li key={`bulk-discard-${result.id}`}>{formatBulkDiscardResult(result)}</li>
+          ))}
+        </ul>
       ) : null}
       {hasTopologyStatus ? (
         <div className={NOTICE_VARIANTS.info}>
@@ -480,6 +940,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                           )}
                         </p>
                         <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
+                        <p>{formatAge(operation.created_at, displayNowMs)}</p>
+                        {isTerminalOperation(operation) ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                         {operation.last_attempted_at ? (
                           <p>
                             {sprintf(
@@ -537,6 +999,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             {items.map((operation) => {
               const payloadSummary = formatPayloadSummary(operation.payload);
               const discardPending = pendingDiscardId === operation.id;
+              const terminal = isTerminalOperation(operation);
 
               return (
                 <li key={operation.id} className="acx-dashboard__activity-item">
@@ -546,6 +1009,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       {sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}
                     </p>
                     <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
+                    <p>{formatAge(operation.created_at, displayNowMs)}</p>
+                    {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
                     <p>
                       {sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}
                     </p>
@@ -553,31 +1018,29 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                     {payloadSummary ? <p>{payloadSummary}</p> : null}
                   </div>
                   <div className="acx-dashboard__actions">
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => {
-                        void handleRetry(operation);
-                      }}
-                      disabled={retryMutation.isPending || discardMutation.isPending}
-                      aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}
-                      aria-describedby={
-                        retryMutation.isPending || discardMutation.isPending ? DEAD_LETTER_PENDING_REASON_ID : undefined
-                      }
-                    >
-                      {__('Retry', 'alt-context')}
-                    </button>
+                    {terminal ? null : (
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => {
+                          void handleRetry(operation);
+                        }}
+                        disabled={mutationPending}
+                        aria-disabled={mutationPending ? true : undefined}
+                        aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+                      >
+                        {__('Retry', 'alt-context')}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button button-secondary"
                       onClick={() => {
                         void handleDiscard(operation);
                       }}
-                      disabled={retryMutation.isPending || discardMutation.isPending}
-                      aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}
-                      aria-describedby={
-                        retryMutation.isPending || discardMutation.isPending ? DEAD_LETTER_PENDING_REASON_ID : undefined
-                      }
+                      disabled={mutationPending}
+                      aria-disabled={mutationPending ? true : undefined}
+                      aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
                     >
                       {discardPending ? __('Confirm discard', 'alt-context') : __('Discard', 'alt-context')}
                     </button>

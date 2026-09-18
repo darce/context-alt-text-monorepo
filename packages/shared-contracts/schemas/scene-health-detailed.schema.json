@@ -1,0 +1,321 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/scene-health-detailed.schema.json",
+  "title": "Scene detailed health",
+  "description": "Auth-gated GET /health/detailed response. The description_adapter block reports the configured description profile and whether the GPU endpoint has a fresh, private resolution result. A null endpoint_private means no resolution result is available; fresh is false until bounded evidence exists.",
+  "type": "object",
+  "required": [
+    "status",
+    "timestamp",
+    "description_adapter"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "degraded",
+        "unhealthy"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "commit_sha": {
+      "type": "string"
+    },
+    "image_variant": {
+      "type": "string"
+    },
+    "pool_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business": {
+          "$ref": "#/definitions/poolMetrics"
+        },
+        "observability": {
+          "$ref": "#/definitions/poolMetrics"
+        },
+        "clustering": {
+          "$ref": "#/definitions/poolMetrics"
+        }
+      },
+      "required": [
+        "business",
+        "observability",
+        "clustering"
+      ]
+    },
+    "breaker_state": {
+      "type": "string",
+      "enum": [
+        "closed",
+        "open",
+        "half_open"
+      ]
+    },
+    "model_cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model_name": {
+          "type": "string"
+        },
+        "cache_dir": {
+          "type": "string"
+        },
+        "bundle_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/definitions/healthStatus"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_name",
+        "cache_dir",
+        "bundle_files",
+        "status",
+        "detail",
+        "profile"
+      ]
+    },
+    "embedding_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "heartbeat_age_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "available",
+        "reason",
+        "heartbeat_age_seconds"
+      ]
+    },
+    "description_adapter": {
+      "$ref": "#/definitions/descriptionAdapterReadiness"
+    },
+    "disk_headroom": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "probe_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "free_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/definitions/healthStatus"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "healthStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "degraded",
+        "unhealthy"
+      ]
+    },
+    "poolMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overflow": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checked_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checked_in": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overflow_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_capacity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "utilization_percent": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "size",
+        "overflow",
+        "checked_out",
+        "checked_in",
+        "overflow_count",
+        "total_capacity",
+        "utilization_percent"
+      ]
+    },
+    "descriptionAdapterReadiness": {
+      "type": "object",
+      "description": "Per-request adapter-readiness evidence. endpoint_configured and endpoint_allowlisted are configuration reads; endpoint_private is the bounded DNS/IP result cached for the health request.",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "kind",
+        "endpoint_configured",
+        "endpoint_allowlisted",
+        "endpoint_private",
+        "checked_at",
+        "fresh",
+        "usable",
+        "reason",
+        "model_id",
+        "model_version"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": [
+            "seeded",
+            "florence_small",
+            "florence_large",
+            "gpu_phi4",
+            "gpu_qwen30b",
+            "gpu_qwen30b_ensemble",
+            "hosted_gpt4o"
+          ],
+          "description": "The active DescriptionSettings profile, never a hardcoded health label."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "seeded",
+            "local_cpu",
+            "gpu",
+            "hosted_provider"
+          ],
+          "description": "The adapter kind associated with profile."
+        },
+        "endpoint_configured": {
+          "type": "boolean",
+          "description": "Whether ACX_GPU_ENDPOINT_URL is configured."
+        },
+        "endpoint_allowlisted": {
+          "type": "boolean",
+          "description": "Whether the endpoint hostname passes the authoritative allowlist check."
+        },
+        "endpoint_private": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether every resolved endpoint address is private or loopback; null before a resolution result exists."
+        },
+        "checked_at": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Unix timestamp in seconds for the cached endpoint-private check; null when no check has completed."
+        },
+        "fresh": {
+          "type": "boolean",
+          "description": "Whether checked_at is within the 60-second endpoint-resolution cache TTL."
+        },
+        "usable": {
+          "type": "boolean",
+          "description": "True only when the adapter's configuration and fresh private-endpoint evidence permit use."
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Machine-readable readiness reason; null when usable (or when a non-GPU profile has no GPU endpoint reason). Common values include profile_unavailable, endpoint_unconfigured, endpoint_invalid_url, endpoint_not_private, and endpoint_resolution_pending."
+        },
+        "model_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Wire model identity the active adapter stamps on responses; null when the profile spec has no model_id."
+        },
+        "model_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Model version the active adapter stamps on responses; null when the profile spec has no model_id."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "status": "ok",
+      "timestamp": "2026-09-17T00:00:00Z",
+      "description_adapter": {
+        "profile": "gpu_qwen30b",
+        "kind": "gpu",
+        "endpoint_configured": true,
+        "endpoint_allowlisted": true,
+        "endpoint_private": true,
+        "checked_at": 1789603200.0,
+        "fresh": true,
+        "usable": true,
+        "reason": null,
+        "model_id": "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639",
+        "model_version": "Q4_K_M"
+      }
+    }
+  ]
+}

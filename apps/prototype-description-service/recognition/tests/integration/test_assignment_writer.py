@@ -12,6 +12,7 @@ from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.persistence.representative_selector import representative_quality_components
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -198,6 +199,44 @@ async def test_persist_new_cluster_creates_representatives(db_session, tenant, s
     # Should have up to max_representatives_per_cluster reps
     expected_num_reps = min(settings.max_representatives_per_cluster, len(identities))
     assert len(reps) == expected_num_reps
+
+
+@pytest.mark.asyncio
+async def test_persist_new_cluster_representative_quality_components_round_trip(
+    db_session, tenant, seed_media_identity
+) -> None:
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    settings = ClusteringSettings()
+    writer = AssignmentWriter(settings, cluster_repo, member_repo)
+
+    identity = make_identity(str(tenant.id))
+    identity.confidence = 0.87
+    identity.bbox_width = 24
+    identity.bbox_height = 18
+    identity.sharpness = 42.5
+    identity.occlusion_severity = 0.15
+    await seed_media_identity(identity.id)
+
+    cluster = await writer.persist_new_cluster(
+        tenant_id=str(tenant.id),
+        identities=[identity],
+        similarities=[0.93],
+        algorithm="graph",
+    )
+
+    representatives = await cluster_repo.get_all_representatives(cluster.id)
+    assert len(representatives) == 1
+    representative = representatives[0]
+    expected_components = representative_quality_components(identity, settings)
+    assert representative.quality_components is not None
+    assert set(representative.quality_components) == {
+        "confidence",
+        "bbox_area",
+        "sharpness",
+        "occlusion_severity",
+    }
+    assert representative.quality_components == expected_components
 
 
 @pytest.mark.asyncio

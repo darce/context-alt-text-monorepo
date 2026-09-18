@@ -1,5 +1,5 @@
 import { __, sprintf } from '@wordpress/i18n';
-import { Clock, Loader2 } from 'lucide-react';
+import { Clock, ImageOff, Loader2 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import {
@@ -46,9 +46,13 @@ export interface MediaAltSuggestProps {
    */
   isDecorative: boolean;
   /**
-   * Row media title for Suggest / Mark decorative accessible names so AT
-   * element lists can tell which image each bare verb belongs to [A11Y-04].
-   * When absent, controls keep their short visible labels as accessible names.
+   * Row media title for Suggest / decorative accessible names so AT
+   * element lists can tell which image each compact control belongs to [A11Y-04].
+   * When absent, Suggest and the decorative toggle keep their short visible
+   * labels as the accessible name (no aria-label). With a title, the decorative
+   * toggle qualifies as "Decorative: {title}" so the visible word comes first
+   * [GPUFLOW-2 B7]. Tooltip and aria-describedby still carry the full outcome
+   * sentence.
    */
   title?: string;
   /**
@@ -91,10 +95,32 @@ export const ALT_SUGGEST_COMMIT_CLAIM_REFUSED_MESSAGE = __(
 );
 
 /**
+ * Compact visible label for the per-image decorative toggle (≤ 2 words).
+ * The full outcome sentence lives on tooltip / aria-describedby so the
+ * suggestion column does not grow. aria-label is title-qualified only
+ * [GPUFLOW-2 B7][LAY-01][INT-06][A11Y-04].
+ */
+export const DECORATIVE_TOGGLE_VISIBLE_LABEL = __('Decorative', 'alt-context');
+
+/** Pressed compact decorative toggle — token-backed so AT/UI share sr-004 color+icon pairing. */
+export const DECORATIVE_TOGGLE_PRESSED_STYLE = {
+  color: 'var(--acx-color-success-text)',
+  backgroundColor: 'var(--acx-color-success-bg)',
+  borderColor: 'var(--acx-color-success-border)',
+};
+
+/** Unpressed compact decorative toggle. */
+export const DECORATIVE_TOGGLE_IDLE_STYLE = {
+  color: 'var(--acx-color-text-secondary)',
+};
+
+/**
  * Explicit control to mark the image decorative (empty alt + durable marker).
- * Label states the screen-reader outcome — "decorative" alone is jargon [INT-06]
- * [A11Y-02]. Recoverable: un-mark control when isDecorative, or a later
- * non-empty description clears the marker server-side [INT-09].
+ * Accessible name / tooltip states the screen-reader outcome — the visible
+ * label is DECORATIVE_TOGGLE_VISIBLE_LABEL because "decorative" alone is
+ * jargon for AT [INT-06][A11Y-02]. Recoverable: un-mark control when
+ * isDecorative, or a later non-empty description clears the marker
+ * server-side [INT-09].
  */
 export const MARK_DECORATIVE_LABEL = __(
   'Mark as decorative — screen readers will announce nothing',
@@ -236,11 +262,14 @@ export const MediaAltSuggest = ({
   const suggestTriggerLabel = title
     ? sprintf(__('Suggest alt text for %s', 'alt-context'), title)
     : undefined;
-  // Distinct label per state so AT users do not act on the wrong operation [INT-06].
-  const decorativeControlAriaLabel = title
-    ? isDecorative
-      ? sprintf(__('Remove decorative mark for %s', 'alt-context'), title)
-      : sprintf(__('Mark as decorative for %s', 'alt-context'), title)
+  // Distinct description per state so AT users do not act on the wrong
+  // operation [INT-06]. Visible text stays DECORATIVE_TOGGLE_VISIBLE_LABEL;
+  // aria-label is title-qualified only; tooltip / aria-describedby keep the
+  // full outcome sentence [GPUFLOW-2 B7][A11Y-04].
+  const decorativeSentence = isDecorative ? UNMARK_DECORATIVE_LABEL : MARK_DECORATIVE_LABEL;
+  const trimmedTitle = title?.trim() ?? '';
+  const decorativeControlAriaLabel = trimmedTitle
+    ? sprintf(__('Decorative: %s', 'alt-context'), trimmedTitle)
     : undefined;
   // House BR-68 pattern (same hook ScanTabContent uses one directory away): seq
   // bumps on every announce so a repeated string (regenerate → same "Draft
@@ -327,6 +356,7 @@ export const MediaAltSuggest = ({
   const disclosureId = useId();
   const errorId = useId();
   const lengthAdvisoryId = useId();
+  const decorativeDescriptionId = useId();
 
   // WHY: useAriaAnnounce has no clear; empty string clears the always-mounted
   // region's text without unmounting it (AT keeps tracking the node).
@@ -591,6 +621,46 @@ export const MediaAltSuggest = ({
       },
     );
   };
+
+  const decorativeBusyLabel = isMarkingDecorative
+    ? decorativeBusyUnmarkingRef.current
+      ? __('Removing decorative mark…', 'alt-context')
+      : __('Marking as decorative…', 'alt-context')
+    : null;
+  const decorativePressedStyle = isDecorative
+    ? DECORATIVE_TOGGLE_PRESSED_STYLE
+    : DECORATIVE_TOGGLE_IDLE_STYLE;
+  const renderDecorativeToggle = (disabled: boolean): React.JSX.Element => (
+    <>
+      <button
+        type="button"
+        ref={decorativeButtonRef}
+        className={
+          isDecorative
+            ? 'button acx-media-selection__media-alt-suggest-decorative acx-media-selection__media-alt-suggest-decorative--pressed'
+            : 'button acx-media-selection__media-alt-suggest-decorative'
+        }
+        onClick={toggleDecorative}
+        disabled={disabled}
+        aria-pressed={isDecorative}
+        aria-busy={isMarkingDecorative ? true : undefined}
+        aria-label={decorativeBusyLabel ?? decorativeControlAriaLabel}
+        aria-describedby={decorativeDescriptionId}
+        title={decorativeSentence}
+        style={decorativePressedStyle}
+      >
+        {isMarkingDecorative ? (
+          <Loader2 aria-hidden="true" size={16} />
+        ) : (
+          <ImageOff aria-hidden="true" size={16} />
+        )}
+        {DECORATIVE_TOGGLE_VISIBLE_LABEL}
+      </button>
+      <span id={decorativeDescriptionId} className="screen-reader-text">
+        {decorativeSentence}
+      </span>
+    </>
+  );
 
   // BR-17: retire status once it has served its purpose — no timeout. When focus
   // leaves this surface while idle, "Alt text saved." is no longer local context.
@@ -1009,26 +1079,7 @@ export const MediaAltSuggest = ({
               >
                 {__('Regenerate', 'alt-context')}
               </button>
-              <button
-                type="button"
-                ref={decorativeButtonRef}
-                className="button acx-media-selection__media-alt-suggest-decorative"
-                onClick={toggleDecorative}
-                disabled={commitControlDisabled}
-                aria-label={
-                  isMarkingDecorative
-                    ? undefined
-                    : decorativeControlAriaLabel
-                }
-              >
-                {isMarkingDecorative
-                  ? decorativeBusyUnmarkingRef.current
-                    ? __('Removing decorative mark…', 'alt-context')
-                    : __('Marking as decorative…', 'alt-context')
-                  : isDecorative
-                    ? UNMARK_DECORATIVE_LABEL
-                    : MARK_DECORATIVE_LABEL}
-              </button>
+              {renderDecorativeToggle(commitControlDisabled)}
               <button
                 type="button"
                 ref={dismissButtonRef}
@@ -1078,26 +1129,7 @@ export const MediaAltSuggest = ({
         >
           {__('Suggest alt text', 'alt-context')}
         </button>
-        <button
-          type="button"
-          ref={decorativeButtonRef}
-          className="button acx-media-selection__media-alt-suggest-decorative"
-          onClick={toggleDecorative}
-          disabled={isMarkingDecorative || peerCommitPending}
-          aria-label={
-            isMarkingDecorative
-              ? undefined
-              : decorativeControlAriaLabel
-          }
-        >
-          {isMarkingDecorative
-            ? decorativeBusyUnmarkingRef.current
-              ? __('Removing decorative mark…', 'alt-context')
-              : __('Marking as decorative…', 'alt-context')
-            : isDecorative
-              ? UNMARK_DECORATIVE_LABEL
-              : MARK_DECORATIVE_LABEL}
-        </button>
+        {renderDecorativeToggle(isMarkingDecorative || peerCommitPending)}
         {conflictMessage ? (
           <div className="acx-media-selection__media-alt-error" role="alert">
             {conflictMessage}

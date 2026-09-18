@@ -12,15 +12,28 @@
 # to produce real descriptions may RUN. Unknown, empty, seeded, and
 # fail-closed stub profiles BLOCK.
 #
-# classify_describe_gate <adapter_profile> <total_media> <media_with_alt> [provenance]
+# classify_describe_gate <adapter_profile> <total_media> <media_with_alt> [provenance] [readiness]
 #   -> RUN | RUN_FORCE | SKIP | BLOCK
 # provenance is PASS|FAIL|UNKNOWN. Omitted/empty/garbage is UNKNOWN.
+# readiness is the compact value emitted by extract_probed_description_adapter;
+# when omitted, the most recent extraction in this shell is used.
 #
 # Shared allowlist: one space-delimited string, exact-word predicate.
 # Callers (bootstrap-wp.sh) read the same source so BLOCK messages can
 # distinguish "untrusted adapter" from "trusted adapter, unmeasurable corpus".
 
 ACX_TRUSTED_DESCRIBE_PROFILES="florence_small gpu_qwen30b gpu_qwen30b_ensemble"
+
+# These are every configuration-fault member of AdapterReadinessReason in
+# apps/prototype-description-service/api/main.py. The intentionally omitted
+# endpoint_resolution_pending member is a warmth-independent cold-GPU state.
+ACX_DESCRIBE_CONFIGURATION_FAULT_REASONS="profile_unavailable vlm_dependencies_missing endpoint_unconfigured endpoint_invalid_url endpoint_not_allowlisted endpoint_not_private"
+
+# bootstrap-wp.sh keeps the profile-only stdout contract for the extractor. The
+# readiness fields travel alongside it in a per-shell file so the unchanged
+# caller can still pass ADAPTER_PROFILE to the gate. $$ is stable across bash
+# command substitutions, while distinct bootstrap processes get distinct files.
+_DESCRIBE_GATE_READINESS_FILE="${TMPDIR:-/tmp}/acx-describe-gate-readiness-$$"
 
 # is_trusted_describe_profile <profile>
 #   exit 0 if <profile> is an exact allowlist member, else 1 (not echo).
@@ -82,14 +95,21 @@ php_define_value() {
 }
 
 # extract_probed_description_adapter <http_code> <body>
-# Returns the top-level JSON string field description_adapter when HTTP is 2xx
-# and the body is parseable. Empty on probe failure, non-2xx, missing field,
-# unparseable body, nested-only key, non-string value, or missing python3.
+# Returns description_adapter.profile from the top-level JSON readiness object
+# when HTTP is 2xx, the body is parseable, and description_adapter matches the
+# full descriptionAdapterReadiness shape. Empty on probe failure, non-2xx,
+# missing or invalid shape fields (including non-empty model identity strings
+# for trusted profiles), unparseable body,
+# nested-only key, non-object value, untrusted model identity, or missing
+# python3.
 # NEVER invents a fallback profile. python3 is required; fail closed if absent.
 extract_probed_description_adapter() {
     local code="$1"
     local body="$2"
     local value=""
+    local profile=""
+    local readiness=""
+    rm -f "$_DESCRIBE_GATE_READINESS_FILE"
     case "$code" in
         2[0-9][0-9]) ;;
         *) echo ""; return ;;
@@ -108,11 +128,108 @@ except Exception:
     raise SystemExit(0)
 if not isinstance(data, dict):
     raise SystemExit(0)
+if data.get("status") not in {"ok", "degraded"}:
+    raise SystemExit(0)
 value = data.get("description_adapter")
-if isinstance(value, str):
-    sys.stdout.write(value)
-' 2>/dev/null) || value=""
-    printf '%s' "$value"
+if not isinstance(value, dict):
+    raise SystemExit(0)
+
+required_keys = {
+    "profile",
+    "kind",
+    "endpoint_configured",
+    "endpoint_allowlisted",
+    "endpoint_private",
+    "checked_at",
+    "fresh",
+    "usable",
+    "reason",
+    "model_id",
+    "model_version",
+}
+if set(value) != required_keys:
+    raise SystemExit(0)
+
+profile = value.get("profile")
+if not isinstance(profile, str) or not profile:
+    raise SystemExit(0)
+if value["kind"] not in {"seeded", "local_cpu", "gpu", "hosted_provider"}:
+    raise SystemExit(0)
+for key in ("endpoint_configured", "endpoint_allowlisted", "fresh", "usable"):
+    if type(value[key]) is not bool:
+        raise SystemExit(0)
+if value["endpoint_private"] is not None and type(value["endpoint_private"]) is not bool:
+    raise SystemExit(0)
+checked_at = value["checked_at"]
+if checked_at is not None and (
+    isinstance(checked_at, bool)
+    or not isinstance(checked_at, (int, float))
+    or not checked_at >= 0
+):
+    raise SystemExit(0)
+if value["reason"] is not None and not isinstance(value["reason"], str):
+    raise SystemExit(0)
+for key in ("model_id", "model_version"):
+    if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
+        raise SystemExit(0)
+trusted_profiles = set(sys.argv[1].split()) if len(sys.argv) > 1 else set()
+if profile in trusted_profiles and any(
+    not isinstance(value[key], str) or not value[key]
+    for key in ("model_id", "model_version")
+):
+    raise SystemExit(0)
+# Keep the profile on stdout for bootstrap-wp.sh. The readiness record is one
+# structured value; shell only consumes its already-validated scalar fields.
+endpoint_private = "null" if value["endpoint_private"] is None else str(value["endpoint_private"]).lower()
+reason = "null" if value["reason"] is None else value["reason"]
+fields = [
+    profile,
+    value["kind"],
+    str(value["endpoint_configured"]).lower(),
+    str(value["endpoint_allowlisted"]).lower(),
+    endpoint_private,
+    str(value["fresh"]).lower(),
+    str(value["usable"]).lower(),
+    reason,
+]
+if any(
+    any(separator in field or control in field for separator in ("|",) for control in ("\r", "\n"))
+    for field in fields
+):
+    raise SystemExit(0)
+sys.stdout.write(profile + "\n" + "|".join(fields))
+' "$ACX_TRUSTED_DESCRIBE_PROFILES" 2>/dev/null) || value=""
+    [ -n "$value" ] || return
+    case "$value" in
+        *$'\n'*) ;;
+        *) return ;;
+    esac
+    profile="${value%%$'\n'*}"
+    readiness="${value#*$'\n'}"
+    [ -n "$profile" ] || return
+    [ -n "$readiness" ] || return
+    printf '%s' "$readiness" >"$_DESCRIBE_GATE_READINESS_FILE"
+    printf '%s' "$profile"
+}
+
+# extract_probed_description_adapter_readiness <expected_profile>
+# Returns the structured readiness captured by the most recent extractor in
+# this shell. The profile field prevents stale evidence from being paired with
+# a different adapter; no JSON is reparsed here.
+extract_probed_description_adapter_readiness() {
+    local expected_profile="${1:-}"
+    local readiness=""
+    local stored_profile=""
+    [ -r "$_DESCRIBE_GATE_READINESS_FILE" ] || return 1
+    readiness=$(<"$_DESCRIBE_GATE_READINESS_FILE")
+    [ -n "$readiness" ] || return 1
+    case "$readiness" in
+        *'|'*) ;;
+        *) return 1 ;;
+    esac
+    stored_profile="${readiness%%|*}"
+    [ -n "$expected_profile" ] && [ "$stored_profile" = "$expected_profile" ] || return 1
+    printf '%s' "$readiness"
 }
 
 # classify_claimed_adapter_matches_probe <probed_adapter> <claimed_adapters_blob>
@@ -246,12 +363,101 @@ classify_describe_provenance() {
     echo PASS
 }
 
-# classify_describe_gate <adapter_profile> <total_media> <media_with_alt> [provenance]
-classify_describe_gate() {
+# _describe_profile_kind <profile> -> kind
+# Trusted profiles are the only profiles that reach this mapping. Keeping the
+# mapping here makes a claimed profile with a mismatched producer kind block.
+_describe_profile_kind() {
+    case "$1" in
+        florence_small) printf '%s' local_cpu ;;
+        gpu_qwen30b|gpu_qwen30b_ensemble) printf '%s' gpu ;;
+        *) return 1 ;;
+    esac
+}
+
+# _describe_readiness_allows_gate <profile> <readiness>
+# The gate deliberately ignores usable/fresh: those fields describe GPU
+# warmth, and a cold but correctly configured GPU must be admitted so the
+# burst can warm it. It checks only profile-independent configuration evidence.
+_describe_readiness_allows_gate() {
     local profile="$1"
+    local readiness="$2"
+    local readiness_profile=""
+    local kind=""
+    local endpoint_configured=""
+    local endpoint_allowlisted=""
+    local endpoint_private=""
+    local fresh=""
+    local usable=""
+    local reason=""
+    local extra=""
+    local expected_kind=""
+    local fault_reason=""
+
+    [ -n "$readiness" ] || return 1
+    case "$readiness" in
+        *$'\n'*|*$'\r'*) return 1 ;;
+    esac
+    IFS='|' read -r readiness_profile kind endpoint_configured endpoint_allowlisted endpoint_private fresh usable reason extra <<EOF
+$readiness
+EOF
+    [ -z "$extra" ] || return 1
+    [ "$readiness_profile" = "$profile" ] || return 1
+    expected_kind=$(_describe_profile_kind "$profile") || return 1
+    [ "$kind" = "$expected_kind" ] || return 1
+    case "$endpoint_configured" in true|false) ;; *) return 1 ;; esac
+    case "$endpoint_allowlisted" in true|false) ;; *) return 1 ;; esac
+    case "$endpoint_private" in true|null) ;; false) return 1 ;; *) return 1 ;; esac
+    case "$fresh" in true|false) ;; *) return 1 ;; esac
+    case "$usable" in true|false) ;; *) return 1 ;; esac
+
+    # AdapterReadinessReason's only non-fault terminal state is pending. An
+    # unknown reason also blocks so adding a new producer fault cannot silently
+    # widen this release gate.
+    if [ "$reason" != "null" ] && [ "$reason" != "endpoint_resolution_pending" ]; then
+        for fault_reason in $ACX_DESCRIBE_CONFIGURATION_FAULT_REASONS; do
+            [ "$reason" = "$fault_reason" ] && return 1
+        done
+        return 1
+    fi
+
+    if [ "$usable" = false ] && [ "$reason" = "null" ]; then
+        return 1
+    fi
+    if [ "$usable" = true ] && [ "$reason" != "null" ]; then
+        return 1
+    fi
+
+    if [ "$kind" = "gpu" ]; then
+        [ "$endpoint_configured" = true ] || return 1
+        [ "$endpoint_allowlisted" = true ] || return 1
+        if [ "$usable" = true ]; then
+            [ "$endpoint_private" = true ] || return 1
+            [ "$fresh" = true ] || return 1
+        fi
+    fi
+    return 0
+}
+
+# classify_describe_gate <adapter_profile> <total_media> <media_with_alt> [provenance] [readiness]
+classify_describe_gate() {
+    local profile="${1:-}"
     local total="${2:-}"
     local with_alt="${3:-}"
     local provenance="${4:-}"
+    local readiness="${5:-}"
+
+    # Accept the structured value as the first argument too, so callers that
+    # already have one readiness value need not split it into profile + fields.
+    if [ -z "$readiness" ] && [[ "$profile" == *'|'* ]]; then
+        readiness="$profile"
+        profile="${profile%%|*}"
+    fi
+    # Likewise tolerate the additive readiness argument in position four;
+    # bootstrap's position-four provenance contract remains unchanged.
+    if [ -z "$readiness" ] && [[ "$provenance" == *'|'* ]]; then
+        readiness="$provenance"
+        provenance=""
+    fi
 
     if ! is_trusted_describe_profile "$profile"; then
         echo BLOCK
@@ -278,9 +484,22 @@ classify_describe_gate() {
     if [ "$with_alt" -eq "$total" ]; then
         case "$provenance" in
             PASS) echo SKIP; return ;;
-            FAIL) echo RUN_FORCE; return ;;
+            FAIL) ;;
             *) echo BLOCK; return ;;
         esac
+    fi
+
+    if [ -z "$readiness" ]; then
+        readiness="$(extract_probed_description_adapter_readiness "$profile")" || readiness=""
+    fi
+    if ! _describe_readiness_allows_gate "$profile" "$readiness"; then
+        echo BLOCK
+        return
+    fi
+
+    if [ "$with_alt" -eq "$total" ]; then
+        echo RUN_FORCE
+        return
     fi
 
     echo RUN

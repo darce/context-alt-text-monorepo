@@ -44,7 +44,7 @@
         "intent_expires_at": {"type": ["string", "null"], "format": "date-time"},
         "intent_status": {
           "type": "string",
-          "enum": ["none", "pending", "honoured", "blocked_work_in_flight", "expired"]
+          "enum": ["none", "pending", "honoured", "blocked_work_in_flight", "stopped_with_work", "expired"]
         },
         "honoured_nonce": {"type": ["string", "null"]},
         "lease_expires_at": {"type": ["string", "null"], "format": "date-time"},

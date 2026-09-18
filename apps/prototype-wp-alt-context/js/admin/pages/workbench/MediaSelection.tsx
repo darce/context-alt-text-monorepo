@@ -6,12 +6,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  CircleHelp,
-  CircleStop,
   Clock,
-  Flame,
   Loader2,
-  Zap,
   XCircle,
 } from 'lucide-react';
 import { __, _n, sprintf } from '@wordpress/i18n';
@@ -34,16 +30,15 @@ import { useSyncOffline } from '../../hooks/useSyncOffline';
 import {
   DESCRIBE_RUN_PHASE,
   DESCRIBE_RUN_STATUS,
-  GPU_STATE,
   type DescribeRunStatus,
   type DescribeRunTiming,
-  type GpuState,
 } from '../../api/describeApi';
 import { toDescriptionHistoryRun } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
+import { GpuTierStatus } from './GpuTierStatus';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import {
   ACCENT_PRIMARY_ATTR,
@@ -57,15 +52,6 @@ import {
   type RecognitionPolicy,
 } from './mediaFooterCtaState';
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
-import {
-  GPU_STATE_ICON,
-  GPU_STATE_TONE,
-  GPU_STATE_VOCABULARY,
-  gpuStateNotice,
-  gpuStatePresentation,
-  type GpuStateIcon,
-  type GpuStateTone,
-} from './gpuStatePresentation';
 
 interface MediaSelectionProps {
   /**
@@ -130,7 +116,8 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     .map(([id]) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
   const describeProgress = bulkDescribe.progress;
-  const activeDescribeRunId = bulkDescribe.runId;
+  const terminalDescribeRunId = bulkDescribe.runId;
+  const activeDescribeRunId = bulkDescribe.activeRunId ?? null;
   // Run started and still making progress: a polling error does NOT count as an
   // active run, so the primary CTA is never left permanently disabled (FE-02).
   const isDescribeRunning =
@@ -141,7 +128,8 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
   const hasDescribeActivity = bulkDescribe.submit.isPending || activeDescribeRunId !== null;
   const isDescribePanelVisible =
-    hasDescribeActivity && (activeDescribeRunId === null || dismissedRunId !== activeDescribeRunId);
+    (hasDescribeActivity || terminalDescribeRunId !== null) &&
+    (activeDescribeRunId === null || dismissedRunId !== terminalDescribeRunId);
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
@@ -223,7 +211,8 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             isSubmitting={bulkDescribe.submit.isPending}
             isCancelling={bulkDescribe.cancel.isPending}
             isRunning={isDescribeRunning}
-            runId={activeDescribeRunId}
+            runId={terminalDescribeRunId}
+            activeRunId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
             errorMessage={identify.error ?? bulkDescribe.errorMessage}
@@ -275,7 +264,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
                 bulkDescribe.cancel.mutate(activeDescribeRunId);
               }
             }}
-            onDismiss={() => setDismissedRunId(activeDescribeRunId)}
+            onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
         </div>
@@ -467,6 +456,9 @@ interface BulkDescribeCtaProps {
   isSubmitting: boolean;
   isCancelling: boolean;
   isRunning: boolean;
+  /** Store-backed id of the currently active run; null after terminal cleanup. */
+  activeRunId?: string | null;
+  /** Active or terminal run id used by the result/review surface. */
   runId: string | null;
   progress: DescribeRunProgress;
   isPanelVisible: boolean;
@@ -500,6 +492,7 @@ export const BulkDescribeCta = ({
   isCancelling,
   isRunning,
   runId,
+  activeRunId = runId,
   progress,
   isPanelVisible,
   errorMessage,
@@ -521,7 +514,7 @@ export const BulkDescribeCta = ({
       progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
       progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
   const canCancelDescribe =
-    isRunning && runId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
+    isRunning && activeRunId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
   // Identifying is a cancellable wait of its own: the footer owns Cancel while the
   // describe progress panel is not yet mounted to own it.
   const canCancel = isIdentifying || canCancelDescribe;
@@ -561,7 +554,7 @@ export const BulkDescribeCta = ({
 
   return (
     <div className="acx-media-selection__bulk-describe">
-      <GpuTierStatus gpuState={gpuState} isRunRelevant={runId !== null || isRunning} />
+      <GpuTierStatus gpuState={gpuState} isRunPending={isRunning} />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -730,89 +723,6 @@ export const BulkDescribeCta = ({
           {errorMessage}
         </div>
       ) : null}
-    </div>
-  );
-};
-
-const GPU_STATE_ICON_COMPONENT = {
-  [GPU_STATE_ICON.HELP]: CircleHelp,
-  [GPU_STATE_ICON.STOPPED]: CircleStop,
-  [GPU_STATE_ICON.STARTING]: Loader2,
-  [GPU_STATE_ICON.WARMING]: Flame,
-  [GPU_STATE_ICON.READY]: Zap,
-  [GPU_STATE_ICON.DEGRADED]: AlertTriangle,
-} satisfies Record<GpuStateIcon, typeof Clock>;
-
-const gpuStateToneClass = (tone: GpuStateTone): string => {
-  switch (tone) {
-    case GPU_STATE_TONE.SUCCESS:
-      return ' acx-sync-status--success';
-    case GPU_STATE_TONE.WARNING:
-      return ' acx-sync-status--warning';
-    case GPU_STATE_TONE.PENDING:
-    case GPU_STATE_TONE.RUNNING:
-      return ' acx-sync-status--info';
-    case GPU_STATE_TONE.MUTED:
-      return '';
-  }
-};
-
-/** GPU tier never gates the primary action; it only reports tier consequences. */
-export const GpuTierStatus = ({
-  gpuState,
-  isRunRelevant = true,
-}: {
-  gpuState: GpuState | null;
-  /** @deprecated Lifecycle totals are not evidence of an item's compute tier. */
-  cpuDraftCount?: number;
-  /** Unknown telemetry is meaningful only while a describe run exists or starts. */
-  isRunRelevant?: boolean;
-}): React.JSX.Element | null => {
-  if (!isRunRelevant) {
-    return null;
-  }
-
-  // Keep the live region mounted for every state of a relevant run. Null is a
-  // legacy direct-call input; the hook otherwise normalizes missing, malformed,
-  // and stale telemetry to UNKNOWN before it reaches this boundary.
-  const displayedState: GpuState = (() => {
-    switch (gpuState) {
-      case null:
-      case GPU_STATE.UNKNOWN:
-        return GPU_STATE.UNKNOWN;
-      case GPU_STATE.STOPPED:
-      case GPU_STATE.STARTING:
-      case GPU_STATE.WARMING:
-      case GPU_STATE.READY:
-      case GPU_STATE.DEGRADED:
-        return gpuState;
-      default: {
-        const unreachable: never = gpuState;
-        return unreachable;
-      }
-    }
-  })();
-
-  const presentation = gpuStatePresentation(displayedState);
-  const Icon = GPU_STATE_ICON_COMPONENT[presentation.icon];
-  const spin = presentation.icon === GPU_STATE_ICON.STARTING;
-  const accessibleName = `${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`;
-
-  return (
-    <div
-      className={`acx-sync-status acx-media-selection__gpu-tier-status${gpuStateToneClass(presentation.tone)}`}
-      role="status"
-      aria-label={accessibleName}
-      aria-live="polite"
-      aria-atomic="true"
-      data-gpu-state={displayedState}
-      data-gpu-terminal={presentation.terminal}
-    >
-      <span className="acx-media-selection__detail-chip">
-        <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
-        {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label}
-      </span>
-      <span className="acx-sync-status__label">{gpuStateNotice(displayedState)}</span>
     </div>
   );
 };

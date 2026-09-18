@@ -9,6 +9,14 @@ interface ClustersRepositoryInterface {
 	public const MAX_SNAPSHOT_MERGE_BATCH = 500;
 
 	/**
+	 * Snapshot-exported projection columns. Copied from the snapshot; never derived (rg-015).
+	 */
+	public const SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY = 'representative_quality';
+	public const SNAPSHOT_EXPORT_QUALITY_COMPONENTS = 'quality_components';
+	public const SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID = 'representative_media_id';
+	public const SNAPSHOT_EXPORT_UNDOABLE_MERGE_RECEIPT_ID = 'undoable_merge_receipt_id';
+
+	/**
 	 * Merge a snapshot payload into tenant-scoped cluster projection rows.
 	 *
 	 * Stale-row pruning still runs once per payload, but row upserts are issued in
@@ -116,6 +124,10 @@ interface ClustersRepositoryInterface {
 
 	/**
 	 * Create or update a projected cluster row from backend-authored topology state.
+	 *
+	 * Snapshot export fields (SNAPSHOT_EXPORT_* constants) are persisted by
+	 * ClusterProjectionWriter::upsert_projection_cluster via $snapshot_export.
+	 * Omitted keys stay SQL NULL and are never invented from sibling fields (rg-015).
 	 */
 	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false ): int;
 

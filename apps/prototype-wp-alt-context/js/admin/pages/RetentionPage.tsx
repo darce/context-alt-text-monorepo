@@ -15,6 +15,142 @@ const EXPORT_JOB_STATUS = {
   failed: 'failed',
 } as const;
 
+const UNAVAILABLE_REASON = {
+  NOT_CONFIGURED: 'not_configured',
+  API_KEY_MISSING: 'api_key_missing',
+  CIRCUIT_OPEN: 'circuit_open',
+  UPSTREAM_5XX: 'upstream_5xx',
+  UPSTREAM_4XX: 'upstream_4xx',
+  TIMEOUT: 'timeout',
+  CONTRACT_MISMATCH: 'contract_mismatch',
+} as const;
+
+const UNAVAILABLE_SERVICE = {
+  RECOGNITION: 'recognition',
+  SCENE: 'scene',
+} as const;
+
+interface ServiceUnavailable {
+  reason: string;
+  service: string;
+  http_status: number | null;
+  retry_after_seconds: number | null;
+  checked_at: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const parseUnavailable = (value: unknown): ServiceUnavailable | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (typeof value.reason !== 'string' || value.reason.trim() === '') {
+    return null;
+  }
+  if (typeof value.service !== 'string' || value.service.trim() === '') {
+    return null;
+  }
+  if (value.http_status !== null && value.http_status !== undefined) {
+    if (typeof value.http_status !== 'number' || !Number.isFinite(value.http_status)) {
+      return null;
+    }
+  }
+  if (value.retry_after_seconds !== null && value.retry_after_seconds !== undefined) {
+    if (typeof value.retry_after_seconds !== 'number' || !Number.isFinite(value.retry_after_seconds)) {
+      return null;
+    }
+  }
+  if (typeof value.checked_at !== 'string' || value.checked_at.trim() === '') {
+    return null;
+  }
+  return {
+    reason: value.reason,
+    service: value.service,
+    http_status: typeof value.http_status === 'number' ? value.http_status : null,
+    retry_after_seconds: typeof value.retry_after_seconds === 'number' ? value.retry_after_seconds : null,
+    checked_at: value.checked_at,
+  };
+};
+
+const readUnavailable = (payload: unknown): ServiceUnavailable | null => {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  return parseUnavailable(payload.unavailable);
+};
+
+const unavailableServiceLabel = (service: string): string => {
+  switch (service) {
+    case UNAVAILABLE_SERVICE.RECOGNITION:
+      return __('Recognition service', 'alt-context');
+    case UNAVAILABLE_SERVICE.SCENE:
+      return __('Description service', 'alt-context');
+    default:
+      return __('Service', 'alt-context');
+  }
+};
+
+const unavailableReasonCopy = (reason: string): { why: string; fix: string } => {
+  switch (reason) {
+    case UNAVAILABLE_REASON.NOT_CONFIGURED:
+      return {
+        why: __('it is not configured', 'alt-context'),
+        fix: __('Set the API URL in Settings.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.API_KEY_MISSING:
+      return {
+        why: __('the API key is missing', 'alt-context'),
+        fix: __('Add the API key in Settings.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.CIRCUIT_OPEN:
+      return {
+        why: __('the circuit breaker is open', 'alt-context'),
+        fix: __('Wait for the cooldown, then Retry.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.UPSTREAM_5XX:
+      return {
+        why: __('it returned a server error', 'alt-context'),
+        fix: __('Retry in a moment. If it continues, check the service logs.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.UPSTREAM_4XX:
+      return {
+        why: __('it rejected the request', 'alt-context'),
+        fix: __('Check the API URL and key in Settings.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.TIMEOUT:
+      return {
+        why: __('it did not respond in time', 'alt-context'),
+        fix: __('Retry. If it continues, check that the host is reachable.', 'alt-context'),
+      };
+    case UNAVAILABLE_REASON.CONTRACT_MISMATCH:
+      return {
+        why: __('it returned a response this plugin does not recognize', 'alt-context'),
+        fix: __('Confirm the plugin and service are on compatible versions.', 'alt-context'),
+      };
+    default:
+      return {
+        why: sprintf(__('an unexpected error occurred (%s)', 'alt-context'), reason),
+        fix: __('Retry. If it continues, check Settings and the service logs.', 'alt-context'),
+      };
+  }
+};
+
+const formatLastChecked = (checkedAt: string): string | null => {
+  const milliseconds = Date.parse(checkedAt);
+  if (!Number.isFinite(milliseconds)) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString().slice(11, 19);
+};
+
+const retryCountdownSeconds = (retryAfterSeconds: number | null): number | null => {
+  if (retryAfterSeconds === null || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return null;
+  }
+  return Math.floor(retryAfterSeconds);
+};
+
 export const RetentionSection = (): React.JSX.Element => {
   const {
     state,
@@ -43,17 +179,66 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
+  const unavailable = readUnavailable(status);
+  const unavailableService = unavailable ? unavailableServiceLabel(unavailable.service) : null;
+  const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
+  const lastChecked = unavailable ? formatLastChecked(unavailable.checked_at) : null;
+  const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+
   const body = retentionQuery.isLoading ? (
     <p>{__('Loading retention status\u2026', 'alt-context')}</p>
   ) : retentionQuery.isError || !status || !status.available || !policy ? (
     <section className="acx-dashboard__panel acx-retention__panel">
-      <h4>{__('Backend unavailable', 'alt-context')}</h4>
-      <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
-      {retentionQuery.isError ? (
-        <p role="alert">
-          {toUserMessage(retentionQuery.error, __('Unable to load retention status. Please try again.', 'alt-context'))}
-        </p>
-      ) : null}
+      {unavailable && unavailableService && unavailableCopy ? (
+        <>
+          <h4>{sprintf(__('%s unavailable', 'alt-context'), unavailableService)}</h4>
+          <div
+            className="acx-sync-status acx-sync-status--warning"
+            role="alert"
+            data-testid="acx-retention-unavailable"
+          >
+            <AlertTriangle
+              className="acx-retention__note-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-retention-unavailable-icon"
+            />
+            <div>
+              <p>
+                {sprintf(
+                  __('%s is unavailable because %s.', 'alt-context'),
+                  unavailableService,
+                  unavailableCopy.why,
+                )}
+              </p>
+              <p>{unavailableCopy.fix}</p>
+              {lastChecked ? (
+                <p className="acx-retention__detail">
+                  {sprintf(__('Last checked %s', 'alt-context'), lastChecked)}
+                </p>
+              ) : null}
+              {retryInSeconds !== null ? (
+                <p className="acx-retention__detail">
+                  {sprintf(__('Retry in %d s', 'alt-context'), retryInSeconds)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <h4>{__('Backend unavailable', 'alt-context')}</h4>
+          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
+          {retentionQuery.isError ? (
+            <p role="alert">
+              {toUserMessage(
+                retentionQuery.error,
+                __('Unable to load retention status. Please try again.', 'alt-context'),
+              )}
+            </p>
+          ) : null}
+        </>
+      )}
       <button
         type="button"
         className="acx-button acx-button--secondary"

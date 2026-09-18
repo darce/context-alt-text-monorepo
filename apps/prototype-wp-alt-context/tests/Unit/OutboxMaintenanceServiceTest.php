@@ -351,6 +351,39 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertFalse($service->retry_failed_operations_bulk('   '));
     }
 
+    public function testMaybeSchedulePurgeUsesActionSchedulerWhenAvailable(): void
+    {
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+        $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+        $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+        $this->assertGreaterThan(time(), (int) $this->actionSchedulerPurgeTimestamp());
+    }
+
+    public function testMaybeSchedulePurgeFallsBackToWpCronWhenActionSchedulerFails(): void
+    {
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertFalse($this->actionSchedulerPurgeTimestamp());
+        $scheduled = wp_next_scheduled('acx_sync_purge_terminal_rows', []);
+        $this->assertNotFalse($scheduled, 'Expected the WP-Cron fallback to book the purge.');
+        $this->assertGreaterThan(time(), (int) $scheduled);
+    }
+
+    public function testMaybeSchedulePurgeDoesNotDuplicateAnExistingActionSchedulerPurge(): void
+    {
+        as_schedule_single_action(time() + 120, 'acx_sync_purge_terminal_rows', [], 'acx-sync');
+        $existing = $this->actionSchedulerPurgeTimestamp();
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertSame($existing, $this->actionSchedulerPurgeTimestamp());
+        $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+    }
+
     /**
      * @return array<string,mixed>
      */
@@ -474,6 +507,17 @@ class OutboxMaintenanceServiceTest extends TestCase
         foreach (array_keys($GLOBALS['__ac_action_scheduler'] ?? []) as $key) {
             if (str_starts_with($key, $hook . '::')) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function actionSchedulerPurgeTimestamp(): int|false
+    {
+        foreach ($GLOBALS['__ac_action_scheduler'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === 'acx_sync_purge_terminal_rows') {
+                return (int) $entry['timestamp'];
             }
         }
 

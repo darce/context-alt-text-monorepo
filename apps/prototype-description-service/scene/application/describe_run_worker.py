@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import inspect
+import json
 import logging
 import os
 import time
@@ -39,6 +40,7 @@ from scene.domain.describe_run import (
     elapsed_ms,
 )
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 
 if TYPE_CHECKING:
     from scene.application.identity_merge.policy import NamingPolicy
@@ -115,6 +117,29 @@ class GpuRunPolicy:
     warmup_timeout_seconds: float
 
 
+class DescribeRunTerminalCode(enum.StrEnum):
+    """Typed terminal codes persisted on a FAILED describe run (C2)."""
+
+    GPU_WARMUP_TIMEOUT = "gpu_warmup_timeout"
+
+
+class DescribeRunTerminalReason(enum.StrEnum):
+    """Per-item/run reason stamps for a warmup-timeout continuation (C2)."""
+
+    GPU_WARMUP_TIMEOUT = "gpu_warmup_timeout"
+
+
+class DescriptionFallbackTier(enum.StrEnum):
+    """Wire tier for CPU continuation after GPU warmup expiry (C2).
+
+    ``DescriptionResultTier`` in ``scene/domain/description.py`` does not yet
+    include this member; persist the C2 token and coerce through
+    ``PROVISIONAL_CPU`` at the repository boundary.
+    """
+
+    CPU_FALLBACK = "cpu_fallback"
+
+
 class _RunCancelledError(RuntimeError):
     """Internal control-flow signal; cancellation is not a run failure."""
 
@@ -173,6 +198,74 @@ def gpu_run_policy(*, adapter_kind: DescriptionAdapterKind, settings: Descriptio
         api_key=settings.gpu_endpoint_api_key,
         warmup_timeout_seconds=settings.gpu_warmup_timeout_seconds,
     )
+
+
+def _usable_cpu_describe_one(
+    cpu_describe_one: DescribeOne | UnavailableDescriptionAdapter | None,
+) -> DescribeOne | None:
+    """Return the CPU callable only when it is configured and not Unavailable."""
+
+    if cpu_describe_one is None or isinstance(cpu_describe_one, UnavailableDescriptionAdapter):
+        return None
+    return cpu_describe_one
+
+
+def _gpu_warmup_timeout_detail(*, timeout_seconds: float, error: BaseException) -> str:
+    """C2 FAILED terminal payload; probe text stays visible (OBS-08)."""
+
+    return json.dumps(
+        {
+            "code": DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT,
+            "retryable": True,
+            "startup_budget_seconds": int(timeout_seconds),
+            "message": str(error),
+        }
+    )
+
+
+def _cpu_fallback_run_stamp() -> str:
+    return json.dumps(
+        {
+            "tier": DescriptionFallbackTier.CPU_FALLBACK,
+            "reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT,
+        }
+    )
+
+
+def _persistable_item_tier(
+    tier: DescriptionResultTier | str | None,
+) -> DescriptionResultTier | str | None:
+    """Repository coerces through DescriptionResultTier; cpu_fallback is not a member yet."""
+
+    if tier is None:
+        return None
+    try:
+        return DescriptionResultTier(tier)
+    except ValueError:
+        return DescriptionResultTier.PROVISIONAL_CPU
+
+
+async def _fail_run_on_gpu_warmup_timeout(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    timeout_seconds: float,
+    error: BaseException,
+) -> None:
+    logger.warning(
+        "GPU warmup timed out run_id=%s budget_seconds=%s; no CPU adapter, ending retryable",
+        run_id,
+        timeout_seconds,
+    )
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        await DescribeRunRepository(session).mark_run_failed(
+            tenant_id=tenant_id,
+            run_id=run_id,
+            error_message=_gpu_warmup_timeout_detail(timeout_seconds=timeout_seconds, error=error),
+        )
+        await session.commit()
 
 
 async def _wait_for_gpu_ready(
@@ -696,6 +789,7 @@ async def run_describe_job(
     describe_one: DescribeOne,
     timeout_seconds: float | None = None,
     gpu_policy: GpuRunPolicy | None = None,
+    cpu_describe_one: DescribeOne | UnavailableDescriptionAdapter | None = None,
 ) -> None:
     """Process a describe run item-by-item.
 
@@ -708,6 +802,11 @@ async def run_describe_job(
     Per-item failures are isolated (item -> FAILED, run continues); an unexpected
     fatal error around the whole loop forces the run terminal-FAILED.
     (S2-01, S2-02, HARM-01)
+
+    A GPU warmup ``TimeoutError`` never fails the run silently: a usable CPU
+    adapter continues the run with ``tier=cpu_fallback`` and
+    ``reason=gpu_warmup_timeout``; otherwise the run ends FAILED with a typed
+    retryable terminal detail (C2 / RES-13).
     """
 
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
@@ -726,6 +825,8 @@ async def run_describe_job(
             run = await DescribeRunRepository(cancel_session).get_run(tenant_id=tenant_id, run_id=run_id)
             return run is None or bool(run.cancel_requested)
 
+    warmup_fallback_tier: DescriptionFallbackTier | None = None
+    warmup_fallback_reason: DescribeRunTerminalReason | None = None
     try:
         await _record_run_pickup(session_factory=session_factory, tenant_id=tenant_id, run_id=run_id)
         if gpu_policy is not None:
@@ -735,12 +836,34 @@ async def run_describe_job(
                 run_id=run_id,
                 phase=DescribeRunPhase.WARMING,
             )
-            immediately_ready = await _wait_for_gpu_ready(
-                endpoint_url=gpu_policy.endpoint_url,
-                api_key=gpu_policy.api_key,
-                timeout_seconds=gpu_policy.warmup_timeout_seconds,
-                cancel_requested=cancel_requested,
-            )
+            try:
+                immediately_ready = await _wait_for_gpu_ready(
+                    endpoint_url=gpu_policy.endpoint_url,
+                    api_key=gpu_policy.api_key,
+                    timeout_seconds=gpu_policy.warmup_timeout_seconds,
+                    cancel_requested=cancel_requested,
+                )
+            except TimeoutError as warmup_timeout:
+                cpu_one = _usable_cpu_describe_one(cpu_describe_one)
+                if cpu_one is None:
+                    await _fail_run_on_gpu_warmup_timeout(
+                        session_factory=session_factory,
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        timeout_seconds=gpu_policy.warmup_timeout_seconds,
+                        error=warmup_timeout,
+                    )
+                    return
+                logger.warning(
+                    "GPU warmup timed out run_id=%s budget_seconds=%s; continuing on CPU adapter",
+                    run_id,
+                    gpu_policy.warmup_timeout_seconds,
+                )
+                describe_one = cpu_one
+                gpu_policy = None
+                warmup_fallback_tier = DescriptionFallbackTier.CPU_FALLBACK
+                warmup_fallback_reason = DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+                immediately_ready = False
             await _persist_run_phase(
                 session_factory=session_factory,
                 tenant_id=tenant_id,
@@ -892,6 +1015,16 @@ async def run_describe_job(
                             )
                     else:
                         outcome = outcome or DescribeItemOutcome()
+                        if warmup_fallback_reason is not None:
+                            outcome = replace(
+                                outcome,
+                                tier=warmup_fallback_tier,
+                                provenance={
+                                    **dict(outcome.provenance or {}),
+                                    "tier": warmup_fallback_tier,
+                                    "reason": warmup_fallback_reason,
+                                },
+                            )
                         await _record_item_processing_ms(
                             repo=repo,
                             tenant_id=tenant_id,
@@ -906,8 +1039,10 @@ async def run_describe_job(
                             alt_text_draft=outcome.alt_text_draft,
                             caption=outcome.caption,
                             provenance=outcome.provenance or None,
-                            tier=outcome.tier,
+                            tier=_persistable_item_tier(outcome.tier),
                         )
+                        if warmup_fallback_tier is not None and item.tier != warmup_fallback_tier:
+                            item.tier = warmup_fallback_tier
                         marked = await repo.mark_item(
                             tenant_id=tenant_id,
                             run_id=run_id,
@@ -933,6 +1068,14 @@ async def run_describe_job(
                     )
                     await session.commit()
                     break
+            if warmup_fallback_reason is not None:
+                run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+                if run is not None and DescribeRunStatus(run.status) in {
+                    DescribeRunStatus.COMPLETED,
+                    DescribeRunStatus.COMPLETED_WITH_ERRORS,
+                }:
+                    run.error_message = _cpu_fallback_run_stamp()
+                    await session.commit()
     except _RunCancelledError:
         # Cancellation can land while the worker is still in its GPU warmup
         # gate, before the main tracking session exists. Drive every queued item

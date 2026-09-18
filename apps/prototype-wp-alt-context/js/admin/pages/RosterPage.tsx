@@ -12,6 +12,7 @@ import { useTopUnlabeledTotal } from './roster/hooks/useTopUnlabeledTotal';
 import { ClusterDrawerPanel, ROSTER_ASSIGN_STATUS } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
+import { SamePersonPrompt } from './roster/SamePersonPrompt';
 import {
   ROSTER_ROUTE_PARAM_KEYS,
   parseRosterRoute,
@@ -64,10 +65,7 @@ export const RosterPage = (): React.JSX.Element => {
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
   const hasEntriesFilter = searchParams.get('personFilter') !== null;
   const defaultWorkspaceRoute = React.useMemo(
-    () =>
-      parsedRoute.selectedClusterId === null &&
-      !parsedRoute.requiresProjectionGateNotice &&
-      !hasEntriesFilter,
+    () => parsedRoute.selectedClusterId === null && !parsedRoute.requiresProjectionGateNotice && !hasEntriesFilter,
     [hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],
   );
   const defaultWorkspaceEntry = React.useMemo(() => {
@@ -116,10 +114,7 @@ export const RosterPage = (): React.JSX.Element => {
     onCommitSettled: dragDrop.resetDragState,
   });
 
-  const reassignUnavailableReason =
-    selectedClusterId === null
-      ? null
-      : REASSIGN_UNAVAILABLE_REASON;
+  const reassignUnavailableReason = selectedClusterId === null ? null : REASSIGN_UNAVAILABLE_REASON;
 
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;
@@ -206,6 +201,7 @@ export const RosterPage = (): React.JSX.Element => {
       </header>
 
       <div className="acx-roster__panel">
+        <SamePersonPrompt />
         {resolvedWorkspaceEntry !== null && (
           <PersonWorkspacePanel entry={resolvedWorkspaceEntry} onOpenQueue={handleOpenPersonWorkspace} />
         )}

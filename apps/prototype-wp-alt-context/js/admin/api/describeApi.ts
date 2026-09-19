@@ -13,12 +13,15 @@ import { getEndpoint, getConfig } from './config';
 import { createRecognitionTimeoutSignal } from './recognition/requestTimeout';
 import { parseWpErrorPayload, resolveWpErrorMessage } from './wpErrorMessage';
 
-/** Canonical naming provenance statuses emitted for describe-run items (sr-007). */
+/** Canonical naming provenance statuses emitted for describe-run items (sr-007, C4). */
 export const NAMING_PROVENANCE_STATUS = {
   APPLIED: 'applied',
   DISABLED: 'disabled',
   SKIPPED_BUDGET: 'skipped_budget',
   NO_FACES: 'no_faces',
+  NO_CONFIRMED_IDENTITIES: 'no_confirmed_identities',
+  NO_ELIGIBLE_IDENTITIES: 'no_eligible_identities',
+  AMBIGUOUS_GROUNDING: 'ambiguous_grounding',
 } as const;
 
 /** Canonical naming realizer vocabulary emitted for applied names (sr-007). */
@@ -31,9 +34,11 @@ export type NamingProvenanceStatus =
   (typeof NAMING_PROVENANCE_STATUS)[keyof typeof NAMING_PROVENANCE_STATUS];
 export type NamingRealizer = (typeof NAMING_REALIZER)[keyof typeof NAMING_REALIZER];
 
-/** C7 per-item naming provenance. Older run items may omit this field entirely. */
+/** C7 per-item naming provenance. Older run items may omit this field entirely.
+ * `status` is the wire value: known members live in NAMING_PROVENANCE_STATUS;
+ * unknown strings are preserved so consumers can map them to neutral copy (C4). */
 export interface NamingProvenance {
-  status: NamingProvenanceStatus;
+  status: string;
   realizer: NamingRealizer | null;
   names_applied: string[];
 }
@@ -329,6 +334,13 @@ const DESCRIBE_RUN_TIMING_INTEGER_KEYS: ReadonlySet<string> = new Set(['items_ti
 
 const isOpaqueId = (value: unknown): value is string =>
   typeof value === 'string' && value.length >= 1 && value.length <= OPAQUE_ID_MAX_LENGTH;
+
+const validateNullableString = (value: unknown, path: string): string | null => {
+  if (value === null || typeof value === 'string') {
+    return null;
+  }
+  return path;
+};
 
 const validateNullableNonNegativeNumber = (value: unknown, path: string): string | null => {
   if (value === null) {
@@ -883,7 +895,8 @@ export const isNamingRealizer = (value: unknown): value is NamingRealizer =>
 /**
  * Validate the additive C7 field before it reaches presentation code. Invalid
  * naming metadata is treated like an older item with no naming field so the UI
- * never renders an untrusted status, realizer, or name.
+ * never renders an untrusted realizer or name. Unknown status strings are kept
+ * so the consumer can map them to neutral copy (C4).
  */
 export const parseNamingProvenance = (value: unknown): NamingProvenance | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -891,7 +904,7 @@ export const parseNamingProvenance = (value: unknown): NamingProvenance | undefi
   }
 
   const record = value as Record<string, unknown>;
-  if (!isNamingProvenanceStatus(record.status)) {
+  if (typeof record.status !== 'string' || record.status === '') {
     return undefined;
   }
 
@@ -1046,6 +1059,10 @@ export interface DescribeRunItem {
   existing_alt: boolean;
   /** Per-item processing milliseconds; null when the item was not timed. */
   processing_ms?: number | null;
+  /** C5: WP attachment thumb; null/omitted when the attachment has no image. */
+  thumbnail_url?: string | null;
+  /** C5: WP srcset for the thumb; null/omitted when srcset is unavailable. */
+  thumbnail_srcset?: string | null;
 }
 
 export interface DescribeRunItemsResponse {
@@ -1219,6 +1236,21 @@ const parseDescribeRunItemsResponse = (payload: unknown, endpoint: string): Desc
       );
       if (processingError) {
         malformed(processingError);
+      }
+    }
+    if (hasOwn(item, 'thumbnail_url')) {
+      const thumbnailUrlError = validateNullableString(item.thumbnail_url, `${itemPath}.thumbnail_url`);
+      if (thumbnailUrlError) {
+        malformed(thumbnailUrlError);
+      }
+    }
+    if (hasOwn(item, 'thumbnail_srcset')) {
+      const thumbnailSrcsetError = validateNullableString(
+        item.thumbnail_srcset,
+        `${itemPath}.thumbnail_srcset`,
+      );
+      if (thumbnailSrcsetError) {
+        malformed(thumbnailSrcsetError);
       }
     }
   }

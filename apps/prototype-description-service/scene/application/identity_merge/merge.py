@@ -289,14 +289,14 @@ def merge_identities(
         named_faces = list(dedup.values())
         mode = NamingMode.GROUNDED
         selected = DeterministicNlgRealizer()
-    elif not phrase_boxes and faces:
+    elif not groundable and faces:
         named_faces, mode, selected = _ungrounded_naming(caption, faces)
     else:
         named_faces = []
 
     if realizer is None:
         realizer = selected
-    realizer_faces = named_faces if not associations and not phrase_boxes else faces
+    realizer_faces = named_faces if not associations and not groundable else faces
     named_draft = (
         realizer.realize(caption=caption, associations=associations, confirmed_faces=realizer_faces)
         if realizer is not None

@@ -9,6 +9,7 @@ import pytest
 from scene.application.identity_merge import (
     ConfirmedFace,
     MergeResult,
+    NamingMode,
     NamingPolicy,
     NamingSkipReason,
     NamingStatus,
@@ -203,3 +204,53 @@ class TestNamingSkipStatusDistinctFromNoFaces:
             assert restored.status is status
             assert type(restored.status) is NamingStatus
             assert model.model_dump(mode="json")["status"] == status.value
+
+
+def _stale_phrase(caption: str) -> PhraseBox:
+    """Span offsets sit past the caption, so span_replaceable is false."""
+    start = len(caption) + 1
+    return PhraseBox(
+        phrase="a ghost",
+        span_start=start,
+        span_end=start + 7,
+        box=NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7),
+    )
+
+
+class TestNoBoxFallbackReadsVerifiedList:
+    """Unverifiable rows must not keep the no-box fallback from running."""
+
+    def test_only_unverifiable_rows_match_empty_payload(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        policy = _enabled_policy()
+        kwargs = {"caption": caption, "confirmed_faces": [face], "policy": policy}
+        stale = merge_identities(phrase_boxes=[_stale_phrase(caption)], **kwargs)
+        empty = merge_identities(phrase_boxes=[], **kwargs)
+        assert stale.named_draft == empty.named_draft
+        assert stale.named_draft != caption
+        assert stale.provenance.mode == empty.provenance.mode
+        assert stale.provenance.mode is NamingMode.SUBSTITUTED
+        assert stale.associations == empty.associations == ()
+
+    def test_verifiable_unmatched_plus_unverifiable_does_not_fallback(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        unmatched = _person_phrase("A man", NormalizedBox(x=0.8, y=0.1, width=0.15, height=0.3))
+        policy = _enabled_policy()
+        mixed = merge_identities(
+            caption=caption,
+            phrase_boxes=[unmatched, _stale_phrase(caption)],
+            confirmed_faces=[face],
+            policy=policy,
+        )
+        verifiable_only = merge_identities(
+            caption=caption,
+            phrase_boxes=[unmatched],
+            confirmed_faces=[face],
+            policy=policy,
+        )
+        assert mixed.named_draft == verifiable_only.named_draft == caption
+        assert mixed.associations == verifiable_only.associations == ()
+        assert mixed.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert mixed.provenance.mode is verifiable_only.provenance.mode

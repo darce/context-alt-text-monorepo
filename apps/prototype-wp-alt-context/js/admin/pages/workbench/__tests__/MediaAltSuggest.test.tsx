@@ -2908,6 +2908,18 @@ const describeErrorFromFixture = (fixture: { status: number; detail: object }): 
     })}`,
   );
 
+const startingWithBudget = (
+  fixture: { status: number; detail: object },
+  startupBudgetSeconds: number,
+): { status: number; detail: object } => ({
+  status: fixture.status,
+  detail: Object.assign({}, fixture.detail, {
+    startup_budget_seconds: startupBudgetSeconds,
+  }),
+});
+
+const SERVICE_STARTUP_BUDGET_SECONDS = 510;
+
 describe('MediaAltSuggest GPUFLOW warming and timing', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -3031,9 +3043,11 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
     vi.useRealTimers();
   });
 
-  it('auto-retries after the warmup ETA with the stored operation_id', async () => {
+  it('auto-retries after the warmup ETA with the stored operation_id while the startup budget remains', async () => {
     describeMock
-      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
       .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
@@ -3056,8 +3070,10 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
     expect(screen.getByText(suggestStates.success_with_timing.alt_text_draft)).toBeInTheDocument();
   });
 
-  it('shows the warming timeout state at the 120 s ceiling with no further auto-retries', async () => {
-    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+  it('shows the warming timeout state at startup budget plus one retry gap with no further auto-retries', async () => {
+    describeMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
@@ -3094,8 +3110,62 @@ describe('MediaAltSuggest warming auto-retry and ceiling', () => {
     expect(describeMock).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps auto-retrying past 120 s while the startup budget remains', async () => {
+    describeMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 180)),
+    );
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(describeMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
+    expect(screen.queryByTestId('media-alt-suggest-warming-timeout')).not.toBeInTheDocument();
+  });
+
+  it('times out after one retry gap when startup_budget_seconds is absent', async () => {
+    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_with_eta));
+    renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('media-alt-suggest-warming')).toBeInTheDocument();
+    expect(describeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId('media-alt-suggest-warming-timeout')).toHaveTextContent(
+      'Still starting — try again',
+    );
+    expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
+    expect(describeMock).toHaveBeenCalledTimes(1);
+  });
+
   it('manual retry from timeout starts a fresh operation without operation_id', async () => {
-    describeMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+    describeMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
     renderSuggest(<MediaAltSuggest isDecorative={false} mediaId={42} />);
 
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));

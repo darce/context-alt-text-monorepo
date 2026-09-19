@@ -183,8 +183,11 @@ def merge_identities(
     Realizer selection lives here, behind the ``ReflowRealizer`` seam — no
     inline mode ladder inside realizers. An injected ``realizer`` always wins;
     otherwise: grounded associations → ``DeterministicNlgRealizer``; no phrase
-    boxes at all → ``PositionalFallbackRealizer`` (Approach B); phrase boxes
-    present but matching ambiguous/empty → generic (never guess).
+    boxes, exactly one confirmed face, and exactly one leading generic person
+    NP → ``N1SubstitutionRealizer``; no phrase boxes and any other face count
+    → ``PositionalFallbackRealizer`` (Approach B); one face but two or more
+    generic NPs → generic (never guess); phrase boxes present but matching
+    ambiguous/empty → generic (never guess).
 
     When a ``NamingPolicy`` is passed, the consent gate filters faces before
     matching and the result carries ``NamingProvenance`` (generic-only results
@@ -203,7 +206,10 @@ def merge_identities(
     )
     from scene.application.identity_merge.realizer import (
         DeterministicNlgRealizer,
+        N1SubstitutionRealizer,
         PositionalFallbackRealizer,
+        find_generic_person_nps,
+        leading_generic_person_np,
     )
 
     def _status_for_skip_reason(reason: NamingSkipReason) -> NamingStatus:
@@ -235,6 +241,20 @@ def merge_identities(
             )
         return MergeResult(generic_draft=caption, named_draft=caption, provenance=provenance)
 
+    def _ungrounded_naming(
+        caption_text: str, ungrounded_faces: list[ConfirmedFace]
+    ) -> tuple[list[ConfirmedFace], Any, Any]:
+        people = _distinct_faces_by_person(sorted(ungrounded_faces, key=lambda f: f.box.center[0]))
+        if len(people) == 1:
+            nps = find_generic_person_nps(caption_text)
+            if len(nps) > 1:
+                return [], None, None
+            if leading_generic_person_np(caption_text) is not None:
+                return people, NamingMode.GROUNDED, N1SubstitutionRealizer()
+        if people:
+            return people, NamingMode.POSITIONAL, PositionalFallbackRealizer()
+        return [], None, None
+
     faces = list(confirmed_faces)
     if policy is not None:
         if not policy.agreement_enabled:
@@ -251,6 +271,7 @@ def merge_identities(
     associations = containment_match(faces, groundable)
     mode: Any = None
     named_faces: list[ConfirmedFace]
+    selected: ReflowRealizer | None = None
     if associations:
         # Provenance counts only faces whose span the realizer will actually
         # replace; duplicate mentions of one person collapse to one entry.
@@ -261,17 +282,14 @@ def merge_identities(
             dedup.setdefault(_person_key(a.face), a.face)
         named_faces = list(dedup.values())
         mode = NamingMode.GROUNDED
+        selected = DeterministicNlgRealizer()
     elif not phrase_boxes and faces:
-        named_faces = _distinct_faces_by_person(sorted(faces, key=lambda f: f.box.center[0]))
-        mode = NamingMode.POSITIONAL
+        named_faces, mode, selected = _ungrounded_naming(caption, faces)
     else:
         named_faces = []
 
     if realizer is None:
-        if associations:
-            realizer = DeterministicNlgRealizer()
-        elif not phrase_boxes and faces:
-            realizer = PositionalFallbackRealizer()
+        realizer = selected
     realizer_faces = named_faces if not associations and not phrase_boxes else faces
     named_draft = (
         realizer.realize(caption=caption, associations=associations, confirmed_faces=realizer_faces)

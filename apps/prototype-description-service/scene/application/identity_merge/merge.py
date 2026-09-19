@@ -212,6 +212,12 @@ def merge_identities(
         leading_generic_person_np,
     )
 
+    realizer_for_mode = {
+        NamingMode.GROUNDED: NamingRealizer.GROUNDED,
+        NamingMode.POSITIONAL: NamingRealizer.POSITIONAL_FALLBACK,
+        NamingMode.SUBSTITUTED: NamingRealizer.SUBSTITUTED,
+    }
+
     def _status_for_skip_reason(reason: NamingSkipReason) -> NamingStatus:
         # C4 / OBS-08 / sr-007: skip statuses are NamingStatus members. Do not
         # return the SkipReason object (Pydantic then rejects it and the wire
@@ -250,7 +256,7 @@ def merge_identities(
             if len(nps) > 1:
                 return [], None, None
             if leading_generic_person_np(caption_text) is not None:
-                return people, NamingMode.GROUNDED, N1SubstitutionRealizer()
+                return people, NamingMode.SUBSTITUTED, N1SubstitutionRealizer()
         if people:
             return people, NamingMode.POSITIONAL, PositionalFallbackRealizer()
         return [], None, None
@@ -314,9 +320,7 @@ def merge_identities(
                 reason=None,
                 mode=mode,
                 status=NamingStatus.APPLIED,
-                realizer=(
-                    NamingRealizer.GROUNDED if mode is NamingMode.GROUNDED else NamingRealizer.POSITIONAL_FALLBACK
-                ),
+                realizer=realizer_for_mode[mode],
                 names_applied=tuple(f.label for f in named_faces),
             )
         else:

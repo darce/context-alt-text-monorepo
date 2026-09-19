@@ -13,6 +13,7 @@ from scene.application.identity_merge import (
     DeterministicNlgRealizer,
     NamingMode,
     NamingPolicy,
+    NamingRealizer,
     NamingSkipReason,
     NormalizedBox,
     PhraseBox,
@@ -248,6 +249,15 @@ class TestHarm:
             caption="Two people.", phrase_boxes=[], confirmed_faces=[_face("Daniel")], policy=policy
         )
         assert result.provenance.mode == NamingMode.POSITIONAL
+
+    def test_nb07_single_person_substitution_reports_substituted(self):
+        policy = NamingPolicy(agreement_enabled=True, suppressed_roster_ids=frozenset())
+        result = merge_identities(
+            caption="A person stands by a window.", phrase_boxes=[], confirmed_faces=[_face("Daniel")], policy=policy
+        )
+        assert result.provenance.mode == NamingMode.SUBSTITUTED
+        assert result.provenance.realizer == NamingRealizer.SUBSTITUTED
+        assert "Daniel" in result.named_draft
 
 
 class TestJoinFilters:

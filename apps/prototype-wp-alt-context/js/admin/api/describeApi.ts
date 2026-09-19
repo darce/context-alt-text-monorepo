@@ -28,6 +28,7 @@ export const NAMING_PROVENANCE_STATUS = {
 export const NAMING_REALIZER = {
   GROUNDED: 'grounded',
   POSITIONAL_FALLBACK: 'positional_fallback',
+  SUBSTITUTED: 'substituted',
 } as const;
 
 export type NamingProvenanceStatus =
@@ -62,7 +63,7 @@ export type NamingProvenanceReason =
   | 'merge_error';
 
 /** E19-4a realization modes for the single-image named-caption preview. */
-export type NamingProvenanceMode = 'grounded' | 'positional';
+export type NamingProvenanceMode = 'grounded' | 'positional' | 'substituted';
 
 /** E19-4a single-image naming preview provenance. */
 export interface NamedCaptionProvenance {
@@ -254,7 +255,7 @@ const NAMING_PREVIEW_REASONS = new Set([
   'ambiguous_grounding',
   'merge_error',
 ]);
-const NAMING_PREVIEW_MODES = new Set([NAMING_REALIZER.GROUNDED, 'positional']);
+const NAMING_PREVIEW_MODES = new Set([NAMING_REALIZER.GROUNDED, 'positional', NAMING_REALIZER.SUBSTITUTED]);
 const ATTACHMENT_DECISIONS = new Set(['object', 'caption', 'dropped']);
 const ATTACHMENT_ALTITUDES = new Set(['object', 'caption', 'none']);
 const ALT_TEXT_WRITE_STATUSES = new Set([

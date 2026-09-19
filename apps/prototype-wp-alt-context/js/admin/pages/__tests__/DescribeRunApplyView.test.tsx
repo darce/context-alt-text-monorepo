@@ -249,6 +249,17 @@ describe('DescribeRunApplyView', () => {
           ...runItemContract,
           existing_alt: false,
         },
+        {
+          media_id: 87,
+          status: 'completed',
+          alt_text_draft: 'Cy sits on a bench.',
+          caption: 'A person sits on a bench.',
+          provenance: {
+            naming: { status: 'applied', realizer: 'substituted', names_applied: ['Cy'] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
       ],
     });
 
@@ -265,6 +276,11 @@ describe('DescribeRunApplyView', () => {
     const positionalBadge = screen.getByTestId('acx-run-apply-naming-81');
     expect(positionalBadge).toHaveAttribute('aria-label', 'Names were applied using positional fallback.');
     expect(positionalBadge).toHaveAttribute('title', 'Names were applied using positional fallback.');
+    expect(screen.getByText('Names: Cy · substituted')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-run-apply-naming-87')).toHaveAttribute(
+      'aria-label',
+      'The name replaced the single person mentioned in the description.',
+    );
   });
 
   it('maps C4 naming skip reasons to closed-map copy and unknown status to neutral copy', async () => {

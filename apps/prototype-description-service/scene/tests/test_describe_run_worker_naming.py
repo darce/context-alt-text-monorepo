@@ -34,7 +34,6 @@ TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cd")
 GENERIC_DRAFT = "A man stands by the window."
 # One unanchored person with a leading generic NP takes N1 substitution, not the positional suffix.
 FUSED_DRAFT = "Ada stands by the window."
-LTR_FUSED_DRAFT = "A man stands by the window. Pictured from left: Ada and Bob."
 GROUNDED_BOXES = (
     PhraseBox(
         phrase="A man",
@@ -299,7 +298,7 @@ def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatc
     assert items[0].caption == GENERIC_DRAFT
 
 
-def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
+def test_unstubbed_naming_abstains_for_two_ungrounded_seeded_faces(monkeypatch):
     import scene.application.identity_merge as identity_merge
     import scene.application.naming_preview_service as nps
 
@@ -343,12 +342,9 @@ def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
     assert disabled_face_loads == 0
     assert enabled.status == DescribeItemStatus.COMPLETED
     assert enabled.caption == GENERIC_DRAFT
-    assert enabled.alt_text_draft == LTR_FUSED_DRAFT
-    assert (enabled.provenance or {}).get("naming", {}).get("mode") == "positional"
-    assert [n["name"] for n in (enabled.provenance or {}).get("naming", {}).get("injected_names", [])] == [
-        "Ada",
-        "Bob",
-    ]
+    assert enabled.alt_text_draft == GENERIC_DRAFT
+    assert (enabled.provenance or {}).get("naming", {}).get("status") == "ambiguous_grounding"
+    assert (enabled.provenance or {}).get("naming", {}).get("names_applied") == []
     assert disabled.status == DescribeItemStatus.COMPLETED
     assert disabled.caption == GENERIC_DRAFT
     assert disabled.alt_text_draft == GENERIC_DRAFT

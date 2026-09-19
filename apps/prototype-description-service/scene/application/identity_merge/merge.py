@@ -183,11 +183,13 @@ def merge_identities(
     Realizer selection lives here, behind the ``ReflowRealizer`` seam — no
     inline mode ladder inside realizers. An injected ``realizer`` always wins;
     otherwise: grounded associations → ``DeterministicNlgRealizer``; no phrase
-    boxes, exactly one confirmed face, and exactly one leading generic person
-    NP → ``N1SubstitutionRealizer``; no phrase boxes and any other face count
-    → ``PositionalFallbackRealizer`` (Approach B); one face but two or more
-    generic NPs → generic (never guess); phrase boxes present but matching
-    ambiguous/empty → generic (never guess).
+    boxes, exactly one confirmed person, and exactly one leading generic
+    person NP → ``N1SubstitutionRealizer``; no phrase boxes, exactly one
+    confirmed person, and substitution does not apply →
+    ``PositionalFallbackRealizer`` (Approach B, n==1 only); two or more
+    ungrounded people → generic until n>=2 position evaluation is accepted;
+    one person but two or more generic NPs → generic (never guess); phrase
+    boxes present but matching ambiguous/empty → generic (never guess).
 
     When a ``NamingPolicy`` is passed, the consent gate filters faces before
     matching and the result carries ``NamingProvenance`` (generic-only results
@@ -251,15 +253,15 @@ def merge_identities(
         caption_text: str, ungrounded_faces: list[ConfirmedFace]
     ) -> tuple[list[ConfirmedFace], Any, Any]:
         people = _distinct_faces_by_person(sorted(ungrounded_faces, key=lambda f: f.box.center[0]))
-        if len(people) == 1:
-            nps = find_generic_person_nps(caption_text)
-            if len(nps) > 1:
-                return [], None, None
-            if leading_generic_person_np(caption_text) is not None:
-                return people, NamingMode.SUBSTITUTED, N1SubstitutionRealizer()
-        if people:
-            return people, NamingMode.POSITIONAL, PositionalFallbackRealizer()
-        return [], None, None
+        if len(people) != 1:
+            # n>=2 ungrounded naming abstains until position evaluation accepts it.
+            return [], None, None
+        nps = find_generic_person_nps(caption_text)
+        if len(nps) > 1:
+            return [], None, None
+        if leading_generic_person_np(caption_text) is not None:
+            return people, NamingMode.SUBSTITUTED, N1SubstitutionRealizer()
+        return people, NamingMode.POSITIONAL, PositionalFallbackRealizer()
 
     faces = list(confirmed_faces)
     if policy is not None:

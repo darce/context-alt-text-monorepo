@@ -195,6 +195,7 @@ class ValidatedDescribeMultipart:
     image_bytes: bytes
     context: dict[str, Any] | None
     operation_id: str | None
+    recognition_enabled: bool
 
 
 class _DescriptionAuditSink:
@@ -291,6 +292,22 @@ def _lease_seconds() -> float:
             f"{_PUBLIC_RETRY_AFTER_CEILING}s Retry-After ceiling"
         )
     return seconds
+
+
+def _parse_recognition_enabled(raw: object) -> bool:
+    """Multipart boolean; omitted → False so identity fusion is opt-in (SEC-01)."""
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
+    value = raw.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 def _optional_operation_id(form: FormData) -> str | None:
@@ -790,6 +807,7 @@ async def _validated_describe_multipart_submission(
         image_bytes=image_bytes,
         context=context,
         operation_id=_optional_operation_id(form),
+        recognition_enabled=_parse_recognition_enabled(form.get("recognition_enabled")),
     )
 
 
@@ -1262,13 +1280,19 @@ async def describe_image_multipart(
         audit_sink = _DescriptionAuditSink(AuditRepository(session))
     # Faces + policy once: Stage-2 fusion needs them for identity attach
     # provenance; Stage-3 naming preview reuses the same inputs (E20-FUSION-S3-BR-01).
-    confirmed_faces, naming_policy = await _load_fusion_naming_inputs(
-        session=session,
-        tenant=tenant_record,
-        tenant_uuid=tenant_uuid,
-        media_id=envelope.media_id,
-        image_bytes=image_bytes,
-    )
+    # Omitted/false recognition_enabled skips the load so a site with naming
+    # off cannot leak roster identity (SEC-01).
+    recognition_enabled = submission.recognition_enabled
+    if recognition_enabled:
+        confirmed_faces, naming_policy = await _load_fusion_naming_inputs(
+            session=session,
+            tenant=tenant_record,
+            tenant_uuid=tenant_uuid,
+            media_id=envelope.media_id,
+            image_bytes=image_bytes,
+        )
+    else:
+        confirmed_faces, naming_policy = [], None
     if envelope.tier == "gpu":
         effective_adapter = get_gpu_description_adapter()
     elif envelope.tier == "cpu":
@@ -1410,33 +1434,43 @@ async def describe_image_multipart(
         # N-R-03: no stored unnamed base — cached draft may already hold names.
         # Keep the service response; do not re-run preview on alt_text_draft.
         if not cached_naming_preview_skipped(response):
-            # HARM-02: derive positional naming from the Stage-2 decision — identities
-            # whose fact was dropped must not be named by the fallback.
-            preview_faces = _faces_for_naming_preview(
-                confirmed_faces, service.last_attachments, service.last_phrase_boxes
-            )
-            # A cache hit's alt_text_draft is already re-realized with names; the phrase-box spans index the unnamed base.
             generic_draft = response.generic_draft or response.alt_text_draft
-            named_draft, naming_provenance = await _naming_preview(
-                session=session,
-                tenant=tenant_record,
-                tenant_uuid=tenant_uuid,
-                media_id=envelope.media_id,
-                image_bytes=image_bytes,
-                generic_draft=generic_draft,
-                # Adapter output on generation; restored from the cached row on cache
-                # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
-                phrase_boxes=service.last_phrase_boxes,
-                confirmed_faces=preview_faces,
-                naming_policy=naming_policy,
-            )
-            response = response.model_copy(
-                update={
-                    "generic_draft": generic_draft,
-                    "named_draft": named_draft,
-                    "naming_provenance": naming_provenance,
-                }
-            )
+            if recognition_enabled:
+                # HARM-02: derive positional naming from the Stage-2 decision — identities
+                # whose fact was dropped must not be named by the fallback.
+                preview_faces = _faces_for_naming_preview(
+                    confirmed_faces, service.last_attachments, service.last_phrase_boxes
+                )
+                # A cache hit's alt_text_draft is already re-realized with names; the phrase-box spans index the unnamed base.
+                named_draft, naming_provenance = await _naming_preview(
+                    session=session,
+                    tenant=tenant_record,
+                    tenant_uuid=tenant_uuid,
+                    media_id=envelope.media_id,
+                    image_bytes=image_bytes,
+                    generic_draft=generic_draft,
+                    # Adapter output on generation; restored from the cached row on cache
+                    # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+                    phrase_boxes=service.last_phrase_boxes,
+                    confirmed_faces=preview_faces,
+                    naming_policy=naming_policy,
+                )
+                response = response.model_copy(
+                    update={
+                        "generic_draft": generic_draft,
+                        "named_draft": named_draft,
+                        "naming_provenance": naming_provenance,
+                    }
+                )
+            else:
+                # Preview reloads faces when naming_policy is None; skip it so
+                # omitted/false recognition cannot name anyone (SEC-01).
+                response = response.model_copy(
+                    update={
+                        "generic_draft": generic_draft,
+                        "named_draft": generic_draft,
+                    }
+                )
         server_elapsed_ms = _elapsed_ms(server_start)
         processing_ms = response.attempt_timing.processing_ms
         try:

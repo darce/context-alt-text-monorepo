@@ -263,6 +263,13 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
     return DescribeRunRepository(session)
 
 
+def _worker_generic_draft(response) -> str:
+    # A cache hit re-realizes names into alt_text_draft; the worker names the
+    # generic draft itself, so hand it the unnamed base or names are applied twice.
+    generic = getattr(response, "generic_draft", None)
+    return generic if generic is not None else response.alt_text_draft
+
+
 def _build_describe_one(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -340,7 +347,7 @@ def _build_describe_one(
         }
         attempt_ms = getattr(getattr(response, "attempt_timing", None), "processing_ms", None)
         return DescribeItemOutcome(
-            alt_text_draft=response.alt_text_draft,
+            alt_text_draft=_worker_generic_draft(response),
             caption=response.visual_facts.caption,
             provenance=provenance,
             phrase_boxes=tuple(service.last_phrase_boxes or ()),

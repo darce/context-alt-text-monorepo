@@ -214,15 +214,19 @@ class GpuControlControllerTest extends TestCase
         );
     }
 
-    public function testGetStatusUpstream5xxKeepsStatusAndAddsUnavailable(): void
+    public function testGetStatusUpstream5xxAllowlistsCodeAndMessageAndDropsSecrets(): void
     {
         $this->queueHttpResponse([
             'response' => ['code' => 502, 'message' => 'Bad Gateway'],
             'headers' => ['Retry-After' => '15'],
             'body' => json_encode([
+                'code' => 'gpu_adapter_failed',
+                'message' => str_repeat('m', 301),
                 'gpu_state' => ['state' => 'unknown'],
                 'detail' => 'adapter exploded with key material',
-            ]),
+                'trace' => 'File "/opt/scene/adapter.py", line 99',
+                'api_key' => 'sk-secret',
+            ], JSON_THROW_ON_ERROR),
         ]);
 
         $response = $this->controller->get_status(
@@ -232,9 +236,163 @@ class GpuControlControllerTest extends TestCase
         $this->assertInstanceOf(WP_REST_Response::class, $response);
         $this->assertSame(502, $response->get_status());
         $data = $response->get_data();
-        $this->assertSame(['state' => 'unknown'], $data['gpu_state']);
+        $this->assertSame('gpu_adapter_failed', $data['code']);
+        $this->assertSame(str_repeat('m', 300), $data['message']);
+        $this->assertArrayNotHasKey('detail', $data);
+        $this->assertArrayNotHasKey('trace', $data);
+        $this->assertArrayNotHasKey('api_key', $data);
+        $this->assertArrayNotHasKey('gpu_state', $data);
         $this->assertTypedUnavailable($data['unavailable'], 'upstream_5xx', 'scene', 502, 15);
-        $this->assertSame('adapter exploded with key material', $data['detail']);
+    }
+
+    public function testGetStatusUpstream4xxAddsUnavailableEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 429, 'message' => 'Too Many Requests'],
+            'headers' => ['Retry-After' => '20'],
+            'body' => json_encode([
+                'code' => 'rate_limited',
+                'message' => 'slow down',
+                'detail' => 'secret-limiter-config',
+                'trace' => 'stack',
+                'api_key' => 'sk-leak',
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(429, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame('rate_limited', $data['code']);
+        $this->assertSame('slow down', $data['message']);
+        $this->assertArrayNotHasKey('detail', $data);
+        $this->assertArrayNotHasKey('trace', $data);
+        $this->assertArrayNotHasKey('api_key', $data);
+        $this->assertTypedUnavailable($data['unavailable'], 'upstream_4xx', 'scene', 429, 20);
+    }
+
+    public function testGetStatusUnauthorized401PassesThroughWithoutEnvelope(): void
+    {
+        $fixture = ['detail' => 'Unauthorized'];
+        $this->queueHttpResponse([
+            'response' => ['code' => 401, 'message' => 'Unauthorized'],
+            'body' => json_encode($fixture, JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(401, $response->get_status());
+        $this->assertSame($fixture, $response->get_data());
+    }
+
+    public function testPostIntentForbidden403PassesThroughWithoutEnvelope(): void
+    {
+        $fixture = ['detail' => 'gpu_control_forbidden'];
+        $this->queueHttpResponse([
+            'response' => ['code' => 403, 'message' => 'Forbidden'],
+            'body' => json_encode($fixture, JSON_THROW_ON_ERROR),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/gpu/intent');
+        $request->set_body_params(['action' => 'start']);
+
+        $response = $this->controller->post_intent($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(403, $response->get_status());
+        $this->assertSame($fixture, $response->get_data());
+    }
+
+    public function testPostIntentValidation422PassesThroughWithoutEnvelope(): void
+    {
+        $fixture = [
+            'detail' => [
+                [
+                    'loc' => ['body', 'action'],
+                    'msg' => 'value is not a valid enumeration member',
+                    'type' => 'enum',
+                ],
+            ],
+        ];
+        $this->queueHttpResponse([
+            'response' => ['code' => 422, 'message' => 'Unprocessable Entity'],
+            'body' => json_encode($fixture, JSON_THROW_ON_ERROR),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/gpu/intent');
+        $request->set_body_params(['action' => 'start']);
+
+        $response = $this->controller->post_intent($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(422, $response->get_status());
+        $this->assertSame($fixture, $response->get_data());
+    }
+
+    public function testGetStatusUpstream404AddsUnavailableEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode([
+                'detail' => 'Not Found',
+                'trace' => 'missing route dump',
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(404, $response->get_status());
+        $data = $response->get_data();
+        $this->assertArrayNotHasKey('detail', $data);
+        $this->assertArrayNotHasKey('trace', $data);
+        $this->assertTypedUnavailable($data['unavailable'], 'upstream_4xx', 'scene', 404);
+    }
+
+    public function testGetStatusUpstream5xxNonArrayJsonAddsUnavailableEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
+            'body' => json_encode('adapter exploded', JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(502, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(['unavailable'], array_keys($data));
+        $this->assertTypedUnavailable($data['unavailable'], 'upstream_5xx', 'scene', 502);
+    }
+
+    public function testGetStatusUpstream5xxNonJsonAddsContractMismatchEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '<html>stack trace with api_key=sk-leak</html>',
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(500, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(['unavailable'], array_keys($data));
+        $this->assertTypedUnavailable($data['unavailable'], 'contract_mismatch', 'scene', 500);
+        $this->assertStringNotContainsString('sk-leak', (string) wp_json_encode($data));
+        $this->assertStringNotContainsString('stack trace', (string) wp_json_encode($data));
     }
 
     public function testPostIntentTransportFailureAddsUnavailableWithoutLeakingMessage(): void
@@ -273,6 +431,7 @@ class GpuControlControllerTest extends TestCase
         $this->assertSame($service, $unavailable['service']);
         $this->assertSame($httpStatus, $unavailable['http_status']);
         $this->assertSame($retryAfter, $unavailable['retry_after_seconds']);
+        // Source: plugin-observed gmdate('Y-m-d\TH:i:s\Z'); proxy_request/WP_Error data has no failed-attempt timestamp.
         $this->assertMatchesRegularExpression(
             '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/',
             $unavailable['checked_at']

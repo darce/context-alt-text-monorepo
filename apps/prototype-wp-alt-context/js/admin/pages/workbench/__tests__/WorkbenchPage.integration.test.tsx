@@ -320,12 +320,13 @@ describe('WorkbenchPage (integration-lite)', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
     });
 
-    // E21-18 S1: active job surfaces via compact strip chrome (Scanning… / Cancel),
-    // not the demoted panel's per-tick statusText live region.
+    // E21-18 S1: active job surfaces via compact strip chrome (Scanning… / Cancel run),
+    // not the demoted panel's per-tick statusText live region. The strip swapped the
+    // old progress-bar Cancel for ActivityStatusStrip's confirm-gated Cancel run.
     const strip = await screen.findByTestId('active-job-strip');
     expect(strip).toBeInTheDocument();
     expect(strip.textContent).toMatch(/Scanning/i);
-    expect(within(strip).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: 'Cancel run' })).toBeEnabled();
   });
 
   it.each([

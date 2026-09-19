@@ -48,6 +48,10 @@ vi.mock('../roster/hooks/useClusterActions', () => ({
   useClusterActions: vi.fn(),
 }));
 
+vi.mock('../roster/SamePersonPrompt', () => ({
+  SamePersonPrompt: () => null,
+}));
+
 const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary => ({
   id: 'cluster-1',
   label: '',

@@ -17,6 +17,8 @@ use Throwable;
 use function apply_filters;
 use function do_action;
 use function function_exists;
+use function in_array;
+use function is_bool;
 use function is_finite;
 use function is_float;
 use function is_int;
@@ -88,6 +90,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 		$snapshot_version = (int) ( $snapshot['snapshot_version'] ?? 0 );
 		$clusters         = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
 		$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
+		$is_complete      = $this->snapshot_declares_complete( $snapshot );
 		$is_empty_snapshot = ( true === ( $snapshot['empty'] ?? false ) )
 			|| ( empty( $clusters ) && 0 === $snapshot_version );
 
@@ -112,9 +115,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 		$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 
 		if ( $this->should_batch_cluster_only_snapshot( $clusters, $members ) ) {
-			$conflicts_generated = $this->project_cluster_only_snapshot_in_batches( $normalized_tenant_id, $clusters, $snapshot_version, $pre_projection_conflict_count );
+			$conflicts_generated = $this->project_cluster_only_snapshot_in_batches( $normalized_tenant_id, $clusters, $snapshot_version, $pre_projection_conflict_count, $is_complete );
 		} else {
-			$conflicts_generated = $this->project_snapshot_in_single_transaction( $normalized_tenant_id, $clusters, $members, $snapshot_version, $pre_projection_conflict_count );
+			$conflicts_generated = $this->project_snapshot_in_single_transaction( $normalized_tenant_id, $clusters, $members, $snapshot_version, $pre_projection_conflict_count, $is_complete );
 		}
 
 		if ( function_exists( 'do_action' ) ) {
@@ -146,9 +149,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	 * @param array<int,array<string,mixed>> $clusters
 	 * @param array<int,array<string,mixed>> $members
 	 */
-	private function project_snapshot_in_single_transaction( string $tenant_id, array $clusters, array $members, int $snapshot_version, int $pre_projection_conflict_count ): int {
+	private function project_snapshot_in_single_transaction( string $tenant_id, array $clusters, array $members, int $snapshot_version, int $pre_projection_conflict_count, bool $is_complete ): int {
 		$this->run_projection_transaction(
-			function () use ( $tenant_id, $clusters, $members, $snapshot_version ): void {
+			function () use ( $tenant_id, $clusters, $members, $snapshot_version, $is_complete ): void {
 				// E15-35 Slice 3: pre-count curated cluster AND member divergence
 				// before any per-entity recording or merge so a mass-divergence
 				// snapshot collapses into one aggregate conflict.
@@ -175,7 +178,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 					$this->record_curated_cluster_deletion_conflicts( $tenant_id, $curated_clusters, $deleted_cluster_keys, $snapshot_version );
 				}
 
-				$this->clusters_repository->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version );
+				$this->clusters_repository->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version, $is_complete );
 				$this->members_repository->merge_snapshot_for_tenant( $tenant_id, $members, $snapshot_version, $suppress_conflict_storm );
 				$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
 				$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
@@ -189,7 +192,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	/**
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
-	private function project_cluster_only_snapshot_in_batches( string $tenant_id, array $clusters, int $snapshot_version, int $pre_projection_conflict_count ): int {
+	private function project_cluster_only_snapshot_in_batches( string $tenant_id, array $clusters, int $snapshot_version, int $pre_projection_conflict_count, bool $is_complete ): int {
 		$cluster_batches      = array_chunk( $clusters, self::MAX_SNAPSHOT_BATCH_SIZE );
 		$total_batches        = count( $cluster_batches );
 		$incoming_cluster_ids = array_values(
@@ -214,9 +217,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$is_last_batch  = ( $total_batches - 1 ) === $index;
 
 			$this->run_projection_transaction(
-				function () use ( $tenant_id, $incoming_cluster_ids, $cluster_batch, $clusters, $snapshot_version, $is_first_batch, $is_last_batch, $curated_clusters, $deleted_cluster_keys, $suppress_conflict_storm ): void {
+				function () use ( $tenant_id, $incoming_cluster_ids, $cluster_batch, $clusters, $snapshot_version, $is_first_batch, $is_last_batch, $curated_clusters, $deleted_cluster_keys, $suppress_conflict_storm, $is_complete ): void {
 					if ( $is_first_batch ) {
-						$this->clusters_repository->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_cluster_ids );
+						$this->clusters_repository->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_cluster_ids, $is_complete );
 						$this->record_person_name_conflicts( $tenant_id, $curated_clusters, $clusters, $snapshot_version );
 						if ( $suppress_conflict_storm ) {
 							$this->record_backend_roster_regression_aggregate(
@@ -315,7 +318,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 				$snapshot_members  = $this->build_delta_member_snapshot_payload( $normalized_tenant_id, $snapshot_clusters, $clusters, $members );
 				$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 
-				$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $snapshot_clusters, $snapshot_version );
+				// Deltas are incremental: they never declare a full tenant set, so
+				// completeness is false even if the payload happens to carry envelope keys.
+				$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $snapshot_clusters, $snapshot_version, false );
 				$this->members_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $snapshot_members, $snapshot_version );
 				$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, $snapshot_version );
 				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
@@ -801,6 +806,53 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 				)
 			);
 		}
+	}
+
+	/**
+	 * Completeness is taken only from envelope flags already on the snapshot
+	 * payload (rg-015). `entity_set_truncated` is a negative veto. Missing keys
+	 * mean undeclared, not complete — never inferred from `count()`.
+	 *
+	 * @param array<string,mixed> $snapshot
+	 */
+	private function snapshot_declares_complete( array $snapshot ): bool {
+		if ( array_key_exists( 'entity_set_truncated', $snapshot ) && $this->to_bool( $snapshot['entity_set_truncated'] ) ) {
+			return false;
+		}
+
+		if ( array_key_exists( 'is_complete', $snapshot ) ) {
+			return $this->to_bool( $snapshot['is_complete'] );
+		}
+
+		if ( array_key_exists( 'complete', $snapshot ) ) {
+			return $this->to_bool( $snapshot['complete'] );
+		}
+
+		if ( array_key_exists( 'is_full', $snapshot ) ) {
+			return $this->to_bool( $snapshot['is_full'] );
+		}
+
+		if ( array_key_exists( 'has_more', $snapshot ) ) {
+			return ! $this->to_bool( $snapshot['has_more'] );
+		}
+
+		if ( array_key_exists( 'partial', $snapshot ) ) {
+			return ! $this->to_bool( $snapshot['partial'] );
+		}
+
+		return false;
+	}
+
+	private function to_bool( mixed $value ): bool {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+
+		if ( is_numeric( $value ) ) {
+			return (int) $value === 1;
+		}
+
+		return in_array( trim( (string) $value ), array( '1', 'true', 'yes', 'on' ), true );
 	}
 
 	private function log_empty_tenant_id_guard(): void {

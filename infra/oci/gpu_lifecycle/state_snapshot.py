@@ -302,15 +302,21 @@ def write_ready_probe_failure_count(
     *,
     instance_id: str | None,
     count: int,
-) -> None:
-    """Persist or clear the consecutive ready-probe failure count."""
-    if snapshot_path is None:
-        return
+) -> bool:
+    """Persist or clear the consecutive ready-probe failure count.
+
+    Returns True when the durable counter matches ``count``. A positive count
+    that cannot be persisted returns False so callers can fail closed.
+    """
+    if count <= 0:
+        if snapshot_path is not None:
+            sidecar = ready_probe_failure_sidecar_path(snapshot_path)
+            with suppress(OSError):
+                sidecar.unlink(missing_ok=True)
+        return True
+    if snapshot_path is None or instance_id is None:
+        return False
     sidecar = ready_probe_failure_sidecar_path(snapshot_path)
-    if count <= 0 or instance_id is None:
-        with suppress(OSError):
-            sidecar.unlink(missing_ok=True)
-        return
     payload = {"instance_id": instance_id, "count": count}
     temporary: Path | None = None
     try:
@@ -335,12 +341,12 @@ def write_ready_probe_failure_count(
         if temporary is not None:
             with suppress(OSError):
                 temporary.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def state_for_instances(
     instance_states: list[str],
-    *,
-    previous_state: GpuLifecycleState | None = None,
 ) -> GpuLifecycleState:
     """Reduce the configured instances to one fail-closed service state."""
     if not instance_states:
@@ -350,7 +356,6 @@ def state_for_instances(
     # only WARMING, so neither verdict may displace it on a later unprobed
     # cycle. This gives DEGRADED an exit edge and prevents stale READY evidence
     # from being republished as though a current readiness probe produced it.
-    del previous_state
     for state in (
         GpuLifecycleState.DEGRADED,
         GpuLifecycleState.READY,

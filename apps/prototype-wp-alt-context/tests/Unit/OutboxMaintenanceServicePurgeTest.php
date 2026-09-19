@@ -81,8 +81,9 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertIsArray($purged);
         $this->assertSame(0, $purged['retried']);
         $this->assertSame(0, $purged['dead_lettered']);
-        $this->assertSame(1, $purged['purged_failed']);
-        $this->assertSame(1, $purged['outbox']);
+        $this->assertSame(2, $purged['purged_failed']);
+        $this->assertSame(1, $purged['purged_exhausted']);
+        $this->assertSame(2, $purged['outbox']);
         $this->assertSame(1, $syncState->refreshCount);
 
         // The reclaim SELECT also matches `last_error_retryable IS NULL` now; pin the purge projection instead.
@@ -90,22 +91,25 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertStringContainsString('SELECT id, first_failed_at, last_attempted_at, created_at, last_error_code, last_error_retryable, attempts FROM `wp_acx_sync_outbox`', $selectQuery);
         $this->assertStringContainsString('last_error_retryable IS NULL', $selectQuery);
         $this->assertStringContainsString("status = '" . OutboxStatus::FAILED . "'", $selectQuery);
-        $this->assertStringContainsString("last_error_code <> 'auto_retry_exhausted'", $selectQuery);
+        $this->assertStringContainsString("last_error_code = 'auto_retry_exhausted'", $selectQuery);
+        $this->assertStringNotContainsString("last_error_code <> 'auto_retry_exhausted'", $selectQuery);
         $this->assertStringNotContainsString('last_error_code IN', $selectQuery);
 
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_sync_outbox');
         $this->assertStringContainsString("last_attempted_at = '{$oldStamp}'", $deleteQuery);
-        $this->assertStringContainsString("last_error_code = 'remote_error'", $deleteQuery);
-        $this->assertStringContainsString('last_error_retryable = 0', $deleteQuery);
         $this->assertStringContainsString('attempts = 1', $deleteQuery);
         $this->assertStringContainsString("first_failed_at = '{$oldStamp}'", $deleteQuery);
 
         $remaining = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
         $this->assertArrayNotHasKey(41, $remaining);
         $this->assertArrayHasKey(42, $remaining);
-        $this->assertArrayHasKey(43, $remaining);
+        $this->assertArrayNotHasKey(43, $remaining);
         $this->assertSame(OutboxStatus::FAILED, $remaining[42]['status']);
-        $this->assertSame(OutboxStatus::FAILED, $remaining[43]['status']);
+
+        $exhaustedAudits = $this->actionsNamed('acx_sync_outbox_exhausted_purged');
+        $this->assertCount(1, $exhaustedAudits);
+        $this->assertSame($tenantId, $exhaustedAudits[0]['args'][0]['tenant_id']);
+        $this->assertSame(1, $exhaustedAudits[0]['args'][0]['purged_count']);
     }
 
     public function testPurgeAutoRetriesUnknownRetryabilityButLeavesExplicitNonRetryableRowsTerminal(): void
@@ -537,6 +541,124 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertFalse($service->get_health_counters('tenant-health-unavailable'));
     }
 
+    public function testPurgeDiscardsEntityGoneFailuresAsOrphansWithAuditRow(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-discard';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(101, $tenantId, 'cluster_not_found', null, 0),
+            $this->buildFailedOutboxRow(102, $tenantId, 'http_404', null, 0),
+            $this->buildFailedOutboxRow(103, $tenantId, 'identity_not_found', null, 1),
+            $this->buildFailedOutboxRow(104, $tenantId, 'remote_error', null, 1),
+        ];
+
+        $syncState = $this->trackingSyncStateRepository();
+        $service = new OutboxMaintenanceService(null, $syncState, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(3, $purged['orphaned']);
+        $this->assertSame(1, $purged['retried']);
+        $this->assertSame(0, $purged['purged_failed']);
+        $this->assertSame(1, $syncState->refreshCount);
+
+        $rowsById = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertSame(OutboxStatus::DISCARDED, $rowsById[101]['status']);
+        $this->assertSame(OutboxStatus::DISCARDED, $rowsById[102]['status']);
+        $this->assertSame(OutboxStatus::DISCARDED, $rowsById[103]['status']);
+        $this->assertSame(OutboxStatus::PENDING, $rowsById[104]['status']);
+
+        $orphanAudits = $this->actionsNamed('acx_sync_outbox_orphan_discarded');
+        $this->assertCount(3, $orphanAudits);
+        $this->assertSame(101, $orphanAudits[0]['args'][0]['outbox_id']);
+        $this->assertSame('cluster_not_found', $orphanAudits[0]['args'][0]['last_error_code']);
+        $this->assertSame('orphaned', $orphanAudits[0]['args'][0]['reason']);
+        $this->assertSame($tenantId, $orphanAudits[0]['args'][0]['tenant_id']);
+    }
+
+    public function testPurgeDoesNotRetryClusterNotFoundEvenWhenRetryableFlagIsTrue(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-no-retry';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(111, $tenantId, 'cluster_not_found', null, 1),
+        ];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(1, $purged['orphaned']);
+        $this->assertSame(0, $purged['retried']);
+        $this->assertSame(OutboxStatus::DISCARDED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+    }
+
+    public function testPurgeLeavesGenericRemoteErrorWhenPersistedCodeIsNot404Class(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-remote-error-not-404';
+        $oldStamp = gmdate('Y-m-d H:i:s', (int) current_time('timestamp') - (8 * 86400));
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(121, $tenantId, 'remote_error', $oldStamp, 0),
+        ];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['orphaned']);
+        $this->assertSame(1, $purged['purged_failed']);
+        $this->assertSame([], $wpdb->tableRows['wp_acx_sync_outbox']);
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+    }
+
+    public function testPurgeAgesOutExhaustedRowsAfterRetentionWithAuditCount(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-exhausted-age-out';
+        $now = (int) current_time('timestamp');
+        $oldStamp = gmdate('Y-m-d H:i:s', $now - (8 * 86400));
+        $recentStamp = gmdate('Y-m-d H:i:s', $now - 3600);
+        $wpdb->defaultQueryResult = 0;
+        $oldExhausted = $this->buildFailedOutboxRow(131, $tenantId, 'auto_retry_exhausted', $oldStamp, 1);
+        $freshExhausted = $this->buildFailedOutboxRow(132, $tenantId, 'auto_retry_exhausted', $oldStamp, 1);
+        $freshExhausted['last_attempted_at'] = $recentStamp;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [$oldExhausted, $freshExhausted];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(1, $purged['purged_exhausted']);
+        $this->assertSame(1, $purged['purged_failed']);
+        $remaining = array_column($wpdb->tableRows['wp_acx_sync_outbox'], null, 'id');
+        $this->assertArrayNotHasKey(131, $remaining);
+        $this->assertArrayHasKey(132, $remaining);
+        $this->assertSame(OutboxStatus::FAILED, $remaining[132]['status']);
+
+        $audits = $this->actionsNamed('acx_sync_outbox_exhausted_purged');
+        $this->assertCount(1, $audits);
+        $this->assertSame(1, $audits[0]['args'][0]['purged_count']);
+        $this->assertSame($tenantId, $audits[0]['args'][0]['tenant_id']);
+    }
+
+    public function testPurgeTerminalRowsSchedulesFollowUpPurgeViaActionScheduler(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-purge-schedule';
+        $wpdb->defaultQueryResult = 0;
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $service->purge_terminal_rows($tenantId);
+
+        $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+        $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+        $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+    }
+
     /**
      * @return SyncStateRepository&object{refreshCount:int,lastTenantId:?string}
      */
@@ -625,6 +747,32 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         foreach (array_keys($GLOBALS['__ac_action_scheduler'] ?? []) as $key) {
             if (str_starts_with($key, $hook . '::')) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<int,array{hook:string,args:array<int,mixed>}>
+     */
+    private function actionsNamed(string $hook): array
+    {
+        $matches = [];
+        foreach ($GLOBALS['__ac_do_action_log'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === $hook) {
+                $matches[] = $entry;
+            }
+        }
+
+        return $matches;
+    }
+
+    private function actionSchedulerPurgeTimestamp(): int|false
+    {
+        foreach ($GLOBALS['__ac_action_scheduler'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === 'acx_sync_purge_terminal_rows') {
+                return (int) $entry['timestamp'];
             }
         }
 

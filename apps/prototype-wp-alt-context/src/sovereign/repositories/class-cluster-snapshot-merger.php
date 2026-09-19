@@ -50,7 +50,8 @@ class ClusterSnapshotMerger {
 
 	/**
 	 * @param array<int,array<string,mixed>>|array<string,mixed> $clusters Cluster list or envelope with completeness flags.
-	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int,preserved_curated:int}
+	 * @throws \RuntimeException When a snapshot write returns false.
 	 */
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false ): array {
 		$parsed              = $this->parse_snapshot_clusters_payload( $clusters );
@@ -69,12 +70,14 @@ class ClusterSnapshotMerger {
 
 	/**
 	 * @param string[] $incoming_cluster_ids
-	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int,preserved_curated:int}
+	 * @throws \RuntimeException When a tombstone delete returns false.
 	 */
 	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false ): array {
 		$empty_counts = array(
 			'tombstoned_clusters' => 0,
 			'tombstoned_members'  => 0,
+			'preserved_curated'   => 0,
 		);
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -92,6 +95,7 @@ class ClusterSnapshotMerger {
 
 	/**
 	 * @param array<int,array<string,mixed>> $clusters
+	 * @throws \RuntimeException When a snapshot upsert query returns false.
 	 */
 	public function merge_snapshot_batch_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
 		global $wpdb;
@@ -187,7 +191,8 @@ class ClusterSnapshotMerger {
 
 			if ( is_string( $sql ) && '' !== $sql ) {
 				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-				$wpdb->query( $sql );
+				$query_result = $wpdb->query( $sql );
+				$this->throw_on_write_failure( $query_result, 'upsert' );
 			}
 		}
 
@@ -365,12 +370,14 @@ class ClusterSnapshotMerger {
 
 	/**
 	 * @param string[] $incoming_cluster_ids
-	 * @return array{tombstoned_clusters:int,tombstoned_members:int}
+	 * @return array{tombstoned_clusters:int,tombstoned_members:int,preserved_curated:int}
+	 * @throws \RuntimeException When a tombstone delete returns false.
 	 */
 	private function tombstone_absent_clusters_for_tenant( string $tenant_id, array $incoming_cluster_ids ): array {
 		$counts = array(
 			'tombstoned_clusters' => 0,
 			'tombstoned_members'  => 0,
+			'preserved_curated'   => 0,
 		);
 
 		global $wpdb;
@@ -380,7 +387,7 @@ class ClusterSnapshotMerger {
 		}
 
 		$local_sql = $this->prepare_query(
-			'SELECT cluster_uuid FROM %i WHERE tenant_id = %s',
+			'SELECT cluster_uuid, is_user_confirmed, person_id, curation_state FROM %i WHERE tenant_id = %s',
 			array(
 				$this->table_name,
 				$tenant_id,
@@ -408,6 +415,11 @@ class ClusterSnapshotMerger {
 				continue;
 			}
 
+			if ( ! $this->is_uncurated_cluster_row( $row ) ) {
+				++$counts['preserved_curated'];
+				continue;
+			}
+
 			$absent_ids[] = $cluster_uuid;
 		}
 
@@ -426,6 +438,7 @@ class ClusterSnapshotMerger {
 					'cluster_uuid' => $cluster_uuid,
 				)
 			);
+			$this->throw_on_write_failure( $deleted_members, 'member delete' );
 			if ( is_int( $deleted_members ) && $deleted_members > 0 ) {
 				$counts['tombstoned_members'] += $deleted_members;
 			}
@@ -437,11 +450,12 @@ class ClusterSnapshotMerger {
 					'tenant_id'    => $tenant_id,
 				)
 			);
+			$this->throw_on_write_failure( $deleted_clusters, 'cluster delete' );
 			if ( is_int( $deleted_clusters ) && $deleted_clusters > 0 ) {
 				$counts['tombstoned_clusters'] += $deleted_clusters;
 			}
 
-			$wpdb->delete(
+			$deleted_conflicts = $wpdb->delete(
 				$conflicts_table,
 				array(
 					'tenant_id'     => $tenant_id,
@@ -449,9 +463,59 @@ class ClusterSnapshotMerger {
 					'entity_key'    => $cluster_uuid,
 				)
 			);
+			$this->throw_on_write_failure( $deleted_conflicts, 'conflict delete' );
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * @param mixed $result
+	 * @throws \RuntimeException When $result is false.
+	 */
+	private function throw_on_write_failure( $result, string $surface ): void {
+		if ( false !== $result ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$error = '';
+		if ( isset( $wpdb ) && is_object( $wpdb ) ) {
+			$raw   = $wpdb->last_error ?? '';
+			$error = is_string( $raw ) ? trim( $raw ) : '';
+		}
+
+		$message = '' !== $error
+			? sprintf( 'Snapshot merger %s failed: %s', $surface, $error )
+			: sprintf( 'Snapshot merger %s failed', $surface );
+
+		// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Internal diagnostic message; never rendered as output.
+		throw new \RuntimeException( $message );
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function is_uncurated_cluster_row( array $row ): bool {
+		$confirmed = $row['is_user_confirmed'] ?? 0;
+		if ( is_bool( $confirmed ) ) {
+			$confirmed_flag = $confirmed ? 1 : 0;
+		} else {
+			$confirmed_flag = in_array( trim( (string) $confirmed ), array( '1', 'true', 'yes', 'on' ), true ) ? 1 : 0;
+		}
+		if ( 1 === $confirmed_flag ) {
+			return false;
+		}
+
+		$person_id = $row['person_id'] ?? null;
+		if ( is_numeric( $person_id ) && (int) $person_id > 0 ) {
+			return false;
+		}
+
+		$state = trim( (string) ( $row['curation_state'] ?? '' ) );
+
+		return '' === $state || 'uncurated' === $state;
 	}
 
 	private function resolve_related_table_name( string $logical_suffix ): string {

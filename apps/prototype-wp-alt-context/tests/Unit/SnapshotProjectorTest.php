@@ -1075,15 +1075,16 @@ class SnapshotProjectorTest extends TestCase
             )
         );
 
-        $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
+        // cluster-stale-b is operator-confirmed and person-bound: snapshot absence must not delete it (1075a021).
+        $this->assertSame(array('cluster-keep', 'cluster-stale-b'), $this->clusterIdsForTenant('tenant-tombstone'));
         $this->assertSame(
             array('cluster-other-tenant'),
             $this->clusterIdsForTenant('other-tenant')
         );
-        $this->assertSame(array('id-keep'), $this->memberIds());
+        $this->assertSame(array('id-keep', 'id-stale-b'), $this->memberIds());
         $this->assertContains('version_conflict:cluster-keep', $this->conflictKeys());
         $this->assertNotContains('cluster_not_found:cluster-stale-a', $this->conflictKeys());
-        $this->assertNotContains('cluster_not_found:cluster-stale-b', $this->conflictKeys());
+        $this->assertContains('cluster_not_found:cluster-stale-b', $this->conflictKeys());
     }
 
     public function testProjectDeltaNeverPassesCompleteness(): void

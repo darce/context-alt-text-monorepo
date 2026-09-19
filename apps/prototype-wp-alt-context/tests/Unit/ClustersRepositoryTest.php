@@ -120,13 +120,14 @@ class ClustersRepositoryTest extends TestCase
         );
 
         global $wpdb;
-        $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
+        // cluster-stale-b is operator-confirmed and person-bound: snapshot absence must not delete it (1075a021).
+        $this->assertSame(array('cluster-keep', 'cluster-stale-b'), $this->clusterIdsForTenant('tenant-tombstone'));
         $this->assertSame(
             array('cluster-other-tenant'),
             $this->clusterIdsForTenant('other-tenant')
         );
         $this->assertSame(
-            array('id-keep'),
+            array('id-keep', 'id-stale-b'),
             array_values(
                 array_map(
                     static fn(array $row): string => (string) $row['identity_uuid'],
@@ -135,7 +136,7 @@ class ClustersRepositoryTest extends TestCase
             )
         );
         $this->assertSame(
-            array('version_conflict:cluster-keep'),
+            array('cluster_not_found:cluster-stale-b', 'version_conflict:cluster-keep'),
             $this->conflictKeys()
         );
     }
@@ -157,6 +158,7 @@ class ClustersRepositoryTest extends TestCase
                 return array(
                     'tombstoned_clusters' => 0,
                     'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
                 );
             }
 
@@ -415,6 +417,7 @@ class ClustersRepositoryTest extends TestCase
                 return array(
                     'tombstoned_clusters' => 0,
                     'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
                 );
             }
         };

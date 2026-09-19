@@ -206,6 +206,14 @@ def _usable_cpu_describe_one(
     return cpu_describe_one
 
 
+def _startup_budget_seconds(timeout_seconds: float) -> int | None:
+    """Whole-second C2 budget; positive timeouts round and floor at 1s."""
+
+    if timeout_seconds <= 0:
+        return None
+    return max(1, round(timeout_seconds))
+
+
 def _gpu_warmup_timeout_detail(*, timeout_seconds: float, error: BaseException) -> str:
     """C2 FAILED terminal payload; probe text stays visible (OBS-08)."""
 
@@ -213,9 +221,32 @@ def _gpu_warmup_timeout_detail(*, timeout_seconds: float, error: BaseException) 
         {
             "code": DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT,
             "retryable": True,
-            "startup_budget_seconds": int(timeout_seconds),
+            "startup_budget_seconds": _startup_budget_seconds(timeout_seconds),
             "message": str(error),
         }
+    )
+
+
+def _warmup_cpu_fallback_detail(*, reason: DescribeRunTerminalReason) -> str:
+    """COMPLETED continuation stamp; no terminal code so GET stays non-FAILED."""
+
+    return json.dumps({"fallback_reason": reason})
+
+
+def _stamp_warmup_cpu_fallback_outcome(
+    outcome: DescribeItemOutcome | None,
+    reason: DescribeRunTerminalReason,
+) -> DescribeItemOutcome:
+    """Force CPU continuation items onto provisional_cpu with a typed reason."""
+
+    outcome = outcome or DescribeItemOutcome()
+    return replace(
+        outcome,
+        tier=DescriptionResultTier.PROVISIONAL_CPU,
+        provenance={
+            **dict(outcome.provenance or {}),
+            "fallback_reason": reason,
+        },
     )
 
 
@@ -271,10 +302,35 @@ async def _apply_warmup_cpu_fallback(
         run_id,
         timeout_seconds,
     )
+    reason = DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+    await _persist_warmup_cpu_fallback_reason(
+        session_factory=session_factory,
+        tenant_id=tenant_id,
+        run_id=run_id,
+        reason=reason,
+    )
     return _WarmupCpuFallback(
         describe_one=cpu_one,
-        reason=DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT,
+        reason=reason,
     )
+
+
+async def _persist_warmup_cpu_fallback_reason(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    reason: DescribeRunTerminalReason,
+) -> None:
+    """Stamp run-level fallback_reason without flipping the run FAILED."""
+
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        run = await DescribeRunRepository(session).get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return
+        run.error_message = _warmup_cpu_fallback_detail(reason=reason)
+        await session.commit()
 
 
 async def _wait_for_gpu_ready(
@@ -1024,12 +1080,8 @@ async def run_describe_job(
                     else:
                         outcome = outcome or DescribeItemOutcome()
                         if warmup_fallback_reason is not None:
-                            outcome = replace(
-                                outcome,
-                                provenance={
-                                    **dict(outcome.provenance or {}),
-                                    "fallback_reason": warmup_fallback_reason,
-                                },
+                            outcome = _stamp_warmup_cpu_fallback_outcome(
+                                outcome, warmup_fallback_reason
                             )
                         await _record_item_processing_ms(
                             repo=repo,

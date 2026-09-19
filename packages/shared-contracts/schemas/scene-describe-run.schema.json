@@ -100,6 +100,40 @@
       "exclusiveMinimum": 0,
       "description": "Additive optional. The server's own end-to-end GENERATION budget for this whole accepted run: the budget the worker actually enforces, summed across the run's items. It explicitly does NOT include GPU warm-up / cold-start - the client adds the warm-up leg itself. Derived at accept from the per-item generation timeout the worker is handed (which depends on the active adapter, not on ACX_DESCRIPTION_TIMEOUT_SECONDS alone) multiplied by the run's unique item count, and snapshotted per run: a later config change does not move an accepted run's deadline. Null only for runs not created through POST /scene/describe/run."
     },
+    "terminal": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Additive optional C2 FAILED terminal parsed from persisted error_message JSON. Null when the payload is absent, malformed, or legacy plain text. Never inferred from status.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "startup_budget_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "retryable",
+        "startup_budget_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "fallback_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Additive optional C2 run-level CPU continuation reason parsed from persisted error_message JSON. Null unless the worker stamped a warmup-timeout fallback. Item tier stays provisional_cpu | final_gpu; fallback is this reason, not a third tier."
+    },
     "operation_id": {
       "type": "string",
       "minLength": 1,

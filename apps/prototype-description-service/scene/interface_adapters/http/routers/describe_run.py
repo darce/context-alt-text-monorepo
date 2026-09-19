@@ -24,6 +24,8 @@ from recognition.interface_adapters.http.deps.demo_quota import (
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeItemOutcome,
+    DescribeRunTerminalCode,
+    DescribeRunTerminalReason,
     FusionNamingInputs,
     MissingNamingSnapshotError,
     gpu_run_policy,
@@ -56,6 +58,7 @@ from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemResponse,
     DescribeRunItemsResponse,
     DescribeRunResponse,
+    DescribeRunTerminal,
     DescribeRunTiming,
 )
 
@@ -157,7 +160,44 @@ def _observed_run_timing(run) -> DescribeRunTiming | None:
     )
 
 
+def _describe_run_wire_error(error_message: str | None) -> tuple[DescribeRunTerminal | None, str | None]:
+    """Parse worker JSON on ``run.error_message``; never raise or fabricate."""
+
+    if not error_message:
+        return None, None
+    try:
+        payload = json.loads(error_message)
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(payload, Mapping):
+        return None, None
+    terminal = None
+    code_raw = payload.get("code")
+    retryable = payload.get("retryable")
+    if isinstance(code_raw, str) and type(retryable) is bool:
+        try:
+            code = DescribeRunTerminalCode(code_raw)
+        except ValueError:
+            code = None
+        if code is not None:
+            budget = payload.get("startup_budget_seconds")
+            terminal = DescribeRunTerminal(
+                code=code,
+                retryable=retryable,
+                startup_budget_seconds=budget if type(budget) is int else None,
+            )
+    fallback_reason = None
+    reason_raw = payload.get("fallback_reason")
+    if isinstance(reason_raw, str):
+        try:
+            fallback_reason = str(DescribeRunTerminalReason(reason_raw))
+        except ValueError:
+            fallback_reason = None
+    return terminal, fallback_reason
+
+
 def _run_response(run) -> DescribeRunResponse:
+    terminal, fallback_reason = _describe_run_wire_error(getattr(run, "error_message", None))
     return DescribeRunResponse(
         tenant_id=str(run.tenant_id),
         run_id=str(run.id),
@@ -172,6 +212,8 @@ def _run_response(run) -> DescribeRunResponse:
         gpu_state=read_gpu_state(),
         recognition_enabled=bool(run.recognition_enabled),
         deadline_seconds=run.deadline_seconds,
+        terminal=terminal,
+        fallback_reason=fallback_reason,
         operation_id=run.operation_id or None,
         startup_id=run.startup_id,
         timing=_observed_run_timing(run),

@@ -315,12 +315,29 @@ class DescribeJobResult(BaseModel):
     error: str | None = None
 
 
+class DescribeRunTerminal(BaseModel):
+    """Typed C2 terminal on a FAILED describe-run envelope.
+
+    Parsed from the JSON the worker persisted on ``run.error_message``.
+    Malformed or legacy plain text never raises and never fabricates keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    retryable: bool
+    startup_budget_seconds: int | None = None
+
+
 class DescribeRunResponse(OmitAbsentOperationMetadata):
     """Async describe-run status returned by submit/status endpoints.
 
     ``operation_id``, ``startup_id``, and ``timing`` are additive optional.
     Unknown timing observations stay explicit nulls inside ``timing``; older
     builders may omit the three fields entirely. Never fabricate values.
+    ``terminal`` and ``fallback_reason`` are additive optional C2 fields parsed
+    from persisted ``error_message`` JSON; both stay null when that payload is
+    absent, malformed, or legacy plain text.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -349,6 +366,11 @@ class DescribeRunResponse(OmitAbsentOperationMetadata):
     # snapshotted, so a later config change never moves an accepted run's number.
     # Null only for runs created outside the submit route (never via POST).
     deadline_seconds: float | None = None
+    # C2: typed FAILED terminal (gpu_warmup_timeout) or null. Never inferred
+    # from status alone.
+    terminal: DescribeRunTerminal | None = None
+    # C2: run-level CPU continuation stamp; null unless the worker persisted it.
+    fallback_reason: str | None = None
     operation_id: str | None = Field(default=None, min_length=1, max_length=128)
     startup_id: str | None = None
     timing: DescribeRunTiming | None = None

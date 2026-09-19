@@ -18,7 +18,12 @@ import pytest
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.application.describe_run_repository import DescribeRunRepository
-from scene.domain.describe_run import DescribeRunStatus
+from scene.application.describe_run_worker import (
+    DescribeRunTerminalCode,
+    DescribeRunTerminalReason,
+    _gpu_warmup_timeout_detail,
+)
+from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.tests.demo_quota_harness import demo_quota_client
@@ -379,6 +384,82 @@ def test_status_route_returns_run_snapshot(monkeypatch):
         assert "timing" not in body
         assert "operation_id" not in body
         assert "startup_id" not in body
+        assert body["terminal"] is None
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_exposes_gpu_warmup_timeout_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                await DescribeRunRepository(s).mark_run_failed(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    error_message=_gpu_warmup_timeout_detail(
+                        timeout_seconds=0.1,
+                        error=TimeoutError("GPU endpoint did not become ready"),
+                    ),
+                )
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.FAILED
+        assert body["terminal"]["code"] == DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert body["terminal"]["retryable"] is True
+        assert body["terminal"]["startup_budget_seconds"] == 1
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_legacy_error_message_has_null_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                await DescribeRunRepository(s).mark_run_failed(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    error_message="legacy plain failure",
+                )
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.FAILED
+        assert body["terminal"] is None
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_cpu_fallback_exposes_fallback_reason_without_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                run = await repo.get_run(tenant_id=TENANT_ID, run_id=rid)
+                assert run is not None
+                run.status = DescribeRunStatus.COMPLETED
+                run.phase = DescribeRunPhase.COMPLETE
+                run.error_message = json.dumps(
+                    {"fallback_reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT}
+                )
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.COMPLETED
+        assert body["fallback_reason"] == DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert body["terminal"] is None
 
 
 def test_submit_omits_unobserved_timing_and_operation_ids(monkeypatch):

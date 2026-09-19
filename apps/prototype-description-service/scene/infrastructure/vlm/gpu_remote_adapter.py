@@ -17,7 +17,7 @@ import httpx
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult
-from scene.application.identity_merge.merge import NormalizedBox, PhraseBox, normalize_bbox
+from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
 from scene.domain.description import DescriptionAdapterKind
 
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
@@ -31,6 +31,8 @@ _MAX_LOGGED_GPU_DIAGNOSTIC = 4096
 # Bounded follow-up for person-span grounding; shorter than caption read timeout.
 _DEFAULT_GROUNDING_TIMEOUT_S = 30.0
 _GROUNDING_FLAG_ENV = "ACX_GPU_GROUNDING_ENABLED"
+# Qwen3-VL native bbox_2d is relative in [0, 1000], not pixels (EMB-02 / RES-13).
+_QWEN_BBOX_RELATIVE_MAX = 1000.0
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +55,12 @@ _SYSTEM_PROMPT = (
 _GROUNDING_SYSTEM_PROMPT = "You ground person phrases in images. Return JSON only. Never invent a box."
 _GROUNDING_USER_PREFIX = (
     "Locate each person mentioned in the caption in this image. "
-    "Reply with JSON only, no markdown. Use this shape: "
-    '{"bboxes": [[x1, y1, x2, y2]], "labels": ["exact caption substring"]}. '
-    "Coordinates are pixel [x1, y1, x2, y2] in this image, origin top-left, "
-    "with x1 < x2 and y1 < y2. Labels must be exact person phrases copied from "
-    "the caption. If no person is visible or a box cannot be located, return "
-    '{"bboxes": [], "labels": []}.'
+    "Reply with JSON only, no markdown. Return a list of objects with this shape: "
+    '[{"bbox_2d": [x1, y1, x2, y2], "label": "exact caption substring"}]. '
+    f"bbox_2d is relative [x1, y1, x2, y2] in the 0-{int(_QWEN_BBOX_RELATIVE_MAX)} frame, "
+    "origin top-left, with x1 < x2 and y1 < y2. Labels must be exact person phrases "
+    "copied from the caption. If no person is visible or a box cannot be located, "
+    "return []."
 )
 
 _gpu_call_semaphore: threading.Semaphore | None = None
@@ -732,6 +734,34 @@ def _image_dimensions(image_bytes: bytes) -> tuple[float, float] | None:
     return float(width), float(height)
 
 
+def _unit_xyxy_from_quad(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> tuple[float, float, float, float] | None:
+    max_coord = max(abs(x1), abs(y1), abs(x2), abs(y2))
+    if max_coord <= 1.0 + 1e-6:
+        if x1 < -1e-6 or y1 < -1e-6 or x2 > 1.0 + 1e-6 or y2 > 1.0 + 1e-6:
+            return None
+        return x1, y1, x2, y2
+    if max_coord <= _QWEN_BBOX_RELATIVE_MAX:
+        return (
+            x1 / _QWEN_BBOX_RELATIVE_MAX,
+            y1 / _QWEN_BBOX_RELATIVE_MAX,
+            x2 / _QWEN_BBOX_RELATIVE_MAX,
+            y2 / _QWEN_BBOX_RELATIVE_MAX,
+        )
+    if image_width is None or image_height is None:
+        return None
+    if x1 < -1.0 or y1 < -1.0 or x2 > image_width + 1.0 or y2 > image_height + 1.0:
+        return None
+    return x1 / image_width, y1 / image_height, x2 / image_width, y2 / image_height
+
+
 def _normalized_box_from_quad(
     x1: float,
     y1: float,
@@ -743,23 +773,18 @@ def _normalized_box_from_quad(
 ) -> NormalizedBox | None:
     if x2 <= x1 or y2 <= y1:
         return None
-    max_coord = max(abs(x1), abs(y1), abs(x2), abs(y2))
-    if max_coord <= 1.0 + 1e-6:
-        if x1 < -1e-6 or y1 < -1e-6 or x2 > 1.0 + 1e-6 or y2 > 1.0 + 1e-6:
-            return None
-        return NormalizedBox(x=x1, y=y1, width=x2 - x1, height=y2 - y1)
-    if image_width is None or image_height is None:
-        return None
-    if x1 < -1.0 or y1 < -1.0 or x2 > image_width + 1.0 or y2 > image_height + 1.0:
-        return None
-    return normalize_bbox(
-        x=x1,
-        y=y1,
-        width=x2 - x1,
-        height=y2 - y1,
+    unit = _unit_xyxy_from_quad(
+        x1,
+        y1,
+        x2,
+        y2,
         image_width=image_width,
         image_height=image_height,
     )
+    if unit is None:
+        return None
+    ux1, uy1, ux2, uy2 = unit
+    return NormalizedBox(x=ux1, y=uy1, width=ux2 - ux1, height=uy2 - uy1)
 
 
 def _span_for_label(label: str, caption: str, cursor_by_label: dict[str, int]) -> tuple[str, tuple[int, int]]:

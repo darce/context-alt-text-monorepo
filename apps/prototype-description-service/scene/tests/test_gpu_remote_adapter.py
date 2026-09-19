@@ -751,7 +751,8 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
 # ------------------------------------------ Qwen person-span grounding (GPUFLOW-3 N3)
 
 
-def test_gpu_remote_adapter_grounding_flag_defaults_off() -> None:
+def test_gpu_remote_adapter_grounding_flag_defaults_off(monkeypatch) -> None:
+    monkeypatch.delenv("ACX_GPU_GROUNDING_ENABLED", raising=False)
     captured: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -783,7 +784,7 @@ def test_gpu_remote_adapter_grounding_enabled_via_env(monkeypatch) -> None:
     captured: list[dict] = []
     handler = _caption_then_grounding_handler(
         caption="A man stands by a window.",
-        grounding_content=json.dumps({"bboxes": [[10.0, 10.0, 60.0, 90.0]], "labels": ["A man"]}),
+        grounding_content=json.dumps({"bboxes": [[100.0, 100.0, 600.0, 900.0]], "labels": ["A man"]}),
         captured=captured,
     )
 
@@ -813,7 +814,7 @@ def test_gpu_remote_adapter_grounding_maps_florence_shape_phrase_boxes() -> None
     caption = "A man stands by a window."
     handler = _caption_then_grounding_handler(
         caption=caption,
-        grounding_content=json.dumps({"bboxes": [[10.0, 10.0, 60.0, 90.0]], "labels": ["A man"]}),
+        grounding_content=json.dumps({"bboxes": [[100.0, 100.0, 600.0, 900.0]], "labels": ["A man"]}),
         captured=captured,
     )
 
@@ -825,6 +826,8 @@ def test_gpu_remote_adapter_grounding_maps_florence_shape_phrase_boxes() -> None
     assert "n_probs" not in captured[1]
     grounding_text = _user_text_from_payload(captured[1])
     assert "Locate each person mentioned in the caption" in grounding_text
+    assert "bbox_2d" in grounding_text
+    assert "0-1000" in grounding_text
     assert caption in grounding_text
     assert "/no_think" in grounding_text
     assert len(result.phrase_boxes) == 1
@@ -838,15 +841,17 @@ def test_gpu_remote_adapter_grounding_accepts_qwen_bbox_2d_list() -> None:
     captured: list[dict] = []
     handler = _caption_then_grounding_handler(
         caption="A woman waves.",
-        grounding_content=json.dumps([{"bbox_2d": [0.0, 0.0, 50.0, 50.0], "label": "A woman"}]),
+        grounding_content=json.dumps([{"bbox_2d": [250.0, 100.0, 750.0, 900.0], "label": "A woman"}]),
         captured=captured,
     )
 
-    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
 
     assert len(result.phrase_boxes) == 1
     assert result.phrase_boxes[0].phrase == "A woman"
-    assert result.phrase_boxes[0].box == NormalizedBox(x=0.0, y=0.0, width=0.5, height=0.5)
+    assert result.phrase_boxes[0].box == NormalizedBox(x=0.25, y=0.10, width=0.50, height=0.80)
 
 
 def test_gpu_remote_adapter_grounding_accepts_unit_frame_boxes() -> None:
@@ -880,7 +885,7 @@ def test_gpu_remote_adapter_grounding_out_of_image_boxes_fail_closed() -> None:
     captured: list[dict] = []
     handler = _caption_then_grounding_handler(
         caption="A man stands.",
-        grounding_content=json.dumps({"bboxes": [[0.0, 0.0, 200.0, 50.0]], "labels": ["A man"]}),
+        grounding_content=json.dumps({"bboxes": [[0.0, 0.0, 2000.0, 50.0]], "labels": ["A man"]}),
         captured=captured,
     )
 
@@ -889,6 +894,21 @@ def test_gpu_remote_adapter_grounding_out_of_image_boxes_fail_closed() -> None:
     )
 
     assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_coord_above_1000_outside_image_fails_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps([{"bbox_2d": [250.0, 100.0, 2500.0, 900.0], "label": "A woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
     assert result.phrase_boxes == ()
 
 

@@ -141,18 +141,38 @@ export class HTTPError extends BoundaryError {
   readonly retryAfterMs: number | undefined;
   readonly endpoint: string;
   readonly bodyPreview: string;
+  /**
+   * Typed unavailable envelope parsed from the full error body. Independent of
+   * `bodyPreview`, which is truncated to 240 characters and cannot be JSON.parsed
+   * for a WP_Error payload that nests `data.unavailable`.
+   */
+  readonly unavailable: {
+    reason: string;
+    service: string;
+    http_status: number | null;
+    retry_after_seconds: number | null;
+    checked_at: string;
+  } | null;
 
   constructor({
     status,
     retryAfterSeconds,
     endpoint,
     bodyPreview,
+    unavailable = null,
     message,
   }: {
     status: number;
     retryAfterSeconds: number | undefined;
     endpoint: string;
     bodyPreview: string;
+    unavailable?: {
+      reason: string;
+      service: string;
+      http_status: number | null;
+      retry_after_seconds: number | null;
+      checked_at: string;
+    } | null;
     message: string;
   }) {
     super(message);
@@ -162,6 +182,7 @@ export class HTTPError extends BoundaryError {
     this.retryAfterMs = retryAfterSeconds === undefined ? undefined : retryAfterSeconds * 1000;
     this.endpoint = endpoint;
     this.bodyPreview = bodyPreview;
+    this.unavailable = unavailable ?? null;
   }
 }
 

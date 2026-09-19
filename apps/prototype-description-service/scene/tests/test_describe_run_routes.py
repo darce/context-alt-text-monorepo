@@ -44,13 +44,14 @@ def _create_run(client) -> str:
     return response.json()["run_id"]
 
 
-def test_submit_omitted_recognition_enabled_defaults_true(monkeypatch):
+def test_submit_omitted_recognition_enabled_defaults_false(monkeypatch):
+    """Omitted recognition_enabled is false so identity fusion is opt-in (SEC-01)."""
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         response = _submit(client, [70])
         assert response.status_code == 202, response.text
         body = response.json()
-        assert body["recognition_enabled"] is True
+        assert body["recognition_enabled"] is False
 
         async def _assert_row():
             async with sf() as s:
@@ -58,7 +59,7 @@ def test_submit_omitted_recognition_enabled_defaults_true(monkeypatch):
                     tenant_id=uuid.UUID(body["tenant_id"]), run_id=uuid.UUID(body["run_id"])
                 )
             assert run is not None
-            assert run.recognition_enabled is True
+            assert run.recognition_enabled is False
 
         asyncio.run(_assert_row())
 
@@ -450,9 +451,7 @@ def test_status_route_cpu_fallback_exposes_fallback_reason_without_terminal(monk
                 assert run is not None
                 run.status = DescribeRunStatus.COMPLETED
                 run.phase = DescribeRunPhase.COMPLETE
-                run.error_message = json.dumps(
-                    {"fallback_reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT}
-                )
+                run.error_message = json.dumps({"fallback_reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT})
                 await s.commit()
 
         asyncio.run(seed())

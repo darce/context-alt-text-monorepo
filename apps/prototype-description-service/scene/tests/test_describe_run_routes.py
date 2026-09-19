@@ -13,6 +13,7 @@ import asyncio
 import json
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -115,6 +116,27 @@ def test_submit_accepts_case_insensitive_true_false_recognition_enabled(monkeypa
             assert run.recognition_enabled is expected
 
         asyncio.run(_assert_row())
+
+
+def test_describe_run_schema_recognition_enabled_does_not_advertise_true_default():
+    """Contract: omitted recognition_enabled is opt-in false, not default-true."""
+    schema_path = (
+        Path(__file__).resolve().parents[4]
+        / "packages"
+        / "shared-contracts"
+        / "schemas"
+        / "scene-describe-run.schema.json"
+    )
+    schema = json.loads(schema_path.read_text())
+    prop = schema["properties"]["recognition_enabled"]
+    assert prop.get("default") is not True
+    description = (prop.get("description") or "").lower()
+    assert "defaults to true" not in description
+    assert "default true" not in description
+    assert "omitted means false" in description
+    root = (schema.get("description") or "").lower()
+    assert "default true" not in root
+    assert "defaults to true" not in root
 
 
 def _spy_fusion_loader(monkeypatch, loads: list, result):

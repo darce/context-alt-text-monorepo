@@ -32,7 +32,8 @@ from scene.domain.description import DescriptionResultTier
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cd")
 GENERIC_DRAFT = "A man stands by the window."
-FUSED_DRAFT = "A man stands by the window. Pictured from left: Ada."
+# One unanchored person with a leading generic NP takes N1 substitution, not the positional suffix.
+FUSED_DRAFT = "Ada stands by the window."
 LTR_FUSED_DRAFT = "A man stands by the window. Pictured from left: Ada and Bob."
 GROUNDED_BOXES = (
     PhraseBox(
@@ -599,6 +600,7 @@ def test_stage2_dropped_identity_is_not_named_on_bulk_path():
     assert item.status == DescribeItemStatus.COMPLETED
     assert item.caption == GENERIC_DRAFT
     assert item.alt_text_draft == FUSED_DRAFT
+    assert (item.provenance or {}).get("naming", {}).get("realizer") == "substituted"
     assert "Bob" not in (item.alt_text_draft or "")
     assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
 

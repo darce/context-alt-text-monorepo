@@ -1408,13 +1408,15 @@ async def describe_image_multipart(
         # HARM-02: derive positional naming from the Stage-2 decision — identities
         # whose fact was dropped must not be named by the fallback.
         preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
+        # A cache hit's alt_text_draft is already re-realized with names; the phrase-box spans index the unnamed base.
+        generic_draft = response.generic_draft or response.alt_text_draft
         named_draft, naming_provenance = await _naming_preview(
             session=session,
             tenant=tenant_record,
             tenant_uuid=tenant_uuid,
             media_id=envelope.media_id,
             image_bytes=image_bytes,
-            generic_draft=response.alt_text_draft,
+            generic_draft=generic_draft,
             # Adapter output on generation; restored from the cached row on cache
             # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
             phrase_boxes=service.last_phrase_boxes,
@@ -1423,7 +1425,7 @@ async def describe_image_multipart(
         )
         response = response.model_copy(
             update={
-                "generic_draft": response.alt_text_draft,
+                "generic_draft": generic_draft,
                 "named_draft": named_draft,
                 "naming_provenance": naming_provenance,
             }

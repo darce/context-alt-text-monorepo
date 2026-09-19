@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
@@ -43,7 +43,17 @@ _DB_SETTINGS = get_database_settings()
 
 _PG_INT32_MIN = -2_147_483_648
 _PG_INT32_MAX = 2_147_483_647
-_IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], asyncio.Lock] = {}
+
+
+@dataclass(slots=True)
+class _InProcessPersistLockEntry:
+    """Ref-counted in-process persist lock (RES-07: drop when waiters hit 0)."""
+
+    lock: asyncio.Lock
+    waiters: int = 0
+
+
+_IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
 _IN_PROCESS_PERSIST_LOCKS_GUARD = asyncio.Lock()
 
 
@@ -71,14 +81,33 @@ def _session_is_postgres(session: AsyncSession) -> bool:
     return getattr(dialect, "name", None) == "postgresql"
 
 
+def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
+    return (str(tenant_uuid), int(media_id))
+
+
 async def _in_process_persist_lock(tenant_uuid: uuid.UUID, media_id: int) -> asyncio.Lock:
-    key = (str(tenant_uuid), int(media_id))
+    key = _persist_lock_key(tenant_uuid, media_id)
     async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
-        lock = _IN_PROCESS_PERSIST_LOCKS.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _IN_PROCESS_PERSIST_LOCKS[key] = lock
-        return lock
+        entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if entry is None:
+            entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
+            _IN_PROCESS_PERSIST_LOCKS[key] = entry
+        entry.waiters += 1
+        return entry.lock
+
+
+def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
+    """Decrement waiter count; drop the registry entry when idle (sync-safe)."""
+    key = _persist_lock_key(tenant_uuid, media_id)
+    entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+    if entry is None:
+        return
+    if entry.waiters > 0:
+        entry.waiters -= 1
+    if entry.waiters <= 0 and not entry.lock.locked():
+        current = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if current is entry:
+            del _IN_PROCESS_PERSIST_LOCKS[key]
 
 
 @asynccontextmanager
@@ -87,7 +116,11 @@ async def _media_persist_lock(
     tenant_uuid: uuid.UUID,
     media_id: int,
 ) -> AsyncIterator[None]:
-    """Serialize persist per (tenant, media): pg xact lock, else asyncio (RES-13)."""
+    """Serialize persist per (tenant, media): pg xact lock, else asyncio (RES-13).
+
+    Non-Postgres holds the asyncio lock until the session's root transaction
+    ends so a sibling worker cannot read pre-commit rows (flush-only persist).
+    """
     if _session_is_postgres(session):
         key1, key2 = _advisory_lock_keys(tenant_uuid, media_id)
         await session.execute(
@@ -97,8 +130,58 @@ async def _media_persist_lock(
         yield
         return
     lock = await _in_process_persist_lock(tenant_uuid, media_id)
-    async with lock:
+    try:
+        await lock.acquire()
+    except BaseException:
+        _release_in_process_persist_waiter(tenant_uuid, media_id)
+        raise
+    released = False
+    sync_session = getattr(session, "sync_session", None)
+    hold_until_commit = False
+
+    def _remove_listener() -> None:
+        if sync_session is None:
+            return
+        try:
+            event.remove(sync_session, "after_transaction_end", _release)
+        except Exception:
+            pass
+
+    def _release(_sess: object = None, transaction: object = None) -> None:
+        nonlocal released
+        if getattr(transaction, "parent", None) is not None:
+            return
+        if released:
+            return
+        released = True
+        if lock.locked():
+            lock.release()
+        _release_in_process_persist_waiter(tenant_uuid, media_id)
+        # event.remove during after_transaction_end mutates SQLAlchemy's
+        # listener deque while it is iterating; defer when fired as a callback.
+        if transaction is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                _remove_listener()
+            else:
+                loop.call_soon(_remove_listener)
+        else:
+            _remove_listener()
+
+    try:
+        if sync_session is not None:
+            event.listen(sync_session, "after_transaction_end", _release)
+            hold_until_commit = True
         yield
+    finally:
+        if hold_until_commit:
+            in_transaction = getattr(sync_session, "in_transaction", None)
+            still_open = bool(callable(in_transaction) and in_transaction())
+            if not still_open:
+                _release()
+        else:
+            _release()
 
 
 class PersistIntegrityError(ValueError):

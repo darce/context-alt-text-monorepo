@@ -1,19 +1,27 @@
 import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { act, cleanup, render } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as describeApi from '../../api/describeApi';
-import { GPU_STATE, type DescribeRunResponse, type GpuState } from '../../api/describeApi';
+import { GPU_STATE } from '../../api/describeApi';
 import type { ToastOptions } from '../../context/ToastContext';
 import { GPU_STATE_VOCABULARY } from '../../pages/workbench/gpuStatePresentation';
 import { setActiveDescribeRunId, setDescribeProgressMounted } from '../activeDescribeRun';
-import { DESCRIBE_RUN_POLL_INTERVAL_MS, useDescribeRunProgress } from '../useDescribeRunProgress';
+import {
+  ACTIVITY_KIND,
+  ACTIVITY_REASON,
+  type ActivityKind,
+  type ActivityStatus,
+  type ActivityStatusActions,
+  type UseActivityStatusResult,
+} from '../useActivityStatus';
 import { useGpuStateToasts } from '../useGpuStateToasts';
 
 const infoMock = vi.fn<(message: string, options?: ToastOptions) => void>();
 const errorMock = vi.fn<(message: string, options?: ToastOptions) => void>();
+const successMock = vi.fn<(message: string, options?: ToastOptions) => void>();
+
+const useActivityStatusMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../context/ToastContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../context/ToastContext')>();
@@ -21,103 +29,104 @@ vi.mock('../../context/ToastContext', async (importOriginal) => {
     ...actual,
     useToast: () => ({
       toast: vi.fn(),
-      success: vi.fn(),
+      success: successMock,
       info: infoMock,
       error: errorMock,
     }),
   };
 });
 
-vi.mock('../../api/describeApi', async (importOriginal) => {
-  const actual = await importOriginal<typeof describeApi>();
-  return { ...actual, fetchBulkDescribeRun: vi.fn() };
+vi.mock('../useActivityStatus', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../useActivityStatus')>();
+  return {
+    ...actual,
+    useActivityStatus: (...args: unknown[]) => useActivityStatusMock(...args),
+  };
 });
 
-const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const idleStatus = (overrides: Partial<ActivityStatus> = {}): ActivityStatus => ({
+  kind: ACTIVITY_KIND.IDLE,
+  progress: null,
+  etaSeconds: null,
+  reason: null,
+  canCancel: false,
+  runId: null,
+  gpuState: GPU_STATE.STOPPED,
+  retryable: false,
+  draftCount: 0,
+  ...overrides,
+});
 
-const runResponse = (runId: string, gpuState: GpuState): DescribeRunResponse => ({
-  tenant_id: 'tenant',
-  run_id: runId,
-  status: 'running',
-  phase: 'describing',
-  completed: 0,
-  failed: 0,
-  skipped: 0,
-  total: 4,
-  cancel_requested: false,
-  eta_seconds: null,
-  gpu_state: gpuState,
-  // GPU lifecycle toasts are indifferent to identity fusion; take the
-  // contract default (schema: recognition_enabled defaults true).
-  recognition_enabled: true,
+const idleActions = (overrides: Partial<ActivityStatusActions> = {}): ActivityStatusActions => ({
+  onCancel: null,
+  onRetry: null,
+  reviewDraftsHref: null,
+  backToRunHref: null,
+  ...overrides,
+});
+
+const hookResult = (overrides: Partial<UseActivityStatusResult> = {}): UseActivityStatusResult => ({
+  status: idleStatus(),
+  actions: idleActions(),
+  isCancelling: false,
+  ...overrides,
 });
 
 const LocationProbe = (): React.JSX.Element => {
   const location = useLocation();
-  return <output data-testid="location">{location.pathname}</output>;
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
 };
 
-const ToastHarness = ({ secondObserver = false }: { secondObserver?: boolean }): React.JSX.Element => {
+const ToastHarness = (): React.JSX.Element => {
   useGpuStateToasts();
-  if (secondObserver) {
-    return <SecondObserver />;
+  return <LocationProbe />;
+};
+
+const harnessTree = (): React.JSX.Element => (
+  <MemoryRouter initialEntries={['/people']}>
+    <ToastHarness />
+  </MemoryRouter>
+);
+
+const renderHarness = () => render(harnessTree());
+
+const observeSequence = (
+  results: readonly UseActivityStatusResult[],
+  options: { mounted?: boolean } = {},
+): ReturnType<typeof render> => {
+  if (results[0] === undefined) {
+    throw new Error('Scripted activity sequence must not be empty');
   }
-  return <LocationProbe />;
-};
-
-const SecondObserver = (): React.JSX.Element => {
-  useDescribeRunProgress('run-1');
-  return <LocationProbe />;
-};
-
-const createClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
-
-const renderHarness = (secondObserver = false) => {
-  const client = createClient();
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/people']}>
-        <ToastHarness secondObserver={secondObserver} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-};
-
-const observeSequence = async (
-  states: readonly GpuState[],
-  options: { mounted?: boolean; runId?: string } = {},
-): Promise<void> => {
-  const runId = options.runId ?? 'run-1';
   setDescribeProgressMounted(options.mounted ?? false);
-  setActiveDescribeRunId(runId);
-  fetchBulkDescribeRunMock.mockImplementation(() => {
-    const state = states[Math.min(fetchBulkDescribeRunMock.mock.calls.length - 1, states.length - 1)];
-    if (state === undefined) {
-      throw new Error('Scripted GPU state sequence must not be empty');
-    }
-    return Promise.resolve(runResponse(runId, state));
-  });
-  renderHarness();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-  });
-  for (let index = 1; index < states.length; index += 1) {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(DESCRIBE_RUN_POLL_INTERVAL_MS);
-    });
+  useActivityStatusMock.mockReturnValue(results[0]);
+  const view = renderHarness();
+  for (const next of results.slice(1)) {
+    useActivityStatusMock.mockReturnValue(next);
+    view.rerender(harnessTree());
   }
+  return view;
+};
+
+const expectNoToasts = (): void => {
+  expect(infoMock).not.toHaveBeenCalled();
+  expect(errorMock).not.toHaveBeenCalled();
+  expect(successMock).not.toHaveBeenCalled();
 };
 
 const expectOnlyInfoToast = (message: string): ToastOptions | undefined => {
   expect(infoMock).toHaveBeenCalledOnce();
   expect(infoMock.mock.calls[0]?.[0]).toBe(message);
   expect(errorMock).not.toHaveBeenCalled();
+  expect(successMock).not.toHaveBeenCalled();
   return infoMock.mock.calls[0]?.[1];
+};
+
+const expectOnlySuccessToast = (message: string): ToastOptions | undefined => {
+  expect(successMock).toHaveBeenCalledOnce();
+  expect(successMock.mock.calls[0]?.[0]).toBe(message);
+  expect(infoMock).not.toHaveBeenCalled();
+  expect(errorMock).not.toHaveBeenCalled();
+  return successMock.mock.calls[0]?.[1];
 };
 
 const requireToastOptions = (options: ToastOptions | undefined): ToastOptions => {
@@ -127,10 +136,11 @@ const requireToastOptions = (options: ToastOptions | undefined): ToastOptions =>
   return options;
 };
 
-const expectOnlyErrorToast = (): ToastOptions => {
+const expectOnlyErrorToast = (message: string): ToastOptions => {
   expect(errorMock).toHaveBeenCalledOnce();
-  expect(errorMock).toHaveBeenCalledWith(GPU_STATE_VOCABULARY.degradedToast, expect.any(Object));
+  expect(errorMock.mock.calls[0]?.[0]).toBe(message);
   expect(infoMock).not.toHaveBeenCalled();
+  expect(successMock).not.toHaveBeenCalled();
   const options = errorMock.mock.calls[0]?.[1];
   if (!options) {
     throw new Error('Expected the error toast to include options');
@@ -138,10 +148,21 @@ const expectOnlyErrorToast = (): ToastOptions => {
   return options;
 };
 
+const runStatus = (
+  kind: ActivityKind,
+  overrides: Partial<ActivityStatus> = {},
+): ActivityStatus =>
+  idleStatus({
+    kind,
+    runId: 'run-1',
+    gpuState: GPU_STATE.READY,
+    ...overrides,
+  });
+
 describe('useGpuStateToasts edge policy', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.clearAllMocks();
+    useActivityStatusMock.mockReturnValue(hookResult());
     act(() => {
       setActiveDescribeRunId(null);
       setDescribeProgressMounted(false);
@@ -153,19 +174,35 @@ describe('useGpuStateToasts edge policy', () => {
       setActiveDescribeRunId(null);
       setDescribeProgressMounted(false);
     });
-    vi.useRealTimers();
+    cleanup();
   });
 
-  it.each([GPU_STATE.STOPPED, GPU_STATE.STARTING])(
-    'toasts when %s transitions to warming away from progress',
-    async (previous) => {
-      await observeSequence([previous, GPU_STATE.WARMING]);
-      expectOnlyInfoToast(GPU_STATE_VOCABULARY.warmingToast);
-    },
-  );
+  it('reads useActivityStatus as the sole activity-status authority', () => {
+    renderHarness();
+    expect(useActivityStatusMock).toHaveBeenCalled();
+  });
 
-  it('toasts warming to ready away from progress with Back to run', async () => {
-    await observeSequence([GPU_STATE.WARMING, GPU_STATE.READY]);
+  it('toasts warming on a kind-change to warming away from progress', () => {
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.IDLE, { gpuState: GPU_STATE.STOPPED }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+      }),
+    ]);
+    expect(expectOnlyInfoToast(GPU_STATE_VOCABULARY.warmingToast)).toBeUndefined();
+  });
+
+  it('toasts warming to describing as GPU ready with Back to run', () => {
+    const view = observeSequence([
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.READY, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+    ]);
 
     const options = requireToastOptions(expectOnlyInfoToast(GPU_STATE_VOCABULARY.readyToast));
     expect(options.action).toMatchObject({
@@ -174,14 +211,115 @@ describe('useGpuStateToasts edge policy', () => {
     });
     expect(options.durationMs).toBeNull();
     act(() => options.action?.onClick());
-    expect(document.querySelector('[data-testid="location"]')).toHaveTextContent('/workbench');
+    expect(view.getByTestId('location')).toHaveTextContent('/workbench');
+  });
+
+  it('toasts describing to done with Review N drafts into the review queue', () => {
+    const view = observeSequence([
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DONE, { draftCount: 4 }),
+        actions: idleActions({ reviewDraftsHref: '#/description-history?run=run-1' }),
+      }),
+    ]);
+
+    const options = requireToastOptions(
+      expectOnlySuccessToast(GPU_STATE_VOCABULARY.doneToast(4)),
+    );
+    expect(options.action).toMatchObject({
+      label: GPU_STATE_VOCABULARY.reviewDrafts(4),
+      altText: GPU_STATE_VOCABULARY.reviewDraftsAltText,
+    });
+    expect(options.durationMs).toBeNull();
+    act(() => options.action?.onClick());
+    expect(view.getByTestId('location')).toHaveTextContent('/description-history?run=run-1');
+  });
+
+  it('toasts failed warmup timeout with Retry when C2 marks it retryable', () => {
+    const onRetry = vi.fn();
+    observeSequence([
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.FAILED, {
+          reason: ACTIVITY_REASON.GPU_WARMUP_TIMEOUT,
+          retryable: true,
+          gpuState: GPU_STATE.STOPPED,
+        }),
+        actions: idleActions({ onRetry }),
+      }),
+    ]);
+
+    const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.failedToastWarmupTimeout);
+    expect(options.action).toMatchObject({
+      label: GPU_STATE_VOCABULARY.retry,
+      altText: GPU_STATE_VOCABULARY.retryAltText,
+    });
+    expect(options.durationMs).toBeNull();
+    act(() => options.action?.onClick());
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [ACTIVITY_REASON.DESCRIBE_POLL_ERROR, GPU_STATE_VOCABULARY.failedToastDescribePoll, true],
+    [ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE, GPU_STATE_VOCABULARY.failedToastGpuUnavailable, true],
+    [ACTIVITY_REASON.SCAN_FAILED, GPU_STATE_VOCABULARY.failedToastScanFailed, true],
+    [ACTIVITY_REASON.FAILED, GPU_STATE_VOCABULARY.failedToastFailed, false],
+    [ACTIVITY_REASON.CANCELLED, GPU_STATE_VOCABULARY.failedToastCancelled, false],
+  ] as const)('toasts failed reason %s with retryable=%s', (reason, message, retryable) => {
+    const onRetry = vi.fn();
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.FAILED, { reason, retryable }),
+        actions: idleActions({ onRetry: retryable ? onRetry : null }),
+      }),
+    ]);
+    const options = expectOnlyErrorToast(message);
+    expect(options.durationMs).toBeNull();
+    if (retryable) {
+      expect(options.action).toMatchObject({
+        label: GPU_STATE_VOCABULARY.retry,
+        altText: GPU_STATE_VOCABULARY.retryAltText,
+      });
+    } else {
+      expect(options.action).toBeUndefined();
+    }
+  });
+
+  it('toasts unknown failed reasons with generic copy and no Retry', () => {
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.FAILED, { reason: 'mystery_code', retryable: false }),
+      }),
+    ]);
+    const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.failedToastWithReason('mystery_code'));
+    expect(options.action).toBeUndefined();
   });
 
   it.each([GPU_STATE.STOPPED, GPU_STATE.STARTING, GPU_STATE.WARMING, GPU_STATE.READY])(
-    'always toasts %s to degraded with Review results',
-    async (previous) => {
-      await observeSequence([previous, GPU_STATE.DEGRADED], { mounted: true });
-      const options = expectOnlyErrorToast();
+    'always toasts %s to degraded with Review results even while mounted',
+    (previous) => {
+      observeSequence(
+        [
+          hookResult({
+            status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: previous, canCancel: true }),
+          }),
+          hookResult({
+            status: runStatus(ACTIVITY_KIND.DESCRIBING, {
+              gpuState: GPU_STATE.DEGRADED,
+              canCancel: true,
+            }),
+          }),
+        ],
+        { mounted: true },
+      );
+      const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.degradedToast);
       expect(options.action).toMatchObject({
         label: GPU_STATE_VOCABULARY.reviewResults,
         altText: GPU_STATE_VOCABULARY.reviewResultsAltText,
@@ -190,77 +328,144 @@ describe('useGpuStateToasts edge policy', () => {
     },
   );
 
-  it.each([GPU_STATE.STOPPED, GPU_STATE.STARTING, GPU_STATE.WARMING, GPU_STATE.READY, GPU_STATE.DEGRADED])(
-    'never toasts an unknown to %s transition',
-    async (next) => {
-      await observeSequence([GPU_STATE.UNKNOWN, next]);
-      expect(infoMock).not.toHaveBeenCalled();
-      expect(errorMock).not.toHaveBeenCalled();
-    },
-  );
+  it('never toasts an unknown GPU state into degraded', () => {
+    observeSequence([
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.UNKNOWN, canCancel: true }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, {
+          gpuState: GPU_STATE.DEGRADED,
+          canCancel: true,
+        }),
+      }),
+    ]);
+    expectNoToasts();
+  });
 
-  it.each([GPU_STATE.STOPPED, GPU_STATE.STARTING, GPU_STATE.WARMING, GPU_STATE.READY, GPU_STATE.DEGRADED])(
-    'never toasts a %s to unknown transition',
-    async (previous) => {
-      await observeSequence([previous, GPU_STATE.UNKNOWN]);
-      expect(infoMock).not.toHaveBeenCalled();
-      expect(errorMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it('never toasts repeated ready polls', async () => {
-    await observeSequence([GPU_STATE.READY, GPU_STATE.READY]);
-    expect(infoMock).not.toHaveBeenCalled();
-    expect(errorMock).not.toHaveBeenCalled();
+  it('never toasts repeated kind polls', () => {
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true, progress: 0.4 }) }),
+    ]);
+    expectNoToasts();
   });
 
   it.each([
-    [GPU_STATE.STOPPED, GPU_STATE.WARMING],
-    [GPU_STATE.STARTING, GPU_STATE.WARMING],
-    [GPU_STATE.WARMING, GPU_STATE.READY],
-  ] as const)('suppresses %s to %s while progress is mounted', async (previous, next) => {
-    await observeSequence([previous, next], { mounted: true });
-    expect(infoMock).not.toHaveBeenCalled();
-    expect(errorMock).not.toHaveBeenCalled();
+    [
+      hookResult({ status: runStatus(ACTIVITY_KIND.IDLE, { gpuState: GPU_STATE.STOPPED }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+      }),
+    ],
+    [
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.READY, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+    ],
+    [
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DONE, { draftCount: 2 }),
+        actions: idleActions({ reviewDraftsHref: '#/description-history?run=run-1' }),
+      }),
+    ],
+    [
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.FAILED, {
+          reason: ACTIVITY_REASON.FAILED,
+          retryable: false,
+        }),
+      }),
+    ],
+  ])('suppresses kind-change edges while progress is mounted', (previous, next) => {
+    observeSequence([previous, next], { mounted: true });
+    expectNoToasts();
   });
 
-  it.each(Object.values(GPU_STATE))('does not toast first observation %s', async (state) => {
-    await observeSequence([state]);
-    expect(infoMock).not.toHaveBeenCalled();
-    expect(errorMock).not.toHaveBeenCalled();
+  it.each(Object.values(ACTIVITY_KIND))('does not toast first observation %s', (kind) => {
+    observeSequence([hookResult({ status: runStatus(kind) })]);
+    expectNoToasts();
   });
 
-  it('emits the same edge at most once for a run id', async () => {
-    await observeSequence([GPU_STATE.WARMING, GPU_STATE.READY, GPU_STATE.WARMING, GPU_STATE.READY]);
-    expect(infoMock).toHaveBeenCalledOnce();
+  it('does not toast a scanning kind-change', () => {
+    observeSequence([
+      hookResult({ status: idleStatus() }),
+      hookResult({
+        status: idleStatus({
+          kind: ACTIVITY_KIND.SCANNING,
+          progress: 0.2,
+          canCancel: true,
+        }),
+      }),
+    ]);
+    expectNoToasts();
   });
 
-  it('re-arms edge memory for a new run id', async () => {
-    fetchBulkDescribeRunMock.mockImplementation((runId) => {
-      const callCountForRun = fetchBulkDescribeRunMock.mock.calls.filter(([id]) => id === runId).length;
-      return Promise.resolve(runResponse(runId, callCountForRun === 1 ? GPU_STATE.WARMING : GPU_STATE.READY));
-    });
-    setActiveDescribeRunId('run-1');
-    renderHarness();
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    await act(async () => vi.advanceTimersByTimeAsync(DESCRIBE_RUN_POLL_INTERVAL_MS));
-    expect(infoMock).toHaveBeenCalledOnce();
-
-    act(() => setActiveDescribeRunId('run-2'));
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    await act(async () => vi.advanceTimersByTimeAsync(DESCRIBE_RUN_POLL_INTERVAL_MS));
-
+  it('emits the same kind edge at most once for a run id', () => {
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.IDLE, { gpuState: GPU_STATE.STOPPED }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.READY, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.READY, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+    ]);
     expect(infoMock).toHaveBeenCalledTimes(2);
+    expect(infoMock.mock.calls[0]?.[0]).toBe(GPU_STATE_VOCABULARY.warmingToast);
+    expect(infoMock.mock.calls[1]?.[0]).toBe(GPU_STATE_VOCABULARY.readyToast);
   });
 
-  it('shares one fetch loop with a second progress observer', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse('run-1', GPU_STATE.WARMING));
-    setActiveDescribeRunId('run-1');
-    renderHarness(true);
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce();
+  it('re-arms edge memory for a new run id', () => {
+    const view = observeSequence([
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, { gpuState: GPU_STATE.WARMING, canCancel: true }),
+      }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, { gpuState: GPU_STATE.READY, canCancel: true }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+    ]);
+    expect(infoMock).toHaveBeenCalledOnce();
 
-    await act(async () => vi.advanceTimersByTimeAsync(DESCRIBE_RUN_POLL_INTERVAL_MS));
-    expect(fetchBulkDescribeRunMock).toHaveBeenCalledTimes(2);
+    useActivityStatusMock.mockReturnValue(
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.WARMING, {
+          runId: 'run-2',
+          gpuState: GPU_STATE.WARMING,
+          canCancel: true,
+        }),
+      }),
+    );
+    view.rerender(harnessTree());
+    expect(infoMock).toHaveBeenCalledOnce();
+
+    useActivityStatusMock.mockReturnValue(
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.DESCRIBING, {
+          runId: 'run-2',
+          gpuState: GPU_STATE.READY,
+          canCancel: true,
+        }),
+        actions: idleActions({ backToRunHref: '#/workbench' }),
+      }),
+    );
+    view.rerender(harnessTree());
+    expect(infoMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -18,11 +18,12 @@ from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     OciCliStartActuator,
     OciCliStopActuator,
+    RunningSinceLeaseStore,
     StaticJobLoadSource,
     run_reap_cycle,
     run_start_cycle,
 )
-from infra.oci.gpu_lifecycle.state_snapshot import LastTransitionReason
+from infra.oci.gpu_lifecycle.state_snapshot import GpuLifecycleState, LastTransitionReason, write_gpu_state_snapshot
 
 
 class RecordingStartActuator:
@@ -201,6 +202,47 @@ def test_reconciled_subprocess_start_failure_does_not_emit_start_failed_fallback
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "starting"
     assert snapshot["reason"] is None
+    assert snapshot["since"] <= snapshot["written_at"]
+
+
+def test_start_actuation_publishes_starting_with_since(tmp_path: Path) -> None:
+    gpu_state_path = tmp_path / "gpu-state.json"
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == [("START", "ocid1.gpu")]
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "starting"
+    assert snapshot["reason"] is None
+    assert snapshot["since"] <= snapshot["written_at"]
+
+
+def test_recording_running_lease_publishes_starting_with_since(tmp_path: Path) -> None:
+    store = RunningSinceLeaseStore(path=tmp_path / "running-since.json", boot_id="test-boot")
+    store.prepare_start("ocid1.gpu")
+    gpu_state_path = tmp_path / "gpu-state.json"
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingStartActuator(),
+        running_since_store=store,
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == []
+    assert result.lease_recorded is True
+    assert store.read("ocid1.gpu") is not None
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "starting"
+    assert snapshot["reason"] is None
+    assert snapshot["since"] <= snapshot["written_at"]
 
 
 class RecordingStopActuator:
@@ -383,3 +425,67 @@ def test_operator_stop_fallback_is_journaled(tmp_path: Path) -> None:
     assert recorded[0]["instance_id"] == "ocid1.gpu"
     assert recorded[0]["profile"] == "florence_small"
     assert recorded[0]["reason"] == "operator_stop_with_work"
+
+
+def _ready_hold_start_cycle(path: Path, log_path: Path | None = None):
+    return run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingStartActuator(),
+        probe=NeverReady(),
+        readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=2, sleep_seconds=0.0),
+        gpu_state_path=path,
+        decision_log_store=None if log_path is None else DecisionLogStore(log_path),
+    )
+
+
+def test_held_ready_probe_timeout_does_not_journal_cpu_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    log_path = tmp_path / "decision-log.jsonl"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    result = _ready_hold_start_cycle(path, log_path)
+
+    assert result.fallbacks == ()
+    assert result.errors == []
+    assert result.snapshot_persisted is True
+    assert json.loads(path.read_text())["state"] == "ready"
+    assert not log_path.exists()
+
+
+def test_ready_hold_second_miss_journals_timeout_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    log_path = tmp_path / "decision-log.jsonl"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    first = _ready_hold_start_cycle(path, log_path)
+    assert first.fallbacks == ()
+    assert first.errors == []
+    assert not log_path.exists()
+
+    second = _ready_hold_start_cycle(path, log_path)
+    assert second.fallbacks
+    assert second.fallbacks[0].reason == "readiness_timeout"
+    assert second.errors
+    assert json.loads(path.read_text())["state"] == "degraded"
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    recorded = json.loads(lines[0])["fallbacks"]
+    assert recorded[0]["reason"] == "readiness_timeout"

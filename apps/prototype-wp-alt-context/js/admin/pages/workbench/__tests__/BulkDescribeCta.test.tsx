@@ -328,7 +328,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(onSubmit).toHaveBeenCalledOnce();
   });
 
-  it('announces a frozen-progress waiting state instead of an error dead-end (BR-07 / A11Y-21)', () => {
+  it('does not keep frozen-progress waiting copy on the CTA after the strip moved (U1b / INT-08)', () => {
     const runningRun = describeRun({ completed: 2, total: 4, eta_seconds: 30 });
     const progress = {
       ...idleProgress,
@@ -342,15 +342,12 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
 
     render(<BulkDescribeCta {...baseProps()} isRunning runId="run-1" progress={progress} isPanelVisible />);
 
-    const notice = screen.getByText(/Waiting for the service — progress updates paused/);
-    // Announced via the surrounding polite live region, not a visual-only hint.
-    expect(notice.closest('[role="status"]')).not.toBeNull();
-    // The frozen state keeps the last-known progress visible — no error dead-end.
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for the service — progress updates paused/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Describe 2 selected' })).toBeDisabled();
   });
 
-  it('announces the shared recognition cooldown with its remaining window', () => {
+  it('does not keep recognition-cooldown copy on the CTA after the strip moved (U1b / A11Y-21)', () => {
     openCooldown(30);
     const runningRun = describeRun({ completed: 1, total: 4, eta_seconds: 60 });
     const progress = {
@@ -365,16 +362,11 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
 
     render(<BulkDescribeCta {...baseProps()} isRunning runId="run-1" progress={progress} isPanelVisible />);
 
-    // The remaining window is visible but aria-hidden so the polite live region
-    // is not re-announced every second (A11Y-21); the announced sentence stays
-    // static while only the countdown ticks.
-    const countdown = screen.getByText(/Retrying in 30s\./);
-    expect(countdown).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.getByText('Waiting for the service — progress updates paused.')).toBeInTheDocument();
+    expect(screen.queryByText(/Retrying in 30s\./)).not.toBeInTheDocument();
+    expect(screen.queryByText('Waiting for the service — progress updates paused.')).not.toBeInTheDocument();
   });
 
-  it('keeps cancel enabled while a run is active even when offline gate is set', async () => {
-    const onCancel = vi.fn();
+  it('does not keep Cancel describe run on the CTA after the strip moved (U1b / INT-08 / INT-10)', () => {
     const progress = {
       ...idleProgress,
       isTerminal: false,
@@ -390,17 +382,14 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
         isPanelVisible
         remoteActionAriaDisabled
         remoteActionTitle="Unavailable while the recognition service is offline"
-        onCancel={onCancel}
       />,
     );
 
-    const cancel = screen.getByRole('button', { name: 'Cancel describe run' });
-    expect(cancel).not.toBeDisabled();
-    await userEvent.click(cancel);
-    expect(onCancel).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Cancel / })).not.toBeInTheDocument();
   });
 
-  it('Review drafts on COMPLETE is a run-history link even if onReviewDrafts is a no-op (WBUX-6 F1)', () => {
+  it('does not keep Review drafts on the CTA after the strip moved (U1b / U2b)', () => {
     const completeRun = describeRun({
       run_id: 'run-42',
       status: 'completed',
@@ -424,16 +413,15 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
         progress={progress}
         isPanelVisible
         onReviewDrafts={() => {
-          /* mutant: a no-op must not be the apply effector */
+          /* mutant: navigation must not depend on this no-op */
         }}
       />,
     );
 
-    const reviewDrafts = screen.getByRole('link', { name: 'Review drafts' });
-    expect(reviewDrafts).toHaveAttribute('href', '#/description-history?run=run-42');
+    expect(screen.queryByRole('link', { name: 'Review drafts' })).not.toBeInTheDocument();
   });
 
-  it('shows exactly one Cancel describe run during warming (WBUX-6 F2)', () => {
+  it('does not duplicate Cancel describe run during warming after the strip moved (U1b / WBUX-6 F2)', () => {
     const warmingRun = describeRun({ phase: 'warming', total: 12 });
     const progress = {
       ...idleProgress,
@@ -445,7 +433,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
 
     render(<BulkDescribeCta {...baseProps()} isRunning runId="run-1" progress={progress} isPanelVisible />);
 
-    expect(screen.getAllByRole('button', { name: 'Cancel describe run' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
   });
 });
 

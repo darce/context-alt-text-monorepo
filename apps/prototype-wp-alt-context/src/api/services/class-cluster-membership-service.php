@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
+require_once __DIR__ . '/class-cluster-merge-service.php';
 require_once __DIR__ . '/class-cluster-person-bind-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
@@ -40,17 +41,25 @@ class ClusterMembershipService {
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
+	private ClusterMergeService $merge_service;
 
 	public function __construct(
 		ClusterMutationHostInterface $host,
 		?ClustersRepositoryInterface $clusters_repository = null,
 		?IdentityMembersRepositoryInterface $members_repository = null,
-		?SyncStateRepositoryInterface $sync_state_repository = null
+		?SyncStateRepositoryInterface $sync_state_repository = null,
+		?ClusterMergeService $merge_service = null
 	) {
 		$this->host = $host;
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->merge_service = $merge_service ?? new ClusterMergeService(
+			$this->host,
+			$this->clusters_repository,
+			$this->members_repository,
+			$this->sync_state_repository
+		);
 	}
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -176,7 +185,7 @@ class ClusterMembershipService {
 			return new WP_Error( 'identity_not_found', 'Identity is not present in the local projection.', array( 'status' => 404 ) );
 		}
 
-		$binder          = new ClusterPersonBindService();
+		$binder          = new ClusterPersonBindService( $this->merge_service );
 		$resolved_person = null;
 		if ( null !== $roster_entry_id ) {
 			$resolved_person = $binder->resolve_person( $roster_entry_id );

@@ -9,11 +9,31 @@ import { ExportDialog, PurgeDialog, ImportDialog } from './retention/RetentionDi
 import { formatTimestamp } from './retention/AuditTimeline';
 import { toUserMessage } from '../utils/appError';
 import { toDescriptionHistory } from '../navigation/appLinks';
+import {
+  readUnavailable,
+  unavailableReasonCopy,
+  unavailableServiceLabel,
+} from '../utils/serviceUnavailable';
 
 const EXPORT_JOB_STATUS = {
   completed: 'completed',
   failed: 'failed',
 } as const;
+
+const formatLastChecked = (checkedAt: string): string | null => {
+  const milliseconds = Date.parse(checkedAt);
+  if (!Number.isFinite(milliseconds)) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString().slice(11, 19);
+};
+
+const retryCountdownSeconds = (retryAfterSeconds: number | null): number | null => {
+  if (retryAfterSeconds === null || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return null;
+  }
+  return Math.floor(retryAfterSeconds);
+};
 
 export const RetentionSection = (): React.JSX.Element => {
   const {
@@ -43,17 +63,66 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
+  const unavailable = readUnavailable(status);
+  const unavailableService = unavailable ? unavailableServiceLabel(unavailable.service) : null;
+  const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
+  const lastChecked = unavailable ? formatLastChecked(unavailable.checked_at) : null;
+  const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+
   const body = retentionQuery.isLoading ? (
     <p>{__('Loading retention status\u2026', 'alt-context')}</p>
   ) : retentionQuery.isError || !status || !status.available || !policy ? (
     <section className="acx-dashboard__panel acx-retention__panel">
-      <h4>{__('Backend unavailable', 'alt-context')}</h4>
-      <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
-      {retentionQuery.isError ? (
-        <p role="alert">
-          {toUserMessage(retentionQuery.error, __('Unable to load retention status. Please try again.', 'alt-context'))}
-        </p>
-      ) : null}
+      {unavailable && unavailableService && unavailableCopy ? (
+        <>
+          <h4>{sprintf(__('%s unavailable', 'alt-context'), unavailableService)}</h4>
+          <div
+            className="acx-sync-status acx-sync-status--warning"
+            role="alert"
+            data-testid="acx-retention-unavailable"
+          >
+            <AlertTriangle
+              className="acx-retention__note-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-retention-unavailable-icon"
+            />
+            <div>
+              <p>
+                {sprintf(
+                  __('%s is unavailable because %s.', 'alt-context'),
+                  unavailableService,
+                  unavailableCopy.why,
+                )}
+              </p>
+              <p>{unavailableCopy.fix}</p>
+              {lastChecked ? (
+                <p className="acx-retention__detail">
+                  {sprintf(__('Last checked %s', 'alt-context'), lastChecked)}
+                </p>
+              ) : null}
+              {retryInSeconds !== null ? (
+                <p className="acx-retention__detail">
+                  {sprintf(__('Retry in %d s', 'alt-context'), retryInSeconds)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <h4>{__('Backend unavailable', 'alt-context')}</h4>
+          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
+          {retentionQuery.isError ? (
+            <p role="alert">
+              {toUserMessage(
+                retentionQuery.error,
+                __('Unable to load retention status. Please try again.', 'alt-context'),
+              )}
+            </p>
+          ) : null}
+        </>
+      )}
       <button
         type="button"
         className="acx-button acx-button--secondary"

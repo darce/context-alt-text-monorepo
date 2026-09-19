@@ -3,16 +3,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../api/config';
 import {
+  _resetActiveDescribeRunForTests,
+  setActiveDescribeRunId,
+  setDescribeProgressMounted,
+  useActiveDescribeRun,
+} from '../activeDescribeRun';
+import {
   _resetDescribeOperationStoreForTests,
   clearDescribeRunContext,
   clearDescribeSuggestContext,
   DESCRIBE_OPERATION_CONTEXT_VERSION,
   DESCRIBE_OPERATION_KIND,
+  DESCRIBE_RUN_RESUME_STATUS,
+  DESCRIBE_RUN_SETTLE_OUTCOME,
   describeOperationMediaStorageKey,
   describeOperationRunStorageKey,
   getDescribeRunContext,
   getDescribeSuggestContext,
+  getLastSettledRun,
+  pendingTerminalRuns,
   putDescribeOperationContext,
+  settleRun,
   useDescribeRunContext,
   useDescribeSuggestContext,
   type DescribeOperationContext,
@@ -70,10 +81,16 @@ describe('describeOperationStore', () => {
     vi.setSystemTime(1_700_000_000_000);
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
+    _resetActiveDescribeRunForTests();
     installTenant(TENANT);
+    setDescribeProgressMounted(false);
+    setActiveDescribeRunId(null);
   });
 
   afterEach(() => {
+    setActiveDescribeRunId(null);
+    setDescribeProgressMounted(false);
+    _resetActiveDescribeRunForTests();
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     resetConfigCache();
@@ -370,5 +387,139 @@ describe('describeOperationStore', () => {
     putDescribeOperationContext(runContext({ id: 'run-memory' }));
     expect(getDescribeRunContext()?.id).toBe('run-memory');
     expect(sessionStorage.length).toBe(0);
+  });
+
+  it('marks an expired run needs_terminal_check on remount instead of deleting it', () => {
+    const context = runContext({
+      id: 'run-expired',
+      startup_budget_seconds: 30,
+    });
+    putDescribeOperationContext(context);
+    const key = describeOperationRunStorageKey(TENANT);
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+
+    vi.setSystemTime(1_700_000_000_000 + 30_000);
+    _resetDescribeOperationStoreForTests();
+
+    expect(getDescribeRunContext()).toBeNull();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(pendingTerminalRuns()).toEqual([
+      {
+        ...durableContext(context),
+        status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+      },
+    ]);
+    expect(JSON.parse(sessionStorage.getItem(key) ?? 'null')).toEqual({
+      ...context,
+      status: DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK,
+    });
+    removeItem.mockRestore();
+  });
+
+  it('does not remove an expired in-session run during subscribe purge', () => {
+    const context = runContext({
+      id: 'run-subscribe-expired',
+      startup_budget_seconds: 30,
+    });
+    putDescribeOperationContext(context);
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+
+    vi.setSystemTime(1_700_000_000_000 + 30_000);
+    const { result } = renderHook(() => useDescribeRunContext());
+
+    expect(result.current).toBeNull();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(pendingTerminalRuns()[0]?.id).toBe('run-subscribe-expired');
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).not.toBeNull();
+    removeItem.mockRestore();
+  });
+
+  it('settleRun purges a pending terminal run after the polled outcome is reported', () => {
+    putDescribeOperationContext(
+      runContext({
+        id: 'run-settle',
+        startup_budget_seconds: 30,
+      }),
+    );
+    vi.setSystemTime(1_700_000_000_000 + 30_000);
+    _resetDescribeOperationStoreForTests();
+    expect(pendingTerminalRuns()).toHaveLength(1);
+
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+    settleRun('run-settle', DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED);
+
+    expect(removeItem).toHaveBeenCalled();
+    expect(pendingTerminalRuns()).toEqual([]);
+    expect(getDescribeRunContext()).toBeNull();
+    expect(sessionStorage.getItem(describeOperationRunStorageKey(TENANT))).toBeNull();
+    expect(getLastSettledRun()).toEqual({
+      id: 'run-settle',
+      outcome: DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED,
+    });
+    removeItem.mockRestore();
+  });
+
+  it('settleRun ignores a different run id and an unknown outcome', () => {
+    putDescribeOperationContext(
+      runContext({
+        id: 'run-keep',
+        startup_budget_seconds: 30,
+      }),
+    );
+    vi.setSystemTime(1_700_000_000_000 + 30_000);
+    _resetDescribeOperationStoreForTests();
+
+    settleRun('run-other', DESCRIBE_RUN_SETTLE_OUTCOME.FAILED);
+    expect(pendingTerminalRuns()[0]?.id).toBe('run-keep');
+
+    settleRun('run-keep', 'not-an-outcome' as never);
+    expect(pendingTerminalRuns()[0]?.id).toBe('run-keep');
+    expect(getLastSettledRun()).toBeNull();
+  });
+
+  it('does not list an in-budget run as pending terminal', () => {
+    putDescribeOperationContext(
+      runContext({
+        id: 'run-live',
+        startup_budget_seconds: 30,
+      }),
+    );
+    expect(pendingTerminalRuns()).toEqual([]);
+    expect(getDescribeRunContext()?.id).toBe('run-live');
+  });
+
+  it('persists progress_mounted on the run record across remount', () => {
+    const context = runContext({ id: 'run-progress', progress_mounted: true });
+    putDescribeOperationContext(context);
+    const stored = sessionStorage.getItem(describeOperationRunStorageKey(TENANT));
+    expect(JSON.parse(stored ?? 'null')).toEqual(context);
+
+    _resetDescribeOperationStoreForTests();
+    expect(getDescribeRunContext()).toEqual(durableContext(context));
+
+    const { result } = renderHook(() => useActiveDescribeRun());
+    expect(result.current).toEqual({ runId: 'run-progress', progressMounted: true });
+  });
+
+  it('setDescribeProgressMounted writes progress_mounted into sessionStorage', () => {
+    setActiveDescribeRunId('run-mounted');
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+
+    act(() => {
+      setDescribeProgressMounted(true);
+    });
+
+    expect(setItem).toHaveBeenCalled();
+    const persisted = sessionStorage.getItem(describeOperationRunStorageKey(TENANT));
+    expect(persisted).not.toBeNull();
+    expect(JSON.parse(persisted ?? '{}').progress_mounted).toBe(true);
+    expect(JSON.parse(persisted ?? '{}').id).toBe('run-mounted');
+
+    _resetDescribeOperationStoreForTests();
+    expect(getDescribeRunContext()?.progress_mounted).toBe(true);
+
+    const { result } = renderHook(() => useActiveDescribeRun());
+    expect(result.current).toEqual({ runId: 'run-mounted', progressMounted: true });
+    setItem.mockRestore();
   });
 });

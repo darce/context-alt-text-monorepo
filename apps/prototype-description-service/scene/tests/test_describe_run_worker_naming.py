@@ -32,8 +32,8 @@ from scene.domain.description import DescriptionResultTier
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cd")
 GENERIC_DRAFT = "A man stands by the window."
-FUSED_DRAFT = "A man stands by the window. Pictured from left: Ada."
-LTR_FUSED_DRAFT = "A man stands by the window. Pictured from left: Ada and Bob."
+# One unanchored person with a leading generic NP takes N1 substitution, not the positional suffix.
+FUSED_DRAFT = "Ada stands by the window."
 GROUNDED_BOXES = (
     PhraseBox(
         phrase="A man",
@@ -298,7 +298,7 @@ def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatc
     assert items[0].caption == GENERIC_DRAFT
 
 
-def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
+def test_unstubbed_naming_abstains_for_two_ungrounded_seeded_faces(monkeypatch):
     import scene.application.identity_merge as identity_merge
     import scene.application.naming_preview_service as nps
 
@@ -342,12 +342,9 @@ def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
     assert disabled_face_loads == 0
     assert enabled.status == DescribeItemStatus.COMPLETED
     assert enabled.caption == GENERIC_DRAFT
-    assert enabled.alt_text_draft == LTR_FUSED_DRAFT
-    assert (enabled.provenance or {}).get("naming", {}).get("mode") == "positional"
-    assert [n["name"] for n in (enabled.provenance or {}).get("naming", {}).get("injected_names", [])] == [
-        "Ada",
-        "Bob",
-    ]
+    assert enabled.alt_text_draft == GENERIC_DRAFT
+    assert (enabled.provenance or {}).get("naming", {}).get("status") == "ambiguous_grounding"
+    assert (enabled.provenance or {}).get("naming", {}).get("names_applied") == []
     assert disabled.status == DescribeItemStatus.COMPLETED
     assert disabled.caption == GENERIC_DRAFT
     assert disabled.alt_text_draft == GENERIC_DRAFT
@@ -599,6 +596,7 @@ def test_stage2_dropped_identity_is_not_named_on_bulk_path():
     assert item.status == DescribeItemStatus.COMPLETED
     assert item.caption == GENERIC_DRAFT
     assert item.alt_text_draft == FUSED_DRAFT
+    assert (item.provenance or {}).get("naming", {}).get("realizer") == "substituted"
     assert "Bob" not in (item.alt_text_draft or "")
     assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
 
@@ -862,3 +860,56 @@ def test_omitted_recognition_enabled_defaults_true_and_still_fuses():
     assert run.recognition_enabled is True
     assert item.alt_text_draft == FUSED_DRAFT
     assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
+
+
+def test_final_draft_skips_naming_preview(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    preview_calls: list[dict] = []
+
+    async def fake_naming_preview(**kwargs):
+        preview_calls.append(kwargs)
+        raise AssertionError("naming_preview must not run for a finished draft")
+
+    monkeypatch.setattr(wmod, "naming_preview", fake_naming_preview, raising=True)
+
+    finished = "A man stands by the window. Pictured from left: Ada."
+    provenance = {"adapter": "seeded", "naming": {"status": wmod.NamingStatus.APPLIED}}
+    outcome = DescribeItemOutcome(
+        alt_text_draft=finished,
+        caption="",
+        phrase_boxes=(),
+        attachments=(
+            Attachment(
+                fact_id="identity:cluster:1",
+                fact_source=FactSource.IDENTITY,
+                fact_label="Ada",
+                decision=AttachmentDecision.OBJECT,
+                altitude=AttachmentAltitude.OBJECT,
+                visible=True,
+            ),
+        ),
+        draft_is_final=True,
+        provenance=provenance,
+    )
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=outcome,
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[object()], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    result = asyncio.run(body())
+    assert result is outcome
+    assert result.alt_text_draft == finished
+    assert result.alt_text_draft.encode("utf-8") == finished.encode("utf-8")
+    assert result.provenance == provenance
+    assert preview_calls == []

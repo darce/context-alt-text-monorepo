@@ -70,6 +70,8 @@ def _provenance_model(provenance) -> NamingProvenanceModel:
             realizer = NamingRealizer.GROUNDED
         elif provenance.mode is not None and str(provenance.mode) == "positional":
             realizer = NamingRealizer.POSITIONAL_FALLBACK
+        elif provenance.mode is not None and str(provenance.mode) == "substituted":
+            realizer = NamingRealizer.SUBSTITUTED
     return _NamingProvenancePayload(
         injected_names=[
             InjectedNameModel(

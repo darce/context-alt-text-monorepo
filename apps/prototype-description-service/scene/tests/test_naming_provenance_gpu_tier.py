@@ -25,6 +25,7 @@ from scene.application.describe_run_worker import DescribeItemOutcome, run_descr
 from scene.application.identity_merge import (
     ConfirmedFace,
     NamingPolicy,
+    NamingStatus,
     NormalizedBox,
     PhraseBox,
     merge_identities,
@@ -153,17 +154,17 @@ async def _run_fake_gpu(*, naming_enabled: bool, seed_faces: bool = True, recogn
     return item
 
 
-def test_fake_final_gpu_adapter_fuses_positional_names_and_disabled_run_does_not():
+def test_fake_final_gpu_adapter_abstains_for_ungrounded_faces_and_disabled_run_does_not():
     enabled = asyncio.run(_run_fake_gpu(naming_enabled=True))
     disabled = asyncio.run(_run_fake_gpu(naming_enabled=False))
 
     assert enabled.status == DescribeItemStatus.COMPLETED
     assert enabled.tier == DescriptionResultTier.FINAL_GPU
-    assert enabled.alt_text_draft == f"{GENERIC_DRAFT} Pictured from left: Ada and Bob."
+    assert enabled.alt_text_draft == GENERIC_DRAFT
     enabled_naming = (enabled.provenance or {})["naming"]
-    assert enabled_naming["status"] == "applied"
-    assert enabled_naming["realizer"] == "positional_fallback"
-    assert enabled_naming["names_applied"] == ["Ada", "Bob"]
+    assert enabled_naming["status"] == "ambiguous_grounding"
+    assert enabled_naming["realizer"] is None
+    assert enabled_naming["names_applied"] == []
 
     assert disabled.status == DescribeItemStatus.COMPLETED
     assert disabled.tier == DescriptionResultTier.FINAL_GPU
@@ -221,7 +222,7 @@ def _face(label: str, *, cluster_id: str, x: float) -> ConfirmedFace:
     )
 
 
-def test_positional_names_keep_distinct_people_with_shared_label_and_dedupe_one_person():
+def test_ungrounded_shared_label_abstains_and_one_person_keeps_positional():
     policy = NamingPolicy(agreement_enabled=True)
     distinct_people = merge_identities(
         caption=GENERIC_DRAFT,
@@ -236,8 +237,9 @@ def test_positional_names_keep_distinct_people_with_shared_label_and_dedupe_one_
         policy=policy,
     )
 
-    assert distinct_people.named_draft.endswith("Pictured from left: Alex and Alex.")
-    assert [name.name for name in distinct_people.provenance.injected_names] == ["Alex", "Alex"]
+    assert distinct_people.named_draft == GENERIC_DRAFT
+    assert distinct_people.provenance.status is NamingStatus.AMBIGUOUS_GROUNDING
+    assert [name.name for name in distinct_people.provenance.injected_names] == []
     assert one_person.named_draft.endswith("Pictured from left: Ada.")
     assert [name.name for name in one_person.provenance.injected_names] == ["Ada"]
 
@@ -280,15 +282,15 @@ def test_invalid_phrase_spans_are_not_used_for_gpu_provenance():
         span_end=-1,
         box=NormalizedBox(x=0.1, y=0.1, width=0.1, height=0.2),
     )
-    result = merge_identities(
-        caption=caption,
-        phrase_boxes=[invalid],
-        confirmed_faces=[_face("Ada", cluster_id="person-a", x=0.1)],
-        policy=policy,
-    )
+    faces = [_face("Ada", cluster_id="person-a", x=0.1)]
+    result = merge_identities(caption=caption, phrase_boxes=[invalid], confirmed_faces=faces, policy=policy)
+    boxless = merge_identities(caption=caption, phrase_boxes=[], confirmed_faces=faces, policy=policy)
 
-    assert result.named_draft == caption
-    assert result.provenance.injected_names == ()
+    # Unverifiable spans are ignored entirely: same outcome as a box-less payload.
+    assert result.associations == ()
+    assert result.named_draft == boxless.named_draft
+    assert result.provenance == boxless.provenance
+    assert result.provenance.realizer.value != "grounded"
 
 
 @pytest.mark.asyncio

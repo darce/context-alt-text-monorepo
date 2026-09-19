@@ -105,8 +105,9 @@ class TestMergeWithPolicy:
 
     def test_positional_fallback_provenance(self):
         policy = NamingPolicy(agreement_enabled=True, suppressed_roster_ids=frozenset())
+        # No generic person NP, so N2 single-subject substitution cannot apply.
         result = merge_identities(
-            caption=CAPTION,
+            caption="Sunlight falls across the window.",
             phrase_boxes=[],
             confirmed_faces=[_face("Daniel")],
             policy=policy,

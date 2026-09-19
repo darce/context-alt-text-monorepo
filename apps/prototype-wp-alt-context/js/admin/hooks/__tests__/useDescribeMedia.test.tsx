@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SUGGEST_WARMING_CEILING_MS, useDescribeMedia } from '../useDescribeMedia';
+import { SUGGEST_WARMING_HARD_CEILING_MS, suggestWarmingCeilingMs, useDescribeMedia } from '../useDescribeMedia';
 import * as describeApi from '../../api/describeApi';
 import type { VisualFactsResponse } from '../../api/describeApi';
 import suggestStates from '../../pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json';
@@ -20,9 +20,7 @@ vi.mock('../../api/describeApi', async (importOriginal) => {
 const describeMediaMock = vi.mocked(describeApi.describeMedia);
 
 const describeErrorFromFixture = (fixture: { status: number; detail: object }): Error =>
-  new Error(
-    `Request to .../describe failed (${fixture.status}): ${JSON.stringify({ detail: fixture.detail })}`,
-  );
+  new Error(`Request to .../describe failed (${fixture.status}): ${JSON.stringify({ detail: fixture.detail })}`);
 
 const sample: VisualFactsResponse = {
   tenant_id: '00000000-0000-4000-8000-000000000001',
@@ -110,9 +108,7 @@ describe('useDescribeMedia', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(describeMediaMock).toHaveBeenNthCalledWith(2, 42, { operationId: 'op-lease-1' });
     expect(result.current.warming).toBeNull();
-    expect(result.current.timing).toEqual(
-      (suggestStates.success_with_timing as VisualFactsResponse).timing,
-    );
+    expect(result.current.timing).toEqual((suggestStates.success_with_timing as VisualFactsResponse).timing);
   });
 
   it('stores a null ETA from the wire and a null operationId when the starting envelope omits it', async () => {
@@ -211,15 +207,11 @@ describe('useDescribeMedia', () => {
 
     result.current.mutate(42);
     await waitFor(() =>
-      expect(result.current.timing).toEqual(
-        (suggestStates.success_with_timing as VisualFactsResponse).timing,
-      ),
+      expect(result.current.timing).toEqual((suggestStates.success_with_timing as VisualFactsResponse).timing),
     );
 
     result.current.mutate(42);
-    await waitFor(() =>
-      expect(result.current.data).toEqual(suggestStates.success_no_timing as VisualFactsResponse),
-    );
+    await waitFor(() => expect(result.current.data).toEqual(suggestStates.success_no_timing as VisualFactsResponse));
     expect(result.current.timing).toBeNull();
   });
 });
@@ -231,10 +223,7 @@ const flushMicrotasks = async (): Promise<void> => {
   });
 };
 
-const startingHttpError = (
-  fixture: { status: number; detail: object },
-  retryAfterSeconds?: number,
-): HTTPError =>
+const startingHttpError = (fixture: { status: number; detail: object }, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
     status: fixture.status,
     retryAfterSeconds,
@@ -244,6 +233,18 @@ const startingHttpError = (
       detail: fixture.detail,
     })}`,
   });
+
+const startingWithBudget = (
+  fixture: { status: number; detail: object },
+  startupBudgetSeconds: number,
+): { status: number; detail: object } => ({
+  status: fixture.status,
+  detail: Object.assign({}, fixture.detail, {
+    startup_budget_seconds: startupBudgetSeconds,
+  }),
+});
+
+const SERVICE_STARTUP_BUDGET_SECONDS = 510;
 
 describe('useDescribeMedia warming auto-retry', () => {
   beforeEach(() => {
@@ -256,13 +257,24 @@ describe('useDescribeMedia warming auto-retry', () => {
     vi.useRealTimers();
   });
 
-  it('pins the public warming ceiling at 120 s', () => {
-    expect(SUGGEST_WARMING_CEILING_MS).toBe(120_000);
+  it('pins the hard warming ceiling at 900 s', () => {
+    expect(SUGGEST_WARMING_HARD_CEILING_MS).toBe(900_000);
+  });
+
+  it('computes the warming ceiling as startup budget plus one retry gap, clamped to 900 s', () => {
+    expect(suggestWarmingCeilingMs(30, 5_000)).toBe(35_000);
+    expect(suggestWarmingCeilingMs(510, 15_000)).toBe(525_000);
+    expect(suggestWarmingCeilingMs(null, 5_000)).toBe(5_000);
+    expect(suggestWarmingCeilingMs(0, 5_000)).toBe(5_000);
+    expect(suggestWarmingCeilingMs(10_000, 5_000)).toBe(900_000);
+    expect(suggestWarmingCeilingMs(899, 2_000)).toBe(900_000);
   });
 
   it('auto-retries after the warmup ETA with the stored operation_id', async () => {
     describeMediaMock
-      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
       .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
@@ -293,8 +305,12 @@ describe('useDescribeMedia warming auto-retry', () => {
 
   it('schedules again when a second starting response arrives inside the ceiling', async () => {
     describeMediaMock
-      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
-      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_with_eta))
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
       .mockResolvedValueOnce(suggestStates.success_with_timing as VisualFactsResponse);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
@@ -320,8 +336,10 @@ describe('useDescribeMedia warming auto-retry', () => {
     expect(result.current.isSuccess).toBe(true);
   });
 
-  it('enters timeout at the 120 s ceiling, clears the lease, and stops scheduling', async () => {
-    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+  it('enters timeout at startup budget plus one retry gap, clears the lease, and stops scheduling', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
     await act(async () => {
@@ -361,7 +379,9 @@ describe('useDescribeMedia warming auto-retry', () => {
   });
 
   it('clears the auto-retry timer on unmount', async () => {
-    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_with_eta));
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_with_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+    );
     const { result, unmount } = renderHook(() => useDescribeMedia(), { wrapper });
 
     await act(async () => {
@@ -379,7 +399,9 @@ describe('useDescribeMedia warming auto-retry', () => {
 
   it('uses the 5 s fallback when ETA and Retry-After are absent', async () => {
     describeMediaMock
-      .mockRejectedValueOnce(describeErrorFromFixture(suggestStates.starting_no_eta))
+      .mockRejectedValueOnce(
+        describeErrorFromFixture(startingWithBudget(suggestStates.starting_no_eta, SERVICE_STARTUP_BUDGET_SECONDS)),
+      )
       .mockResolvedValueOnce(sample);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
@@ -402,7 +424,9 @@ describe('useDescribeMedia warming auto-retry', () => {
 
   it('uses parsed Retry-After when the warmup ETA is absent', async () => {
     describeMediaMock
-      .mockRejectedValueOnce(startingHttpError(suggestStates.starting_no_eta, 8))
+      .mockRejectedValueOnce(
+        startingHttpError(startingWithBudget(suggestStates.starting_no_eta, SERVICE_STARTUP_BUDGET_SECONDS), 8),
+      )
       .mockResolvedValueOnce(sample);
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
@@ -424,7 +448,9 @@ describe('useDescribeMedia warming auto-retry', () => {
   });
 
   it('starts a fresh operation from timeout retry (no operation_id)', async () => {
-    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_eta_60));
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 60)),
+    );
     const { result } = renderHook(() => useDescribeMedia(), { wrapper });
 
     await act(async () => {
@@ -449,5 +475,92 @@ describe('useDescribeMedia warming auto-retry', () => {
     expect(describeMediaMock).toHaveBeenLastCalledWith(42);
     expect(result.current.isSuccess).toBe(true);
     expect(result.current.warmingTimedOut).toBe(false);
+  });
+
+  it('keeps auto-retrying past 120 s while the startup budget remains', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(startingWithBudget(suggestStates.starting_eta_60, 180)),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+    expect(result.current.warmingTimedOut).toBe(false);
+    expect(result.current.warming).not.toBeNull();
+  });
+
+  it('times out after one retry gap when startup_budget_seconds is absent', async () => {
+    describeMediaMock.mockRejectedValue(describeErrorFromFixture(suggestStates.starting_with_eta));
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(describeMediaMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps a huge startup budget to the 900 s hard ceiling', async () => {
+    describeMediaMock.mockRejectedValue(
+      describeErrorFromFixture(
+        startingWithBudget(
+          {
+            status: 503,
+            detail: {
+              code: 'description_service_starting',
+              message: 'Description service is starting.',
+              operation_id: 'op-lease-1',
+              warmup_eta_seconds: 300,
+            },
+          },
+          10_000,
+        ),
+      ),
+    );
+    const { result } = renderHook(() => useDescribeMedia(), { wrapper });
+
+    await act(async () => {
+      result.current.mutate(42);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
+    expect(result.current.warmingTimedOut).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+    await flushMicrotasks();
+    expect(result.current.warmingTimedOut).toBe(true);
+    expect(result.current.warming).toBeNull();
+    expect(describeMediaMock).toHaveBeenCalledTimes(3);
   });
 });

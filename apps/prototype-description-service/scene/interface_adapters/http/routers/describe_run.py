@@ -24,6 +24,8 @@ from recognition.interface_adapters.http.deps.demo_quota import (
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeItemOutcome,
+    DescribeRunTerminalCode,
+    DescribeRunTerminalReason,
     FusionNamingInputs,
     MissingNamingSnapshotError,
     gpu_run_policy,
@@ -31,6 +33,7 @@ from scene.application.describe_run_worker import (
     publish_demand_snapshot,
     run_describe_job,
 )
+from scene.application.identity_merge import NamingStatus
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.gpu_state import read_gpu_state
 from scene.application.visual_facts_service import VisualFactsService
@@ -44,17 +47,20 @@ from scene.domain.describe_run import (
     describe_job_error,
     normalize_idempotency_key,
 )
-from scene.interface_adapters.http.deps import get_description_adapter
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.deps import get_cpu_description_adapter, get_description_adapter
 from scene.interface_adapters.http.routers.describe import (
     _DescriptionAuditSink,
     _DescriptionMetricsSink,
     _generation_timeout_seconds,
+    _parse_recognition_enabled,
     worker_session_factory,
 )
 from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemResponse,
     DescribeRunItemsResponse,
     DescribeRunResponse,
+    DescribeRunTerminal,
     DescribeRunTiming,
 )
 
@@ -156,7 +162,44 @@ def _observed_run_timing(run) -> DescribeRunTiming | None:
     )
 
 
+def _describe_run_wire_error(error_message: str | None) -> tuple[DescribeRunTerminal | None, str | None]:
+    """Parse worker JSON on ``run.error_message``; never raise or fabricate."""
+
+    if not error_message:
+        return None, None
+    try:
+        payload = json.loads(error_message)
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(payload, Mapping):
+        return None, None
+    terminal = None
+    code_raw = payload.get("code")
+    retryable = payload.get("retryable")
+    if isinstance(code_raw, str) and type(retryable) is bool:
+        try:
+            code = DescribeRunTerminalCode(code_raw)
+        except ValueError:
+            code = None
+        if code is not None:
+            budget = payload.get("startup_budget_seconds")
+            terminal = DescribeRunTerminal(
+                code=code,
+                retryable=retryable,
+                startup_budget_seconds=budget if type(budget) is int else None,
+            )
+    fallback_reason = None
+    reason_raw = payload.get("fallback_reason")
+    if isinstance(reason_raw, str):
+        try:
+            fallback_reason = str(DescribeRunTerminalReason(reason_raw))
+        except ValueError:
+            fallback_reason = None
+    return terminal, fallback_reason
+
+
 def _run_response(run) -> DescribeRunResponse:
+    terminal, fallback_reason = _describe_run_wire_error(getattr(run, "error_message", None))
     return DescribeRunResponse(
         tenant_id=str(run.tenant_id),
         run_id=str(run.id),
@@ -171,6 +214,8 @@ def _run_response(run) -> DescribeRunResponse:
         gpu_state=read_gpu_state(),
         recognition_enabled=bool(run.recognition_enabled),
         deadline_seconds=run.deadline_seconds,
+        terminal=terminal,
+        fallback_reason=fallback_reason,
         operation_id=run.operation_id or None,
         startup_id=run.startup_id,
         timing=_observed_run_timing(run),
@@ -220,13 +265,32 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
     return DescribeRunRepository(session)
 
 
+def _worker_generic_draft(response) -> str:
+    # A cache hit re-realizes names into alt_text_draft; the worker names the
+    # generic draft itself, so hand it the unnamed base or names are applied twice.
+    generic = getattr(response, "generic_draft", None)
+    return generic if generic is not None else response.alt_text_draft
+
+
+def _worker_draft_is_final(response) -> bool:
+    # Older cache rows store only the finished named draft. Re-running preview
+    # appends a second positional sentence, so skip when naming already applied.
+    if getattr(response, "generic_draft", None) is not None:
+        return False
+    provenance = getattr(response, "naming_provenance", None)
+    status = getattr(provenance, "status", None)
+    if status is None and isinstance(provenance, Mapping):
+        status = provenance.get("status")
+    return status == NamingStatus.APPLIED
+
+
 def _build_describe_one(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     tenant_id: uuid.UUID,
+    recognition_enabled: bool,
     adapter=None,
     settings=None,
-    recognition_enabled: bool = True,
 ):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 
@@ -297,13 +361,14 @@ def _build_describe_one(
         }
         attempt_ms = getattr(getattr(response, "attempt_timing", None), "processing_ms", None)
         return DescribeItemOutcome(
-            alt_text_draft=response.alt_text_draft,
+            alt_text_draft=_worker_generic_draft(response),
             caption=response.visual_facts.caption,
             provenance=provenance,
             phrase_boxes=tuple(service.last_phrase_boxes or ()),
             attachments=tuple(service.last_attachments or ()),
             tier=response.tier,
             processing_ms=None if attempt_ms is None else float(attempt_ms),
+            draft_is_final=_worker_draft_is_final(response),
         )
 
     return describe_one
@@ -323,22 +388,6 @@ def _parse_media_ids(raw: object) -> list[int]:
     if any(m <= 0 for m in parsed):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
     return parsed
-
-
-def _parse_recognition_enabled(raw: object) -> bool:
-    """Multipart boolean; omitted → True so today's naming-on path stays the default."""
-    if raw is None:
-        return True
-    if isinstance(raw, bool):
-        return raw
-    if not isinstance(raw, str):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
-    value = raw.strip().lower()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 def _parse_idempotency_key(raw: object) -> str | None:
@@ -598,6 +647,18 @@ async def create_describe_run(
     # start cycle sees batch_in_progress on its next tick rather than a tick
     # after the first item already needed the GPU.
     await publish_demand_snapshot(session_factory)
+    cpu_adapter = get_cpu_description_adapter()
+    cpu_describe_one = (
+        None
+        if isinstance(cpu_adapter, UnavailableDescriptionAdapter)
+        else _build_describe_one(
+            session_factory=session_factory,
+            tenant_id=tenant_id,
+            adapter=cpu_adapter,
+            settings=settings,
+            recognition_enabled=recognition_enabled,
+        )
+    )
     background_tasks.add_task(
         run_describe_job,
         tenant_id=tenant_id,
@@ -613,6 +674,7 @@ async def create_describe_run(
         # [S01] The same value run_deadline_seconds was derived from.
         timeout_seconds=item_timeout_seconds,
         gpu_policy=run_gpu_policy,
+        cpu_describe_one=cpu_describe_one,
     )
 
     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)

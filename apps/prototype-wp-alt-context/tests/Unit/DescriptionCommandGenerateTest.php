@@ -71,6 +71,243 @@ class DescriptionCommandGenerateTest extends TestCase
         $this->assertSame(1, $payload['failed'] ?? null);
     }
 
+    public function testGenerateSurfacesTypedArrayDetailCodeAndMessage(): void
+    {
+        $service = new RecordingDescribeService([
+            303 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_error',
+                        'message' => 'adapter failed',
+                    ],
+                ],
+                502
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '303', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertSame('description_service_error: adapter failed', $payload['rows'][0]['error']);
+        $this->assertStringNotContainsString('Array', (string) ($payload['rows'][0]['error'] ?? ''));
+        $this->assertSame(1, $payload['failed'] ?? null);
+        $this->assertSame([303], $service->requestedMediaIds);
+    }
+
+    public function testGenerateDoesNotRetryNonStartingTypedDetailEvenWithRetryAfter(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            304 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_unavailable',
+                        'message' => 'Description service is unavailable.',
+                    ],
+                ],
+                503,
+                ['Retry-After' => '5']
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '304', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame(
+            'description_service_unavailable: Description service is unavailable.',
+            $payload['rows'][0]['error']
+        );
+        $this->assertSame([304], $service->requestedMediaIds);
+        $this->assertSame([], $slept);
+    }
+
+    public function testGenerateRetriesStartingGpuHonouringRetryAfterThenSucceeds(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            305 => [
+                $this->startingDescribeResponse(7, 30),
+                new WP_REST_Response([
+                    'media_id' => 305,
+                    'alt_text_draft' => 'A recovered GPU draft.',
+                    'adapter' => 'seeded',
+                ]),
+            ],
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        $command->__invoke(['generate'], ['media-id' => '305', 'format' => 'json']);
+
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame([305, 305], $service->requestedMediaIds);
+        $this->assertSame([7], $slept);
+        $this->assertSame('dry_run', $payload['rows'][0]['status']);
+        $this->assertSame('A recovered GPU draft.', $payload['rows'][0]['alt_text_draft']);
+        $this->assertSame(0, $payload['failed'] ?? null);
+        $this->assertSame(1, $payload['dry_run'] ?? null);
+        $this->assertEmpty(\WP_CLI::$messages['success']);
+    }
+
+    public function testGenerateStartingGpuStopsAfterMaxAttemptsAndPrintsTypedError(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            306 => $this->startingDescribeResponse(5, 30),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '306', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame([306, 306, 306], $service->requestedMediaIds);
+        $this->assertSame([5, 5], $slept);
+        $this->assertSame('failed', $payload['rows'][0]['status']);
+        $this->assertSame(
+            'description_service_starting: Description service is starting.',
+            $payload['rows'][0]['error']
+        );
+        $this->assertSame(1, $payload['failed'] ?? null);
+    }
+
+    public function testGenerateStartingGpuCapsTotalWaitByStartupBudgetSeconds(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            307 => $this->startingDescribeResponse(4, 5),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '307', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame([307, 307, 307], $service->requestedMediaIds);
+        $this->assertSame([4, 1], $slept);
+        $this->assertSame(5, array_sum($slept));
+        $this->assertSame(
+            'description_service_starting: Description service is starting.',
+            $payload['rows'][0]['error']
+        );
+    }
+
+    public function testGenerateStartingWithoutBudgetCapsRetryAfterByFallbackBudget(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            309 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_starting',
+                        'message' => 'Description service is starting.',
+                    ],
+                ],
+                503,
+                ['Retry-After' => '86400']
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        try {
+            $command->__invoke(['generate'], ['media-id' => '309', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            // expected: still starting after the capped wait
+        }
+
+        $this->assertSame([510], $slept);
+        $this->assertSame([309, 309], $service->requestedMediaIds);
+    }
+
+    public function testGenerateStartingWithoutRetryAfterDoesNotRetry(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            308 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_starting',
+                        'message' => 'Description service is starting.',
+                        'startup_budget_seconds' => 30,
+                    ],
+                ],
+                503
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '308', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $payload = json_decode(\WP_CLI::$messages['log'][0] ?? '', true);
+        $this->assertSame([308], $service->requestedMediaIds);
+        $this->assertSame([], $slept);
+        $this->assertSame(
+            'description_service_starting: Description service is starting.',
+            $payload['rows'][0]['error']
+        );
+    }
+
+    public function testGenerateTableTypedArrayDetailIsQuotedNotArray(): void
+    {
+        $service = new RecordingDescribeService([
+            309 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_error',
+                        'message' => 'adapter failed',
+                    ],
+                ],
+                502
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service);
+
+        $caught = null;
+        try {
+            $command->__invoke(['generate'], ['media-id' => '309', 'write' => true]);
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $caught);
+        $log = \WP_CLI::$messages['log'][0] ?? '';
+        $this->assertStringContainsString('status=failed', $log);
+        $this->assertStringContainsString('error="description_service_error: adapter failed"', $log);
+        $this->assertStringNotContainsString('error="Array"', $log);
+        $this->assertStringNotContainsString('error=Array', $log);
+    }
+
     public function testGenerateWriteStoresAltTextAndProvenance(): void
     {
         $service = new RecordingDescribeService([
@@ -1953,6 +2190,35 @@ class DescriptionCommandGenerateTest extends TestCase
         );
         $this->assertSame($marker, get_post_meta(987, '_acx_description_provenance_pending', true));
     }
+
+    /**
+     * @param list<int> $slept
+     * @return callable(int):void
+     */
+    private function recordingSleeper(array &$slept): callable
+    {
+        return static function (int $seconds) use (&$slept): void {
+            $slept[] = $seconds;
+        };
+    }
+
+    private function startingDescribeResponse(
+        int $retryAfter,
+        int $startupBudget,
+        string $message = 'Description service is starting.'
+    ): WP_REST_Response {
+        return new WP_REST_Response(
+            [
+                'detail' => [
+                    'code' => 'description_service_starting',
+                    'message' => $message,
+                    'startup_budget_seconds' => $startupBudget,
+                ],
+            ],
+            503,
+            ['Retry-After' => (string) $retryAfter]
+        );
+    }
 }
 
 class RecordingDescribeService extends DescribeMediaService
@@ -1960,7 +2226,9 @@ class RecordingDescribeService extends DescribeMediaService
     /** @var int[] */
     public array $requestedMediaIds = [];
 
-    /** @param array<int,WP_REST_Response|WP_Error> $responses */
+    /**
+     * @param array<int, WP_REST_Response|WP_Error|list<WP_REST_Response|WP_Error>> $responses
+     */
     public function __construct(private array $responses)
     {
     }
@@ -1970,13 +2238,33 @@ class RecordingDescribeService extends DescribeMediaService
         $mediaId = (int) $request->get_param('media_id');
         $this->requestedMediaIds[] = $mediaId;
 
-        return $this->responses[$mediaId] ?? new WP_REST_Response(
-            [
-                'media_id' => $mediaId,
-                'alt_text_draft' => 'Generated alt text.',
-                'adapter' => 'seeded',
-            ]
-        );
+        if (!array_key_exists($mediaId, $this->responses)) {
+            return new WP_REST_Response(
+                [
+                    'media_id' => $mediaId,
+                    'alt_text_draft' => 'Generated alt text.',
+                    'adapter' => 'seeded',
+                ]
+            );
+        }
+
+        $entry = $this->responses[$mediaId];
+        if (is_array($entry)) {
+            $next = array_shift($this->responses[$mediaId]);
+            if ($next instanceof WP_REST_Response || $next instanceof WP_Error) {
+                return $next;
+            }
+
+            return new WP_REST_Response(
+                [
+                    'media_id' => $mediaId,
+                    'alt_text_draft' => 'Generated alt text.',
+                    'adapter' => 'seeded',
+                ]
+            );
+        }
+
+        return $entry;
     }
 }
 

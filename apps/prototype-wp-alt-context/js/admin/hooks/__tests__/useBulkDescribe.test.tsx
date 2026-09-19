@@ -172,6 +172,8 @@ describe('useBulkDescribe', () => {
     expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
     expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
     expect(rest).not.toMatch(/submit\.data\?\.run_id\s*\?\?\s*cancel\.data\?\.run_id/);
+    // U2b / Z2: Review drafts targets the workbench queue filter, not this hook.
+    expect(rest).not.toMatch(/description-history/);
   });
 
   it('submits media ids and captures the run id', async () => {

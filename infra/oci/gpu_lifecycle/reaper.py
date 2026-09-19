@@ -121,6 +121,7 @@ _MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 _OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
+_PROBE_TIMEOUT_FALLBACK_REASONS = frozenset({"readiness_timeout", "readiness_stall"})
 
 
 def _acquire_flock_with_timeout(
@@ -2656,13 +2657,7 @@ def run_reap_cycle(
             for instance in instances
         ]
         snapshot_instance_id = _snapshot_instance_id(post_actuation_instances)
-        state = state_for_instances(
-            [instance.state for instance in post_actuation_instances],
-            previous_state=read_previous_gpu_state(
-                gpu_state_path,
-                expected_instance_id=snapshot_instance_id,
-            ),
-        )
+        state = state_for_instances([instance.state for instance in post_actuation_instances])
         if result.errors:
             state = GpuLifecycleState.DEGRADED
         instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
@@ -3295,6 +3290,70 @@ def _run_start_cycle(
     )
 
 
+def _drop_held_ready_probe_timeouts(result: StartCycleResult) -> StartCycleResult:
+    """Omit probe-timeout fallbacks/errors when hysteresis still publishes READY."""
+    wait_errors = frozenset(result.wait_result.errors) if result.wait_result is not None else frozenset()
+    return replace(
+        result,
+        fallbacks=tuple(
+            fallback
+            for fallback in result.fallbacks
+            if fallback.reason not in _PROBE_TIMEOUT_FALLBACK_REASONS
+        ),
+        errors=[error for error in result.errors if error not in wait_errors],
+    )
+
+
+def _finalize_start_snapshot_state(
+    result: StartCycleResult,
+    *,
+    instances: list[GpuInstance],
+    snapshot_path: Path,
+    snapshot_instance_id: str | None,
+) -> tuple[GpuLifecycleState, StartCycleResult]:
+    """Resolve published state, persist the ready-hold counter, and align cycle outcome."""
+    previous_state = read_previous_gpu_state(
+        snapshot_path,
+        expected_instance_id=snapshot_instance_id,
+    )
+    wait_ready = result.wait_result is not None and bool(result.wait_result.ready)
+    probe_failed = result.wait_result is not None and not wait_ready and bool(result.wait_result.failed)
+    start_failed = any(fallback.reason == "start_failed" for fallback in result.fallbacks)
+    operator_stop = any(fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in result.fallbacks)
+    if wait_ready:
+        candidate = GpuLifecycleState.READY
+    elif start_failed or operator_stop:
+        candidate = GpuLifecycleState.DEGRADED
+    elif result.actuated or result.lease_recorded:
+        candidate = GpuLifecycleState.STARTING
+    elif probe_failed or result.errors:
+        candidate = GpuLifecycleState.DEGRADED
+    else:
+        candidate = state_for_instances([instance.state for instance in instances])
+    failure_count = 0
+    state = candidate
+    if probe_failed:
+        failure_count = read_ready_probe_failure_count(
+            snapshot_path,
+            instance_id=snapshot_instance_id,
+        )
+        state, failure_count = hold_ready_until_consecutive_failures(
+            candidate=candidate,
+            previous=previous_state,
+            consecutive_failures=failure_count,
+        )
+    count_persisted = write_ready_probe_failure_count(
+        snapshot_path,
+        instance_id=snapshot_instance_id,
+        count=failure_count,
+    )
+    if not count_persisted and failure_count > 0:
+        state = candidate
+    elif state is GpuLifecycleState.READY and candidate is not GpuLifecycleState.READY:
+        result = _drop_held_ready_probe_timeouts(result)
+    return state, result
+
+
 def run_start_cycle(
     *,
     controller: GpuLifecycleController,
@@ -3359,46 +3418,15 @@ def run_start_cycle(
             dry_run=False,
             effective_intent=effective_intent,
         )
-        result = _record_decision(result, mode="start", now=now, store=resolved_log)
         snapshot_instance_id = _snapshot_instance_id(instances)
         resolved_snapshot_path = resolve_gpu_state_path() if gpu_state_path is None else Path(gpu_state_path)
-        previous_state = read_previous_gpu_state(
-            resolved_snapshot_path,
-            expected_instance_id=snapshot_instance_id,
+        state, result = _finalize_start_snapshot_state(
+            result,
+            instances=instances,
+            snapshot_path=resolved_snapshot_path,
+            snapshot_instance_id=snapshot_instance_id,
         )
-        wait_ready = result.wait_result is not None and bool(result.wait_result.ready)
-        probe_failed = result.wait_result is not None and not wait_ready and bool(result.wait_result.failed)
-        start_failed = any(fallback.reason == "start_failed" for fallback in result.fallbacks)
-        operator_stop = any(fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in result.fallbacks)
-        if wait_ready:
-            state = GpuLifecycleState.READY
-        elif start_failed or operator_stop:
-            state = GpuLifecycleState.DEGRADED
-        elif result.actuated or result.lease_recorded:
-            state = GpuLifecycleState.STARTING
-        elif probe_failed or result.errors:
-            state = GpuLifecycleState.DEGRADED
-        else:
-            state = state_for_instances(
-                [instance.state for instance in instances],
-                previous_state=previous_state,
-            )
-        failure_count = 0
-        if probe_failed:
-            failure_count = read_ready_probe_failure_count(
-                resolved_snapshot_path,
-                instance_id=snapshot_instance_id,
-            )
-            state, failure_count = hold_ready_until_consecutive_failures(
-                candidate=state,
-                previous=previous_state,
-                consecutive_failures=failure_count,
-            )
-        write_ready_probe_failure_count(
-            resolved_snapshot_path,
-            instance_id=snapshot_instance_id,
-            count=failure_count,
-        )
+        result = _record_decision(result, mode="start", now=now, store=resolved_log)
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
         instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
             instances,

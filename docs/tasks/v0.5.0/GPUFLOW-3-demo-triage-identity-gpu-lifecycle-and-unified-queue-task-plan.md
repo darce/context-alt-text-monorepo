@@ -462,6 +462,26 @@ Design decision (binding): Docs lane. Mirror the structure of the inlined existi
 
 Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` passes; changed paths stay inside the lane's owned list.
 
+### Slice Z1: gate-app-redirect
+
+Merge-gate adjudication. App.test route boot expects #/description-history; spa-queue-drafts-mount redirects the history route into the filtered queue. Owned: `apps/prototype-wp-alt-context/js/admin/__tests__/App.test.tsx`. Test: `npx vitest run js/admin/__tests__/App.test.tsx`.
+
+### Slice Z2: gate-bulk-cta
+
+Merge-gate adjudication. BulkDescribeCta lost Cancel describe run, the waiting and cooldown copy and the Review drafts link after the strip moved; BulkDescribeProgress Review drafts href changed. Owned: `apps/prototype-wp-alt-context/js/admin/pages/workbench/BulkDescribeCta.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/BulkDescribeProgress.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx`. Test: `npx vitest run js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx`.
+
+### Slice Z3: gate-suggest-ceiling
+
+Merge-gate adjudication. MediaAltSuggest warming tests still assume the 120 s ceiling and an ETA auto-retry; spa-suggest-ceiling moved the ceiling to the server startup budget. Owned: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx`, `apps/prototype-wp-alt-context/js/admin/hooks/useDescribeMedia.ts`. Test: `npx vitest run js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx js/admin/hooks/__tests__/useDescribeMedia.test.tsx`.
+
+### Slice Z4: gate-cluster-unlink
+
+Merge-gate adjudication. IdentityClusterList expects Unlink only for singleton clusters; the person-card change now shows it on multi-member clusters. Owned: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`. Test: `npx vitest run js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx`.
+
+### Slice Z5: gate-scan-cancel
+
+Merge-gate adjudication. WorkbenchPage integration cannot find the scan Cancel button after Panels.tsx swapped its progress bar for the status strip. Owned: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx`. Test: `npx vitest run js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx js/admin/pages/workbench/__tests__/Panels.test.tsx`.
+
 ## Lane Decomposition
 
 ### Lanes
@@ -503,6 +523,11 @@ Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p
 | `svc-position-eval` | N4 | `docs/assessments/GPUFLOW-3-position-accuracy-eval-20260918.md` | `svc-n1-substitution` (S/scene/application/identity_merge/realizer.py, S/scene/application/identity_merge/merge.py); `svc-qwen-grounding` (S/scene/infrastructure/vlm/gpu_remote_adapter.py) | `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` |
 | `spa-queue-drafts-mount` | U2b | `W/js/admin/pages/workbench/MediaSelectionTableBody.tsx`<br>`W/js/admin/pages/workbench/MediaSelection.tsx`<br>`W/js/admin/App.tsx`<br>`W/js/admin/pages/workbench/__tests__/MediaSelection.filters.test.tsx` | `spa-queue-drafts` (W/js/admin/hooks/useQueueDrafts.ts, W/js/admin/pages/workbench/QueueDraftCell.tsx); `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-apply-view-evidence` (W/js/admin/pages/DescribeRunApplyView.tsx) | `npx vitest run js/admin/pages/workbench/__tests__/MediaSelection.filters.test.tsx js/admin/pages/workbench/__tests__/MediaSelectionTableBody.commitExclusivity.test.tsx` |
 | `ux-maps` | U3 | `docs/ux-maps/workbench-review-queue.md`<br>`docs/ux-maps/roster-people.md` | `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-activity-toasts` (W/js/admin/hooks/useGpuStateToasts.ts, W/js/admin/pages/workbench/gpuStatePresentation.ts); `spa-queue-drafts-mount` (W/js/admin/pages/workbench/MediaSelectionTableBody.tsx, W/js/admin/pages/workbench/MediaSelection.tsx, W/js/admin/App.tsx); `spa-person-card` (W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx, W/js/admin/pages/workbench/identity-clusters/representativeVocabulary.ts, W/js/admin/pages/workbench/identity-clusters/utils.ts); `spa-same-person-prompt` (W/js/admin/pages/roster/SamePersonPrompt.tsx, W/js/admin/pages/RosterPage.tsx); `spa-person-also-with` (W/js/admin/pages/roster/PersonWorkspacePanel.tsx) | `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` |
+| `gate-suggest-ceiling` | Z3 | `W/js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx`<br>`W/js/admin/hooks/useDescribeMedia.ts` | `spa-suggest-ceiling` (W/js/admin/hooks/useDescribeMedia.ts) | `npx vitest run js/admin/pages/workbench/__tests__/MediaAltSuggest.test.tsx js/admin/hooks/__tests__/useDescribeMedia.test.tsx` |
+| `gate-cluster-unlink` | Z4 | `W/js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx`<br>`W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx` | `spa-person-card` (W/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx, W/js/admin/pages/workbench/identity-clusters/representativeVocabulary.ts, W/js/admin/pages/workbench/identity-clusters/utils.ts) | `npx vitest run js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx` |
+| `gate-scan-cancel` | Z5 | `W/js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx`<br>`W/js/admin/pages/workbench/Panels.tsx` | `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx) | `npx vitest run js/admin/pages/workbench/__tests__/WorkbenchPage.integration.test.tsx js/admin/pages/workbench/__tests__/Panels.test.tsx` |
+| `gate-app-redirect` | Z1 | `W/js/admin/__tests__/App.test.tsx` | `spa-queue-drafts-mount` (W/js/admin/pages/workbench/MediaSelectionTableBody.tsx, W/js/admin/pages/workbench/MediaSelection.tsx, W/js/admin/App.tsx) | `npx vitest run js/admin/__tests__/App.test.tsx` |
+| `gate-bulk-cta` | Z2 | `W/js/admin/pages/workbench/BulkDescribeCta.tsx`<br>`W/js/admin/pages/workbench/BulkDescribeProgress.tsx`<br>`W/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx`<br>`W/js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx` | `spa-status-mount` (W/js/admin/pages/workbench/Panels.tsx, W/js/admin/pages/workbench/MediaSelection.tsx); `spa-queue-drafts-mount` (W/js/admin/pages/workbench/MediaSelectionTableBody.tsx, W/js/admin/pages/workbench/MediaSelection.tsx, W/js/admin/App.tsx) | `npx vitest run js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx js/admin/pages/workbench/__tests__/BulkDescribeProgress.phases.test.tsx` |
 
 ### Lane summaries
 
@@ -541,6 +566,11 @@ Acceptance: `python3 -m pytest scripts/tests/test_composer_lock_tracked.py -q -p
 | `svc-position-eval` | 40 | CAL-02 EMB-02 | Evaluation protocol and acceptance gate for position accuracy before any n>=2 naming rule or the grounding flag is enabled. |
 | `spa-queue-drafts-mount` | 45 | NAV-05 NAV-06 NAV-07 | Drafts render inline in the review queue with a 'Has draft' / per-run filter; the history route redirects into the filtered queue. |
 | `ux-maps` | 40 | NAV-05 INT-10 | UX maps for the review queue and the roster/person screens as built by this wave. |
+| `gate-suggest-ceiling` | 25 | RES-06 PERC-01 | MediaAltSuggest warming tests still assume the 120 s ceiling and an ETA auto-retry; spa-suggest-ceiling moved the ceiling to the server startup budget. |
+| `gate-cluster-unlink` | 20 | INT-03 | IdentityClusterList expects Unlink only for singleton clusters; the person-card change now shows it on multi-member clusters. |
+| `gate-scan-cancel` | 30 | INT-08 INT-10 | WorkbenchPage integration cannot find the scan Cancel button after Panels.tsx swapped its progress bar for the status strip. |
+| `gate-app-redirect` | 10 | NAV-07 | App.test route boot expects #/description-history; spa-queue-drafts-mount redirects the history route into the filtered queue. |
+| `gate-bulk-cta` | 40 | INT-08 INT-10 A11Y-21 A11Y-24 | BulkDescribeCta lost Cancel describe run, the waiting and cooldown copy and the Review drafts link after the strip moved; BulkDescribeProgress Review drafts href changed. |
 
 ### DAG levels (longest-path depth)
 

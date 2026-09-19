@@ -1398,6 +1398,64 @@ def test_gpu_unusable_endpoint_fails_fast_before_demand(monkeypatch, tmp_path, e
         assert _lease_rows(client) == []
 
 
+def test_gpu_unusable_endpoint_with_operation_id_keeps_adapter_reason_when_db_absent(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+    with _client(db_absent=True) as client:
+        response = _post(
+            client,
+            TENANT_ID,
+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
+            extra_data={"operation_id": "retry-operation-id"},
+        )
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+
+
+def test_rebuild_post_accept_drops_starting_transport_when_operation_id_missing():
+    from types import SimpleNamespace
+
+    from fastapi import status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers.describe import (
+        _LifecycleHoldHTTPException,
+        _rebuild_post_accept_typed_error,
+    )
+
+    detail = {
+        "code": "description_service_starting",
+        "message": "dependency starting",
+        "operation_id": None,
+        "startup_id": None,
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": 3,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+        "warmup_eta_seconds": 12.0,
+        "startup_budget_seconds": 30.0,
+    }
+    exc = _LifecycleHoldHTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=detail,
+        headers={"Retry-After": "12"},
+    )
+    rebuilt = _rebuild_post_accept_typed_error(
+        exc,
+        op=SimpleNamespace(operation_id=None, startup_id=None),
+        settings=DescriptionSettings(),
+        server_start=0,
+    )
+    assert rebuilt.detail["code"] == "description_service_unavailable"
+    assert rebuilt.headers is None or "Retry-After" not in rebuilt.headers
+    assert not isinstance(rebuilt, _LifecycleHoldHTTPException)
+
+
 def test_gpu_adapter_reason_fails_fast_before_demand(monkeypatch, tmp_path):
     from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 

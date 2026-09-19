@@ -725,6 +725,7 @@ class RetentionControllerTest extends TestCase
         $this->assertSame($service, $unavailable['service']);
         $this->assertSame($httpStatus, $unavailable['http_status']);
         $this->assertSame($retryAfter, $unavailable['retry_after_seconds']);
+        // Source: plugin-observed gmdate('Y-m-d\TH:i:s\Z'); proxy_request/WP_Error data has no failed-attempt timestamp.
         $this->assertMatchesRegularExpression(
             '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/',
             $unavailable['checked_at']

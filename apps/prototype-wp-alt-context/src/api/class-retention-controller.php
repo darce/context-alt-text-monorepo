@@ -413,6 +413,11 @@ class RetentionController extends AbstractRecognitionProxyController {
 	}
 
 	/**
+	 * Typed unavailable object for retention status failures.
+	 *
+	 * `checked_at` is the time the plugin observed the failure (gmdate UTC).
+	 * proxy_request and its WP_Error data do not carry a failed-attempt timestamp.
+	 *
 	 * @return array{
 	 *   reason: string,
 	 *   service: string,

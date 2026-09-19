@@ -135,14 +135,14 @@ class TestSeamSelection:
         assert result.named_draft == "Daniel stands by the window."
         assert result.generic_draft == caption
 
-    def test_no_phrase_boxes_selects_positional_fallback(self):
+    def test_no_phrase_boxes_two_people_abstain(self):
         caption = "Two people sit at a table."
         result = merge_identities(
             caption=caption,
             phrase_boxes=[],
             confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
         )
-        assert result.named_draft == "Two people sit at a table. Pictured from left: Daniel and Sarah."
+        assert result.named_draft == caption
 
     def test_ambiguous_grounding_stays_generic(self):
         # Phrase boxes exist but two faces land in the same box: no fallback,
@@ -186,14 +186,14 @@ class TestN1Substitution:
         assert result.named_draft == "Keanu Reeves waves from the steps."
         assert result.associations == ()
 
-    def test_two_faces_keep_positional_fallback(self):
+    def test_two_faces_ungrounded_abstain(self):
         caption = "A man stands by the window."
         result = merge_identities(
             caption=caption,
             phrase_boxes=[],
             confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
         )
-        assert result.named_draft == "A man stands by the window. Pictured from left: Daniel and Sarah."
+        assert result.named_draft == caption
 
     def test_two_generic_nps_abstain(self):
         caption = "A man stands next to a woman."

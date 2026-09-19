@@ -28,6 +28,7 @@ from scene.domain.describe_run import (
 )
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.routers.describe_run import _run_response
 from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse
 from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
 
@@ -368,11 +369,28 @@ def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPat
         detail = _warmup_timeout_detail(run.error_message)
         assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
         assert detail["retryable"] is True
-        assert detail["startup_budget_seconds"] == int(_gpu_policy().warmup_timeout_seconds)
+        assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
+        envelope = _run_response(run)
+        assert envelope.status is DescribeRunStatus.FAILED
+        assert envelope.terminal is not None
+        assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal.retryable is True
+        assert envelope.fallback_reason is None
         assert items[0].status == DescribeItemStatus.FAILED
         assert items[0].image_bytes is None
 
     asyncio.run(body())
+
+
+def test_gpu_warmup_timeout_startup_budget_rounds_positive_timeout() -> None:
+    detail = _warmup_timeout_detail(
+        wmod._gpu_warmup_timeout_detail(timeout_seconds=17.5, error=TimeoutError("still starting"))
+    )
+    assert detail["startup_budget_seconds"] == 18
+    assert wmod._startup_budget_seconds(0.1) == 1
+    assert wmod._startup_budget_seconds(1.0) == 1
+    assert wmod._startup_budget_seconds(0.0) is None
+    assert wmod._startup_budget_seconds(-2.0) is None
 
 
 def test_warmup_timeout_degrades_to_cpu_adapter_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -425,7 +443,12 @@ def test_warmup_timeout_degrades_to_cpu_adapter_when_configured(monkeypatch: pyt
         assert cpu_calls == [7, 8]
         assert run is not None
         assert run.status == DescribeRunStatus.COMPLETED
-        assert run.error_message is None
+        persisted = _warmup_timeout_detail(run.error_message)
+        assert persisted["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert "code" not in persisted
+        envelope = _run_response(run)
+        assert envelope.fallback_reason == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal is None
         assert run.first_ready_at is None
         assert run.ramp_up_ms is None
         assert [item.status for item in items] == [DescribeItemStatus.COMPLETED, DescribeItemStatus.COMPLETED]
@@ -497,9 +520,70 @@ def test_warmup_timeout_unavailable_cpu_ends_with_typed_retryable_reason(
         detail = _warmup_timeout_detail(run.error_message)
         assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
         assert detail["retryable"] is True
-        assert detail["startup_budget_seconds"] == int(_gpu_policy().warmup_timeout_seconds)
+        assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
+        envelope = _run_response(run)
+        assert envelope.status is DescribeRunStatus.FAILED
+        assert envelope.terminal is not None
+        assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal.retryable is True
+        assert envelope.fallback_reason is None
         assert items[0].status == DescribeItemStatus.FAILED
         assert items[0].image_bytes is None
+
+    asyncio.run(body())
+
+
+def test_warmup_cpu_fallback_forces_provisional_cpu_when_adapter_returns_final_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [3])
+
+            async def gpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            async def cpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=gpu_describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=cpu_describe_one,
+                ),
+                timeout=2.0,
+            )
+            run, items = await _read_run(session_factory, run_id)
+
+        assert run is not None
+        assert run.status == DescribeRunStatus.COMPLETED
+        envelope = _run_response(run)
+        assert envelope.fallback_reason == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal is None
+        assert items[0].tier == DescriptionResultTier.PROVISIONAL_CPU
+        assert items[0].tier != DescriptionResultTier.FINAL_GPU
+        assert items[0].provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert describe_job_status(items[0]) is DescribeJobStatus.DEGRADED
 
     asyncio.run(body())
 

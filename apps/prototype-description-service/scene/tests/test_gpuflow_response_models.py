@@ -9,9 +9,11 @@ from jsonschema import Draft7Validator
 from pydantic import ValidationError
 from referencing import Registry, Resource
 
+from scene.application.describe_run_worker import DescribeRunTerminalCode, DescribeRunTerminalReason
 from scene.interface_adapters.http.schemas.responses import (
     DescribeRunItemsResponse,
     DescribeRunResponse,
+    DescribeRunTerminal,
     MultipartDescribeResponse,
     VisualFactsResponse,
 )
@@ -283,6 +285,57 @@ def test_multipart_omits_null_operation_id():
         assert wire["startup_id"] is None
         assert wire["timing"] == _VISUAL_TIMING
         validator.validate(wire)
+
+
+def test_describe_run_terminal_and_fallback_reason_validate_against_shared_schema():
+    payload = {
+        "tenant_id": "11111111-1111-4111-8111-111111111111",
+        "run_id": "22222222-2222-4222-8222-222222222222",
+        "status": "failed",
+        "phase": "failed",
+        "completed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "total": 1,
+        "cancel_requested": False,
+        "eta_seconds": None,
+        "gpu_state": "unknown",
+        "recognition_enabled": True,
+        "terminal": DescribeRunTerminal(
+            code=DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT,
+            retryable=True,
+            startup_budget_seconds=18,
+        ),
+    }
+    response = DescribeRunResponse(**payload)
+    dumped, encoded = _dumped_payloads(response)
+    for wire in (dumped, encoded):
+        assert wire["terminal"]["code"] == DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert wire["terminal"]["retryable"] is True
+        assert wire["terminal"]["startup_budget_seconds"] == 18
+        assert wire["fallback_reason"] is None
+        _validate_shared_schema(DescribeRunResponse, wire)
+    continued_payload = {
+        **{k: v for k, v in payload.items() if k != "terminal"},
+        "status": "completed",
+        "phase": "complete",
+        "completed": 1,
+        "failed": 0,
+        "fallback_reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT,
+    }
+    continued = DescribeRunResponse(**continued_payload)
+    continued_dump, continued_encoded = _dumped_payloads(continued)
+    for wire in (continued_dump, continued_encoded):
+        assert wire["fallback_reason"] == DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert wire["terminal"] is None
+        _validate_shared_schema(DescribeRunResponse, wire)
+    with pytest.raises(ValidationError):
+        DescribeRunTerminal(
+            code=DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT,
+            retryable=True,
+            startup_budget_seconds=18,
+            extra="nope",
+        )
 
 
 def test_base_omission_validates_base_schema_but_fails_multipart_schema():

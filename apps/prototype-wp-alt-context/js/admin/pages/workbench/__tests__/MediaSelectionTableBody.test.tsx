@@ -37,6 +37,40 @@ vi.mock('../../../api/describeApi', async () => {
   };
 });
 
+const { queueDrafts } = vi.hoisted(() => ({
+  queueDrafts: {
+    draftsByMediaId: {} as Record<
+      number,
+      {
+        mediaId: number;
+        draftText: string;
+        existingAlt: boolean;
+        runId: string | null;
+        source: string;
+      }
+    >,
+    isLoading: false,
+    isError: false,
+    error: null as Error | null,
+    historyTruncated: false,
+  },
+}));
+
+vi.mock('../../../hooks/useQueueDrafts', () => ({
+  QUEUE_DRAFT_SOURCE: {
+    DESCRIBE_RUN: 'describe_run',
+    DESCRIPTION_HISTORY: 'description_history',
+  },
+  QUEUE_DRAFTS_HISTORY_QUERY_KEY: ['description-history'],
+  useQueueDrafts: () => ({
+    draftsByMediaId: queueDrafts.draftsByMediaId,
+    isLoading: queueDrafts.isLoading,
+    isError: queueDrafts.isError,
+    error: queueDrafts.error,
+    historyTruncated: queueDrafts.historyTruncated,
+  }),
+}));
+
 const makeItem = (overrides: Partial<WorkbenchMediaItem> = {}): WorkbenchMediaItem => ({
   id: 42,
   title: 'Ornamental border',
@@ -56,6 +90,9 @@ const renderBody = (
     searchQuery?: string;
     statusFilter?: 'all' | 'missing';
     onClearStatusFilter?: () => void;
+    hasDraftFilter?: boolean;
+    draftRunId?: string | null;
+    onClearDraftFilters?: () => void;
   } = {},
 ) => {
   const client = new QueryClient({
@@ -83,6 +120,11 @@ const renderBody = (
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
   afterEach(() => {
     resetConfigCache();
+    queueDrafts.draftsByMediaId = {};
+    queueDrafts.isLoading = false;
+    queueDrafts.isError = false;
+    queueDrafts.error = null;
+    queueDrafts.historyTruncated = false;
   });
 
   it('does not offer search recovery when the library is empty without a search [DUX-W2D6C-RV-02]', () => {
@@ -305,5 +347,69 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
       screen.getByRole('button', { name: 'Edit alt text for Harbour at dusk' }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit alt text' })).toBeNull();
+  });
+});
+
+describe('MediaSelectionTableBody — draft filter lookup honesty [GPUFLOW-3-U-R-04]', () => {
+  afterEach(() => {
+    queueDrafts.draftsByMediaId = {};
+    queueDrafts.isLoading = false;
+    queueDrafts.isError = false;
+    queueDrafts.error = null;
+    queueDrafts.historyTruncated = false;
+  });
+
+  it('shows draft lookup error and Try again instead of no-match when the filter is active', () => {
+    queueDrafts.isError = true;
+
+    renderBody([makeItem({ title: 'Harbour at dusk' })], vi.fn(), {
+      hasDraftFilter: true,
+      onClearDraftFilters: vi.fn(),
+    });
+
+    expect(screen.getByText('Could not load drafts.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show all media' })).toBeInTheDocument();
+    expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'unavailable');
+    expect(screen.queryByText('No media items match the current filters.')).not.toBeInTheDocument();
+  });
+
+  it('shows truncation copy when history is truncated and no drafts match', () => {
+    queueDrafts.historyTruncated = true;
+
+    renderBody([makeItem({ title: 'Harbour at dusk' })], vi.fn(), {
+      hasDraftFilter: true,
+      onClearDraftFilters: vi.fn(),
+    });
+
+    expect(
+      screen.getByText('Only recent drafts were checked. Older drafts may not be listed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show all media' })).toBeInTheDocument();
+    expect(screen.queryByText('No media items match the current filters.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Harbour at dusk')).not.toBeInTheDocument();
+  });
+
+  it('keeps matching rows and shows truncation copy when history is truncated', () => {
+    queueDrafts.historyTruncated = true;
+    queueDrafts.draftsByMediaId = {
+      42: {
+        mediaId: 42,
+        draftText: 'A harbour.',
+        existingAlt: false,
+        runId: null,
+        source: 'description_history',
+      },
+    };
+
+    renderBody([makeItem({ id: 42, title: 'Harbour at dusk' })], vi.fn(), {
+      hasDraftFilter: true,
+      onClearDraftFilters: vi.fn(),
+    });
+
+    expect(
+      screen.getByText('Only recent drafts were checked. Older drafts may not be listed.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Harbour at dusk')).toBeInTheDocument();
   });
 });

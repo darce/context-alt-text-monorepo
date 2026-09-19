@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
-import { useQueueDrafts, type QueueDraft } from '../../hooks/useQueueDrafts';
+import { describeRunItemsQueryKey } from '../../hooks/useDescribeRunApply';
+import { QUEUE_DRAFTS_HISTORY_QUERY_KEY, useQueueDrafts, type QueueDraft } from '../../hooks/useQueueDrafts';
 import type { DataSource } from '../../api/recognition/types';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -93,14 +95,48 @@ export const MediaSelectionTableBody = ({
   onClearDraftFilters,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
   const mediaIds = useMemo(() => items.map((item) => item.id), [items]);
-  const { draftsByMediaId, isLoading: draftsLoading } = useQueueDrafts(mediaIds, draftRunId);
+  const queryClient = useQueryClient();
+  const {
+    draftsByMediaId,
+    isLoading: draftsLoading,
+    isError: draftsIsError,
+    historyTruncated,
+  } = useQueueDrafts(mediaIds, draftRunId);
   const filterByDrafts = hasDraftFilter || Boolean(draftRunId);
+  const retryDraftLookup = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: QUEUE_DRAFTS_HISTORY_QUERY_KEY });
+    if (draftRunId) {
+      void queryClient.invalidateQueries({ queryKey: describeRunItemsQueryKey(draftRunId) });
+    }
+  }, [draftRunId, queryClient]);
   const visibleItems = useMemo(() => {
-    if (!filterByDrafts || draftsLoading) {
+    // Failed lookup must not collapse to a false "no matches" empty [GPUFLOW-3-U-R-04].
+    if (!filterByDrafts || draftsLoading || draftsIsError) {
       return items;
     }
     return items.filter((item) => draftsByMediaId[item.id] != null);
-  }, [draftsByMediaId, draftsLoading, filterByDrafts, items]);
+  }, [draftsByMediaId, draftsIsError, draftsLoading, filterByDrafts, items]);
+  const truncationHeading = __(
+    'Only recent drafts were checked. Older drafts may not be listed.',
+    'alt-context',
+  );
+  const draftTruncationNotice = (
+    <tr>
+      <td colSpan={4}>
+        <EmptyState
+          variant={EmptyStateVariant.UNAVAILABLE}
+          heading={truncationHeading}
+          body={__('Show all media to return to the media library.', 'alt-context')}
+          action={{
+            label: __('Show all media', 'alt-context'),
+            onClick: () => onClearDraftFilters?.(),
+          }}
+          headingLevel={3}
+          announceState={false}
+        />
+      </td>
+    </tr>
+  );
 
   if (isLoading && items.length === 0) {
     return (
@@ -112,11 +148,37 @@ export const MediaSelectionTableBody = ({
     );
   }
 
+  if (filterByDrafts && draftsIsError) {
+    return (
+      <tr>
+        <td colSpan={4}>
+          <EmptyState
+            variant={EmptyStateVariant.UNAVAILABLE}
+            heading={__('Could not load drafts.', 'alt-context')}
+            body={__('Retry the lookup, or show all media to leave the draft filter.', 'alt-context')}
+            action={{
+              label: __('Try again', 'alt-context'),
+              onClick: retryDraftLookup,
+            }}
+            headingLevel={3}
+            announceState={false}
+          />
+          <button type="button" className="button" onClick={() => onClearDraftFilters?.()}>
+            {__('Show all media', 'alt-context')}
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
   if (visibleItems.length === 0) {
     const hasActiveSearch = searchQuery.trim().length > 0;
     const hasStatusFilter = statusFilter !== 'all';
 
     if (items.length > 0 && filterByDrafts) {
+      if (historyTruncated) {
+        return draftTruncationNotice;
+      }
       return (
         <tr>
           <td colSpan={4}>
@@ -199,6 +261,7 @@ export const MediaSelectionTableBody = ({
 
   return (
     <>
+      {filterByDrafts && historyTruncated ? draftTruncationNotice : null}
       {visibleItems.map((item, index) => (
         <MediaSelectionRow
           key={item.id}

@@ -44,7 +44,8 @@ from scene.domain.describe_run import (
     describe_job_error,
     normalize_idempotency_key,
 )
-from scene.interface_adapters.http.deps import get_description_adapter
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.deps import get_cpu_description_adapter, get_description_adapter
 from scene.interface_adapters.http.routers.describe import (
     _DescriptionAuditSink,
     _DescriptionMetricsSink,
@@ -598,6 +599,18 @@ async def create_describe_run(
     # start cycle sees batch_in_progress on its next tick rather than a tick
     # after the first item already needed the GPU.
     await publish_demand_snapshot(session_factory)
+    cpu_adapter = get_cpu_description_adapter()
+    cpu_describe_one = (
+        None
+        if isinstance(cpu_adapter, UnavailableDescriptionAdapter)
+        else _build_describe_one(
+            session_factory=session_factory,
+            tenant_id=tenant_id,
+            adapter=cpu_adapter,
+            settings=settings,
+            recognition_enabled=recognition_enabled,
+        )
+    )
     background_tasks.add_task(
         run_describe_job,
         tenant_id=tenant_id,
@@ -613,6 +626,7 @@ async def create_describe_run(
         # [S01] The same value run_deadline_seconds was derived from.
         timeout_seconds=item_timeout_seconds,
         gpu_policy=run_gpu_policy,
+        cpu_describe_one=cpu_describe_one,
     )
 
     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)

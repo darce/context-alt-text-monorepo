@@ -6,6 +6,7 @@ import {
   DESCRIBE_OPERATION_KIND,
   getDescribeRunContext,
   putDescribeOperationContext,
+  resolveDescribeOperationTenantId,
   subscribeDescribeOperationStore,
   type DescribeOperationContextInput,
 } from './describeOperationStore';
@@ -15,8 +16,11 @@ export interface ActiveDescribeRunState {
   progressMounted: boolean;
 }
 
-let progressMounted = false;
+const progressMountedByTenant = new Map<string | null, boolean>();
 const progressListeners = new Set<() => void>();
+
+const tenantProgressMounted = (): boolean =>
+  progressMountedByTenant.get(resolveDescribeOperationTenantId()) === true;
 
 const emitProgressChange = (): void => {
   progressListeners.forEach((listener) => listener());
@@ -34,7 +38,7 @@ const getProgressMounted = (): boolean => {
   if (existing !== null) {
     return existing.progress_mounted === true;
   }
-  return progressMounted;
+  return tenantProgressMounted();
 };
 
 const getActiveRunId = (): string | null => getDescribeRunContext()?.id ?? null;
@@ -82,6 +86,7 @@ export const setActiveDescribeRunId = (runId: string | null): void => {
     return;
   }
   const existing = getDescribeRunContext();
+  const progressMounted = tenantProgressMounted();
   if (existing?.id === runId) {
     if ((existing.progress_mounted === true) !== progressMounted) {
       persistRunContext(existing, progressMounted);
@@ -108,12 +113,18 @@ export const clearActiveDescribeRunId = (runId: string): void => {
 export const setDescribeProgressMounted = (nextProgressMounted: boolean): void => {
   const existing = getDescribeRunContext();
   const recordMounted = existing?.progress_mounted === true;
+  const progressMounted = tenantProgressMounted();
   if (nextProgressMounted === progressMounted && recordMounted === nextProgressMounted) {
     return;
   }
-  progressMounted = nextProgressMounted;
+  progressMountedByTenant.set(resolveDescribeOperationTenantId(), nextProgressMounted);
   if (existing !== null && recordMounted !== nextProgressMounted) {
     persistRunContext(existing, nextProgressMounted);
   }
   emitProgressChange();
+};
+
+/** Test-only: drop in-memory per-tenant progress flags. */
+export const _resetActiveDescribeRunForTests = (): void => {
+  progressMountedByTenant.clear();
 };

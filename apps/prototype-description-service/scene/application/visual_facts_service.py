@@ -472,12 +472,21 @@ class VisualFactsService:
         except Exception:  # noqa: BLE001 - provenance must never fail the describe
             _logger.exception("fusion recompute failed on cache hit; degrading to no attachment provenance")
             attachments, provenance = (), None
-        self.last_attachments = attachments
+            self.last_attachments = attachments
+            # Fail closed: a Stage-2 recompute fault must not name anyone.
+            preview_faces: Sequence[ConfirmedFace] = ()
+        else:
+            self.last_attachments = attachments
+            from scene.application.naming_preview_service import faces_for_naming_preview
+
+            preview_faces = faces_for_naming_preview(
+                list(confirmed_faces), attachments, self.last_phrase_boxes
+            )
         update: dict[str, Any] = {"attachment_provenance": provenance}
         realized = _rerealize_cached_names(
             row,
             phrase_boxes=self.last_phrase_boxes,
-            confirmed_faces=confirmed_faces,
+            confirmed_faces=preview_faces,
             naming_policy=naming_policy,
         )
         if realized is not None:
@@ -649,6 +658,35 @@ def _merge_provenance_to_response(provenance: Any) -> NamingProvenanceModel | No
     )
 
 
+def cached_naming_preview_skipped(response: VisualFactsResponse) -> bool:
+    """True when cache-hit naming was skipped because no unnamed base exists.
+
+    The cached ``alt_text_draft`` may already hold names; the route must not
+    run naming preview on it (N-R-03).
+    """
+    provenance = response.naming_provenance
+    if provenance is None or response.named_draft is None or response.generic_draft is not None:
+        return False
+    return provenance.status == NamingStatus.SKIPPED_BUDGET
+
+
+def _no_base_naming_update(row: ImageDescription) -> dict[str, Any]:
+    """Keep the cached draft and skip re-merge when no unnamed base is stored."""
+    return {
+        "generic_draft": None,
+        "named_draft": row.alt_text_draft,
+        "naming_provenance": NamingProvenanceModel(
+            injected_names=[],
+            naming_allowed=False,
+            reason=NamingSkipReason.MERGE_ERROR,
+            mode=None,
+            status=NamingStatus.SKIPPED_BUDGET,
+            realizer=None,
+            names_applied=[],
+        ),
+    }
+
+
 def _rerealize_cached_names(
     row: ImageDescription,
     *,
@@ -658,13 +696,13 @@ def _rerealize_cached_names(
 ) -> dict[str, Any] | None:
     """Re-run merge_identities over the cached base caption (no VLM).
 
-    Returns response-field updates, or None when there is no stored base
-    field (keep the cached draft and naming_status unchanged). A merge
-    policy reject stays generic — a wrong name is worse than no name.
+    Returns response-field updates. When there is no stored base field,
+    keep the cached draft as ``named_draft`` and skip naming (N-R-03). A
+    merge policy reject stays generic — a wrong name is worse than no name.
     """
     base = _cached_unnamed_base(row)
     if base is None:
-        return None
+        return _no_base_naming_update(row)
     try:
         result = merge_identities(
             caption=base,

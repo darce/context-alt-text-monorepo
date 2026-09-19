@@ -68,6 +68,7 @@ from scene.application.visual_facts_service import (
     AdapterAttemptTiming,
     VisualFactsService,
     VisualFactsServiceResult,
+    cached_naming_preview_skipped,
 )
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
@@ -1405,31 +1406,36 @@ async def describe_image_multipart(
                 naming_policy=naming_policy,
                 before_compute=_before_compute,
             )
-        # HARM-02: derive positional naming from the Stage-2 decision — identities
-        # whose fact was dropped must not be named by the fallback.
-        preview_faces = _faces_for_naming_preview(confirmed_faces, service.last_attachments, service.last_phrase_boxes)
-        # A cache hit's alt_text_draft is already re-realized with names; the phrase-box spans index the unnamed base.
-        generic_draft = response.generic_draft or response.alt_text_draft
-        named_draft, naming_provenance = await _naming_preview(
-            session=session,
-            tenant=tenant_record,
-            tenant_uuid=tenant_uuid,
-            media_id=envelope.media_id,
-            image_bytes=image_bytes,
-            generic_draft=generic_draft,
-            # Adapter output on generation; restored from the cached row on cache
-            # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
-            phrase_boxes=service.last_phrase_boxes,
-            confirmed_faces=preview_faces,
-            naming_policy=naming_policy,
-        )
-        response = response.model_copy(
-            update={
-                "generic_draft": generic_draft,
-                "named_draft": named_draft,
-                "naming_provenance": naming_provenance,
-            }
-        )
+        # N-R-03: no stored unnamed base — cached draft may already hold names.
+        # Keep the service response; do not re-run preview on alt_text_draft.
+        if not cached_naming_preview_skipped(response):
+            # HARM-02: derive positional naming from the Stage-2 decision — identities
+            # whose fact was dropped must not be named by the fallback.
+            preview_faces = _faces_for_naming_preview(
+                confirmed_faces, service.last_attachments, service.last_phrase_boxes
+            )
+            # A cache hit's alt_text_draft is already re-realized with names; the phrase-box spans index the unnamed base.
+            generic_draft = response.generic_draft or response.alt_text_draft
+            named_draft, naming_provenance = await _naming_preview(
+                session=session,
+                tenant=tenant_record,
+                tenant_uuid=tenant_uuid,
+                media_id=envelope.media_id,
+                image_bytes=image_bytes,
+                generic_draft=generic_draft,
+                # Adapter output on generation; restored from the cached row on cache
+                # hits — both paths yield the same named draft (E19-4A-S4-BR-03).
+                phrase_boxes=service.last_phrase_boxes,
+                confirmed_faces=preview_faces,
+                naming_policy=naming_policy,
+            )
+            response = response.model_copy(
+                update={
+                    "generic_draft": generic_draft,
+                    "named_draft": named_draft,
+                    "naming_provenance": naming_provenance,
+                }
+            )
         server_elapsed_ms = _elapsed_ms(server_start)
         processing_ms = response.attempt_timing.processing_ms
         try:

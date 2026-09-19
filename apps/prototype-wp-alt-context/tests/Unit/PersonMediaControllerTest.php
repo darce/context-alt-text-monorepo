@@ -115,6 +115,31 @@ class PersonMediaControllerTest extends TestCase
         ], $source->calls[0]);
     }
 
+    public function testDuplicateDetectionsOnOneAttachmentReturnOnePhoto(): void
+    {
+        $this->seedPerson(7);
+        $GLOBALS['__ac_attachment_urls'][22] = 'https://example.test/media/22.jpg';
+        $source = $this->source([[
+            'total_count' => 1,
+            'identity_uuid' => 'id-earlier',
+            'attachment_id' => 22,
+            'cluster_uuid' => 'cluster-a',
+        ]]);
+
+        $response = (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'limit' => 50, 'offset' => 0])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertCount(1, $data['media']);
+        $this->assertSame(22, $data['media'][0]['media_id']);
+        $this->assertSame('id-earlier', $data['media'][0]['identity_id']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
     public function testEmptyFirstPageIs200WithTotalZero(): void
     {
         $this->seedPerson(7);
@@ -231,11 +256,18 @@ class PersonMediaControllerTest extends TestCase
         $this->assertNotSame([], $captured);
         $sql = $captured[0];
         $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
+        $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY m.attachment_id ORDER BY m.assigned_at ASC, m.identity_uuid ASC)', $sql);
         $this->assertStringContainsString('tenant_id', $sql);
         $this->assertStringContainsString("'" . addslashes(self::currentTenantId()) . "'", $sql);
         $this->assertStringContainsString('person_id', $sql);
         $this->assertStringContainsString('LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringContainsString('ORDER BY assigned_at ASC, identity_uuid LIMIT 10 OFFSET 2', $sql);
         $this->assertStringNotContainsString('HAVING COUNT(DISTINCT', $sql);
+        $rnPos = strpos($sql, 'rn = 1');
+        $limitPos = strpos($sql, 'LIMIT 10 OFFSET 2');
+        $this->assertNotFalse($rnPos);
+        $this->assertNotFalse($limitPos);
+        $this->assertLessThan($limitPos, $rnPos);
         $this->assertSame(1, $response->get_data()['total']);
         $this->assertFalse($response->get_data()['truncated']);
     }
@@ -481,6 +513,7 @@ class PersonMediaControllerTest extends TestCase
         $this->assertCount(1, $captured);
         $sql = $captured[0];
         $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
+        $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY m.attachment_id ORDER BY m.assigned_at ASC, m.identity_uuid ASC)', $sql);
         $this->assertStringContainsString('m.attachment_id', $sql);
         $this->assertStringContainsString('GROUP BY mx.attachment_id', $sql);
         $this->assertStringContainsString('HAVING COUNT(DISTINCT cx.person_id) = 3', $sql);
@@ -490,7 +523,16 @@ class PersonMediaControllerTest extends TestCase
         $this->assertStringContainsString('`wp_acx_clusters`', $sql);
         $this->assertStringContainsString("'" . addslashes(self::currentTenantId()) . "'", $sql);
         $this->assertStringContainsString('LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringContainsString('ORDER BY assigned_at ASC, identity_uuid LIMIT 10 OFFSET 2', $sql);
         $this->assertStringNotContainsString('%i', $sql);
+        $havingPos = strpos($sql, 'HAVING COUNT(DISTINCT cx.person_id) = 3');
+        $rnPos = strpos($sql, 'rn = 1');
+        $limitPos = strpos($sql, 'LIMIT 10 OFFSET 2');
+        $this->assertNotFalse($havingPos);
+        $this->assertNotFalse($rnPos);
+        $this->assertNotFalse($limitPos);
+        $this->assertLessThan($rnPos, $havingPos);
+        $this->assertLessThan($limitPos, $rnPos);
     }
 
     /**

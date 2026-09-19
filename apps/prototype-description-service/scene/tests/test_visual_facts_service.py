@@ -11,10 +11,16 @@ from db.models.base_imports import Base
 from db.models.scene import ImageDescription
 from scene.application.description_adapter import AdapterResult
 from scene.application.description_repository import ImageDescriptionRepository
-from scene.application.identity_merge import NamingPolicy, NamingStatus, NormalizedBox, PhraseBox
+from scene.application.identity_merge import NamingPolicy, NamingSkipReason, NamingStatus, NormalizedBox, PhraseBox
 from scene.application.seeded_adapter import SeededDescriptionAdapter
 from scene.application.visual_facts_service import VisualFactsService
 from scene.domain.description import DescriptionAdapterKind
+from scene.interface_adapters.http.schemas.requests import (
+    ContextPack,
+    IdentityContext,
+    IdentityContextItem,
+    IdentityPolicyContext,
+)
 from scene.tests.identity_merge_helpers import make_face
 
 IMG = b"\x89PNG service test bytes"
@@ -488,6 +494,23 @@ REREALIZE_FACE = make_face(
 )
 
 
+def _identity_pack_for_face(face, name="Daniel") -> dict:
+    pack = ContextPack(
+        identity=IdentityContext(
+            policy=IdentityPolicyContext(person_naming="allowed"),
+            identities=[
+                IdentityContextItem(
+                    name=name,
+                    identity_id=str(face.identity_id),
+                    cluster_id=str(face.cluster_id),
+                    source="roster",
+                )
+            ],
+        )
+    )
+    return pack.model_dump(exclude_none=True)
+
+
 class _GroundedCaptionAdapter:
     """Fixed caption + phrase boxes so cache-hit naming can re-merge without a VLM."""
 
@@ -666,5 +689,77 @@ def test_cache_hit_without_base_caption_keeps_cached_draft_and_naming_status():
     assert second.cached is True
     assert adapter.calls == 1
     assert second.alt_text_draft == named_only
-    assert second.named_draft is None
-    assert second.naming_provenance is None
+    assert second.named_draft == named_only
+    assert second.generic_draft is None
+    assert second.naming_provenance is not None
+    assert second.naming_provenance.status is NamingStatus.SKIPPED_BUDGET
+    assert second.naming_provenance.reason == NamingSkipReason.MERGE_ERROR
+
+
+def test_cache_hit_does_not_name_face_dropped_by_stage2():
+    """N-R-01: Stage-2 drop (no matching phrase box) must not re-realize the name."""
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=())
+    repo = _MemoryRepo()
+    policy = NamingPolicy(agreement_enabled=True)
+    context = _identity_pack_for_face(REREALIZE_FACE)
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        first = await svc.describe(
+            tenant_id=tenant, media_id=7, image_bytes=IMG, context=context, naming_policy=policy
+        )
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        second = await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=context,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=policy,
+        )
+        return first, second
+
+    first, second = asyncio.run(body())
+    assert first.cached is False
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert "Daniel" not in second.alt_text_draft
+    facts = {f.fact_id: f for f in second.attachment_provenance.facts}
+    identity = facts[f"identity:cluster:{REREALIZE_FACE.cluster_id}"]
+    assert identity.decision == "dropped"
+
+
+def test_cache_hit_still_names_stage2_accepted_face():
+    """N-R-01 regression: a Stage-2-accepted face is still named on cache hit."""
+    tenant = uuid.uuid4()
+    adapter = _GroundedCaptionAdapter(phrase_boxes=(REREALIZE_PERSON,))
+    repo = _MemoryRepo()
+    policy = NamingPolicy(agreement_enabled=True)
+    context = _identity_pack_for_face(REREALIZE_FACE)
+
+    async def body():
+        svc = VisualFactsService(adapter=adapter, repository=repo)
+        first = await svc.describe(
+            tenant_id=tenant, media_id=7, image_bytes=IMG, context=context, naming_policy=policy
+        )
+        svc2 = VisualFactsService(adapter=adapter, repository=repo)
+        second = await svc2.describe(
+            tenant_id=tenant,
+            media_id=8,
+            image_bytes=IMG,
+            context=context,
+            confirmed_faces=[REREALIZE_FACE],
+            naming_policy=policy,
+        )
+        return first, second
+
+    first, second = asyncio.run(body())
+    assert first.cached is False
+    assert second.cached is True
+    assert adapter.calls == 1
+    assert second.alt_text_draft == REREALIZE_NAMED
+    assert second.named_draft == REREALIZE_NAMED
+    facts = {f.fact_id: f for f in second.attachment_provenance.facts}
+    identity = facts[f"identity:cluster:{REREALIZE_FACE.cluster_id}"]
+    assert identity.decision == "object"

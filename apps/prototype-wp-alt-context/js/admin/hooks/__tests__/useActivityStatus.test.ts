@@ -269,7 +269,7 @@ describe('resolveActivityStatus', () => {
         eta_seconds: null,
         gpu_state: GPU_STATE.STOPPED,
       }),
-      { detail: { code: 'gpu_warmup_timeout', retryable: true, startup_budget_seconds: 510 } },
+      { terminal: { code: 'gpu_warmup_timeout', retryable: true, startup_budget_seconds: 510 } },
     );
     const status = resolveActivityStatus({
       scan: idleScan(),

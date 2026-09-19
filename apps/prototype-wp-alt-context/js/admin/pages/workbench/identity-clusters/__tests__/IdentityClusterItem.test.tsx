@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IdentityClusterItem } from '../IdentityClusterItem';
 import type { ClusterGroup } from '../types';
+import { groupIdentitiesByClusters } from '../utils';
 
 const MATCH_DEBOUNCE_MS = 300;
 
@@ -287,6 +288,7 @@ describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-
 
   it('offers Split only when the group itself carries a cluster id', () => {
     renderItem(twoMemberCluster());
+    expect(screen.getByText('Not the same person?')).toBeVisible();
     expect(splitButton()).toBeInTheDocument();
 
     cleanup();
@@ -342,6 +344,7 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
 
   it('preselects the only eligible face group and excludes singleton anchors', () => {
     renderItem(personSpanningCluster());
+    expect(screen.getByText('Not the same person?')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /split group/i }));
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Use face from media #3/i })).not.toBeInTheDocument();
@@ -413,18 +416,93 @@ describe('IdentityClusterItem split routing across a person-spanning group (IDCH
 describe('IdentityClusterItem face-group badge', () => {
   afterEach(cleanup);
 
-  it('shows face groups alongside the member count', () => {
+  it('keeps face-group topology off the daily card and under Not the same person?', () => {
     renderItem({
       ...bobCluster(),
       clusterIds: ['first', 'second'],
-      members: [member(), member({ identity_id: 'id-2' }), member({ identity_id: 'id-3' })],
+      identityClusterIds: { 'id-1': 'first', 'id-2': 'first', 'id-3': 'second' },
+      members: [
+        member({ identity_id: 'id-1', media_id: 1 }),
+        member({ identity_id: 'id-2', media_id: 2, representative_id: 'rep-2' }),
+        member({ identity_id: 'id-3', media_id: 3, representative_id: 'rep-3' }),
+      ],
     });
-    expect(screen.getByRole('img', { name: '2 face groups' })).toBeVisible();
-    expect(screen.getByText('+2')).toBeVisible();
+    expect(screen.queryByRole('img', { name: /face groups?/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    expect(screen.getByText('Not the same person?')).toBeVisible();
+    expect(screen.getByRole('button', { name: /split group/i })).toBeVisible();
   });
 
   it.each([undefined, [], ['first']])('omits the badge unless multiple groups are supplied', (clusterIds) => {
     renderItem({ ...bobCluster(), clusterIds });
     expect(screen.queryByRole('img', { name: /face groups?/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+  });
+});
+
+describe('groupIdentitiesByClusters same-face dedup (GPUFLOW-3 R1)', () => {
+  it('keeps one row when the same media box overlaps above 0.5 IOU', () => {
+    const identities = [
+      member({ identity_id: 'id-1', media_id: 10, bbox: { x: 0, y: 0, width: 50, height: 50 } }),
+      member({
+        identity_id: 'id-2',
+        representative_id: 'rep-2',
+        media_id: 10,
+        bbox: { x: 10, y: 0, width: 50, height: 50 },
+      }),
+    ];
+    const [group] = groupIdentitiesByClusters(identities);
+    expect(group.members.map((row) => row.identity_id)).toEqual(['id-1']);
+  });
+
+  it('keeps distinct faces on the same media when IOU is not above 0.5', () => {
+    const identities = [
+      member({ identity_id: 'id-1', media_id: 10, bbox: { x: 0, y: 0, width: 40, height: 40 } }),
+      member({
+        identity_id: 'id-2',
+        representative_id: 'rep-2',
+        media_id: 10,
+        bbox: { x: 60, y: 60, width: 40, height: 40 },
+      }),
+    ];
+    const [group] = groupIdentitiesByClusters(identities);
+    expect(group.members.map((row) => row.identity_id)).toEqual(['id-1', 'id-2']);
+  });
+
+  it('abstains when boxes are 1px stubs without a usable face region', () => {
+    const identities = [
+      member({ identity_id: 'id-1', media_id: 10, bbox: { x: 0, y: 0, width: 1, height: 1 } }),
+      member({
+        identity_id: 'id-2',
+        representative_id: 'rep-2',
+        media_id: 10,
+        bbox: { x: 0, y: 0, width: 1, height: 1 },
+      }),
+    ];
+    const [group] = groupIdentitiesByClusters(identities);
+    expect(group.members.map((row) => row.identity_id)).toEqual(['id-1', 'id-2']);
+  });
+
+  it('does not merge different people by similarity (GRPH-18)', () => {
+    const identities = [
+      member({
+        identity_id: 'id-1',
+        person_id: '1',
+        media_id: 10,
+        similarity: 1,
+        bbox: { x: 0, y: 0, width: 50, height: 50 },
+      }),
+      member({
+        identity_id: 'id-2',
+        representative_id: 'rep-2',
+        person_id: '2',
+        media_id: 11,
+        similarity: 1,
+        bbox: { x: 0, y: 0, width: 50, height: 50 },
+      }),
+    ];
+    const groups = groupIdentitiesByClusters(identities);
+    expect(groups.map((group) => group.key)).toEqual(['person:1', 'person:2']);
+    expect(groups.map((group) => group.members.map((row) => row.identity_id))).toEqual([['id-1'], ['id-2']]);
   });
 });

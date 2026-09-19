@@ -280,15 +280,15 @@ def test_invalid_phrase_spans_are_not_used_for_gpu_provenance():
         span_end=-1,
         box=NormalizedBox(x=0.1, y=0.1, width=0.1, height=0.2),
     )
-    result = merge_identities(
-        caption=caption,
-        phrase_boxes=[invalid],
-        confirmed_faces=[_face("Ada", cluster_id="person-a", x=0.1)],
-        policy=policy,
-    )
+    faces = [_face("Ada", cluster_id="person-a", x=0.1)]
+    result = merge_identities(caption=caption, phrase_boxes=[invalid], confirmed_faces=faces, policy=policy)
+    boxless = merge_identities(caption=caption, phrase_boxes=[], confirmed_faces=faces, policy=policy)
 
-    assert result.named_draft == caption
-    assert result.provenance.injected_names == ()
+    # Unverifiable spans are ignored entirely: same outcome as a box-less payload.
+    assert result.associations == ()
+    assert result.named_draft == boxless.named_draft
+    assert result.provenance == boxless.provenance
+    assert result.provenance.realizer.value != "grounded"
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../api/config';
 import {
+  _resetActiveDescribeRunForTests,
   setActiveDescribeRunId,
   setDescribeProgressMounted,
   useActiveDescribeRun,
@@ -80,6 +81,7 @@ describe('describeOperationStore', () => {
     vi.setSystemTime(1_700_000_000_000);
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
+    _resetActiveDescribeRunForTests();
     installTenant(TENANT);
     setDescribeProgressMounted(false);
     setActiveDescribeRunId(null);
@@ -88,6 +90,7 @@ describe('describeOperationStore', () => {
   afterEach(() => {
     setActiveDescribeRunId(null);
     setDescribeProgressMounted(false);
+    _resetActiveDescribeRunForTests();
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     resetConfigCache();

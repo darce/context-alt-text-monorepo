@@ -78,6 +78,9 @@ export const DESCRIBE_OPERATION_STORAGE_PREFIX = 'acx_describe_op_v1';
 export const describeOperationRunStorageKey = (tenantId: string): string =>
   `${DESCRIBE_OPERATION_STORAGE_PREFIX}:${tenantId}:run`;
 
+const describeOperationPendingRunStorageKey = (tenantId: string): string =>
+  `${DESCRIBE_OPERATION_STORAGE_PREFIX}:${tenantId}:run:pending`;
+
 export const describeOperationMediaStorageKey = (tenantId: string, mediaId: number): string =>
   `${DESCRIBE_OPERATION_STORAGE_PREFIX}:${tenantId}:media:${mediaId}`;
 
@@ -90,6 +93,7 @@ type TenantScope = string | null;
 // deliberately); a single process-wide context would otherwise leak one
 // tenant's active operation into the next tenant until storage rehydration.
 const runContextByTenant = new Map<TenantScope, DescribeOperationContext | null>();
+const pendingTerminalByTenant = new Map<TenantScope, DescribeOperationContext[]>();
 const suggestByTenant = new Map<TenantScope, Map<number, DescribeOperationContext>>();
 const lastSettledByTenant = new Map<TenantScope, SettledDescribeRun | null>();
 
@@ -368,6 +372,98 @@ const isPendingTerminalRun = (context: DescribeOperationContext): boolean =>
   (context.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK ||
     isDescribeOperationExpired(context));
 
+const pendingListFor = (tenantId: TenantScope): DescribeOperationContext[] =>
+  pendingTerminalByTenant.get(tenantId) ?? [];
+
+const persistPendingList = (tenantId: TenantScope, pending: DescribeOperationContext[]): void => {
+  if (tenantId === null) {
+    return;
+  }
+  const key = describeOperationPendingRunStorageKey(tenantId);
+  if (pending.length === 0) {
+    removeStorageWithTombstone(key);
+    return;
+  }
+  const payload = pending.map((context) => JSON.parse(serializeContext(context)) as unknown);
+  const durable = writeStorageItem(key, JSON.stringify(payload));
+  if (durable) {
+    storageTombstones.delete(key);
+  } else {
+    storageTombstones.add(key);
+  }
+};
+
+const setPendingList = (tenantId: TenantScope, pending: DescribeOperationContext[]): void => {
+  if (pending.length === 0) {
+    pendingTerminalByTenant.delete(tenantId);
+  } else {
+    pendingTerminalByTenant.set(tenantId, pending);
+  }
+  persistPendingList(tenantId, pending);
+};
+
+const upsertPending = (tenantId: TenantScope, context: DescribeOperationContext): void => {
+  const next = pendingListFor(tenantId).filter((item) => item.id !== context.id);
+  next.push(context);
+  setPendingList(tenantId, next);
+};
+
+const removePendingById = (tenantId: TenantScope, id: string): boolean => {
+  const current = pendingListFor(tenantId);
+  const next = current.filter((item) => item.id !== id);
+  if (next.length === current.length) {
+    return false;
+  }
+  setPendingList(tenantId, next);
+  return true;
+};
+
+const parsePendingStoredPayload = (raw: string): DescribeOperationContext[] | null => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const records = Array.isArray(parsed) ? parsed : [parsed];
+    const contexts: DescribeOperationContext[] = [];
+    for (const record of records) {
+      const context = parseContext(record);
+      if (context === null || context.kind !== DESCRIBE_OPERATION_KIND.RUN) {
+        continue;
+      }
+      const durable: DescribeOperationContext = { ...context, persistence: 'durable' };
+      if (!isPendingTerminalRun(durable)) {
+        continue;
+      }
+      contexts.push(durable);
+    }
+    return contexts;
+  } catch {
+    return null;
+  }
+};
+
+const hydratePendingFromStorage = (): void => {
+  const tenantId = resolveTenantId();
+  if (pendingTerminalByTenant.has(tenantId)) {
+    return;
+  }
+  if (tenantId === null) {
+    return;
+  }
+  const key = describeOperationPendingRunStorageKey(tenantId);
+  if (storageTombstones.has(key)) {
+    return;
+  }
+  const storage = readStorageItem(key);
+  if (storage.kind !== 'value') {
+    return;
+  }
+  const contexts = parsePendingStoredPayload(storage.raw);
+  if (contexts === null || contexts.length === 0) {
+    removeStorageWithTombstone(key);
+    return;
+  }
+  pendingTerminalByTenant.set(tenantId, contexts);
+};
+
 const markRunNeedsTerminalCheck = (
   tenantId: TenantScope,
   context: DescribeOperationContext,
@@ -417,6 +513,23 @@ const hydrateRunFromStorage = (): void => {
     return;
   }
   runContextByTenant.set(tenantId, stored.context);
+};
+
+const parkLivePendingIfReplacing = (tenantId: TenantScope, nextRunId: string): void => {
+  hydrateRunFromStorage();
+  hydratePendingFromStorage();
+  const current = runContextByTenant.get(tenantId);
+  if (current === undefined || current === null || current.id === nextRunId) {
+    return;
+  }
+  if (!isPendingTerminalRun(current)) {
+    return;
+  }
+  const marked =
+    current.status === DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK
+      ? current
+      : markRunNeedsTerminalCheck(tenantId, current);
+  upsertPending(tenantId, marked);
 };
 
 const liveRunContext = (): DescribeOperationContext | null => {
@@ -546,14 +659,21 @@ export const getDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 export const pendingTerminalRuns = (): DescribeOperationContext[] => {
   const tenantId = resolveTenantId();
   hydrateRunFromStorage();
+  hydratePendingFromStorage();
+  const pending = [...pendingListFor(tenantId)];
   const current = runContextByTenant.get(tenantId);
   if (current === undefined || current === null || !isPendingTerminalRun(current)) {
-    return [];
+    return pending;
+  }
+  if (pending.some((item) => item.id === current.id)) {
+    return pending;
   }
   if (current.status !== DESCRIBE_RUN_RESUME_STATUS.NEEDS_TERMINAL_CHECK) {
-    return [markRunNeedsTerminalCheck(tenantId, current)];
+    pending.push(markRunNeedsTerminalCheck(tenantId, current));
+    return pending;
   }
-  return [current];
+  pending.push(current);
+  return pending;
 };
 
 export const getLastSettledRun = (): SettledDescribeRun | null => {
@@ -567,6 +687,14 @@ export const settleRun = (id: string, outcome: DescribeRunSettleOutcome): void =
   }
   const tenantId = resolveTenantId();
   hydrateRunFromStorage();
+  hydratePendingFromStorage();
+  const parked = pendingListFor(tenantId).find((item) => item.id === id);
+  if (parked !== undefined && isPendingTerminalRun(parked)) {
+    lastSettledByTenant.set(tenantId, { id, outcome });
+    removePendingById(tenantId, id);
+    emitChange();
+    return;
+  }
   const current = runContextByTenant.get(tenantId);
   if (current === undefined || current === null || current.id !== id) {
     return;
@@ -587,6 +715,8 @@ export const putDescribeOperationContext = (context: DescribeOperationContextInp
   }
   const tenantId = resolveTenantId();
   if (parsed.kind === DESCRIBE_OPERATION_KIND.RUN) {
+    parkLivePendingIfReplacing(tenantId, parsed.id);
+    removePendingById(tenantId, parsed.id);
     let persistence: DescribeOperationPersistence = 'memory_only';
     if (tenantId !== null) {
       const key = describeOperationRunStorageKey(tenantId);
@@ -679,6 +809,7 @@ export const useDescribeSuggestContext = (mediaId: number): DescribeOperationCon
 /** Test-only: drop the in-memory snapshot so the next read rehydrates from sessionStorage. */
 export const _resetDescribeOperationStoreForTests = (): void => {
   runContextByTenant.clear();
+  pendingTerminalByTenant.clear();
   suggestByTenant.clear();
   lastSettledByTenant.clear();
   // Preserve tombstones while the failed delete's old storage value remains;

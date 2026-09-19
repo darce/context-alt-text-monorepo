@@ -13,9 +13,9 @@ use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
  * writing an anonymous class that must implement all 8 interface methods.
  */
 class NullClustersRepository implements ClustersRepositoryInterface {
-	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {}
+	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false ): void {}
 
-	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void {}
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false ): void {}
 
 	public function merge_snapshot_batch_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {}
 

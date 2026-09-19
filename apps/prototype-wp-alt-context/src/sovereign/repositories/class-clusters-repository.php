@@ -53,15 +53,15 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	/**
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
-		$this->snapshot_merger->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version );
+	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false ): void {
+		$this->snapshot_merger->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version, $is_complete );
 	}
 
 	/**
 	 * @param string[] $incoming_cluster_ids
 	 */
-	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void {
-		$this->snapshot_merger->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_cluster_ids );
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false ): void {
+		$this->snapshot_merger->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_cluster_ids, $is_complete );
 	}
 
 	/**

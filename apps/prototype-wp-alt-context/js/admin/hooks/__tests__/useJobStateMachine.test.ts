@@ -5,6 +5,7 @@ import { useJobPersistence } from '../useJobPersistence';
 import { useJobProgressStream } from '../useJobProgressStream';
 import { useCombinedScanStatus } from '../useRecognitionHooks';
 import { useSyncTrigger } from '../useSyncTrigger';
+import { useGpuServiceStatus } from '../useGpuServiceStatus';
 import { useQueryClient } from '@tanstack/react-query';
 import { HTTPError } from '../../utils/http';
 
@@ -73,6 +74,9 @@ vi.mock('../useRecognitionHooks', () => ({
 vi.mock('../useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(() => ({ mutateAsync: vi.fn() })),
 }));
+vi.mock('../useGpuServiceStatus', () => ({
+  useGpuServiceStatus: vi.fn(() => ({ gpuState: 'ready' })),
+}));
 
 describe('useJobStateMachine', () => {
   beforeEach(() => {
@@ -101,6 +105,16 @@ describe('useJobStateMachine', () => {
       batchRunStatusQuery: { data: null },
     });
     (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: vi.fn() });
+  });
+
+  it('runs the scan stream on the warming stall clock while the GPU is warming (G3)', () => {
+    (useGpuServiceStatus as Mock).mockReturnValue({ gpuState: 'warming' });
+    renderHook(() => useJobStateMachine());
+    expect((useJobProgressStream as Mock).mock.calls.at(-1)?.[1]).toMatchObject({ stallPhase: 'warming' });
+
+    (useGpuServiceStatus as Mock).mockReturnValue({ gpuState: 'ready' });
+    renderHook(() => useJobStateMachine());
+    expect((useJobProgressStream as Mock).mock.calls.at(-1)?.[1]).toMatchObject({ stallPhase: 'processing' });
   });
 
   it('initializes with idle phase', () => {

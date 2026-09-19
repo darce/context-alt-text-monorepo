@@ -22,6 +22,7 @@ import {
   jobReducer,
   projectWireStatus,
   type JobEvent,
+  type StallPhase,
   type WireJobStatus,
 } from './jobMachine';
 import { useJobCoordination } from './useJobCoordination';
@@ -83,6 +84,13 @@ export interface JobProgressStreamOptions {
    * line is honest, a wrongly-joined one is a false trail (ml CAL-02).
    */
   resolveRequestId?: (jobId: string) => string | null;
+  /**
+   * Stall clock for STALL_TICK. `warming` while the GPU is starting/warming so a cold boot
+   * is not reported as stalled after the 30 s processing clock (G3, PERC-03). Defaults to
+   * `processing`.
+   */
+  stallPhase?: StallPhase;
+  startupBudgetSeconds?: number | null;
 }
 
 export interface JobProgressStream {
@@ -176,8 +184,10 @@ export const useJobProgressStream = (
   // time the `[jobId]` effect declared after it reads `resolveRequestIdRef.current`. First
   // mount is covered by the `useRef` initializer, later renders by the effect.
   const resolveRequestIdRef = useRef(options.resolveRequestId);
+  const stallClockRef = useRef({ phase: options.stallPhase, startupBudgetSeconds: options.startupBudgetSeconds });
   useEffect(() => {
     resolveRequestIdRef.current = options.resolveRequestId;
+    stallClockRef.current = { phase: options.stallPhase, startupBudgetSeconds: options.startupBudgetSeconds };
   });
 
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -283,7 +293,13 @@ export const useJobProgressStream = (
     if (!streamIsActive) {
       return;
     }
-    const tick = () => dispatch({ type: JOB_EVENT.STALL_TICK, now: Date.now() });
+    const tick = () =>
+      dispatch({
+        type: JOB_EVENT.STALL_TICK,
+        now: Date.now(),
+        phase: stallClockRef.current.phase,
+        startupBudgetSeconds: stallClockRef.current.startupBudgetSeconds,
+      });
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);

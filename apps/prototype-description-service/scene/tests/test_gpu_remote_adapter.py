@@ -901,7 +901,37 @@ def test_gpu_remote_adapter_grounding_coord_above_1000_outside_image_fails_close
     captured: list[dict] = []
     handler = _caption_then_grounding_handler(
         caption="A woman waves.",
-        grounding_content=json.dumps([{"bbox_2d": [250.0, 100.0, 2500.0, 900.0], "label": "A woman"}]),
+        grounding_content=json.dumps([{"bbox_2d": [0.0, 0.0, 1001.0, 800.0], "label": "A woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_coord_in_open_1000_to_image_width_fails_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps([{"bbox_2d": [0.0, 0.0, 1500.0, 800.0], "label": "A woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_negative_coord_fails_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps([{"bbox_2d": [-50.0, 0.0, 500.0, 500.0], "label": "A woman"}]),
         captured=captured,
     )
 

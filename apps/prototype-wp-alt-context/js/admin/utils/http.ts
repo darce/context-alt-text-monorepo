@@ -15,6 +15,7 @@ import {
   TransportError,
   UnknownBoundaryError,
 } from './errorTaxonomy';
+import { parseUnavailable, type ServiceUnavailable } from './serviceUnavailable';
 
 /**
  * The error vocabulary lives in the leaf module `./errorTaxonomy` so this
@@ -270,6 +271,25 @@ const composeAbortSignals = (signals: AbortSignal[]): AbortSignal => {
   return controller.signal;
 };
 
+const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const parseUnavailableFromErrorText = (errorText: string): ServiceUnavailable | null => {
+  try {
+    const parsed: unknown = JSON.parse(errorText);
+    if (!isJsonRecord(parsed)) {
+      return null;
+    }
+    const fromRoot = parseUnavailable(parsed.unavailable);
+    if (fromRoot) {
+      return fromRoot;
+    }
+    return isJsonRecord(parsed.data) ? parseUnavailable(parsed.data.unavailable) : null;
+  } catch {
+    return null;
+  }
+};
+
 const throwHttpError = (
   endpoint: string,
   status: number,
@@ -282,6 +302,7 @@ const throwHttpError = (
     retryAfterSeconds,
     endpoint,
     bodyPreview: buildResponsePreview(errorText),
+    unavailable: parseUnavailableFromErrorText(errorText),
     message: `Request to ${endpoint} failed (${status}): ${errorText}`,
   });
 };

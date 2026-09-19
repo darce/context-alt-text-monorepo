@@ -1,8 +1,14 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
 import { toWorkbench } from '../../navigation/appLinks';
+import {
+  readUnavailable,
+  unavailableReasonCopy,
+  unavailableServiceLabel,
+} from '../../utils/serviceUnavailable';
 import { GPU_STATE_ICON, GPU_STATE_TONE, gpuStatePresentation } from '../workbench/gpuStatePresentation';
 import { useGpuControl } from './useGpuControl';
 
@@ -153,143 +159,20 @@ const errorCopy = (error: unknown): string => {
     : 'Could not reach the description service. Retrying in 15 s.';
 };
 
-const UNAVAILABLE_REASON = {
-  NOT_CONFIGURED: 'not_configured',
-  API_KEY_MISSING: 'api_key_missing',
-  CIRCUIT_OPEN: 'circuit_open',
-  UPSTREAM_5XX: 'upstream_5xx',
-  UPSTREAM_4XX: 'upstream_4xx',
-  TIMEOUT: 'timeout',
-  CONTRACT_MISMATCH: 'contract_mismatch',
-} as const;
-
-const UNAVAILABLE_SERVICE = {
-  RECOGNITION: 'recognition',
-  SCENE: 'scene',
-} as const;
-
-interface ServiceUnavailable {
-  reason: string;
-  service: string;
-  http_status: number | null;
-  retry_after_seconds: number | null;
-  checked_at: string;
-}
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const parseUnavailable = (value: unknown): ServiceUnavailable | null => {
-  if (!isRecord(value)) {
+const intentFailureCopy = (
+  action: typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO | null,
+  error: unknown,
+): string | null => {
+  if (error == null || readUnavailable(error) !== null) {
     return null;
   }
-  if (typeof value.reason !== 'string' || value.reason.trim() === '') {
-    return null;
-  }
-  if (typeof value.service !== 'string' || value.service.trim() === '') {
-    return null;
-  }
-  if (value.http_status !== null && value.http_status !== undefined) {
-    if (typeof value.http_status !== 'number' || !Number.isFinite(value.http_status)) {
-      return null;
-    }
-  }
-  if (value.retry_after_seconds !== null && value.retry_after_seconds !== undefined) {
-    if (typeof value.retry_after_seconds !== 'number' || !Number.isFinite(value.retry_after_seconds)) {
-      return null;
-    }
-  }
-  if (typeof value.checked_at !== 'string' || value.checked_at.trim() === '') {
-    return null;
-  }
-  return {
-    reason: value.reason,
-    service: value.service,
-    http_status: typeof value.http_status === 'number' ? value.http_status : null,
-    retry_after_seconds: typeof value.retry_after_seconds === 'number' ? value.retry_after_seconds : null,
-    checked_at: value.checked_at,
-  };
-};
-
-const readUnavailable = (source: unknown): ServiceUnavailable | null => {
-  if (!isRecord(source)) {
-    return null;
-  }
-  const direct = parseUnavailable(source.unavailable);
-  if (direct) {
-    return direct;
-  }
-  if (typeof source.bodyPreview !== 'string') {
-    return null;
-  }
-  try {
-    const parsed: unknown = JSON.parse(source.bodyPreview);
-    if (!isRecord(parsed)) {
-      return null;
-    }
-    const fromRoot = parseUnavailable(parsed.unavailable);
-    if (fromRoot) {
-      return fromRoot;
-    }
-    return isRecord(parsed.data) ? parseUnavailable(parsed.data.unavailable) : null;
-  } catch {
-    return null;
-  }
-};
-
-const unavailableServiceLabel = (service: string): string => {
-  switch (service) {
-    case UNAVAILABLE_SERVICE.RECOGNITION:
-      return __('Recognition service', 'alt-context');
-    case UNAVAILABLE_SERVICE.SCENE:
-      return __('Description service', 'alt-context');
+  switch (action) {
+    case GpuIntentAction.START:
+      return __('Start request failed', 'alt-context');
+    case GpuIntentAction.STOP:
+      return __('Stop request failed', 'alt-context');
     default:
-      return __('Service', 'alt-context');
-  }
-};
-
-const unavailableReasonCopy = (reason: string): { why: string; fix: string } => {
-  switch (reason) {
-    case UNAVAILABLE_REASON.NOT_CONFIGURED:
-      return {
-        why: __('it is not configured', 'alt-context'),
-        fix: __('Set the API URL in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.API_KEY_MISSING:
-      return {
-        why: __('the API key is missing', 'alt-context'),
-        fix: __('Add the API key in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.CIRCUIT_OPEN:
-      return {
-        why: __('the circuit breaker is open', 'alt-context'),
-        fix: __('Wait for the cooldown, then Retry.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.UPSTREAM_5XX:
-      return {
-        why: __('it returned a server error', 'alt-context'),
-        fix: __('Retry in a moment. If it continues, check the service logs.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.UPSTREAM_4XX:
-      return {
-        why: __('it rejected the request', 'alt-context'),
-        fix: __('Check the API URL and key in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.TIMEOUT:
-      return {
-        why: __('it did not respond in time', 'alt-context'),
-        fix: __('Retry. If it continues, check that the host is reachable.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.CONTRACT_MISMATCH:
-      return {
-        why: __('it returned a response this plugin does not recognize', 'alt-context'),
-        fix: __('Confirm the plugin and service are on compatible versions.', 'alt-context'),
-      };
-    default:
-      return {
-        why: sprintf(__('an unexpected error occurred (%s)', 'alt-context'), reason),
-        fix: __('Retry. If it continues, check Settings and the service logs.', 'alt-context'),
-      };
+      return null;
   }
 };
 
@@ -315,9 +198,13 @@ export const GpuControlCard = (): React.JSX.Element => {
     canReturnToAuto,
     requestIntent,
     isIntentPending,
+    intentError,
   } = useGpuControl();
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
   const [clearedConfirmationReason, setClearedConfirmationReason] = React.useState<string | null>(null);
+  const [lastIntentAction, setLastIntentAction] = React.useState<
+    typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO | null
+  >(null);
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
   const pendingReason = isIntentPending ? __('a service request is already in flight', 'alt-context') : null;
@@ -329,11 +216,19 @@ export const GpuControlCard = (): React.JSX.Element => {
     : null;
   const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
-  const unavailable = readUnavailable(data) ?? readUnavailable(error);
+  const unavailable = readUnavailable(data) ?? readUnavailable(intentError) ?? readUnavailable(error);
   const unavailableService = unavailable ? unavailableServiceLabel(unavailable.service) : null;
   const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
   const lastChecked = unavailable ? formatClock(unavailable.checked_at) : null;
   const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+  const intentFailureNotice = intentFailureCopy(lastIntentAction, intentError);
+
+  const submitIntent = (
+    action: typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO,
+  ): void => {
+    setLastIntentAction(action);
+    requestIntent(action);
+  };
 
   React.useEffect(() => {
     if (confirmation === null) {
@@ -356,9 +251,9 @@ export const GpuControlCard = (): React.JSX.Element => {
   const confirm = (): void => {
     const action = confirmation;
     if (action === GpuIntentAction.START && canStart) {
-      requestIntent(action);
+      submitIntent(action);
     } else if (action === GpuIntentAction.STOP && canStop) {
-      requestIntent(action);
+      submitIntent(action);
     }
     setConfirmation(null);
   };
@@ -439,6 +334,17 @@ export const GpuControlCard = (): React.JSX.Element => {
           </span>
         ) : isError ? (
           <span className="notice-error">{errorCopy(error)}</span>
+        ) : null}
+        {intentFailureNotice ? (
+          <span className="notice-error" role="alert" data-testid="gpu-intent-failure">
+            <AlertTriangle
+              className="acx-gpu-control__state-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="gpu-intent-failure-icon"
+            />{' '}
+            <span>{intentFailureNotice}</span>
+          </span>
         ) : null}
         {clearedConfirmationReason ? (
           <span data-testid="gpu-confirmation-cleared-reason">{clearedConfirmationReason}</span>
@@ -548,7 +454,7 @@ export const GpuControlCard = (): React.JSX.Element => {
               <button
                 type="button"
                 className="acx-button acx-button--secondary"
-                onClick={() => requestIntent(GpuIntentAction.AUTO)}
+                onClick={() => submitIntent(GpuIntentAction.AUTO)}
                 disabled={isIntentPending}
               >
                 <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}

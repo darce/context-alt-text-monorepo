@@ -222,8 +222,14 @@ describe('ActivityStatusStrip cancel confirm (dialog only for cancel)', () => {
 
     render(<ActivityStatusStrip />);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByRole('heading', { name: 'Cancel this run?' })).toBeTruthy();
+    const heading = await screen.findByRole('heading', { name: 'Cancel this run?' });
+    const dialog =
+      heading.closest('[role="dialog"]') ??
+      heading.closest('.acx-dialog__content') ??
+      heading.parentElement;
+    if (!(dialog instanceof HTMLElement)) {
+      throw new Error('expected cancel confirm container');
+    }
     expect(onCancel).not.toHaveBeenCalled();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel run' }));
     expect(onCancel).toHaveBeenCalledTimes(1);

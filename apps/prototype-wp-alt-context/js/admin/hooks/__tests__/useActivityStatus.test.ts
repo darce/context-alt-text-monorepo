@@ -1,13 +1,16 @@
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache } from '../../api/config';
 import {
   DESCRIBE_RUN_PHASE,
   DESCRIBE_RUN_STATUS,
+  DESCRIBE_RUN_TERMINAL_CODE,
   GPU_STATE,
+  type DescribeRunItem,
+  type DescribeRunItemsResponse,
   type DescribeRunResponse,
 } from '../../api/describeApi';
 import type { GpuState } from '../../api/describeApi';
@@ -20,6 +23,7 @@ import {
   DESCRIBE_OPERATION_KIND,
   DESCRIBE_RUN_RESUME_STATUS,
   DESCRIBE_RUN_SETTLE_OUTCOME,
+  getDescribeRunContext,
   getLastSettledRun,
   pendingTerminalRuns,
   putDescribeOperationContext,
@@ -44,11 +48,19 @@ vi.mock('../../api/gpuApi', async (importOriginal) => {
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
-  return { ...actual, fetchBulkDescribeRun: vi.fn(), cancelBulkDescribeRun: vi.fn() };
+  return {
+    ...actual,
+    fetchBulkDescribeRun: vi.fn(),
+    cancelBulkDescribeRun: vi.fn(),
+    fetchDescribeRunItems: vi.fn(),
+    submitBulkDescribeRun: vi.fn(),
+  };
 });
 
 const fetchGpuStatusMock = vi.mocked(gpuApi.fetchGpuStatus);
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const fetchDescribeRunItemsMock = vi.mocked(describeApi.fetchDescribeRunItems);
+const submitBulkDescribeRunMock = vi.mocked(describeApi.submitBulkDescribeRun);
 
 const TENANT = 'tenant-a';
 
@@ -157,6 +169,71 @@ const installTenant = (): void => {
     ajaxUrl: '/wp-admin/admin-ajax.php',
     endpoints: {},
     tenant_id: TENANT,
+  });
+};
+
+const describeItem = (mediaId: number, status: string): DescribeRunItem => ({
+  media_id: mediaId,
+  status,
+  alt_text_draft: null,
+  caption: null,
+  provenance: null,
+  tier: null,
+  result_generation: 0,
+  existing_alt: false,
+});
+
+const itemsResponse = (
+  runId: string,
+  items: DescribeRunItem[],
+): DescribeRunItemsResponse => ({
+  run_id: runId,
+  items,
+});
+
+const warmupTimeoutRun = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse =>
+  Object.assign(
+    describeRun({
+      status: DESCRIBE_RUN_STATUS.FAILED,
+      phase: DESCRIBE_RUN_PHASE.FAILED,
+      completed: 1,
+      failed: 1,
+      skipped: 0,
+      total: 3,
+      eta_seconds: null,
+      gpu_state: GPU_STATE.STOPPED,
+      ...overrides,
+    }),
+    {
+      terminal: {
+        code: DESCRIBE_RUN_TERMINAL_CODE.GPU_WARMUP_TIMEOUT,
+        retryable: true,
+        startup_budget_seconds: 510,
+      },
+    },
+  );
+
+const seedWarmupTimeoutRun = (runId = 'run-1'): void => {
+  putDescribeOperationContext({
+    version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+    kind: DESCRIBE_OPERATION_KIND.RUN,
+    id: runId,
+    startup_id: null,
+    started_at: Date.now(),
+    request: { writeAlt: false, force: false },
+  });
+  fetchBulkDescribeRunMock.mockImplementation(async (id: string) => {
+    if (id === runId) {
+      return warmupTimeoutRun({ run_id: runId });
+    }
+    return describeRun({
+      run_id: id,
+      status: DESCRIBE_RUN_STATUS.PENDING,
+      phase: DESCRIBE_RUN_PHASE.WARMING,
+      completed: 0,
+      eta_seconds: 90,
+      gpu_state: GPU_STATE.WARMING,
+    });
   });
 };
 
@@ -355,6 +432,14 @@ describe('useActivityStatus', () => {
     sessionStorage.clear();
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
     fetchBulkDescribeRunMock.mockResolvedValue(describeRun());
+    fetchDescribeRunItemsMock.mockResolvedValue(itemsResponse('run-1', []));
+    submitBulkDescribeRunMock.mockResolvedValue(
+      describeRun({
+        run_id: 'run-2',
+        status: DESCRIBE_RUN_STATUS.PENDING,
+        phase: DESCRIBE_RUN_PHASE.WARMING,
+      }),
+    );
   });
 
   afterEach(async () => {
@@ -447,5 +532,154 @@ describe('useActivityStatus', () => {
     expect(result.current.status.kind).toBe(ACTIVITY_KIND.DONE);
     expect(result.current.status.draftCount).toBe(4);
     expect(result.current.actions.reviewDraftsHref).toContain('run-settle');
+  });
+
+  it('resubmits unfinished items on GPU warmup-timeout Retry and persists the new run', async () => {
+    seedWarmupTimeoutRun('run-old');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-old', [
+        describeItem(11, 'completed'),
+        describeItem(12, 'skipped'),
+        describeItem(13, 'failed'),
+        describeItem(14, 'pending'),
+      ]),
+    );
+    submitBulkDescribeRunMock.mockResolvedValue(
+      describeRun({
+        run_id: 'run-new',
+        status: DESCRIBE_RUN_STATUS.PENDING,
+        phase: DESCRIBE_RUN_PHASE.WARMING,
+        gpu_state: GPU_STATE.WARMING,
+        eta_seconds: 80,
+        completed: 0,
+      }),
+    );
+
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.actions.onRetry).not.toBeNull();
+
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledWith('run-old');
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith([13, 14]);
+    await waitFor(() => expect(getDescribeRunContext()?.id).toBe('run-new'));
+    await waitFor(() => expect(result.current.status.runId).toBe('run-new'));
+  });
+
+  it('does not submit a second warmup-timeout resubmit while the first is pending', async () => {
+    seedWarmupTimeoutRun('run-1');
+    let resolveItems: ((value: DescribeRunItemsResponse) => void) | undefined;
+    fetchDescribeRunItemsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveItems = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    act(() => {
+      result.current.actions.onRetry?.();
+      result.current.actions.onRetry?.();
+    });
+
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.actions.onRetry).toBeNull());
+
+    act(() => {
+      resolveItems?.(
+        itemsResponse('run-1', [describeItem(21, 'failed'), describeItem(22, 'completed')]),
+      );
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    expect(submitBulkDescribeRunMock).toHaveBeenCalledWith([21]);
+  });
+
+  it('keeps Retry available after a warmup-timeout resubmit failure', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(31, 'failed')]),
+    );
+    submitBulkDescribeRunMock.mockRejectedValue(new Error('could not start run'));
+
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT);
+    expect(getDescribeRunContext()?.id).toBe('run-1');
+  });
+
+  it('does not submit when warmup-timeout items are already finished and hides Retry', async () => {
+    seedWarmupTimeoutRun('run-1');
+    fetchDescribeRunItemsMock.mockResolvedValue(
+      itemsResponse('run-1', [describeItem(41, 'completed'), describeItem(42, 'skipped')]),
+    );
+
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+
+    await waitFor(() => expect(fetchDescribeRunItemsMock).toHaveBeenCalledWith('run-1'));
+    await waitFor(() => expect(result.current.actions.onRetry).toBeNull());
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+    expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
+    expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT);
+  });
+
+  it('retries SCAN_FAILED via the scan source without submitting a describe run', async () => {
+    const retryScan = vi.fn();
+    const { result } = renderHook(
+      () =>
+        useActivityStatus({
+          scan: {
+            isScanning: false,
+            errorMessage: 'People identification failed.',
+            retryScan,
+          },
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.SCAN_FAILED));
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+    expect(retryScan).toHaveBeenCalledTimes(1);
+    expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
+  });
+
+  it('retries GPU_STATUS_UNAVAILABLE via gpu refetch without submitting a describe run', async () => {
+    fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+
+    await waitFor(() =>
+      expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE),
+    );
+    const callsBefore = fetchGpuStatusMock.mock.calls.length;
+    act(() => {
+      result.current.actions.onRetry?.();
+    });
+    await waitFor(() => expect(fetchGpuStatusMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    expect(fetchDescribeRunItemsMock).not.toHaveBeenCalled();
+    expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
   });
 });

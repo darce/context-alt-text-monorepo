@@ -2,12 +2,41 @@
  * Utility functions for identity cluster operations.
  */
 
-import type { DetectedIdentity } from '../../../api/recognition';
+import type { BoundingBox, DetectedIdentity } from '../../../api/recognition';
 import { isHumanLabeledTarget } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 
 /** Bucket key for identities with neither a person nor a cluster (GPUFLOW-2 C5). */
 export const UNGROUPED_GROUP_KEY = 'ungrouped';
+
+/** Same-media duplicate-face cutoff. Spatial overlap only; never similarity (GRPH-18). */
+const SAME_FACE_BBOX_IOU = 0.5;
+
+const bboxArea = (bbox: BoundingBox): number => Math.max(0, bbox.width) * Math.max(0, bbox.height);
+
+// WHY: detector boxes are pixel-sized; 1×1 stubs are not face-region evidence, so abstain (FIR).
+const hasUsableFaceRegion = (bbox: BoundingBox): boolean => bbox.width > 1 && bbox.height > 1;
+
+const bboxIou = (left: BoundingBox, right: BoundingBox): number => {
+  const leftRight = left.x + left.width;
+  const leftBottom = left.y + left.height;
+  const rightRight = right.x + right.width;
+  const rightBottom = right.y + right.height;
+  const overlapWidth = Math.max(0, Math.min(leftRight, rightRight) - Math.max(left.x, right.x));
+  const overlapHeight = Math.max(0, Math.min(leftBottom, rightBottom) - Math.max(left.y, right.y));
+  const intersection = overlapWidth * overlapHeight;
+  const union = bboxArea(left) + bboxArea(right) - intersection;
+  if (union <= 0) {
+    return 0;
+  }
+  return intersection / union;
+};
+
+const isSameFaceInMedia = (left: DetectedIdentity, right: DetectedIdentity): boolean =>
+  left.media_id === right.media_id &&
+  hasUsableFaceRegion(left.bbox) &&
+  hasUsableFaceRegion(right.bbox) &&
+  bboxIou(left.bbox, right.bbox) > SAME_FACE_BBOX_IOU;
 
 export const isUngroupedGroup = (group: ClusterGroup): boolean => group.key === UNGROUPED_GROUP_KEY;
 
@@ -138,7 +167,9 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
       group.clusteringPending = true;
     }
 
-    group.members.push(identity);
+    if (!group.members.some((existing) => isSameFaceInMedia(existing, identity))) {
+      group.members.push(identity);
+    }
   });
 
   // A group formed from an unbound first member (clusterId null) but later

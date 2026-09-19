@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { faceGroupsBadge, gatedClusterCopy, repairGatedCount } from '../representativeVocabulary';
+import { gatedClusterCopy, repairGatedCount } from '../representativeVocabulary';
 
 describe('repairGatedCount', () => {
   it('R3-03: zero evidence and zero unlabeled does not invent a group', () => {
@@ -38,8 +38,9 @@ describe('repairGatedCount', () => {
   });
 });
 
-describe('faceGroupsBadge', () => {
-  it.each([[0, '0 face groups'], [1, '1 face group'], [2, '2 face groups']])('formats %i groups', (count, expected) => {
-    expect(faceGroupsBadge(count)).toBe(expected);
+describe('face-group badge copy', () => {
+  it('does not keep daily-card face-group badge copy', async () => {
+    const vocab = await import('../representativeVocabulary');
+    expect(vocab).not.toHaveProperty('faceGroupsBadge');
   });
 });

@@ -61,7 +61,7 @@ const appliedRealizerLabel = (realizer: NamingRealizer | null): string | null =>
   return null;
 };
 
-const namingBadgeCopy = (naming: NamingProvenance): NamingBadgeCopy | null => {
+const namingBadgeCopy = (naming: NamingProvenance): NamingBadgeCopy => {
   switch (naming.status) {
     case NAMING_PROVENANCE_STATUS.APPLIED: {
       const names = naming.names_applied.join(', ');
@@ -95,8 +95,31 @@ const namingBadgeCopy = (naming: NamingProvenance): NamingBadgeCopy | null => {
         description: __('Names were not applied because no faces were detected.', 'alt-context'),
         icon: '○',
       };
+    case NAMING_PROVENANCE_STATUS.NO_CONFIRMED_IDENTITIES:
+      return {
+        label: __('Faces found, none confirmed', 'alt-context'),
+        description: __(
+          'Names were not applied because none of the detected faces are confirmed identities.',
+          'alt-context',
+        ),
+        icon: '○',
+      };
+    case NAMING_PROVENANCE_STATUS.NO_ELIGIBLE_IDENTITIES:
+    case NAMING_PROVENANCE_STATUS.AMBIGUOUS_GROUNDING:
+      return {
+        label: __('Grounding ambiguous', 'alt-context'),
+        description:
+          naming.status === NAMING_PROVENANCE_STATUS.NO_ELIGIBLE_IDENTITIES
+            ? __('Names were not applied because no identities were eligible.', 'alt-context')
+            : __('Names were not applied because face-to-phrase grounding was ambiguous.', 'alt-context'),
+        icon: '○',
+      };
     default:
-      return null;
+      return {
+        label: __('Names not applied', 'alt-context'),
+        description: __('Naming status was not recognized.', 'alt-context'),
+        icon: '○',
+      };
   }
 };
 
@@ -111,9 +134,6 @@ const namingBadgeFor = (item: DescribeRunItem): React.JSX.Element | null => {
     return null;
   }
   const copy = namingBadgeCopy(naming);
-  if (!copy) {
-    return null;
-  }
 
   return (
     <span
@@ -127,6 +147,79 @@ const namingBadgeFor = (item: DescribeRunItem): React.JSX.Element | null => {
       </span>
       <span>{copy.label}</span>
     </span>
+  );
+};
+
+export interface DescribeRunApplyItemOverwrite {
+  checked: boolean;
+  onToggle: () => void;
+  ariaLabel: string;
+}
+
+export interface DescribeRunApplyItemRowProps {
+  item: DescribeRunItem;
+  mediaIdLabel: string;
+  heading?: string;
+  overwrite?: DescribeRunApplyItemOverwrite;
+}
+
+const itemThumbnail = (item: DescribeRunItem, alt: string): React.JSX.Element => {
+  const thumbnailUrl = typeof item.thumbnail_url === 'string' && item.thumbnail_url !== '' ? item.thumbnail_url : null;
+  const thumbnailSrcset =
+    typeof item.thumbnail_srcset === 'string' && item.thumbnail_srcset !== '' ? item.thumbnail_srcset : undefined;
+
+  if (thumbnailUrl) {
+    return (
+      <img
+        src={thumbnailUrl}
+        srcSet={thumbnailSrcset}
+        alt={alt}
+        className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
+        loading="lazy"
+        decoding="async"
+      />
+    );
+  }
+
+  return <span className="acx-media-selection__thumb acx-media-selection__thumb--placeholder" />;
+};
+
+/**
+ * Ready-to-apply evidence row: attachment thumb beside the draft, plus
+ * reason-specific naming copy. Exported for spa-queue-drafts-mount.
+ */
+export const DescribeRunApplyItemRow = ({
+  item,
+  mediaIdLabel,
+  heading,
+  overwrite,
+}: DescribeRunApplyItemRowProps): React.JSX.Element => {
+  const title = heading ?? itemHeading(item);
+  const headingNode = <span className="acx-run-apply__item-heading">{title}</span>;
+
+  return (
+    <li className={overwrite ? 'acx-run-apply__item acx-run-apply__item--existing' : 'acx-run-apply__item'}>
+      {overwrite ? (
+        <label className="acx-run-apply__overwrite">
+          <input
+            type="checkbox"
+            checked={overwrite.checked}
+            onChange={overwrite.onToggle}
+            aria-label={overwrite.ariaLabel}
+          />
+          {headingNode}
+        </label>
+      ) : (
+        headingNode
+      )}
+      <div className="acx-run-apply__item-evidence">
+        {itemThumbnail(item, title)}
+        {item.alt_text_draft ? <span className="acx-run-apply__draft">{item.alt_text_draft}</span> : null}
+      </div>
+      {mediaIdLabel !== '' ? <span className="acx-run-apply__media-id">{mediaIdLabel}</span> : null}
+      {tierBadgeFor(item)}
+      {namingBadgeFor(item)}
+    </li>
   );
 };
 
@@ -488,32 +581,24 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                 <p>{safePanelBody}</p>
                 <ul className="acx-run-apply__list">
                   {withoutAlt.map((item) => (
-                    <li key={item.media_id} className="acx-run-apply__item">
-                      <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                      <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                      <span className="acx-run-apply__media-id">
-                        {sprintf(__('Media %d', 'alt-context'), item.media_id)}
-                      </span>
-                      {tierBadgeFor(item)}
-                      {namingBadgeFor(item)}
-                    </li>
+                    <DescribeRunApplyItemRow
+                      key={item.media_id}
+                      item={item}
+                      mediaIdLabel={sprintf(__('Media %d', 'alt-context'), item.media_id)}
+                    />
                   ))}
                   {/* When safe drafts coexist with outstanding partials, list the
                       history-completion rows under the same primary so the operator
                       sees the full write set the button will perform. */}
                   {historyCompletionItems.map((item) => (
-                    <li key={`partial-${item.media_id}`} className="acx-run-apply__item">
-                      <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                      <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                      <span className="acx-run-apply__media-id">
-                        {sprintf(
-                          __('Media %1$d — needs history completion (no overwrite)', 'alt-context'),
-                          item.media_id,
-                        )}
-                      </span>
-                      {tierBadgeFor(item)}
-                      {namingBadgeFor(item)}
-                    </li>
+                    <DescribeRunApplyItemRow
+                      key={`partial-${item.media_id}`}
+                      item={item}
+                      mediaIdLabel={sprintf(
+                        __('Media %1$d — needs history completion (no overwrite)', 'alt-context'),
+                        item.media_id,
+                      )}
+                    />
                   ))}
                 </ul>
                 {nothingSelectedIdle ? (
@@ -547,26 +632,19 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
                   </p>
                   <ul className="acx-run-apply__list">
                     {overwriteCandidates.map((item) => (
-                      <li key={item.media_id} className="acx-run-apply__item acx-run-apply__item--existing">
-                        <label className="acx-run-apply__overwrite">
-                          <input
-                            type="checkbox"
-                            checked={overwriteIds.has(item.media_id)}
-                            onChange={() => toggleOverwrite(item.media_id)}
-                            aria-label={sprintf(
-                              __('Overwrite existing alt text for media %d', 'alt-context'),
-                              item.media_id,
-                            )}
-                          />
-                          <span className="acx-run-apply__item-heading">{itemHeading(item)}</span>
-                        </label>
-                        <span className="acx-run-apply__draft">{item.alt_text_draft}</span>
-                        <span className="acx-run-apply__media-id">
-                          {sprintf(__('Media %d', 'alt-context'), item.media_id)}
-                        </span>
-                        {tierBadgeFor(item)}
-                        {namingBadgeFor(item)}
-                      </li>
+                      <DescribeRunApplyItemRow
+                        key={item.media_id}
+                        item={item}
+                        mediaIdLabel={sprintf(__('Media %d', 'alt-context'), item.media_id)}
+                        overwrite={{
+                          checked: overwriteIds.has(item.media_id),
+                          onToggle: () => toggleOverwrite(item.media_id),
+                          ariaLabel: sprintf(
+                            __('Overwrite existing alt text for media %d', 'alt-context'),
+                            item.media_id,
+                          ),
+                        }}
+                      />
                     ))}
                   </ul>
                 </section>
@@ -583,11 +661,12 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
               <h2>{sprintf(__('%d items produced no draft', 'alt-context'), noDraft.length)}</h2>
               <ul className="acx-run-apply__list">
                 {noDraft.map((item) => (
-                  <li key={item.media_id} className="acx-run-apply__item">
-                    <span>{sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}</span>
-                    {tierBadgeFor(item)}
-                    {namingBadgeFor(item)}
-                  </li>
+                  <DescribeRunApplyItemRow
+                    key={item.media_id}
+                    item={item}
+                    heading={sprintf(__('Media %1$d — %2$s', 'alt-context'), item.media_id, item.status)}
+                    mediaIdLabel=""
+                  />
                 ))}
               </ul>
             </section>

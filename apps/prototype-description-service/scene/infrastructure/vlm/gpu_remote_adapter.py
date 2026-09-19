@@ -19,7 +19,8 @@ import httpx
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult
-from scene.application.identity_merge.merge import NormalizedBox, PhraseBox
+from scene.application.identity_merge.merge import NormalizedBox, PhraseBox, span_replaceable
+from scene.application.identity_merge.realizer import find_generic_person_nps
 from scene.domain.description import DescriptionAdapterKind
 
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
@@ -843,6 +844,22 @@ def _normalized_box_from_quad(
     return NormalizedBox(x=ux1, y=uy1, width=ux2 - ux1, height=uy2 - uy1)
 
 
+def _is_generic_subject_label(label: str) -> bool:
+    """True when ``label`` is exactly one closed-list generic person NP.
+
+    Object labels such as ``A window`` must not become PhraseBoxes. The
+    detector requires an article, so a missing leading article is ignored by
+    also probing ``a {label}`` (bare heads like ``woman`` still count).
+    """
+    text = str(label).strip()
+    if not text:
+        return False
+    for probe in (text, f"a {text}"):
+        if any(start == 0 and end == len(probe) for start, end, _surface in find_generic_person_nps(probe)):
+            return True
+    return False
+
+
 def _span_for_label(label: str, caption: str, cursor_by_label: dict[str, int]) -> tuple[str, tuple[int, int]]:
     key = str(label).lower()
     if not key.strip():
@@ -885,8 +902,16 @@ def _parse_phrase_grounding(
         box = _normalized_box_from_quad(x1, y1, x2, y2, frame=frame)
         if box is None:
             continue
-        phrase, span = _span_for_label(str(label), caption, cursor_by_label)
-        phrase_boxes.append(PhraseBox(phrase=phrase, span_start=span[0], span_end=span[1], box=box))
+        raw_label = str(label)
+        if not _is_generic_subject_label(raw_label):
+            continue
+        phrase, span = _span_for_label(raw_label, caption, cursor_by_label)
+        if span == (-1, -1):
+            continue
+        phrase_box = PhraseBox(phrase=phrase, span_start=span[0], span_end=span[1], box=box)
+        if not span_replaceable(caption, phrase_box):
+            continue
+        phrase_boxes.append(phrase_box)
     return tuple(phrase_boxes)
 
 

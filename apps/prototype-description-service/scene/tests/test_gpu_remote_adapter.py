@@ -14,7 +14,13 @@ import pytest
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
-from scene.application.identity_merge.merge import NormalizedBox, span_replaceable
+from scene.application.identity_merge.merge import (
+    ConfirmedFace,
+    NormalizedBox,
+    merge_identities,
+    span_replaceable,
+)
+from scene.application.identity_merge.policy import NamingMode, NamingPolicy, NamingSkipReason
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm import gpu_remote_adapter
 from scene.infrastructure.vlm.gpu_remote_adapter import (
@@ -1230,6 +1236,40 @@ def test_gpu_remote_adapter_grounding_single_object_payload_yields_no_boxes() ->
     assert result.phrase_boxes == ()
 
 
+def test_gpu_remote_adapter_grounding_drops_object_label_even_when_in_caption() -> None:
+    captured: list[dict] = []
+    caption = "A man stands by a window."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps([{"bbox_2d": [100.0, 100.0, 400.0, 400.0], "label": "A window"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == caption
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_keeps_generic_subject_label() -> None:
+    captured: list[dict] = []
+    caption = "A woman waves."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps([{"bbox_2d": [250.0, 100.0, 750.0, 900.0], "label": "a woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(result.phrase_boxes) == 1
+    box = result.phrase_boxes[0]
+    assert box.phrase == "A woman"
+    assert (box.span_start, box.span_end) == (0, 7)
+    assert caption[box.span_start : box.span_end] == "A woman"
+    assert span_replaceable(caption, box) is True
+
+
 def test_gpu_remote_adapter_grounding_unmatched_label_is_not_replaceable() -> None:
     captured: list[dict] = []
     caption = "A woman waves."
@@ -1243,11 +1283,27 @@ def test_gpu_remote_adapter_grounding_unmatched_label_is_not_replaceable() -> No
         image_bytes=_png_bytes(width=2000, height=1500), context=None
     )
 
-    assert len(result.phrase_boxes) == 1
-    box = result.phrase_boxes[0]
-    assert box.phrase == "a man"
-    assert (box.span_start, box.span_end) == (-1, -1)
-    assert span_replaceable(caption, box) is False
+    assert result.phrase_boxes == ()
+
+    merged = merge_identities(
+        caption=caption,
+        phrase_boxes=list(result.phrase_boxes),
+        confirmed_faces=[
+            ConfirmedFace(
+                identity_id="id-daniel",
+                cluster_id="cluster-daniel",
+                roster_id="roster-daniel",
+                label="Daniel",
+                detection_confidence=0.95,
+                box=NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08),
+            )
+        ],
+        policy=NamingPolicy(agreement_enabled=True),
+    )
+    assert merged.provenance is not None
+    assert merged.provenance.mode in (NamingMode.SUBSTITUTED, NamingMode.POSITIONAL)
+    assert merged.provenance.reason is not NamingSkipReason.AMBIGUOUS_GROUNDING
+    assert merged.named_draft != caption
 
 
 def test_gpu_remote_adapter_grounding_repeated_label_advances_cursor() -> None:

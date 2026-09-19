@@ -1,7 +1,8 @@
 """Slice 2: reflow realizers behind the ReflowRealizer seam (PA-03).
 
-One test per enumerated rule R1–R4, the positional fallback, and a seam-swap
-test proving merge_identities has no inline mode ladder.
+One test per enumerated rule R1–R4, the positional fallback, n==1 NP
+substitution without phrase boxes, and a seam-swap test proving
+merge_identities has no inline mode ladder.
 """
 
 from scene.application.identity_merge import (
@@ -14,6 +15,7 @@ from scene.application.identity_merge import (
     merge_identities,
 )
 from scene.application.identity_merge.merge import IdentityAssociation
+from scene.application.identity_merge.realizer import N1SubstitutionRealizer
 from scene.tests.identity_merge_helpers import make_face, make_phrase_box
 
 
@@ -152,3 +154,87 @@ class TestSeamSelection:
             confirmed_faces=[_face("Daniel", x=0.3), _face("Sarah", x=0.5)],
         )
         assert result.named_draft == caption
+
+
+class TestN1Substitution:
+    """n==1: one confirmed face + one leading generic person NP, no boxes."""
+
+    def test_weaves_name_into_leading_generic_phrase_without_boxes(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves stands by the window."
+        assert result.generic_draft == caption
+        assert result.associations == ()
+
+    def test_closed_list_includes_young_man(self):
+        caption = "A young man waves from the steps."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves waves from the steps."
+        assert result.associations == ()
+
+    def test_two_faces_keep_positional_fallback(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Sarah", x=0.7), _face("Daniel", x=0.2)],
+        )
+        assert result.named_draft == "A man stands by the window. Pictured from left: Daniel and Sarah."
+
+    def test_two_generic_nps_abstain(self):
+        caption = "A man stands next to a woman."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == caption
+        assert result.associations == ()
+
+    def test_no_generic_np_keeps_positional_fallback(self):
+        caption = "Two people sit at a table."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Two people sit at a table. Pictured from left: Keanu Reeves."
+
+    def test_non_leading_unique_np_keeps_positional_fallback(self):
+        caption = "In the park a man stands."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "In the park a man stands. Pictured from left: Keanu Reeves."
+
+    def test_realizer_weaves_and_abstains_on_count(self):
+        realizer = N1SubstitutionRealizer()
+        assert isinstance(realizer, ReflowRealizer)
+        one = realizer.realize(
+            caption="A woman stands by the window.",
+            associations=[],
+            confirmed_faces=[_face("Sarah")],
+        )
+        assert one == "Sarah stands by the window."
+        two_nps = realizer.realize(
+            caption="A man stands next to a woman.",
+            associations=[],
+            confirmed_faces=[_face("Sarah")],
+        )
+        assert two_nps == "A man stands next to a woman."
+        two_faces = realizer.realize(
+            caption="A woman stands by the window.",
+            associations=[],
+            confirmed_faces=[_face("Sarah", x=0.2), _face("Daniel", x=0.7)],
+        )
+        assert two_faces == "A woman stands by the window."

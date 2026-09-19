@@ -123,6 +123,7 @@ _MAX_DEFERRED_STOP_EXTENSION_SECONDS = 7200
 _ABSENT_BATCH_KEY_WARNED = False
 _OPERATOR_STOP_WITH_WORK_REASON = "operator_stop_with_work"
 _PROBE_TIMEOUT_FALLBACK_REASONS = frozenset({"readiness_timeout", "readiness_stall"})
+_READINESS_WAIT_TIMEOUT_REASON = "readiness_wait_timeout"
 
 
 def _acquire_flock_with_timeout(
@@ -1825,14 +1826,24 @@ def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
     return None
 
 
+def _readiness_wait_timed_out(wait_result: ReadinessWaitResult | None) -> bool:
+    """True when a wait ran, stayed not-ready, and expired without a stall."""
+    if wait_result is None or wait_result.ready or wait_result.stalled:
+        return False
+    return bool(wait_result.timed_out)
+
+
 def _state_reason(
     state: GpuLifecycleState,
     *,
     instances: list[GpuInstance],
     fallback_reason: str | None = None,
     has_errors: bool = False,
+    wait_result: ReadinessWaitResult | None = None,
 ) -> str | None:
-    """Supply the contract-required reason for every degraded snapshot."""
+    """Supply the contract-required reason for degraded and timed-out starting snapshots."""
+    if state is GpuLifecycleState.STARTING and _readiness_wait_timed_out(wait_result):
+        return _READINESS_WAIT_TIMEOUT_REASON
     if state is not GpuLifecycleState.DEGRADED:
         return None
     if fallback_reason is not None:
@@ -2801,6 +2812,7 @@ class _StartActuationContext:
     use_write_ahead_start: bool
     prepare_start: Callable[..., object] | None
     commit_start: Callable[..., object] | None
+    on_start_issued: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -3161,6 +3173,16 @@ def _start_instance_attempt(
     )
 
 
+def _invoke_on_start_issued(on_start_issued: Callable[[], None] | None) -> None:
+    """Publish STARTING before a blocking wait; never fail the start itself."""
+    if on_start_issued is None:
+        return
+    try:
+        on_start_issued()
+    except Exception:
+        logger.exception("failed to publish starting GPU state before boot wait")
+
+
 def _actuate_start_instances(
     context: _StartActuationContext,
     decided: list[tuple[str, str]],
@@ -3169,6 +3191,8 @@ def _actuate_start_instances(
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
     errors: list[str] = []
+    if not context.dry_run and any(action == LifecycleAction.START for action, _ in decided):
+        _invoke_on_start_issued(context.on_start_issued)
     for action, instance_id in decided:
         if action != LifecycleAction.START:
             continue
@@ -3280,6 +3304,7 @@ def _run_start_cycle(
     running_since_store: RunningSinceLeaseStore | None = None,
     dry_run: bool = False,
     effective_intent: EffectiveIntent | None = None,
+    on_start_issued: Callable[[], None] | None = None,
 ) -> StartCycleResult:
     """Emit START for STOPPED instances when the job store has work."""
     effective_intent = effective_intent or EffectiveIntent()
@@ -3293,6 +3318,8 @@ def _run_start_cycle(
     )
     if errors:
         return _start_recovery_error_result(effective_intent, errors)
+    if lease_recorded and not dry_run:
+        _invoke_on_start_issued(on_start_issued)
     decision = _start_work_decision(
         controller=controller,
         instances=instances,
@@ -3335,6 +3362,7 @@ def _run_start_cycle(
             use_write_ahead_start=callable(prepare_start) and callable(commit_start),
             prepare_start=prepare_start,
             commit_start=commit_start,
+            on_start_issued=on_start_issued,
         ),
         decision.decided,
     )
@@ -3384,12 +3412,57 @@ def _drop_held_ready_probe_timeouts(result: StartCycleResult) -> StartCycleResul
     )
 
 
+def _snapshot_written_at(path: Path) -> float | None:
+    """Read written_at from a snapshot without treating IO/parse errors as state."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    written_at = payload.get("written_at")
+    if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
+        return None
+    if not math.isfinite(written_at):
+        return None
+    return written_at
+
+
+def _concurrent_reap_published_stopped(
+    *,
+    previous_state: GpuLifecycleState | None,
+    snapshot_path: Path,
+    cycle_started_at: float | None,
+    result: StartCycleResult,
+) -> bool:
+    """True when a reap published STOPPED while this start cycle's probe ran unlocked."""
+    if previous_state is not GpuLifecycleState.STOPPED:
+        return False
+    if result.actuated or result.lease_recorded or result.wait_result is None:
+        return False
+    if cycle_started_at is None:
+        return False
+    written_at = _snapshot_written_at(snapshot_path)
+    return written_at is not None and written_at >= cycle_started_at
+
+
+def _start_probe_failed(result: StartCycleResult) -> bool:
+    """Stall, or a timeout on a cycle that did not issue START, is a probe failure."""
+    wait_result = result.wait_result
+    if wait_result is None or wait_result.ready:
+        return False
+    if wait_result.stalled:
+        return True
+    return bool(wait_result.timed_out) and not (result.actuated or result.lease_recorded)
+
+
 def _finalize_start_snapshot_state(
     result: StartCycleResult,
     *,
     instances: list[GpuInstance],
     snapshot_path: Path,
     snapshot_instance_id: str | None,
+    cycle_started_at: float | None = None,
 ) -> tuple[GpuLifecycleState, StartCycleResult]:
     """Resolve published state, persist the ready-hold counter, and align cycle outcome."""
     previous_state = read_previous_gpu_state(
@@ -3397,16 +3470,25 @@ def _finalize_start_snapshot_state(
         expected_instance_id=snapshot_instance_id,
     )
     wait_ready = result.wait_result is not None and bool(result.wait_result.ready)
-    probe_failed = result.wait_result is not None and not wait_ready and bool(result.wait_result.failed)
+    probe_failed = _start_probe_failed(result)
     start_failed = any(fallback.reason == "start_failed" for fallback in result.fallbacks)
     operator_stop = any(fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in result.fallbacks)
-    if wait_ready:
+    if _concurrent_reap_published_stopped(
+        previous_state=previous_state,
+        snapshot_path=snapshot_path,
+        cycle_started_at=cycle_started_at,
+        result=result,
+    ):
+        candidate = GpuLifecycleState.STOPPED
+    elif wait_ready:
         candidate = GpuLifecycleState.READY
     elif start_failed or operator_stop:
         candidate = GpuLifecycleState.DEGRADED
+    elif probe_failed:
+        candidate = GpuLifecycleState.DEGRADED
     elif result.actuated or result.lease_recorded:
         candidate = GpuLifecycleState.STARTING
-    elif probe_failed or result.errors:
+    elif result.errors:
         candidate = GpuLifecycleState.DEGRADED
     else:
         candidate = state_for_instances([instance.state for instance in instances])
@@ -3432,6 +3514,49 @@ def _finalize_start_snapshot_state(
     elif state is GpuLifecycleState.READY and candidate is not GpuLifecycleState.READY:
         result = _drop_held_ready_probe_timeouts(result)
     return state, result
+
+
+def _publish_starting_issued_snapshot(
+    *,
+    gpu_state_path: str | Path | None,
+    instances: list[GpuInstance],
+    effective_intent: EffectiveIntent,
+    running_since_store: RunningSinceLeaseStore | None,
+    max_lease_seconds: int,
+) -> None:
+    """Publish STARTING under the snapshot lock so readers see the boot wait."""
+    snapshot_instance_id = _snapshot_instance_id(instances)
+    instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
+        instances,
+        running_since_store,
+        max_lease_seconds=max_lease_seconds,
+    )
+    honoured_nonce = (
+        effective_intent.nonce if effective_intent.action is IntentAction.START else persisted_nonce
+    )
+    last_transition_reason = (
+        LastTransitionReason.OPERATOR
+        if effective_intent.action is IntentAction.START
+        else LastTransitionReason.WORK
+    )
+    intent_status = (
+        IntentStatus.HONOURED
+        if effective_intent.action is IntentAction.START
+        else _pending_intent_status(effective_intent)
+    )
+    with _serialized_gpu_state_publish(gpu_state_path):
+        write_gpu_state_snapshot(
+            GpuLifecycleState.STARTING,
+            instance_id=snapshot_instance_id,
+            path=gpu_state_path,
+            intent=effective_intent.action,
+            intent_expires_at=effective_intent.expires_at,
+            intent_status=intent_status,
+            honoured_nonce=honoured_nonce or persisted_nonce,
+            lease_expires_at=lease_expires_at,
+            instance_running_since=instance_running_since,
+            last_transition_reason=last_transition_reason,
+        )
 
 
 def run_start_cycle(
@@ -3486,18 +3611,30 @@ def run_start_cycle(
             effective_intent=effective_intent,
         )
         return _record_decision(result, mode="start", now=now, store=resolved_log)
-    with _serialized_gpu_state_publish(gpu_state_path):
-        result = _run_start_cycle(
-            controller=controller,
+
+    def on_start_issued() -> None:
+        _publish_starting_issued_snapshot(
+            gpu_state_path=gpu_state_path,
             instances=instances,
-            load_source=load_source,
-            actuator=actuator,
-            probe=probe,
-            readiness_wait=readiness_wait,
-            running_since_store=running_since_store,
-            dry_run=False,
             effective_intent=effective_intent,
+            running_since_store=running_since_store,
+            max_lease_seconds=max_lease_seconds,
         )
+
+    cycle_started_at = time.time()
+    result = _run_start_cycle(
+        controller=controller,
+        instances=instances,
+        load_source=load_source,
+        actuator=actuator,
+        probe=probe,
+        readiness_wait=readiness_wait,
+        running_since_store=running_since_store,
+        dry_run=False,
+        effective_intent=effective_intent,
+        on_start_issued=on_start_issued,
+    )
+    with _serialized_gpu_state_publish(gpu_state_path):
         snapshot_instance_id = _snapshot_instance_id(instances)
         resolved_snapshot_path = resolve_gpu_state_path() if gpu_state_path is None else Path(gpu_state_path)
         state, result = _finalize_start_snapshot_state(
@@ -3505,6 +3642,7 @@ def run_start_cycle(
             instances=instances,
             snapshot_path=resolved_snapshot_path,
             snapshot_instance_id=snapshot_instance_id,
+            cycle_started_at=cycle_started_at,
         )
         result = _record_decision(result, mode="start", now=now, store=resolved_log)
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
@@ -3521,6 +3659,7 @@ def run_start_cycle(
                 instances=instances,
                 fallback_reason=fallback_reason,
                 has_errors=bool(result.errors),
+                wait_result=result.wait_result,
             ),
             path=gpu_state_path,
             intent=result.intent.action,

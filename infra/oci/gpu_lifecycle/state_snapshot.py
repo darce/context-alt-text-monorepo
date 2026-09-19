@@ -135,6 +135,8 @@ def _snapshot_reason_is_valid(payload: dict[str, object], state: GpuLifecycleSta
     reason = payload.get("reason")
     if state is GpuLifecycleState.DEGRADED:
         return isinstance(reason, str) and bool(reason.strip())
+    if state is GpuLifecycleState.STARTING:
+        return reason is None or (isinstance(reason, str) and bool(reason.strip()))
     return reason is None
 
 
@@ -421,8 +423,13 @@ def _validate_snapshot_reason(
     if published_state is GpuLifecycleState.DEGRADED:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("degraded GPU lifecycle snapshots require a reason")
-    elif reason is not None:
-        raise ValueError("reason is only valid for degraded GPU lifecycle snapshots")
+        return
+    if published_state is GpuLifecycleState.STARTING:
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
+            raise ValueError("starting GPU lifecycle snapshot reason must be a non-blank string or None")
+        return
+    if reason is not None:
+        raise ValueError("reason is only valid for degraded or starting GPU lifecycle snapshots")
 
 
 def _coerce_snapshot_intent(intent: IntentAction | str | None | object) -> IntentAction:

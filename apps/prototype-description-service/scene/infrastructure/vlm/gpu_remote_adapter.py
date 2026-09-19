@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -776,11 +777,11 @@ def _span_for_label(label: str, caption: str, cursor_by_label: dict[str, int]) -
     key = str(label).lower()
     if not key.strip():
         return "", (-1, -1)
-    lowered = caption.lower()
-    start = lowered.find(key, cursor_by_label.get(key, 0))
-    if start == -1:
+    pattern = re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE)
+    match = pattern.search(caption, cursor_by_label.get(key, 0))
+    if match is None:
         return str(label), (-1, -1)
-    end = start + len(key)
+    start, end = match.start(), match.end()
     cursor_by_label[key] = end
     return caption[start:end], (start, end)
 

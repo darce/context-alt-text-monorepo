@@ -1,5 +1,7 @@
 # APP-1 evidence: customer portal, beta strategy, and vendor refresh
 
+> **Current APP-1 recommendation (2026-09-19):** [launch decision and source-book grounding](app-portal-launch-recommendation-2026-09-19.md) recommends Clerk identity, retained local API-key management and Polar Starter. It supersedes open-ended vendor selection and keys-only/later-billing scope for APP-1. The analysis below is retained as dated prior art; it is not evidence of implementation.
+
 Date: 2026-09-19. Status: research supporting a proposed plan, not a vendor purchase or production readiness claim.
 Repository baseline: `213fad181474e5739a3b4859536f28792638cdeb`.
 Canon baseline: `aa18707a999affeab4357c9a9d15ae8b502c459f` in `~/Development/heuristics-canon-research`.

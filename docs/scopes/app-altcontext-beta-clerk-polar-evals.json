@@ -2,7 +2,7 @@
   "version": 1,
   "suite_id": "app-1-beta-clerk-polar",
   "owner": "APP-1",
-  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence. Describes the provisional Polar/local-key candidate; G0..G4 vendor selection must amend affected contracts and cases before implementation if another candidate wins.",
+  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence. Describes the recommended Clerk-identity/local-key/Polar stack, pending review. S1 proves chosen integrations; alternatives require a concrete blocker and coherent contract/case amendments. In-house API-key management is retained.",
   "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-polar-evals.json --group deterministic",
   "threshold": {
     "kind": "junit_counts",
@@ -58,9 +58,9 @@
     {
       "id": "APP-SC-06",
       "group": "deterministic",
-      "criterion": "Audit/journal writes are atomic with key mutation; old admin API behavior preserved.",
+      "criterion": "Audit and any selected journal-outbox writes are atomic with key mutation; WAL-backed recovery adds no application journal; old admin API behavior preserved.",
       "status": "planned",
-      "test": "recognition/tests/api/test_portal_keys.py::test_audit_journal_failure_rolls_back_and_admin_contract_survives"
+      "test": "recognition/tests/api/test_portal_keys.py::test_required_evidence_failure_rolls_back_and_admin_contract_survives"
     },
     {
       "id": "APP-SC-07",
@@ -125,7 +125,7 @@
     {
       "id": "APP-SC-15",
       "group": "operational",
-      "criterion": "Restore handles mint/revoke/rotate state and fails closed on an uncertain security-journal tail.",
+      "criterion": "Restore handles mint/revoke/rotate state under the selected WAL or journal mechanism and fails closed on an uncertain security-mutation tail.",
       "status": "planned",
       "test": "recognition/tests/api/test_customer_state_restore.py::test_replay_twice_preserves_security_and_unknown_tail_fails_closed",
       "additional_evidence_required": true

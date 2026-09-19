@@ -91,7 +91,7 @@ class GpuControlControllerTest extends TestCase
         $this->assertSame(10, $calls[0]['args']['timeout']);
     }
 
-    public function testPostIntentAddsCurrentUserAndPassesThroughAcceptedResponse(): void
+    public function testPostIntentForwardsOnlyContractFieldsAndPassesThroughAcceptedResponse(): void
     {
         $fixture = [
             'gpu_state' => ['state' => 'starting'],
@@ -127,9 +127,7 @@ class GpuControlControllerTest extends TestCase
 
         $body = json_decode((string) $calls[0]['args']['body'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('start', $body['action']);
-        $this->assertSame(120, $body['ttl_seconds']);
-        $this->assertSame('operator.login', $body['requested_by']);
-        $this->assertSame(['forward' => true], $body['future_field']);
+        $this->assertSame(['action' => 'start', 'ttl_seconds' => 120], $body);
     }
 
     public function testInvalidActionReturnsBadRequestBeforeHttpCall(): void

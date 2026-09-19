@@ -71,6 +71,9 @@ export interface NamedCaptionProvenance {
   naming_allowed: boolean;
   reason: NamingProvenanceReason | null;
   mode: NamingProvenanceMode | null;
+  status: string;
+  realizer: NamingRealizer | null;
+  names_applied: string[];
 }
 
 export interface AttachmentFactProvenance {
@@ -415,7 +418,15 @@ const VISUAL_FACTS_RESPONSE_KEYS = [
 const VISUAL_FACTS_KEYS = ['caption', 'objects', 'ocr_text'] as const;
 const CONTEXT_USED_KEYS = ['sources', 'applied'] as const;
 const PROVIDER_DISCLOSURE_KEYS = ['provider', 'left_service_boundary'] as const;
-const NAMING_PREVIEW_KEYS = ['injected_names', 'naming_allowed', 'reason', 'mode'] as const;
+const NAMING_PREVIEW_KEYS = [
+  'injected_names',
+  'naming_allowed',
+  'reason',
+  'mode',
+  'status',
+  'realizer',
+  'names_applied',
+] as const;
 const INJECTED_NAME_KEYS = ['name', 'cluster_id', 'roster_id', 'detection_confidence'] as const;
 const ATTACHMENT_PROVENANCE_KEYS = ['facts'] as const;
 const ATTACHMENT_FACT_KEYS = [
@@ -481,6 +492,15 @@ const validateNamedCaptionProvenance = (value: unknown, path: string): string | 
     (typeof value.mode !== 'string' || !NAMING_PREVIEW_MODES.has(value.mode))
   ) {
     return `${path}.mode`;
+  }
+  if (typeof value.status !== 'string' || value.status === '') {
+    return `${path}.status`;
+  }
+  if (value.realizer !== null && !isNamingRealizer(value.realizer)) {
+    return `${path}.realizer`;
+  }
+  if (!isStringArray(value.names_applied)) {
+    return `${path}.names_applied`;
   }
   return null;
 };

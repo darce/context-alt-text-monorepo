@@ -98,47 +98,48 @@ export const unavailableServiceLabel = (service: string): string => {
   }
 };
 
+export type UnavailableReason = (typeof UNAVAILABLE_REASON)[keyof typeof UNAVAILABLE_REASON];
+
+const UNAVAILABLE_REASON_COPY: Record<UnavailableReason, { why: string; fix: string }> = {
+  [UNAVAILABLE_REASON.NOT_CONFIGURED]: {
+    why: __('it is not configured', 'alt-context'),
+    fix: __('Set the API URL in Settings.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.API_KEY_MISSING]: {
+    why: __('the API key is missing', 'alt-context'),
+    fix: __('Add the API key in Settings.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.CIRCUIT_OPEN]: {
+    why: __('the circuit breaker is open', 'alt-context'),
+    fix: __('Wait for the cooldown, then Retry.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.UPSTREAM_5XX]: {
+    why: __('the remote service is failing', 'alt-context'),
+    fix: __('Retry in a moment. If it continues, check the service logs.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.UPSTREAM_4XX]: {
+    why: __('it rejected the request', 'alt-context'),
+    fix: __('Check the API URL and key in Settings.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.TIMEOUT]: {
+    why: __('it did not respond in time', 'alt-context'),
+    fix: __('Retry. If it continues, check that the host is reachable.', 'alt-context'),
+  },
+  [UNAVAILABLE_REASON.CONTRACT_MISMATCH]: {
+    why: __('it returned a response this plugin does not recognize', 'alt-context'),
+    fix: __('Confirm the plugin and service are on compatible versions.', 'alt-context'),
+  },
+};
+
+const isUnavailableReason = (reason: string): reason is UnavailableReason =>
+  (Object.values(UNAVAILABLE_REASON) as string[]).includes(reason);
+
 export const unavailableReasonCopy = (reason: string): { why: string; fix: string } => {
-  switch (reason) {
-    case UNAVAILABLE_REASON.NOT_CONFIGURED:
-      return {
-        why: __('it is not configured', 'alt-context'),
-        fix: __('Set the API URL in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.API_KEY_MISSING:
-      return {
-        why: __('the API key is missing', 'alt-context'),
-        fix: __('Add the API key in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.CIRCUIT_OPEN:
-      return {
-        why: __('the circuit breaker is open', 'alt-context'),
-        fix: __('Wait for the cooldown, then Retry.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.UPSTREAM_5XX:
-      return {
-        why: __('it returned a server error', 'alt-context'),
-        fix: __('Retry in a moment. If it continues, check the service logs.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.UPSTREAM_4XX:
-      return {
-        why: __('it rejected the request', 'alt-context'),
-        fix: __('Check the API URL and key in Settings.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.TIMEOUT:
-      return {
-        why: __('it did not respond in time', 'alt-context'),
-        fix: __('Retry. If it continues, check that the host is reachable.', 'alt-context'),
-      };
-    case UNAVAILABLE_REASON.CONTRACT_MISMATCH:
-      return {
-        why: __('it returned a response this plugin does not recognize', 'alt-context'),
-        fix: __('Confirm the plugin and service are on compatible versions.', 'alt-context'),
-      };
-    default:
-      return {
-        why: sprintf(__('an unexpected error occurred (%s)', 'alt-context'), reason),
-        fix: __('Retry. If it continues, check Settings and the service logs.', 'alt-context'),
-      };
+  if (isUnavailableReason(reason)) {
+    return UNAVAILABLE_REASON_COPY[reason];
   }
+  return {
+    why: sprintf(__('an unexpected error occurred (%s)', 'alt-context'), reason),
+    fix: __('Retry. If it continues, check Settings and the service logs.', 'alt-context'),
+  };
 };

@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\Services\ClusterMembershipService;
+use AltContext\Api\Services\ClusterMergeService;
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\ClusterProjectionWriter;
@@ -301,7 +302,8 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertSame($personUuid, $data['person_uuid']);
         $this->assertSame('Roster Name', $data['person_name']);
 
-        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 7');
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
+        $this->assertStringContainsString('person_id = 7', $clusterUpdate);
         $this->assertStringContainsString("curation_state = 'confirmed'", $clusterUpdate);
         $this->assertStringContainsString('is_user_confirmed = 1', $clusterUpdate);
         $this->assertStringContainsString("label = 'Roster Name'", $clusterUpdate);
@@ -309,6 +311,86 @@ class ClusterMembershipServiceTest extends TestCase
         $boundOps = $this->queriesContaining($wpdb->queries, "'cluster_person_bound'");
         $this->assertCount(1, $boundOps);
         $this->assertStringContainsString($personUuid, $boundOps[0]);
+    }
+
+    public function testCreateForIdentitySecondBindMergesIntoPersonSurvivorWithoutLabelCopy(): void
+    {
+        global $wpdb;
+
+        $personUuid = '8cb36e76-7c2c-4aa8-bf2f-0d4dfab01234';
+        $wpdb->queryResults['SELECT person_uuid FROM `wp_acx_persons` WHERE id = 7'] = $personUuid;
+        $wpdb->queryResults['SELECT name FROM `wp_acx_persons` WHERE id = 7'] = 'Roster Name';
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 7,
+                'person_uuid' => $personUuid,
+                'name' => 'Roster Name',
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-survivor',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Roster Name',
+                'person_id' => 7,
+                'curation_state' => 'confirmed',
+                'local_revision' => 1,
+                'is_user_confirmed' => 1,
+            ],
+        ];
+
+        $captured = null;
+        $merge = $this->createMergeService();
+        $merge->expects($this->once())
+            ->method('merge_cluster')
+            ->willReturnCallback(static function (WP_REST_Request $request) use (&$captured): WP_REST_Response {
+                $captured = $request;
+                return new WP_REST_Response(
+                    [
+                        'source_cluster_id' => $request->get_param('source_id'),
+                        'target_cluster_id' => $request->get_param('target_cluster_id'),
+                        'moved_identity_count' => 3,
+                        'synced' => false,
+                        'status' => 'pending',
+                    ],
+                    200
+                );
+            });
+
+        $host = new ClusterMutationsController(
+            $this->repository,
+            $this->syncStateRepository,
+            $this->membersRepository,
+            null,
+            new ClusterMutationsTopologyCommandSpy()
+        );
+        $service = new ClusterMembershipService(
+            $host,
+            $this->repository,
+            $this->membersRepository,
+            $this->syncStateRepository,
+            $merge
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'identity-77');
+        $request->set_param('label', 'Curated Name');
+        $request->set_param('roster_entry_id', 7);
+
+        $response = $service->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(7, $data['person_id']);
+        $this->assertSame($personUuid, $data['person_uuid']);
+        $this->assertSame('Roster Name', $data['person_name']);
+        $this->assertInstanceOf(WP_REST_Request::class, $captured);
+        $this->assertSame($this->repository->createdLocalClusterId, $captured->get_param('source_id'));
+        $this->assertSame('cluster-survivor', $captured->get_param('target_cluster_id'));
+        $this->assertNull($captured->get_param('target_label'));
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, "'cluster_person_bound'"));
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, 'UPDATE wp_acx_clusters'));
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, "'cluster_label_updated'"));
     }
 
     public function testCreateForIdentityWithoutRosterEntryIdLeavesPersonNullAndSkipsBind(): void
@@ -432,6 +514,17 @@ class ClusterMembershipServiceTest extends TestCase
         $this->assertTrue(is_wp_error($response));
         $this->assertSame('acx_name_collision', $response->get_error_code());
         $this->assertSame(409, $response->get_error_data()['status']);
+    }
+
+    /**
+     * @return ClusterMergeService&\PHPUnit\Framework\MockObject\MockObject
+     */
+    private function createMergeService(): ClusterMergeService
+    {
+        return $this->getMockBuilder(ClusterMergeService::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['merge_cluster'])
+            ->getMock();
     }
 
     private function serviceWithFailingOutbox(): ClusterMembershipService

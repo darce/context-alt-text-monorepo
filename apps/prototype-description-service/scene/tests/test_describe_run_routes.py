@@ -19,7 +19,8 @@ import pytest
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeRunStatus
-from scene.domain.description import DescriptionResultTier
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
 from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
@@ -440,6 +441,43 @@ def test_create_run_publishes_demand_without_stop_flags(monkeypatch):
         response = _submit(client, [70])
         assert response.status_code == 202, response.text
     assert len(calls) == 1
+
+
+class _StubCpuAdapter:
+    kind = DescriptionAdapterKind.LOCAL_CPU
+
+
+def test_submit_queues_cpu_describe_one_when_cpu_adapter_resolves(monkeypatch):
+    captured: dict = {}
+
+    async def _spy(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _spy)
+    monkeypatch.setattr(describe_run_mod, "get_cpu_description_adapter", lambda: _StubCpuAdapter())
+    with _client() as (client, _):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+    assert captured["cpu_describe_one"] is not None
+    assert callable(captured["cpu_describe_one"])
+
+
+def test_submit_queues_none_cpu_describe_one_when_cpu_adapter_unavailable(monkeypatch):
+    captured: dict = {}
+
+    async def _spy(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _spy)
+    monkeypatch.setattr(
+        describe_run_mod,
+        "get_cpu_description_adapter",
+        lambda: UnavailableDescriptionAdapter("florence_small extra missing"),
+    )
+    with _client() as (client, _):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+    assert captured["cpu_describe_one"] is None
 
 
 def test_status_route_404_for_unknown_run(monkeypatch):

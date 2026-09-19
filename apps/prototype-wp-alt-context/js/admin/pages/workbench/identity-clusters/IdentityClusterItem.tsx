@@ -3,8 +3,6 @@
  */
 
 import React from 'react';
-import { Layers } from 'lucide-react';
-import { faceGroupsBadge } from './representativeVocabulary';
 import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -395,18 +393,8 @@ export const IdentityClusterItem = ({
       <ClusterPreview
         representative={representative}
         representativeFace={representative?.representative_face}
-        memberCount={cluster.members.length}
+        memberCount={1}
       />
-      {cluster.clusterIds && cluster.clusterIds.length > 1 && (
-        <span
-          className="acx-identity-cluster__face-groups"
-          role="img"
-          aria-label={faceGroupsBadge(cluster.clusterIds.length)}
-        >
-          <Layers aria-hidden="true" size="1em" />
-          <span aria-hidden="true">{faceGroupsBadge(cluster.clusterIds.length)}</span>
-        </span>
-      )}
 
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (
@@ -472,21 +460,38 @@ export const IdentityClusterItem = ({
               </div>
             ) : null}
             {!cluster.clusteringPending && (
-              <ClusterActions
-                canEdit={canEdit}
-                canSearchForMatch={canSearchForMatch}
-                hasLabel={Boolean(cluster.label)}
-                isAutoLabel={cluster.isAutoLabel}
-                canSplit={canMutate && Boolean(cluster.clusterId) && splittableGroups.length > 0}
-                canReject={canMutate && cluster.members.length === 1}
-                isPending={mutations.isPending}
-                splitDisabled={mutations.splitGate.disabled}
-                splitTitle={mutations.splitGate.title}
-                splitAriaDisabled={mutations.splitGate['aria-disabled']}
-                onEdit={startEditing}
-                onWrongPerson={handleWrongPerson}
-                onSplit={handleSplit}
-              />
+              <>
+                <ClusterActions
+                  canEdit={canEdit}
+                  canSearchForMatch={canSearchForMatch}
+                  hasLabel={Boolean(cluster.label)}
+                  isAutoLabel={cluster.isAutoLabel}
+                  canSplit={false}
+                  canReject={canMutate && cluster.members.length === 1}
+                  isPending={mutations.isPending}
+                  splitDisabled={mutations.splitGate.disabled}
+                  splitTitle={mutations.splitGate.title}
+                  splitAriaDisabled={mutations.splitGate['aria-disabled']}
+                  onEdit={startEditing}
+                  onWrongPerson={handleWrongPerson}
+                  onSplit={handleSplit}
+                />
+                {canMutate && Boolean(cluster.clusterId) && splittableGroups.length > 0 ? (
+                  <details className="acx-identity-cluster__not-same-person" open>
+                    <summary>{__('Not the same person?', 'alt-context')}</summary>
+                    <button
+                      type="button"
+                      className="acx-identity-cluster__action"
+                      onClick={handleSplit}
+                      disabled={mutations.isPending || mutations.splitGate.disabled}
+                      aria-disabled={mutations.splitGate['aria-disabled']}
+                      title={mutations.splitGate.title}
+                    >
+                      {__('Split group', 'alt-context')}
+                    </button>
+                  </details>
+                ) : null}
+              </>
             )}
             {/* Show inline "Is this X?" prompt for unlabeled items */}
             {showInlinePrompt && (

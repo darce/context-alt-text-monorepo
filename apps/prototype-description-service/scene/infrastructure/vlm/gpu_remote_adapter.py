@@ -33,6 +33,7 @@ _DEFAULT_GROUNDING_TIMEOUT_S = 30.0
 _GROUNDING_FLAG_ENV = "ACX_GPU_GROUNDING_ENABLED"
 # Qwen3-VL native bbox_2d is relative in [0, 1000], not pixels (EMB-02 / RES-13).
 _QWEN_BBOX_RELATIVE_MAX = 1000.0
+_BBOX_FRAME_EPSILON = 1e-6
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +528,7 @@ class GpuRemoteDescriptionAdapter:
         except Exception as exc:  # noqa: BLE001 - RES-13 crumple zone for follow-up
             _log_grounding_discard("follow_up_failed", f"{type(exc).__name__}: {exc}")
             return ()
-        return _parse_qwen_phrase_grounding(text, caption=caption, image_bytes=encoded_image)
+        return _parse_qwen_phrase_grounding(text, caption=caption)
 
     def _post(
         self,
@@ -722,16 +723,10 @@ def _florence_mapping(payload: Any) -> Mapping[str, Any] | None:
     return None
 
 
-def _image_dimensions(image_bytes: bytes) -> tuple[float, float] | None:
-    try:
-        with Image.open(BytesIO(image_bytes)) as image:
-            image.load()
-            width, height = image.size
-    except Exception:  # noqa: BLE001 - unreadable image cannot validate pixel boxes
-        return None
-    if width <= 0 or height <= 0:
-        return None
-    return float(width), float(height)
+def _axis_in_relative_frame(start: float, end: float) -> bool:
+    return (
+        -_BBOX_FRAME_EPSILON <= start < end <= _QWEN_BBOX_RELATIVE_MAX + _BBOX_FRAME_EPSILON
+    )
 
 
 def _unit_xyxy_from_quad(
@@ -739,27 +734,27 @@ def _unit_xyxy_from_quad(
     y1: float,
     x2: float,
     y2: float,
-    *,
-    image_width: float | None,
-    image_height: float | None,
 ) -> tuple[float, float, float, float] | None:
     max_coord = max(abs(x1), abs(y1), abs(x2), abs(y2))
-    if max_coord <= 1.0 + 1e-6:
-        if x1 < -1e-6 or y1 < -1e-6 or x2 > 1.0 + 1e-6 or y2 > 1.0 + 1e-6:
+    if max_coord <= 1.0 + _BBOX_FRAME_EPSILON:
+        if (
+            x1 < -_BBOX_FRAME_EPSILON
+            or y1 < -_BBOX_FRAME_EPSILON
+            or x2 > 1.0 + _BBOX_FRAME_EPSILON
+            or y2 > 1.0 + _BBOX_FRAME_EPSILON
+        ):
             return None
         return x1, y1, x2, y2
-    if max_coord <= _QWEN_BBOX_RELATIVE_MAX:
+    if max_coord <= _QWEN_BBOX_RELATIVE_MAX + _BBOX_FRAME_EPSILON:
+        if not (_axis_in_relative_frame(x1, x2) and _axis_in_relative_frame(y1, y2)):
+            return None
         return (
             x1 / _QWEN_BBOX_RELATIVE_MAX,
             y1 / _QWEN_BBOX_RELATIVE_MAX,
             x2 / _QWEN_BBOX_RELATIVE_MAX,
             y2 / _QWEN_BBOX_RELATIVE_MAX,
         )
-    if image_width is None or image_height is None:
-        return None
-    if x1 < -1.0 or y1 < -1.0 or x2 > image_width + 1.0 or y2 > image_height + 1.0:
-        return None
-    return x1 / image_width, y1 / image_height, x2 / image_width, y2 / image_height
+    return None
 
 
 def _normalized_box_from_quad(
@@ -767,20 +762,10 @@ def _normalized_box_from_quad(
     y1: float,
     x2: float,
     y2: float,
-    *,
-    image_width: float | None,
-    image_height: float | None,
 ) -> NormalizedBox | None:
     if x2 <= x1 or y2 <= y1:
         return None
-    unit = _unit_xyxy_from_quad(
-        x1,
-        y1,
-        x2,
-        y2,
-        image_width=image_width,
-        image_height=image_height,
-    )
+    unit = _unit_xyxy_from_quad(x1, y1, x2, y2)
     if unit is None:
         return None
     ux1, uy1, ux2, uy2 = unit
@@ -804,8 +789,6 @@ def _parse_phrase_grounding(
     parsed: Mapping[str, Any],
     *,
     caption: str,
-    image_width: float | None,
-    image_height: float | None,
 ) -> tuple[PhraseBox, ...]:
     """Map Qwen grounding JSON to the Florence/VLM-2C phrase-box shape."""
     bboxes = parsed.get("bboxes") or []
@@ -821,7 +804,7 @@ def _parse_phrase_grounding(
             x1, y1, x2, y2 = (float(value) for value in bbox)
         except (TypeError, ValueError):
             continue
-        box = _normalized_box_from_quad(x1, y1, x2, y2, image_width=image_width, image_height=image_height)
+        box = _normalized_box_from_quad(x1, y1, x2, y2)
         if box is None:
             continue
         phrase, span = _span_for_label(str(label), caption, cursor_by_label)
@@ -829,11 +812,9 @@ def _parse_phrase_grounding(
     return tuple(phrase_boxes)
 
 
-def _parse_qwen_phrase_grounding(text: str, *, caption: str, image_bytes: bytes) -> tuple[PhraseBox, ...]:
+def _parse_qwen_phrase_grounding(text: str, *, caption: str) -> tuple[PhraseBox, ...]:
     payload = _load_json_payload(text)
     mapping = _florence_mapping(payload)
     if mapping is None:
         return ()
-    dimensions = _image_dimensions(image_bytes)
-    image_width, image_height = dimensions if dimensions is not None else (None, None)
-    return _parse_phrase_grounding(mapping, caption=caption, image_width=image_width, image_height=image_height)
+    return _parse_phrase_grounding(mapping, caption=caption)

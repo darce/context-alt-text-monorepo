@@ -1,5 +1,7 @@
 # APP-1: payment and API-key build/buy reassessment
 
+> **Current APP-1 recommendation (2026-09-19):** [launch decision and source-book grounding](app-portal-launch-recommendation-2026-09-19.md) recommends Clerk identity, retained local API-key management and Polar Starter. It supersedes open-ended vendor selection and keys-only/later-billing scope for APP-1. The analysis below is retained as dated prior art; it is not evidence of implementation.
+
 Date: 2026-09-19. Status: proposed; supersedes the earlier APP-1 vendor ranking, not its security or zero-charge requirements. [Plan 0001](../../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md).
 
 ## Recommendation and what changed

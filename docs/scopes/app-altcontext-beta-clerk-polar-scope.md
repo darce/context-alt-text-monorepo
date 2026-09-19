@@ -3,7 +3,7 @@
 Date: 2026-09-19. Status: proposed; intake partly answered, assumptions explicit.
 Handoff decision: `APP-1` #12633. [Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md). [Research and vendor refresh](../assessments/current/app-portal-prior-art-and-vendors-2026-09-19.md).
 
-Vendor reassessment: [current build/buy decision pipeline](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md). Polar and local keys remain provisional candidates, with selection gates before implementation.
+Current recommendation: [Clerk identity + retained local API keys + Polar Starter](../assessments/current/app-portal-launch-recommendation-2026-09-19.md), with source-book corpus and execution sequence. The earlier vendor comparison remains evidence; mandatory comparative spikes are replaced by proof of the chosen path and explicit fallback triggers.
 
 ## Intent and recommendation
 
@@ -16,7 +16,7 @@ Recommend the first option's complete journey as a **controlled free self-servic
 | Question asked | Answer or working assumption |
 | --- | --- |
 | Paid beta / public launch / private manual pilot? | User explicitly wants free beta plus ready paid conversion. Controlled self-service enrollment is our recommendation, not yet accepted |
-| Clerk/Polar preferred or fixed? | User explicitly asks to reopen both choices. Keep Clerk identity; compare managed keys and Polar/Stripe Managed Payments/Paddle through G0..G4. No final selection accepted |
+| Clerk/Polar preferred or fixed? | User explicitly asks to reopen both choices. Recommend Clerk identity, retained local keys and Polar Starter after comparison. User asked whether keys also retire: recommendation explicitly says no. No implementation approval claimed |
 | Organization / single-owner / agency tenant? | No new answer. Preserve E16-7 single-owner `(issuer, subject)` binding initially; tenant UUID is independent of user. Team roles/invites are deferred, not accidentally implied by "workspace" |
 | Date, budget, prices, rotation, outages? | Low initial costs confirmed; exact ceiling/date unconfirmed. Propose seven-day maximum overlap, bounded usage, local outage containment and measured rollout gates below |
 
@@ -28,7 +28,7 @@ The earlier September 15 keys-only intake excluded signup and billing; this user
 - One owner per tenant; key create/list/rotate/revoke; one-time secret display; WordPress install and Test Connection guidance.
 - Beta entitlement with no payment instrument or charge; real limits, visible allowance/end date, recoverable cap/expiry states.
 - Usage and activation evidence; privacy-safe feedback; observed first-run sessions with consent.
-- Selected-provider sandbox checkout (Polar candidate), signed durable webhooks, local subscription/entitlement projection, hosted billing portal, cancellation/failed-payment recovery and reconciliation.
+- Polar sandbox checkout, signed durable webhooks, local subscription/entitlement projection, hosted billing portal, cancellation/failed-payment recovery and reconciliation.
 - Live paid activation implemented behind a server gate; explicit checkout at launch, no silent beta-to-paid conversion or arrears.
 - Isolation, concurrency, provider-failure, restore and full user-journey evidence. Every APP-SC criterion maps to an eval case in [the eval data](app-altcontext-beta-clerk-polar-evals.json).
 
@@ -42,7 +42,7 @@ Local portal operations target p95 <=500 ms / p99 <=1 s under the defined stagin
 
 ## Not doing
 
-Public unlimited enrollment; automatic charging at beta expiry; live charges in this planning session; usage overage billing; agency subtenants/team roles/SSO; custom payment forms/invoices; unselected credential migration; a second tenant/key source of truth; local-worker implementation; CRM rebuild; plugin silent key replacement; storing media, face identity or credentials in analytics.
+Public unlimited enrollment; automatic charging at beta expiry; live charges in this planning session; usage overage billing; agency subtenants/team roles/SSO; custom payment forms/invoices; migration to Clerk-managed API keys or a generic API gateway; a second tenant/key source of truth; local-worker implementation; CRM rebuild; plugin silent key replacement; storing media, face identity or credentials in analytics.
 
 ## Review decisions
 

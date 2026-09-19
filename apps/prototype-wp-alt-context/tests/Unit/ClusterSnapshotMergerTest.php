@@ -925,6 +925,177 @@ class ClusterSnapshotMergerTest extends TestCase
         );
     }
 
+    public function testTombstoneLocksClassifiedAbsentClustersForUpdate(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone-lock');
+
+        global $wpdb;
+        $wpdb->queries = [];
+
+        $this->merger->prepare_snapshot_merge_for_tenant(
+            'tenant-tombstone-lock',
+            array('cluster-keep'),
+            true
+        );
+
+        $lockQueries = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'FOR UPDATE')
+            )
+        );
+        $this->assertNotSame(array(), $lockQueries);
+        $lockSql = implode("\n", $lockQueries);
+        $this->assertStringContainsString(
+            'SELECT cluster_uuid, is_user_confirmed, person_id, curation_state FROM `wp_acx_clusters`',
+            $lockSql
+        );
+        $this->assertStringContainsString("tenant_id = 'tenant-tombstone-lock'", $lockSql);
+        $this->assertStringContainsString('cluster-stale-a', $lockSql);
+        $this->assertStringContainsString('cluster-stale-b', $lockSql);
+        $this->assertStringNotContainsString('cluster-keep', $lockSql);
+        $this->assertStringNotContainsString('cluster-other-tenant', $lockSql);
+
+        $lockIndex = array_search($lockQueries[0], $wpdb->queries, true);
+        $deleteQueries = $this->queriesStartingWith('DELETE FROM wp_acx_');
+        $this->assertNotSame(array(), $deleteQueries);
+        $firstDeleteIndex = array_search($deleteQueries[0], $wpdb->queries, true);
+        $this->assertIsInt($lockIndex);
+        $this->assertIsInt($firstDeleteIndex);
+        $this->assertLessThan($firstDeleteIndex, $lockIndex);
+    }
+
+    public function testTombstoneRechecksCurationConfirmationAndPersonBindingBeforeDelete(): void
+    {
+        global $wpdb;
+
+        $tenant = 'tenant-tombstone-recheck';
+        $wpdb->tableRows['wp_acx_clusters'] = array(
+            array(
+                'cluster_uuid' => 'cluster-keep',
+                'tenant_id' => $tenant,
+                'label' => 'Keep',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-flip-confirmed',
+                'tenant_id' => $tenant,
+                'label' => 'Flip Confirmed',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-flip-bound',
+                'tenant_id' => $tenant,
+                'label' => 'Flip Bound',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-flip-curated',
+                'tenant_id' => $tenant,
+                'label' => 'Flip Curated',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-still-stale',
+                'tenant_id' => $tenant,
+                'label' => 'Still Stale',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_identity_members'] = array(
+            array(
+                'identity_uuid' => 'id-keep',
+                'cluster_uuid' => 'cluster-keep',
+            ),
+            array(
+                'identity_uuid' => 'id-flip-confirmed',
+                'cluster_uuid' => 'cluster-flip-confirmed',
+            ),
+            array(
+                'identity_uuid' => 'id-flip-bound',
+                'cluster_uuid' => 'cluster-flip-bound',
+            ),
+            array(
+                'identity_uuid' => 'id-flip-curated',
+                'cluster_uuid' => 'cluster-flip-curated',
+            ),
+            array(
+                'identity_uuid' => 'id-still-stale',
+                'cluster_uuid' => 'cluster-still-stale',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_sync_conflicts'] = array();
+        $wpdb->queries = [];
+        $wpdb->onGetResults = static function (string $sql): ?array {
+            if (!str_contains($sql, 'FOR UPDATE')) {
+                return null;
+            }
+
+            global $wpdb;
+            foreach ($wpdb->tableRows['wp_acx_clusters'] as $index => $row) {
+                $clusterUuid = (string) ($row['cluster_uuid'] ?? '');
+                if ('cluster-flip-confirmed' === $clusterUuid) {
+                    $wpdb->tableRows['wp_acx_clusters'][$index]['is_user_confirmed'] = 1;
+                    continue;
+                }
+                if ('cluster-flip-bound' === $clusterUuid) {
+                    $wpdb->tableRows['wp_acx_clusters'][$index]['person_id'] = 11;
+                    continue;
+                }
+                if ('cluster-flip-curated' === $clusterUuid) {
+                    $wpdb->tableRows['wp_acx_clusters'][$index]['curation_state'] = 'confirmed';
+                }
+            }
+
+            return null;
+        };
+
+        $result = $this->merger->prepare_snapshot_merge_for_tenant(
+            $tenant,
+            array('cluster-keep'),
+            true
+        );
+
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 1,
+                'tombstoned_members' => 1,
+                'preserved_curated' => 3,
+            ),
+            $result
+        );
+        $this->assertSame(
+            array(
+                'cluster-flip-bound',
+                'cluster-flip-confirmed',
+                'cluster-flip-curated',
+                'cluster-keep',
+            ),
+            $this->clusterIdsForTenant($tenant)
+        );
+        $memberIds = array_values(
+            array_map(
+                static fn(array $row): string => (string) $row['identity_uuid'],
+                $wpdb->tableRows['wp_acx_identity_members']
+            )
+        );
+        sort($memberIds);
+        $this->assertSame(
+            array('id-flip-bound', 'id-flip-confirmed', 'id-flip-curated', 'id-keep'),
+            $memberIds
+        );
+    }
+
     /**
      * @return int[]
      */

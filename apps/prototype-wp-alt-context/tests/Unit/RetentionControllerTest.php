@@ -166,6 +166,62 @@ class RetentionControllerTest extends TestCase
         $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
     }
 
+    public function testGetStatusPassesThroughServiceTypedUnavailableReason(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_unavailable',
+                    'message' => 'Description service is unavailable.',
+                    'reason' => 'operator_stop',
+                    'api_key' => 'sk-secret',
+                ],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'operator_stop', 'recognition', 503);
+        $this->assertStringNotContainsString('sk-secret', (string) wp_json_encode($response->get_data()));
+        $this->assertStringNotContainsString(
+            'Description service is unavailable.',
+            (string) wp_json_encode($response->get_data())
+        );
+    }
+
+    public function testGetStatusPassesThroughUnknownServiceUnavailableReason(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'unavailable' => [
+                    'reason' => 'state_missing',
+                    'service' => 'recognition',
+                    'http_status' => 503,
+                    'retry_after_seconds' => null,
+                    'checked_at' => '2026-09-18T14:03:22Z',
+                ],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $response = $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data(), 'state_missing', 'recognition', 503);
+    }
+
     public function testGetStatusUnavailableWhenRecognitionNotConfigured(): void
     {
         $this->setOption('acx_recognition_url', '');

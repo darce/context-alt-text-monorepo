@@ -7,7 +7,7 @@ import { IdentityClusterList } from '../identity-clusters';
 import * as api from '../../../api/recognition';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
-import type { MediaIdentitiesResponse } from '../../../api/recognition';
+import type { DetectedIdentity, MediaIdentitiesResponse } from '../../../api/recognition';
 import { DATA_SOURCE } from '../../../api/recognition/types';
 import { buildNamingOptions } from '../identity-clusters/buildNamingOptions';
 import type {
@@ -1040,13 +1040,63 @@ describe('IdentityClusterList', () => {
     );
     unmount();
 
-    // 2. Multi-member case - button should be hidden
-    const member1 = { ...baseIdentity, identity_id: '1', cluster_id: 'c1', cluster_label: 'Startrek' };
-    const member2 = { ...baseIdentity, identity_id: '2', cluster_id: 'c1', cluster_label: 'Startrek' };
+    const expectUnlinkHiddenFor = async (identities: DetectedIdentity[]) => {
+      const rendered = await renderWithClient(<IdentityClusterList identities={identities} />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /edit label|name this person/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /remove from group/i })).not.toBeInTheDocument();
+      rendered.unmount();
+    };
 
-    await renderWithClient(<IdentityClusterList identities={[member1, member2]} />);
+    // Same cluster, two identity rows that person-card same-face dedup collapses to one
+    // visual member — Unlink stays hidden because identityClusterIds still names two.
+    await expectUnlinkHiddenFor([
+      { ...baseIdentity, identity_id: '1', cluster_id: 'c1', cluster_label: 'Startrek' },
+      { ...baseIdentity, identity_id: '2', cluster_id: 'c1', cluster_label: 'Startrek' },
+    ]);
 
-    expect(screen.queryByRole('button', { name: /remove from group/i })).not.toBeInTheDocument();
+    // Distinct faces in one cluster (different media, no bbox overlap).
+    await expectUnlinkHiddenFor([
+      {
+        ...baseIdentity,
+        identity_id: '1',
+        cluster_id: 'c1',
+        cluster_label: 'Startrek',
+        media_id: 1,
+        bbox: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      {
+        ...baseIdentity,
+        identity_id: '2',
+        cluster_id: 'c1',
+        cluster_label: 'Startrek',
+        media_id: 2,
+        bbox: { x: 40, y: 40, width: 10, height: 10 },
+      },
+    ]);
+
+    // Person-spanning card: two face groups, one person.
+    await expectUnlinkHiddenFor([
+      {
+        ...baseIdentity,
+        identity_id: 'p-a',
+        cluster_id: 'ca',
+        person_id: '7',
+        cluster_label: 'Startrek',
+        media_id: 3,
+        bbox: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      {
+        ...baseIdentity,
+        identity_id: 'p-b',
+        cluster_id: 'cb',
+        person_id: '7',
+        cluster_label: 'Startrek',
+        media_id: 4,
+        bbox: { x: 40, y: 40, width: 10, height: 10 },
+      },
+    ]);
   });
 
   it('allows splitting a cluster', async () => {

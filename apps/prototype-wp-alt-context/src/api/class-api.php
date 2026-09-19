@@ -10,6 +10,8 @@ require_once __DIR__ . '/class-public-demo-describe-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-person-resolution-service.php';
+require_once __DIR__ . '/class-cluster-mutations-controller.php';
+require_once __DIR__ . '/services/class-cluster-merge-service.php';
 require_once __DIR__ . '/services/class-cluster-person-bind-service.php';
 require_once __DIR__ . '/services/class-person-merge-service.php';
 require_once __DIR__ . '/class-person-merge-controller.php';
@@ -29,6 +31,7 @@ require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.ph
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Api\RecognitionController;
+use AltContext\Api\Services\ClusterMergeService;
 use AltContext\Api\Services\ClusterPersonBindService;
 use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Support\RunsTransactional;
@@ -94,6 +97,7 @@ class Api {
 	private OutboxDrain $outboxDrain;
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 	private ?SyncPullJobInterface $bootstrapSyncPullJob;
+	private ?ClusterMergeService $clusterPersonBindMergeService = null;
 
 	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null, ?PublicDemoDescribeController $public_demo_describe_controller = null ) {
 		$this->recognitionController = new RecognitionController();
@@ -651,7 +655,7 @@ class Api {
 		$now = current_time( 'mysql' );
 
 		if ( null !== $person_id ) {
-			$binder = new ClusterPersonBindService();
+			$binder = new ClusterPersonBindService( $this->get_cluster_person_bind_merge_service() );
 			$bound  = $binder->bind_cluster_to_person(
 				$cluster_id,
 				$person_id,
@@ -1102,6 +1106,14 @@ class Api {
 				);
 			}
 		);
+	}
+
+	private function get_cluster_person_bind_merge_service(): ClusterMergeService {
+		if ( ! $this->clusterPersonBindMergeService instanceof ClusterMergeService ) {
+			$this->clusterPersonBindMergeService = new ClusterMergeService( new ClusterMutationsController() );
+		}
+
+		return $this->clusterPersonBindMergeService;
 	}
 
 	/**

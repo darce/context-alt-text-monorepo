@@ -588,6 +588,55 @@ def test_warmup_cpu_fallback_forces_provisional_cpu_when_adapter_returns_final_g
     asyncio.run(body())
 
 
+def test_warmup_cpu_fallback_failed_item_keeps_fallback_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [3])
+
+            async def gpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            async def cpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                raise RuntimeError("cpu adapter crashed")
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=gpu_describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=cpu_describe_one,
+                ),
+                timeout=2.0,
+            )
+            _run, items = await _read_run(session_factory, run_id)
+
+        assert items[0].status == DescribeItemStatus.FAILED
+        assert items[0].tier == DescriptionResultTier.PROVISIONAL_CPU
+        assert items[0].provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+
+    asyncio.run(body())
+
+
 def test_describe_run_item_response_accepts_warmup_cpu_fallback_row() -> None:
     item = DescribeRunItemResponse.model_validate(
         {

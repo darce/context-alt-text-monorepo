@@ -134,14 +134,21 @@ describe('QueueDraftCell', () => {
   });
 
   it('lands programmatic focus on Accept for a committable draft, not Dismiss [WBUX-5]', () => {
-    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
+    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." autoFocus />, client);
 
     expect(screen.getByRole('button', { name: /^accept$/i })).toHaveFocus();
     expect(screen.getByRole('button', { name: /^dismiss$/i })).not.toHaveFocus();
   });
 
+  it('does not claim focus on mount without autoFocus (table rows)', () => {
+    renderCell(<QueueDraftCell mediaId={71} draftText="A flower." />, client);
+
+    expect(screen.getByRole('button', { name: /^accept$/i })).not.toHaveFocus();
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it('lands programmatic focus on Edit draft when the draft is not committable [WBUX-5]', () => {
-    renderCell(<QueueDraftCell mediaId={71} draftText="   " />, client);
+    renderCell(<QueueDraftCell mediaId={71} draftText="   " autoFocus />, client);
 
     expect(screen.getByRole('button', { name: /^edit draft$/i })).toHaveFocus();
     expect(screen.getByRole('button', { name: /^accept$/i })).toBeDisabled();

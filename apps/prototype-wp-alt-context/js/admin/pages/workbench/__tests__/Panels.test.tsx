@@ -152,7 +152,7 @@ describe('ScanActionPanel', () => {
     expect(screen.getByText('Processed 4/10 images')).toBeTruthy();
   });
 
-  it('L3R-01 residual: live region stays phase-stable while per-tick statusText updates visually', () => {
+  it('L3R-01 residual: suppressed-chrome live region stays phase-stable while per-tick statusText updates visually', () => {
     const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
     const { rerender } = render(
       <ScanActionPanel
@@ -164,6 +164,7 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
 
@@ -187,6 +188,7 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
     expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 5/10 images');
@@ -203,9 +205,23 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
     expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Clustering');
+  });
+
+  it('leaves the scan live region to the activity strip when it is shown', () => {
+    const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, progress, statusText: 'Processed 1/10 images', jobId: 'job-1' }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('activity-status-strip')).toBeTruthy();
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 
   it('buildCoarseJobAnnouncement ignores count-bearing statusText without a phase', () => {

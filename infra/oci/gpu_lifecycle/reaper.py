@@ -2628,11 +2628,12 @@ def _finalize_reap_snapshot_state(
     if previous is not GpuLifecycleState.READY:
         return candidate
     if _probe_reports_ready(probe, snapshot_instance_id):
-        write_ready_probe_failure_count(
+        if not write_ready_probe_failure_count(
             snapshot_path,
             instance_id=snapshot_instance_id,
             count=0,
-        )
+        ):
+            logger.warning("ready-probe failure counter could not be cleared; next failure may drop READY early")
         return GpuLifecycleState.READY
     failure_count = read_ready_probe_failure_count(
         snapshot_path,

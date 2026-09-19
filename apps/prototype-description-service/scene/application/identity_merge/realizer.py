@@ -1,14 +1,17 @@
 """Reflow realizers: turn 1:1 name↔phrase associations into a named draft.
 
 ``ReflowRealizer`` is the LLM-ready seam (Approach D drops a constrained
-on-box LLM behind the same Protocol later; no LLM ships in v1). The two v1
+on-box LLM behind the same Protocol later; no LLM ships in v1). The v1
 implementations are deterministic:
 
 - ``DeterministicNlgRealizer`` — grammar-aware span replacement with the four
   enumerated, individually-tested rules (R1 article elision + case, R2
   possessive form, R3 list aggregation, R4 repeated-mention coreference).
+- ``N1SubstitutionRealizer`` — n==1 only: weave the confirmed name into the
+  unique leading generic person NP when phrase boxes are absent.
 - ``PositionalFallbackRealizer`` — Approach B: when phrase grounding is
-  absent, order confirmed faces left→right and append one naming sentence.
+  absent and n==1 substitution does not apply, order confirmed faces
+  left→right and append one naming sentence.
 """
 
 from __future__ import annotations
@@ -50,6 +53,43 @@ _S_ENDING_NON_VERBS = frozenset(
         "this",
         "thus",
     }
+)
+# Closed list of generic person NP heads (longest first so "young man"
+# wins over "man"). Articles are matched separately; plurals are excluded.
+_GENERIC_PERSON_HEADS: tuple[str, ...] = tuple(
+    sorted(
+        (
+            "young man",
+            "young woman",
+            "young person",
+            "young boy",
+            "young girl",
+            "old man",
+            "old woman",
+            "little boy",
+            "little girl",
+            "little child",
+            "gentleman",
+            "teenager",
+            "person",
+            "woman",
+            "adult",
+            "child",
+            "baby",
+            "girl",
+            "lady",
+            "man",
+            "boy",
+            "guy",
+            "kid",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_GENERIC_PERSON_NP = re.compile(
+    r"\b((?:a|an|the)\s+(?:" + "|".join(re.escape(head) for head in _GENERIC_PERSON_HEADS) + r"))\b",
+    re.IGNORECASE,
 )
 
 
@@ -181,6 +221,48 @@ class DeterministicNlgRealizer:
         if plural is None:
             return None
         return pronoun + rest[:verb_start] + plural, end + verb_end
+
+
+def find_generic_person_nps(caption: str) -> tuple[tuple[int, int, str], ...]:
+    """Return closed-list generic person NPs as (start, end, surface) spans."""
+    return tuple((m.start(1), m.end(1), m.group(1)) for m in _GENERIC_PERSON_NP.finditer(caption))
+
+
+def leading_generic_person_np(caption: str) -> tuple[int, int, str] | None:
+    """Unique leading generic person NP, or None when the count is not n==1.
+
+    Leading means the match is at the start of the caption (whitespace only
+    before it). Two or more closed-list NPs, or a unique NP that is not
+    caption-initial, are not substitution evidence.
+    """
+    matches = find_generic_person_nps(caption)
+    if len(matches) != 1:
+        return None
+    start, end, phrase = matches[0]
+    if caption[:start].strip() != "":
+        return None
+    return start, end, phrase
+
+
+class N1SubstitutionRealizer:
+    """Weave one confirmed name into the unique leading generic person NP."""
+
+    def realize(
+        self,
+        *,
+        caption: str,
+        associations: Sequence[IdentityAssociation],
+        confirmed_faces: Sequence[ConfirmedFace],
+    ) -> str:
+        people = _distinct_people(confirmed_faces)
+        if len(people) != 1:
+            return caption
+        span = leading_generic_person_np(caption)
+        if span is None:
+            return caption
+        start, end, phrase = span
+        name = DeterministicNlgRealizer()._name_phrase(phrase, people[0].label)
+        return caption[:start] + name + caption[end:]
 
 
 class PositionalFallbackRealizer:

@@ -206,15 +206,21 @@ def merge_identities(
         PositionalFallbackRealizer,
     )
 
-    def _status_for_skip_reason(reason: Any) -> Any:
-        # C4 / OBS-08: a more specific skip must not collapse into NO_FACES.
-        # AGREEMENT_DISABLED is the one skip whose status name differs (DISABLED).
-        if reason is NamingSkipReason.AGREEMENT_DISABLED:
-            return NamingStatus.DISABLED
-        member = NamingStatus.__members__.get(getattr(reason, "name", ""))
-        if member is not None:
-            return member
-        return reason
+    def _status_for_skip_reason(reason: NamingSkipReason) -> NamingStatus:
+        # C4 / OBS-08 / sr-007: skip statuses are NamingStatus members. Do not
+        # return the SkipReason object (Pydantic then rejects it and the wire
+        # collapses to no_faces). NO_FACES is only for genuinely absent faces,
+        # which this merge path never produces.
+        mapping = {
+            NamingSkipReason.AGREEMENT_DISABLED: NamingStatus.DISABLED,
+            NamingSkipReason.NO_CONFIRMED_IDENTITIES: NamingStatus.NO_CONFIRMED_IDENTITIES,
+            NamingSkipReason.NO_ELIGIBLE_IDENTITIES: NamingStatus.NO_ELIGIBLE_IDENTITIES,
+            NamingSkipReason.AMBIGUOUS_GROUNDING: NamingStatus.AMBIGUOUS_GROUNDING,
+        }
+        try:
+            return mapping[reason]
+        except KeyError as exc:
+            raise ValueError(f"no NamingStatus mapping for skip reason {reason!s}") from exc
 
     def _generic(reason: Any) -> MergeResult:
         if policy is None:

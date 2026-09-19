@@ -605,6 +605,39 @@ def test_cache_hit_keeps_grounded_naming_parity():
         assert second["naming_provenance"]["injected_names"] == first["naming_provenance"]["injected_names"]
 
 
+def test_cache_hit_without_base_skips_naming_preview(monkeypatch):
+    """N-R-03: missing unnamed base keeps the cached named draft; preview is not re-run."""
+    from scene.interface_adapters.http.routers import describe as describe_mod
+
+    named_only = "Alex stands by the window."
+    with _client(adapter=_GroundedAdapter()) as client:
+        first = _post_png(client, TENANT_ID)
+        assert first.status_code == 200, first.text
+
+        async def _blank_caption():
+            async with client.app.state.session_factory() as session:
+                row = (await session.scalars(select(ImageDescription))).one()
+                row.alt_text_draft = named_only
+                row.visual_facts = {**dict(row.visual_facts or {}), "caption": ""}
+                await session.commit()
+
+        asyncio.run(_blank_caption())
+
+        async def boom(*args, **kwargs):
+            raise AssertionError("naming preview must not run when cached base is missing")
+
+        monkeypatch.setattr(describe_mod, "_naming_preview", boom)
+        second = _post_png(client, TENANT_ID)
+        assert second.status_code == 200, second.text
+        body = second.json()
+        assert body["cached"] is True
+        assert body["alt_text_draft"] == named_only
+        assert body["named_draft"] == named_only
+        assert body["generic_draft"] is None
+        assert body["naming_provenance"]["status"] == "skipped_budget"
+        assert body["naming_provenance"]["reason"] == "merge_error"
+
+
 class _NoBoxAdapter:
     """Fixed caption, no phrase boxes — drives the positional-fallback naming path."""
 

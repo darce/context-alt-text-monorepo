@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import importlib
 import json
+import logging
 import socket
 import threading
+from types import SimpleNamespace
 from io import BytesIO
 
 import httpx
@@ -82,7 +84,8 @@ def test_gpu_remote_adapter_stores_quantization_and_defaults_to_none() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_gpu_adapter_state():
+def _reset_gpu_adapter_state(monkeypatch):
+    monkeypatch.delenv("ACX_GPU_GROUNDING_ENABLED", raising=False)
     reset_gpu_remote_adapter_state_for_tests()
     yield
     reset_gpu_remote_adapter_state_for_tests()
@@ -1101,6 +1104,68 @@ def test_gpu_remote_adapter_grounding_follow_up_uses_own_timeout(monkeypatch) ->
     assert captured_timeouts[0].read == 120.0
     assert captured_timeouts[1].read == 12.0
     assert captured_timeouts[1].connect == 3.0
+
+
+def _budget_adapter(handler, *, read_timeout_s: float) -> GpuRemoteDescriptionAdapter:
+    return GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        connect_timeout_s=3.0,
+        read_timeout_s=read_timeout_s,
+        grounding_enabled=True,
+        grounding_timeout_s=30.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def _fake_monotonic(monkeypatch, readings: list[float]) -> None:
+    import scene.infrastructure.vlm.gpu_remote_adapter as adapter_module
+
+    values = iter(readings)
+    monkeypatch.setattr(adapter_module, "time", SimpleNamespace(monotonic=lambda: next(values)))
+
+
+def test_gpu_remote_adapter_grounding_is_capped_by_remaining_caption_budget(monkeypatch) -> None:
+    captured_timeouts: list[httpx.Timeout] = []
+    original_client = httpx.Client
+
+    def _client_factory(*args, **kwargs):
+        if kwargs.get("transport") is not None:
+            captured_timeouts.append(kwargs["timeout"])
+        return original_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _client_factory)
+    # Caption took 165s of a 175s budget: grounding may use only the 10s left, not its 30s default.
+    _fake_monotonic(monkeypatch, [0.0, 165.0])
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": [], "labels": []}),
+        captured=captured,
+    )
+    _budget_adapter(handler, read_timeout_s=175.0).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(captured) == 2
+    assert captured_timeouts[1].read == 10.0
+    assert captured_timeouts[1].connect == 3.0
+
+
+def test_gpu_remote_adapter_skips_grounding_when_caption_budget_is_spent(monkeypatch, caplog) -> None:
+    _fake_monotonic(monkeypatch, [0.0, 174.5])
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": [], "labels": []}),
+        captured=captured,
+    )
+    with caplog.at_level(logging.INFO):
+        result = _budget_adapter(handler, read_timeout_s=175.0).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+    assert len(captured) == 1
+    assert "budget_exhausted" in caplog.text
 
 
 def test_gpu_remote_adapter_grounding_labels_bind_on_word_boundaries() -> None:

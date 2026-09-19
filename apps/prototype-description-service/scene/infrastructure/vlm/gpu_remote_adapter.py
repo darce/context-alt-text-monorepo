@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -31,6 +32,9 @@ _DEFAULT_N_PROBS = 10
 _MAX_LOGGED_GPU_DIAGNOSTIC = 4096
 # Bounded follow-up for person-span grounding; shorter than caption read timeout.
 _DEFAULT_GROUNDING_TIMEOUT_S = 30.0
+# Caption + grounding share the caption read budget, which is sized under the
+# caller's generation_timeout_seconds; below this remainder grounding is skipped.
+_MIN_GROUNDING_BUDGET_S = 2.0
 _GROUNDING_FLAG_ENV = "ACX_GPU_GROUNDING_ENABLED"
 # Qwen3-VL native bbox_2d is relative in [0, 1000], not pixels (EMB-02 / RES-13).
 _QWEN_BBOX_RELATIVE_MAX = 1000.0
@@ -412,12 +416,6 @@ class GpuRemoteDescriptionAdapter:
             bool(grounding_enabled) if grounding_enabled is not None else _env_flag_enabled(_GROUNDING_FLAG_ENV)
         )
         self._grounding_timeout_s = max(0.1, float(grounding_timeout_s))
-        self._grounding_timeout = httpx.Timeout(
-            connect=self._connect_timeout_s,
-            read=self._grounding_timeout_s,
-            write=30.0,
-            pool=5.0,
-        )
 
     def describe(self, *, image_bytes: bytes, context: Mapping[str, Any] | None) -> AdapterResult:
         result, _ = self._describe(image_bytes=image_bytes, context=context, n_probs=None)
@@ -439,6 +437,7 @@ class GpuRemoteDescriptionAdapter:
     def _describe(
         self, *, image_bytes: bytes, context: Mapping[str, Any] | None, n_probs: int | None
     ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
+        started = time.monotonic()
         user_text, context_sources, context_applied = _user_text(context)
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         semaphore = _get_gpu_call_semaphore(self._max_concurrent_calls)
@@ -495,13 +494,23 @@ class GpuRemoteDescriptionAdapter:
         traces = _extract_token_traces(body) if n_probs is not None else ()
         phrase_boxes: tuple[PhraseBox, ...] = ()
         if self.grounding_enabled:
-            phrase_boxes = self._request_phrase_boxes(
-                encoded_image=encoded_image,
-                media_type=media_type,
-                caption=caption,
-                headers=headers,
-                semaphore=semaphore,
-            )
+            remaining_s = self._read_timeout_s - (time.monotonic() - started)
+            if remaining_s < _MIN_GROUNDING_BUDGET_S:
+                _log_grounding_discard("budget_exhausted", f"remaining={remaining_s:.1f}s")
+            else:
+                phrase_boxes = self._request_phrase_boxes(
+                    encoded_image=encoded_image,
+                    media_type=media_type,
+                    caption=caption,
+                    headers=headers,
+                    semaphore=semaphore,
+                    timeout=httpx.Timeout(
+                        connect=min(self._connect_timeout_s, remaining_s),
+                        read=min(self._grounding_timeout_s, remaining_s),
+                        write=min(30.0, remaining_s),
+                        pool=min(5.0, remaining_s),
+                    ),
+                )
         result = AdapterResult(
             caption=caption,
             objects=(),
@@ -521,6 +530,7 @@ class GpuRemoteDescriptionAdapter:
         caption: str,
         headers: dict[str, str],
         semaphore: threading.Semaphore,
+        timeout: httpx.Timeout,
     ) -> tuple[PhraseBox, ...]:
         payload = _completion_payload(
             model_id=self._endpoint_model_id,
@@ -531,7 +541,7 @@ class GpuRemoteDescriptionAdapter:
         )
         try:
             with semaphore:
-                response = self._post(json=payload, headers=headers, timeout=self._grounding_timeout)
+                response = self._post(json=payload, headers=headers, timeout=timeout)
                 if not 200 <= response.status_code < 300:
                     _log_grounding_discard("endpoint_rejected", f"HTTP {response.status_code}: {response.text}")
                     return ()

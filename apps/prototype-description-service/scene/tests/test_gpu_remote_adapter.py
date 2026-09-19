@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
-from scene.application.identity_merge.merge import NormalizedBox
+from scene.application.identity_merge.merge import NormalizedBox, span_replaceable
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm import gpu_remote_adapter
 from scene.infrastructure.vlm.gpu_remote_adapter import (
@@ -1010,3 +1010,139 @@ def test_gpu_remote_adapter_grounding_follow_up_uses_own_timeout(monkeypatch) ->
     assert captured_timeouts[0].read == 120.0
     assert captured_timeouts[1].read == 12.0
     assert captured_timeouts[1].connect == 3.0
+
+
+def test_gpu_remote_adapter_grounding_labels_bind_on_word_boundaries() -> None:
+    captured: list[dict] = []
+    caption = "A woman and a man stand."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps(
+            [
+                {"bbox_2d": [50.0, 100.0, 400.0, 900.0], "label": "woman"},
+                {"bbox_2d": [500.0, 100.0, 900.0, 900.0], "label": "man"},
+            ]
+        ),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(result.phrase_boxes) == 2
+    woman, man = result.phrase_boxes
+    assert woman.phrase == "woman"
+    assert (woman.span_start, woman.span_end) == (2, 7)
+    assert caption[woman.span_start : woman.span_end] == "woman"
+    assert man.phrase == "man"
+    assert (man.span_start, man.span_end) == (14, 17)
+    assert caption[man.span_start : man.span_end] == "man"
+    assert (man.span_start, man.span_end) != (4, 7)
+
+
+def test_gpu_remote_adapter_grounding_accepts_markdown_fenced_json() -> None:
+    captured: list[dict] = []
+    rows = [{"bbox_2d": [250.0, 100.0, 750.0, 900.0], "label": "A woman"}]
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content="```json\n" + json.dumps(rows) + "\n```",
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert len(result.phrase_boxes) == 1
+    assert result.phrase_boxes[0].phrase == "A woman"
+    assert (result.phrase_boxes[0].span_start, result.phrase_boxes[0].span_end) == (0, 7)
+    assert result.phrase_boxes[0].box == NormalizedBox(x=0.25, y=0.10, width=0.50, height=0.80)
+
+
+def test_gpu_remote_adapter_grounding_single_object_payload_yields_no_boxes() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps({"bbox_2d": [250.0, 100.0, 750.0, 900.0], "label": "A woman"}),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert result.caption == "A woman waves."
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_unmatched_label_is_not_replaceable() -> None:
+    captured: list[dict] = []
+    caption = "A woman waves."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps([{"bbox_2d": [250.0, 100.0, 750.0, 900.0], "label": "a man"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert len(result.phrase_boxes) == 1
+    box = result.phrase_boxes[0]
+    assert box.phrase == "a man"
+    assert (box.span_start, box.span_end) == (-1, -1)
+    assert span_replaceable(caption, box) is False
+
+
+def test_gpu_remote_adapter_grounding_repeated_label_advances_cursor() -> None:
+    captured: list[dict] = []
+    caption = "A man and a man"
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps(
+            [
+                {"bbox_2d": [50.0, 100.0, 400.0, 900.0], "label": "man"},
+                {"bbox_2d": [500.0, 100.0, 900.0, 900.0], "label": "man"},
+            ]
+        ),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(result.phrase_boxes) == 2
+    first, second = result.phrase_boxes
+    assert first.phrase == "man"
+    assert (first.span_start, first.span_end) == (2, 5)
+    assert caption[first.span_start : first.span_end] == "man"
+    assert second.phrase == "man"
+    assert (second.span_start, second.span_end) == (12, 15)
+    assert caption[second.span_start : second.span_end] == "man"
+    assert second.span_start > first.span_end
+
+
+def test_gpu_remote_adapter_grounding_keeps_valid_rows_from_mixed_payload() -> None:
+    captured: list[dict] = []
+    caption = "A woman and a man stand."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps(
+            [
+                {"bbox_2d": [50.0, 100.0, 400.0, 900.0], "label": "woman"},
+                "not-an-object",
+                {"bbox_2d": "bad-quad", "label": "person"},
+                {"label": "missing-box"},
+                {"bbox_2d": [500.0, 100.0, 900.0, 900.0], "label": "man"},
+            ]
+        ),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(result.phrase_boxes) == 2
+    woman, man = result.phrase_boxes
+    assert woman.phrase == "woman"
+    assert (woman.span_start, woman.span_end) == (2, 7)
+    assert man.phrase == "man"
+    assert (man.span_start, man.span_end) == (14, 17)

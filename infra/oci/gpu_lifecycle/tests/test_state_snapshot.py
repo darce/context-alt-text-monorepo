@@ -795,6 +795,99 @@ def test_reap_cycle_revokes_ready_without_a_current_probe(tmp_path: Path, monkey
     assert payload["written_at"] >= previous_written_at
 
 
+def test_reap_cycle_passing_probe_keeps_ready_and_since(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous = json.loads(path.read_text())
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=AlwaysReady(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+    assert payload["since"] == previous["since"]
+    assert payload["written_at"] >= previous["written_at"]
+
+
+def test_reap_cycle_single_failed_probe_keeps_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous = json.loads(path.read_text())
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=NeverReady(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+    assert payload["since"] == previous["since"]
+
+
+def test_reap_cycle_consecutive_failed_probes_leave_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    previous_since = json.loads(path.read_text())["since"]
+
+    def _reprobe() -> None:
+        run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+            load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+            actuator=RecordingActuator(),
+            probe=NeverReady(),
+            fence_delay_seconds=0.0,
+            gpu_state_path=path,
+        )
+
+    _reprobe()
+    assert json.loads(path.read_text())["state"] == "ready"
+    assert json.loads(path.read_text())["since"] == previous_since
+
+    _reprobe()
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "warming"
+    assert payload["since"] != previous_since
+
+
 def test_reaped_instance_snapshot_does_not_suppress_replacement_transition(
     tmp_path: Path,
 ) -> None:

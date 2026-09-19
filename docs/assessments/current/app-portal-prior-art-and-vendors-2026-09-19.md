@@ -4,6 +4,8 @@ Date: 2026-09-19. Status: research supporting a proposed plan, not a vendor purc
 Repository baseline: `213fad181474e5739a3b4859536f28792638cdeb`.
 Canon baseline: `aa18707a999affeab4357c9a9d15ae8b502c459f` in `~/Development/heuristics-canon-research`.
 
+**Later same-day reassessment:** [build/buy pipeline](app-portal-build-buy-reassessment-2026-09-19.md) supersedes the vendor ranking below, adds verified Dodo pricing, promotes Stripe Managed Payments/Paddle to finalists, and specifies a Clerk-key challenge. Earlier receipts remain historical evidence.
+
 ## Collected prior art and precedence
 
 | Source | Reusable decision or evidence | Treatment in APP-1 |
@@ -67,7 +69,7 @@ Verified 2026-09-19. Fees are public list prices, not an account quote. Country,
 | **Stripe Managed Payments** | Stripe MoR, **3.5% in addition to Payments fees**; Billing and optional products separate. Checkout/Payment Links and subscriptions supported. [Product/pricing](https://stripe.com/managed-payments), [integration](https://docs.stripe.com/payments/managed-payments) | Real fallback now, not dismissed using July's preview label. Eligibility review still applies; docs list CA and US. Fully automated digital products qualify; professional-service/consulting offers do not. [Eligibility](https://docs.stripe.com/payments/managed-payments/eligibility) |
 | **Stripe direct** | Payments, Billing and Tax as separate services; Canadian Payments list starts at 2.9% + CA$0.30 for domestic cards. Your business is merchant; optional tax tooling is not automatically the MoR service. [Canada pricing](https://stripe.com/en-ca/pricing), [MoR comparison](https://docs.stripe.com/payments/managed-payments) | More commercial control but retains merchant responsibilities. Not the low-operations default for this launch |
 
-The comparison revisits all five ADR-014 options. It is not a market-wide ranking. Dodo was checked as an adjacent candidate, but its English pricing page failed this browser fetch; no unverified rate is promoted into the decision.
+The comparison revisits all five ADR-014 options. It is not a market-wide ranking. Dodo initially failed the browser fetch; the later reassessment retrieved and parsed its official English pricing page and now includes it.
 
 **Corrections to ADR-014:** replace vague "Stripe-tier" SMP price; verify account access rather than assume old preview exclusion; remove advice to create an organization now to capture an already-past Polar grandfather date. Lemon Squeezy's [January update](https://www.lemonsqueezy.com/blog/2026-update) describes the team's Stripe direction and slower updates, not a published shutdown deadline. A MoR does not remove every seller cost: Polar documents non-refundable original processing fees, a $15 dispute charge and payout fees. Open-source software does not reproduce a vendor's merchant agreements, compliance operation or payouts when self-hosted. An adapter reduces code changes; it does not guarantee payment-method or subscription portability. [Polar fees](https://polar.sh/docs/merchant-of-record/fees)
 

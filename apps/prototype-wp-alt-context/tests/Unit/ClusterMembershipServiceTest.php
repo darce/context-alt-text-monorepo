@@ -287,6 +287,7 @@ class ClusterMembershipServiceTest extends TestCase
         $personUuid = '8cb36e76-7c2c-4aa8-bf2f-0d4dfab01234';
         $wpdb->queryResults['SELECT person_uuid FROM `wp_acx_persons` WHERE id = 7'] = $personUuid;
         $wpdb->queryResults['SELECT name FROM `wp_acx_persons` WHERE id = 7'] = 'Roster Name';
+        $wpdb->queryResults['SELECT id FROM `wp_acx_persons` WHERE id = 7 FOR UPDATE'] = 7;
         $wpdb->queryResults["SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = 'uuid-1'"] = 2;
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');

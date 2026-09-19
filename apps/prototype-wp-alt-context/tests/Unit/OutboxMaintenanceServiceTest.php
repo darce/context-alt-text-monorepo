@@ -375,6 +375,7 @@ class OutboxMaintenanceServiceTest extends TestCase
 
     public function testMaybeSchedulePurgeDoesNotDuplicateAnExistingActionSchedulerPurge(): void
     {
+        wp_schedule_event(time() + 7200, 'daily', 'acx_sync_purge_terminal_rows', []);
         as_schedule_single_action(time() + 120, 'acx_sync_purge_terminal_rows', [], 'acx-sync');
         $existing = $this->actionSchedulerPurgeTimestamp();
 
@@ -382,6 +383,22 @@ class OutboxMaintenanceServiceTest extends TestCase
 
         $this->assertSame($existing, $this->actionSchedulerPurgeTimestamp());
         $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+    }
+
+    public function testMaybeSchedulePurgeClearsWpCronWhenActionSchedulerOwnsTheHook(): void
+    {
+        wp_schedule_event(time() + 7200, 'daily', 'acx_sync_purge_terminal_rows', []);
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+        $this->assertFalse(
+            wp_next_scheduled('acx_sync_purge_terminal_rows', []),
+            'Action Scheduler ownership must call wp_clear_scheduled_hook for the purge hook.'
+        );
+        $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+        $this->assertGreaterThan(time(), (int) $this->actionSchedulerPurgeTimestamp());
     }
 
     /**

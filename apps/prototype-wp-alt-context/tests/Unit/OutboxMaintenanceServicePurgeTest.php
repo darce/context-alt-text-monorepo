@@ -575,6 +575,32 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame('cluster_not_found', $orphanAudits[0]['args'][0]['last_error_code']);
         $this->assertSame('orphaned', $orphanAudits[0]['args'][0]['reason']);
         $this->assertSame($tenantId, $orphanAudits[0]['args'][0]['tenant_id']);
+        $this->assertSame(
+            ['tenant_id', 'outbox_id', 'last_error_code', 'reason'],
+            array_keys($orphanAudits[0]['args'][0])
+        );
+        $this->assertArrayNotHasKey('_orphan_discard_events', $purged);
+        $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testPurgeDoesNotAuditOrphanDiscardWhenTransactionRollsBack(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-rollback';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->queryResults['COMMIT'] = false;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOutboxRow(201, $tenantId, 'cluster_not_found', null, 0),
+        ];
+
+        $service = new OutboxMaintenanceService(null, $this->trackingSyncStateRepository(), 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertFalse($purged);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_exhausted_purged'));
     }
 
     public function testPurgeDoesNotRetryClusterNotFoundEvenWhenRetryableFlagIsTrue(): void

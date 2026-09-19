@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 from typing import cast
 
 from sqlalchemy import Table
@@ -11,9 +12,13 @@ from db.models.base_imports import Base
 from db.models.scene import ImageDescription
 from scene.application.description_adapter import AdapterResult
 from scene.application.description_repository import ImageDescriptionRepository
-from scene.application.identity_merge import NamingPolicy, NamingSkipReason, NamingStatus, NormalizedBox, PhraseBox
+from scene.application.identity_merge import NamingPolicy, NamingStatus, NormalizedBox, PhraseBox
 from scene.application.seeded_adapter import SeededDescriptionAdapter
-from scene.application.visual_facts_service import VisualFactsService
+from scene.application.visual_facts_service import (
+    VisualFactsService,
+    _no_base_naming_update,
+    cached_naming_preview_skipped,
+)
 from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.schemas.requests import (
     ContextPack,
@@ -21,6 +26,7 @@ from scene.interface_adapters.http.schemas.requests import (
     IdentityContextItem,
     IdentityPolicyContext,
 )
+from scene.interface_adapters.http.schemas.responses import NamingProvenance, VisualFactsResponse
 from scene.tests.identity_merge_helpers import make_face
 
 IMG = b"\x89PNG service test bytes"
@@ -691,9 +697,71 @@ def test_cache_hit_without_base_caption_keeps_cached_draft_and_naming_status():
     assert second.alt_text_draft == named_only
     assert second.named_draft == named_only
     assert second.generic_draft is None
-    assert second.naming_provenance is not None
-    assert second.naming_provenance.status is NamingStatus.SKIPPED_BUDGET
-    assert second.naming_provenance.reason == NamingSkipReason.MERGE_ERROR
+    assert cached_naming_preview_skipped(second) is True
+    assert second.naming_provenance is None or second.naming_provenance.status is not NamingStatus.SKIPPED_BUDGET
+
+
+def _sample_visual_facts_response(**overrides) -> VisualFactsResponse:
+    payload = {
+        "tenant_id": "00000000-0000-0000-0000-000000000001",
+        "media_id": 42,
+        "image_hash": "a" * 64,
+        "context_hash": "b" * 64,
+        "adapter": "seeded",
+        "model_id": "rerealize-test",
+        "model_version": "1",
+        "prompt_or_task_version": "1",
+        "visual_facts": {"caption": "A man stands by the window.", "objects": ["person"], "ocr_text": None},
+        "alt_text_draft": "Alex stands by the window.",
+        "context_used": {"sources": [], "applied": False},
+        "provider_disclosure": {"provider": "none", "left_service_boundary": False},
+        "cached": True,
+        "duration_ms": 1,
+        "retention_class": "retain_all",
+    }
+    payload.update(overrides)
+    return VisualFactsResponse.model_validate(payload)
+
+
+def test_cached_naming_preview_skipped_from_drafts_not_budget_status():
+    """N-R-03 / N-R2-02: missing unnamed base is named_draft without generic_draft."""
+    named_only = "Alex stands by the window."
+    missing_base = _sample_visual_facts_response(
+        named_draft=named_only,
+        generic_draft=None,
+        naming_provenance=None,
+    )
+    assert cached_naming_preview_skipped(missing_base) is True
+
+    budget_skip = _sample_visual_facts_response(
+        alt_text_draft=REREALIZE_CAPTION,
+        generic_draft=REREALIZE_CAPTION,
+        named_draft=REREALIZE_CAPTION,
+        naming_provenance=NamingProvenance(status=NamingStatus.SKIPPED_BUDGET),
+    )
+    assert cached_naming_preview_skipped(budget_skip) is False
+    assert budget_skip.naming_provenance.status is NamingStatus.SKIPPED_BUDGET
+
+
+def test_no_base_naming_update_does_not_rewrite_budget_skip_provenance():
+    """N-R2-02: missing-base update must not stamp SKIPPED_BUDGET / MERGE_ERROR."""
+    named_only = "Alex stands by the window."
+    row = SimpleNamespace(alt_text_draft=named_only)
+    update = _no_base_naming_update(row)
+    assert update == {"generic_draft": None, "named_draft": named_only}
+    assert "naming_provenance" not in update
+
+    existing = _sample_visual_facts_response(
+        named_draft=named_only,
+        generic_draft=None,
+        naming_provenance=NamingProvenance(status=NamingStatus.SKIPPED_BUDGET),
+    )
+    preserved = existing.model_copy(update=update)
+    assert preserved.named_draft == named_only
+    assert preserved.generic_draft is None
+    assert preserved.naming_provenance is not None
+    assert preserved.naming_provenance.status is NamingStatus.SKIPPED_BUDGET
+    assert cached_naming_preview_skipped(preserved) is True
 
 
 def test_cache_hit_does_not_name_face_dropped_by_stage2():

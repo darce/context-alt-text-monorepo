@@ -53,6 +53,7 @@ from scene.interface_adapters.http.routers.describe import (
     _DescriptionAuditSink,
     _DescriptionMetricsSink,
     _generation_timeout_seconds,
+    _parse_recognition_enabled,
     worker_session_factory,
 )
 from scene.interface_adapters.http.schemas.responses import (
@@ -387,22 +388,6 @@ def _parse_media_ids(raw: object) -> list[int]:
     if any(m <= 0 for m in parsed):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
     return parsed
-
-
-def _parse_recognition_enabled(raw: object) -> bool:
-    """Multipart boolean; omitted → True so today's naming-on path stays the default."""
-    if raw is None:
-        return True
-    if isinstance(raw, bool):
-        return raw
-    if not isinstance(raw, str):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
-    value = raw.strip().lower()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 def _parse_idempotency_key(raw: object) -> str | None:

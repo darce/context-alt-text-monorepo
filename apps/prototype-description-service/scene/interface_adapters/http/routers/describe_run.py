@@ -288,9 +288,9 @@ def _build_describe_one(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     tenant_id: uuid.UUID,
+    recognition_enabled: bool,
     adapter=None,
     settings=None,
-    recognition_enabled: bool = True,
 ):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 

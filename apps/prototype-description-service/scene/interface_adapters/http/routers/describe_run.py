@@ -33,6 +33,7 @@ from scene.application.describe_run_worker import (
     publish_demand_snapshot,
     run_describe_job,
 )
+from scene.application.identity_merge import NamingStatus
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.gpu_state import read_gpu_state
 from scene.application.visual_facts_service import VisualFactsService
@@ -270,6 +271,18 @@ def _worker_generic_draft(response) -> str:
     return generic if generic is not None else response.alt_text_draft
 
 
+def _worker_draft_is_final(response) -> bool:
+    # Older cache rows store only the finished named draft. Re-running preview
+    # appends a second positional sentence, so skip when naming already applied.
+    if getattr(response, "generic_draft", None) is not None:
+        return False
+    provenance = getattr(response, "naming_provenance", None)
+    status = getattr(provenance, "status", None)
+    if status is None and isinstance(provenance, Mapping):
+        status = provenance.get("status")
+    return status == NamingStatus.APPLIED
+
+
 def _build_describe_one(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -354,6 +367,7 @@ def _build_describe_one(
             attachments=tuple(service.last_attachments or ()),
             tier=response.tier,
             processing_ms=None if attempt_ms is None else float(attempt_ms),
+            draft_is_final=_worker_draft_is_final(response),
         )
 
     return describe_one

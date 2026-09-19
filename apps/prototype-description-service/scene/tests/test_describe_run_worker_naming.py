@@ -864,3 +864,56 @@ def test_omitted_recognition_enabled_defaults_true_and_still_fuses():
     assert run.recognition_enabled is True
     assert item.alt_text_draft == FUSED_DRAFT
     assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
+
+
+def test_final_draft_skips_naming_preview(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    preview_calls: list[dict] = []
+
+    async def fake_naming_preview(**kwargs):
+        preview_calls.append(kwargs)
+        raise AssertionError("naming_preview must not run for a finished draft")
+
+    monkeypatch.setattr(wmod, "naming_preview", fake_naming_preview, raising=True)
+
+    finished = "A man stands by the window. Pictured from left: Ada."
+    provenance = {"adapter": "seeded", "naming": {"status": wmod.NamingStatus.APPLIED}}
+    outcome = DescribeItemOutcome(
+        alt_text_draft=finished,
+        caption="",
+        phrase_boxes=(),
+        attachments=(
+            Attachment(
+                fact_id="identity:cluster:1",
+                fact_source=FactSource.IDENTITY,
+                fact_label="Ada",
+                decision=AttachmentDecision.OBJECT,
+                altitude=AttachmentAltitude.OBJECT,
+                visible=True,
+            ),
+        ),
+        draft_is_final=True,
+        provenance=provenance,
+    )
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=outcome,
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[object()], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    result = asyncio.run(body())
+    assert result is outcome
+    assert result.alt_text_draft == finished
+    assert result.alt_text_draft.encode("utf-8") == finished.encode("utf-8")
+    assert result.provenance == provenance
+    assert preview_calls == []

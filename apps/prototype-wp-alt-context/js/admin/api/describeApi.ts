@@ -1033,6 +1033,21 @@ export interface DescribeRunResponse {
   startup_id?: string | null;
   /** Run-level measured milliseconds; unknown values are null. */
   timing?: DescribeRunTiming;
+  /** C2 FAILED terminal parsed server-side from the worker's persisted detail; null when absent or legacy. */
+  terminal?: DescribeRunTerminal | null;
+  /** C2 run-level CPU continuation reason; null unless the worker stamped a warmup-timeout fallback. */
+  fallback_reason?: string | null;
+}
+
+export const DESCRIBE_RUN_TERMINAL_CODE = {
+  GPU_WARMUP_TIMEOUT: 'gpu_warmup_timeout',
+} as const;
+
+/** Typed C2 terminal on a FAILED run; `code` stays an untrusted string consumers compare against the const map. */
+export interface DescribeRunTerminal {
+  code: string;
+  retryable: boolean;
+  startup_budget_seconds: number | null;
 }
 
 /** Measured milliseconds on a describe-run envelope; unknown values are null. */
@@ -1279,6 +1294,8 @@ const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
   'operation_id',
   'startup_id',
   'timing',
+  'terminal',
+  'fallback_reason',
 ] as const;
 
 const DESCRIBE_RUN_RESPONSE_KEYS = [
@@ -1361,6 +1378,20 @@ const validateDescribeRunResponse = (payload: unknown): string | null => {
     if (timingError) {
       return timingError;
     }
+  }
+  if (hasOwn(payload, 'terminal') && payload.terminal !== null) {
+    const terminal = payload.terminal;
+    if (
+      !isRecord(terminal) ||
+      typeof terminal.code !== 'string' ||
+      typeof terminal.retryable !== 'boolean' ||
+      (terminal.startup_budget_seconds !== null && !isInteger(terminal.startup_budget_seconds))
+    ) {
+      return 'response.terminal';
+    }
+  }
+  if (hasOwn(payload, 'fallback_reason') && payload.fallback_reason !== null && typeof payload.fallback_reason !== 'string') {
+    return 'response.fallback_reason';
   }
   return null;
 };

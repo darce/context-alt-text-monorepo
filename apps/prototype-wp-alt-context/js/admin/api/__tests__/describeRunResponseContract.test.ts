@@ -40,6 +40,8 @@ const DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS = [
   'operation_id',
   'startup_id',
   'timing',
+  'terminal',
+  'fallback_reason',
 ] as const;
 
 /** Single canonical key list for the envelope (sr-007), mirrored against the schema. */
@@ -129,7 +131,7 @@ describe('DescribeRunResponse contract', () => {
     // The envelope is still exactly required + the optional keys, so a new
     // schema property added without a TS field fails here rather than silently.
     const expectedKeys = [...DESCRIBE_RUN_RESPONSE_KEYS, ...DESCRIBE_RUN_RESPONSE_OPTIONAL_KEYS];
-    expect(expectedKeys).toHaveLength(16);
+    expect(expectedKeys).toHaveLength(18);
     expect([...declared].sort()).toEqual(expectedKeys.sort());
   });
 

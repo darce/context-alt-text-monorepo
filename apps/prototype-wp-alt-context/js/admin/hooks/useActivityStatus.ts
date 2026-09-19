@@ -5,6 +5,7 @@ import {
   cancelBulkDescribeRun,
   DESCRIBE_RUN_PHASE,
   DESCRIBE_RUN_STATUS,
+  DESCRIBE_RUN_TERMINAL_CODE,
   GPU_STATE,
   isGpuState,
   type DescribeRunResponse,
@@ -142,14 +143,11 @@ const scanProgressFraction = (progress: ScanActivitySource['progress']): number 
 };
 
 const parseWarmupTimeout = (run: DescribeRunResponse | null): { retryable: boolean } | null => {
-  if (!isRecord(run)) {
+  const terminal = run?.terminal;
+  if (!isRecord(terminal) || terminal.code !== DESCRIBE_RUN_TERMINAL_CODE.GPU_WARMUP_TIMEOUT) {
     return null;
   }
-  const detail = isRecord(run.detail) ? run.detail : run;
-  if (detail.code !== ACTIVITY_REASON.GPU_WARMUP_TIMEOUT) {
-    return null;
-  }
-  return { retryable: detail.retryable === true };
+  return { retryable: terminal.retryable === true };
 };
 
 const describeDraftCount = (run: DescribeRunResponse | null): number => run?.completed ?? 0;

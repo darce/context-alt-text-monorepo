@@ -106,6 +106,7 @@ class DescribeItemOutcome:
     attachments: tuple = ()
     tier: DescriptionResultTier | str | None = None
     processing_ms: float | None = None
+    draft_is_final: bool = False
 
 
 @dataclass(frozen=True)
@@ -796,6 +797,9 @@ async def _apply_naming_preview(
     Preview wait_for is ``min(NAMING_BUDGET_SECONDS, remaining_envelope)``. Remaining
     <= 0 skips preview and keeps the generic draft (same path as a lookup timeout).
     """
+
+    if outcome.draft_is_final:
+        return outcome
 
     def with_naming_payload(payload: dict) -> DescribeItemOutcome:
         merged = dict(outcome.provenance or {})

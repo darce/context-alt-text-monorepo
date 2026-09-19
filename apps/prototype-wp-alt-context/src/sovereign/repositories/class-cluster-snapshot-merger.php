@@ -15,14 +15,17 @@ use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function absint;
 use function array_chunk;
+use function array_fill;
 use function array_fill_keys;
 use function array_filter;
 use function array_key_exists;
 use function array_map;
+use function array_merge;
 use function array_unique;
 use function array_values;
 use function count;
 use function gmdate;
+use function implode;
 use function in_array;
 use function is_array;
 use function is_bool;
@@ -428,10 +431,36 @@ class ClusterSnapshotMerger {
 			return $counts;
 		}
 
+		$locked_rows   = $this->lock_classified_absent_clusters( $tenant_id, $absent_ids );
+		$absent_set    = array_fill_keys( $absent_ids, true );
+		$deletable_ids = array();
+		foreach ( $locked_rows as $locked_row ) {
+			if ( ! is_array( $locked_row ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $locked_row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid || ! isset( $absent_set[ $cluster_uuid ] ) ) {
+				continue;
+			}
+
+			if ( ! $this->is_uncurated_cluster_row( $locked_row ) ) {
+				++$counts['preserved_curated'];
+				continue;
+			}
+
+			$deletable_ids[] = $cluster_uuid;
+		}
+
+		$deletable_ids = $this->sanitize_uuid_list( $deletable_ids );
+		if ( empty( $deletable_ids ) ) {
+			return $counts;
+		}
+
 		$members_table   = $this->resolve_related_table_name( 'acx_identity_members' );
 		$conflicts_table = $this->resolve_related_table_name( 'acx_sync_conflicts' );
 
-		foreach ( $absent_ids as $cluster_uuid ) {
+		foreach ( $deletable_ids as $cluster_uuid ) {
 			$deleted_members = $wpdb->delete(
 				$members_table,
 				array(
@@ -467,6 +496,33 @@ class ClusterSnapshotMerger {
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * @param string[] $cluster_uuids
+	 * @return array<int,array<string,mixed>>
+	 * @throws \RuntimeException When the lock query does not execute.
+	 */
+	private function lock_classified_absent_clusters( string $tenant_id, array $cluster_uuids ): array {
+		global $wpdb;
+
+		$placeholders = implode( ',', array_fill( 0, count( $cluster_uuids ), '%s' ) );
+		$sql          = $this->prepare_query(
+			"SELECT cluster_uuid, is_user_confirmed, person_id, curation_state FROM %i WHERE tenant_id = %s AND cluster_uuid IN ({$placeholders}) FOR UPDATE",
+			array_merge( array( $this->table_name, $tenant_id ), $cluster_uuids )
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			throw new \RuntimeException( 'Snapshot merger cluster lock failed' );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$locked_rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $locked_rows ) ) {
+			$this->throw_on_write_failure( false, 'cluster lock' );
+			return array();
+		}
+
+		return $locked_rows;
 	}
 
 	/**

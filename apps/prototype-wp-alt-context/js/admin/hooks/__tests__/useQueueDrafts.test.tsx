@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { QUEUE_DRAFT_SOURCE, useQueueDrafts } from '../useQueueDrafts';
+import {
+  QUEUE_DRAFT_SOURCE,
+  QUEUE_DRAFTS_HISTORY_MAX_PAGES,
+  QUEUE_DRAFTS_HISTORY_PAGE_SIZE,
+  useQueueDrafts,
+} from '../useQueueDrafts';
 import * as describeApi from '../../api/describeApi';
 import type {
   DescriptionHistoryItem,
@@ -58,8 +63,11 @@ const historyItem = (overrides: Partial<DescriptionHistoryItem> = {}): Descripti
   ...overrides,
 });
 
-const historyResponse = (items: DescriptionHistoryItem[]): DescriptionHistoryResponse => ({
-  total: items.length,
+const historyResponse = (
+  items: DescriptionHistoryItem[],
+  total = items.length,
+): DescriptionHistoryResponse => ({
+  total,
   items,
 });
 
@@ -99,6 +107,11 @@ describe('useQueueDrafts', () => {
     expect(correctMock).not.toHaveBeenCalled();
   });
 
+  it('keeps historyTruncated false when no media ids are provided', () => {
+    const { result } = renderHook(() => useQueueDrafts([]), { wrapper: createWrapper(client) });
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
   it('reads run items when runId is set and keys usable drafts by media id', async () => {
     fetchRunItemsMock.mockResolvedValue(
       runResponse([
@@ -133,6 +146,7 @@ describe('useQueueDrafts', () => {
     expect(result.current.draftsByMediaId[72]).toBeUndefined();
     expect(result.current.draftsByMediaId[73]).toBeUndefined();
     expect(result.current.draftsByMediaId[99]).toBeUndefined();
+    expect(result.current.historyTruncated).toBe(false);
   });
 
   it('reads description history when runId is omitted and skips applied or corrected rows', async () => {
@@ -166,7 +180,11 @@ describe('useQueueDrafts', () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(fetchHistoryMock).toHaveBeenCalledWith({ limit: 50, offset: 0 });
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(1);
+    expect(fetchHistoryMock).toHaveBeenCalledWith({
+      limit: QUEUE_DRAFTS_HISTORY_PAGE_SIZE,
+      offset: 0,
+    });
     expect(fetchRunItemsMock).not.toHaveBeenCalled();
     expect(applyRunMock).not.toHaveBeenCalled();
     expect(correctMock).not.toHaveBeenCalled();
@@ -182,6 +200,7 @@ describe('useQueueDrafts', () => {
     expect(result.current.draftsByMediaId[70]?.existingAlt).toBe(true);
     expect(result.current.draftsByMediaId[74]).toBeUndefined();
     expect(result.current.draftsByMediaId[75]).toBeUndefined();
+    expect(result.current.historyTruncated).toBe(false);
   });
 
   it('decodes stored history alts at the read boundary', async () => {
@@ -215,5 +234,223 @@ describe('useQueueDrafts', () => {
 
     expect(applyRunMock).not.toHaveBeenCalled();
     expect(correctMock).not.toHaveBeenCalled();
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('finds a wanted draft on page 2 and calls offsets 0 then 50', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset === 0) {
+        return historyResponse(
+          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
+          100,
+        );
+      }
+      if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
+        return historyResponse(
+          [historyItem({ media_id: 71, generated_alt_text: 'A flower.' })],
+          100,
+        );
+      }
+      throw new Error(`unexpected offset ${offset}`);
+    });
+
+    const { result } = renderHook(() => useQueueDrafts([71]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(fetchHistoryMock).toHaveBeenNthCalledWith(1, {
+      limit: QUEUE_DRAFTS_HISTORY_PAGE_SIZE,
+      offset: 0,
+    });
+    expect(fetchHistoryMock).toHaveBeenNthCalledWith(2, {
+      limit: QUEUE_DRAFTS_HISTORY_PAGE_SIZE,
+      offset: QUEUE_DRAFTS_HISTORY_PAGE_SIZE,
+    });
+    expect(result.current.draftsByMediaId[71]?.draftText).toBe('A flower.');
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('stops paging once every wanted id has a usable draft', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset === 0) {
+        return historyResponse(
+          [historyItem({ media_id: 71, generated_alt_text: 'A flower.' })],
+          200,
+        );
+      }
+      if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
+        return historyResponse(
+          [historyItem({ media_id: 70, generated_alt_text: 'A bridge.' })],
+          200,
+        );
+      }
+      throw new Error(`unexpected offset ${offset}`);
+    });
+
+    const { result } = renderHook(() => useQueueDrafts([71, 70]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.draftsByMediaId[70]).toBeDefined());
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(result.current.draftsByMediaId[71]?.draftText).toBe('A flower.');
+    expect(result.current.draftsByMediaId[70]?.draftText).toBe('A bridge.');
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('stops paging once offset reaches total', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset === 0) {
+        return historyResponse(
+          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
+          75,
+        );
+      }
+      if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
+        return historyResponse(
+          [historyItem({ media_id: 2, generated_alt_text: 'More filler.' })],
+          75,
+        );
+      }
+      throw new Error(`unexpected offset ${offset}`);
+    });
+
+    const { result } = renderHook(() => useQueueDrafts([71]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(result.current.draftsByMediaId[71]).toBeUndefined();
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('stops paging when a page returns zero items', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset === 0) {
+        return historyResponse(
+          [historyItem({ media_id: 1, generated_alt_text: 'Filler.' })],
+          500,
+        );
+      }
+      if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
+        return historyResponse([], 500);
+      }
+      throw new Error(`unexpected offset ${offset}`);
+    });
+
+    const { result } = renderHook(() => useQueueDrafts([71]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(result.current.draftsByMediaId[71]).toBeUndefined();
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('stops at the page cap and sets historyTruncated when ids remain uncovered', async () => {
+    const total = QUEUE_DRAFTS_HISTORY_MAX_PAGES * QUEUE_DRAFTS_HISTORY_PAGE_SIZE + 50;
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) =>
+      historyResponse(
+        [historyItem({ media_id: 1, generated_alt_text: `Filler at ${offset}.` })],
+        total,
+      ),
+    );
+
+    const { result } = renderHook(() => useQueueDrafts([71]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(QUEUE_DRAFTS_HISTORY_MAX_PAGES);
+    expect(result.current.draftsByMediaId[71]).toBeUndefined();
+    expect(result.current.historyTruncated).toBe(true);
+  });
+
+  it('keeps the newest usable draft when the same id appears on a later page', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset === 0) {
+        return historyResponse(
+          [historyItem({ media_id: 71, generated_alt_text: 'Newest flower.' })],
+          100,
+        );
+      }
+      if (offset === QUEUE_DRAFTS_HISTORY_PAGE_SIZE) {
+        return historyResponse(
+          [
+            historyItem({ media_id: 71, generated_alt_text: 'Older flower.' }),
+            historyItem({ media_id: 70, generated_alt_text: 'A bridge.' }),
+          ],
+          100,
+        );
+      }
+      throw new Error(`unexpected offset ${offset}`);
+    });
+
+    const { result } = renderHook(() => useQueueDrafts([71, 70]), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.draftsByMediaId[70]).toBeDefined());
+
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(result.current.draftsByMediaId[71]?.draftText).toBe('Newest flower.');
+    expect(result.current.draftsByMediaId[70]?.draftText).toBe('A bridge.');
+    expect(result.current.historyTruncated).toBe(false);
+  });
+
+  it('refetches history when the wanted media ids change', async () => {
+    fetchHistoryMock.mockImplementation(async ({ offset = 0 } = {}) => {
+      if (offset !== 0) {
+        return historyResponse([], 2);
+      }
+      return historyResponse(
+        [
+          historyItem({ media_id: 71, generated_alt_text: 'A flower.' }),
+          historyItem({ media_id: 70, generated_alt_text: 'A bridge.' }),
+        ],
+        2,
+      );
+    });
+
+    const { result, rerender } = renderHook(
+      ({ mediaIds }: { mediaIds: number[] }) => useQueueDrafts(mediaIds),
+      { wrapper: createWrapper(client), initialProps: { mediaIds: [71] } },
+    );
+
+    await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(1);
+    expect(result.current.draftsByMediaId[70]).toBeUndefined();
+
+    rerender({ mediaIds: [70] });
+
+    await waitFor(() => expect(result.current.draftsByMediaId[70]).toBeDefined());
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
+    expect(result.current.draftsByMediaId[71]).toBeUndefined();
+    expect(result.current.draftsByMediaId[70]?.draftText).toBe('A bridge.');
+  });
+
+  it('does not page history when a runId is given', async () => {
+    fetchRunItemsMock.mockResolvedValue(runResponse([runItem()]));
+    fetchHistoryMock.mockResolvedValue(historyResponse([historyItem()], 500));
+
+    const { result } = renderHook(() => useQueueDrafts([71], 'run-abc'), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
+
+    expect(fetchRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(fetchHistoryMock).not.toHaveBeenCalled();
+    expect(result.current.draftsByMediaId[71]?.source).toBe(QUEUE_DRAFT_SOURCE.DESCRIBE_RUN);
+    expect(result.current.historyTruncated).toBe(false);
   });
 });

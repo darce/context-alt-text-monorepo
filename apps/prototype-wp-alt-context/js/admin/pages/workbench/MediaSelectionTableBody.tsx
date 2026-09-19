@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
+import { useQueueDrafts, type QueueDraft } from '../../hooks/useQueueDrafts';
 import type { DataSource } from '../../api/recognition/types';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -9,6 +10,7 @@ import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { MediaAltSuggest } from './MediaAltSuggest';
+import { QueueDraftCell } from './QueueDraftCell';
 import { mediaEditUrl } from './Panels';
 import { mediaLibraryUrl } from '../../utils/adminUrls';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
@@ -69,6 +71,9 @@ interface MediaSelectionTableBodyProps {
   statusFilter?: WorkbenchMediaStatus;
   onClearSearch: () => void;
   onClearStatusFilter?: () => void;
+  draftRunId?: string | null;
+  hasDraftFilter?: boolean;
+  onClearDraftFilters?: () => void;
 }
 
 export const MediaSelectionTableBody = ({
@@ -83,7 +88,20 @@ export const MediaSelectionTableBody = ({
   statusFilter = 'all',
   onClearSearch,
   onClearStatusFilter,
+  draftRunId = null,
+  hasDraftFilter = false,
+  onClearDraftFilters,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
+  const mediaIds = useMemo(() => items.map((item) => item.id), [items]);
+  const { draftsByMediaId, isLoading: draftsLoading } = useQueueDrafts(mediaIds, draftRunId);
+  const filterByDrafts = hasDraftFilter || Boolean(draftRunId);
+  const visibleItems = useMemo(() => {
+    if (!filterByDrafts || draftsLoading) {
+      return items;
+    }
+    return items.filter((item) => draftsByMediaId[item.id] != null);
+  }, [draftsByMediaId, draftsLoading, filterByDrafts, items]);
+
   if (isLoading && items.length === 0) {
     return (
       <>
@@ -94,9 +112,29 @@ export const MediaSelectionTableBody = ({
     );
   }
 
-  if (items.length === 0) {
+  if (visibleItems.length === 0) {
     const hasActiveSearch = searchQuery.trim().length > 0;
     const hasStatusFilter = statusFilter !== 'all';
+
+    if (items.length > 0 && filterByDrafts) {
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media items match the current filters.', 'alt-context')}
+              body={__('Show all media to return to the media library.', 'alt-context')}
+              action={{
+                label: __('Show all media', 'alt-context'),
+                onClick: () => onClearDraftFilters?.(),
+              }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
 
     if (hasActiveSearch) {
       return (
@@ -161,7 +199,7 @@ export const MediaSelectionTableBody = ({
 
   return (
     <>
-      {items.map((item, index) => (
+      {visibleItems.map((item, index) => (
         <MediaSelectionRow
           key={item.id}
           item={item}
@@ -171,6 +209,7 @@ export const MediaSelectionTableBody = ({
           checked={selection[item.id.toString()] ?? false}
           identitiesDataSource={identitiesDataSource}
           onRetryIdentities={onRetryIdentities}
+          draft={draftsByMediaId[item.id]}
         />
       ))}
     </>
@@ -185,6 +224,7 @@ interface MediaSelectionRowProps {
   checked: boolean;
   identitiesDataSource?: DataSource;
   onRetryIdentities?: () => void;
+  draft?: QueueDraft;
 }
 
 interface RowPoliteState {
@@ -200,6 +240,7 @@ const MediaSelectionRow = ({
   checked,
   identitiesDataSource,
   onRetryIdentities,
+  draft,
 }: MediaSelectionRowProps): React.JSX.Element => {
   const thumbDimensions = item.thumbnailDimensions;
   const detailReady = [item.mimeType, item.updatedAt, item.dimensions].some((value) => value != null && value !== '');
@@ -321,6 +362,9 @@ const MediaSelectionRow = ({
           onCommitStart={suggestCommitStart}
           onCommitEnd={suggestCommitEnd}
         />
+        {draft ? (
+          <QueueDraftCell mediaId={item.id} draftText={draft.draftText} title={item.title} />
+        ) : null}
         {/* detail-meta is metadata loading, not an operator result — not a live region. */}
         <div className="acx-media-selection__detail-meta">
           {detailReady ? (

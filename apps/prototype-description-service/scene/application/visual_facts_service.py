@@ -662,28 +662,22 @@ def cached_naming_preview_skipped(response: VisualFactsResponse) -> bool:
     """True when cache-hit naming was skipped because no unnamed base exists.
 
     The cached ``alt_text_draft`` may already hold names; the route must not
-    run naming preview on it (N-R-03).
+    run naming preview on it (N-R-03). Decided from stored drafts, not from a
+    reused budget-skip status — SKIPPED_BUDGET is a worker time-budget skip
+    (N-R2-02 / sr-007).
     """
-    provenance = response.naming_provenance
-    if provenance is None or response.named_draft is None or response.generic_draft is not None:
-        return False
-    return provenance.status == NamingStatus.SKIPPED_BUDGET
+    return response.named_draft is not None and response.generic_draft is None
 
 
 def _no_base_naming_update(row: ImageDescription) -> dict[str, Any]:
-    """Keep the cached draft and skip re-merge when no unnamed base is stored."""
+    """Keep the cached draft and skip re-merge when no unnamed base is stored.
+
+    Do not rewrite ``naming_provenance``: a genuine budget skip must stay
+    distinguishable from a missing unnamed base (N-R2-02).
+    """
     return {
         "generic_draft": None,
         "named_draft": row.alt_text_draft,
-        "naming_provenance": NamingProvenanceModel(
-            injected_names=[],
-            naming_allowed=False,
-            reason=NamingSkipReason.MERGE_ERROR,
-            mode=None,
-            status=NamingStatus.SKIPPED_BUDGET,
-            realizer=None,
-            names_applied=[],
-        ),
     }
 
 

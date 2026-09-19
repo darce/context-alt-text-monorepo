@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -18,6 +18,8 @@ export const SAME_PERSON_PROMPT_SESSION_KEY = 'acx.samePersonPrompt.consumed';
 
 const SESSION_CONSUMED_VALUE = '1';
 
+let samePersonPromptConsumedInMemory = false;
+
 const canFetchMergeSuggestions = (): boolean => {
   try {
     getEndpoint('recognitionMergeSuggestions');
@@ -28,17 +30,25 @@ const canFetchMergeSuggestions = (): boolean => {
 };
 
 const readSamePersonPromptConsumed = (): boolean => {
+  if (samePersonPromptConsumedInMemory) {
+    return true;
+  }
   try {
     if (typeof window === 'undefined' || !window.sessionStorage) {
       return false;
     }
-    return window.sessionStorage.getItem(SAME_PERSON_PROMPT_SESSION_KEY) === SESSION_CONSUMED_VALUE;
+    const stored = window.sessionStorage.getItem(SAME_PERSON_PROMPT_SESSION_KEY) === SESSION_CONSUMED_VALUE;
+    if (stored) {
+      samePersonPromptConsumedInMemory = true;
+    }
+    return stored;
   } catch {
     return false;
   }
 };
 
 const writeSamePersonPromptConsumed = (): void => {
+  samePersonPromptConsumedInMemory = true;
   try {
     if (typeof window === 'undefined' || !window.sessionStorage) {
       return;
@@ -49,20 +59,35 @@ const writeSamePersonPromptConsumed = (): void => {
   }
 };
 
+export const resetSamePersonPromptSessionForTests = (): void => {
+  samePersonPromptConsumedInMemory = false;
+};
+
 const isReservedClusterLabel = (label: string): boolean => {
   const normalized = label.trim().toLowerCase();
   return normalized.startsWith('cluster-') || normalized.startsWith('cluster_');
 };
 
-const displayPersonName = (label: string | null | undefined): string => {
+const unnamedPersonName = (sideIndex: 0 | 1): string =>
+  sideIndex === 0 ? __('First person', 'alt-context') : __('Second person', 'alt-context');
+
+const displayPersonName = (label: string | null | undefined, sideIndex: 0 | 1): string => {
   if (label == null) {
-    return __('Unnamed person', 'alt-context');
+    return unnamedPersonName(sideIndex);
   }
   const trimmed = label.trim();
   if (trimmed === '' || isReservedClusterLabel(trimmed)) {
-    return __('Unnamed person', 'alt-context');
+    return unnamedPersonName(sideIndex);
   }
   return trimmed;
+};
+
+const mediaAdminEditHref = (mediaId: number | null | undefined): string | null => {
+  if (typeof mediaId !== 'number' || !Number.isInteger(mediaId) || mediaId <= 0) {
+    return null;
+  }
+  const params = new URLSearchParams({ post: String(mediaId), action: 'edit' });
+  return `post.php?${params.toString()}`;
 };
 
 const FaceSide = ({
@@ -70,11 +95,13 @@ const FaceSide = ({
   mediaUrl,
   bbox,
   thumbUrl,
+  photoHref,
 }: {
   name: string;
   mediaUrl: string | null | undefined;
   bbox: BoundingBox | null | undefined;
   thumbUrl: string | null | undefined;
+  photoHref: string | null;
 }): React.JSX.Element => {
   const hasCrop = typeof mediaUrl === 'string' && mediaUrl.length > 0 && bbox != null;
   const croppedThumb = typeof thumbUrl === 'string' && thumbUrl.length > 0 ? thumbUrl : undefined;
@@ -93,6 +120,11 @@ const FaceSide = ({
         />
       )}
       <span className="acx-suggestion-card__face-label">{name}</span>
+      {photoHref !== null ? (
+        <a className="acx-suggestion-card__view-photo" href={photoHref} target="_blank" rel="noopener noreferrer">
+          {__('View photo', 'alt-context')}
+        </a>
+      ) : null}
     </div>
   );
 };
@@ -127,14 +159,23 @@ export const SamePersonPrompt = (): React.JSX.Element | null => {
   });
 
   const suggestion: PendingMergeSuggestion | null = pendingQuery.data?.suggestions[0] ?? null;
+  const suggestionId = suggestion?.id ?? null;
+
+  useEffect(() => {
+    if (sessionConsumed || suggestionId === null) {
+      return;
+    }
+    writeSamePersonPromptConsumed();
+  }, [sessionConsumed, suggestionId]);
+
   if (sessionConsumed || suggestion === null) {
     return null;
   }
 
   const busy = acceptMutation.isPending || rejectMutation.isPending;
   const error = acceptMutation.error ?? rejectMutation.error;
-  const nameA = displayPersonName(suggestion.cluster_a_label);
-  const nameB = displayPersonName(suggestion.cluster_b_label);
+  const nameA = displayPersonName(suggestion.cluster_a_label, 0);
+  const nameB = displayPersonName(suggestion.cluster_b_label, 1);
   const titleId = 'acx-same-person-prompt-title';
 
   return (
@@ -150,12 +191,14 @@ export const SamePersonPrompt = (): React.JSX.Element | null => {
           mediaUrl={suggestion.cluster_a_representative_media_url}
           bbox={suggestion.cluster_a_representative_bbox}
           thumbUrl={suggestion.cluster_a_representative_thumb_url}
+          photoHref={mediaAdminEditHref(suggestion.cluster_a_representative_media_id)}
         />
         <FaceSide
           name={nameB}
           mediaUrl={suggestion.cluster_b_representative_media_url}
           bbox={suggestion.cluster_b_representative_bbox}
           thumbUrl={suggestion.cluster_b_representative_thumb_url}
+          photoHref={mediaAdminEditHref(suggestion.cluster_b_representative_media_id)}
         />
       </div>
       <div className="acx-suggestion-card__content">

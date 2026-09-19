@@ -587,6 +587,23 @@ describe('PersonWorkspacePanel photo grid', () => {
     truncated: false,
   };
 
+  const boundedMediaItem = {
+    identity_id: 'identity-1',
+    media_id: 501,
+    media_url: 'https://example.com/photo-501.jpg',
+    bbox: { x: 10, y: 20, width: 30, height: 40 },
+    similarity: 0.9,
+    cluster_id: CLUSTER_UUID,
+  };
+
+  const boundedMediaPage = {
+    media: [boundedMediaItem],
+    limit: 50,
+    offset: 0,
+    total: 1,
+    truncated: false,
+  };
+
   const configurePersonMedia = (): void => {
     window.AltContextAdmin = {
       nonce: 'test-nonce',
@@ -721,6 +738,67 @@ describe('PersonWorkspacePanel photo grid', () => {
     });
     expect(screen.queryByText(/of \d+ photos/)).not.toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Photo from media 501' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: 'id -1',
+      payload: { ...boundedMediaPage, media: [{ ...boundedMediaItem, media_id: -1 }] },
+    },
+    {
+      name: 'id 1.5',
+      payload: { ...boundedMediaPage, media: [{ ...boundedMediaItem, media_id: 1.5 }] },
+    },
+    {
+      name: 'NaN offset',
+      payload: { ...boundedMediaPage, offset: Number.NaN },
+    },
+    {
+      name: 'total -3',
+      payload: { ...boundedMediaPage, total: -3 },
+    },
+    {
+      name: 'bbox width 0',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, bbox: { x: 10, y: 20, width: 0, height: 40 } }],
+      },
+    },
+    {
+      name: 'bbox x 1.2',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, bbox: { x: 1.2, y: 20, width: 30, height: 40 } }],
+      },
+    },
+    {
+      name: 'similarity Infinity',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, similarity: Number.POSITIVE_INFINITY }],
+      },
+    },
+  ])('rejects a person media page with $name', async ({ payload }) => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue(payload);
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not load this person\'s photos.');
+    });
+    expect(screen.queryByText(/of \d+ photos/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Photo from media 501' })).not.toBeInTheDocument();
+  });
+
+  it('renders a well-formed person media page after numeric bound checks', async () => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue(boundedMediaPage);
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const grid = await screen.findByRole('region', { name: 'Photos' });
+    expect(within(grid).getByRole('img', { name: 'Photo from media 501' })).toBeInTheDocument();
+    expect(within(grid).getByText('1–1 of 1 photos')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('uses a grid photo as cover through the pin mutation', async () => {

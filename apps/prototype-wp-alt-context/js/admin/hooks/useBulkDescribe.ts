@@ -82,7 +82,7 @@ export const formatBulkDescribeErrorMessage = (
   return message;
 };
 
-const persistRunContext = (response: DescribeRunResponse): void => {
+export const persistRunContext = (response: DescribeRunResponse): void => {
   putDescribeOperationContext({
     version: DESCRIBE_OPERATION_CONTEXT_VERSION,
     kind: DESCRIBE_OPERATION_KIND.RUN,

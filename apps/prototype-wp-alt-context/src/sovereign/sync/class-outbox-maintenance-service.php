@@ -43,6 +43,7 @@ use function str_starts_with;
 use function strtolower;
 use function time;
 use function trim;
+use function wp_clear_scheduled_hook;
 use function wp_json_encode;
 use function wp_next_scheduled;
 use function wp_schedule_event;
@@ -72,6 +73,8 @@ class OutboxMaintenanceService {
 	private SyncStateRepository $sync_state_repository;
 	private string $table_name;
 	private string $conflicts_table_name;
+	/** @var list<array{tenant_id:string,outbox_id:int,last_error_code:?string,reason:string}> */
+	private array $pending_orphan_discard_events = array();
 
 	public function __construct(
 		?OutboxQueryRepository $query_repository = null,
@@ -106,6 +109,7 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
+		$this->pending_orphan_discard_events = array();
 		$result = $this->run_transactional(
 			function () use ( $normalized_tenant_id ): array {
 				$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id );
@@ -125,16 +129,33 @@ class OutboxMaintenanceService {
 					'skipped_concurrent' => $orphans['skipped_concurrent'] + $reclaim['skipped_concurrent'],
 					'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
 					'purged_exhausted' => $failed_purge['exhausted'],
+					'_orphan_discard_events' => $this->pending_orphan_discard_events,
 				);
 			}
 		);
 
 		if ( is_wp_error( $result ) ) {
+			$this->pending_orphan_discard_events = array();
 			return false;
 		}
 
 		if ( ! is_array( $result ) ) {
+			$this->pending_orphan_discard_events = array();
 			return false;
+		}
+
+		$orphan_events = array();
+		if ( isset( $result['_orphan_discard_events'] ) && is_array( $result['_orphan_discard_events'] ) ) {
+			$orphan_events = $result['_orphan_discard_events'];
+		}
+		unset( $result['_orphan_discard_events'] );
+		$this->pending_orphan_discard_events = array();
+
+		foreach ( $orphan_events as $payload ) {
+			if ( ! is_array( $payload ) ) {
+				continue;
+			}
+			do_action( 'acx_sync_outbox_orphan_discarded', $payload );
 		}
 
 		if ( ( $result['retried'] + $result['dead_lettered'] + $result['purged_failed'] + $result['orphaned'] ) > 0 ) {
@@ -170,12 +191,14 @@ class OutboxMaintenanceService {
 		if ( function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
 			$existing = as_next_scheduled_action( self::PURGE_HOOK, array(), $group );
 			if ( true === $existing || ( is_numeric( $existing ) && (int) $existing > 0 ) ) {
+				wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
 				return;
 			}
 
 			try {
 				$action_id = as_schedule_single_action( $timestamp, self::PURGE_HOOK, array(), $group );
 				if ( (int) $action_id > 0 ) {
+					wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
 					return;
 				}
 			} catch ( Throwable $exception ) {
@@ -769,14 +792,11 @@ class OutboxMaintenanceService {
 			return 'skipped_concurrent';
 		}
 
-		do_action(
-			'acx_sync_outbox_orphan_discarded',
-			array(
-				'tenant_id' => $tenant_id,
-				'outbox_id' => $outbox_id,
-				'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
-				'reason' => self::ORPHAN_REASON,
-			)
+		$this->pending_orphan_discard_events[] = array(
+			'tenant_id' => $tenant_id,
+			'outbox_id' => $outbox_id,
+			'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+			'reason' => self::ORPHAN_REASON,
 		);
 
 		return 'orphaned';

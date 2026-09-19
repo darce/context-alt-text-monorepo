@@ -5,8 +5,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from io import BytesIO
@@ -16,6 +17,7 @@ import httpx
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult
+from scene.application.identity_merge.merge import NormalizedBox, PhraseBox, normalize_bbox
 from scene.domain.description import DescriptionAdapterKind
 
 _DEFAULT_CONNECT_TIMEOUT_S = 5.0
@@ -26,6 +28,9 @@ _DEFAULT_MAX_ENCODED_IMAGE_BYTES = 25 * 1024 * 1024
 # Per-token top-k logprob width requested from llama.cpp (VLM-4 Slice 2b).
 _DEFAULT_N_PROBS = 10
 _MAX_LOGGED_GPU_DIAGNOSTIC = 4096
+# Bounded follow-up for person-span grounding; shorter than caption read timeout.
+_DEFAULT_GROUNDING_TIMEOUT_S = 30.0
+_GROUNDING_FLAG_ENV = "ACX_GPU_GROUNDING_ENABLED"
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +48,17 @@ _SYSTEM_PROMPT = (
     "supplies into the description where they fit naturally. Never name or guess "
     "about anyone the context does not name. If the context conflicts with what "
     "the image shows, describe what the image shows."
+)
+
+_GROUNDING_SYSTEM_PROMPT = "You ground person phrases in images. Return JSON only. Never invent a box."
+_GROUNDING_USER_PREFIX = (
+    "Locate each person mentioned in the caption in this image. "
+    "Reply with JSON only, no markdown. Use this shape: "
+    '{"bboxes": [[x1, y1, x2, y2]], "labels": ["exact caption substring"]}. '
+    "Coordinates are pixel [x1, y1, x2, y2] in this image, origin top-left, "
+    "with x1 < x2 and y1 < y2. Labels must be exact person phrases copied from "
+    "the caption. If no person is visible or a box cannot be located, return "
+    '{"bboxes": [], "labels": []}.'
 )
 
 _gpu_call_semaphore: threading.Semaphore | None = None
@@ -204,6 +220,59 @@ def _user_text(context: Mapping[str, Any] | None) -> tuple[str, tuple[str, ...],
     return "\n".join(lines), sources, bool(rendered)
 
 
+def _env_flag_enabled(name: str) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _grounding_user_text(caption: str) -> str:
+    return f"{_GROUNDING_USER_PREFIX}\nCaption:\n{caption}\n/no_think"
+
+
+def _completion_payload(
+    *,
+    model_id: str,
+    system_prompt: str,
+    user_text: str,
+    media_type: str,
+    encoded_image: bytes,
+    n_probs: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model_id,
+        "temperature": 0,
+        "max_tokens": 512,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{base64.b64encode(encoded_image).decode()}"},
+                    },
+                    {"type": "text", "text": user_text},
+                ],
+            },
+        ],
+    }
+    if n_probs is not None:
+        payload["n_probs"] = n_probs
+        payload["logprobs"] = True
+        payload["top_logprobs"] = n_probs
+    return payload
+
+
+def _log_grounding_discard(reason: str, diagnostic: str) -> None:
+    logger.warning(
+        "GPU remote adapter grounding discarded reason=%s diagnostic=%s",
+        reason,
+        diagnostic[:_MAX_LOGGED_GPU_DIAGNOSTIC],
+    )
+
+
 class GpuRemoteAdapterErrorReason(StrEnum):
     """Classified GPU adapter failures exposed to the HTTP boundary."""
 
@@ -283,6 +352,8 @@ class GpuRemoteDescriptionAdapter:
         api_key: str | None = None,
         max_concurrent_calls: int = _DEFAULT_MAX_CONCURRENT_CALLS,
         transport: httpx.BaseTransport | None = None,
+        grounding_enabled: bool | None = None,
+        grounding_timeout_s: float = _DEFAULT_GROUNDING_TIMEOUT_S,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
         # llama.cpp served id stays unadorned; wire provenance is hub-repo@pin
@@ -306,6 +377,16 @@ class GpuRemoteDescriptionAdapter:
         self._timeout = httpx.Timeout(
             connect=self._connect_timeout_s,
             read=self._read_timeout_s,
+            write=30.0,
+            pool=5.0,
+        )
+        self.grounding_enabled = (
+            bool(grounding_enabled) if grounding_enabled is not None else _env_flag_enabled(_GROUNDING_FLAG_ENV)
+        )
+        self._grounding_timeout_s = max(0.1, float(grounding_timeout_s))
+        self._grounding_timeout = httpx.Timeout(
+            connect=self._connect_timeout_s,
+            read=self._grounding_timeout_s,
             write=30.0,
             pool=5.0,
         )
@@ -333,42 +414,24 @@ class GpuRemoteDescriptionAdapter:
         user_text, context_sources, context_applied = _user_text(context)
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         semaphore = _get_gpu_call_semaphore(self._max_concurrent_calls)
+        encoded_image = b""
+        media_type = "image/jpeg"
         try:
             with semaphore:
                 media_type, encoded_image = _image_payload(image_bytes)
-                payload: dict[str, Any] = {
-                    "model": self._endpoint_model_id,
-                    "temperature": 0,
-                    "max_tokens": 512,
-                    "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": (f"data:{media_type};base64,{base64.b64encode(encoded_image).decode()}")
-                                    },
-                                },
-                                {"type": "text", "text": user_text},
-                            ],
-                        },
-                    ],
-                }
-                if n_probs is not None:
-                    # llama.cpp native knob + the OpenAI-compat aliases the same server
-                    # accepts on /v1/chat/completions; harmless no-ops elsewhere.
-                    payload["n_probs"] = n_probs
-                    payload["logprobs"] = True
-                    payload["top_logprobs"] = n_probs
+                payload = _completion_payload(
+                    model_id=self._endpoint_model_id,
+                    system_prompt=_SYSTEM_PROMPT,
+                    user_text=user_text,
+                    media_type=media_type,
+                    encoded_image=encoded_image,
+                    n_probs=n_probs,
+                )
                 response = self._post(json=payload, headers=headers)
                 if not 200 <= response.status_code < 300:
                     raise GpuRemoteAdapterError(
                         GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED,
-                        raw_diagnostic=(
-                            f"GPU endpoint returned HTTP {response.status_code}: {response.text}"
-                        ),
+                        raw_diagnostic=(f"GPU endpoint returned HTTP {response.status_code}: {response.text}"),
                         status_code=response.status_code,
                     )
                 try:
@@ -377,8 +440,7 @@ class GpuRemoteDescriptionAdapter:
                     raise GpuRemoteAdapterError(
                         GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
                         raw_diagnostic=(
-                            f"GPU endpoint returned invalid JSON: {type(exc).__name__}: {exc}; "
-                            f"body={response.text!r}"
+                            f"GPU endpoint returned invalid JSON: {type(exc).__name__}: {exc}; body={response.text!r}"
                         ),
                     ) from exc
         except GpuRemoteAdapterError:
@@ -387,9 +449,7 @@ class GpuRemoteDescriptionAdapter:
             response = exc.response
             raise GpuRemoteAdapterError(
                 GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED,
-                raw_diagnostic=(
-                    f"GPU endpoint returned HTTP {response.status_code}: {response.text}"
-                ),
+                raw_diagnostic=(f"GPU endpoint returned HTTP {response.status_code}: {response.text}"),
                 status_code=response.status_code,
             ) from exc
         except httpx.RequestError as exc:
@@ -405,6 +465,15 @@ class GpuRemoteDescriptionAdapter:
 
         caption = _extract_caption(body)
         traces = _extract_token_traces(body) if n_probs is not None else ()
+        phrase_boxes: tuple[PhraseBox, ...] = ()
+        if self.grounding_enabled:
+            phrase_boxes = self._request_phrase_boxes(
+                encoded_image=encoded_image,
+                media_type=media_type,
+                caption=caption,
+                headers=headers,
+                semaphore=semaphore,
+            )
         result = AdapterResult(
             caption=caption,
             objects=(),
@@ -412,15 +481,65 @@ class GpuRemoteDescriptionAdapter:
             alt_text_draft=caption,
             context_sources=context_sources,
             context_applied=context_applied,
+            phrase_boxes=phrase_boxes,
         )
         return result, traces
 
-    def _post(self, *, json: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
+    def _request_phrase_boxes(
+        self,
+        *,
+        encoded_image: bytes,
+        media_type: str,
+        caption: str,
+        headers: dict[str, str],
+        semaphore: threading.Semaphore,
+    ) -> tuple[PhraseBox, ...]:
+        payload = _completion_payload(
+            model_id=self._endpoint_model_id,
+            system_prompt=_GROUNDING_SYSTEM_PROMPT,
+            user_text=_grounding_user_text(caption),
+            media_type=media_type,
+            encoded_image=encoded_image,
+        )
+        try:
+            with semaphore:
+                response = self._post(json=payload, headers=headers, timeout=self._grounding_timeout)
+                if not 200 <= response.status_code < 300:
+                    _log_grounding_discard("endpoint_rejected", f"HTTP {response.status_code}: {response.text}")
+                    return ()
+                try:
+                    body = response.json()
+                except (TypeError, ValueError) as exc:
+                    _log_grounding_discard("response_malformed", f"{type(exc).__name__}: {exc}")
+                    return ()
+            text = _extract_caption(body)
+        except GpuRemoteAdapterError as exc:
+            _log_grounding_discard(exc.reason.value, exc.raw_diagnostic)
+            return ()
+        except httpx.HTTPStatusError as exc:
+            _log_grounding_discard("endpoint_rejected", f"HTTP {exc.response.status_code}")
+            return ()
+        except httpx.RequestError as exc:
+            _log_grounding_discard("endpoint_unreachable", f"{type(exc).__name__}: {exc}")
+            return ()
+        except Exception as exc:  # noqa: BLE001 - RES-13 crumple zone for follow-up
+            _log_grounding_discard("follow_up_failed", f"{type(exc).__name__}: {exc}")
+            return ()
+        return _parse_qwen_phrase_grounding(text, caption=caption, image_bytes=encoded_image)
+
+    def _post(
+        self,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+        timeout: httpx.Timeout | None = None,
+    ) -> httpx.Response:
+        timeout = timeout or self._timeout
         if self._transport is not None:
-            with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
+            with httpx.Client(timeout=timeout, transport=self._transport) as client:
                 return client.post(f"{self.endpoint_url}/v1/chat/completions", json=json, headers=headers)
         client = _get_shared_client(self._timeout)
-        return client.post(f"{self.endpoint_url}/v1/chat/completions", json=json, headers=headers)
+        return client.post(f"{self.endpoint_url}/v1/chat/completions", json=json, headers=headers, timeout=timeout)
 
 
 def _get_gpu_call_semaphore(max_concurrent_calls: int) -> threading.Semaphore:
@@ -535,13 +654,161 @@ def _extract_caption(body: dict[str, Any]) -> str:
         if isinstance(reasoning, str) and reasoning.strip():
             raise GpuRemoteAdapterError(
                 GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED,
-                raw_diagnostic=(
-                    "GPU endpoint emitted reasoning_content but empty content: "
-                    f"{body!r}"
-                ),
+                raw_diagnostic=(f"GPU endpoint emitted reasoning_content but empty content: {body!r}"),
             )
         raise GpuRemoteAdapterError(
             GpuRemoteAdapterErrorReason.EMPTY_CAPTION,
             raw_diagnostic=f"GPU endpoint returned an empty caption: {body!r}",
         )
     return content.strip()
+
+
+def _strip_markdown_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _load_json_payload(text: str) -> Any | None:
+    stripped = _strip_markdown_fence(text)
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char not in "{[":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        return obj
+    return None
+
+
+def _qwen_rows_to_florence(rows: Sequence[Any]) -> dict[str, list[Any]]:
+    bboxes: list[Any] = []
+    labels: list[Any] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        box = row.get("bbox_2d") or row.get("bbox") or row.get("box")
+        label = row.get("label") or row.get("phrase") or row.get("text") or ""
+        if box is None:
+            continue
+        bboxes.append(box)
+        labels.append(label)
+    return {"bboxes": bboxes, "labels": labels}
+
+
+def _florence_mapping(payload: Any) -> Mapping[str, Any] | None:
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+        return _qwen_rows_to_florence(payload)
+    if not isinstance(payload, Mapping):
+        return None
+    if "bboxes" in payload or "labels" in payload:
+        return payload
+    for key in ("grounding", "phrase_boxes", "objects"):
+        inner = payload.get(key)
+        if isinstance(inner, Mapping) and ("bboxes" in inner or "labels" in inner):
+            return inner
+        if isinstance(inner, Sequence) and not isinstance(inner, (str, bytes)):
+            return _qwen_rows_to_florence(inner)
+    return None
+
+
+def _image_dimensions(image_bytes: bytes) -> tuple[float, float] | None:
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            image.load()
+            width, height = image.size
+    except Exception:  # noqa: BLE001 - unreadable image cannot validate pixel boxes
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return float(width), float(height)
+
+
+def _normalized_box_from_quad(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    *,
+    image_width: float | None,
+    image_height: float | None,
+) -> NormalizedBox | None:
+    if x2 <= x1 or y2 <= y1:
+        return None
+    max_coord = max(abs(x1), abs(y1), abs(x2), abs(y2))
+    if max_coord <= 1.0 + 1e-6:
+        if x1 < -1e-6 or y1 < -1e-6 or x2 > 1.0 + 1e-6 or y2 > 1.0 + 1e-6:
+            return None
+        return NormalizedBox(x=x1, y=y1, width=x2 - x1, height=y2 - y1)
+    if image_width is None or image_height is None:
+        return None
+    if x1 < -1.0 or y1 < -1.0 or x2 > image_width + 1.0 or y2 > image_height + 1.0:
+        return None
+    return normalize_bbox(
+        x=x1,
+        y=y1,
+        width=x2 - x1,
+        height=y2 - y1,
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+
+def _span_for_label(label: str, caption: str, cursor_by_label: dict[str, int]) -> tuple[str, tuple[int, int]]:
+    key = str(label).lower()
+    if not key.strip():
+        return "", (-1, -1)
+    lowered = caption.lower()
+    start = lowered.find(key, cursor_by_label.get(key, 0))
+    if start == -1:
+        return str(label), (-1, -1)
+    end = start + len(key)
+    cursor_by_label[key] = end
+    return caption[start:end], (start, end)
+
+
+def _parse_phrase_grounding(
+    parsed: Mapping[str, Any],
+    *,
+    caption: str,
+    image_width: float | None,
+    image_height: float | None,
+) -> tuple[PhraseBox, ...]:
+    """Map Qwen grounding JSON to the Florence/VLM-2C phrase-box shape."""
+    bboxes = parsed.get("bboxes") or []
+    labels = parsed.get("labels") or []
+    if not isinstance(bboxes, Sequence) or isinstance(bboxes, (str, bytes)):
+        return ()
+    if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
+        return ()
+    cursor_by_label: dict[str, int] = {}
+    phrase_boxes: list[PhraseBox] = []
+    for bbox, label in zip(bboxes, labels, strict=False):
+        try:
+            x1, y1, x2, y2 = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        box = _normalized_box_from_quad(x1, y1, x2, y2, image_width=image_width, image_height=image_height)
+        if box is None:
+            continue
+        phrase, span = _span_for_label(str(label), caption, cursor_by_label)
+        phrase_boxes.append(PhraseBox(phrase=phrase, span_start=span[0], span_end=span[1], box=box))
+    return tuple(phrase_boxes)
+
+
+def _parse_qwen_phrase_grounding(text: str, *, caption: str, image_bytes: bytes) -> tuple[PhraseBox, ...]:
+    payload = _load_json_payload(text)
+    mapping = _florence_mapping(payload)
+    if mapping is None:
+        return ()
+    dimensions = _image_dimensions(image_bytes)
+    image_width, image_height = dimensions if dimensions is not None else (None, None)
+    return _parse_phrase_grounding(mapping, caption=caption, image_width=image_width, image_height=image_height)

@@ -87,8 +87,12 @@ _GENERIC_PERSON_HEADS: tuple[str, ...] = tuple(
         reverse=True,
     )
 )
+# Trailing \b also fires on man-made / man/woman / man‑made (U+2011). Require a
+# real NP terminator so compounds stay generic (ATTRIB-02 / GPUFLOW-3-N-B-06).
 _GENERIC_PERSON_NP = re.compile(
-    r"\b((?:a|an|the)\s+(?:" + "|".join(re.escape(head) for head in _GENERIC_PERSON_HEADS) + r"))\b",
+    r"\b((?:a|an|the)\s+(?:"
+    + "|".join(re.escape(head) for head in _GENERIC_PERSON_HEADS)
+    + r"))(?=\s|[.!?;:,]|$|'s|’s)",
     re.IGNORECASE,
 )
 

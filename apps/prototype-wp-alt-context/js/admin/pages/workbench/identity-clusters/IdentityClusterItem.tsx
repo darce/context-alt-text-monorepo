@@ -104,6 +104,9 @@ export const IdentityClusterItem = ({
   const isSingleton = !editableClusterId && cluster.members.length === 1;
   const canEdit = canLabel && Boolean(editableClusterId) && !cluster.clusteringPending;
   const canSearchForMatch = canLabel && isSingleton && !cluster.clusteringPending;
+  // WHY: person-card same-face dedup can leave one member while identityClusterIds still names several identities (INT-03).
+  const recordedIdentityCount = Object.keys(cluster.identityClusterIds ?? {}).length;
+  const canUnlink = canMutate && Math.max(recordedIdentityCount, cluster.members.length) === 1;
 
   // Show "Processing..." when clustering hasn't run yet, otherwise "Unnamed person"
   const labelText = cluster.clusteringPending
@@ -326,7 +329,7 @@ export const IdentityClusterItem = ({
 
   // Handle "Wrong person" action
   const handleWrongPerson = () => {
-    if (!representative?.identity_id) {
+    if (!canUnlink || !representative?.identity_id) {
       return;
     }
 
@@ -467,7 +470,7 @@ export const IdentityClusterItem = ({
                   hasLabel={Boolean(cluster.label)}
                   isAutoLabel={cluster.isAutoLabel}
                   canSplit={false}
-                  canReject={canMutate && cluster.members.length === 1}
+                  canReject={canUnlink}
                   isPending={mutations.isPending}
                   splitDisabled={mutations.splitGate.disabled}
                   splitTitle={mutations.splitGate.title}

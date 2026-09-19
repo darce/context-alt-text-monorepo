@@ -8,12 +8,13 @@
 - **Baseline inspected:** `213fad181474e5739a3b4859536f28792638cdeb`.
 - **Delivery now:** reviewable planning documents and eval data only. No feature implementation, vendor purchase, invitations, live charges or deployment.
 - **Intake:** [scope](../scopes/app-altcontext-beta-clerk-polar-scope.md), MCP decision #12633.
+- **Vendor reassessment:** [payment and key build/buy pipeline](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md), including fresh semantic retrieval and current primary sources.
 - **Evidence:** [prior art, refreshed vendors and canon reasoning](../assessments/current/app-portal-prior-art-and-vendors-2026-09-19.md).
 - **Eval specification:** [APP-1 data](../scopes/app-altcontext-beta-clerk-polar-evals.json).
 
 ## Objective
 
-Let an invited WordPress customer sign up at app.altcontext.com, obtain and safely rotate a tenant API key, see their allowance, and use the service free during beta. Implement the paid conversion path before beta release, prove it in Polar sandbox, and later enable explicit paid checkout without replacing accounts, tenants or keys.
+Let an invited WordPress customer sign up at app.altcontext.com, obtain and safely rotate a tenant API key, see their allowance, and use the service free during beta. Implement the paid conversion path before beta release, prove it in the selected provider's sandbox, and later enable explicit paid checkout without replacing accounts, tenants or keys.
 
 ## Product decision and success hypothesis
 
@@ -38,16 +39,20 @@ The earlier E16-7 docs landed **without implementation** (handoff #11754). Reuse
 | Decision | Draft default | Review gate |
 | --- | --- | --- |
 | Tenant identity | Single owner, stable `(Clerk issuer, subject)` -> tenant UUID; no organization switcher | Confirm whether actual beta users require multiple admins before S1 |
-| Key authority | Existing local hashes and verification; Clerk authenticates the portal person | Explicitly compare Clerk managed keys in S0, preserve local path unless spike evidence overturns it |
+| Key authority | Existing local hashes provisionally; Clerk authenticates the person | G0 validates inherited outage/rotation/custody preferences; G2 tests Clerk managed keys against the same accepted contracts before S2 |
 | UI/runtime | FastAPI server-rendered page, small supported Clerk browser integration and small same-origin mutation script | S1 must prove real login, renewal, logout and secret response display; no unsupported no-JS assumption |
-| Billing vendor | Polar Starter, thin adapter; Paddle first fallback | Account approval, product fit, fresh fee quote and sandbox evidence; ADR-014 remains proposed until reviewed |
+| Billing vendor | Polar Starter provisional; Stripe Managed Payments and Paddle are real finalists | G0..G4 in reassessment: actual eligibility, remaining integration effort, lifecycle proof and total cost; no incumbent preference based on unbuilt code |
 | Beta envelope | 10-20 tenants, 30 days, 200 successful image jobs each, one active job per tenant | Measure cost, choose daily/global limits and approve numeric config before invites |
 | Beta budget | Proposed US$50 incremental ceiling per 30 days; existing hosting excluded | Founder chooses currency/ceiling; enforce worst-case admission budget, do not rely only on cloud budget alerts |
 | Pricing | One paid monthly offer with a versioned allowance initially | Old $19/$49 and 5k/25k tables are historical hypotheses, not authorized prices |
 | Past-due/stale access | Proposed 72-hour payment grace; 24-hour bounded billing outage extension | Confirm financial risk; fixtures prove exact time boundaries |
 | Calendar | Sequence by evidence, no promised date | Estimate after S1 integration spike |
 
-Out of scope: unlimited public beta, automatic paid conversion, paid overages, custom invoices/payment forms, team/agency hierarchy, enterprise SSO, CRM migration, local workers, analytics warehouse, Clerk-managed key migration, silent WordPress key replacement, separate writable business credential database.
+Out of scope: unlimited public beta, automatic paid conversion, paid overages, custom invoices/payment forms, team/agency hierarchy, enterprise SSO, CRM migration, local workers, analytics warehouse, unselected key migration, silent WordPress key replacement, separate writable business credential database.
+
+### Vendor selection before implementation
+
+Apply the linked reassessment's G0..G4 before committing to provider-specific production work. S0 records requirements versus inherited design preferences. S1 runs bounded payment/key spikes (proposed total two engineer-days), records measured remaining work and chooses one payment provider and one credential authority. This draft's concrete architecture and APP-R2/APP-R4 contracts still describe the **Polar + local-key candidate**, not an approved selection. A different winner requires a coherent contract/eval amendment before S2/S5; do not bolt a second authority onto this design. Clerk key usage price is not a rejection reason, and Stripe Managed Payments is not excluded by the old Stripe-direct tax argument.
 
 ## Current state and context loading
 
@@ -194,8 +199,8 @@ Each implementation slice first establishes failing behavioral tests, records th
 
 | Slice | Goal and owned surfaces | Depends on | Proof / mapped criteria |
 | --- | --- | --- | --- |
-| **S0 - reconcile contracts** | Integration owner: APP-R1..R6 spec, E16-7 reuse/disposition, ADR-014 refresh, route/metering inventory, role/reset model, cost envelope, catalog proposal | Plan review | Named E16-7 finding dispositions with evidence; complete endpoint/state/usage matrix; no duplicate task ownership |
-| **S1 - real integrations** | Auth/billing owner: throwaway Clerk browser + FastAPI JWT and Polar sandbox spikes; pin supported SDKs; snapshot redacted claims/webhook fixtures | S0 decisions | Actual sign-in/renew/logout; verified email source; valid/invalid webhook signature; checkout/portal/cancel/refund state; ambiguous-checkout retry behavior. No secrets committed |
+| **S0 - reconcile contracts** | G0/G1 requirements, eligibility and build/buy inputs; integration owner: APP-R1..R6 spec, E16-7 reuse/disposition, ADR-014 refresh, route/metering inventory, role/reset model, cost envelope, catalog proposal | Plan review | Named E16-7 finding dispositions with evidence; complete endpoint/state/usage matrix; no duplicate task ownership |
+| **S1 - real integrations** | Auth/billing owner: G2/G3 throwaway Clerk browser + FastAPI JWT/key spike and Polar versus strongest eligible payment challenger; choose provider/key authority via G4 before production work; pin supported SDKs; snapshot redacted claims/webhook fixtures | S0 decisions | Actual sign-in/renew/logout; verified email source; valid/invalid webhook signature; checkout/portal/cancel/refund state; ambiguous-checkout retry behavior. Record actual effort, unresolved custody/outage/migration behavior and selected-contract amendments. No secrets committed |
 | **S2 - durable keys** | Credential owner: schema truth and restricted reset grants, tenant-bound repositories, extracted key service, creation/rotation/revoke, recovery journal and bound history | S0, S1 auth contract | APP-SC-02..06, 15; preserve existing admin contract. Rotation service and repository ship together |
 | **S3 - self-service account** | Portal owner: onboarding/invites, identity links, beta grants, auth dependencies, portal renderer and JS; app mount and Caddy through integration owner | S1, S2 | APP-SC-01, 07, 13, 14, 16; real invited user obtains key, connects WordPress, completes one job |
 | **S4 - allowance and cost** | Admission owner: new usage reservation/entitlement service and repositories, all scoped billable routes, usage UI, cost controls and reaper contract | S3 | APP-SC-08, 09, 17; race at remaining=1, duplicate completion, failure/cancel/restart, global cost ceiling and no per-key bypass |
@@ -258,7 +263,7 @@ Flags are server-controlled and independent: portal enabled, beta admission open
 ## Consolidated checklist
 
 - [ ] S0: choose one implementation owner, reconcile E16-7 deferred items and authority docs, review APP-R1..R6 spec/catalog/cost policy.
-- [ ] S1: prove real Clerk and Polar sandbox contracts, pin versions and sanitized fixtures.
+- [ ] S1: complete G0..G4 vendor/key selection, prove selected real contracts, amend plan/evals together if changed, pin versions and sanitized fixtures.
 - [ ] S2: deliver tenant-safe key lifecycle, atomic evidence, reset containment and durable recovery.
 - [ ] S3: deliver actual self-service onboarding and working WordPress connection.
 - [ ] S4: deliver correct allowance/usage and enforceable compute budget.
@@ -270,4 +275,4 @@ Flags are server-controlled and independent: portal enabled, beta admission open
 
 ## Review packet and remaining choices
 
-Review this plan with its scope, evidence note and eval data. First settle tenancy, local-vs-Clerk key authority, free-beta budget/allowance/cohort and final price/catalog. Then verify S0 crosswalk, webhook/entitlement edge cases, SDK-supported browser flow and recovery assumptions against code. Planning review findings belong in MCP. The task is complete **as a draft deliverable** when these artifacts are coherent and discoverable; implementation and user-study completion remain unchecked.
+Review this plan with its scope, evidence note and eval data. First apply the build/buy pipeline, then settle tenancy, local-vs-Clerk key authority, free-beta budget/allowance/cohort and final price/catalog. Then verify S0 crosswalk, webhook/entitlement edge cases, SDK-supported browser flow and recovery assumptions against code. Planning review findings belong in MCP. The task is complete **as a draft deliverable** when these artifacts are coherent and discoverable; implementation and user-study completion remain unchecked.

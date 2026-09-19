@@ -2,7 +2,7 @@
   "version": 1,
   "suite_id": "app-1-beta-clerk-polar",
   "owner": "APP-1",
-  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence.",
+  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence. Describes the provisional Polar/local-key candidate; G0..G4 vendor selection must amend affected contracts and cases before implementation if another candidate wins.",
   "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-polar-evals.json --group deterministic",
   "threshold": {
     "kind": "junit_counts",

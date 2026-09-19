@@ -13,7 +13,9 @@ use AltContext\Support\RunsTransactional;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use DateTimeImmutable;
 use DateTimeZone;
+use RuntimeException;
 use Throwable;
+use WP_Error;
 
 use function apply_filters;
 use function array_fill;
@@ -38,12 +40,14 @@ use function max;
 use function method_exists;
 use function min;
 use function sprintf;
+use function str_contains;
 use function str_ends_with;
 use function str_starts_with;
 use function strtolower;
 use function time;
 use function trim;
 use function wp_clear_scheduled_hook;
+use function wp_generate_uuid4;
 use function wp_json_encode;
 use function wp_next_scheduled;
 use function wp_schedule_event;
@@ -63,6 +67,7 @@ class OutboxMaintenanceService {
 	private const AUTO_ATTEMPT_PAYLOAD_KEY = 'acx_auto_attempts';
 	private const DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED = 'auto_retry_exhausted';
 	private const ORPHAN_REASON = 'orphaned';
+	private const ORPHAN_AUDIT_OPERATION_TYPE = 'orphan_discard_audit';
 	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	// E15-35 Slice 2 bulk-requeue tunables (filterable, fail-safe floored at 1).
@@ -111,26 +116,30 @@ class OutboxMaintenanceService {
 
 		$this->pending_orphan_discard_events = array();
 		$result = $this->run_transactional(
-			function () use ( $normalized_tenant_id ): array {
-				$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id );
-				$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id );
-				$failed_purge = $this->purge_failed_non_retryable_batch( $normalized_tenant_id );
-				$purged_failed = $failed_purge['deleted'];
-				$purged_acknowledged = $this->purge_acknowledged_outbox_batch( $normalized_tenant_id );
+			function () use ( $normalized_tenant_id ): array|WP_Error {
+				try {
+					$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id );
+					$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id );
+					$failed_purge = $this->purge_failed_non_retryable_batch( $normalized_tenant_id );
+					$purged_failed = $failed_purge['deleted'];
+					$purged_acknowledged = $this->purge_acknowledged_outbox_batch( $normalized_tenant_id );
 
-				return array(
-					// Keep the established aggregate meaning: all acknowledged and failed
-					// outbox deletions. The failed-only breakdown remains available below.
-					'outbox' => $purged_acknowledged + $purged_failed,
-					'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
-					'retried' => $reclaim['retried'],
-					'dead_lettered' => $reclaim['dead_lettered'],
-					'purged_failed' => $purged_failed,
-					'skipped_concurrent' => $orphans['skipped_concurrent'] + $reclaim['skipped_concurrent'],
-					'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
-					'purged_exhausted' => $failed_purge['exhausted'],
-					'_orphan_discard_events' => $this->pending_orphan_discard_events,
-				);
+					return array(
+						// Keep the established aggregate meaning: all acknowledged and failed
+						// outbox deletions. The failed-only breakdown remains available below.
+						'outbox' => $purged_acknowledged + $purged_failed,
+						'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
+						'retried' => $reclaim['retried'],
+						'dead_lettered' => $reclaim['dead_lettered'],
+						'purged_failed' => $purged_failed,
+						'skipped_concurrent' => $orphans['skipped_concurrent'] + $reclaim['skipped_concurrent'],
+						'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
+						'purged_exhausted' => $failed_purge['exhausted'],
+						'_orphan_discard_events' => $this->pending_orphan_discard_events,
+					);
+				} catch ( RuntimeException $exception ) {
+					return new WP_Error( 'acx_db_error', $exception->getMessage(), array( 'status' => 500 ) );
+				}
 			}
 		);
 
@@ -743,7 +752,7 @@ class OutboxMaintenanceService {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, attempts, last_error_code, last_error_retryable, first_failed_at, last_attempted_at, created_at FROM %i WHERE tenant_id = %s AND status = %s AND id > %d ORDER BY id ASC LIMIT %d',
+				'SELECT id, attempts, last_error_code, last_error_retryable, first_failed_at, last_attempted_at, created_at, entity_type, entity_key FROM %i WHERE tenant_id = %s AND status = %s AND id > %d ORDER BY id ASC LIMIT %d FOR UPDATE',
 				$this->table_name,
 				$normalized_tenant_id,
 				OutboxStatus::FAILED,
@@ -775,6 +784,20 @@ class OutboxMaintenanceService {
 			return 'skipped';
 		}
 
+		$locked = $this->lock_failed_outbox_row_for_tenant( $outbox_id, $tenant_id );
+		if ( null === $locked ) {
+			return 'skipped_concurrent';
+		}
+		if ( OutboxStatus::FAILED !== trim( (string) ( $locked['status'] ?? '' ) ) ) {
+			return 'skipped_concurrent';
+		}
+		if ( ! $this->is_entity_gone_error_code( $locked['last_error_code'] ?? null ) ) {
+			return 'skipped';
+		}
+		if ( $this->local_entity_exists_for_tenant( $tenant_id, $locked ) ) {
+			return 'skipped';
+		}
+
 		$updated = $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
@@ -783,7 +806,7 @@ class OutboxMaintenanceService {
 				'status' => OutboxStatus::DISCARDED,
 			),
 			array( '%s' ),
-			$this->failed_row_fingerprint( $row )
+			$this->failed_row_fingerprint( $locked )
 		);
 		if ( false === $updated ) {
 			return 'skipped';
@@ -792,14 +815,232 @@ class OutboxMaintenanceService {
 			return 'skipped_concurrent';
 		}
 
+		$this->write_orphan_discard_audit_row( $tenant_id, $outbox_id, $locked );
+
 		$this->pending_orphan_discard_events[] = array(
 			'tenant_id' => $tenant_id,
 			'outbox_id' => $outbox_id,
-			'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+			'last_error_code' => $this->fingerprint_nullable_value( $locked['last_error_code'] ?? null ),
 			'reason' => self::ORPHAN_REASON,
 		);
 
 		return 'orphaned';
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function lock_failed_outbox_row_for_tenant( int $outbox_id, string $tenant_id ): ?array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			$outbox_id <= 0
+			|| '' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return null;
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, status, attempts, last_error_code, last_error_retryable, first_failed_at, last_attempted_at, entity_type, entity_key FROM %i WHERE id = %d AND tenant_id = %s LIMIT 1 FOR UPDATE',
+				$this->table_name,
+				$outbox_id,
+				$normalized_tenant_id
+			),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) || array() === $rows || ! is_array( $rows[0] ?? null ) ) {
+			return null;
+		}
+
+		return $rows[0];
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function local_entity_exists_for_tenant( string $tenant_id, array $row ): bool {
+		$entity_type = strtolower( trim( (string) ( $row['entity_type'] ?? '' ) ) );
+		$entity_key = trim( (string) ( $row['entity_key'] ?? '' ) );
+		if ( '' === $entity_key ) {
+			return false;
+		}
+
+		if ( '' === $entity_type || 'cluster' === $entity_type ) {
+			if ( $this->locked_cluster_exists_for_tenant( $entity_key, $tenant_id ) ) {
+				return true;
+			}
+			if ( 'cluster' === $entity_type ) {
+				return false;
+			}
+		}
+
+		if ( '' === $entity_type || 'member' === $entity_type ) {
+			if ( $this->locked_member_exists_for_tenant( $entity_key, $tenant_id ) ) {
+				return true;
+			}
+			if ( 'member' === $entity_type ) {
+				return false;
+			}
+		}
+
+		if ( 'person' === $entity_type ) {
+			return $this->locked_person_exists_for_tenant( $entity_key, $tenant_id );
+		}
+
+		return false;
+	}
+
+	private function locked_cluster_exists_for_tenant( string $cluster_uuid, string $tenant_id ): bool {
+		return $this->locked_identifier_exists(
+			$this->related_table_name( 'acx_clusters' ),
+			'SELECT cluster_uuid FROM %i WHERE cluster_uuid = %s AND tenant_id = %s LIMIT 1 FOR UPDATE',
+			array( $cluster_uuid, $tenant_id )
+		);
+	}
+
+	private function locked_member_exists_for_tenant( string $identity_uuid, string $tenant_id ): bool {
+		$member_rows = $this->select_locked_rows(
+			'SELECT cluster_uuid FROM %i WHERE identity_uuid = %s LIMIT 1 FOR UPDATE',
+			$this->related_table_name( 'acx_identity_members' ),
+			array( $identity_uuid )
+		);
+		if ( array() === $member_rows ) {
+			return false;
+		}
+
+		$cluster_uuid = trim( (string) ( $member_rows[0]['cluster_uuid'] ?? '' ) );
+		if ( '' === $cluster_uuid ) {
+			return false;
+		}
+
+		return $this->locked_cluster_exists_for_tenant( $cluster_uuid, $tenant_id );
+	}
+
+	private function locked_person_exists_for_tenant( string $person_key, string $tenant_id ): bool {
+		if ( is_numeric( $person_key ) && (int) $person_key > 0 ) {
+			return $this->locked_identifier_exists(
+				$this->related_table_name( 'acx_persons' ),
+				'SELECT id FROM %i WHERE id = %d AND tenant_id = %s LIMIT 1 FOR UPDATE',
+				array( (int) $person_key, $tenant_id )
+			);
+		}
+
+		return $this->locked_identifier_exists(
+			$this->related_table_name( 'acx_persons' ),
+			'SELECT id FROM %i WHERE person_uuid = %s AND tenant_id = %s LIMIT 1 FOR UPDATE',
+			array( $person_key, $tenant_id )
+		);
+	}
+
+	/**
+	 * @param array<int,mixed> $values
+	 */
+	private function locked_identifier_exists( string $table_name, string $sql, array $values ): bool {
+		return array() !== $this->select_locked_rows( $sql, $table_name, $values );
+	}
+
+	/**
+	 * @param array<int,mixed> $values
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function select_locked_rows( string $sql, string $table_name, array $values ): array {
+		global $wpdb;
+
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- $sql is a private literal from callers.
+		$rows = $wpdb->get_results(
+			$wpdb->prepare( $sql, $table_name, ...$values ),
+			ARRAY_A
+		);
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$matched = array();
+		foreach ( $rows as $row ) {
+			if ( is_array( $row ) ) {
+				$matched[] = $row;
+			}
+		}
+
+		return $matched;
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 */
+	private function write_orphan_discard_audit_row( string $tenant_id, int $outbox_id, array $row ): void {
+		global $wpdb;
+
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'insert' )
+		) {
+			throw new RuntimeException( 'Orphan discard audit insert is unavailable.' );
+		}
+
+		$entity_type = trim( (string) ( $row['entity_type'] ?? '' ) );
+		$entity_key = trim( (string) ( $row['entity_key'] ?? '' ) );
+		$payload = wp_json_encode(
+			array(
+				'outbox_id' => $outbox_id,
+				'last_error_code' => $this->fingerprint_nullable_value( $row['last_error_code'] ?? null ),
+				'reason' => self::ORPHAN_REASON,
+				'entity_type' => '' !== $entity_type ? $entity_type : null,
+				'entity_key' => '' !== $entity_key ? $entity_key : null,
+			)
+		);
+		if ( ! is_string( $payload ) || '' === $payload ) {
+			$payload = '{}';
+		}
+
+		$inserted = $wpdb->insert(
+			$this->table_name,
+			array(
+				'tenant_id' => $tenant_id,
+				'operation_type' => self::ORPHAN_AUDIT_OPERATION_TYPE,
+				'entity_type' => '' !== $entity_type ? $entity_type : 'outbox',
+				'entity_key' => '' !== $entity_key ? $entity_key : (string) $outbox_id,
+				'idempotency_key' => wp_generate_uuid4(),
+				'payload' => $payload,
+				'status' => OutboxStatus::DISCARDED,
+				'created_at' => gmdate( 'Y-m-d H:i:s', (int) current_time( 'timestamp' ) ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+		if ( false === $inserted || ( is_int( $inserted ) && $inserted <= 0 ) ) {
+			throw new RuntimeException( 'Orphan discard audit insert failed.' );
+		}
+	}
+
+	private function related_table_name( string $logical_suffix ): string {
+		if ( str_contains( $this->table_name, 'acx_sync_outbox' ) ) {
+			return str_replace( 'acx_sync_outbox', $logical_suffix, $this->table_name );
+		}
+
+		global $wpdb;
+
+		$prefix = 'wp_';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$prefix = $wpdb->prefix;
+		}
+
+		return $prefix . $logical_suffix;
 	}
 
 	/**

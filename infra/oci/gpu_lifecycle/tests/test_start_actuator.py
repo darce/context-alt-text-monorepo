@@ -18,6 +18,7 @@ from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     OciCliStartActuator,
     OciCliStopActuator,
+    RunningSinceLeaseStore,
     StaticJobLoadSource,
     run_reap_cycle,
     run_start_cycle,
@@ -201,6 +202,47 @@ def test_reconciled_subprocess_start_failure_does_not_emit_start_failed_fallback
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "starting"
     assert snapshot["reason"] is None
+    assert snapshot["since"] == snapshot["written_at"]
+
+
+def test_start_actuation_publishes_starting_with_since(tmp_path: Path) -> None:
+    gpu_state_path = tmp_path / "gpu-state.json"
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == [("START", "ocid1.gpu")]
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "starting"
+    assert snapshot["reason"] is None
+    assert snapshot["since"] == snapshot["written_at"]
+
+
+def test_recording_running_lease_publishes_starting_with_since(tmp_path: Path) -> None:
+    store = RunningSinceLeaseStore(path=tmp_path / "running-since.json", boot_id="test-boot")
+    store.prepare_start("ocid1.gpu")
+    gpu_state_path = tmp_path / "gpu-state.json"
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance(instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingStartActuator(),
+        running_since_store=store,
+        gpu_state_path=gpu_state_path,
+    )
+
+    assert result.actuated == []
+    assert result.lease_recorded is True
+    assert store.read("ocid1.gpu") is not None
+    snapshot = json.loads(gpu_state_path.read_text())
+    assert snapshot["state"] == "starting"
+    assert snapshot["reason"] is None
+    assert snapshot["since"] == snapshot["written_at"]
 
 
 class RecordingStopActuator:

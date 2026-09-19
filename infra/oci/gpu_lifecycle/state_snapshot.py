@@ -22,6 +22,7 @@ GPU_STATE_PATH_ENV = "ACX_GPU_STATE_PATH"
 DEFAULT_GPU_STATE_PATH = "/run/acx/gpu-state.json"
 DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS = 180.0
 DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS = 5.0
+DEFAULT_READY_PROBE_FAILURES_TO_LEAVE = 2
 
 
 class GpuLifecycleState(StrEnum):
@@ -244,6 +245,96 @@ def read_previous_gpu_state(
     ):
         return None
     return state
+
+
+def hold_ready_until_consecutive_failures(
+    *,
+    candidate: GpuLifecycleState,
+    previous: GpuLifecycleState | None,
+    consecutive_failures: int,
+    failures_to_leave: int = DEFAULT_READY_PROBE_FAILURES_TO_LEAVE,
+) -> tuple[GpuLifecycleState, int]:
+    """Hold ready until N consecutive failed probes; since stays until a real leave."""
+    if isinstance(failures_to_leave, bool) or not isinstance(failures_to_leave, int) or failures_to_leave < 1:
+        raise ValueError("failures_to_leave must be a positive integer")
+    if isinstance(consecutive_failures, bool) or not isinstance(consecutive_failures, int) or consecutive_failures < 0:
+        raise ValueError("consecutive_failures must be a non-negative integer")
+    if previous is not GpuLifecycleState.READY:
+        return candidate, 0
+    if candidate is GpuLifecycleState.READY:
+        return candidate, 0
+    if candidate in {GpuLifecycleState.STOPPED, GpuLifecycleState.STARTING}:
+        return candidate, 0
+    next_count = consecutive_failures + 1
+    if next_count < failures_to_leave:
+        return GpuLifecycleState.READY, next_count
+    return candidate, 0
+
+
+def ready_probe_failure_sidecar_path(snapshot_path: str | Path) -> Path:
+    """Sidecar that counts consecutive ready-probe misses across oneshot cycles."""
+    target = Path(snapshot_path)
+    return target.with_name(f".{target.name}.ready-probe-failures")
+
+
+def read_ready_probe_failure_count(
+    snapshot_path: str | Path | None,
+    *,
+    instance_id: str | None,
+) -> int:
+    """Read the durable consecutive-failure count for the reconciled instance."""
+    if snapshot_path is None or instance_id is None:
+        return 0
+    payload = _read_snapshot_payload(ready_probe_failure_sidecar_path(snapshot_path))
+    if not isinstance(payload, dict):
+        return 0
+    stored_id = payload.get("instance_id")
+    count = payload.get("count")
+    if stored_id != instance_id:
+        return 0
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return 0
+    return count
+
+
+def write_ready_probe_failure_count(
+    snapshot_path: str | Path | None,
+    *,
+    instance_id: str | None,
+    count: int,
+) -> None:
+    """Persist or clear the consecutive ready-probe failure count."""
+    if snapshot_path is None:
+        return
+    sidecar = ready_probe_failure_sidecar_path(snapshot_path)
+    if count <= 0 or instance_id is None:
+        with suppress(OSError):
+            sidecar.unlink(missing_ok=True)
+        return
+    payload = {"instance_id": instance_id, "count": count}
+    temporary: Path | None = None
+    try:
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=sidecar.parent,
+            prefix=f".{sidecar.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o644)
+        os.replace(temporary, sidecar)
+    except OSError as exc:
+        logger.warning("failed to persist ready-probe failure count %s: %s", sidecar, exc)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def state_for_instances(

@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 from scene.application.description_adapter import AdapterResult, DescriptionAdapter
+from scene.application.identity_merge.merge import NormalizedBox
 from scene.domain.description import DescriptionAdapterKind
 from scene.infrastructure.vlm import gpu_remote_adapter
 from scene.infrastructure.vlm.gpu_remote_adapter import (
@@ -23,13 +24,41 @@ from scene.infrastructure.vlm.gpu_remote_adapter import (
 )
 
 
-def _adapter(handler) -> GpuRemoteDescriptionAdapter:
+def _adapter(handler, **kwargs) -> GpuRemoteDescriptionAdapter:
     return GpuRemoteDescriptionAdapter(
         endpoint_url="http://gpu.test:8000",
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_version="Q4_K_M",
         transport=httpx.MockTransport(handler),
+        **kwargs,
     )
+
+
+def _png_bytes(*, width: int = 100, height: int = 100) -> bytes:
+    source = BytesIO()
+    Image.new("RGB", (width, height), color=(24, 96, 180)).save(source, format="PNG")
+    return source.getvalue()
+
+
+def _user_text_from_payload(payload: dict) -> str:
+    content = payload["messages"][1]["content"]
+    return next(part["text"] for part in content if part["type"] == "text")
+
+
+def _caption_then_grounding_handler(
+    *,
+    caption: str,
+    grounding_content: str,
+    captured: list[dict],
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        captured.append(payload)
+        if "Locate each person mentioned in the caption" in _user_text_from_payload(payload):
+            return httpx.Response(200, json={"choices": [{"message": {"content": grounding_content}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": caption}}]})
+
+    return handler
 
 
 def test_gpu_remote_adapter_stores_quantization_and_defaults_to_none() -> None:
@@ -87,8 +116,10 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert result.alt_text_draft == "A detailed GPU caption."
     assert result.caption == "A detailed GPU caption."
     assert result.objects == ()
+    assert result.phrase_boxes == ()
     assert result.context_sources == ("context.caption",)
     assert result.context_applied is True
+    assert len(captured) == 1
     assert captured[0]["path"] == "/v1/chat/completions"
     assert captured[0]["headers"]["authorization"] == "Bearer gpu-secret"
     payload = captured[0]["payload"]
@@ -715,3 +746,217 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
     finally:
         vars(gpu_remote_adapter).clear()
         vars(gpu_remote_adapter).update(snapshot)
+
+
+# ------------------------------------------ Qwen person-span grounding (GPUFLOW-3 N3)
+
+
+def test_gpu_remote_adapter_grounding_flag_defaults_off() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "A man stands."}}]})
+
+    result = _adapter(handler).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.phrase_boxes == ()
+    assert len(captured) == 1
+    assert "Locate each person mentioned in the caption" not in _user_text_from_payload(captured[0])
+
+
+def test_gpu_remote_adapter_grounding_env_flag_defaults_off(monkeypatch) -> None:
+    monkeypatch.delenv("ACX_GPU_GROUNDING_ENABLED", raising=False)
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
+        ),
+    )
+    assert adapter.grounding_enabled is False
+
+
+def test_gpu_remote_adapter_grounding_enabled_via_env(monkeypatch) -> None:
+    monkeypatch.setenv("ACX_GPU_GROUNDING_ENABLED", "true")
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands by a window.",
+        grounding_content=json.dumps({"bboxes": [[10.0, 10.0, 60.0, 90.0]], "labels": ["A man"]}),
+        captured=captured,
+    )
+
+    result = _adapter(handler).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(captured) == 2
+    assert len(result.phrase_boxes) == 1
+    assert result.phrase_boxes[0].phrase == "A man"
+
+
+def test_gpu_remote_adapter_explicit_off_wins_over_env(monkeypatch) -> None:
+    monkeypatch.setenv("ACX_GPU_GROUNDING_ENABLED", "true")
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "A man stands."}}]})
+
+    result = _adapter(handler, grounding_enabled=False).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.phrase_boxes == ()
+    assert len(captured) == 1
+
+
+def test_gpu_remote_adapter_grounding_maps_florence_shape_phrase_boxes() -> None:
+    captured: list[dict] = []
+    caption = "A man stands by a window."
+    handler = _caption_then_grounding_handler(
+        caption=caption,
+        grounding_content=json.dumps({"bboxes": [[10.0, 10.0, 60.0, 90.0]], "labels": ["A man"]}),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == caption
+    assert len(captured) == 2
+    assert captured[1]["max_tokens"] == 512
+    assert "n_probs" not in captured[1]
+    grounding_text = _user_text_from_payload(captured[1])
+    assert "Locate each person mentioned in the caption" in grounding_text
+    assert caption in grounding_text
+    assert "/no_think" in grounding_text
+    assert len(result.phrase_boxes) == 1
+    box = result.phrase_boxes[0]
+    assert box.phrase == "A man"
+    assert (box.span_start, box.span_end) == (0, 5)
+    assert box.box == NormalizedBox(x=0.1, y=0.1, width=0.5, height=0.8)
+
+
+def test_gpu_remote_adapter_grounding_accepts_qwen_bbox_2d_list() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps([{"bbox_2d": [0.0, 0.0, 50.0, 50.0], "label": "A woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(result.phrase_boxes) == 1
+    assert result.phrase_boxes[0].phrase == "A woman"
+    assert result.phrase_boxes[0].box == NormalizedBox(x=0.0, y=0.0, width=0.5, height=0.5)
+
+
+def test_gpu_remote_adapter_grounding_accepts_unit_frame_boxes() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A person sits.",
+        grounding_content=json.dumps({"bboxes": [[0.1, 0.2, 0.6, 0.9]], "labels": ["A person"]}),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.phrase_boxes[0].box == NormalizedBox(x=0.1, y=0.2, width=0.5, height=0.7)
+
+
+def test_gpu_remote_adapter_grounding_malformed_boxes_fail_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": ["not-a-quad"], "labels": ["A man"]}),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_out_of_image_boxes_fail_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": [[0.0, 0.0, 200.0, 50.0]], "labels": ["A man"]}),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=100, height=100), context=None
+    )
+
+    assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_missing_boxes_fail_closed() -> None:
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content="I cannot locate anyone.",
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+
+
+def test_gpu_remote_adapter_grounding_follow_up_failure_keeps_caption() -> None:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        captured.append(payload)
+        if "Locate each person mentioned in the caption" in _user_text_from_payload(payload):
+            return httpx.Response(500, text="upstream grounding fault")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "A man stands."}}]})
+
+    result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
+
+    assert result.caption == "A man stands."
+    assert result.phrase_boxes == ()
+    assert len(captured) == 2
+
+
+def test_gpu_remote_adapter_grounding_follow_up_uses_own_timeout(monkeypatch) -> None:
+    captured_timeouts: list[httpx.Timeout] = []
+    original_client = httpx.Client
+
+    class _CapturingClient(httpx.Client):
+        def __init__(self, *, timeout, transport):
+            captured_timeouts.append(timeout)
+            super().__init__(timeout=timeout, transport=transport)
+
+    def _client_factory(*args, **kwargs):
+        if kwargs.get("transport") is not None:
+            return _CapturingClient(**kwargs)
+        return original_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _client_factory)
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": [], "labels": []}),
+        captured=captured,
+    )
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        connect_timeout_s=3.0,
+        read_timeout_s=120.0,
+        grounding_enabled=True,
+        grounding_timeout_s=12.0,
+        transport=httpx.MockTransport(handler),
+    )
+    adapter.describe(image_bytes=_png_bytes(), context=None)
+
+    assert len(captured_timeouts) == 2
+    assert captured_timeouts[0].read == 120.0
+    assert captured_timeouts[1].read == 12.0
+    assert captured_timeouts[1].connect == 3.0

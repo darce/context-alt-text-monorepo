@@ -99,6 +99,17 @@ def test_start_unit_always_executes_a_readiness_probe() -> None:
     assert "${READY_URL}" in start_unit
 
 
+def test_reap_unit_always_executes_a_readiness_probe() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    reap_unit = re.search(
+        r"sudo tee [^\n]*/acx-gpu-reap\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script, flags=re.DOTALL,
+    ).group(1)
+
+    assert "--ready-url" in reap_unit
+    assert "${READY_URL}" in reap_unit
+
+
 def test_lifecycle_units_pass_the_operator_intent_directory() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(

@@ -33,7 +33,8 @@ def _run_lifecycle(
     drop_in_paths: str = "",
     mismatched_unit: str | None = None,
     reap_exec_start: str = (
-        "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --max-lease-seconds ${MAX_LEASE_SECONDS}"
+        "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} --ready-url ${READY_URL}"
     ),
     remote_body_mutation: str = "",
     previous_release: bool = False,
@@ -702,6 +703,23 @@ def test_effective_reaper_must_retain_expected_max_lease_argument(tmp_path: Path
     assert "systemctl <disable> <--now> <acx-gpu-start.timer>" in calls
 
 
+def test_effective_reaper_must_retain_ready_url_argument(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        reap_exec_start=(
+            "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
+            "--max-lease-seconds ${MAX_LEASE_SECONDS}"
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "lacks the ready-url argument" in result.stderr
+    assert "systemctl <disable> <--now> <acx-gpu-start.timer>" in calls
+
+
 def test_installer_own_verifier_fails_loudly_with_fake_systemctl(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -738,7 +756,7 @@ if [ "$1" = show ]; then
     *"--property=FragmentPath"*) printf '%s/%s\n' "$ACX_EFFECTIVE_SYSTEMD_DIR" "$2" ;;
     *"--property=DropInPaths"*) printf '\n' ;;
     *"--property=ExecStart"*)
-      printf '%s\n' '/usr/bin/python3 --mode reap --max-lease-seconds ${MAX_LEASE_SECONDS}'
+      printf '%s\n' '/usr/bin/python3 --mode reap --max-lease-seconds ${MAX_LEASE_SECONDS} --ready-url ${READY_URL}'
       ;;
   esac
   exit 0

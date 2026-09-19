@@ -22,16 +22,25 @@ interface ClustersRepositoryInterface {
 	 * Stale-row pruning still runs once per payload, but row upserts are issued in
 	 * MAX_SNAPSHOT_MERGE_BATCH-sized chunks rather than one monolithic statement.
 	 *
+	 * Tombstones absent local clusters/members only when `$is_complete` is true.
+	 * Callers must derive that flag from an existing snapshot-envelope signal
+	 * (`is_complete`, `complete`, `is_full`, `has_more`, `partial`, or the
+	 * `entity_set_truncated` veto). Undeclared completeness must pass false
+	 * (rg-015: never infer from `count()`).
+	 *
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
-	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void;
+	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false ): void;
 
 	/**
-	 * Prune stale non-curated rows before one or more batch upserts for the same snapshot payload.
+	 * Prune stale rows before one or more batch upserts for the same snapshot payload.
+	 *
+	 * Tombstones only when `$is_complete` is true so a truncated/undeclared page
+	 * cannot delete clusters that arrive in a later batch.
 	 *
 	 * @param string[] $incoming_cluster_ids
 	 */
-	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void;
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false ): void;
 
 	/**
 	 * Upsert one bounded batch of snapshot cluster rows after stale-row pruning has already run.

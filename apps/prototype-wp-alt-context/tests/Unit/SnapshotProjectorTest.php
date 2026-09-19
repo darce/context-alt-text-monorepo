@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\ClusterFacade;
+use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
@@ -894,5 +895,376 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame(['cluster-visible', 'cluster-singleton'], array_column($result['clusters'], 'cluster_uuid'));
         $this->assertCount(1, $result['members']['cluster-visible']);
         $this->assertSame('identity-visible', $result['members']['cluster-visible'][0]['identity_uuid']);
+    }
+
+    public function testProjectPassesEnvelopeCompletenessToClustersRepository(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project(
+            'tenant-complete-flag',
+            array(
+                'snapshot_version' => 12,
+                'is_complete' => true,
+                'clusters' => array(
+                    array('cluster_uuid' => 'cluster-keep', 'identity_count' => 1),
+                ),
+                'members' => array(
+                    array('identity_uuid' => 'id-keep', 'cluster_uuid' => 'cluster-keep'),
+                ),
+            )
+        );
+
+        $this->assertTrue($clustersRepo->mergedIsComplete);
+        $this->assertCount(1, $clustersRepo->clusters);
+        $this->assertSame('cluster-keep', $clustersRepo->clusters[0]['cluster_uuid']);
+    }
+
+    public function testProjectHasMoreFalseIsCompleteAndHasMoreTrueIsNot(): void
+    {
+        $completeRepo = new SnapshotProjectorClustersSpy();
+        $truncatedRepo = new SnapshotProjectorClustersSpy();
+        $payload = array(
+            'snapshot_version' => 13,
+            'clusters' => array(
+                array('cluster_uuid' => 'cluster-keep', 'identity_count' => 1),
+            ),
+            'members' => array(),
+        );
+
+        (new SnapshotProjector($completeRepo, new SnapshotProjectorMembersSpy(), new SnapshotProjectorSyncStateSpy()))
+            ->project('tenant-has-more', array_merge($payload, array('has_more' => false)));
+        (new SnapshotProjector($truncatedRepo, new SnapshotProjectorMembersSpy(), new SnapshotProjectorSyncStateSpy()))
+            ->project('tenant-has-more', array_merge($payload, array('has_more' => true)));
+
+        $this->assertTrue($completeRepo->mergedIsComplete);
+        $this->assertFalse($truncatedRepo->mergedIsComplete);
+    }
+
+    public function testProjectEntitySetTruncatedIsNeverComplete(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project(
+            'tenant-truncated-entities',
+            array(
+                'snapshot_version' => 14,
+                'is_complete' => true,
+                'entity_set_truncated' => true,
+                'clusters' => array(
+                    array('cluster_uuid' => 'cluster-keep', 'identity_count' => 1),
+                ),
+                'members' => array(),
+            )
+        );
+
+        $this->assertFalse($clustersRepo->mergedIsComplete);
+    }
+
+    public function testProjectUndeclaredCompletenessDoesNotTombstone(): void
+    {
+        $this->seedTombstoneProjection('tenant-undeclared');
+        $clustersRepo = new ClustersRepository();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project(
+            'tenant-undeclared',
+            array(
+                'snapshot_version' => 21,
+                'clusters' => array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                'members' => array(),
+            )
+        );
+
+        $this->assertSame(
+            array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+            $this->clusterIdsForTenant('tenant-undeclared')
+        );
+        $this->assertSame(
+            array('id-keep', 'id-stale-a', 'id-stale-b'),
+            $this->memberIds()
+        );
+        $this->assertContains('cluster_not_found:cluster-stale-a', $this->conflictKeys());
+        $this->assertContains('cluster_not_found:cluster-stale-b', $this->conflictKeys());
+    }
+
+    public function testProjectTruncatedSnapshotDoesNotTombstone(): void
+    {
+        $this->seedTombstoneProjection('tenant-truncated');
+        $clustersRepo = new ClustersRepository();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project(
+            'tenant-truncated',
+            array(
+                'snapshot_version' => 21,
+                'has_more' => true,
+                'clusters' => array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                'members' => array(),
+            )
+        );
+
+        $this->assertSame(
+            array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+            $this->clusterIdsForTenant('tenant-truncated')
+        );
+        $this->assertSame(
+            array('id-keep', 'id-stale-a', 'id-stale-b'),
+            $this->memberIds()
+        );
+    }
+
+    public function testProjectCompleteSnapshotTombsOmittedClustersAndMembers(): void
+    {
+        $this->seedTombstoneProjection('tenant-tombstone');
+        $clustersRepo = new ClustersRepository();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project(
+            'tenant-tombstone',
+            array(
+                'snapshot_version' => 21,
+                'is_complete' => true,
+                'clusters' => array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                'members' => array(
+                    array(
+                        'identity_uuid' => 'id-keep',
+                        'cluster_uuid' => 'cluster-keep',
+                    ),
+                ),
+            )
+        );
+
+        $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
+        $this->assertSame(
+            array('cluster-other-tenant'),
+            $this->clusterIdsForTenant('other-tenant')
+        );
+        $this->assertSame(array('id-keep'), $this->memberIds());
+        $this->assertContains('version_conflict:cluster-keep', $this->conflictKeys());
+        $this->assertNotContains('cluster_not_found:cluster-stale-a', $this->conflictKeys());
+        $this->assertNotContains('cluster_not_found:cluster-stale-b', $this->conflictKeys());
+    }
+
+    public function testProjectDeltaNeverPassesCompleteness(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project_delta(
+            'tenant-delta',
+            array(
+                'snapshot_version' => 4,
+                'is_complete' => true,
+                'clusters' => array(
+                    array('cluster_uuid' => 'cluster-keep', 'label' => 'Keep'),
+                ),
+                'members' => array(),
+            )
+        );
+
+        $this->assertFalse($clustersRepo->mergedIsComplete);
+        $this->assertNotSame([], $clustersRepo->mergedClusters);
+    }
+
+    public function testProjectBatchedCompleteSnapshotPassesCompletenessToPrepare(): void
+    {
+        $chunkSize = (new \ReflectionClass(SnapshotProjector::class))->getConstant('MAX_SNAPSHOT_BATCH_SIZE');
+        $this->assertIsInt($chunkSize);
+
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $clusters = [];
+        for ($index = 1; $index <= $chunkSize + 1; $index++) {
+            $clusters[] = [
+                'cluster_uuid' => 'cluster-' . $index,
+                'identity_count' => 1,
+            ];
+        }
+
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+        $projector->project(
+            'tenant-batch-complete',
+            array(
+                'snapshot_version' => 55,
+                'is_complete' => true,
+                'clusters' => $clusters,
+                'members' => array(),
+            )
+        );
+
+        $this->assertTrue($clustersRepo->prepareIsComplete);
+        $this->assertCount(2, $clustersRepo->mergedClusterBatches);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function clusterIdsForTenant(string $tenantId): array
+    {
+        global $wpdb;
+
+        $ids = array();
+        foreach ($wpdb->tableRows['wp_acx_clusters'] ?? array() as $row) {
+            if ((string) ($row['tenant_id'] ?? '') !== $tenantId) {
+                continue;
+            }
+            $ids[] = (string) $row['cluster_uuid'];
+        }
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function memberIds(): array
+    {
+        global $wpdb;
+
+        $ids = array();
+        foreach ($wpdb->tableRows['wp_acx_identity_members'] ?? array() as $row) {
+            $ids[] = (string) ($row['identity_uuid'] ?? '');
+        }
+        sort($ids);
+
+        return $ids;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function conflictKeys(): array
+    {
+        global $wpdb;
+
+        $keys = array_map(
+            static fn(array $row): string => (string) $row['conflict_code'] . ':' . (string) $row['entity_key'],
+            $wpdb->tableRows['wp_acx_sync_conflicts'] ?? array()
+        );
+        sort($keys);
+
+        return $keys;
+    }
+
+    private function seedTombstoneProjection(string $tenant): void
+    {
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = array(
+            array(
+                'cluster_uuid' => 'cluster-keep',
+                'tenant_id' => $tenant,
+                'label' => 'Keep',
+                'is_user_confirmed' => 0,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-stale-a',
+                'tenant_id' => $tenant,
+                'label' => 'Stale A',
+                'is_user_confirmed' => 0,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-stale-b',
+                'tenant_id' => $tenant,
+                'label' => 'Operator Name',
+                'is_user_confirmed' => 1,
+                'person_id' => 9,
+            ),
+            array(
+                'cluster_uuid' => 'cluster-other-tenant',
+                'tenant_id' => 'other-tenant',
+                'label' => 'Other',
+                'is_user_confirmed' => 0,
+            ),
+        );
+        $wpdb->tableRows['wp_acx_identity_members'] = array(
+            array(
+                'identity_uuid' => 'id-keep',
+                'cluster_uuid' => 'cluster-keep',
+            ),
+            array(
+                'identity_uuid' => 'id-stale-a',
+                'cluster_uuid' => 'cluster-stale-a',
+            ),
+            array(
+                'identity_uuid' => 'id-stale-b',
+                'cluster_uuid' => 'cluster-stale-b',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_sync_conflicts'] = array(
+            array(
+                'id' => 1,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-stale-a',
+                'conflict_code' => 'cluster_not_found',
+                'resolution_status' => 'open',
+            ),
+            array(
+                'id' => 2,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-keep',
+                'conflict_code' => 'version_conflict',
+                'resolution_status' => 'open',
+            ),
+            array(
+                'id' => 3,
+                'tenant_id' => $tenant,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-stale-b',
+                'conflict_code' => 'cluster_not_found',
+                'resolution_status' => 'open',
+            ),
+        );
     }
 }

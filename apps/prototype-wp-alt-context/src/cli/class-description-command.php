@@ -50,6 +50,8 @@ class DescriptionCommand extends \WP_CLI_Command {
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
 	private const STARTING_CODE               = 'description_service_starting';
 	private const STARTING_MAX_ATTEMPTS       = 3;
+	// Mirrors the service's DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS; bounds the wait when the 503 omits a usable budget (RES-02).
+	private const STARTING_FALLBACK_BUDGET_SECONDS = 510;
 
 	private DescriptionCandidateService $candidate_service;
 	private DescribeMediaService $describe_service;
@@ -532,17 +534,13 @@ class DescriptionCommand extends \WP_CLI_Command {
 			return null;
 		}
 
-		$budget = $this->startup_budget_seconds( $detail );
-		if ( null !== $budget ) {
-			$remaining = $budget - $waited;
-			if ( $remaining <= 0 ) {
-				return null;
-			}
-
-			return min( $retry_after, $remaining );
+		$budget    = $this->startup_budget_seconds( $detail ) ?? self::STARTING_FALLBACK_BUDGET_SECONDS;
+		$remaining = $budget - $waited;
+		if ( $remaining <= 0 ) {
+			return null;
 		}
 
-		return $retry_after;
+		return min( $retry_after, $remaining );
 	}
 
 	/**

@@ -217,6 +217,33 @@ class DescriptionCommandGenerateTest extends TestCase
         );
     }
 
+    public function testGenerateStartingWithoutBudgetCapsRetryAfterByFallbackBudget(): void
+    {
+        $slept = [];
+        $service = new RecordingDescribeService([
+            309 => new WP_REST_Response(
+                [
+                    'detail' => [
+                        'code' => 'description_service_starting',
+                        'message' => 'Description service is starting.',
+                    ],
+                ],
+                503,
+                ['Retry-After' => '86400']
+            ),
+        ]);
+        $command = new DescriptionCommand(null, $service, $this->recordingSleeper($slept));
+
+        try {
+            $command->__invoke(['generate'], ['media-id' => '309', 'format' => 'json']);
+        } catch (RuntimeException $e) {
+            // expected: still starting after the capped wait
+        }
+
+        $this->assertSame([510], $slept);
+        $this->assertSame([309, 309], $service->requestedMediaIds);
+    }
+
     public function testGenerateStartingWithoutRetryAfterDoesNotRetry(): void
     {
         $slept = [];

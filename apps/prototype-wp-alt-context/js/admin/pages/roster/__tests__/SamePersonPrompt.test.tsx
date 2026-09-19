@@ -17,7 +17,11 @@ import { useRecognitionCluster } from '../../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../../hooks/useRosterHooks';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import { RosterPage } from '../../RosterPage';
-import { SAME_PERSON_PROMPT_SESSION_KEY, SamePersonPrompt } from '../SamePersonPrompt';
+import {
+  SAME_PERSON_PROMPT_SESSION_KEY,
+  SamePersonPrompt,
+  resetSamePersonPromptSessionForTests,
+} from '../SamePersonPrompt';
 import { useClusterActions } from '../hooks/useClusterActions';
 import { useClusterDragDrop } from '../hooks/useClusterDragDrop';
 import { useClusterMediaMap } from '../hooks/useClusterMediaMap';
@@ -186,6 +190,7 @@ const stubPending = (suggestions: PendingMergeSuggestion[]): void => {
 describe('SamePersonPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSamePersonPromptSessionForTests();
     getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockReturnValue(null);
     setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => undefined);
     stubPending([makeSuggestion()]);
@@ -251,7 +256,11 @@ describe('SamePersonPrompt', () => {
     renderPrompt();
 
     expect(await screen.findByRole('heading', { name: 'Same or different person?' })).toBeInTheDocument();
-    expect(screen.getAllByText('Unnamed person')).toHaveLength(2);
+    expect(screen.getByText('First person')).toBeInTheDocument();
+    expect(screen.getByText('Second person')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'First person' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Second person' })).toBeInTheDocument();
+    expect(screen.queryByText('Unnamed person')).not.toBeInTheDocument();
     expect(screen.queryByText('cluster-42')).not.toBeInTheDocument();
     expect(screen.queryByText('cluster_auto')).not.toBeInTheDocument();
   });
@@ -315,11 +324,92 @@ describe('SamePersonPrompt', () => {
     expect(fetchPendingMergeSuggestions).not.toHaveBeenCalled();
     expect(acceptMergeSuggestion).not.toHaveBeenCalled();
   });
+
+  it('does not show the prompt again after remount before a decision', async () => {
+    const store = new Map<string, string>();
+    getItemSpy.mockImplementation((key) => store.get(String(key)) ?? null);
+    setItemSpy.mockImplementation((key, value) => {
+      store.set(String(key), String(value));
+    });
+    const { unmount } = renderPrompt();
+    expect(await screen.findByTestId('acx-same-person-prompt')).toBeInTheDocument();
+    expect(setItemSpy).toHaveBeenCalledWith(SAME_PERSON_PROMPT_SESSION_KEY, '1');
+    unmount();
+    renderPrompt();
+    await waitFor(() => {
+      expect(screen.queryByTestId('acx-same-person-prompt')).not.toBeInTheDocument();
+    });
+    expect(fetchPendingMergeSuggestions).toHaveBeenCalledTimes(1);
+    expect(acceptMergeSuggestion).not.toHaveBeenCalled();
+    expect(rejectMergeSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('does not show the prompt again after remount when sessionStorage throws', async () => {
+    getItemSpy.mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    setItemSpy.mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    const { unmount } = renderPrompt();
+    expect(await screen.findByTestId('acx-same-person-prompt')).toBeInTheDocument();
+    unmount();
+    renderPrompt();
+    await waitFor(() => {
+      expect(screen.queryByTestId('acx-same-person-prompt')).not.toBeInTheDocument();
+    });
+    expect(fetchPendingMergeSuggestions).toHaveBeenCalledTimes(1);
+    expect(acceptMergeSuggestion).not.toHaveBeenCalled();
+    expect(rejectMergeSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('links each face to the source media in a new tab', async () => {
+    stubPending([
+      makeSuggestion({
+        cluster_a_representative_media_id: 11,
+        cluster_b_representative_media_id: 22,
+      }),
+    ]);
+    renderPrompt();
+
+    const links = await screen.findAllByRole('link', { name: 'View photo' });
+    expect(links).toHaveLength(2);
+    expect(links[0]).toHaveAttribute('href', 'post.php?post=11&action=edit');
+    expect(links[1]).toHaveAttribute('href', 'post.php?post=22&action=edit');
+    for (const link of links) {
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+  });
+
+  it('omits the view-photo link when a side has no media id', async () => {
+    stubPending([
+      makeSuggestion({
+        cluster_a_representative_media_id: 42,
+        cluster_b_representative_media_id: null,
+      }),
+    ]);
+    renderPrompt();
+
+    const links = await screen.findAllByRole('link', { name: 'View photo' });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', 'post.php?post=42&action=edit');
+    expect(links[0]).toHaveAttribute('target', '_blank');
+    expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('omits view-photo links when neither side has a media id', async () => {
+    renderPrompt();
+
+    expect(await screen.findByRole('heading', { name: 'Same or different person?' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View photo' })).not.toBeInTheDocument();
+  });
 });
 
 describe('RosterPage mounts SamePersonPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSamePersonPromptSessionForTests();
     vi.spyOn(Storage.prototype, 'getItem').mockReturnValue(null);
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => undefined);
     stubPending([makeSuggestion()]);

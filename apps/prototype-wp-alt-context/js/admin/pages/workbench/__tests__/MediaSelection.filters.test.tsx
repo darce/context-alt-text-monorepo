@@ -81,6 +81,7 @@ const { mediaQuery, queueDrafts } = vi.hoisted(() => ({
     isLoading: false,
     isError: false,
     error: null as Error | null,
+    historyTruncated: false,
     lastRunId: undefined as string | null | undefined,
   },
 }));
@@ -120,6 +121,7 @@ vi.mock('../../../hooks/useQueueDrafts', () => ({
     DESCRIBE_RUN: 'describe_run',
     DESCRIPTION_HISTORY: 'description_history',
   },
+  QUEUE_DRAFTS_HISTORY_QUERY_KEY: ['description-history'],
   useQueueDrafts: (_mediaIds: readonly number[], runId?: string | null) => {
     queueDrafts.lastRunId = runId;
     return {
@@ -127,6 +129,7 @@ vi.mock('../../../hooks/useQueueDrafts', () => ({
       isLoading: queueDrafts.isLoading,
       isError: queueDrafts.isError,
       error: queueDrafts.error,
+      historyTruncated: queueDrafts.historyTruncated,
     };
   },
 }));
@@ -230,6 +233,7 @@ describe('W3-C-07 MediaSelection media-query copy', () => {
     queueDrafts.isLoading = false;
     queueDrafts.isError = false;
     queueDrafts.error = null;
+    queueDrafts.historyTruncated = false;
     queueDrafts.lastRunId = undefined;
   });
 
@@ -258,6 +262,7 @@ describe('U2b MediaSelection draft queue filters', () => {
     queueDrafts.isLoading = false;
     queueDrafts.isError = false;
     queueDrafts.error = null;
+    queueDrafts.historyTruncated = false;
     queueDrafts.lastRunId = undefined;
   });
 

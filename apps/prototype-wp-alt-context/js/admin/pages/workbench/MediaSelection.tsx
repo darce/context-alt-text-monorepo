@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import {
@@ -32,7 +33,7 @@ import {
   type DescribeRunStatus,
   type DescribeRunTiming,
 } from '../../api/describeApi';
-import { toDescriptionHistoryRun } from '../../navigation/appLinks';
+import { APP_LINK_PARAMS, parseRunParam, serializeRunParam } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
@@ -59,7 +60,39 @@ interface MediaSelectionProps {
   reviewActive?: boolean;
 }
 
+export const QUEUE_HAS_DRAFT_PARAM = 'hasDraft';
+export const QUEUE_HAS_DRAFT_VALUE = '1';
+
+/** History / ?run= deep-links land on the workbench draft filter (NAV-07). */
+export const descriptionHistoryQueuePath = (search: string): string => {
+  const incoming = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const next = new URLSearchParams();
+  next.set(QUEUE_HAS_DRAFT_PARAM, QUEUE_HAS_DRAFT_VALUE);
+  const runId = parseRunParam(incoming.get(APP_LINK_PARAMS.run));
+  if (runId !== null) {
+    next.set(APP_LINK_PARAMS.run, runId);
+  }
+  return `/workbench?${next.toString()}`;
+};
+
+export const workbenchDraftQueueHref = (runId?: string | null): string => {
+  const serialized = serializeRunParam(runId);
+  return `#${descriptionHistoryQueuePath(serialized ? `${APP_LINK_PARAMS.run}=${serialized}` : '')}`;
+};
+
 export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+  const inRouter = useInRouterContext();
+  if (!inRouter) {
+    return (
+      <MemoryRouter initialEntries={['/workbench']}>
+        <MediaSelectionRouted reviewActive={reviewActive} />
+      </MemoryRouter>
+    );
+  }
+  return <MediaSelectionRouted reviewActive={reviewActive} />;
+};
+
+const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -77,6 +110,34 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     setCurrentPage: onPageChange,
   } = filters;
   const { mediaQuery, statusMessage, isStatusPending } = mediaQueue;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hasDraftFilter = searchParams.get(QUEUE_HAS_DRAFT_PARAM) === QUEUE_HAS_DRAFT_VALUE;
+  const draftRunId = parseRunParam(searchParams.get(APP_LINK_PARAMS.run));
+  const setHasDraftFilter = (next: boolean): void => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) {
+          params.set(QUEUE_HAS_DRAFT_PARAM, QUEUE_HAS_DRAFT_VALUE);
+        } else {
+          params.delete(QUEUE_HAS_DRAFT_PARAM);
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  };
+  const clearDraftFilters = (): void => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.delete(QUEUE_HAS_DRAFT_PARAM);
+        params.delete(APP_LINK_PARAMS.run);
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   const mediaData = mediaQuery.data;
   const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
@@ -160,6 +221,10 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
           isStatusPending={isStatusPending}
           isError={isError}
           onRetry={onRetry}
+          hasDraftFilter={hasDraftFilter}
+          onHasDraftFilterChange={setHasDraftFilter}
+          draftRunId={draftRunId}
+          onClearDraftFilters={clearDraftFilters}
         />
 
         <table className="acx-media-selection__table">
@@ -191,6 +256,9 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               statusFilter={statusFilter}
               onClearSearch={clearSearch}
               onClearStatusFilter={() => onStatusFilterChange('all')}
+              draftRunId={draftRunId}
+              hasDraftFilter={hasDraftFilter}
+              onClearDraftFilters={clearDraftFilters}
             />
           </tbody>
         </table>
@@ -319,6 +387,10 @@ interface MediaSelectionToolbarProps {
   isStatusPending: boolean;
   isError: boolean;
   onRetry?: () => void;
+  hasDraftFilter?: boolean;
+  onHasDraftFilterChange?: (next: boolean) => void;
+  draftRunId?: string | null;
+  onClearDraftFilters?: () => void;
 }
 
 /** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
@@ -333,6 +405,10 @@ export const MediaSelectionToolbar = ({
   isStatusPending,
   isError,
   onRetry,
+  hasDraftFilter = false,
+  onHasDraftFilterChange,
+  draftRunId = null,
+  onClearDraftFilters,
 }: MediaSelectionToolbarProps) => {
   // Settled candidate: exclude transient fetch-pending so fetch churn never
   // enters the live region. Visual span still shows the full message [B-01 option b].
@@ -401,6 +477,27 @@ export const MediaSelectionToolbar = ({
           </Select.Portal>
         </Select.Root>
       </div>
+
+      <div className="acx-media-selection__draft-filter">
+        <Checkbox
+          ariaLabel={__('Has draft', 'alt-context')}
+          checked={hasDraftFilter}
+          onCheckedChange={(checked) => onHasDraftFilterChange?.(checked)}
+        />
+        <span id="acx-media-has-draft-label" aria-hidden="true">
+          {__('Has draft', 'alt-context')}
+        </span>
+      </div>
+      {draftRunId ? (
+        <div className="acx-media-selection__run-filter">
+          <span>{sprintf(__('Showing drafts from run %s', 'alt-context'), draftRunId)}</span>
+          {onClearDraftFilters ? (
+            <button type="button" className="button button-link" onClick={onClearDraftFilters}>
+              {__('Clear run filter', 'alt-context')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="acx-media-selection__toolbar-actions">
         <span className="acx-media-selection__status">
@@ -932,7 +1029,7 @@ export const BulkDescribeProgress = ({
         {measuredAnnouncement !== null ? (
           <span className="screen-reader-text">{measuredAnnouncement}</span>
         ) : null}
-        <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
+        <a className="button button-secondary" href={workbenchDraftQueueHref(run.run_id)}>
           {__('Review drafts', 'alt-context')}
         </a>
         {onDismiss ? (

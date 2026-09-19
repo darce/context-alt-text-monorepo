@@ -78,7 +78,7 @@ Frozen for this wave. Producers and consumers implement against this text, not a
 
 `reason` is a closed set: `not_configured`, `api_key_missing`, `circuit_open`, `upstream_5xx`, `upstream_4xx`, `timeout`, `contract_mismatch`. `service` is `recognition` or `scene`. Every field comes from the proxy error (rg-015); absent values are `null`. Existing fields and status codes are unchanged. Consumers treat an unknown `reason` as generic copy plus the code.
 
-**C2. Warm-up terminal (G1).** Run terminal detail: `{"code": "gpu_warmup_timeout", "retryable": true, "startup_budget_seconds": <int>}`. CPU continuation stamps run and items with `tier: "cpu_fallback"` and `reason: "gpu_warmup_timeout"`.
+**C2. Warm-up terminal (G1).** Run terminal detail: `{"code": "gpu_warmup_timeout", "retryable": true, "startup_budget_seconds": <int>}`. CPU continuation keeps items on the existing `tier: "provisional_cpu"` (the tier enum stays `provisional_cpu | final_gpu`; no `cpu_fallback` member) and stamps the run with an optional `fallback_reason: "gpu_warmup_timeout"` plus `provenance.fallback_reason` on each item. Amended 2026-09-19 (canon API-09, REF-29, DOM-03, PROV-01): deployed consumers hold a closed tier set, so the cause travels as an additive optional field.
 
 **C3. GPU state (G2).** `starting` is published with `since` on START actuation or a RUNNING lease. Leaving `ready` requires a named number of consecutive probe failures (default 2). No state outside the existing contract enum.
 

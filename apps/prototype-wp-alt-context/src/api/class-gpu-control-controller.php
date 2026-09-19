@@ -104,15 +104,16 @@ class GpuControlController extends AbstractRecognitionProxyController {
 			);
 		}
 
-		$current_user = wp_get_current_user();
-		$body['requested_by'] = is_object( $current_user ) && isset( $current_user->user_login )
-			? (string) $current_user->user_login
-			: '';
+		// GpuIntentRequest forbids extra keys; the service derives requested_by from the API key.
+		$intent = array( 'action' => $body['action'] );
+		if ( array_key_exists( 'ttl_seconds', $body ) ) {
+			$intent['ttl_seconds'] = $body['ttl_seconds'];
+		}
 
 		$response = $this->proxy_request(
 			'POST',
 			'/scene/gpu/intent',
-			$body,
+			$intent,
 			array(),
 			'post_scan_read'
 		);

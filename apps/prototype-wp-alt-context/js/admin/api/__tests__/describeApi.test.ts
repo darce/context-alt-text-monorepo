@@ -90,6 +90,9 @@ const sampleResponse = {
     naming_allowed: true,
     reason: null,
     mode: 'grounded',
+    status: 'applied',
+    realizer: 'grounded',
+    names_applied: ['Ada'],
   },
 };
 
@@ -228,6 +231,32 @@ describe('describeApi', () => {
         },
       }),
     ).toThrow(/response\.naming_provenance\.mode/);
+
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        naming_provenance: {
+          ...sampleResponse.naming_provenance,
+          realizer: 'untrusted-realizer',
+        },
+      }),
+    ).toThrow(/response\.naming_provenance\.realizer/);
+  });
+
+  it('accepts the backend NamingProvenance shape with the C7 status fields', () => {
+    const parsed = parseVisualFactsResponse(sampleResponse);
+    expect(parsed.naming_provenance).toMatchObject({
+      status: 'applied',
+      realizer: 'grounded',
+      names_applied: ['Ada'],
+    });
+  });
+
+  it('rejects a named-caption provenance missing the C7 status fields', () => {
+    const { status: _status, ...withoutStatus } = sampleResponse.naming_provenance;
+    expect(() =>
+      parseVisualFactsResponse({ ...sampleResponse, naming_provenance: withoutStatus }),
+    ).toThrow(/response\.naming_provenance\.status/);
   });
 
   it('fetches dry-run description candidates without posting to the backend describe action', async () => {

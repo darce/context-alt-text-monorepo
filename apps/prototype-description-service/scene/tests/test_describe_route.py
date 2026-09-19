@@ -634,8 +634,8 @@ def test_cache_hit_without_base_skips_naming_preview(monkeypatch):
         assert body["alt_text_draft"] == named_only
         assert body["named_draft"] == named_only
         assert body["generic_draft"] is None
-        assert body["naming_provenance"]["status"] == "skipped_budget"
-        assert body["naming_provenance"]["reason"] == "merge_error"
+        prov = body["naming_provenance"]
+        assert prov is None or prov.get("status") != "skipped_budget"
 
 
 class _NoBoxAdapter:

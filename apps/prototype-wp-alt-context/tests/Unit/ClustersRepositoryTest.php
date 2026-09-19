@@ -157,6 +157,7 @@ class ClustersRepositoryTest extends TestCase
                 return array(
                     'tombstoned_clusters' => 0,
                     'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
                 );
             }
 
@@ -415,6 +416,7 @@ class ClustersRepositoryTest extends TestCase
                 return array(
                     'tombstoned_clusters' => 0,
                     'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
                 );
             }
         };

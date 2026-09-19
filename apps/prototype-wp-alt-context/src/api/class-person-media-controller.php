@@ -42,6 +42,7 @@ interface PersonMediaRowsSource {
 	/**
 	 * Paged identity-member rows for one person. When $with_person_ids is
 	 * non-empty, only media that also contain all named people are returned.
+	 * Each row is one attachment (photo), not one detection.
 	 * Each row must carry `total_count` from the query window (rg-015); never
 	 * derive total from PHP `count()`.
 	 *
@@ -68,7 +69,11 @@ final class IdentityMembersPersonMediaReadRepository extends IdentityMembersRead
 		$prefix         = ( isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) ? $wpdb->prefix : 'wp_';
 		$members_table  = $prefix . 'acx_identity_members';
 		$clusters_table = $prefix . 'acx_clusters';
-		$sql_template   = 'SELECT COUNT(*) OVER() AS total_count, m.identity_uuid, m.attachment_id, m.cluster_uuid, m.bbox_json, m.thumb_path, m.similarity
+		// One photo per attachment before COUNT/ORDER/LIMIT: earliest assigned_at, then identity_uuid.
+		$sql_template   = 'SELECT COUNT(*) OVER() AS total_count, identity_uuid, attachment_id, cluster_uuid, bbox_json, thumb_path, similarity
+			FROM (
+			SELECT m.identity_uuid, m.attachment_id, m.cluster_uuid, m.bbox_json, m.thumb_path, m.similarity, m.assigned_at,
+			ROW_NUMBER() OVER (PARTITION BY m.attachment_id ORDER BY m.assigned_at ASC, m.identity_uuid ASC) AS rn
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s AND c.person_id = %d';
@@ -99,7 +104,7 @@ final class IdentityMembersPersonMediaReadRepository extends IdentityMembersRead
 			$args[] = count( $required_ids );
 		}
 
-		$sql_template .= ' ORDER BY m.assigned_at ASC, m.identity_uuid LIMIT %d OFFSET %d';
+		$sql_template .= ' ) ranked WHERE rn = 1 ORDER BY assigned_at ASC, identity_uuid LIMIT %d OFFSET %d';
 		$args[]        = $limit;
 		$args[]        = $offset;
 		$sql           = $this->prepare_query( $sql_template, $args );

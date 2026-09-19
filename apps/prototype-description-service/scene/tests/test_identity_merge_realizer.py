@@ -5,6 +5,8 @@ substitution without phrase boxes, and a seam-swap test proving
 merge_identities has no inline mode ladder.
 """
 
+import pytest
+
 from scene.application.identity_merge import (
     ConfirmedFace,
     DeterministicNlgRealizer,
@@ -15,7 +17,11 @@ from scene.application.identity_merge import (
     merge_identities,
 )
 from scene.application.identity_merge.merge import IdentityAssociation
-from scene.application.identity_merge.realizer import N1SubstitutionRealizer
+from scene.application.identity_merge.realizer import (
+    N1SubstitutionRealizer,
+    find_generic_person_nps,
+    leading_generic_person_np,
+)
 from scene.tests.identity_merge_helpers import make_face, make_phrase_box
 
 
@@ -238,3 +244,51 @@ class TestN1Substitution:
             confirmed_faces=[_face("Sarah", x=0.2), _face("Daniel", x=0.7)],
         )
         assert two_faces == "A woman stands by the window."
+
+    @pytest.mark.parametrize(
+        "caption",
+        [
+            "A man-made sculpture stands in the plaza.",
+            "A man/woman sign hangs on the wall.",
+            "The man-eating plant sits in the corner.",
+            "A man\u2011made sculpture stands in the plaza.",
+        ],
+        ids=["hyphen", "slash", "man-eating", "nonbreaking-hyphen"],
+    )
+    def test_hyphen_and_slash_compounds_stay_generic(self, caption: str):
+        realizer = N1SubstitutionRealizer()
+        named = realizer.realize(
+            caption=caption,
+            associations=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert named == caption
+        assert find_generic_person_nps(caption) == ()
+        assert leading_generic_person_np(caption) is None
+
+    def test_possessive_still_weaves_name(self):
+        caption = "A man's hat lies on the bench."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Keanu Reeves")],
+        )
+        assert result.named_draft == "Keanu Reeves's hat lies on the bench."
+        assert result.generic_draft == caption
+        assert result.associations == ()
+
+    def test_compound_plus_later_np_counts_only_terminated_np(self):
+        caption = "A man-made statue beside a woman."
+        nps = find_generic_person_nps(caption)
+        assert len(nps) == 1
+        assert nps[0][2].lower() == "a woman"
+        assert leading_generic_person_np(caption) is None
+        realizer = N1SubstitutionRealizer()
+        assert (
+            realizer.realize(
+                caption=caption,
+                associations=[],
+                confirmed_faces=[_face("Keanu Reeves")],
+            )
+            == caption
+        )

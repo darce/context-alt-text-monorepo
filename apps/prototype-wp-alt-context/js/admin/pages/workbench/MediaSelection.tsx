@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import {
@@ -17,7 +18,6 @@ import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
 import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
-import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { useJobPipeline } from './JobPipelineContext';
 
 import { Checkbox } from '../../../components/ui/checkbox';
@@ -33,12 +33,11 @@ import {
   type DescribeRunStatus,
   type DescribeRunTiming,
 } from '../../api/describeApi';
-import { toDescriptionHistoryRun } from '../../navigation/appLinks';
+import { APP_LINK_PARAMS, parseRunParam, serializeRunParam } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
-import { GpuTierStatus } from './GpuTierStatus';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import {
   ACCENT_PRIMARY_ATTR,
@@ -61,7 +60,39 @@ interface MediaSelectionProps {
   reviewActive?: boolean;
 }
 
+export const QUEUE_HAS_DRAFT_PARAM = 'hasDraft';
+export const QUEUE_HAS_DRAFT_VALUE = '1';
+
+/** History / ?run= deep-links land on the workbench draft filter (NAV-07). */
+export const descriptionHistoryQueuePath = (search: string): string => {
+  const incoming = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const next = new URLSearchParams();
+  next.set(QUEUE_HAS_DRAFT_PARAM, QUEUE_HAS_DRAFT_VALUE);
+  const runId = parseRunParam(incoming.get(APP_LINK_PARAMS.run));
+  if (runId !== null) {
+    next.set(APP_LINK_PARAMS.run, runId);
+  }
+  return `/workbench?${next.toString()}`;
+};
+
+export const workbenchDraftQueueHref = (runId?: string | null): string => {
+  const serialized = serializeRunParam(runId);
+  return `#${descriptionHistoryQueuePath(serialized ? `${APP_LINK_PARAMS.run}=${serialized}` : '')}`;
+};
+
 export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
+  const inRouter = useInRouterContext();
+  if (!inRouter) {
+    return (
+      <MemoryRouter initialEntries={['/workbench']}>
+        <MediaSelectionRouted reviewActive={reviewActive} />
+      </MemoryRouter>
+    );
+  }
+  return <MediaSelectionRouted reviewActive={reviewActive} />;
+};
+
+const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): React.JSX.Element => {
   const { selection: mediaSelection, filters, mediaQueue } = useWorkbenchMediaContext();
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
@@ -79,6 +110,34 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     setCurrentPage: onPageChange,
   } = filters;
   const { mediaQuery, statusMessage, isStatusPending } = mediaQueue;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const hasDraftFilter = searchParams.get(QUEUE_HAS_DRAFT_PARAM) === QUEUE_HAS_DRAFT_VALUE;
+  const draftRunId = parseRunParam(searchParams.get(APP_LINK_PARAMS.run));
+  const setHasDraftFilter = (next: boolean): void => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next) {
+          params.set(QUEUE_HAS_DRAFT_PARAM, QUEUE_HAS_DRAFT_VALUE);
+        } else {
+          params.delete(QUEUE_HAS_DRAFT_PARAM);
+        }
+        return params;
+      },
+      { replace: true },
+    );
+  };
+  const clearDraftFilters = (): void => {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.delete(QUEUE_HAS_DRAFT_PARAM);
+        params.delete(APP_LINK_PARAMS.run);
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   const mediaData = mediaQuery.data;
   const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
@@ -162,6 +221,10 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
           isStatusPending={isStatusPending}
           isError={isError}
           onRetry={onRetry}
+          hasDraftFilter={hasDraftFilter}
+          onHasDraftFilterChange={setHasDraftFilter}
+          draftRunId={draftRunId}
+          onClearDraftFilters={clearDraftFilters}
         />
 
         <table className="acx-media-selection__table">
@@ -193,6 +256,9 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               statusFilter={statusFilter}
               onClearSearch={clearSearch}
               onClearStatusFilter={() => onStatusFilterChange('all')}
+              draftRunId={draftRunId}
+              hasDraftFilter={hasDraftFilter}
+              onClearDraftFilters={clearDraftFilters}
             />
           </tbody>
         </table>
@@ -321,6 +387,10 @@ interface MediaSelectionToolbarProps {
   isStatusPending: boolean;
   isError: boolean;
   onRetry?: () => void;
+  hasDraftFilter?: boolean;
+  onHasDraftFilterChange?: (next: boolean) => void;
+  draftRunId?: string | null;
+  onClearDraftFilters?: () => void;
 }
 
 /** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
@@ -335,6 +405,10 @@ export const MediaSelectionToolbar = ({
   isStatusPending,
   isError,
   onRetry,
+  hasDraftFilter = false,
+  onHasDraftFilterChange,
+  draftRunId = null,
+  onClearDraftFilters,
 }: MediaSelectionToolbarProps) => {
   // Settled candidate: exclude transient fetch-pending so fetch churn never
   // enters the live region. Visual span still shows the full message [B-01 option b].
@@ -403,6 +477,27 @@ export const MediaSelectionToolbar = ({
           </Select.Portal>
         </Select.Root>
       </div>
+
+      <div className="acx-media-selection__draft-filter">
+        <Checkbox
+          ariaLabel={__('Has draft', 'alt-context')}
+          checked={hasDraftFilter}
+          onCheckedChange={(checked) => onHasDraftFilterChange?.(checked)}
+        />
+        <span id="acx-media-has-draft-label" aria-hidden="true">
+          {__('Has draft', 'alt-context')}
+        </span>
+      </div>
+      {draftRunId ? (
+        <div className="acx-media-selection__run-filter">
+          <span>{sprintf(__('Showing drafts from run %s', 'alt-context'), draftRunId)}</span>
+          {onClearDraftFilters ? (
+            <button type="button" className="button button-link" onClick={onClearDraftFilters}>
+              {__('Clear run filter', 'alt-context')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="acx-media-selection__toolbar-actions">
         <span className="acx-media-selection__status">
@@ -491,10 +586,6 @@ export const BulkDescribeCta = ({
   isSubmitting,
   isCancelling,
   isRunning,
-  runId,
-  activeRunId = runId,
-  progress,
-  isPanelVisible,
   errorMessage,
   remoteActionTitle,
   remoteActionAriaDisabled,
@@ -503,26 +594,8 @@ export const BulkDescribeCta = ({
   isIdentifying = false,
   onSubmit,
   onCancel,
-  onDismiss,
-  onReviewDrafts,
-  onRetryPolling,
 }: BulkDescribeCtaProps) => {
-  const progressPhase = progress.run?.phase;
-  const progressOwnsCancel =
-    isPanelVisible &&
-    (progressPhase === DESCRIBE_RUN_PHASE.QUEUED ||
-      progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
-      progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
-  const canCancelDescribe =
-    isRunning && activeRunId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
-  // Identifying is a cancellable wait of its own: the footer owns Cancel while the
-  // describe progress panel is not yet mounted to own it.
-  const canCancel = isIdentifying || canCancelDescribe;
-  // Cannot cancel an errored/finished run — offer to clear the panel instead so a
-  // new run can start from the terminal state (FE-01, rg-003). Complete-phase
-  // dismiss lives on the named done-state in BulkDescribeProgress.
-  const canDismiss =
-    isPanelVisible && (progress.isTerminal || progress.isError) && progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
+  const canCancel = isIdentifying;
   const offlineGated = Boolean(remoteActionAriaDisabled);
   // rg-003: an empty selection HOLDS the primary (aria-disabled + no-op click) but
   // never removes it from the tab order, so the control and its reason stay
@@ -550,11 +623,9 @@ export const BulkDescribeCta = ({
   // In-flight identification and an unresolved recognition policy hold the primary for
   // the same reason: acting now would either double-submit or act on an unknown policy.
   const submitHeld = offlineGated || emptySelectionHeld || isIdentifying || isSettingsPending;
-  const gpuState = progress.gpuState ?? null;
 
   return (
     <div className="acx-media-selection__bulk-describe">
-      <GpuTierStatus gpuState={gpuState} isRunPending={isRunning} />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -622,33 +693,10 @@ export const BulkDescribeCta = ({
           </span>
         ) : null}
         {canCancel ? (
-          // WBUX6-W4-R-02: ONE Cancel control spans both waits, but its label names the
-          // operation actually in flight — identification and the describe run are
-          // different objects with different consequences, and while identifying this
-          // button aborts the scan, never a describe run (there is none yet). A label
-          // that names the wrong operation makes the user act on the wrong object
-          // [INT-06 lexicons/interaction-ux.md:163] and gives voice-control users a
-          // phrase for something that is not happening [A11Y-04 accessibility.md:72].
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-            {isCancelling
-              ? __('Cancelling…', 'alt-context')
-              : isIdentifying
-                ? __('Cancel people identification', 'alt-context')
-                : __('Cancel describe run', 'alt-context')}
+            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel people identification', 'alt-context')}
           </button>
         ) : null}
-        {canDismiss ? (
-          <button type="button" className="button button-link" onClick={onDismiss}>
-            {__('Dismiss', 'alt-context')}
-          </button>
-        ) : null}
-        {progress.run?.phase === DESCRIBE_RUN_PHASE.COMPLETE ? null : (
-          <BulkDescribeReviewLink
-            runId={runId}
-            isTerminal={progress.isTerminal}
-            appliedCount={progress.run ? progress.run.completed : 0}
-          />
-        )}
       </div>
       <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
         {/* sr-007: exhaustive switch over the centralized policy — no bare string compares. */}
@@ -707,16 +755,6 @@ export const BulkDescribeCta = ({
       <span role="status" aria-live="polite" className="screen-reader-text">
         {recognitionUnavailableNotice}
       </span>
-      {isPanelVisible ? (
-        <BulkDescribeProgress
-          progress={progress}
-          onRetry={onRetryPolling}
-          onCancel={onCancel}
-          onDismiss={onDismiss}
-          onReviewDrafts={onReviewDrafts}
-          isCancelling={isCancelling}
-        />
-      ) : null}
       {errorMessage ? (
         // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
         <div className="acx-media-selection__bulk-describe-error" role="alert">
@@ -991,7 +1029,7 @@ export const BulkDescribeProgress = ({
         {measuredAnnouncement !== null ? (
           <span className="screen-reader-text">{measuredAnnouncement}</span>
         ) : null}
-        <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
+        <a className="button button-secondary" href={workbenchDraftQueueHref(run.run_id)}>
           {__('Review drafts', 'alt-context')}
         </a>
         {onDismiss ? (

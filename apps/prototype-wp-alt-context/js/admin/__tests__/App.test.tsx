@@ -93,6 +93,27 @@ describe('App route boot', () => {
     expect(determineInitialRoute()).toBe('/description-history');
   });
 
+  it('redirects the /description-history hash route to the workbench draft filter', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-dashboard');
+    window.location.hash = '#/description-history';
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/workbench?hasDraft=1');
+    expect(screen.getByText('Workbench')).toBeInTheDocument();
+    expect(screen.queryByText('Description History')).not.toBeInTheDocument();
+  });
+
+  it('preserves ?run= when redirecting description-history into the filtered queue', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-dashboard');
+    window.location.hash = '#/description-history?run=run-abc';
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/workbench?hasDraft=1&run=run-abc');
+    expect(screen.getByText('Workbench')).toBeInTheDocument();
+  });
+
   it('boots the settings page from the WordPress admin query arg', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-settings');
 
@@ -102,13 +123,14 @@ describe('App route boot', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
-  it('boots the description history page from the WordPress admin query arg', () => {
+  it('boots the filtered workbench queue from the description history admin page query arg', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-description-history');
 
     render(<App />);
 
-    expect(window.location.hash).toBe('#/description-history');
-    expect(screen.getByText('Description History')).toBeInTheDocument();
+    expect(window.location.hash).toBe('#/workbench?hasDraft=1');
+    expect(screen.getByText('Workbench')).toBeInTheDocument();
+    expect(screen.queryByText('Description History')).not.toBeInTheDocument();
   });
 
   it('boots settings from the retention admin page query arg via the /retention redirect', () => {

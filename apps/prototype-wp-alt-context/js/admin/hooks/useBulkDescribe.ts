@@ -22,6 +22,7 @@ import {
   resolveDescribeOperationTenantId,
   subscribeDescribeOperationStore,
 } from './describeOperationStore';
+import { SUGGEST_WARMING_HARD_CEILING_MS } from './useDescribeMedia';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 
 export interface UseBulkDescribeResult {
@@ -82,13 +83,15 @@ export const formatBulkDescribeErrorMessage = (
   return message;
 };
 
-const persistRunContext = (response: DescribeRunResponse): void => {
+export const persistRunContext = (response: DescribeRunResponse): void => {
   putDescribeOperationContext({
     version: DESCRIBE_OPERATION_CONTEXT_VERSION,
     kind: DESCRIBE_OPERATION_KIND.RUN,
     id: response.run_id,
     startup_id: response.startup_id ?? null,
     started_at: Date.now(),
+    // Every wait needs a bound; the run response discloses no warm-up-inclusive budget.
+    startup_budget_seconds: SUGGEST_WARMING_HARD_CEILING_MS / 1000,
     request: { writeAlt: false, force: false },
   });
   setActiveDescribeRunId(response.run_id);

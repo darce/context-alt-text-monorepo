@@ -9,6 +9,10 @@ import pytest
 from scene.application.identity_merge import (
     ConfirmedFace,
     MergeResult,
+    NamingMode,
+    NamingPolicy,
+    NamingSkipReason,
+    NamingStatus,
     NormalizedBox,
     PhraseBox,
     containment_match,
@@ -100,3 +104,239 @@ class TestMergeIdentitiesSkeleton:
         assert result.associations == ()
         assert result.named_draft == caption
         assert result.generic_draft == caption
+
+
+def _enabled_policy(*, suppressed_roster_ids: frozenset = frozenset()) -> NamingPolicy:
+    return NamingPolicy(agreement_enabled=True, suppressed_roster_ids=suppressed_roster_ids)
+
+
+class TestNamingSkipStatusDistinctFromNoFaces:
+    """C4: skip reasons keep their own status wire values; they do not collapse to no_faces."""
+
+    def test_no_confirmed_identities_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.NO_CONFIRMED_IDENTITIES
+        assert result.provenance.status is NamingStatus.NO_CONFIRMED_IDENTITIES
+        assert type(result.provenance.status) is NamingStatus
+        assert result.provenance.status is not NamingStatus.NO_FACES
+
+    def test_no_eligible_identities_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=_enabled_policy(suppressed_roster_ids=frozenset({face.roster_id})),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.NO_ELIGIBLE_IDENTITIES
+        assert result.provenance.status is NamingStatus.NO_ELIGIBLE_IDENTITIES
+        assert type(result.provenance.status) is NamingStatus
+        assert result.provenance.status is not NamingStatus.NO_FACES
+
+    def test_ambiguous_grounding_status_is_the_reason_not_no_faces(self):
+        caption = "A man stands by the window."
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.8))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[
+                _face("Daniel", NormalizedBox(x=0.35, y=0.2, width=0.04, height=0.06)),
+                _face("Sarah", NormalizedBox(x=0.5, y=0.2, width=0.04, height=0.06)),
+            ],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert result.provenance.status is NamingStatus.AMBIGUOUS_GROUNDING
+        assert type(result.provenance.status) is NamingStatus
+        assert result.provenance.status is not NamingStatus.NO_FACES
+
+    def test_agreement_disabled_status_stays_disabled(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=NamingPolicy(agreement_enabled=False, suppressed_roster_ids=frozenset()),
+        )
+        assert result.provenance.reason is NamingSkipReason.AGREEMENT_DISABLED
+        assert result.provenance.status is NamingStatus.DISABLED
+
+    def test_applied_status_unchanged_when_a_name_is_woven(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        person = _person_phrase("A man", NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[person],
+            confirmed_faces=[face],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft != caption
+        assert result.provenance.reason is None
+        assert result.provenance.status is NamingStatus.APPLIED
+
+    def test_http_schema_round_trips_new_skip_statuses(self):
+        from scene.interface_adapters.http.schemas.responses import (
+            NamingProvenance as HttpNamingProvenance,
+        )
+
+        for status in (
+            NamingStatus.NO_CONFIRMED_IDENTITIES,
+            NamingStatus.NO_ELIGIBLE_IDENTITIES,
+            NamingStatus.AMBIGUOUS_GROUNDING,
+        ):
+            model = HttpNamingProvenance(status=status)
+            dumped = model.model_dump()
+            restored = HttpNamingProvenance.model_validate(dumped)
+            assert restored.status is status
+            assert type(restored.status) is NamingStatus
+            assert model.model_dump(mode="json")["status"] == status.value
+
+
+def _stale_phrase(caption: str) -> PhraseBox:
+    """Span offsets sit past the caption, so span_replaceable is false."""
+    start = len(caption) + 1
+    return PhraseBox(
+        phrase="a ghost",
+        span_start=start,
+        span_end=start + 7,
+        box=NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7),
+    )
+
+
+class TestNoBoxFallbackReadsVerifiedList:
+    """Unverifiable rows must not keep the no-box fallback from running."""
+
+    def test_only_unverifiable_rows_match_empty_payload(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        policy = _enabled_policy()
+        kwargs = {"caption": caption, "confirmed_faces": [face], "policy": policy}
+        stale = merge_identities(phrase_boxes=[_stale_phrase(caption)], **kwargs)
+        empty = merge_identities(phrase_boxes=[], **kwargs)
+        assert stale.named_draft == empty.named_draft
+        assert stale.named_draft != caption
+        assert stale.provenance.mode == empty.provenance.mode
+        assert stale.provenance.mode is NamingMode.SUBSTITUTED
+        assert stale.associations == empty.associations == ()
+
+    def test_verifiable_unmatched_plus_unverifiable_does_not_fallback(self):
+        caption = "A man stands by the window."
+        face = _face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))
+        unmatched = _person_phrase("A man", NormalizedBox(x=0.8, y=0.1, width=0.15, height=0.3))
+        policy = _enabled_policy()
+        mixed = merge_identities(
+            caption=caption,
+            phrase_boxes=[unmatched, _stale_phrase(caption)],
+            confirmed_faces=[face],
+            policy=policy,
+        )
+        verifiable_only = merge_identities(
+            caption=caption,
+            phrase_boxes=[unmatched],
+            confirmed_faces=[face],
+            policy=policy,
+        )
+        assert mixed.named_draft == verifiable_only.named_draft == caption
+        assert mixed.associations == verifiable_only.associations == ()
+        assert mixed.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert mixed.provenance.mode is verifiable_only.provenance.mode
+
+
+class TestUngroundedNGe2PositionalGate:
+    """Z11: ungrounded n>=2 abstains until position eval; n==1 substitution stays."""
+
+    def test_two_ungrounded_people_keep_generic_draft(self):
+        caption = "Two people sit at a table."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[
+                _face("Sarah", NormalizedBox(x=0.7, y=0.2, width=0.05, height=0.08)),
+                _face("Daniel", NormalizedBox(x=0.2, y=0.2, width=0.05, height=0.08)),
+            ],
+        )
+        assert result.named_draft == caption
+        assert result.generic_draft == caption
+        assert result.associations == ()
+        assert "Pictured from left" not in result.named_draft
+        assert "Daniel" not in result.named_draft
+        assert "Sarah" not in result.named_draft
+
+    def test_two_ungrounded_people_with_policy_are_ambiguous_grounding(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[
+                _face("Ada", NormalizedBox(x=0.1, y=0.2, width=0.05, height=0.08)),
+                _face("Bob", NormalizedBox(x=0.6, y=0.2, width=0.05, height=0.08)),
+            ],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == caption
+        assert result.provenance.naming_allowed is False
+        assert result.provenance.reason is NamingSkipReason.AMBIGUOUS_GROUNDING
+        assert result.provenance.status is NamingStatus.AMBIGUOUS_GROUNDING
+        assert result.provenance.mode is None
+        assert result.provenance.realizer is None
+        assert result.provenance.names_applied == ()
+
+    def test_n1_substitution_still_weaves_the_name(self):
+        caption = "A man stands by the window."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == "Daniel stands by the window."
+        assert result.provenance.mode is NamingMode.SUBSTITUTED
+        assert result.provenance.status is NamingStatus.APPLIED
+
+    def test_n1_positional_fallback_still_applies_when_substitution_does_not(self):
+        caption = "Two people sit at a table."
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[_face("Daniel", NormalizedBox(x=0.4, y=0.2, width=0.05, height=0.08))],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == "Two people sit at a table. Pictured from left: Daniel."
+        assert result.provenance.mode is NamingMode.POSITIONAL
+
+    def test_two_faces_same_cluster_remain_n1_substitution(self):
+        caption = "A man stands by the window."
+        left = make_face(
+            "Daniel",
+            box=NormalizedBox(x=0.2, y=0.2, width=0.05, height=0.08),
+            roster_id="roster-Daniel",
+            cluster_id="cluster-daniel",
+        )
+        right = make_face(
+            "Daniel",
+            box=NormalizedBox(x=0.6, y=0.2, width=0.05, height=0.08),
+            roster_id="roster-Daniel",
+            cluster_id="cluster-daniel",
+        )
+        result = merge_identities(
+            caption=caption,
+            phrase_boxes=[],
+            confirmed_faces=[left, right],
+            policy=_enabled_policy(),
+        )
+        assert result.named_draft == "Daniel stands by the window."
+        assert result.provenance.mode is NamingMode.SUBSTITUTED

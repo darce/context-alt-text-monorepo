@@ -90,6 +90,9 @@ const sampleResponse = {
     naming_allowed: true,
     reason: null,
     mode: 'grounded',
+    status: 'applied',
+    realizer: 'grounded',
+    names_applied: ['Ada'],
   },
 };
 
@@ -118,8 +121,11 @@ describe('describeApi', () => {
       'disabled',
       'skipped_budget',
       'no_faces',
+      'no_confirmed_identities',
+      'no_eligible_identities',
+      'ambiguous_grounding',
     ]);
-    expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback']);
+    expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback', 'substituted']);
   });
 
   it('accepts a valid naming provenance shape at the API boundary', () => {
@@ -200,6 +206,14 @@ describe('describeApi', () => {
     await expect(describeMedia(42)).rejects.toThrow(/response\.result_generation/);
   });
 
+  it('accepts substituted as a named-caption provenance mode', () => {
+    const parsed = parseVisualFactsResponse({
+      ...sampleResponse,
+      naming_provenance: { ...sampleResponse.naming_provenance, mode: 'substituted' },
+    });
+    expect(parsed.naming_provenance?.mode).toBe('substituted');
+  });
+
   it('rejects invalid enum values in tier and named-caption provenance', () => {
     expect(() =>
       parseVisualFactsResponse({
@@ -217,6 +231,32 @@ describe('describeApi', () => {
         },
       }),
     ).toThrow(/response\.naming_provenance\.mode/);
+
+    expect(() =>
+      parseVisualFactsResponse({
+        ...sampleResponse,
+        naming_provenance: {
+          ...sampleResponse.naming_provenance,
+          realizer: 'untrusted-realizer',
+        },
+      }),
+    ).toThrow(/response\.naming_provenance\.realizer/);
+  });
+
+  it('accepts the backend NamingProvenance shape with the C7 status fields', () => {
+    const parsed = parseVisualFactsResponse(sampleResponse);
+    expect(parsed.naming_provenance).toMatchObject({
+      status: 'applied',
+      realizer: 'grounded',
+      names_applied: ['Ada'],
+    });
+  });
+
+  it('rejects a named-caption provenance missing the C7 status fields', () => {
+    const { status: _status, ...withoutStatus } = sampleResponse.naming_provenance;
+    expect(() =>
+      parseVisualFactsResponse({ ...sampleResponse, naming_provenance: withoutStatus }),
+    ).toThrow(/response\.naming_provenance\.status/);
   });
 
   it('fetches dry-run description candidates without posting to the backend describe action', async () => {

@@ -12,7 +12,13 @@ from pathlib import Path
 import pytest
 from infra.oci.gpu_lifecycle import state_snapshot as state_snapshot_module
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
-from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
+from infra.oci.gpu_lifecycle.probe import (
+    InstanceReadinessProbe,
+    ProbeSample,
+    ProbeStatus,
+    ReadinessWaitResult,
+    WarmReadinessWait,
+)
 from infra.oci.gpu_lifecycle.reaper import (
     StaticJobLoadSource,
     _serialized_gpu_state_publish,
@@ -21,13 +27,16 @@ from infra.oci.gpu_lifecycle.reaper import (
 )
 from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
+    DEFAULT_READY_PROBE_FAILURES_TO_LEAVE,
     GpuLifecycleState,
+    hold_ready_until_consecutive_failures,
     instance_state_is_explicitly_stopped,
     instance_state_is_unknown,
     read_previous_gpu_state,
     resolve_gpu_state_path,
     state_for_instances,
     write_gpu_state_snapshot,
+    write_ready_probe_failure_count,
 )
 
 
@@ -121,7 +130,7 @@ def test_fresh_ready_snapshot_is_not_reused_without_current_probe(
     previous_state = read_previous_gpu_state(path, expected_instance_id="ocid1.gpu", now=SNAPSHOT_NOW)
 
     assert previous_state is GpuLifecycleState.READY
-    assert state_for_instances(["RUNNING"], previous_state=previous_state) is GpuLifecycleState.WARMING
+    assert state_for_instances(["RUNNING"]) is GpuLifecycleState.WARMING
 
 
 def test_fresh_snapshot_for_different_instance_is_not_preserved(
@@ -213,23 +222,11 @@ def test_writer_blank_path_env_uses_default(
 
 
 def test_running_instance_does_not_preserve_previous_starting_state() -> None:
-    assert (
-        state_for_instances(
-            ["RUNNING"],
-            previous_state=GpuLifecycleState.STARTING,
-        )
-        is GpuLifecycleState.WARMING
-    )
+    assert state_for_instances(["RUNNING"]) is GpuLifecycleState.WARMING
 
 
 def test_degraded_does_not_latch_across_cycles() -> None:
-    assert (
-        state_for_instances(
-            ["RUNNING"],
-            previous_state=GpuLifecycleState.DEGRADED,
-        )
-        is GpuLifecycleState.WARMING
-    )
+    assert state_for_instances(["RUNNING"]) is GpuLifecycleState.WARMING
 
 
 def test_transient_reap_error_decays_on_the_next_healthy_cycle(
@@ -277,23 +274,11 @@ def test_degraded_does_not_displace_ready_observation(
         mapped_states.__getitem__,
     )
 
-    assert (
-        state_for_instances(
-            list(mapped_states),
-            previous_state=GpuLifecycleState.DEGRADED,
-        )
-        is GpuLifecycleState.READY
-    )
+    assert state_for_instances(list(mapped_states)) is GpuLifecycleState.READY
 
 
 def test_ready_state_is_not_preserved_for_warming_observation() -> None:
-    assert (
-        state_for_instances(
-            ["RUNNING"],
-            previous_state=GpuLifecycleState.READY,
-        )
-        is GpuLifecycleState.WARMING
-    )
+    assert state_for_instances(["RUNNING"]) is GpuLifecycleState.WARMING
 
 
 def test_writer_emits_documented_metadata_and_tracks_state_change_time(
@@ -391,6 +376,22 @@ def test_writer_requires_reason_for_degraded_snapshot(tmp_path: Path) -> None:
             now=120.0,
             path=tmp_path / "gpu-state.json",
         )
+
+
+def test_writer_accepts_readiness_wait_timeout_reason_for_starting(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    assert (
+        write_gpu_state_snapshot(
+            GpuLifecycleState.STARTING,
+            instance_id="ocid1.gpu",
+            reason="readiness_wait_timeout",
+            now=120.0,
+            path=path,
+        )
+        is True
+    )
+    assert json.loads(path.read_text())["reason"] == "readiness_wait_timeout"
 
 
 @pytest.mark.parametrize("state", list(GpuLifecycleState))
@@ -515,12 +516,16 @@ def test_start_cycle_writes_snapshot_for_no_action_and_start_states(
         actuator=RecordingActuator(),
     )
 
-    assert json.loads(path.read_text())["state"] == expected
+    payload = json.loads(path.read_text())
+    assert payload["state"] == expected
+    if expected == "starting":
+        assert payload["since"] <= payload["written_at"]
+        assert payload["reason"] is None
 
 
 @pytest.mark.parametrize(
     ("probe", "expected"),
-    [(AlwaysReady(), "ready"), (NeverReady(), "degraded")],
+    [(AlwaysReady(), "ready"), (NeverReady(), "starting")],
 )
 def test_start_cycle_writes_readiness_outcome(
     tmp_path: Path,
@@ -540,7 +545,11 @@ def test_start_cycle_writes_readiness_outcome(
         readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=2, sleep_seconds=0.0),
     )
 
-    assert json.loads(path.read_text())["state"] == expected
+    payload = json.loads(path.read_text())
+    assert payload["state"] == expected
+    if expected == "starting":
+        assert payload["since"] <= payload["written_at"]
+        assert payload["reason"] == "readiness_wait_timeout"
 
 
 def test_steady_running_cycle_reprobes_warming_instance_to_ready(
@@ -621,12 +630,39 @@ def test_stop_intent_with_unknown_state_writes_instance_state_unknown_reason(
     assert payload["reason"] == "instance_state_unknown"
 
 
-def test_steady_running_cycle_reprobes_ready_instance_to_degraded(
+def test_ready_probe_failure_threshold_defaults_to_two() -> None:
+    assert DEFAULT_READY_PROBE_FAILURES_TO_LEAVE == 2
+
+
+def test_hold_ready_until_consecutive_failures_keeps_ready_and_since_semantics() -> None:
+    held, count = hold_ready_until_consecutive_failures(
+        candidate=GpuLifecycleState.DEGRADED,
+        previous=GpuLifecycleState.READY,
+        consecutive_failures=0,
+    )
+    assert held is GpuLifecycleState.READY
+    assert count == 1
+
+    left, reset = hold_ready_until_consecutive_failures(
+        candidate=GpuLifecycleState.DEGRADED,
+        previous=GpuLifecycleState.READY,
+        consecutive_failures=1,
+    )
+    assert left is GpuLifecycleState.DEGRADED
+    assert reset == 0
+
+
+def test_single_failed_probe_does_not_leave_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "gpu-state.json"
-    path.write_text('{"state":"ready","written_at":1.0}\n')
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous = json.loads(path.read_text())
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
 
     result = run_start_cycle(
@@ -636,13 +672,127 @@ def test_steady_running_cycle_reprobes_ready_instance_to_degraded(
         actuator=RecordingActuator(),
         probe=NeverReady(),
         readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=2, sleep_seconds=0.0),
+        gpu_state_path=path,
     )
 
     assert result.wait_result is not None
     assert result.wait_result.timed_out == ("ocid1.gpu",)
+    assert result.fallbacks == ()
+    assert result.errors == []
+    assert result.snapshot_persisted is True
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+    assert payload["since"] == previous["since"]
+    assert payload["written_at"] >= previous["written_at"]
+
+
+def test_consecutive_failed_probes_leave_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    previous_since = json.loads(path.read_text())["since"]
+
+    def _reprobe() -> object:
+        return run_start_cycle(
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+            load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+            actuator=RecordingActuator(),
+            probe=NeverReady(),
+            readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=2, sleep_seconds=0.0),
+            gpu_state_path=path,
+        )
+
+    first = _reprobe()
+    assert first.wait_result is not None
+    assert first.fallbacks == ()
+    assert first.errors == []
+    assert json.loads(path.read_text())["state"] == "ready"
+    assert json.loads(path.read_text())["since"] == previous_since
+
+    second = _reprobe()
+    assert second.wait_result is not None
+    assert second.fallbacks
+    assert second.fallbacks[0].reason == "readiness_timeout"
+    assert second.errors
     payload = json.loads(path.read_text())
     assert payload["state"] == "degraded"
     assert payload["reason"] == "readiness_timeout"
+    assert payload["since"] != previous_since
+
+
+def test_ready_probe_failure_count_write_reports_persist_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    def fail_replace(_src: object, _dst: object, *_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated sidecar persist failure")
+
+    monkeypatch.setattr(state_snapshot_module.os, "replace", fail_replace)
+
+    assert write_ready_probe_failure_count(path, instance_id="ocid1.gpu", count=1) is False
+
+
+def test_ready_probe_failure_count_clear_reports_unlink_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    def fail_unlink(_self: Path, *_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated sidecar unlink failure")
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    assert write_ready_probe_failure_count(path, instance_id="ocid1.gpu", count=0) is False
+
+
+def test_failed_probe_count_persist_failure_leaves_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    original_replace = state_snapshot_module.os.replace
+
+    def fail_sidecar_replace(src: object, dst: object, *args: object, **kwargs: object) -> object:
+        if ".ready-probe-failures" in str(dst):
+            raise OSError("simulated sidecar persist failure")
+        return original_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(state_snapshot_module.os, "replace", fail_sidecar_replace)
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=NeverReady(),
+        readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=2, sleep_seconds=0.0),
+        gpu_state_path=path,
+    )
+
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "degraded"
+    assert payload["reason"] == "readiness_timeout"
+    assert result.fallbacks
+    assert result.fallbacks[0].reason == "readiness_timeout"
+    assert result.errors
 
 
 def test_reap_cycle_writes_stopped_after_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -681,6 +831,99 @@ def test_reap_cycle_revokes_ready_without_a_current_probe(tmp_path: Path, monkey
     payload = json.loads(path.read_text())
     assert payload["state"] == "warming"
     assert payload["written_at"] >= previous_written_at
+
+
+def test_reap_cycle_passing_probe_keeps_ready_and_since(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous = json.loads(path.read_text())
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=AlwaysReady(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+    assert payload["since"] == previous["since"]
+    assert payload["written_at"] >= previous["written_at"]
+
+
+def test_reap_cycle_single_failed_probe_keeps_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous = json.loads(path.read_text())
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=NeverReady(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+    assert payload["since"] == previous["since"]
+
+
+def test_reap_cycle_consecutive_failed_probes_leave_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    previous_since = json.loads(path.read_text())["since"]
+
+    def _reprobe() -> None:
+        run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+            load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+            actuator=RecordingActuator(),
+            probe=NeverReady(),
+            fence_delay_seconds=0.0,
+            gpu_state_path=path,
+        )
+
+    _reprobe()
+    assert json.loads(path.read_text())["state"] == "ready"
+    assert json.loads(path.read_text())["since"] == previous_since
+
+    _reprobe()
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "warming"
+    assert payload["since"] != previous_since
 
 
 def test_reaped_instance_snapshot_does_not_suppress_replacement_transition(
@@ -865,3 +1108,149 @@ def test_reap_publish_cannot_be_overwritten_by_stale_start_probe(
     assert not start_thread.is_alive()
     assert not reap_thread.is_alive()
     assert json.loads(path.read_text())["state"] == "stopped"
+
+
+class AlwaysError:
+    def probe(self, instance_id: str) -> ProbeSample:
+        return ProbeSample(instance_id=instance_id, status=ProbeStatus.ERROR, detail="hung")
+
+
+class InspectingWait(WarmReadinessWait):
+    def __init__(
+        self,
+        path: Path,
+        seen: list[dict[str, object]],
+        *,
+        max_cycles: int,
+        stall_cycles: int,
+        sleep_seconds: float = 0.0,
+    ) -> None:
+        super().__init__(max_cycles=max_cycles, stall_cycles=stall_cycles, sleep_seconds=sleep_seconds)
+        self._path = path
+        self._seen = seen
+
+    def wait(self, instance_ids: list[str], probe: InstanceReadinessProbe) -> ReadinessWaitResult:
+        self._seen.append(json.loads(self._path.read_text()))
+        return super().wait(instance_ids, probe)
+
+
+def test_start_cycle_publishes_starting_before_readiness_wait_returns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    seen_during_wait: list[dict[str, object]] = []
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "STOPPED", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=NeverReady(),
+        readiness_wait=InspectingWait(
+            path,
+            seen_during_wait,
+            max_cycles=3,
+            stall_cycles=5,
+            sleep_seconds=0.0,
+        ),
+        gpu_state_path=path,
+    )
+
+    assert seen_during_wait
+    during_wait = seen_during_wait[0]
+    assert during_wait["state"] == "starting"
+    assert during_wait["since"] is not None
+    assert during_wait["since"] <= during_wait["written_at"]
+    assert result.wait_result is not None
+    assert not result.wait_result.ready
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "starting"
+    assert payload["reason"] == "readiness_wait_timeout"
+    assert payload["since"] == during_wait["since"]
+
+
+def test_successful_boot_writes_starting_then_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+    seen_during_wait: list[dict[str, object]] = []
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "STOPPED", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=AlwaysReady(),
+        readiness_wait=InspectingWait(
+            path,
+            seen_during_wait,
+            max_cycles=1,
+            stall_cycles=2,
+            sleep_seconds=0.0,
+        ),
+        gpu_state_path=path,
+    )
+
+    assert seen_during_wait
+    assert seen_during_wait[0]["state"] == "starting"
+    assert seen_during_wait[0]["since"] is not None
+    assert result.wait_result is not None
+    assert result.wait_result.ready == ("ocid1.gpu",)
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "ready"
+    assert payload["reason"] is None
+
+
+def test_timed_out_wait_on_actuated_cycle_names_readiness_wait_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "STOPPED", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=NeverReady(),
+        readiness_wait=WarmReadinessWait(max_cycles=2, stall_cycles=5, sleep_seconds=0.0),
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("START", "ocid1.gpu")]
+    assert result.wait_result is not None
+    assert result.wait_result.timed_out == ("ocid1.gpu",)
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "starting"
+    assert payload["reason"] == "readiness_wait_timeout"
+    assert payload["since"] <= payload["written_at"]
+
+
+def test_probe_stall_on_actuated_cycle_writes_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    result = run_start_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "STOPPED", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        probe=AlwaysError(),
+        readiness_wait=WarmReadinessWait(max_cycles=3, stall_cycles=1, sleep_seconds=0.0),
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("START", "ocid1.gpu")]
+    assert result.wait_result is not None
+    assert result.wait_result.stalled == ("ocid1.gpu",)
+    payload = json.loads(path.read_text())
+    assert payload["state"] == "degraded"
+    assert payload["reason"] == "readiness_stall"

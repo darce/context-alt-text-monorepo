@@ -28,9 +28,15 @@ use function hash;
 use function implode;
 use function in_array;
 use function is_array;
+use function is_finite;
+use function is_float;
+use function is_int;
 use function is_numeric;
 use function is_string;
 use function is_wp_error;
+use function max;
+use function min;
+use function sleep;
 use function sprintf;
 use function trim;
 use function update_post_meta;
@@ -42,13 +48,27 @@ class DescriptionCommand extends \WP_CLI_Command {
 	private const ALT_TEXT_META_KEY           = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY         = '_acx_description_provenance';
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
+	private const STARTING_CODE               = 'description_service_starting';
+	private const STARTING_MAX_ATTEMPTS       = 3;
+	// Mirrors the service's DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS; bounds the wait when the 503 omits a usable budget (RES-02).
+	private const STARTING_FALLBACK_BUDGET_SECONDS = 510;
 
 	private DescriptionCandidateService $candidate_service;
 	private DescribeMediaService $describe_service;
+	/** @var callable(int):void */
+	private $sleeper;
 
-	public function __construct( ?DescriptionCandidateService $candidate_service = null, ?DescribeMediaService $describe_service = null ) {
+	/**
+	 * @param (callable(int):void)|null $sleeper
+	 */
+	public function __construct( ?DescriptionCandidateService $candidate_service = null, ?DescribeMediaService $describe_service = null, ?callable $sleeper = null ) {
 		$this->candidate_service = $candidate_service ?? new DescriptionCandidateService();
 		$this->describe_service  = $describe_service ?? new DescribeMediaService( new DescribeController() );
+		$this->sleeper           = $sleeper ?? static function ( int $seconds ): void {
+			if ( $seconds > 0 ) {
+				sleep( $seconds );
+			}
+		};
 	}
 
 	/**
@@ -275,11 +295,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 * @return array<string,mixed>
 	 */
 	private function generate_one( int $media_id, bool $write, bool $force ): array {
-		// The third constructor argument is route *attributes*, which
-		// get_param() never reads; media_id must go through set_param().
-		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe' );
-		$request->set_param( 'media_id', $media_id );
-		$result  = $this->describe_service->describe_media( $request );
+		$result = $this->describe_with_starting_retry( $media_id );
 
 		if ( is_wp_error( $result ) ) {
 			return array(
@@ -296,7 +312,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::FAILED,
 				'alt_text_draft' => '',
-				'error'          => (string) ( $data['message'] ?? $data['detail'] ?? 'Describe request failed.' ),
+				'error'          => $this->format_describe_error( $data ),
 			);
 		}
 
@@ -467,6 +483,153 @@ class DescriptionCommand extends \WP_CLI_Command {
 	}
 
 	/**
+	 * Bounded describe: typed starting GPU waits retry_after, max 3 attempts,
+	 * total wait capped by startup_budget_seconds (RES-02).
+	 *
+	 * @return WP_REST_Response|WP_Error
+	 */
+	private function describe_with_starting_retry( int $media_id ): WP_REST_Response|\WP_Error {
+		// The third constructor argument is route *attributes*, which
+		// get_param() never reads; media_id must go through set_param().
+		$request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe' );
+		$request->set_param( 'media_id', $media_id );
+
+		$result = new \WP_Error( 'describe_request_failed', 'Describe request failed.' );
+		$waited = 0;
+
+		for ( $attempt = 1; $attempt <= self::STARTING_MAX_ATTEMPTS; $attempt++ ) {
+			$result = $this->describe_service->describe_media( $request );
+			if ( ! $result instanceof WP_REST_Response || $result->get_status() < 400 ) {
+				return $result;
+			}
+
+			$data = is_array( $result->get_data() ) ? $result->get_data() : array();
+			$wait = $this->starting_retry_wait_seconds( $result, $data, $waited, $attempt );
+			if ( null === $wait ) {
+				return $result;
+			}
+
+			$this->wait_seconds( $wait );
+			$waited += $wait;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * @param array<string,mixed> $data
+	 */
+	private function starting_retry_wait_seconds( WP_REST_Response $result, array $data, int $waited, int $attempt ): ?int {
+		if ( $attempt >= self::STARTING_MAX_ATTEMPTS ) {
+			return null;
+		}
+
+		$detail = $data['detail'] ?? null;
+		if ( ! is_array( $detail ) || self::STARTING_CODE !== ( $detail['code'] ?? null ) ) {
+			return null;
+		}
+
+		$retry_after = $this->retry_after_seconds( $result, $data );
+		if ( null === $retry_after ) {
+			return null;
+		}
+
+		$budget    = $this->startup_budget_seconds( $detail ) ?? self::STARTING_FALLBACK_BUDGET_SECONDS;
+		$remaining = $budget - $waited;
+		if ( $remaining <= 0 ) {
+			return null;
+		}
+
+		return min( $retry_after, $remaining );
+	}
+
+	/**
+	 * Retry-After is a header (schema: never a body field). Honour payload
+	 * retry_after only when the header is absent so proxy copies still work.
+	 *
+	 * @param array<string,mixed> $data
+	 */
+	private function retry_after_seconds( WP_REST_Response $result, array $data ): ?int {
+		$headers = $result->get_headers();
+		$raw     = $headers['Retry-After'] ?? $headers['retry-after'] ?? null;
+		if ( null === $raw || '' === $raw ) {
+			$raw = $data['retry_after'] ?? null;
+			if ( ( null === $raw || '' === $raw ) && is_array( $data['detail'] ?? null ) ) {
+				$raw = $data['detail']['retry_after'] ?? null;
+			}
+		}
+
+		return $this->non_negative_int( $raw );
+	}
+
+	/**
+	 * @param array<string,mixed> $detail
+	 */
+	private function startup_budget_seconds( array $detail ): ?int {
+		$parsed = $this->non_negative_int( $detail['startup_budget_seconds'] ?? null );
+		if ( null === $parsed || $parsed < 1 ) {
+			return null;
+		}
+
+		return $parsed;
+	}
+
+	private function non_negative_int( mixed $raw ): ?int {
+		if ( is_int( $raw ) ) {
+			return max( 0, $raw );
+		}
+		if ( is_float( $raw ) && is_finite( $raw ) ) {
+			return max( 0, (int) $raw );
+		}
+		if ( is_string( $raw ) && is_numeric( $raw ) ) {
+			return max( 0, (int) $raw );
+		}
+
+		return null;
+	}
+
+	private function wait_seconds( int $seconds ): void {
+		( $this->sleeper )( $seconds );
+	}
+
+	/**
+	 * Typed detail is an object on the wire; (string) array becomes "Array".
+	 *
+	 * @param array<string,mixed> $data
+	 */
+	private function format_describe_error( array $data ): string {
+		$detail = $data['detail'] ?? null;
+		if ( is_array( $detail ) ) {
+			$code    = isset( $detail['code'] ) && is_string( $detail['code'] ) && '' !== $detail['code']
+				? $detail['code']
+				: '';
+			$message = isset( $detail['message'] ) && is_string( $detail['message'] ) && '' !== $detail['message']
+				? $detail['message']
+				: '';
+			if ( '' !== $code && '' !== $message ) {
+				return $code . ': ' . $message;
+			}
+			if ( '' !== $message ) {
+				return $message;
+			}
+			if ( '' !== $code ) {
+				return $code;
+			}
+
+			return 'Describe request failed.';
+		}
+
+		if ( isset( $data['message'] ) && is_string( $data['message'] ) && '' !== $data['message'] ) {
+			return $data['message'];
+		}
+		if ( is_string( $detail ) && '' !== $detail ) {
+			return $detail;
+		}
+
+		return 'Describe request failed.';
+	}
+
+	/**
 	 * Plant `_acx_description_provenance_pending` after alt landed but provenance
 	 * did not. Mirrors bulk-apply / REST-single marker discipline:
 	 * - `draft_hash` is sha256 of the **stored** alt form (post wp_unslash +
@@ -553,6 +716,7 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 * rather than coerce to '' [rg-015]. Happy-path value is unchanged (no trim).
 	 *
 	 * @param mixed $adapter
+	 * @throws \InvalidArgumentException When adapter is missing or unusable.
 	 */
 	private function require_usable_adapter( mixed $adapter ): string {
 		if ( ! is_string( $adapter ) || '' === trim( $adapter ) ) {

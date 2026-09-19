@@ -3,10 +3,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
+import { resetConfigCache } from '../../../api/config';
+import { pinRepresentative } from '../../../api/recognition/clusterApiMutations';
 import type { RosterEntry } from '../../../api/rosterApi';
+import { fetchRequiredApi } from '../../../utils/http';
 import { PersonWorkspacePanel } from '../PersonWorkspacePanel';
+
+vi.mock('../../../api/recognition/clusterApiMutations', () => ({
+  pinRepresentative: vi.fn(),
+}));
+
+vi.mock('../../../utils/http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../utils/http')>();
+  return {
+    ...actual,
+    fetchRequiredApi: vi.fn(),
+  };
+});
 
 const Providers = ({ children }: { children: React.ReactNode }): React.JSX.Element => {
   const [queryClient] = React.useState(
@@ -23,6 +38,14 @@ const Providers = ({ children }: { children: React.ReactNode }): React.JSX.Eleme
 };
 
 const renderPanel = (ui: React.ReactElement) => render(ui, { wrapper: Providers });
+
+beforeEach(() => {
+  delete window.AltContextAdmin;
+  resetConfigCache();
+  vi.mocked(pinRepresentative).mockReset();
+  vi.mocked(pinRepresentative).mockResolvedValue(undefined);
+  vi.mocked(fetchRequiredApi).mockReset();
+});
 
 const CLUSTER_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
@@ -490,5 +513,321 @@ describe('D-23 PersonWorkspacePanel failure states', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry({ projection_status: 'refreshing' })} onOpenQueue={vi.fn()} />);
     expect(screen.getByText('Refreshing linked faces…')).toBeInTheDocument();
     expect(screen.queryByText('Linked faces may be out of date.')).not.toBeInTheDocument();
+  });
+});
+
+describe('PersonWorkspacePanel cover face', () => {
+  beforeEach(() => {
+    vi.mocked(pinRepresentative).mockReset();
+    vi.mocked(pinRepresentative).mockResolvedValue(undefined);
+  });
+
+  it('pins the selected face as cover and disables the action while it is already the cover', async () => {
+    const user = userEvent.setup();
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const coverButton = screen.getByRole('button', { name: /^Use as cover$/ });
+    expect(coverButton).toBeEnabled();
+    await user.click(coverButton);
+
+    expect(pinRepresentative).toHaveBeenCalledWith(CLUSTER_UUID, 'identity-1', true, expect.any(AbortSignal));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Already the cover$/ })).toBeDisabled();
+    });
+  });
+
+  it('disables Use as cover when no face is selected', () => {
+    renderPanel(
+      <PersonWorkspacePanel
+        entry={baseEntry({ cluster_count: 0, clusters: [] })}
+        onOpenQueue={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /^Use as cover$/ })).toBeDisabled();
+  });
+
+  it('shows an undoable cover toast and restores the previous representative', async () => {
+    const user = userEvent.setup();
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /^Use as cover$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-person-cover-toast')).toHaveTextContent('Cover photo updated.');
+    });
+    await user.click(screen.getByRole('button', { name: /^Undo$/ }));
+
+    expect(pinRepresentative).toHaveBeenLastCalledWith(CLUSTER_UUID, 'identity-rep', true, expect.any(AbortSignal));
+  });
+
+  it('marks the selected face as cover before the pin settles', async () => {
+    vi.mocked(pinRepresentative).mockImplementation(
+      () =>
+        new Promise(() => {
+          /* pending */
+        }),
+    );
+    const user = userEvent.setup();
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /^Use as cover$/ }));
+
+    expect(screen.getByRole('button', { name: /^Already the cover$/ })).toBeDisabled();
+    expect(screen.queryByTestId('acx-person-cover-toast')).not.toBeInTheDocument();
+  });
+});
+
+describe('PersonWorkspacePanel photo grid', () => {
+  const emptyPage = {
+    media: [],
+    limit: 50,
+    offset: 0,
+    total: 0,
+    truncated: false,
+  };
+
+  const boundedMediaItem = {
+    identity_id: 'identity-1',
+    media_id: 501,
+    media_url: 'https://example.com/photo-501.jpg',
+    bbox: { x: 10, y: 20, width: 30, height: 40 },
+    similarity: 0.9,
+    cluster_id: CLUSTER_UUID,
+  };
+
+  const boundedMediaPage = {
+    media: [boundedMediaItem],
+    limit: 50,
+    offset: 0,
+    total: 1,
+    truncated: false,
+  };
+
+  const configurePersonMedia = (): void => {
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {
+        rosterPersons: 'http://example.test/wp-json/acx/v1/roster/persons',
+      },
+    };
+    resetConfigCache();
+  };
+
+  beforeEach(() => {
+    vi.mocked(pinRepresentative).mockReset();
+    vi.mocked(pinRepresentative).mockResolvedValue(undefined);
+    vi.mocked(fetchRequiredApi).mockReset();
+    vi.mocked(fetchRequiredApi).mockResolvedValue(emptyPage);
+    configurePersonMedia();
+  });
+
+  afterEach(() => {
+    delete window.AltContextAdmin;
+    resetConfigCache();
+  });
+
+  it('renders a paged photo grid from the person media endpoint', async () => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue({
+      media: [
+        {
+          identity_id: 'identity-1',
+          media_id: 501,
+          media_url: 'https://example.com/photo-501.jpg',
+          bbox: { x: 10, y: 20, width: 30, height: 40 },
+          similarity: 0.9,
+          cluster_id: CLUSTER_UUID,
+        },
+        {
+          identity_id: 'identity-2',
+          media_id: 502,
+          media_url: 'https://example.com/photo-502.jpg',
+          bbox: { x: 12, y: 22, width: 28, height: 36 },
+          similarity: 0.7,
+          cluster_id: CLUSTER_UUID,
+        },
+      ],
+      limit: 50,
+      offset: 0,
+      total: 2,
+      truncated: false,
+    });
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const grid = await screen.findByRole('region', { name: 'Photos' });
+    expect(within(grid).getByRole('img', { name: 'Photo from media 501' })).toBeInTheDocument();
+    expect(within(grid).getByRole('img', { name: 'Photo from media 502' })).toBeInTheDocument();
+    expect(within(grid).getByText('1–2 of 2 photos')).toBeInTheDocument();
+    expect(within(grid).getByRole('button', { name: 'Previous photos' })).toBeDisabled();
+    expect(within(grid).getByRole('button', { name: 'Next photos' })).toBeDisabled();
+    expect(vi.mocked(fetchRequiredApi).mock.calls[0]?.[0]).toContain('/roster/persons/1/media');
+    expect(vi.mocked(fetchRequiredApi).mock.calls[0]?.[0]).toContain('limit=50');
+    expect(vi.mocked(fetchRequiredApi).mock.calls[0]?.[0]).toContain('offset=0');
+  });
+
+  it('requests the next page using envelope limit and truncated, not page length', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchRequiredApi)
+      .mockResolvedValueOnce({
+        media: [
+          {
+            identity_id: 'identity-1',
+            media_id: 501,
+            media_url: 'https://example.com/photo-501.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.9,
+            cluster_id: CLUSTER_UUID,
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        total: 51,
+        truncated: true,
+      })
+      .mockResolvedValueOnce({
+        media: [
+          {
+            identity_id: 'identity-2',
+            media_id: 551,
+            media_url: 'https://example.com/photo-551.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.8,
+            cluster_id: CLUSTER_UUID,
+          },
+        ],
+        limit: 50,
+        offset: 50,
+        total: 51,
+        truncated: false,
+      });
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const grid = await screen.findByRole('region', { name: 'Photos' });
+    expect(within(grid).getByText('1–1 of 51 photos')).toBeInTheDocument();
+    expect(within(grid).queryByText('1–1 of 1 photos')).not.toBeInTheDocument();
+    await user.click(within(grid).getByRole('button', { name: 'Next photos' }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchRequiredApi).mock.calls[1]?.[0]).toContain('offset=50');
+    });
+    expect(await screen.findByText('51–51 of 51 photos')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Photo from media 551' })).toBeInTheDocument();
+  });
+
+  it('does not invent a total when the person media envelope omits pagination metadata', async () => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue({
+      media: [
+        {
+          identity_id: 'identity-1',
+          media_id: 501,
+          media_url: 'https://example.com/photo-501.jpg',
+          bbox: { x: 10, y: 20, width: 30, height: 40 },
+          similarity: 0.9,
+          cluster_id: CLUSTER_UUID,
+        },
+      ],
+    });
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not load this person\'s photos.');
+    });
+    expect(screen.queryByText(/of \d+ photos/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Photo from media 501' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: 'id -1',
+      payload: { ...boundedMediaPage, media: [{ ...boundedMediaItem, media_id: -1 }] },
+    },
+    {
+      name: 'id 1.5',
+      payload: { ...boundedMediaPage, media: [{ ...boundedMediaItem, media_id: 1.5 }] },
+    },
+    {
+      name: 'NaN offset',
+      payload: { ...boundedMediaPage, offset: Number.NaN },
+    },
+    {
+      name: 'total -3',
+      payload: { ...boundedMediaPage, total: -3 },
+    },
+    {
+      name: 'bbox width 0',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, bbox: { x: 10, y: 20, width: 0, height: 40 } }],
+      },
+    },
+    {
+      name: 'bbox x 1.2',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, bbox: { x: 1.2, y: 20, width: 30, height: 40 } }],
+      },
+    },
+    {
+      name: 'similarity Infinity',
+      payload: {
+        ...boundedMediaPage,
+        media: [{ ...boundedMediaItem, similarity: Number.POSITIVE_INFINITY }],
+      },
+    },
+  ])('rejects a person media page with $name', async ({ payload }) => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue(payload);
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not load this person\'s photos.');
+    });
+    expect(screen.queryByText(/of \d+ photos/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Photo from media 501' })).not.toBeInTheDocument();
+  });
+
+  it('renders a well-formed person media page after numeric bound checks', async () => {
+    vi.mocked(fetchRequiredApi).mockResolvedValue(boundedMediaPage);
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const grid = await screen.findByRole('region', { name: 'Photos' });
+    expect(within(grid).getByRole('img', { name: 'Photo from media 501' })).toBeInTheDocument();
+    expect(within(grid).getByText('1–1 of 1 photos')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('uses a grid photo as cover through the pin mutation', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchRequiredApi).mockResolvedValue({
+      media: [
+        {
+          identity_id: 'identity-2',
+          media_id: 502,
+          media_url: 'https://example.com/photo-502.jpg',
+          bbox: { x: 12, y: 22, width: 28, height: 36 },
+          similarity: 0.7,
+          cluster_id: CLUSTER_UUID,
+        },
+      ],
+      limit: 50,
+      offset: 0,
+      total: 1,
+      truncated: false,
+    });
+
+    renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
+
+    const usePhoto = await screen.findByRole('button', { name: /^Use media 502 as cover$/ });
+    await user.click(usePhoto);
+
+    expect(pinRepresentative).toHaveBeenCalledWith(CLUSTER_UUID, 'identity-2', true, expect.any(AbortSignal));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Media 502 is already the cover$/ })).toBeDisabled();
+    });
   });
 });

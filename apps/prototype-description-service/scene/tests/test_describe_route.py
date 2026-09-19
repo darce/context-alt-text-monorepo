@@ -193,9 +193,12 @@ def _post(
     body=None,
     extra_data=None,
     request_body=None,
+    recognition_enabled=None,
 ):
     payload = body if body is not None else b"image-bytes-payload"
     data = {"request": json.dumps(request_body or {"tenant_id": str(tenant), "media_id": media_id})}
+    if recognition_enabled is not None:
+        data["recognition_enabled"] = "true" if recognition_enabled else "false"
     if extra_data:
         data.update(extra_data)
     return client.post(
@@ -421,10 +424,13 @@ def _png_bytes(width=100, height=50):
     return buf.getvalue()
 
 
-def _post_png(client, tenant, *, media_id=42):
+def _post_png(client, tenant, *, media_id=42, recognition_enabled=None):
+    data = {"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})}
+    if recognition_enabled is not None:
+        data["recognition_enabled"] = "true" if recognition_enabled else "false"
     return client.post(
         "/scene/describe/multipart",
-        data={"request": json.dumps({"tenant_id": str(tenant), "media_id": media_id})},
+        data=data,
         files={f"image_{media_id}": ("x.png", _png_bytes(), "image/png")},
     )
 
@@ -469,7 +475,7 @@ def _seed_confirmed_identity(label="Daniel", *, media_id=42, roster_id=None, sup
 
 def test_preview_fields_generic_when_no_identities():
     with _client() as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["generic_draft"] == body["alt_text_draft"]
@@ -482,7 +488,7 @@ def test_preview_fields_generic_when_no_identities():
 
 def test_db_absent_named_draft_identical_to_generic():
     with _client(db_absent=True) as client:
-        r = _post(client, TENANT_ID)
+        r = _post(client, TENANT_ID, recognition_enabled=True)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["named_draft"] == body["generic_draft"] == body["alt_text_draft"]
@@ -493,7 +499,7 @@ def test_db_absent_named_draft_identical_to_generic():
 def test_confirmed_identity_named_in_preview():
     roster = uuid.uuid4()
     with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster)) as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["named_draft"].endswith("Pictured from left: Daniel.")
@@ -505,12 +511,64 @@ def test_confirmed_identity_named_in_preview():
         assert prov["injected_names"][0]["roster_id"] == str(roster)
 
 
+def test_omitted_recognition_enabled_skips_fusion_and_names(monkeypatch):
+    """Omitted recognition_enabled is false: no fusion load, no roster name (SEC-01)."""
+    from scene.interface_adapters.http.routers import describe as describe_mod
+
+    loads: list = []
+
+    async def _forbid_fusion(*args, **kwargs):
+        loads.append(kwargs)
+        raise AssertionError("fusion naming inputs must not load when recognition_enabled is omitted")
+
+    monkeypatch.setattr(describe_mod, "_load_fusion_naming_inputs", _forbid_fusion)
+    roster = uuid.uuid4()
+    with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster)) as client:
+        r = _post_png(client, TENANT_ID)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert loads == []
+        assert body["named_draft"] == body["generic_draft"]
+        assert "Daniel" not in (body.get("named_draft") or "")
+        assert "Daniel" not in (body.get("alt_text_draft") or "")
+
+
+def test_explicit_recognition_enabled_false_skips_fusion_and_names(monkeypatch):
+    from scene.interface_adapters.http.routers import describe as describe_mod
+
+    loads: list = []
+
+    async def _forbid_fusion(*args, **kwargs):
+        loads.append(kwargs)
+        raise AssertionError("fusion naming inputs must not load when recognition_enabled is false")
+
+    monkeypatch.setattr(describe_mod, "_load_fusion_naming_inputs", _forbid_fusion)
+    roster = uuid.uuid4()
+    with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster)) as client:
+        r = _post_png(client, TENANT_ID, recognition_enabled=False)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert loads == []
+        assert body["named_draft"] == body["generic_draft"]
+        assert "Daniel" not in (body.get("named_draft") or "")
+        assert "Daniel" not in (body.get("alt_text_draft") or "")
+
+
+@pytest.mark.parametrize("raw", ["maybe", "yes", "on", "1", "0", "no", "off"])
+def test_multipart_rejects_non_bool_recognition_enabled(raw):
+    with _client() as client:
+        r = _post(client, TENANT_ID, extra_data={"recognition_enabled": raw})
+        assert r.status_code == 422, r.text
+        assert "recognition_enabled" in r.text
+        assert "boolean" in r.text
+
+
 def test_agreement_off_suppresses_naming():
     with _client(
         naming_agreement_enabled=False,
         seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
     ) as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         body = r.json()
         assert body["named_draft"] == body["generic_draft"]
         assert body["naming_provenance"]["reason"] == "agreement_disabled"
@@ -520,7 +578,7 @@ def test_agreement_off_suppresses_naming():
 def test_suppress_list_blocks_naming_by_roster_id():
     roster = uuid.uuid4()
     with _client(seed=_seed_confirmed_identity("Daniel", roster_id=roster, suppressed=True)) as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         body = r.json()
         assert body["named_draft"] == body["generic_draft"]
         assert body["naming_provenance"]["reason"] == "no_eligible_identities"
@@ -567,7 +625,7 @@ def test_naming_preview_failure_degrades_to_generic_with_merge_error(monkeypatch
 
     monkeypatch.setattr(naming_preview_module, "load_confirmed_faces", boom)
     with _client() as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["named_draft"] == body["generic_draft"] == body["alt_text_draft"]
@@ -581,7 +639,7 @@ def test_grounded_adapter_names_via_span_replacement():
         adapter=_GroundedAdapter(),
         seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
     ) as client:
-        r = _post_png(client, TENANT_ID)
+        r = _post_png(client, TENANT_ID, recognition_enabled=True)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["named_draft"] == "Daniel stands by the window."
@@ -597,12 +655,45 @@ def test_cache_hit_keeps_grounded_naming_parity():
         adapter=_GroundedAdapter(),
         seed=_seed_confirmed_identity("Daniel", roster_id=uuid.uuid4()),
     ) as client:
-        first = _post_png(client, TENANT_ID).json()
-        second = _post_png(client, TENANT_ID).json()
+        first = _post_png(client, TENANT_ID, recognition_enabled=True).json()
+        second = _post_png(client, TENANT_ID, recognition_enabled=True).json()
         assert second["cached"] is True
         assert second["named_draft"] == first["named_draft"] == "Daniel stands by the window."
         assert second["naming_provenance"]["mode"] == first["naming_provenance"]["mode"] == "grounded"
         assert second["naming_provenance"]["injected_names"] == first["naming_provenance"]["injected_names"]
+
+
+def test_cache_hit_without_base_skips_naming_preview(monkeypatch):
+    """N-R-03: missing unnamed base keeps the cached named draft; preview is not re-run."""
+    from scene.interface_adapters.http.routers import describe as describe_mod
+
+    named_only = "Alex stands by the window."
+    with _client(adapter=_GroundedAdapter()) as client:
+        first = _post_png(client, TENANT_ID)
+        assert first.status_code == 200, first.text
+
+        async def _blank_caption():
+            async with client.app.state.session_factory() as session:
+                row = (await session.scalars(select(ImageDescription))).one()
+                row.alt_text_draft = named_only
+                row.visual_facts = {**dict(row.visual_facts or {}), "caption": ""}
+                await session.commit()
+
+        asyncio.run(_blank_caption())
+
+        async def boom(*args, **kwargs):
+            raise AssertionError("naming preview must not run when cached base is missing")
+
+        monkeypatch.setattr(describe_mod, "_naming_preview", boom)
+        second = _post_png(client, TENANT_ID)
+        assert second.status_code == 200, second.text
+        body = second.json()
+        assert body["cached"] is True
+        assert body["alt_text_draft"] == named_only
+        assert body["named_draft"] == named_only
+        assert body["generic_draft"] is None
+        prov = body["naming_provenance"]
+        assert prov is None or prov.get("status") != "skipped_budget"
 
 
 class _NoBoxAdapter:
@@ -655,7 +746,8 @@ def test_positional_fallback_suppressed_when_stage2_drops_identity():
                             }
                         },
                     }
-                )
+                ),
+                "recognition_enabled": "true",
             },
             files={"image_42": ("x.png", _png_bytes(), "image/png")},
         )
@@ -1365,6 +1457,64 @@ def test_gpu_unusable_endpoint_fails_fast_before_demand(monkeypatch, tmp_path, e
         assert _lease_rows(client) == []
 
 
+def test_gpu_unusable_endpoint_with_operation_id_keeps_adapter_reason_when_db_absent(monkeypatch, tmp_path):
+    _gpu_env(monkeypatch, tmp_path, state="stopped")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
+    with _client(db_absent=True) as client:
+        response = _post(
+            client,
+            TENANT_ID,
+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
+            extra_data={"operation_id": "retry-operation-id"},
+        )
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "description_service_unavailable"
+        assert detail["reason"] == "endpoint_not_private"
+
+
+def test_rebuild_post_accept_drops_starting_transport_when_operation_id_missing():
+    from types import SimpleNamespace
+
+    from fastapi import status
+
+    from scene.config.settings import DescriptionSettings
+    from scene.interface_adapters.http.routers.describe import (
+        _LifecycleHoldHTTPException,
+        _rebuild_post_accept_typed_error,
+    )
+
+    detail = {
+        "code": "description_service_starting",
+        "message": "dependency starting",
+        "operation_id": None,
+        "startup_id": None,
+        "timing": {
+            "queue_ms": 1,
+            "ramp_up_ms": 2,
+            "processing_ms": 3,
+            "startup_ms": None,
+            "server_elapsed_ms": 4,
+        },
+        "warmup_eta_seconds": 12.0,
+        "startup_budget_seconds": 30.0,
+    }
+    exc = _LifecycleHoldHTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=detail,
+        headers={"Retry-After": "12"},
+    )
+    rebuilt = _rebuild_post_accept_typed_error(
+        exc,
+        op=SimpleNamespace(operation_id=None, startup_id=None),
+        settings=DescriptionSettings(),
+        server_start=0,
+    )
+    assert rebuilt.detail["code"] == "description_service_unavailable"
+    assert rebuilt.headers is None or "Retry-After" not in rebuilt.headers
+    assert not isinstance(rebuilt, _LifecycleHoldHTTPException)
+
+
 def test_gpu_adapter_reason_fails_fast_before_demand(monkeypatch, tmp_path):
     from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 
@@ -1552,9 +1702,7 @@ def test_post_accept_route_rebuilds_null_lifecycle_reason(monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize("upstream_operation_id", ["foreign-operation", None])
-def test_post_accept_route_rebuilds_foreign_or_null_operation_id(
-    monkeypatch, tmp_path, caplog, upstream_operation_id
-):
+def test_post_accept_route_rebuilds_foreign_or_null_operation_id(monkeypatch, tmp_path, caplog, upstream_operation_id):
     import logging
 
     _gpu_env(monkeypatch, tmp_path, state="ready")
@@ -1562,9 +1710,10 @@ def test_post_accept_route_rebuilds_foreign_or_null_operation_id(
         monkeypatch,
         lambda _operation_id: _upstream_typed_detail(upstream_operation_id),
     )
-    with caplog.at_level(logging.WARNING, logger="scene.interface_adapters.http.routers.describe"), _client(
-        adapter=_GpuAdapter()
-    ) as client:
+    with (
+        caplog.at_level(logging.WARNING, logger="scene.interface_adapters.http.routers.describe"),
+        _client(adapter=_GpuAdapter()) as client,
+    ):
         response = _post(client, TENANT_ID)
 
     assert response.status_code == 503, response.text
@@ -1573,9 +1722,7 @@ def test_post_accept_route_rebuilds_foreign_or_null_operation_id(
     detail = body["detail"]
     assert detail["operation_id"] == accepted["operation_id"]
     mismatch_records = [
-        record
-        for record in caplog.records
-        if "post-accept describe error operation_id mismatch" in record.getMessage()
+        record for record in caplog.records if "post-accept describe error operation_id mismatch" in record.getMessage()
     ]
     assert mismatch_records
     mismatch_message = mismatch_records[-1].getMessage()

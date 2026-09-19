@@ -40,6 +40,12 @@ def _png_bytes(*, width: int = 100, height: int = 100) -> bytes:
     return source.getvalue()
 
 
+def _jpeg_bytes(*, width: int = 100, height: int = 100) -> bytes:
+    source = BytesIO()
+    Image.new("RGB", (width, height), color=(24, 96, 180)).save(source, format="JPEG")
+    return source.getvalue()
+
+
 def _user_text_from_payload(payload: dict) -> str:
     content = payload["messages"][1]["content"]
     return next(part["text"] for part in content if part["type"] == "text")
@@ -108,7 +114,7 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     )
 
     assert isinstance(adapter, DescriptionAdapter)
-    result = adapter.describe(image_bytes=b"\x89PNG\r\n\x1a\nfake", context={"caption": "Launch day"})
+    result = adapter.describe(image_bytes=_png_bytes(), context={"caption": "Launch day"})
 
     assert isinstance(result, AdapterResult)
     assert adapter.kind is DescriptionAdapterKind.GPU
@@ -198,6 +204,70 @@ def test_gpu_remote_adapter_rejects_oversized_webp_before_decoder_construction(m
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
     assert "4096x4096" in exc_info.value.raw_diagnostic
     assert str(gpu_remote_adapter._DEFAULT_MAX_IMAGE_PIXELS) in exc_info.value.raw_diagnostic
+
+
+def test_gpu_remote_adapter_rejects_png_over_pixel_ceiling(monkeypatch) -> None:
+    monkeypatch.setattr(gpu_remote_adapter, "_DEFAULT_MAX_IMAGE_PIXELS", 50)
+    image_bytes = _png_bytes(width=10, height=10)
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        gpu_remote_adapter._image_payload(image_bytes)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "image/png" in exc_info.value.raw_diagnostic
+    assert "10x10" in exc_info.value.raw_diagnostic
+    assert "50" in exc_info.value.raw_diagnostic
+    assert "10x10" not in str(exc_info.value)
+
+
+def test_gpu_remote_adapter_rejects_jpeg_over_pixel_ceiling(monkeypatch) -> None:
+    monkeypatch.setattr(gpu_remote_adapter, "_DEFAULT_MAX_IMAGE_PIXELS", 50)
+    image_bytes = _jpeg_bytes(width=10, height=10)
+
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        gpu_remote_adapter._image_payload(image_bytes)
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "image/jpeg" in exc_info.value.raw_diagnostic
+    assert "10x10" in exc_info.value.raw_diagnostic
+    assert "50" in exc_info.value.raw_diagnostic
+    assert "10x10" not in str(exc_info.value)
+
+
+def test_gpu_remote_adapter_png_under_pixel_ceiling_is_byte_identical(monkeypatch) -> None:
+    monkeypatch.setattr(gpu_remote_adapter, "_DEFAULT_MAX_IMAGE_PIXELS", 10_000)
+    image_bytes = _png_bytes(width=32, height=24)
+
+    media_type, outgoing = gpu_remote_adapter._image_payload(image_bytes)
+
+    assert media_type == "image/png"
+    assert outgoing == image_bytes
+
+
+def test_gpu_remote_adapter_jpeg_under_pixel_ceiling_is_byte_identical(monkeypatch) -> None:
+    monkeypatch.setattr(gpu_remote_adapter, "_DEFAULT_MAX_IMAGE_PIXELS", 10_000)
+    image_bytes = _jpeg_bytes(width=32, height=24)
+
+    media_type, outgoing = gpu_remote_adapter._image_payload(image_bytes)
+
+    assert media_type == "image/jpeg"
+    assert outgoing == image_bytes
+
+
+def test_gpu_remote_adapter_unreadable_png_header_fails_closed() -> None:
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        gpu_remote_adapter._image_payload(b"\x89PNG\r\n\x1a\nfake")
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "image/png" in exc_info.value.raw_diagnostic
+
+
+def test_gpu_remote_adapter_unreadable_jpeg_header_fails_closed() -> None:
+    with pytest.raises(GpuRemoteAdapterError) as exc_info:
+        gpu_remote_adapter._image_payload(b"jpeg")
+
+    assert exc_info.value.reason == GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED
+    assert "image/jpeg" in exc_info.value.raw_diagnostic
 
 
 def test_webp_canvas_size_matches_pillow_for_real_webp() -> None:
@@ -352,7 +422,7 @@ def test_gpu_remote_adapter_provenance_names_loaded_revision_not_payload_model()
         hub_repo=hub_repo,
         transport=httpx.MockTransport(handler),
     )
-    adapter.describe(image_bytes=b"x", context=None)
+    adapter.describe(image_bytes=_png_bytes(), context=None)
     assert adapter.model_id == f"{hub_repo}@{pin}"
     assert captured[0]["model"] == "Qwen3-VL-30B-A3B-Instruct"
 
@@ -367,7 +437,7 @@ def test_gpu_remote_adapter_omits_context_sources_when_context_empty() -> None:
         ),
     )
 
-    result = adapter.describe(image_bytes=b"jpeg", context={"caption": "", "title": None})
+    result = adapter.describe(image_bytes=_jpeg_bytes(), context={"caption": "", "title": None})
 
     assert result.context_sources == ()
     assert result.context_applied is False
@@ -384,7 +454,7 @@ def test_gpu_remote_adapter_rejects_empty_caption() -> None:
     )
 
     with pytest.raises(GpuRemoteAdapterError, match="empty caption") as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.EMPTY_CAPTION
 
@@ -398,7 +468,7 @@ def test_gpu_remote_adapter_rejects_http_5xx() -> None:
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.ENDPOINT_REJECTED
     assert exc_info.value.status_code == 503
@@ -416,7 +486,7 @@ def test_gpu_remote_adapter_rejects_auth_body_without_leaking_upstream_details()
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     error = exc_info.value
     assert error.reason == "endpoint_rejected"
@@ -448,7 +518,7 @@ def test_gpu_remote_adapter_classifies_transport_failures_without_leaking_detail
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     error = exc_info.value
     assert error.reason == "endpoint_unreachable"
@@ -467,7 +537,7 @@ def test_gpu_remote_adapter_rejects_non_json_body() -> None:
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
     assert "not-json" in exc_info.value.raw_diagnostic
@@ -482,7 +552,7 @@ def test_gpu_remote_adapter_rejects_missing_choices_shape() -> None:
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
     assert "missing choices" in exc_info.value.raw_diagnostic
@@ -507,7 +577,7 @@ def test_gpu_remote_adapter_rejects_response_without_text_parts_without_leaking_
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     error = exc_info.value
     assert error.reason == "response_malformed"
@@ -539,7 +609,7 @@ def test_gpu_remote_adapter_joins_list_content_parts() -> None:
         ),
     )
 
-    result = adapter.describe(image_bytes=b"jpeg", context=None)
+    result = adapter.describe(image_bytes=_jpeg_bytes(), context=None)
     assert result.caption == "First second"
 
 
@@ -566,7 +636,7 @@ def test_gpu_remote_adapter_surfaces_reasoning_only_response() -> None:
     )
 
     with pytest.raises(GpuRemoteAdapterError) as exc_info:
-        adapter.describe(image_bytes=b"jpeg", context=None)
+        adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert exc_info.value.reason == GpuRemoteAdapterErrorReason.RESPONSE_MALFORMED
     assert "reasoning_content" in exc_info.value.raw_diagnostic
@@ -611,7 +681,7 @@ def test_describe_with_trace_requests_n_probs_and_parses_openai_logprobs() -> No
             },
         )
 
-    result, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+    result, traces = _adapter(handler).describe_with_trace(image_bytes=_jpeg_bytes(), context=None)
 
     assert result.caption == "A red bicycle."
     assert captured[0]["n_probs"] == 10
@@ -643,7 +713,7 @@ def test_describe_with_trace_parses_llamacpp_completion_probabilities() -> None:
             },
         )
 
-    _, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+    _, traces = _adapter(handler).describe_with_trace(image_bytes=_jpeg_bytes(), context=None)
 
     assert traces == (GpuRemoteTokenTrace(token="A", logprob=-0.2, top_logprobs={"A": -0.2}),)
 
@@ -652,7 +722,7 @@ def test_describe_with_trace_missing_logprobs_yields_empty_trace_not_exception()
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
 
-    result, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+    result, traces = _adapter(handler).describe_with_trace(image_bytes=_jpeg_bytes(), context=None)
 
     assert result.caption == "Caption."
     assert traces == ()
@@ -679,7 +749,7 @@ def test_describe_with_trace_skips_malformed_entries_defensively() -> None:
             },
         )
 
-    _, traces = _adapter(handler).describe_with_trace(image_bytes=b"jpeg", context=None)
+    _, traces = _adapter(handler).describe_with_trace(image_bytes=_jpeg_bytes(), context=None)
 
     # Only the entry with a valid token+logprob survives; its trace still
     # includes itself in top_logprobs even though top_logprobs was malformed.
@@ -693,7 +763,7 @@ def test_plain_describe_does_not_request_logprobs() -> None:
         captured.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
 
-    _adapter(handler).describe(image_bytes=b"jpeg", context=None)
+    _adapter(handler).describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert "n_probs" not in captured[0]
     assert "logprobs" not in captured[0]
@@ -725,7 +795,7 @@ def test_gpu_remote_adapter_applies_connect_and_read_timeouts(monkeypatch) -> No
             lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
         ),
     )
-    adapter.describe(image_bytes=b"jpeg", context=None)
+    adapter.describe(image_bytes=_jpeg_bytes(), context=None)
 
     assert captured
     assert captured[0].connect == 3.0
@@ -855,6 +925,7 @@ def test_gpu_remote_adapter_grounding_accepts_qwen_bbox_2d_list() -> None:
 
 
 def test_gpu_remote_adapter_grounding_accepts_unit_frame_boxes() -> None:
+    # N-B-14: unit-frame only for non-bbox_2d quads with a fractional coordinate.
     captured: list[dict] = []
     handler = _caption_then_grounding_handler(
         caption="A person sits.",
@@ -865,6 +936,26 @@ def test_gpu_remote_adapter_grounding_accepts_unit_frame_boxes() -> None:
     result = _adapter(handler, grounding_enabled=True).describe(image_bytes=_png_bytes(), context=None)
 
     assert result.phrase_boxes[0].box == NormalizedBox(x=0.1, y=0.2, width=0.5, height=0.7)
+
+
+def test_gpu_remote_adapter_grounding_bbox_2d_zero_one_stays_in_qwen_frame() -> None:
+    # N-B-14: Qwen bbox_2d [0,0,1,1] is 0.1% of the 0-1000 frame, not a full-image box.
+    captured: list[dict] = []
+    handler = _caption_then_grounding_handler(
+        caption="A woman waves.",
+        grounding_content=json.dumps([{"bbox_2d": [0, 0, 1, 1], "label": "A woman"}]),
+        captured=captured,
+    )
+
+    result = _adapter(handler, grounding_enabled=True).describe(
+        image_bytes=_png_bytes(width=2000, height=1500), context=None
+    )
+
+    assert len(result.phrase_boxes) == 1
+    assert result.phrase_boxes[0].phrase == "A woman"
+    assert result.phrase_boxes[0].box == NormalizedBox(x=0.0, y=0.0, width=0.001, height=0.001)
+    assert result.phrase_boxes[0].box.width != 1.0
+    assert result.phrase_boxes[0].box.height != 1.0
 
 
 def test_gpu_remote_adapter_grounding_malformed_boxes_fail_closed() -> None:

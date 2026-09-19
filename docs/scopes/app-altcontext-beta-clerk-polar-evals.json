@@ -1,0 +1,236 @@
+{
+  "version": 1,
+  "suite_id": "app-1-beta-clerk-polar",
+  "owner": "APP-1",
+  "description": "PROVISIONAL DATA ONLY. Local E16-7-style manifest, not registered in the absent packages/workbay-system eval registry. Named tests and runner are implementation deliverables. Deterministic fixtures do not replace sandbox, browser, restore, cohort study or authorized live evidence.",
+  "command": "cd apps/prototype-description-service && ACX_PORTAL_TESTS_REQUIRE_PG=1 uv run --locked --extra dev python scripts/run_app_portal_evals.py --manifest ../../docs/scopes/app-altcontext-beta-clerk-polar-evals.json --group deterministic",
+  "threshold": {
+    "kind": "junit_counts",
+    "max_failures": 0,
+    "max_skipped": 0
+  },
+  "evidence_sink": ".task-state/evals/results.jsonl",
+  "tags": [
+    "app-1",
+    "beta",
+    "clerk",
+    "polar",
+    "tenancy",
+    "billing"
+  ],
+  "cases": [
+    {
+      "id": "APP-SC-01",
+      "group": "deterministic",
+      "criterion": "One invitation creates or claims one stable tenant under retry and concurrency.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_onboarding.py::test_concurrent_invite_redemption_is_single_tenant"
+    },
+    {
+      "id": "APP-SC-02",
+      "group": "deterministic",
+      "criterion": "Key, usage and billing access cannot cross the server-resolved tenant, including repository calls.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_isolation.py::test_foreign_resources_and_tenant_headers_are_rejected"
+    },
+    {
+      "id": "APP-SC-03",
+      "group": "deterministic",
+      "criterion": "Invalid tokens, mixed credentials and CSRF failures cannot mutate state.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_auth.py::test_token_transport_and_csrf_negative_matrix"
+    },
+    {
+      "id": "APP-SC-04",
+      "group": "browser",
+      "criterion": "Secret is returned once; retry and recovery never expose it through logs, cache or analytics.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_keys.py::test_secret_once_replay_redaction_and_lost_response_recovery",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-05",
+      "group": "deterministic",
+      "criterion": "One rotation wins; overlap, replacement lifetime and immediate revoke work at exact boundaries.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_keys.py::test_rotation_concurrency_cutoff_lifetime_and_emergency_revoke"
+    },
+    {
+      "id": "APP-SC-06",
+      "group": "deterministic",
+      "criterion": "Audit/journal writes are atomic with key mutation; old admin API behavior preserved.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_keys.py::test_audit_journal_failure_rolls_back_and_admin_contract_survives"
+    },
+    {
+      "id": "APP-SC-07",
+      "group": "deterministic",
+      "criterion": "Beta is free without card; expiry does not create a charge, paid subscription or arrears.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_beta_entitlements.py::test_beta_never_creates_charge_subscription_or_arrears"
+    },
+    {
+      "id": "APP-SC-08",
+      "group": "deterministic",
+      "criterion": "Quota admission and job completion count exactly once; no per-key or retry bypass.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_usage_admission.py::test_concurrent_reservations_retries_and_period_rollover"
+    },
+    {
+      "id": "APP-SC-09",
+      "group": "operational",
+      "criterion": "Tenant/global budget admission and in-flight bounds prevent uncontrolled allocation.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_beta_budget.py::test_budget_stops_new_dispatch_and_bounds_inflight_cost",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-10",
+      "group": "sandbox",
+      "criterion": "Checkout/portal is tenant/catalog/environment-bound and safe on concurrent or ambiguous retries.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_billing_checkout.py::test_checkout_binding_environment_and_ambiguous_retry",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-11",
+      "group": "deterministic",
+      "criterion": "Signed dedupe, worker crash recovery and authoritative reconciliation converge.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_billing_webhooks.py::test_signed_durable_inbox_reorder_restart_and_reconcile"
+    },
+    {
+      "id": "APP-SC-12",
+      "group": "sandbox",
+      "criterion": "Payment/cancel/past-due/refund/recovery and stale periods enforce the reviewed transition table.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_billing_entitlements.py::test_subscription_and_staleness_transition_matrix",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-13",
+      "group": "deterministic",
+      "criterion": "Clerk/Polar outages are bounded and preserve valid local API access within policy.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_provider_outages.py::test_provider_outage_preserves_local_api_within_policy"
+    },
+    {
+      "id": "APP-SC-14",
+      "group": "browser",
+      "criterion": "Keyboard, mobile and assistive-technology journey includes secret, rotate, cap, pending and recovery states.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_ui.py::test_accessible_complete_customer_journey",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-15",
+      "group": "operational",
+      "criterion": "Restore handles mint/revoke/rotate state and fails closed on an uncertain security-journal tail.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_customer_state_restore.py::test_replay_twice_preserves_security_and_unknown_tail_fails_closed",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-16",
+      "group": "operational",
+      "criterion": "Public hosts deny internal/admin routes; reset role cannot destroy customer credentials.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_boundaries.py::test_public_routes_and_reset_privileges_are_contained",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-17",
+      "group": "operational",
+      "criterion": "Usage/events are truthful and privacy-safe; load and cost evidence includes timestamps and measured envelope.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_portal_privacy_observability.py::test_usage_truth_privacy_and_load_budget",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-18",
+      "group": "sandbox",
+      "criterion": "Explicit checkout converts without tenant/key migration, retroactive charge or loss of recovery access.",
+      "status": "planned",
+      "test": "recognition/tests/api/test_beta_paid_transition.py::test_explicit_upgrade_preserves_tenant_keys_and_never_bills_beta",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-19",
+      "group": "study",
+      "criterion": "First-cohort study reports all attempts, assistance, activation, repeat use and support effort against predeclared targets.",
+      "status": "planned",
+      "artifact": "docs/assessments/current/app1-beta-observation-report.md",
+      "additional_evidence_required": true
+    },
+    {
+      "id": "APP-SC-20",
+      "group": "live",
+      "criterion": "Paid gate has merchant/catalog/notice/restore/rollback evidence and an explicitly authorized live transaction receipt.",
+      "status": "planned",
+      "artifact": "docs/runbooks/evidence/app1-paid-release.json",
+      "additional_evidence_required": true
+    }
+  ],
+  "release_gates": {
+    "beta": {
+      "required_cases": [
+        "APP-SC-01",
+        "APP-SC-02",
+        "APP-SC-03",
+        "APP-SC-04",
+        "APP-SC-05",
+        "APP-SC-06",
+        "APP-SC-07",
+        "APP-SC-08",
+        "APP-SC-09",
+        "APP-SC-10",
+        "APP-SC-11",
+        "APP-SC-12",
+        "APP-SC-13",
+        "APP-SC-14",
+        "APP-SC-15",
+        "APP-SC-16",
+        "APP-SC-17",
+        "APP-SC-18"
+      ],
+      "live_payments_enabled": false,
+      "require_nonempty_fresh_results": true,
+      "require_sandbox_and_operational_evidence": true
+    },
+    "expansion": {
+      "required_cases": [
+        "APP-SC-19"
+      ],
+      "proposed_minimum_attempts": 10,
+      "proposed_unassisted_activations": 8,
+      "proposed_repeat_day_users": 5,
+      "observation_window_days": 14,
+      "observed_sessions": 5
+    },
+    "paid": {
+      "required_cases": [
+        "APP-SC-01",
+        "APP-SC-02",
+        "APP-SC-03",
+        "APP-SC-04",
+        "APP-SC-05",
+        "APP-SC-06",
+        "APP-SC-07",
+        "APP-SC-08",
+        "APP-SC-09",
+        "APP-SC-10",
+        "APP-SC-11",
+        "APP-SC-12",
+        "APP-SC-13",
+        "APP-SC-14",
+        "APP-SC-15",
+        "APP-SC-16",
+        "APP-SC-17",
+        "APP-SC-18",
+        "APP-SC-19",
+        "APP-SC-20"
+      ],
+      "requires_explicit_live_charge_authorization": true
+    }
+  }
+}

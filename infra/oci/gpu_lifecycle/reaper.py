@@ -74,6 +74,7 @@ from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
     HttpReadinessProbe,
     InstanceReadinessProbe,
+    ProbeStatus,
     ReadinessWaitResult,
     WarmReadinessWait,
 )
@@ -2574,12 +2575,80 @@ def _run_reap_cycle(
     )
 
 
+def _probe_reports_ready(probe: InstanceReadinessProbe, instance_id: str) -> bool:
+    """Return True only when the current probe sample is READY."""
+    try:
+        sample = probe.probe(instance_id)
+    except Exception as exc:  # noqa: BLE001 - a probe exception is not READY evidence
+        logger.exception("readiness probe failed for %s: %s", instance_id, exc)
+        return False
+    return sample.status is ProbeStatus.READY
+
+
+def _finalize_reap_snapshot_state(
+    candidate: GpuLifecycleState,
+    *,
+    probe: InstanceReadinessProbe | None,
+    snapshot_path: Path,
+    snapshot_instance_id: str | None,
+    instances: list[GpuInstance],
+    stop_actuated: bool,
+    has_errors: bool,
+) -> GpuLifecycleState:
+    """Hold READY across reap ticks when a current probe still confirms it.
+
+    No probe means no READY claim: the lifecycle candidate (WARMING for a
+    RUNNING instance) is published unchanged. Leaving READY still requires
+    the shared consecutive-failure hysteresis.
+    """
+    if (
+        probe is None
+        or stop_actuated
+        or has_errors
+        or snapshot_instance_id is None
+        or not instances
+        or any(instance.state != "RUNNING" for instance in instances)
+    ):
+        return candidate
+    previous = read_previous_gpu_state(
+        snapshot_path,
+        expected_instance_id=snapshot_instance_id,
+    )
+    if previous is not GpuLifecycleState.READY:
+        return candidate
+    if _probe_reports_ready(probe, snapshot_instance_id):
+        write_ready_probe_failure_count(
+            snapshot_path,
+            instance_id=snapshot_instance_id,
+            count=0,
+        )
+        return GpuLifecycleState.READY
+    failure_count = read_ready_probe_failure_count(
+        snapshot_path,
+        instance_id=snapshot_instance_id,
+    )
+    state, failure_count = hold_ready_until_consecutive_failures(
+        candidate=candidate,
+        previous=previous,
+        consecutive_failures=failure_count,
+    )
+    count_persisted = write_ready_probe_failure_count(
+        snapshot_path,
+        instance_id=snapshot_instance_id,
+        count=failure_count,
+    )
+    if not count_persisted and failure_count > 0:
+        return candidate
+    return state
+
+
 def run_reap_cycle(
     *,
     controller: GpuLifecycleController,
     instances: list[GpuInstance],
     load_source: JobLoadSource,
     actuator: InstanceStopActuator,
+    probe: InstanceReadinessProbe | None = None,
     fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
     max_lease_seconds: int = 0,
     running_since_store: RunningSinceLeaseStore | None = None,
@@ -2657,9 +2726,20 @@ def run_reap_cycle(
             for instance in instances
         ]
         snapshot_instance_id = _snapshot_instance_id(post_actuation_instances)
+        resolved_snapshot_path = resolve_gpu_state_path() if gpu_state_path is None else Path(gpu_state_path)
         state = state_for_instances([instance.state for instance in post_actuation_instances])
         if result.errors:
             state = GpuLifecycleState.DEGRADED
+        else:
+            state = _finalize_reap_snapshot_state(
+                state,
+                probe=probe,
+                snapshot_path=resolved_snapshot_path,
+                snapshot_instance_id=snapshot_instance_id,
+                instances=post_actuation_instances,
+                stop_actuated=bool(stopped_instance_ids),
+                has_errors=False,
+            )
         instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
             post_actuation_instances,
             running_since_store,
@@ -3811,11 +3891,15 @@ def main(argv: list[str] | None = None) -> int:
         auth=args.oci_auth,
         timeout_seconds=args.oci_timeout_seconds,
     )
+    probe = None
+    if args.ready_url:
+        probe = HttpReadinessProbe(url=args.ready_url)
     result = run_reap_cycle(
         controller=controller,
         instances=instances,
         load_source=load_source,
         actuator=actuator,
+        probe=probe,
         fence_delay_seconds=args.fence_delay_seconds,
         max_lease_seconds=args.max_lease_seconds,
         gpu_state_path=args.gpu_state_json,

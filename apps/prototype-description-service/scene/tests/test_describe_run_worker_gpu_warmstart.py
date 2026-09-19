@@ -23,10 +23,12 @@ from scene.domain.describe_run import (
     DescribeItemStatus,
     DescribeJobStatus,
     DescribeRunStatus,
+    describe_job_error,
     describe_job_status,
 )
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse
 from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
 
 HealthHandler = Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]]
@@ -423,18 +425,32 @@ def test_warmup_timeout_degrades_to_cpu_adapter_when_configured(monkeypatch: pyt
         assert cpu_calls == [7, 8]
         assert run is not None
         assert run.status == DescribeRunStatus.COMPLETED
-        stamp = _warmup_timeout_detail(run.error_message)
-        assert stamp["tier"] == wmod.DescriptionFallbackTier.CPU_FALLBACK
-        assert stamp["reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert run.error_message is None
+        assert run.first_ready_at is None
+        assert run.ramp_up_ms is None
         assert [item.status for item in items] == [DescribeItemStatus.COMPLETED, DescribeItemStatus.COMPLETED]
         for item in items:
-            assert item.tier == wmod.DescriptionFallbackTier.CPU_FALLBACK
+            assert item.tier == DescriptionResultTier.PROVISIONAL_CPU
             assert item.provenance is not None
-            assert item.provenance["reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+            assert item.provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
             assert item.alt_text_draft == f"cpu alt {item.media_id}"
             projected = describe_job_status(item)
             assert projected is DescribeJobStatus.DEGRADED
             assert projected is not DescribeJobStatus.FINAL
+            validated = DescribeRunItemResponse.model_validate(
+                {
+                    "media_id": item.media_id,
+                    "status": item.status,
+                    "alt_text_draft": item.alt_text_draft,
+                    "caption": item.caption,
+                    "provenance": item.provenance,
+                    "error": describe_job_error(item),
+                    "tier": item.tier,
+                    "result_generation": item.result_generation,
+                    "processing_ms": item.processing_ms,
+                }
+            )
+            assert validated.tier is DescriptionResultTier.PROVISIONAL_CPU
 
     asyncio.run(body())
 
@@ -486,3 +502,72 @@ def test_warmup_timeout_unavailable_cpu_ends_with_typed_retryable_reason(
         assert items[0].image_bytes is None
 
     asyncio.run(body())
+
+
+def test_describe_run_item_response_accepts_warmup_cpu_fallback_row() -> None:
+    item = DescribeRunItemResponse.model_validate(
+        {
+            "media_id": 7,
+            "status": "completed",
+            "alt_text_draft": "cpu alt 7",
+            "caption": "cpu caption 7",
+            "provenance": {"adapter": "florence_small", "fallback_reason": "gpu_warmup_timeout"},
+            "tier": "provisional_cpu",
+            "result_generation": 0,
+        }
+    )
+    assert item.tier is DescriptionResultTier.PROVISIONAL_CPU
+    assert item.provenance is not None
+    assert item.provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+
+
+def test_naming_preview_timeout_stamps_skipped_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def hang(**_kwargs):
+        raise TimeoutError("preview timed out")
+
+    monkeypatch.setattr(wmod, "naming_preview", hang)
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=wmod.DescribeItemOutcome(alt_text_draft="generic"),
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    naming = asyncio.run(body()).provenance["naming"]
+    assert naming["status"] == wmod.NamingStatus.SKIPPED_BUDGET
+
+
+def test_naming_preview_unexpected_exception_stamps_merge_error_not_no_faces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("preview exploded")
+
+    monkeypatch.setattr(wmod, "naming_preview", boom)
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=wmod.DescribeItemOutcome(alt_text_draft="generic"),
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    naming = asyncio.run(body()).provenance["naming"]
+    assert naming["reason"] == wmod.NamingSkipReason.MERGE_ERROR
+    assert naming["status"] != wmod.NamingStatus.NO_FACES
+    assert naming["status"] != wmod.NamingStatus.SKIPPED_BUDGET

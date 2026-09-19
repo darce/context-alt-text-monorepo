@@ -243,6 +243,79 @@ class GpuControlControllerTest extends TestCase
         $this->assertTypedUnavailable($data['unavailable'], 'upstream_5xx', 'scene', 502, 15);
     }
 
+    public function testGetStatusPassesThroughServiceTypedUnavailableReason(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'detail' => [
+                    'code' => 'description_service_unavailable',
+                    'message' => 'Description service is unavailable',
+                    'reason' => 'degraded',
+                    'trace' => 'File "/opt/scene/adapter.py", line 99',
+                    'api_key' => 'sk-secret',
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(503, $response->get_status());
+        $data = $response->get_data();
+        $this->assertTypedUnavailable($data['unavailable'], 'degraded', 'scene', 503);
+        $this->assertStringNotContainsString('sk-secret', (string) wp_json_encode($data));
+        $this->assertStringNotContainsString('/opt/scene/adapter.py', (string) wp_json_encode($data));
+    }
+
+    public function testGetStatusPassesThroughUnknownServiceUnavailableReason(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'body' => json_encode([
+                'unavailable' => [
+                    'reason' => 'endpoint_unconfigured',
+                    'service' => 'scene',
+                    'http_status' => 503,
+                    'retry_after_seconds' => null,
+                    'checked_at' => '2026-09-18T14:03:22Z',
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(503, $response->get_status());
+        $this->assertTypedUnavailable($response->get_data()['unavailable'], 'endpoint_unconfigured', 'scene', 503);
+    }
+
+    public function testGetStatusDoesNotTreatFreeformReasonAsTypedUnavailable(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 502, 'message' => 'Bad Gateway'],
+            'body' => json_encode([
+                'reason' => 'adapter exploded with api_key=sk-leak',
+                'code' => 'gpu_adapter_failed',
+                'message' => 'adapter failed',
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->controller->get_status(
+            new WP_REST_Request('GET', '/acx/v1/recognition/gpu/status')
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertTypedUnavailable($data['unavailable'], 'upstream_5xx', 'scene', 502);
+        $this->assertStringNotContainsString('sk-leak', (string) wp_json_encode($data));
+        $this->assertStringNotContainsString('adapter exploded', (string) wp_json_encode($data['unavailable']));
+    }
+
     public function testGetStatusUpstream4xxAddsUnavailableEnvelope(): void
     {
         $this->queueHttpResponse([

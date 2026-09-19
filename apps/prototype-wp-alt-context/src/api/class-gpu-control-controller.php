@@ -20,11 +20,13 @@ use function is_int;
 use function is_object;
 use function is_string;
 use function is_wp_error;
+use function preg_match;
 use function register_rest_route;
 use function str_contains;
 use function strlen;
 use function strtolower;
 use function substr;
+use function trim;
 use function wp_get_current_user;
 
 /**
@@ -214,6 +216,11 @@ class GpuControlController extends AbstractRecognitionProxyController {
 			return 'contract_mismatch';
 		}
 
+		$service_reason = $this->service_unavailable_reason( $response );
+		if ( null !== $service_reason ) {
+			return $service_reason;
+		}
+
 		if ( is_wp_error( $response ) ) {
 			$code = $response->get_error_code();
 			if ( 'recognition_not_configured' === $code ) {
@@ -236,6 +243,75 @@ class GpuControlController extends AbstractRecognitionProxyController {
 		}
 
 		return 'upstream_5xx';
+	}
+
+	private function service_unavailable_reason( WP_REST_Response|WP_Error $response ): ?string {
+		$payload = $this->unavailable_reason_source_payload( $response );
+		if ( null === $payload ) {
+			return null;
+		}
+
+		foreach ( $this->unavailable_reason_candidates( $payload ) as $candidate ) {
+			$normalized = $this->normalize_service_unavailable_reason( $candidate );
+			if ( null !== $normalized ) {
+				return $normalized;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * @return array<string, mixed>|null
+	 */
+	private function unavailable_reason_source_payload( WP_REST_Response|WP_Error $response ): ?array {
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+
+			return is_array( $data ) ? $data : null;
+		}
+
+		$data = $response->get_error_data();
+
+		return is_array( $data ) ? $data : null;
+	}
+
+	/**
+	 * @param array<string, mixed> $payload
+	 * @return list<mixed>
+	 */
+	private function unavailable_reason_candidates( array $payload ): array {
+		$candidates = array();
+		$unavailable = $payload['unavailable'] ?? null;
+		if ( is_array( $unavailable ) ) {
+			$candidates[] = $unavailable['reason'] ?? null;
+		}
+
+		$candidates[] = $payload['reason'] ?? null;
+
+		$detail = $payload['detail'] ?? null;
+		if ( is_array( $detail ) ) {
+			$nested_unavailable = $detail['unavailable'] ?? null;
+			if ( is_array( $nested_unavailable ) ) {
+				$candidates[] = $nested_unavailable['reason'] ?? null;
+			}
+			$candidates[] = $detail['reason'] ?? null;
+		}
+
+		return $candidates;
+	}
+
+	private function normalize_service_unavailable_reason( mixed $reason ): ?string {
+		if ( ! is_string( $reason ) ) {
+			return null;
+		}
+
+		$normalized = strtolower( trim( $reason ) );
+		if ( 1 !== preg_match( '/^[a-z][a-z0-9_]{0,62}$/', $normalized ) ) {
+			return null;
+		}
+
+		return $normalized;
 	}
 
 	private function proxy_http_status( WP_REST_Response|WP_Error $response ): ?int {

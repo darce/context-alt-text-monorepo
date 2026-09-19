@@ -6,8 +6,11 @@ import {
   DESCRIBE_RUN_PHASE,
   DESCRIBE_RUN_STATUS,
   DESCRIBE_RUN_TERMINAL_CODE,
+  fetchDescribeRunItems,
   GPU_STATE,
   isGpuState,
+  submitBulkDescribeRun,
+  type DescribeRunItem,
   type DescribeRunResponse,
   type DescribeRunStatus,
   type GpuState,
@@ -21,6 +24,7 @@ import {
   subscribeDescribeOperationStore,
   type DescribeRunSettleOutcome,
 } from './describeOperationStore';
+import { persistRunContext } from './useBulkDescribe';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 import { useGpuServiceStatus } from './useGpuServiceStatus';
 
@@ -47,6 +51,25 @@ export const ACTIVITY_REASON = {
 } as const;
 
 export type ActivityReason = (typeof ACTIVITY_REASON)[keyof typeof ACTIVITY_REASON];
+
+/** Item statuses that do not need a warmup-timeout resubmit (sr-007). */
+const FINISHED_DESCRIBE_ITEM_STATUS = {
+  COMPLETED: DESCRIBE_RUN_STATUS.COMPLETED,
+  SKIPPED: 'skipped',
+} as const;
+
+const FINISHED_DESCRIBE_ITEM_STATUSES: ReadonlySet<string> = new Set(
+  Object.values(FINISHED_DESCRIBE_ITEM_STATUS),
+);
+
+type WarmupResubmitResult =
+  | { kind: 'exhausted' }
+  | { kind: 'submitted'; response: DescribeRunResponse };
+
+const unfinishedMediaIdsFromItems = (items: readonly DescribeRunItem[]): number[] =>
+  items
+    .filter((item) => !FINISHED_DESCRIBE_ITEM_STATUSES.has(item.status))
+    .map((item) => item.media_id);
 
 /** Stable authority snapshot consumed by the strip and by spa-activity-toasts (C7). */
 export interface ActivityStatus {
@@ -353,6 +376,26 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
   const cancelMutation = useMutation({
     mutationFn: cancelBulkDescribeRun,
   });
+  const resubmitInFlightRef = useRef(false);
+  const resubmitMutation = useMutation<WarmupResubmitResult, Error, string>({
+    mutationFn: async (runId) => {
+      const itemsResponse = await fetchDescribeRunItems(runId);
+      const unfinishedIds = unfinishedMediaIdsFromItems(itemsResponse.items);
+      if (unfinishedIds.length === 0) {
+        return { kind: 'exhausted' };
+      }
+      const response = await submitBulkDescribeRun(unfinishedIds);
+      return { kind: 'submitted', response };
+    },
+    onSuccess: (result) => {
+      if (result.kind === 'submitted') {
+        persistRunContext(result.response);
+      }
+    },
+    onSettled: () => {
+      resubmitInFlightRef.current = false;
+    },
+  });
   const lastTerminalRef = useRef<ActivityStatus | null>(null);
 
   useEffect(() => {
@@ -418,20 +461,41 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
           }
         }
       : null;
-    const onRetry =
-      status.kind === ACTIVITY_KIND.FAILED && status.retryable
-        ? () => {
-            if (status.reason === ACTIVITY_REASON.SCAN_FAILED) {
-              scan?.retryScan?.();
-              return;
-            }
-            if (status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE) {
-              gpu.refetch();
-              return;
-            }
-            describeProgress.retry();
+    const onRetry = ((): (() => void) | null => {
+      if (status.kind !== ACTIVITY_KIND.FAILED || !status.retryable) {
+        return null;
+      }
+      if (status.reason === ACTIVITY_REASON.SCAN_FAILED) {
+        return () => {
+          scan?.retryScan?.();
+        };
+      }
+      if (status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE) {
+        return () => {
+          gpu.refetch();
+        };
+      }
+      if (status.reason === ACTIVITY_REASON.GPU_WARMUP_TIMEOUT) {
+        if (
+          status.runId === null ||
+          resubmitMutation.isPending ||
+          resubmitMutation.data?.kind === 'exhausted'
+        ) {
+          return null;
+        }
+        const runId = status.runId;
+        return () => {
+          if (resubmitInFlightRef.current || resubmitMutation.isPending) {
+            return;
           }
-        : null;
+          resubmitInFlightRef.current = true;
+          resubmitMutation.mutate(runId);
+        };
+      }
+      return () => {
+        describeProgress.retry();
+      };
+    })();
     return {
       onCancel,
       onRetry,
@@ -444,7 +508,7 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
           ? toWorkbench()
           : null,
     };
-  }, [cancelMutation, describeProgress, gpu, isCancelling, scan, status]);
+  }, [cancelMutation, describeProgress, gpu, isCancelling, resubmitMutation, scan, status]);
 
   return { status, actions, isCancelling };
 };

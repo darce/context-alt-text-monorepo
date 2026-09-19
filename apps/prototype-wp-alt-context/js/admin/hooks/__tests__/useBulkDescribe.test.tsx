@@ -18,9 +18,14 @@ import {
   DESCRIBE_OPERATION_CONTEXT_VERSION,
   DESCRIBE_OPERATION_KIND,
   describeOperationRunStorageKey,
+  getDescribeRunContext,
   type DescribeOperationContextInput,
 } from '../describeOperationStore';
-import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
+import {
+  formatBulkDescribeErrorMessage,
+  persistRunContext,
+  useBulkDescribe,
+} from '../useBulkDescribe';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
 import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 
@@ -258,6 +263,17 @@ describe('useBulkDescribe', () => {
       kind: DESCRIBE_OPERATION_KIND.RUN,
       id: 'run-persist',
       startup_id: 'startup-from-run',
+    });
+    expect(getDescribeRunContext()?.id).toBe('run-persist');
+  });
+
+  it('exports persistRunContext so a second caller can persist a new run the same way', () => {
+    persistRunContext(runResponse({ run_id: 'run-export', startup_id: 'startup-export' }));
+    expect(getDescribeRunContext()).toMatchObject({
+      version: DESCRIBE_OPERATION_CONTEXT_VERSION,
+      kind: DESCRIBE_OPERATION_KIND.RUN,
+      id: 'run-export',
+      startup_id: 'startup-export',
     });
   });
 

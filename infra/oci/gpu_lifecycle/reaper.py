@@ -81,12 +81,15 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
     GpuLifecycleState,
     LastTransitionReason,
+    hold_ready_until_consecutive_failures,
     instance_state_is_explicitly_stopped,
     instance_state_is_unknown,
     read_previous_gpu_state,
+    read_ready_probe_failure_count,
     resolve_gpu_state_path,
     state_for_instances,
     write_gpu_state_snapshot,
+    write_ready_probe_failure_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -1189,6 +1192,7 @@ class StartCycleResult:
     instance_running_since: datetime | None = None
     lease_expires_at: datetime | None = None
     last_transition_reason: LastTransitionReason = LastTransitionReason.UNKNOWN
+    lease_recorded: bool = False
 
 
 def _intent_store_paths(
@@ -2776,14 +2780,16 @@ def _start_pending_recovery_errors(
     running_since_store: RunningSinceLeaseStore | None,
     *,
     dry_run: bool,
-) -> list[str]:
+) -> tuple[list[str], bool]:
     """Reconcile pending durable START records before reading new load."""
     errors: list[str] = []
+    lease_recorded = False
     reconcile_pending = getattr(running_since_store, "reconcile_pending_start", None)
     if callable(reconcile_pending) and not dry_run:
         for instance in instances:
             try:
-                reconcile_pending(instance.instance_id, instance.state)
+                if reconcile_pending(instance.instance_id, instance.state):
+                    lease_recorded = True
             except (OSError, ValueError) as exc:
                 msg = (
                     f"{instance.instance_id}: pending START recovery failed; refusing START: "
@@ -2791,7 +2797,7 @@ def _start_pending_recovery_errors(
                 )
                 logger.error(msg)
                 errors.append(msg)
-    return errors
+    return errors, lease_recorded
 
 
 def _start_recovery_error_result(
@@ -3147,6 +3153,7 @@ def _finalize_start_result(
     readiness: _StartReadinessResult,
     errors: list[str],
     intent_status: IntentStatus | None = None,
+    lease_recorded: bool = False,
 ) -> StartCycleResult:
     """Publish START intent, lease, readiness, and transition metadata."""
     if intent_status is None:
@@ -3165,6 +3172,7 @@ def _finalize_start_result(
             if effective_intent.action is IntentAction.START
             else LastTransitionReason.WORK
         )
+        lease_recorded = True
     if actuation.start_failed:
         last_transition_reason = LastTransitionReason.START_FAILED
     if any(
@@ -3182,6 +3190,7 @@ def _finalize_start_result(
         intent_status=intent_status,
         honoured_nonce=honoured_nonce,
         last_transition_reason=last_transition_reason,
+        lease_recorded=lease_recorded,
     )
 
 
@@ -3202,7 +3211,7 @@ def _run_start_cycle(
     blocked_result = _blocked_start_result(effective_intent)
     if blocked_result is not None:
         return blocked_result
-    errors = _start_pending_recovery_errors(
+    errors, lease_recorded = _start_pending_recovery_errors(
         instances,
         running_since_store,
         dry_run=dry_run,
@@ -3239,7 +3248,7 @@ def _run_start_cycle(
         operator_stop_with_work=operator_stop_with_work,
     )
     if pre_actuation.result is not None:
-        return pre_actuation.result
+        return replace(pre_actuation.result, lease_recorded=lease_recorded)
     prepare_start = getattr(running_since_store, "prepare_start", None)
     commit_start = getattr(running_since_store, "commit_start", None)
     actuation = _actuate_start_instances(
@@ -3281,9 +3290,8 @@ def _run_start_cycle(
         actuation=actuation,
         readiness=readiness,
         errors=errors,
-        intent_status=(
-            IntentStatus.STOPPED_WITH_WORK if operator_stop_with_work else None
-        ),
+        intent_status=(IntentStatus.STOPPED_WITH_WORK if operator_stop_with_work else None),
+        lease_recorded=lease_recorded,
     )
 
 
@@ -3353,22 +3361,44 @@ def run_start_cycle(
         )
         result = _record_decision(result, mode="start", now=now, store=resolved_log)
         snapshot_instance_id = _snapshot_instance_id(instances)
-        if result.fallbacks:
-            state = GpuLifecycleState.DEGRADED
-        elif result.wait_result is not None and result.wait_result.ready:
+        resolved_snapshot_path = resolve_gpu_state_path() if gpu_state_path is None else Path(gpu_state_path)
+        previous_state = read_previous_gpu_state(
+            resolved_snapshot_path,
+            expected_instance_id=snapshot_instance_id,
+        )
+        wait_ready = result.wait_result is not None and bool(result.wait_result.ready)
+        probe_failed = result.wait_result is not None and not wait_ready and bool(result.wait_result.failed)
+        start_failed = any(fallback.reason == "start_failed" for fallback in result.fallbacks)
+        operator_stop = any(fallback.reason == _OPERATOR_STOP_WITH_WORK_REASON for fallback in result.fallbacks)
+        if wait_ready:
             state = GpuLifecycleState.READY
-        elif result.actuated:
+        elif start_failed or operator_stop:
+            state = GpuLifecycleState.DEGRADED
+        elif result.actuated or result.lease_recorded:
             state = GpuLifecycleState.STARTING
-        elif result.errors:
+        elif probe_failed or result.errors:
             state = GpuLifecycleState.DEGRADED
         else:
             state = state_for_instances(
                 [instance.state for instance in instances],
-                previous_state=read_previous_gpu_state(
-                    gpu_state_path,
-                    expected_instance_id=snapshot_instance_id,
-                ),
+                previous_state=previous_state,
             )
+        failure_count = 0
+        if probe_failed:
+            failure_count = read_ready_probe_failure_count(
+                resolved_snapshot_path,
+                instance_id=snapshot_instance_id,
+            )
+            state, failure_count = hold_ready_until_consecutive_failures(
+                candidate=state,
+                previous=previous_state,
+                consecutive_failures=failure_count,
+            )
+        write_ready_probe_failure_count(
+            resolved_snapshot_path,
+            instance_id=snapshot_instance_id,
+            count=failure_count,
+        )
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
         instance_running_since, lease_expires_at, persisted_nonce = _lease_snapshot_metadata(
             instances,

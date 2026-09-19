@@ -145,29 +145,53 @@ def _webp_canvas_size(image_bytes: bytes) -> tuple[int, int]:
     )
 
 
+def _raster_header_size(image_bytes: bytes, media_type: str) -> tuple[int, int]:
+    """Read PNG/JPEG dimensions from the container header without decoding pixels."""
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            return image.size
+    except GpuRemoteAdapterError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - unreadable headers must never reach the endpoint
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+            raw_diagnostic=(
+                f"GPU adapter could not parse {media_type} header: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        ) from exc
+
+
+def _reject_over_pixel_ceiling(width: int, height: int, media_type: str) -> None:
+    pixel_count = width * height
+    if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
+        raise GpuRemoteAdapterError(
+            GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
+            raw_diagnostic=(
+                f"GPU adapter rejected {media_type} dimensions "
+                f"{width}x{height} ({pixel_count} pixels); maximum is "
+                f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
+            ),
+        )
+
+
 def _image_payload(image_bytes: bytes) -> tuple[str, bytes]:
     """Return endpoint-safe image bytes and their data-URL media type.
 
     The burst llama.cpp endpoint accepts WebP-labelled URLs but can decode the
     payload as a different image. Keep the public API's WebP acceptance intact,
-    while converting WebP to lossless PNG at this adapter boundary.
+    while converting WebP to lossless PNG at this adapter boundary. Every raster
+    format is checked against the decoded pixel ceiling before it is posted.
     """
     media_type = _media_type(image_bytes)
     if media_type != "image/webp":
+        width, height = _raster_header_size(image_bytes, media_type)
+        _reject_over_pixel_ceiling(width, height, media_type)
         return media_type, image_bytes
 
     try:
         width, height = _webp_canvas_size(image_bytes)
-        pixel_count = width * height
-        if pixel_count > _DEFAULT_MAX_IMAGE_PIXELS:
-            raise GpuRemoteAdapterError(
-                GpuRemoteAdapterErrorReason.IMAGE_UNSUPPORTED,
-                raw_diagnostic=(
-                    "GPU adapter rejected image/webp dimensions "
-                    f"{width}x{height} ({pixel_count} pixels); maximum is "
-                    f"{_DEFAULT_MAX_IMAGE_PIXELS} pixels"
-                ),
-            )
+        _reject_over_pixel_ceiling(width, height, media_type)
         with Image.open(BytesIO(image_bytes)) as image:
             image.load()
             encoded = BytesIO()
@@ -693,19 +717,37 @@ def _load_json_payload(text: str) -> Any | None:
     return None
 
 
+class _BboxFrame(StrEnum):
+    """Explicit grounding-box frame; callers choose, converters do not re-sniff."""
+
+    QWEN_RELATIVE = "qwen_relative"
+    UNIT = "unit"
+
+
+def _row_bbox_source(row: Mapping[str, Any]) -> tuple[Any, str] | None:
+    for key in ("bbox_2d", "bbox", "box"):
+        box = row.get(key)
+        if box is not None:
+            return box, key
+    return None
+
+
 def _qwen_rows_to_florence(rows: Sequence[Any]) -> dict[str, list[Any]]:
     bboxes: list[Any] = []
     labels: list[Any] = []
+    bbox_keys: list[str] = []
     for row in rows:
         if not isinstance(row, Mapping):
             continue
-        box = row.get("bbox_2d") or row.get("bbox") or row.get("box")
-        label = row.get("label") or row.get("phrase") or row.get("text") or ""
-        if box is None:
+        sourced = _row_bbox_source(row)
+        if sourced is None:
             continue
+        box, key = sourced
+        label = row.get("label") or row.get("phrase") or row.get("text") or ""
         bboxes.append(box)
         labels.append(label)
-    return {"bboxes": bboxes, "labels": labels}
+        bbox_keys.append(key)
+    return {"bboxes": bboxes, "labels": labels, "bbox_keys": bbox_keys}
 
 
 def _florence_mapping(payload: Any) -> Mapping[str, Any] | None:
@@ -730,14 +772,32 @@ def _axis_in_relative_frame(start: float, end: float) -> bool:
     )
 
 
+def _has_fractional_part(value: float) -> bool:
+    return abs(value - int(value)) > _BBOX_FRAME_EPSILON
+
+
+def _bbox_frame_for_source(
+    source_key: str,
+    coords: tuple[float, float, float, float],
+) -> _BboxFrame:
+    # N-B-14: bbox_2d is always the Qwen 0-1000 frame, including [0, 0, 1, 1].
+    if source_key == "bbox_2d":
+        return _BboxFrame.QWEN_RELATIVE
+    max_coord = max(abs(value) for value in coords)
+    if max_coord <= 1.0 + _BBOX_FRAME_EPSILON and any(_has_fractional_part(value) for value in coords):
+        return _BboxFrame.UNIT
+    return _BboxFrame.QWEN_RELATIVE
+
+
 def _unit_xyxy_from_quad(
     x1: float,
     y1: float,
     x2: float,
     y2: float,
+    *,
+    frame: _BboxFrame,
 ) -> tuple[float, float, float, float] | None:
-    max_coord = max(abs(x1), abs(y1), abs(x2), abs(y2))
-    if max_coord <= 1.0 + _BBOX_FRAME_EPSILON:
+    if frame is _BboxFrame.UNIT:
         if (
             x1 < -_BBOX_FRAME_EPSILON
             or y1 < -_BBOX_FRAME_EPSILON
@@ -746,16 +806,14 @@ def _unit_xyxy_from_quad(
         ):
             return None
         return x1, y1, x2, y2
-    if max_coord <= _QWEN_BBOX_RELATIVE_MAX + _BBOX_FRAME_EPSILON:
-        if not (_axis_in_relative_frame(x1, x2) and _axis_in_relative_frame(y1, y2)):
-            return None
-        return (
-            x1 / _QWEN_BBOX_RELATIVE_MAX,
-            y1 / _QWEN_BBOX_RELATIVE_MAX,
-            x2 / _QWEN_BBOX_RELATIVE_MAX,
-            y2 / _QWEN_BBOX_RELATIVE_MAX,
-        )
-    return None
+    if not (_axis_in_relative_frame(x1, x2) and _axis_in_relative_frame(y1, y2)):
+        return None
+    return (
+        x1 / _QWEN_BBOX_RELATIVE_MAX,
+        y1 / _QWEN_BBOX_RELATIVE_MAX,
+        x2 / _QWEN_BBOX_RELATIVE_MAX,
+        y2 / _QWEN_BBOX_RELATIVE_MAX,
+    )
 
 
 def _normalized_box_from_quad(
@@ -763,10 +821,12 @@ def _normalized_box_from_quad(
     y1: float,
     x2: float,
     y2: float,
+    *,
+    frame: _BboxFrame,
 ) -> NormalizedBox | None:
     if x2 <= x1 or y2 <= y1:
         return None
-    unit = _unit_xyxy_from_quad(x1, y1, x2, y2)
+    unit = _unit_xyxy_from_quad(x1, y1, x2, y2, frame=frame)
     if unit is None:
         return None
     ux1, uy1, ux2, uy2 = unit
@@ -794,18 +854,25 @@ def _parse_phrase_grounding(
     """Map Qwen grounding JSON to the Florence/VLM-2C phrase-box shape."""
     bboxes = parsed.get("bboxes") or []
     labels = parsed.get("labels") or []
+    bbox_keys = parsed.get("bbox_keys") or []
     if not isinstance(bboxes, Sequence) or isinstance(bboxes, (str, bytes)):
         return ()
     if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
         return ()
+    if not isinstance(bbox_keys, Sequence) or isinstance(bbox_keys, (str, bytes)):
+        bbox_keys = ()
     cursor_by_label: dict[str, int] = {}
     phrase_boxes: list[PhraseBox] = []
-    for bbox, label in zip(bboxes, labels, strict=False):
+    for index, (bbox, label) in enumerate(zip(bboxes, labels, strict=False)):
         try:
             x1, y1, x2, y2 = (float(value) for value in bbox)
         except (TypeError, ValueError):
             continue
-        box = _normalized_box_from_quad(x1, y1, x2, y2)
+        source_key = bbox_keys[index] if index < len(bbox_keys) else ""
+        if not isinstance(source_key, str):
+            source_key = ""
+        frame = _bbox_frame_for_source(source_key, (x1, y1, x2, y2))
+        box = _normalized_box_from_quad(x1, y1, x2, y2, frame=frame)
         if box is None:
             continue
         phrase, span = _span_for_label(str(label), caption, cursor_by_label)

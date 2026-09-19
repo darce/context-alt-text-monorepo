@@ -19,6 +19,7 @@ import {
   DESCRIBE_OPERATION_KIND,
   describeOperationRunStorageKey,
   getDescribeRunContext,
+  isDescribeOperationExpired,
   type DescribeOperationContextInput,
 } from '../describeOperationStore';
 import {
@@ -26,6 +27,7 @@ import {
   persistRunContext,
   useBulkDescribe,
 } from '../useBulkDescribe';
+import { SUGGEST_WARMING_HARD_CEILING_MS } from '../useDescribeMedia';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
 import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 
@@ -172,6 +174,8 @@ describe('useBulkDescribe', () => {
     expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
     expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
     expect(rest).not.toMatch(/submit\.data\?\.run_id\s*\?\?\s*cancel\.data\?\.run_id/);
+    // U2b / Z2: Review drafts targets the workbench queue filter, not this hook.
+    expect(rest).not.toMatch(/description-history/);
   });
 
   it('submits media ids and captures the run id', async () => {
@@ -275,6 +279,18 @@ describe('useBulkDescribe', () => {
       id: 'run-export',
       startup_id: 'startup-export',
     });
+  });
+
+  it('persists startup_budget_seconds so a resumed run expires at the warming ceiling (FIN-07)', () => {
+    persistRunContext(runResponse({ run_id: 'run-bound', startup_id: 'startup-bound' }));
+    const context = getDescribeRunContext();
+    if (context === null) {
+      throw new Error('expected persisted run context');
+    }
+    expect(context.startup_budget_seconds).toBe(SUGGEST_WARMING_HARD_CEILING_MS / 1000);
+    expect(
+      isDescribeOperationExpired(context, context.started_at + SUGGEST_WARMING_HARD_CEILING_MS),
+    ).toBe(true);
   });
 
   it('resumes a seeded run from sessionStorage without a new submit', async () => {

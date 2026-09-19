@@ -217,6 +217,63 @@ class ClusterPersonBindServiceTest extends TestCase
         $this->assertSame('cluster_person_bound', $enqueued[0]['operation_type']);
     }
 
+    public function testBindLocksPersonRowBeforeLockingSurvivorLookup(): void
+    {
+        global $wpdb;
+
+        $this->seedPerson();
+        $this->seedCluster(self::FIRST_CLUSTER);
+        $wpdb->queryResults["SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = '" . self::FIRST_CLUSTER . "'"] = 2;
+
+        $merge = $this->createMergeService();
+        $enqueued = [];
+        $result = $this->newService($merge)->bind_cluster_to_person(
+            self::FIRST_CLUSTER,
+            self::PERSON_ID,
+            $this->captureEnqueue($enqueued),
+            self::PERSON_UUID,
+            self::PERSON_NAME
+        );
+
+        $this->assertIsArray($result);
+        $queries = array_values(array_filter($wpdb->queries, 'is_string'));
+        $personLock = array_search('SELECT id FROM `wp_acx_persons` WHERE id = 7 FOR UPDATE', $queries, true);
+        $survivorLookups = array_keys(array_filter(
+            $queries,
+            static fn (string $q): bool => str_contains($q, 'SELECT cluster_uuid FROM') && str_contains($q, 'person_id = 7')
+        ));
+        $this->assertIsInt($personLock);
+        $this->assertCount(1, $survivorLookups);
+        $this->assertLessThan($survivorLookups[0], $personLock);
+        $this->assertStringEndsWith('FOR UPDATE', $queries[$survivorLookups[0]]);
+    }
+
+    public function testBindReturnsBusyWithoutWritesWhenPersonLockFails(): void
+    {
+        global $wpdb;
+
+        $this->seedPerson();
+        $this->seedCluster(self::FIRST_CLUSTER);
+        $wpdb->queryResults['SELECT id FROM `wp_acx_persons` WHERE id = 7 FOR UPDATE'] = null;
+
+        $merge = $this->createMergeService();
+        $merge->expects($this->never())->method('merge_cluster');
+        $enqueued = [];
+        $result = $this->newService($merge)->bind_cluster_to_person(
+            self::FIRST_CLUSTER,
+            self::PERSON_ID,
+            $this->captureEnqueue($enqueued),
+            self::PERSON_UUID,
+            self::PERSON_NAME
+        );
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('acx_bind_busy', $result->get_error_code());
+        $this->assertSame(409, (int) ($result->get_error_data()['status'] ?? 0));
+        $this->assertSame([], $enqueued);
+        $this->assertSame([], $this->queriesContaining($wpdb->queries, 'UPDATE wp_acx_clusters'));
+    }
+
     /**
      * @return ClusterMergeService&\PHPUnit\Framework\MockObject\MockObject
      */

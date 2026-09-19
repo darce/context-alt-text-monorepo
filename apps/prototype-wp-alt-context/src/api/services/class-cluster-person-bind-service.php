@@ -13,7 +13,7 @@ use WP_REST_Response;
 /**
  * Shared cluster→person bind used by commit_roster_cluster and create-for-identity.
  *
- * Transaction-agnostic: the caller owns START/COMMIT/ROLLBACK.
+ * The caller owns START/COMMIT/ROLLBACK and must call inside a transaction: the person row lock lasts until COMMIT.
  */
 class ClusterPersonBindService {
 
@@ -102,6 +102,19 @@ class ClusterPersonBindService {
 
 		$trimmed_name = is_string( $person_name ) ? trim( $person_name ) : '';
 		$person_name  = '' !== $trimmed_name ? $trimmed_name : null;
+
+		// Row lock held to the caller's COMMIT serializes concurrent binds to one person, else both see no survivor and both confirm.
+		// Same persons-then-clusters lock order as PersonMergeService.
+		$locked_person = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE id = %d FOR UPDATE', $wpdb->prefix . 'acx_persons', $person_id )
+		);
+		if ( null === $locked_person ) {
+			return new WP_Error(
+				'acx_bind_busy',
+				__( 'Could not lock the person for assignment. Try again.', 'alt-context' ),
+				array( 'status' => 409 )
+			);
+		}
 
 		$survivor_id = $this->find_person_survivor_cluster_uuid(
 			$wpdb->prefix . 'acx_clusters',
@@ -197,7 +210,7 @@ class ClusterPersonBindService {
 
 		$found = $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT cluster_uuid FROM %i WHERE person_id = %d AND cluster_uuid != %s AND curation_state != %s ORDER BY cluster_uuid ASC LIMIT 1',
+				'SELECT cluster_uuid FROM %i WHERE person_id = %d AND cluster_uuid != %s AND curation_state != %s ORDER BY cluster_uuid ASC LIMIT 1 FOR UPDATE',
 				$table_clusters,
 				$person_id,
 				$cluster_id,

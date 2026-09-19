@@ -770,6 +770,8 @@ def _naming_provenance_payload(
             realizer = NamingRealizer.GROUNDED
         elif mode == "positional":
             realizer = NamingRealizer.POSITIONAL_FALLBACK
+        elif mode == "substituted":
+            realizer = NamingRealizer.SUBSTITUTED
     payload["realizer"] = getattr(realizer, "value", realizer) if realizer is not None else None
     payload["names_applied"] = names_applied
     return payload

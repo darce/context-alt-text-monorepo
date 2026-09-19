@@ -58,6 +58,9 @@ const appliedRealizerLabel = (realizer: NamingRealizer | null): string | null =>
   if (realizer === NAMING_REALIZER.POSITIONAL_FALLBACK) {
     return __('positional', 'alt-context');
   }
+  if (realizer === NAMING_REALIZER.SUBSTITUTED) {
+    return __('substituted', 'alt-context');
+  }
   return null;
 };
 
@@ -74,7 +77,9 @@ const namingBadgeCopy = (naming: NamingProvenance): NamingBadgeCopy => {
           ? __('Names were applied using positional fallback.', 'alt-context')
           : naming.realizer === NAMING_REALIZER.GROUNDED
             ? __('Names were applied using grounded phrase alignment.', 'alt-context')
-            : __('Names were applied, but the naming method was not reported.', 'alt-context');
+            : naming.realizer === NAMING_REALIZER.SUBSTITUTED
+              ? __('The name replaced the single person mentioned in the description.', 'alt-context')
+              : __('Names were applied, but the naming method was not reported.', 'alt-context');
       return { label, description, icon: '✓' };
     }
     case NAMING_PROVENANCE_STATUS.DISABLED:

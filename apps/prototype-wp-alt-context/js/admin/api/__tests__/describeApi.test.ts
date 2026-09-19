@@ -122,7 +122,7 @@ describe('describeApi', () => {
       'no_eligible_identities',
       'ambiguous_grounding',
     ]);
-    expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback']);
+    expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback', 'substituted']);
   });
 
   it('accepts a valid naming provenance shape at the API boundary', () => {
@@ -201,6 +201,14 @@ describe('describeApi', () => {
     });
 
     await expect(describeMedia(42)).rejects.toThrow(/response\.result_generation/);
+  });
+
+  it('accepts substituted as a named-caption provenance mode', () => {
+    const parsed = parseVisualFactsResponse({
+      ...sampleResponse,
+      naming_provenance: { ...sampleResponse.naming_provenance, mode: 'substituted' },
+    });
+    expect(parsed.naming_provenance?.mode).toBe('substituted');
   });
 
   it('rejects invalid enum values in tier and named-caption provenance', () => {

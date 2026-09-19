@@ -91,8 +91,9 @@ class NamingProvenance(BaseModel):
     injected_names: list[InjectedName] = Field(default_factory=list)
     naming_allowed: bool = False
     reason: str | None = None
-    # "grounded" (phrase-box span replacement) or "positional" (appended
-    # left-to-right sentence); null when no naming occurred.
+    # "grounded" (phrase-box span replacement), "positional" (appended
+    # left-to-right sentence) or "substituted" (N1 leading generic NP swapped
+    # without a phrase box); null when no naming occurred.
     mode: str | None = None
     # C7 fields: typed, contract-locked naming outcome and realization.
     status: NamingProvenanceStatus = NamingProvenanceStatus.NO_FACES

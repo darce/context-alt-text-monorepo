@@ -245,9 +245,10 @@
           "enum": [
             "grounded",
             "positional",
+            "substituted",
             null
           ],
-          "description": "How the named draft was realized: grounded span replacement or the positional appended sentence; null when no naming occurred."
+          "description": "How the named draft was realized: grounded span replacement, the positional appended sentence, or substituted (the single leading generic person phrase replaced without a phrase box); null when no naming occurred."
         }
       }
     },

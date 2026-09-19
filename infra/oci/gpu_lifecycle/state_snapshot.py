@@ -313,8 +313,10 @@ def write_ready_probe_failure_count(
     if count <= 0:
         if snapshot_path is not None:
             sidecar = ready_probe_failure_sidecar_path(snapshot_path)
-            with suppress(OSError):
+            try:
                 sidecar.unlink(missing_ok=True)
+            except OSError:
+                return False
         return True
     if snapshot_path is None or instance_id is None:
         return False

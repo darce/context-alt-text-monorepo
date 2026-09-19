@@ -261,7 +261,12 @@ coverage, exact_order_rate, status
 ```
 
 The status is `scored` only when all structural and sample floors hold;
-otherwise it is `not_evaluable` or `needs_operator`. Intervals are two-sided
+otherwise it is `not_evaluable` or `needs_operator`. A `scored` cell whose
+point estimate or lower bound misses its bar, or that is at or below the
+binary-chance floor, is reported as `fail` (the harness `ScoreVerdict.FAIL`
+vocabulary [apps/prototype-description-service/scripts/eval_harness/report.py:270]). `fail` is final
+for that locked set: it is never downgraded to `not_evaluable` by adding
+triage exclusions after scoring. Intervals are two-sided
 95% percentile intervals over complete image clusters, with the lower endpoint
 used for the gate. A target-level Wilson interval may be included for
 comparison, but it cannot override a cluster-bootstrap lower bound or a sparse
@@ -286,7 +291,13 @@ condition below is true:
    out-of-image association survives parsing, and the full wrong-name ledger is
    present and reproducible.
 6. The candidate does not regress the existing `n == 1` baseline on `G1` or
-   any occlusion marginal; compare both candidates on the same locked images.
+   any occlusion marginal. Score both candidates on the same locked images and
+   compute the paired per-image difference `candidate - baseline` in robust
+   `gate_accuracy`, with a 95% cluster-bootstrap interval resampling the same
+   image clusters for both arms. Non-regression holds only when the lower
+   endpoint of that paired interval is `>= -0.02` and `wrong_name_total` does
+   not increase. A lower endpoint below `-0.02` is `fail`, not a
+   sparse result.
 
 If one item fails, keep the production grounding flag off. A measured value at
 or below the repository's binary-chance quality floor is a hard failure, not a

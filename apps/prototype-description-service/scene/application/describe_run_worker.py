@@ -1059,13 +1059,19 @@ async def run_describe_job(
                             media_id=item.media_id,
                             processing_ms=processing_ms,
                         )
+                        failed_outcome = (
+                            _stamp_warmup_cpu_fallback_outcome(None, warmup_fallback_reason)
+                            if warmup_fallback_reason is not None
+                            else None
+                        )
                         await repo.record_item_result(
                             tenant_id=tenant_id,
                             run_id=run_id,
                             media_id=item.media_id,
                             alt_text_draft=None,
                             caption=None,
-                            provenance=None,
+                            provenance=failed_outcome.provenance if failed_outcome is not None else None,
+                            tier=failed_outcome.tier if failed_outcome is not None else None,
                         )
                         marked = await repo.mark_item(
                             tenant_id=tenant_id,

@@ -143,7 +143,8 @@ export const ScanActionPanel = ({
           {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
         </p>
       )}
-      {coarseAnnouncement && (
+      {/* The strip owns the live region when mounted; one announcer per activity. */}
+      {suppressPrimaryChrome && coarseAnnouncement && (
         <p
           className="screen-reader-text"
           role="status"

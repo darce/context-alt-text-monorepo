@@ -12,6 +12,8 @@ export interface QueueDraftCellProps {
   title?: string;
   onDismiss?: () => void;
   onApplied?: () => void;
+  // Only the single focused-review surface should claim focus; table rows mount many cells.
+  autoFocus?: boolean;
 }
 
 const APPLY_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
@@ -27,6 +29,7 @@ export const QueueDraftCell = ({
   title,
   onDismiss,
   onApplied,
+  autoFocus = false,
 }: QueueDraftCellProps): React.JSX.Element | null => {
   const [isEditing, setIsEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(draftText);
@@ -47,6 +50,9 @@ export const QueueDraftCell = ({
   const editLabel = title ? sprintf(__('Edit draft for %s', 'alt-context'), title) : __('Edit draft', 'alt-context');
 
   useEffect(() => {
+    if (!autoFocus) {
+      return;
+    }
     const active = document.activeElement;
     const ownsFocus = !active || active === document.body || containerRef.current?.contains(active);
     if (!ownsFocus) {
@@ -57,7 +63,7 @@ export const QueueDraftCell = ({
     } else {
       editButtonRef.current?.focus();
     }
-  }, [canAcceptDraft]);
+  }, [autoFocus, canAcceptDraft]);
 
   useEffect(() => {
     if (isEditing) {

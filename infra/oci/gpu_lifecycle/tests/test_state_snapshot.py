@@ -743,6 +743,20 @@ def test_ready_probe_failure_count_write_reports_persist_failure(
     assert write_ready_probe_failure_count(path, instance_id="ocid1.gpu", count=1) is False
 
 
+def test_ready_probe_failure_count_clear_reports_unlink_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    def fail_unlink(_self: Path, *_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated sidecar unlink failure")
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    assert write_ready_probe_failure_count(path, instance_id="ocid1.gpu", count=0) is False
+
+
 def test_failed_probe_count_persist_failure_leaves_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -589,9 +589,11 @@ describe('useActivityStatus', () => {
       result.current.actions.onRetry?.();
     });
 
-    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    // mutate() schedules mutationFn asynchronously; the in-flight ref must still drop the second click.
+    await waitFor(() => expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1));
     expect(submitBulkDescribeRunMock).not.toHaveBeenCalled();
     await waitFor(() => expect(result.current.actions.onRetry).toBeNull());
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
 
     act(() => {
       resolveItems?.(

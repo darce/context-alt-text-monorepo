@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Sovereign\Repositories\ClusterSnapshotMerger;
 use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
+use RuntimeException;
 
 /**
  * @covers \AltContext\Sovereign\Repositories\ClusterSnapshotMerger
@@ -588,6 +589,7 @@ class ClusterSnapshotMergerTest extends TestCase
             array(
                 'tombstoned_clusters' => 0,
                 'tombstoned_members' => 0,
+                'preserved_curated' => 0,
             ),
             $result
         );
@@ -626,6 +628,7 @@ class ClusterSnapshotMergerTest extends TestCase
             array(
                 'tombstoned_clusters' => 2,
                 'tombstoned_members' => 2,
+                'preserved_curated' => 0,
             ),
             $result
         );
@@ -679,6 +682,7 @@ class ClusterSnapshotMergerTest extends TestCase
             array(
                 'tombstoned_clusters' => 0,
                 'tombstoned_members' => 0,
+                'preserved_curated' => 0,
             ),
             $result
         );
@@ -715,6 +719,7 @@ class ClusterSnapshotMergerTest extends TestCase
             array(
                 'tombstoned_clusters' => 0,
                 'tombstoned_members' => 0,
+                'preserved_curated' => 0,
             ),
             $result
         );
@@ -745,8 +750,179 @@ class ClusterSnapshotMergerTest extends TestCase
 
         $this->assertSame(2, $result['tombstoned_clusters']);
         $this->assertSame(2, $result['tombstoned_members']);
+        $this->assertSame(0, $result['preserved_curated']);
         $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
         $this->assertSame(array('version_conflict:cluster-keep'), $this->conflictKeys());
+    }
+
+    public function testUpsertQueryFailureThrowsAndDoesNotTombstone(): void
+    {
+        $this->seedTombstoneProjection('tenant-upsert-fail');
+
+        global $wpdb;
+        $wpdb->queries = [];
+        $wpdb->defaultQueryResult = false;
+        $wpdb->last_error = 'simulated upsert failure';
+
+        try {
+            $this->merger->merge_snapshot_for_tenant(
+                'tenant-upsert-fail',
+                array(
+                    array(
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => 'Keep',
+                        'identity_count' => 1,
+                    ),
+                ),
+                21,
+                false
+            );
+            $this->fail('Expected RuntimeException when upsert query returns false');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('simulated upsert failure', $exception->getMessage());
+            $this->assertSame(array(), $this->queriesStartingWith('DELETE FROM wp_acx_'));
+            $this->assertCount(3, $this->clusterIdsForTenant('tenant-upsert-fail'));
+        }
+    }
+
+    public function testMemberDeleteFailureThrowsBeforeClusterDelete(): void
+    {
+        $this->seedTombstoneProjection('tenant-delete-fail');
+
+        global $wpdb;
+        $wpdb->queries = [];
+        $wpdb->last_error = 'simulated member delete failure';
+        $wpdb->deleteResultsByTable['wp_acx_identity_members'] = false;
+
+        try {
+            $this->merger->prepare_snapshot_merge_for_tenant(
+                'tenant-delete-fail',
+                array('cluster-keep'),
+                true
+            );
+            $this->fail('Expected RuntimeException when member delete returns false');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('simulated member delete failure', $exception->getMessage());
+            $this->assertSame(array(), $this->queriesStartingWith('DELETE FROM wp_acx_clusters'));
+            $this->assertSame(
+                array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+                $this->clusterIdsForTenant('tenant-delete-fail')
+            );
+        }
+    }
+
+    public function testCompleteSnapshotPreservesConfirmedAndPersonBoundClusters(): void
+    {
+        global $wpdb;
+
+        $tenant = 'tenant-preserve';
+        $wpdb->tableRows['wp_acx_clusters'] = array(
+            array(
+                'cluster_uuid' => 'cluster-keep',
+                'tenant_id' => $tenant,
+                'label' => 'Keep',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-uncurated',
+                'tenant_id' => $tenant,
+                'label' => 'Stale Uncurated',
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-confirmed',
+                'tenant_id' => $tenant,
+                'label' => 'Human Confirmed',
+                'is_user_confirmed' => 1,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
+            ),
+            array(
+                'cluster_uuid' => 'cluster-person-bound',
+                'tenant_id' => $tenant,
+                'label' => 'Bound Person',
+                'is_user_confirmed' => 0,
+                'person_id' => 11,
+                'curation_state' => 'uncurated',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_identity_members'] = array(
+            array(
+                'identity_uuid' => 'id-keep',
+                'cluster_uuid' => 'cluster-keep',
+            ),
+            array(
+                'identity_uuid' => 'id-uncurated',
+                'cluster_uuid' => 'cluster-uncurated',
+            ),
+            array(
+                'identity_uuid' => 'id-confirmed',
+                'cluster_uuid' => 'cluster-confirmed',
+            ),
+            array(
+                'identity_uuid' => 'id-person-bound',
+                'cluster_uuid' => 'cluster-person-bound',
+            ),
+        );
+        $wpdb->tableRows['wp_acx_sync_conflicts'] = array(
+            array(
+                'tenant_id' => $tenant,
+                'conflict_code' => 'cluster_not_found',
+                'entity_key' => 'cluster-uncurated',
+            ),
+            array(
+                'tenant_id' => $tenant,
+                'conflict_code' => 'cluster_not_found',
+                'entity_key' => 'cluster-confirmed',
+            ),
+            array(
+                'tenant_id' => $tenant,
+                'conflict_code' => 'cluster_not_found',
+                'entity_key' => 'cluster-person-bound',
+            ),
+        );
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            $tenant,
+            array(
+                array(
+                    'cluster_uuid' => 'cluster-keep',
+                    'label' => 'Keep',
+                    'identity_count' => 1,
+                ),
+            ),
+            21,
+            true
+        );
+
+        $this->assertSame(
+            array(
+                'tombstoned_clusters' => 1,
+                'tombstoned_members' => 1,
+                'preserved_curated' => 2,
+            ),
+            $result
+        );
+        $this->assertSame(
+            array('cluster-confirmed', 'cluster-keep', 'cluster-person-bound'),
+            $this->clusterIdsForTenant($tenant)
+        );
+        $memberIds = array_values(
+            array_map(
+                static fn(array $row): string => (string) $row['identity_uuid'],
+                $wpdb->tableRows['wp_acx_identity_members']
+            )
+        );
+        sort($memberIds);
+        $this->assertSame(array('id-confirmed', 'id-keep', 'id-person-bound'), $memberIds);
+        $this->assertSame(
+            array('cluster_not_found:cluster-confirmed', 'cluster_not_found:cluster-person-bound'),
+            $this->conflictKeys()
+        );
     }
 
     /**
@@ -843,13 +1019,16 @@ class ClusterSnapshotMergerTest extends TestCase
                 'tenant_id' => $tenant,
                 'label' => 'Stale A',
                 'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => 'uncurated',
             ),
             array(
                 'cluster_uuid' => 'cluster-stale-b',
                 'tenant_id' => $tenant,
                 'label' => 'Operator Name',
-                'is_user_confirmed' => 1,
-                'person_id' => 9,
+                'is_user_confirmed' => 0,
+                'person_id' => null,
+                'curation_state' => '',
             ),
             array(
                 'cluster_uuid' => 'cluster-other-tenant',

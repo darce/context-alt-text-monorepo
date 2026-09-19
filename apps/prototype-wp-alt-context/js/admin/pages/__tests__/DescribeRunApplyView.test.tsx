@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DescribeRunApplyView } from '../DescribeRunApplyView';
+import { DescribeRunApplyItemRow, DescribeRunApplyView } from '../DescribeRunApplyView';
 import { applyDescribeRunDrafts, fetchDescribeRunItems } from '../../api/describeApi';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -265,6 +265,146 @@ describe('DescribeRunApplyView', () => {
     const positionalBadge = screen.getByTestId('acx-run-apply-naming-81');
     expect(positionalBadge).toHaveAttribute('aria-label', 'Names were applied using positional fallback.');
     expect(positionalBadge).toHaveAttribute('title', 'Names were applied using positional fallback.');
+  });
+
+  it('maps C4 naming skip reasons to closed-map copy and unknown status to neutral copy', async () => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-naming-c4',
+      items: [
+        {
+          media_id: 91,
+          status: 'completed',
+          alt_text_draft: 'Two people stand together.',
+          caption: 'Two people.',
+          provenance: {
+            naming: { status: 'no_confirmed_identities', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 92,
+          status: 'completed',
+          alt_text_draft: 'A person stands outside.',
+          caption: 'A person.',
+          provenance: {
+            naming: { status: 'no_eligible_identities', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 93,
+          status: 'completed',
+          alt_text_draft: 'People stand in a doorway.',
+          caption: 'A doorway.',
+          provenance: {
+            naming: { status: 'ambiguous_grounding', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+        {
+          media_id: 94,
+          status: 'completed',
+          alt_text_draft: 'A crowd gathers.',
+          caption: 'A crowd.',
+          provenance: {
+            naming: { status: 'future_skip_reason', realizer: null, names_applied: [] },
+          },
+          ...runItemContract,
+          existing_alt: false,
+        },
+      ],
+    });
+
+    renderView('run-naming-c4');
+
+    expect(await screen.findByText('Two people stand together.')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-run-apply-naming-91')).toHaveTextContent('Faces found, none confirmed');
+    expect(screen.getByTestId('acx-run-apply-naming-92')).toHaveTextContent('Grounding ambiguous');
+    expect(screen.getByTestId('acx-run-apply-naming-93')).toHaveTextContent('Grounding ambiguous');
+    expect(screen.getByTestId('acx-run-apply-naming-94')).toHaveTextContent('Names not applied');
+    expect(screen.queryByText('No faces')).not.toBeInTheDocument();
+  });
+
+  it('shows the attachment thumb beside the draft on ready-to-apply rows', async () => {
+    fetchItemsMock.mockResolvedValue({
+      run_id: 'run-thumbs',
+      items: [
+        {
+          media_id: 71,
+          status: 'completed',
+          alt_text_draft: 'A red flower.',
+          caption: 'A flower.',
+          provenance: null,
+          existing_alt: false,
+          thumbnail_url: 'https://example.test/uploads/71-medium.jpg',
+          thumbnail_srcset: 'https://example.test/uploads/71.jpg 150w, https://example.test/uploads/71-medium.jpg 300w',
+          ...runItemContract,
+        },
+        {
+          media_id: 90,
+          status: 'completed',
+          alt_text_draft: 'A blue car.',
+          caption: 'A car.',
+          provenance: null,
+          existing_alt: false,
+          thumbnail_url: null,
+          thumbnail_srcset: null,
+          ...runItemContract,
+        },
+      ],
+    });
+
+    renderView('run-thumbs');
+
+    expect(await screen.findByText('A red flower.')).toBeInTheDocument();
+    const flowerImg = screen.getByRole('img', { name: 'A flower.' });
+    expect(flowerImg).toHaveAttribute('src', 'https://example.test/uploads/71-medium.jpg');
+    expect(flowerImg).toHaveAttribute(
+      'srcSet',
+      'https://example.test/uploads/71.jpg 150w, https://example.test/uploads/71-medium.jpg 300w',
+    );
+    expect(flowerImg).toHaveClass('acx-media-selection__thumb', 'acx-media-selection__thumb--thumb');
+    const flowerRow = flowerImg.closest('li');
+    expect(flowerRow).not.toBeNull();
+    const flowerEvidence = flowerRow!.querySelector('.acx-run-apply__item-evidence');
+    expect(flowerEvidence).toContainElement(flowerImg);
+    expect(flowerEvidence).toContainElement(screen.getByText('A red flower.'));
+
+    const carRow = screen.getByText('A blue car.').closest('li');
+    expect(carRow?.querySelector('.acx-media-selection__thumb--placeholder')).not.toBeNull();
+    expect(within(carRow!).queryByRole('img')).not.toBeInTheDocument();
+  });
+
+  it('exports DescribeRunApplyItemRow for spa-queue-drafts-mount', () => {
+    render(
+      <ul>
+        <DescribeRunApplyItemRow
+          item={{
+            media_id: 11,
+            status: 'completed',
+            alt_text_draft: 'A named draft.',
+            caption: 'A caption.',
+            provenance: {
+              naming: { status: 'no_confirmed_identities', realizer: null, names_applied: [] },
+            },
+            existing_alt: false,
+            thumbnail_url: 'https://example.test/uploads/11.jpg',
+            thumbnail_srcset: null,
+            ...runItemContract,
+          }}
+          mediaIdLabel="Media 11"
+        />
+      </ul>,
+    );
+
+    const img = screen.getByRole('img', { name: 'A caption.' });
+    expect(img).toHaveAttribute('src', 'https://example.test/uploads/11.jpg');
+    expect(screen.getByText('A named draft.')).toBeInTheDocument();
+    expect(screen.getByText('Faces found, none confirmed')).toBeInTheDocument();
+    expect(screen.getByText('Media 11')).toBeInTheDocument();
   });
 
   it('applies the safe bucket with no overwrites by default', async () => {

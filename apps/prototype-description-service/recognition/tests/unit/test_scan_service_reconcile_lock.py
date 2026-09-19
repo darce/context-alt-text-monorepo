@@ -10,9 +10,19 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
+
 from db.settings import get_database_settings
 from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol
-from recognition.application.scan.service import PersistIntegrityError, ReconcileResult, ScanService
+from recognition.application.scan.service import (
+    PersistIntegrityError,
+    ReconcileResult,
+    ScanService,
+    _IN_PROCESS_PERSIST_LOCKS,
+    _media_persist_lock,
+)
 
 _DB_SETTINGS = get_database_settings()
 _DIM = int(_DB_SETTINGS.pgvector_dimension)
@@ -83,6 +93,15 @@ class _SnapshotYieldSession(_FakeSession):
         snapshot = list(self.existing)
         await asyncio.sleep(0)
         return _FakeResult(snapshot)
+
+
+class _SyncTxSession(_FakeSession):
+    """Non-Postgres fake that exposes a real Session so lock hold lasts until commit."""
+
+    def __init__(self, sync_session: Session) -> None:
+        super().__init__()
+        self.sync_session = sync_session
+        self.bind = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
 
 class _PostgresFakeSession(_FakeSession):
@@ -252,3 +271,135 @@ async def test_persist_integrity_error_releases_in_process_lock() -> None:
     )
     assert result.new == 1
     assert len(session.existing) == 1
+
+
+def _open_sync_tx_session() -> tuple[_SyncTxSession, Session, object]:
+    engine = create_engine("sqlite:///:memory:")
+    sync_session = Session(engine)
+    return _SyncTxSession(sync_session), sync_session, engine
+
+
+async def _acquire_media_lock(session: _FakeSession | object, tenant: uuid.UUID, media_id: int) -> None:
+    async with _media_persist_lock(session, tenant, media_id):  # type: ignore[arg-type]
+        return None
+
+
+async def _wait_waiters(key: tuple[str, int], expected: int) -> None:
+    while True:
+        entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if entry is not None and entry.waiters == expected:
+            return
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_in_process_lock_held_until_root_commit() -> None:
+    tenant = uuid.uuid4()
+    media_id = 11
+    session_a, sync_a, engine_a = _open_sync_tx_session()
+    session_b, sync_b, engine_b = _open_sync_tx_session()
+    try:
+        sync_a.begin()
+        first = await _persist(session_a, tenant_id=str(tenant), media_id=media_id)
+        assert first.new == 1
+        assert sync_a.in_transaction()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 0.05)
+        sync_a.commit()
+        await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 1)
+    finally:
+        sync_a.close()
+        sync_b.close()
+        engine_a.dispose()
+        engine_b.dispose()
+
+
+@pytest.mark.asyncio
+async def test_in_process_lock_released_on_root_rollback() -> None:
+    tenant = uuid.uuid4()
+    media_id = 12
+    session_a, sync_a, engine_a = _open_sync_tx_session()
+    session_b, sync_b, engine_b = _open_sync_tx_session()
+    try:
+        sync_a.begin()
+        await _persist(session_a, tenant_id=str(tenant), media_id=media_id)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 0.05)
+        sync_a.rollback()
+        await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 1)
+    finally:
+        sync_a.close()
+        sync_b.close()
+        engine_a.dispose()
+        engine_b.dispose()
+
+
+@pytest.mark.asyncio
+async def test_in_process_lock_held_until_async_session_commit() -> None:
+    tenant = uuid.uuid4()
+    media_id = 13
+    engine_a = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine_b = create_async_engine("sqlite+aiosqlite:///:memory:")
+    factory_a = async_sessionmaker(engine_a, expire_on_commit=False)
+    factory_b = async_sessionmaker(engine_b, expire_on_commit=False)
+    try:
+        async with factory_a() as session_a, factory_b() as session_b:
+            async with session_a.begin():
+                async with _media_persist_lock(session_a, tenant, media_id):
+                    pass
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 0.05)
+            await asyncio.wait_for(_acquire_media_lock(session_b, tenant, media_id), 1)
+    finally:
+        await engine_a.dispose()
+        await engine_b.dispose()
+
+
+@pytest.mark.asyncio
+async def test_in_process_persist_lock_registry_empties_after_distinct_media() -> None:
+    _IN_PROCESS_PERSIST_LOCKS.clear()
+    session = _FakeSession()
+    tenant = str(uuid.uuid4())
+    for media_id in range(5):
+        await _persist(session, tenant_id=tenant, media_id=media_id)
+    assert _IN_PROCESS_PERSIST_LOCKS == {}
+
+
+@pytest.mark.asyncio
+async def test_in_process_persist_lock_entry_survives_until_last_waiter_releases() -> None:
+    _IN_PROCESS_PERSIST_LOCKS.clear()
+    session = _FakeSession()
+    tenant = uuid.uuid4()
+    media_id = 99
+    key = (str(tenant), media_id)
+    first_inside = asyncio.Event()
+    release_first = asyncio.Event()
+    second_inside = asyncio.Event()
+    release_second = asyncio.Event()
+
+    async def _first() -> None:
+        async with _media_persist_lock(session, tenant, media_id):
+            first_inside.set()
+            await release_first.wait()
+
+    async def _second() -> None:
+        async with _media_persist_lock(session, tenant, media_id):
+            second_inside.set()
+            await release_second.wait()
+
+    task_first = asyncio.create_task(_first())
+    await asyncio.wait_for(first_inside.wait(), 1)
+    task_second = asyncio.create_task(_second())
+    await asyncio.sleep(0)
+    await asyncio.wait_for(_wait_waiters(key, 2), 1)
+    assert key in _IN_PROCESS_PERSIST_LOCKS
+    assert _IN_PROCESS_PERSIST_LOCKS[key].waiters == 2
+    release_first.set()
+    await asyncio.wait_for(second_inside.wait(), 1)
+    await asyncio.wait_for(task_first, 1)
+    assert key in _IN_PROCESS_PERSIST_LOCKS
+    assert _IN_PROCESS_PERSIST_LOCKS[key].waiters == 1
+    release_second.set()
+    await asyncio.wait_for(task_second, 1)
+    assert key not in _IN_PROCESS_PERSIST_LOCKS
+    assert _IN_PROCESS_PERSIST_LOCKS == {}

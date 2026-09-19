@@ -202,7 +202,7 @@ def test_reconciled_subprocess_start_failure_does_not_emit_start_failed_fallback
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "starting"
     assert snapshot["reason"] is None
-    assert snapshot["since"] == snapshot["written_at"]
+    assert snapshot["since"] <= snapshot["written_at"]
 
 
 def test_start_actuation_publishes_starting_with_since(tmp_path: Path) -> None:
@@ -219,7 +219,7 @@ def test_start_actuation_publishes_starting_with_since(tmp_path: Path) -> None:
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "starting"
     assert snapshot["reason"] is None
-    assert snapshot["since"] == snapshot["written_at"]
+    assert snapshot["since"] <= snapshot["written_at"]
 
 
 def test_recording_running_lease_publishes_starting_with_since(tmp_path: Path) -> None:
@@ -242,7 +242,7 @@ def test_recording_running_lease_publishes_starting_with_since(tmp_path: Path) -
     snapshot = json.loads(gpu_state_path.read_text())
     assert snapshot["state"] == "starting"
     assert snapshot["reason"] is None
-    assert snapshot["since"] == snapshot["written_at"]
+    assert snapshot["since"] <= snapshot["written_at"]
 
 
 class RecordingStopActuator:

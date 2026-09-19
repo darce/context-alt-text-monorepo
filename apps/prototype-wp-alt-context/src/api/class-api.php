@@ -97,10 +97,12 @@ class Api {
 	private OutboxDrain $outboxDrain;
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 	private ?SyncPullJobInterface $bootstrapSyncPullJob;
+	private ClusterMutationsController $clusterMutationsController;
 	private ?ClusterMergeService $clusterPersonBindMergeService = null;
 
 	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null, ?PublicDemoDescribeController $public_demo_describe_controller = null ) {
-		$this->recognitionController = new RecognitionController();
+		$this->clusterMutationsController = new ClusterMutationsController();
+		$this->recognitionController = new RecognitionController( null, null, $this->clusterMutationsController );
 		$this->gpuControlController = new GpuControlController();
 		$this->publicDemoDescribeController = $public_demo_describe_controller ?? new PublicDemoDescribeController();
 		$this->mediaDetailController = new MediaDetailController();
@@ -1110,7 +1112,7 @@ class Api {
 
 	private function get_cluster_person_bind_merge_service(): ClusterMergeService {
 		if ( ! $this->clusterPersonBindMergeService instanceof ClusterMergeService ) {
-			$this->clusterPersonBindMergeService = new ClusterMergeService( new ClusterMutationsController() );
+			$this->clusterPersonBindMergeService = new ClusterMergeService( $this->clusterMutationsController );
 		}
 
 		return $this->clusterPersonBindMergeService;

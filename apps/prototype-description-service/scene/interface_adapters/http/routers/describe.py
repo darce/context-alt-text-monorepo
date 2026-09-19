@@ -558,6 +558,7 @@ def _rebuild_post_accept_typed_error(
     timing = _untimed_with_elapsed(_elapsed_ms(server_start))
 
     def _build(code_to_emit: str, *, reason_to_emit: UnavailableReason | None = reason) -> HTTPException:
+        starting = code_to_emit == "description_service_starting"
         rebuilt = _typed_describe_error(
             status_code=exc.status_code,
             code=code_to_emit,
@@ -569,8 +570,8 @@ def _rebuild_post_accept_typed_error(
             startup_budget_seconds=startup_budget_seconds,
             reason=reason_to_emit,
             lifecycle_reason=lifecycle_reason,
-            retry_after=retry_after,
-            preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
+            retry_after=retry_after if starting else None,
+            preserve_lease=starting and isinstance(exc, _LifecycleHoldHTTPException),
         )
         if isinstance(rebuilt.detail, dict):
             for optional_key in (
@@ -1279,7 +1280,7 @@ async def describe_image_multipart(
     adapter_reason = None
     if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
         adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
-        if adapter_reason is not None and submission.operation_id is None:
+        if adapter_reason is not None and (submission.operation_id is None or session is None):
             raise _typed_describe_error(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 code="description_service_unavailable",

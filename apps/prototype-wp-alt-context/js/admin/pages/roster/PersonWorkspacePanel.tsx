@@ -99,12 +99,21 @@ interface AlsoWithPerson {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
+
+const isUnitInterval = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+
 const isBoundingBox = (value: unknown): value is BoundingBox =>
   isRecord(value) &&
-  typeof value.x === 'number' &&
-  typeof value.y === 'number' &&
-  typeof value.width === 'number' &&
-  typeof value.height === 'number';
+  isNonNegativeInteger(value.x) &&
+  isNonNegativeInteger(value.y) &&
+  isPositiveInteger(value.width) &&
+  isPositiveInteger(value.height);
 
 const parsePersonMediaItem = (value: unknown): PersonMediaItem => {
   if (!isRecord(value)) {
@@ -113,7 +122,7 @@ const parsePersonMediaItem = (value: unknown): PersonMediaItem => {
   if (typeof value.identity_id !== 'string' || typeof value.cluster_id !== 'string') {
     throw new Error('Person media item is missing identity or cluster.');
   }
-  if (typeof value.media_id !== 'number') {
+  if (!isPositiveInteger(value.media_id)) {
     throw new Error('Person media item is missing media_id.');
   }
   if (value.media_url !== null && typeof value.media_url !== 'string') {
@@ -122,7 +131,7 @@ const parsePersonMediaItem = (value: unknown): PersonMediaItem => {
   if (value.bbox !== null && !isBoundingBox(value.bbox)) {
     throw new Error('Person media item has a malformed bbox.');
   }
-  if (value.similarity !== null && typeof value.similarity !== 'number') {
+  if (value.similarity !== null && !isUnitInterval(value.similarity)) {
     throw new Error('Person media item has a malformed similarity.');
   }
   return {
@@ -140,9 +149,9 @@ const parsePersonMediaPage = (payload: unknown): PersonMediaPage => {
     throw new Error('Person media response is missing or malformed.');
   }
   if (
-    typeof payload.limit !== 'number' ||
-    typeof payload.offset !== 'number' ||
-    typeof payload.total !== 'number' ||
+    !isPositiveInteger(payload.limit) ||
+    !isNonNegativeInteger(payload.offset) ||
+    !isNonNegativeInteger(payload.total) ||
     typeof payload.truncated !== 'boolean'
   ) {
     throw new Error('Person media response is missing pagination metadata.');

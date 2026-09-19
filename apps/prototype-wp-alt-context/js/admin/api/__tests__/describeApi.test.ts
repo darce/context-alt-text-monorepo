@@ -118,6 +118,9 @@ describe('describeApi', () => {
       'disabled',
       'skipped_budget',
       'no_faces',
+      'no_confirmed_identities',
+      'no_eligible_identities',
+      'ambiguous_grounding',
     ]);
     expect(Object.values(NAMING_REALIZER)).toEqual(['grounded', 'positional_fallback']);
   });

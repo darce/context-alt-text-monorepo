@@ -65,6 +65,7 @@ MODULE_NAME = "scripts.validate_fir_dev_runtime"
 NOW = "2026-09-20T12:01:00Z"
 DEFAULT_TENANT_SENTINEL = "00000000-0000-7000-8000-000000000000"
 SENTINEL = "REPLACE_ME_DEV_FIR_PG"
+DSN_PASSWORD = "dsn-password-must-not-appear"
 
 ROLE_SET = ("api", "worker", "fix-blob-ownership")
 ROLE_FIELDS = (
@@ -115,6 +116,8 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "seeded_description_adapter": ("invalid", 2, "description_adapter_stub_or_seeded"),
     "image_digest_mismatch": ("invalid", 2, "role_image_digest_mismatch"),
     "forbidden_storage": ("invalid", 2, "forbidden_resource_id"),
+    "compose_prefixed_forbidden_storage": ("invalid", 2, "forbidden_resource_id"),
+    "casefolded_forbidden_database": ("invalid", 2, "forbidden_resource_id"),
     "default_tenant": ("invalid", 2, "shared_default_tenant"),
     "all_declared_provenance": ("incomplete", 1, "observation_provenance_declared"),
     "unparseable_model_id": ("invalid", 2, "unparseable_model_id"),
@@ -143,6 +146,8 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "enrolled_store_missing_centroid_sample": ("incomplete", 1, "embedding_provenance_unobserved"),
     "enrolled_store_missing_provenance_summary": ("incomplete", 1, "embedding_provenance_unobserved"),
     "empty_store_with_rows": ("incomplete", 1, "fir_store_state_unobserved"),
+    "fourth_vector_column_nonzero": ("incomplete", 1, "fir_store_state_unobserved"),
+    "fourth_vector_column_zero": ("ready", 0, "ready"),
     "duplicate_worker_role": ("invalid", 2, "duplicate_role_observation"),
     "unknown_role_present": ("invalid", 2, "unknown_role_observation"),
     "schema_version_two": ("invalid", 2, "unsupported_schema_version"),
@@ -150,6 +155,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "empty_forbidden_resource_policy": ("invalid", 2, "malformed_isolation_policy"),
     "malformed_policy_input": ("invalid", 2, "malformed_policy_input"),
     "malformed_timestamp": ("invalid", 2, "malformed_timestamp"),
+    "keyword_value_dsn_secret": ("invalid", 2, "secret_shaped_input"),
     "redaction_secret_input": ("invalid", 2, "secret_shaped_input"),
     "import_purity": ("ready", 0, "import_pure"),
 }
@@ -390,6 +396,10 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         _field(snapshot, "worker", "image_digest")["value"] = "sha256:worker-digest-does-not-match"
     elif case_name == "forbidden_storage":
         snapshot["storage"]["volume_ids"]["value"][0] = "acx-dev-pgdata"
+    elif case_name == "compose_prefixed_forbidden_storage":
+        snapshot["storage"]["volume_ids"]["value"][0] = "acx-dev_acx-dev-pgdata"
+    elif case_name == "casefolded_forbidden_database":
+        snapshot["database"]["identity"]["database_name"]["value"] = "ALT_CONTEXT"
     elif case_name == "default_tenant":
         snapshot["tenant_id"]["value"] = DEFAULT_TENANT_SENTINEL
     elif case_name == "all_declared_provenance":
@@ -464,6 +474,20 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         del snapshot["database"]["embedding_provenance"]
     elif case_name == "empty_store_with_rows":
         snapshot["database"]["embedding_provenance"]["value"]["row_counts"]["public.media_identities.embedding"] = 1
+    elif case_name in {"fourth_vector_column_nonzero", "fourth_vector_column_zero"}:
+        extra_identity = "public.audit_embeddings.embedding"
+        snapshot["database"]["vector_column_inventory"]["value"].append(
+            {
+                "schema": "public",
+                "table": "audit_embeddings",
+                "column": "embedding",
+                "dimension": 128,
+                "provenance": "database_catalog",
+            }
+        )
+        snapshot["database"]["embedding_provenance"]["value"]["row_counts"][extra_identity] = (
+            1 if case_name == "fourth_vector_column_nonzero" else 0
+        )
     elif case_name == "duplicate_worker_role":
         _role(snapshot, "fix-blob-ownership")["role"] = "worker"
     elif case_name == "unknown_role_present":
@@ -476,6 +500,11 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         pass
     elif case_name == "malformed_timestamp":
         _set_captured_at(snapshot, "not-an-iso-timestamp")
+    elif case_name == "keyword_value_dsn_secret":
+        snapshot["database"]["identity"]["database_name"]["value"] = (
+            "host=postgres port=5432 dbname=alt_context_dev_fir "
+            f"user=acx_dev_fir password={DSN_PASSWORD} sslmode=disable"
+        )
     elif case_name in {
         "valid_empty_fir_store",
         "valid_enrolled_fir_store",
@@ -732,6 +761,39 @@ def test_redaction_surfaces_cover_stdout_json_report_and_exit_reason(tmp_path: P
     assert _coarse_token(model_id) in report_json
     assert _coarse_token(tenant_id) in report_json
     assert expected[2] in exit_reason
+
+
+def test_keyword_value_dsn_is_refused_and_never_emitted_in_cli_report(tmp_path: Path) -> None:
+    case_name = "keyword_value_dsn_secret"
+    snapshot = _case_snapshot(case_name)
+    result = _validator_result(case_name, snapshot)
+    _assert_pinned_outcome(case_name, result)
+
+    completed = _run_cli(tmp_path, snapshot)
+    assert completed.returncode == CASE_OUTCOMES[case_name][1]
+    assert DSN_PASSWORD not in completed.stdout
+    assert DSN_PASSWORD not in completed.stderr
+    assert DSN_PASSWORD not in json.dumps(json.loads(completed.stdout), sort_keys=True)
+
+
+def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:
+    nonzero_case = "fourth_vector_column_nonzero"
+    nonzero_result = _validator_result(nonzero_case, _case_snapshot(nonzero_case))
+    _assert_pinned_outcome(nonzero_case, nonzero_result)
+
+    zero_case = "fourth_vector_column_zero"
+    zero_result = _validator_result(zero_case, _case_snapshot(zero_case))
+    _assert_pinned_outcome(zero_case, zero_result)
+
+
+def test_compose_prefixed_forbidden_volume_id_is_refused() -> None:
+    case_name = "compose_prefixed_forbidden_storage"
+    _assert_pinned_outcome(case_name, _validator_result(case_name, _case_snapshot(case_name)))
+
+
+def test_casefolded_forbidden_database_name_is_refused() -> None:
+    case_name = "casefolded_forbidden_database"
+    _assert_pinned_outcome(case_name, _validator_result(case_name, _case_snapshot(case_name)))
 
 
 def test_validator_import_is_pure_in_a_subprocess() -> None:

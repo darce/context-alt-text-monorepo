@@ -121,6 +121,19 @@ OBSERVATION_METHODS: dict[str, frozenset[str]] = {
 }
 
 _SECRET_MARKER = re.compile(r"REPLACE_ME[_A-Z0-9]*")
+_CREDENTIAL_KEY = re.compile(
+    r"^(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)$",
+    re.IGNORECASE,
+)
+_CREDENTIAL_KEY_VALUE = re.compile(
+    r"(?:^|\s)(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)"
+    r"\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*=)[^\s]+)",
+    re.IGNORECASE,
+)
+_BEARER_TOKEN_PREFIX = re.compile(
+    r"^\s*(?:authorization\s*:\s*)?(?:bearer|basic|token)\s+\S",
+    re.IGNORECASE,
+)
 _MAX_CLOCK_SKEW = timedelta(seconds=60)
 _ISOLATION_RESOURCE_CATEGORIES = frozenset(
     {
@@ -169,18 +182,58 @@ def _uri_has_password(value: str) -> bool:
     return bool(userinfo.rsplit(":", 1)[1])
 
 
+def _credential_value_is_nonempty(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip().strip("\"'").strip())
+    if isinstance(value, Mapping):
+        if "value" in value:
+            return _credential_value_is_nonempty(value["value"])
+        return bool(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_credential_value_is_nonempty(item) for item in value)
+    return value is not None and bool(value)
+
+
+def _keyword_value_has_credential(value: str) -> bool:
+    return any(_credential_value_is_nonempty(match.group("value")) for match in _CREDENTIAL_KEY_VALUE.finditer(value))
+
+
 def _is_secret_shaped_string(value: str) -> bool:
-    return bool(_SECRET_MARKER.search(value)) or _uri_has_password(value)
+    return (
+        bool(_SECRET_MARKER.search(value))
+        or _uri_has_password(value)
+        or _keyword_value_has_credential(value)
+        or bool(_BEARER_TOKEN_PREFIX.search(value))
+    )
 
 
 def _contains_secret_shaped(value: Any) -> bool:
-    """Inspect input values using only the documented secret-shape rules."""
+    """Inspect input values for credential-bearing shapes before any validation rung."""
 
     if isinstance(value, Mapping):
-        return any(_contains_secret_shaped(key) or _contains_secret_shaped(item) for key, item in value.items())
+        for key, item in value.items():
+            if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and _credential_value_is_nonempty(item):
+                return True
+            if _contains_secret_shaped(key) or _contains_secret_shaped(item):
+                return True
+        return False
     if isinstance(value, (list, tuple, set, frozenset)):
         return any(_contains_secret_shaped(item) for item in value)
     return isinstance(value, str) and _is_secret_shaped_string(value)
+
+
+def _redact_credential_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if key == "value" and _credential_value_is_nonempty(item):
+                redacted[key] = "[redacted-secret]"
+            else:
+                redacted[key] = _redact_value(item)
+        return redacted
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_redact_credential_value(item) for item in value]
+    return "[redacted-secret]"
 
 
 def _redact_value(value: Any) -> Any:
@@ -190,7 +243,10 @@ def _redact_value(value: Any) -> Any:
         redacted: dict[Any, Any] = {}
         for key, item in value.items():
             redacted_key = "[redacted-key]" if isinstance(key, str) and _is_secret_shaped_string(key) else key
-            redacted[redacted_key] = _redact_value(item)
+            if isinstance(key, str) and _CREDENTIAL_KEY.fullmatch(key.strip()) and _credential_value_is_nonempty(item):
+                redacted[redacted_key] = _redact_credential_value(item)
+            else:
+                redacted[redacted_key] = _redact_value(item)
         return redacted
     if isinstance(value, list):
         return [_redact_value(item) for item in value]
@@ -319,21 +375,48 @@ def _flatten_policy_values(value: Any) -> Iterable[Any]:
         yield value
 
 
-def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[Any]:
+def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[tuple[str, Any]]:
     storage = snapshot["storage"]
+    storage_categories = {
+        "volume_ids": "volumes",
+        "network_ids": "networks",
+        "compose_project": "compose_projects",
+        "blob_namespace": "blob_namespaces",
+    }
     for field_name in STORAGE_FIELDS:
         value = storage[field_name]["value"]
+        category = storage_categories[field_name]
         if isinstance(value, (list, tuple, set, frozenset)):
-            yield from value
+            for item in value:
+                yield category, item
         else:
-            yield value
+            yield category, value
     identity = snapshot["database"]["identity"]
-    yield identity["database_name"]["value"]
-    yield identity["role"]["value"]
+    yield "database_names", identity["database_name"]["value"]
+    yield "database_roles", identity["role"]["value"]
 
 
-def _resource_is_forbidden(value: Any, forbidden_values: Iterable[Any]) -> bool:
-    return any(value == forbidden for forbidden in forbidden_values)
+def _resource_is_forbidden(
+    value: Any,
+    forbidden_values: Iterable[Any],
+    *,
+    allow_compose_prefix: bool = True,
+) -> bool:
+    """Match strip/casefold-normalized IDs, including Compose volume suffixes when enabled."""
+
+    for forbidden in forbidden_values:
+        if isinstance(value, str) and isinstance(forbidden, str):
+            normalized_value = value.strip().casefold()
+            normalized_forbidden = forbidden.strip().casefold()
+            if normalized_value == normalized_forbidden:
+                return True
+            if allow_compose_prefix and normalized_forbidden and normalized_value.endswith(
+                f"_{normalized_forbidden}"
+            ):
+                return True
+        elif value == forbidden:
+            return True
+    return False
 
 
 def _non_database_provenance_is_declared(snapshot: Mapping[str, Any], roles: tuple[Mapping[str, Any], ...]) -> bool:
@@ -549,9 +632,13 @@ def _validate_freshness_and_isolation(
         return "stale_snapshot"
     if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
         return "shared_default_tenant"
-    forbidden_values = tuple(_flatten_policy_values(isolation_policy["forbidden_resource_ids"]))
-    if any(_resource_is_forbidden(value, forbidden_values) for value in _observed_resource_values(snapshot)):
-        return "forbidden_resource_id"
+    # Policy contract: string IDs are compared after strip/casefold normalization. Collectors may emit
+    # Docker Compose volume IDs as ``<project>_<declared-name>``; volume policy IDs match that suffix.
+    forbidden_resources = isolation_policy["forbidden_resource_ids"]
+    for category, value in _observed_resource_values(snapshot):
+        forbidden_values = tuple(_flatten_policy_values(forbidden_resources[category]))
+        if _resource_is_forbidden(value, forbidden_values, allow_compose_prefix=category == "volumes"):
+            return "forbidden_resource_id"
     return None
 
 
@@ -733,8 +820,19 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     if not required_summary_fields.issubset(summary):
         return "embedding_provenance_unobserved"
 
+    inventory = database["vector_column_inventory"]["value"]
+    if not isinstance(inventory, (list, tuple)):
+        return "embedding_provenance_unobserved"
+    inventory_identities = {
+        f"{item['schema']}.{item['table']}.{item['column']}"
+        for item in inventory
+        if isinstance(item, Mapping)
+        and isinstance(item.get("schema"), str)
+        and isinstance(item.get("table"), str)
+        and isinstance(item.get("column"), str)
+    }
     row_counts = summary["row_counts"]
-    if not isinstance(row_counts, Mapping) or set(row_counts) != EXPECTED_VECTOR_COLUMNS:
+    if not isinstance(row_counts, Mapping) or set(row_counts) != inventory_identities:
         return "embedding_provenance_unobserved"
     if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in row_counts.values()):
         return "embedding_provenance_unobserved"

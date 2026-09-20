@@ -227,7 +227,7 @@ async def test_grant_beta_is_tenant_bound_audited_and_upserts_metadata(database)
 
 
 @pytest.mark.asyncio
-async def test_apply_paid_state_preserves_current_period_usage_without_arrears(database) -> None:
+async def test_beta_to_paid_upgrade_applies_paid_allowance_and_starts_a_clean_period(database) -> None:
     session_factory, tenant_id, now = database
     period_start = now - timedelta(hours=1)
     async with session_factory() as session:
@@ -262,13 +262,14 @@ async def test_apply_paid_state_preserves_current_period_usage_without_arrears(d
         past_due_since=None,
     )
     async with session_factory() as session:
-        snapshot = await _service(session, now).apply_billing_state(tenant_id, state)
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 5000})
+        snapshot = await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
         await session.commit()
 
     assert snapshot.status is EntitlementStatus.PAID_ACTIVE
-    assert snapshot.allowance_jobs == 10
-    assert snapshot.used_jobs == 3
-    assert snapshot.period_start == period_start
+    assert snapshot.allowance_jobs == 5000
+    assert snapshot.used_jobs == 0
+    assert snapshot.period_start == now
 
 
 @pytest.mark.asyncio
@@ -370,9 +371,18 @@ async def test_h6_unknown_plan_refuses_instead_of_defaulting_allowance_to_zero(d
     )
 
     async with session_factory() as session:
-        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"other": 20})
+        with pytest.raises(ValueError, match="billable 'paid' plan"):
+            SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"other": 20})
+
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 20})
         with pytest.raises(ValueError, match="unknown entitlement plan"):
-            await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+            await repository.apply_billing_state(
+                tenant_id,
+                status=EntitlementStatus.PAID_ACTIVE,
+                now=now,
+                period_end=state.current_period_end,
+                plan_code="other",
+            )
 
 
 @pytest.mark.asyncio

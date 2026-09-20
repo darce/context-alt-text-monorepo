@@ -1,4 +1,16 @@
-"""Tenant-scoped persistence for portal entitlements."""
+"""Tenant-scoped persistence for portal entitlements.
+
+The entitlement state machine has deliberately narrow preservation rules.  An
+unexpired beta row stays independent when billing reports ``past_due``,
+``expired``, or ``revoked``; those billing states must not consume or replace
+the beta authorization.  A beta-to-paid transition recomputes the allowance
+from the paid plan and opens a fresh period, so beta usage is not arrears.
+Within one paid period, a repeated ``paid_active`` or a transition to
+``past_due`` preserves the purchased allowance.  Recovery into
+``paid_active`` recomputes it from the plan, while other period/status changes
+also recompute when the existing period is no longer current.  Beta grants
+may never overwrite a billing-sourced row, including a ``past_due`` paid row.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +30,8 @@ from db.models import TenantEntitlement, UsageReservation
 from recognition.domain.portal_contracts import EntitlementStatus, UsageReservationStatus
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
+_BILLING_SOURCE = "billing"
+_BILLING_PLAN_CODE = "paid"
 _BETA_PRESERVING_BILLING_STATUSES = frozenset(
     {
         EntitlementStatus.PAST_DUE,
@@ -116,7 +130,11 @@ class SqlAlchemyTenantEntitlementRepository:
         if plan_allowances is not None and allowance_by_plan is not None:
             raise ValueError("provide one plan allowance configuration")
         configured_allowances = plan_allowances if plan_allowances is not None else allowance_by_plan
-        self._plan_allowances = _validate_plan_allowances(configured_allowances or {})
+        if configured_allowances is None:
+            raise ValueError("plan_allowances must configure the billable 'paid' plan")
+        self._plan_allowances = _validate_plan_allowances(configured_allowances)
+        if not self._plan_allowances or _BILLING_PLAN_CODE not in self._plan_allowances:
+            raise ValueError("plan_allowances must configure the billable 'paid' plan")
         if past_due_grace is not None and past_due_grace_s is not None:
             raise ValueError("provide one past_due grace configuration")
         if past_due_grace_s is not None:
@@ -240,8 +258,12 @@ class SqlAlchemyTenantEntitlementRepository:
                 },
                 # WHY: active paid billing outranks a beta grant; an
                 # unexpired beta grant outranks non-active billing, so a
-                # repeated beta grant must never erase paid authorization.
-                where=TenantEntitlement.status != EntitlementStatus.PAID_ACTIVE.value,
+                # repeated beta grant must never erase paid authorization or
+                # any other billing-sourced state.
+                where=and_(
+                    TenantEntitlement.status != EntitlementStatus.PAID_ACTIVE.value,
+                    TenantEntitlement.source != _BILLING_SOURCE,
+                ),
             )
             await _with_timeout(
                 self._session.execute(statement),
@@ -257,7 +279,10 @@ class SqlAlchemyTenantEntitlementRepository:
             if row is None:
                 row = TenantEntitlement(**values)
                 self._session.add(row)
-            elif _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE:
+            elif (
+                _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE
+                and row.source != _BILLING_SOURCE
+            ):
                 self._set_beta_values(row, values)
 
         await _with_timeout(
@@ -343,10 +368,23 @@ class SqlAlchemyTenantEntitlementRepository:
                 EntitlementStatus.PAID_ACTIVE,
                 EntitlementStatus.PAST_DUE,
             }
-            if not preserve_allowance:
+            transitioning_from_beta_to_paid = (
+                existing_status is EntitlementStatus.BETA_ACTIVE
+                and normalized_status is EntitlementStatus.PAID_ACTIVE
+            )
+            recovering_to_paid = (
+                normalized_status is EntitlementStatus.PAID_ACTIVE
+                and existing_status is not EntitlementStatus.PAID_ACTIVE
+            )
+            if transitioning_from_beta_to_paid or recovering_to_paid or not preserve_allowance:
                 row.allowance_jobs = self._allowance_for_plan(normalized_plan_code)
                 row.allowance_version = "billing"
-            if not current_period:
+            if transitioning_from_beta_to_paid:
+                if normalized_period_end is None:
+                    raise ValueError("active paid entitlement requires period_end")
+                row.period_start = normalized_now
+                row.period_end = normalized_period_end
+            elif not current_period:
                 row.period_start = normalized_now
                 row.period_end = normalized_period_end or normalized_now
             elif normalized_period_end is not None:

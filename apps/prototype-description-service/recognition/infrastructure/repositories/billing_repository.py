@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import contextlib
+import logging
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -12,7 +13,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import BillingSubscriptionProjection, BillingWebhookInbox
+from db.tenant_context import (
+    clear_tenant_context,
+    disable_rls_bypass,
+    enable_rls_bypass,
+    set_tenant_context,
+)
+from recognition.application.scan.retry_backoff import compute_retry_backoff
 from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
+from recognition.shared.db.dialect import is_sqlite
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_WEBHOOK_MAX_ATTEMPTS = 5
+DEFAULT_WEBHOOK_RETRY_BACKOFF_BASE_SECONDS = 2.0
+DEFAULT_WEBHOOK_RETRY_BACKOFF_MAX_SECONDS = 60.0
 
 
 class BillingRepository:
@@ -23,8 +38,24 @@ class BillingRepository:
     a rejected projection cannot poison the caller's transaction.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        max_attempts: int = DEFAULT_WEBHOOK_MAX_ATTEMPTS,
+        retry_backoff_base_s: float = DEFAULT_WEBHOOK_RETRY_BACKOFF_BASE_SECONDS,
+        retry_backoff_max_s: float = DEFAULT_WEBHOOK_RETRY_BACKOFF_MAX_SECONDS,
+    ) -> None:
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer")
+        if retry_backoff_base_s < 0 or retry_backoff_max_s < 0:
+            raise ValueError("retry backoff values must be non-negative")
+        if retry_backoff_base_s > retry_backoff_max_s:
+            raise ValueError("retry_backoff_base_s must not exceed retry_backoff_max_s")
         self._session = session
+        self._max_attempts = max_attempts
+        self._retry_backoff_base_s = retry_backoff_base_s
+        self._retry_backoff_max_s = retry_backoff_max_s
 
     @property
     def session(self) -> AsyncSession:
@@ -47,8 +78,11 @@ class BillingRepository:
             statement = statement.where(BillingSubscriptionProjection.provider == provider)
         # tenant_id is unique, but keep the result bounded for defense in depth.
         statement = statement.limit(1)
-        result = await self._session.execute(statement)
-        return result.scalar_one_or_none()
+        # WHY: projection rows are tenant-scoped FORCE-RLS data, so every read
+        # must establish the requested tenant context for this statement.
+        async with self._tenant_context(tenant_id):
+            result = await self._session.execute(statement)
+            return result.scalar_one_or_none()
 
     async def get_webhook(
         self,
@@ -117,7 +151,7 @@ class BillingRepository:
         provider: str,
         provider_customer_id: str,
         provider_subscription_id: str | None,
-        status: BillingSubscriptionStatus,
+        status: BillingSubscriptionStatus | str,
         current_period_end: datetime | None,
         past_due_since: datetime | None,
         provider_event_id: str,
@@ -135,6 +169,34 @@ class BillingRepository:
         normalized_period_end = _coerce_optional_datetime(current_period_end, "current_period_end")
         normalized_past_due_since = _coerce_optional_datetime(past_due_since, "past_due_since")
 
+        # WHY: the projection has one row per tenant and is FORCE-RLS protected;
+        # keep its read/compare/write sequence inside one tenant context.
+        async with self._tenant_context(tenant_id):
+            return await self._upsert_projection(
+                tenant_id=tenant_id,
+                provider=provider,
+                provider_customer_id=provider_customer_id,
+                provider_subscription_id=provider_subscription_id,
+                status=normalized_status,
+                current_period_end=normalized_period_end,
+                past_due_since=normalized_past_due_since,
+                provider_event_id=provider_event_id,
+                event_position=normalized_position,
+            )
+
+    async def _upsert_projection(
+        self,
+        *,
+        tenant_id: UUID,
+        provider: str,
+        provider_customer_id: str,
+        provider_subscription_id: str | None,
+        status: BillingSubscriptionStatus,
+        current_period_end: datetime | None,
+        past_due_since: datetime | None,
+        provider_event_id: str,
+        event_position: datetime,
+    ) -> bool:
         # The projection has one row per tenant.  Lock the row where supported
         # (PostgreSQL) and retain the same compare-before-write behavior on SQLite.
         statement = (
@@ -152,18 +214,18 @@ class BillingRepository:
             if projection.last_event_id == provider_event_id:
                 return False
             stored_position = _coerce_position(projection.updated_at, "projection.updated_at")
-            if projection.last_event_id is not None and normalized_position <= stored_position:
+            if projection.last_event_id is not None and event_position <= stored_position:
                 return False
 
             projection.provider_customer_id = provider_customer_id
             projection.provider_subscription_id = provider_subscription_id
-            projection.status = normalized_status.value
-            projection.current_period_end = normalized_period_end
-            projection.past_due_since = normalized_past_due_since
+            projection.status = status.value
+            projection.current_period_end = current_period_end
+            projection.past_due_since = past_due_since
             projection.last_event_id = provider_event_id
             # ``updated_at`` is the model's stored event position.  It is set
             # explicitly because the foundation model has no separate cursor.
-            projection.updated_at = normalized_position
+            projection.updated_at = event_position
             await self._session.flush()
             return True
 
@@ -172,11 +234,11 @@ class BillingRepository:
             provider=provider,
             provider_customer_id=provider_customer_id,
             provider_subscription_id=provider_subscription_id,
-            status=normalized_status.value,
-            current_period_end=normalized_period_end,
-            past_due_since=normalized_past_due_since,
+            status=status.value,
+            current_period_end=current_period_end,
+            past_due_since=past_due_since,
             last_event_id=provider_event_id,
-            updated_at=normalized_position,
+            updated_at=event_position,
         )
         self._session.add(projection)
         await self._session.flush()
@@ -193,7 +255,7 @@ class BillingRepository:
         payload: Mapping[str, object],
         provider_customer_id: str,
         provider_subscription_id: str | None,
-        status: BillingSubscriptionStatus,
+        status: BillingSubscriptionStatus | str,
         current_period_end: datetime | None,
         past_due_since: datetime | None,
         event_position: datetime | str,
@@ -226,7 +288,7 @@ class BillingRepository:
         *,
         provider: str,
         provider_event_id: str,
-        status: WebhookInboxStatus = WebhookInboxStatus.PROCESSED,
+        status: WebhookInboxStatus | str = WebhookInboxStatus.PROCESSED,
         processed_at: datetime | None = None,
     ) -> bool:
         """Advance an inbox row using only the published status vocabulary."""
@@ -236,10 +298,36 @@ class BillingRepository:
         row = await self.get_webhook(provider=provider, provider_event_id=provider_event_id)
         if row is None:
             return False
-        row.status = normalized_status.value
-        row.attempts = int(row.attempts or 0) + 1
+
+        attempts = int(row.attempts or 0) + 1
+        row.attempts = attempts
         if normalized_status is WebhookInboxStatus.PROCESSED:
             row.processed_at = _coerce_optional_datetime(processed_at, "processed_at") or datetime.now(UTC)
+            row.status = normalized_status.value
+            row.next_attempt_at = None
+            row.quarantined_at = None
+        elif normalized_status is WebhookInboxStatus.FAILED:
+            failure_at = _coerce_optional_datetime(processed_at, "processed_at") or datetime.now(UTC)
+            if attempts >= self._max_attempts:
+                row.status = WebhookInboxStatus.DISCARDED.value
+                row.next_attempt_at = None
+                row.quarantined_at = failure_at
+            else:
+                row.status = normalized_status.value
+                row.next_attempt_at = failure_at + compute_retry_backoff(
+                    attempts,
+                    base_seconds=self._retry_backoff_base_s,
+                    max_seconds=self._retry_backoff_max_s,
+                )
+                row.quarantined_at = None
+        elif normalized_status is WebhookInboxStatus.DISCARDED:
+            row.status = normalized_status.value
+            row.next_attempt_at = None
+            row.quarantined_at = _coerce_optional_datetime(processed_at, "processed_at") or datetime.now(UTC)
+        else:
+            row.status = normalized_status.value
+            row.next_attempt_at = None
+            row.quarantined_at = None
         await self._session.flush()
         return True
 
@@ -250,11 +338,48 @@ class BillingRepository:
         statement = (
             select(BillingWebhookInbox)
             .where(BillingWebhookInbox.status.in_([WebhookInboxStatus.RECEIVED.value, WebhookInboxStatus.FAILED.value]))
+            .where(BillingWebhookInbox.attempts < self._max_attempts)
+            .where(
+                BillingWebhookInbox.next_attempt_at.is_(None)
+                | (BillingWebhookInbox.next_attempt_at <= datetime.now(UTC))
+            )
             .order_by(BillingWebhookInbox.received_at, BillingWebhookInbox.id)
             .limit(limit)
         )
-        result = await self._session.execute(statement)
-        return list(result.scalars().all())
+        # WHY: the worker scan intentionally spans tenants because inbox rows
+        # have no tenant key; use the approved maintenance bypass only around
+        # this bounded read and always release it on success or failure.
+        async with self._maintenance_rls_bypass():
+            result = await self._session.execute(statement)
+            return list(result.scalars().all())
+
+    @contextlib.asynccontextmanager
+    async def _tenant_context(self, tenant_id: UUID) -> AsyncIterator[None]:
+        if _is_sqlite_session(self._session):
+            yield
+            return
+        try:
+            await set_tenant_context(self._session, tenant_id)
+            yield
+        finally:
+            await clear_tenant_context(self._session)
+
+    @contextlib.asynccontextmanager
+    async def _maintenance_rls_bypass(self) -> AsyncIterator[None]:
+        if _is_sqlite_session(self._session):
+            yield
+            return
+        try:
+            await enable_rls_bypass(self._session)
+            yield
+        except BaseException:
+            try:
+                await disable_rls_bypass(self._session)
+            except Exception:  # noqa: BLE001 - preserve the original scan failure
+                logger.warning("billing inbox RLS context reset failed")
+            raise
+        else:
+            await disable_rls_bypass(self._session)
 
     # Small, explicit aliases keep the repository useful to the future worker
     # without introducing another persistence implementation.
@@ -276,20 +401,20 @@ def _validate_uuid(name: str, value: object) -> None:
         raise ValueError(f"{name} must be a UUID")
 
 
-def _coerce_subscription_status(value: BillingSubscriptionStatus) -> BillingSubscriptionStatus:
+def _coerce_subscription_status(value: BillingSubscriptionStatus | str) -> BillingSubscriptionStatus:
     if isinstance(value, BillingSubscriptionStatus):
         return value
     try:
-        return BillingSubscriptionStatus(cast(str, value))
+        return BillingSubscriptionStatus(value)
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid billing subscription status") from exc
 
 
-def _coerce_inbox_status(value: WebhookInboxStatus) -> WebhookInboxStatus:
+def _coerce_inbox_status(value: WebhookInboxStatus | str) -> WebhookInboxStatus:
     if isinstance(value, WebhookInboxStatus):
         return value
     try:
-        return WebhookInboxStatus(cast(str, value))
+        return WebhookInboxStatus(value)
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid webhook inbox status") from exc
 
@@ -318,4 +443,17 @@ def _coerce_optional_datetime(value: datetime | None, name: str) -> datetime | N
     return _coerce_position(value, name)
 
 
-__all__ = ["BillingRepository", "SqlAlchemyBillingRepository"]
+def _is_sqlite_session(session: AsyncSession) -> bool:
+    if is_sqlite(session):
+        return True
+    wrapped = getattr(session, "_session", None)
+    return wrapped is not None and is_sqlite(wrapped)
+
+
+__all__ = [
+    "BillingRepository",
+    "DEFAULT_WEBHOOK_MAX_ATTEMPTS",
+    "DEFAULT_WEBHOOK_RETRY_BACKOFF_BASE_SECONDS",
+    "DEFAULT_WEBHOOK_RETRY_BACKOFF_MAX_SECONDS",
+    "SqlAlchemyBillingRepository",
+]

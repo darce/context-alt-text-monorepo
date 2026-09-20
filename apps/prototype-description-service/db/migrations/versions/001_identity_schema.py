@@ -35,6 +35,7 @@ TENANT_TABLES = [
     "billing_subscription_projection",
     "api_key_rotation_history",
     "tenant_key_idempotency",
+    "portal_tenant_invitation",
     "describe_operations",
     "describe_demand_leases",
     "media_identities",
@@ -106,6 +107,7 @@ EXPECTED_SCHEMA_TABLES = [
     "billing_webhook_inbox",
     "api_key_rotation_history",
     "tenant_key_idempotency",
+    "portal_tenant_invitation",
     "demo_instances",
     "worker_capabilities",
     "media_identities",
@@ -144,6 +146,7 @@ DOWNGRADE_TABLE_ORDER = [
     "describe_demand_leases",
     "describe_operations",
     "describe_startups",
+    "portal_tenant_invitation",
     "tenant_key_idempotency",
     "api_key_rotation_history",
     "billing_webhook_inbox",
@@ -722,6 +725,39 @@ def ensure_tables(op) -> None:
         ),
     )
     _ensure_index(op, "idx_tenant_key_idempotency_reclaim", "tenant_key_idempotency", ["created_at"])
+
+    # APP-R1: the invitation is the ONLY evidence that authorises binding a new
+    # (issuer, subject) to an existing tenant. Only the hash is stored, so a
+    # database read cannot mint a usable token [SECD-03].
+    _ensure_table(
+        op,
+        "portal_tenant_invitation",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("invited_email", sa.Text(), nullable=False),
+        sa.Column("token_hash", sa.Text(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("accepted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "accepted_by_identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("portal_identity.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("token_hash", name="uq_portal_tenant_invitation_token_hash"),
+    )
+    _ensure_index(
+        op,
+        "idx_portal_tenant_invitation_reclaim",
+        "portal_tenant_invitation",
+        ["expires_at", "accepted_at"],
+    )
 
     # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
     # slug (not tenant_id); raw API key is never stored — only a hash/ref.
@@ -3114,6 +3150,8 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
+    op.drop_index("idx_portal_tenant_invitation_reclaim", table_name="portal_tenant_invitation")
+    op.drop_index("idx_tenant_key_idempotency_reclaim", table_name="tenant_key_idempotency")
     op.drop_index("idx_api_key_rotation_history_reclaim", table_name="api_key_rotation_history")
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")

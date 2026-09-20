@@ -820,25 +820,50 @@ def test_redaction_surfaces_cover_stdout_json_report_and_exit_reason(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    "tenant_as_wrapper",
-    (True, False),
-    ids=("mapping-wrapped", "bare-string"),
+    ("snapshot_shape", "policy_shape"),
+    (
+        ("mapping-wrapped", "string"),
+        ("bare-string", "string"),
+        ("list", "string"),
+        ("missing-value-wrapper", "string"),
+        ("mapping-wrapped", "list"),
+        ("mapping-wrapped", "mapping"),
+    ),
 )
-def test_tenant_and_required_policy_id_are_coarsely_tokenized_in_report(tenant_as_wrapper: bool) -> None:
+def test_tenant_and_required_policy_id_are_coarsely_tokenized_in_report(
+    snapshot_shape: str,
+    policy_shape: str,
+) -> None:
     snapshot = _case_snapshot("valid_empty_fir_store")
     isolation_policy = _load_fixture("isolation_policy.json")
     tenant_id = isolation_policy["required_tenant_id"]
     assert snapshot["tenant_id"]["value"] == tenant_id
-    if not tenant_as_wrapper:
+
+    if snapshot_shape == "bare-string":
         snapshot["tenant_id"] = tenant_id
+        snapshot_token = _coarse_token(tenant_id)
+    elif snapshot_shape == "list":
+        snapshot["tenant_id"] = [tenant_id]
+        snapshot_token = _coarse_token(str(snapshot["tenant_id"]))
+    elif snapshot_shape == "missing-value-wrapper":
+        snapshot["tenant_id"] = {"val": tenant_id, "provenance": "x"}
+        snapshot_token = _coarse_token(str(snapshot["tenant_id"]))
+    else:
+        snapshot_token = _coarse_token(tenant_id)
+
+    if policy_shape == "list":
+        isolation_policy["required_tenant_id"] = [tenant_id]
+    elif policy_shape == "mapping":
+        isolation_policy["required_tenant_id"] = {"v": tenant_id}
+    policy_token = _coarse_token(str(isolation_policy["required_tenant_id"]))
 
     result = _validate_custom_snapshot(snapshot, isolation_policy=isolation_policy)
     report_json = json.dumps(result["report"], sort_keys=True)
-    coarse_token = _coarse_token(tenant_id)
 
     assert tenant_id not in report_json
-    assert coarse_token in report_json
-    assert result["report"]["isolation_policy"]["required_tenant_id"] == coarse_token
+    assert snapshot_token in report_json
+    assert policy_token in report_json
+    assert result["report"]["isolation_policy"]["required_tenant_id"] == policy_token
 
 
 def test_model_ids_remain_full_on_observation_and_provenance_report_paths(tmp_path: Path) -> None:

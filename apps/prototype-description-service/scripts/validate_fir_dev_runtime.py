@@ -288,8 +288,7 @@ def _build_report(
     redacted_isolation_policy = report["isolation_policy"]
     if isinstance(redacted_isolation_policy, dict) and isinstance(isolation_policy, Mapping):
         required_tenant_id = isolation_policy.get("required_tenant_id")
-        if isinstance(required_tenant_id, str):
-            redacted_isolation_policy["required_tenant_id"] = _coarse_space_token(required_tenant_id)
+        redacted_isolation_policy["required_tenant_id"] = _coarse_space_token(str(required_tenant_id))
 
     redacted_snapshot = report["snapshot"]
     if not isinstance(redacted_snapshot, dict):
@@ -301,8 +300,8 @@ def _build_report(
     tenant_field = snapshot.get("tenant_id")
     if isinstance(tenant_field, Mapping) and "value" in tenant_field:
         redacted_snapshot["tenant_id"] = _redacted_field(tenant_field, tenant_field["value"])
-    elif isinstance(tenant_field, str):
-        redacted_snapshot["tenant_id"] = _coarse_space_token(tenant_field)
+    else:
+        redacted_snapshot["tenant_id"] = _coarse_space_token(str(tenant_field))
 
     return report
 

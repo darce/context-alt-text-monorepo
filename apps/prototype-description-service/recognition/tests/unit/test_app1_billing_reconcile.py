@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from recognition.domain.portal_contracts import BillingState, BillingSubscriptionStatus, WebhookInboxStatus
+from scripts import billing_reconcile as billing_reconcile_module
 from scripts.billing_reconcile import (
     MAX_BATCH_SIZE,
     ReconcileConfig,
@@ -48,12 +49,14 @@ def _row(
 
 
 class _Repository:
-    def __init__(self, rows: list[SimpleNamespace]) -> None:
+    def __init__(self, rows: list[SimpleNamespace], *, session: object | None = None) -> None:
         self.rows = rows
         self.projections: dict[UUID, SimpleNamespace] = {}
         self.list_limits: list[int] = []
         self.upserts: list[dict[str, object]] = []
         self.marks: list[dict[str, object]] = []
+        self.session = session
+        self.entitlement_service = _EntitlementService()
 
     async def list_pending_webhooks(self, *, limit: int) -> list[SimpleNamespace]:
         self.list_limits.append(limit)
@@ -184,6 +187,11 @@ class _EntitlementService:
         self.states.append(state)
 
 
+class _FailingEntitlementService(_EntitlementService):
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> None:
+        raise RuntimeError("simulated entitlement write failure")
+
+
 def _config(**updates: object) -> ReconcileConfig:
     values: dict[str, object] = {
         "provider_timeout_s": 0.1,
@@ -274,6 +282,88 @@ async def test_h1_dry_run_does_not_apply_billing_state() -> None:
     assert entitlement_service.states == []
     assert repository.upserts == []
     assert repository.marks == []
+
+
+@pytest.mark.asyncio
+async def test_projected_event_applies_entitlement_before_processed_marker() -> None:
+    row = _row("evt-projected")
+    repository = _Repository([row])
+    repository.projections[_TENANT_ID] = SimpleNamespace(
+        provider="polar",
+        provider_customer_id="cus-evt-projected",
+        provider_subscription_id="sub-evt-projected",
+        status=BillingSubscriptionStatus.ACTIVE.value,
+        current_period_end=_BASE_POSITION + timedelta(days=30),
+        past_due_since=None,
+        last_event_id="evt-projected",
+        updated_at=_BASE_POSITION,
+    )
+
+    report = await reconcile(repository, _Provider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 0
+    assert report.duplicates == 1
+    assert len(repository.entitlement_service.states) == 1
+    assert repository.marks[-1]["status"] is WebhookInboxStatus.PROCESSED
+
+
+@pytest.mark.asyncio
+async def test_entitlement_context_is_released_after_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = object()
+    repository = _Repository([_row("evt-context")], session=session)
+    calls: list[tuple[str, object, UUID | None]] = []
+
+    async def set_context(candidate: object, tenant_id: UUID) -> None:
+        calls.append(("set", candidate, tenant_id))
+
+    async def clear_context(candidate: object) -> None:
+        calls.append(("clear", candidate, None))
+
+    monkeypatch.setattr(billing_reconcile_module, "set_tenant_context", set_context)
+    monkeypatch.setattr(billing_reconcile_module, "clear_tenant_context", clear_context)
+
+    report = await reconcile(repository, _Provider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 0
+    assert calls == [("set", session, _TENANT_ID), ("clear", session, None)]
+
+
+@pytest.mark.asyncio
+async def test_entitlement_context_is_released_when_write_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = object()
+    repository = _Repository([_row("evt-context-failure")], session=session)
+    repository.entitlement_service = _FailingEntitlementService()
+    calls: list[tuple[str, object, UUID | None]] = []
+
+    async def set_context(candidate: object, tenant_id: UUID) -> None:
+        calls.append(("set", candidate, tenant_id))
+
+    async def clear_context(candidate: object) -> None:
+        calls.append(("clear", candidate, None))
+
+    monkeypatch.setattr(billing_reconcile_module, "set_tenant_context", set_context)
+    monkeypatch.setattr(billing_reconcile_module, "clear_tenant_context", clear_context)
+
+    report = await reconcile(repository, _Provider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert calls == [("set", session, _TENANT_ID), ("clear", session, None)]
+    assert [mark["status"] for mark in repository.marks] == [WebhookInboxStatus.FAILED]
+    assert all(mark["status"] is not WebhookInboxStatus.PROCESSED for mark in repository.marks)
+
+
+@pytest.mark.asyncio
+async def test_missing_entitlement_service_is_a_row_failure() -> None:
+    repository = _Repository([_row("evt-no-service")])
+    repository.entitlement_service = None
+
+    report = await reconcile(repository, _Provider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert [mark["status"] for mark in repository.marks] == [WebhookInboxStatus.FAILED]
+    assert repository.rows[0].status == WebhookInboxStatus.FAILED.value
 
 
 @pytest.mark.asyncio
@@ -529,6 +619,41 @@ def test_required_config_and_malformed_config_fail_fast() -> None:
         ReconcileConfig.from_env({})
     with pytest.raises(ValueError, match="finite number"):
         ReconcileConfig.from_env({"BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS": "not-a-number"})
+
+
+@pytest.mark.asyncio
+async def test_documented_cli_path_builds_runtime_without_injection_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider = _Provider()
+    built: list[tuple[object | None, object | None]] = []
+
+    async def build_runtime(
+        config: ReconcileConfig | None,
+        *,
+        repository: object | None,
+        provider: object | None,
+    ) -> object:
+        built.append((repository, provider))
+        return billing_reconcile_module._RuntimeDependencies(
+            repository=repository or _Repository([]),
+            provider=provider or provider_from_test,
+            config=config or _config(),
+        )
+
+    provider_from_test = provider
+    monkeypatch.setattr(billing_reconcile_module, "_build_runtime", build_runtime)
+
+    exit_code = await billing_reconcile_module.run(
+        ["--once", "--batch-size", "100"],
+        config=_config(),
+        sleeper=_no_sleep,
+    )
+
+    assert exit_code == 0
+    assert built == [(None, None)]
+    assert "requires injected repository and provider" not in capsys.readouterr().err
 
 
 @pytest.mark.asyncio

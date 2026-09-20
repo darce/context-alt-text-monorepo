@@ -1,30 +1,29 @@
 """Bounded reconciliation of the verified billing webhook inbox.
 
-The command is deliberately a composition seam: the database repository and
-provider are injected by the caller.  This keeps vendor transport, credentials,
-and application startup out of the worker while making the retry and timeout
-policy testable without a network.
+The worker keeps repository and provider injection for tests, while the module
+entrypoint composes the production dependencies from service configuration.
+Provider calls and entitlement writes remain bounded and transaction-aware.
 
 Usage:
     python -m scripts.billing_reconcile --once --batch-size 100
     python -m scripts.billing_reconcile --loop --max-cycles 2
 
-The standalone command validates its numeric configuration and reports that an
-injected repository/provider are required.  Runtime wiring belongs to the
-application composition root in a later wave.
+The standalone command validates configuration before opening a worker cycle.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import inspect
+import json
 import logging
 import math
 import os
 import random
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -33,6 +32,8 @@ from uuid import UUID
 from sqlalchemy import select
 
 from db.models import BillingWebhookInbox
+from db.tenant_context import clear_tenant_context, set_tenant_context
+from recognition.config.settings import RecognitionSettings
 from recognition.domain.portal_contracts import (
     BillingProvider,
     BillingState,
@@ -102,6 +103,59 @@ class UnsupportedWebhookError(ReconciliationError):
 
 ProviderUnavailable = ProviderUnavailableError
 UnsupportedWebhook = UnsupportedWebhookError
+
+
+@dataclass(slots=True)
+class _RuntimeDependencies:
+    repository: BillingRepositoryLike
+    provider: ReconciliationProvider
+    config: ReconcileConfig
+    session: object | None = None
+    http_client: object | None = None
+
+    async def close(self) -> None:
+        try:
+            if self.http_client is not None:
+                close = getattr(self.http_client, "aclose", None)
+                if callable(close):
+                    await _maybe_await(close())
+        finally:
+            if self.session is not None:
+                close = getattr(self.session, "close", None)
+                if callable(close):
+                    await _maybe_await(close())
+
+
+class _HttpxBillingClient:
+    """Adapt httpx's timeout keyword to the provider transport protocol."""
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        request_timeout: float,
+    ) -> object:
+        method = getattr(self._client, "get", None)
+        if not callable(method):
+            raise ReconciliationError("billing HTTP client does not expose GET")
+        return await _maybe_await(method(url, headers=headers, timeout=request_timeout))
+
+    async def post(
+        self,
+        url: str,
+        *,
+        json: Mapping[str, object],
+        headers: Mapping[str, str],
+        request_timeout: float,
+    ) -> object:
+        method = getattr(self._client, "post", None)
+        if not callable(method):
+            raise ReconciliationError("billing HTTP client does not expose POST")
+        return await _maybe_await(method(url, json=json, headers=headers, timeout=request_timeout))
 
 
 class BillingRepositoryLike(Protocol):
@@ -439,6 +493,7 @@ class BillingReconciliationWorker:
                 if writable_row is None:
                     await self._rollback()
                     return _RowOutcome()
+                await self._apply_billing_state(self._state_from_projection(projection, context))
                 await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
                 self._log_row(row, "processed", action=change.action)
                 return _RowOutcome(progressed=True, duplicate=True)
@@ -486,6 +541,7 @@ class BillingReconciliationWorker:
                 )
 
             if action == "skip_stale":
+                await self._apply_billing_state(self._state_from_projection(projection, context))
                 await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
                 self._log_row(row, "processed", action=action)
                 return _RowOutcome(progressed=True, stale=True)
@@ -505,6 +561,8 @@ class BillingReconciliationWorker:
             )
             if changed:
                 await self._apply_billing_state(state)
+            elif action == "skip_duplicate":
+                await self._apply_billing_state(self._state_from_projection(projection, context))
             await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
             self._log_row(row, "processed", action="update_projection" if changed else "skip_stale")
             return _RowOutcome(
@@ -567,7 +625,9 @@ class BillingReconciliationWorker:
 
                 service = TenantEntitlementService(session)
         if service is None:
-            return
+            raise ReconciliationError(
+                "entitlement service unavailable; refusing to mark inbox row processed"
+            )
 
         apply_state = getattr(service, "apply_billing_state", None)
         if not callable(apply_state):
@@ -579,7 +639,63 @@ class BillingReconciliationWorker:
             current_period_end=state.current_period_end,
             past_due_since=state.past_due_since,
         )
-        await _maybe_await(apply_state(state.tenant_id, billing_state))
+        async with self._entitlement_tenant_context(service, state.tenant_id):
+            await _maybe_await(apply_state(state.tenant_id, billing_state))
+
+    @contextlib.asynccontextmanager
+    async def _entitlement_tenant_context(
+        self,
+        service: object,
+        tenant_id: UUID,
+    ) -> AsyncIterator[None]:
+        session = _entitlement_session(service, self._repository)
+        if session is None:
+            yield
+            return
+        try:
+            await set_tenant_context(session, tenant_id)
+            yield
+        finally:
+            await clear_tenant_context(session)
+
+    def _state_from_projection(
+        self,
+        projection: object | None,
+        context: _EventContext,
+    ) -> AuthoritativeBillingState:
+        if projection is None:
+            raise ReconciliationError("billing projection is required before entitlement application")
+        status_value = _projection_value(projection, "status")
+        try:
+            status = (
+                status_value
+                if isinstance(status_value, BillingSubscriptionStatus)
+                else BillingSubscriptionStatus(status_value)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ReconciliationError("billing projection has an unknown subscription status") from exc
+        provider_customer_id = _normalize_customer_id(_projection_value(projection, "provider_customer_id"))
+        provider_subscription_id = _projection_value(projection, "provider_subscription_id")
+        if provider_subscription_id is not None and not isinstance(provider_subscription_id, str):
+            raise ReconciliationError("billing projection subscription id must be a string")
+        return AuthoritativeBillingState(
+            tenant_id=context.tenant_id,
+            provider_customer_id=provider_customer_id,
+            provider_subscription_id=provider_subscription_id,
+            status=status,
+            current_period_end=_optional_datetime(
+                _projection_value(projection, "current_period_end"),
+                "billing projection current_period_end",
+            ),
+            past_due_since=_optional_datetime(
+                _projection_value(projection, "past_due_since"),
+                "billing projection past_due_since",
+            ),
+            event_position=_parse_datetime(
+                _projection_value(projection, "updated_at"),
+                "billing projection event position",
+            ),
+        )
 
     async def _dry_run_failure(
         self,
@@ -904,6 +1020,303 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _build_runtime(
+    config: ReconcileConfig | None,
+    *,
+    repository: BillingRepositoryLike | None,
+    provider: ReconciliationProvider | None,
+) -> _RuntimeDependencies:
+    settings = _load_recognition_settings()
+    secret_provider = _load_secret_provider()
+    resolved_config = config or _reconcile_config_from_settings(settings, secret_provider)
+    session: object | None = None
+    http_client: object | None = None
+    try:
+        if repository is None:
+            from db.session import async_session_factory
+            from recognition.infrastructure.repositories.billing_repository import BillingRepository
+
+            session = async_session_factory()
+            repository = BillingRepository(session)
+        if provider is None:
+            import httpx
+
+            from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
+
+            webhook_secret = _required_runtime_value(
+                settings,
+                secret_provider,
+                names=("polar_webhook_secret", "webhook_secret"),
+                keys=("POLAR_WEBHOOK_SECRET",),
+            )
+            access_token = _required_runtime_value(
+                settings,
+                secret_provider,
+                names=("polar_access_token", "polar_api_token", "access_token", "api_token"),
+                keys=("POLAR_ACCESS_TOKEN", "POLAR_API_TOKEN"),
+            )
+            product_ids = _product_ids_from_runtime(settings, secret_provider)
+            base_url = _runtime_text_value(
+                settings,
+                secret_provider,
+                names=("polar_base_url", "base_url"),
+                keys=("POLAR_BASE_URL", "POLAR_API_BASE_URL"),
+                default="https://api.polar.sh",
+            )
+            environment = _runtime_text_value(
+                settings,
+                secret_provider,
+                names=("polar_environment", "environment"),
+                keys=("POLAR_ENVIRONMENT",),
+                default="sandbox",
+            )
+            payments_enabled = _runtime_bool_value(
+                settings,
+                secret_provider,
+                names=("polar_payments_enabled", "payments_enabled"),
+                keys=("POLAR_PAYMENTS_ENABLED",),
+                default=False,
+            )
+            transport = httpx.AsyncClient(timeout=resolved_config.provider_timeout_s)
+            http_client = transport
+            provider = PolarBillingProvider(
+                _HttpxBillingClient(transport),
+                webhook_secret=webhook_secret,
+                access_token=access_token,
+                product_ids=product_ids,
+                base_url=base_url,
+                timeout=resolved_config.provider_timeout_s,
+                payments_enabled=payments_enabled,
+                environment=environment,
+            )
+    except ConfigurationError:
+        await _close_runtime_parts(session, http_client)
+        raise
+    except ValueError as exc:
+        await _close_runtime_parts(session, http_client)
+        raise ConfigurationError("invalid billing reconciliation runtime configuration") from exc
+    except Exception:
+        await _close_runtime_parts(session, http_client)
+        raise
+    if repository is None or provider is None:
+        await _close_runtime_parts(session, http_client)
+        raise ConfigurationError("billing reconciliation runtime dependencies are incomplete")
+    return _RuntimeDependencies(
+        repository=repository,
+        provider=provider,
+        config=resolved_config,
+        session=session,
+        http_client=http_client,
+    )
+
+
+def _load_recognition_settings() -> RecognitionSettings:
+    try:
+        return RecognitionSettings()
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("recognition settings are invalid") from exc
+
+
+def _load_secret_provider() -> object:
+    try:
+        from shared.secrets import get_secret_provider
+
+        return get_secret_provider()
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("secret configuration is unavailable") from exc
+
+
+def _reconcile_config_from_settings(settings: object, secret_provider: object) -> ReconcileConfig:
+    values: dict[str, str] = {}
+    config_names = {
+        "BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS": (
+            "billing_reconcile_provider_timeout_seconds",
+            "provider_timeout_seconds",
+            "provider_timeout_s",
+        ),
+        "BILLING_RECONCILE_RETRY_ATTEMPTS": ("billing_reconcile_retry_attempts", "retry_attempts"),
+        "BILLING_RECONCILE_RETRY_INITIAL_DELAY_SECONDS": (
+            "billing_reconcile_retry_initial_delay_seconds",
+            "retry_initial_delay_seconds",
+            "retry_initial_delay_s",
+        ),
+        "BILLING_RECONCILE_RETRY_MAX_DELAY_SECONDS": (
+            "billing_reconcile_retry_max_delay_seconds",
+            "retry_max_delay_seconds",
+            "retry_max_delay_s",
+        ),
+        "BILLING_RECONCILE_RETRY_JITTER_SECONDS": (
+            "billing_reconcile_retry_jitter_seconds",
+            "retry_jitter_seconds",
+            "retry_jitter_s",
+        ),
+        "BILLING_RECONCILE_STALL_LIMIT": ("billing_reconcile_stall_limit", "stall_limit"),
+        "BILLING_RECONCILE_POLL_INTERVAL_SECONDS": (
+            "billing_reconcile_poll_interval_seconds",
+            "poll_interval_seconds",
+            "poll_interval_s",
+        ),
+    }
+    for key, names in config_names.items():
+        value = _runtime_setting_value(settings, names)
+        if value is None:
+            value = _secret_value(secret_provider, key)
+        if value is not None:
+            values[key] = str(value)
+    try:
+        return ReconcileConfig.from_env(values)
+    except ConfigurationError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("billing reconciliation settings are invalid") from exc
+
+
+def _required_runtime_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+) -> str:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"missing required configuration {keys[0]}")
+    return value
+
+
+def _runtime_text_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+    default: str,
+) -> str:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"invalid configuration {keys[0]}")
+    return value.strip()
+
+
+def _runtime_bool_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+    default: bool,
+) -> bool:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"invalid configuration {keys[0]}")
+
+
+def _product_ids_from_runtime(settings: object, secret_provider: object) -> dict[str, str]:
+    value = _runtime_setting_value(settings, ("polar_product_ids", "product_ids"))
+    if value is None:
+        value = _secret_value(secret_provider, "POLAR_PRODUCT_IDS")
+    if value is None:
+        single = _secret_value(secret_provider, "POLAR_PRODUCT_ID")
+        if single is not None:
+            value = {"paid": single}
+    if isinstance(value, Mapping):
+        result = {str(key).strip(): str(item).strip() for key, item in value.items()}
+    elif isinstance(value, str):
+        result = _parse_product_ids(value)
+    else:
+        result = {}
+    if not result or any(not key or not item for key, item in result.items()):
+        raise ConfigurationError("missing required configuration POLAR_PRODUCT_IDS")
+    return result
+
+
+def _parse_product_ids(raw: str) -> dict[str, str]:
+    stripped = raw.strip()
+    if not stripped:
+        return {}
+    if stripped.startswith("{"):
+        try:
+            decoded = json.loads(stripped)
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS") from exc
+        if not isinstance(decoded, Mapping):
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS")
+        return {str(key).strip(): str(value).strip() for key, value in decoded.items()}
+    result: dict[str, str] = {}
+    for item in stripped.split(","):
+        separator = "=" if "=" in item else ":"
+        if separator not in item:
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS")
+        plan, product_id = item.split(separator, 1)
+        result[plan.strip()] = product_id.strip()
+    return result
+
+
+def _runtime_setting_value(settings: object, names: Sequence[str]) -> object | None:
+    sources = (
+        settings,
+        getattr(settings, "billing", None),
+        getattr(settings, "polar", None),
+    )
+    for source in sources:
+        if source is None:
+            continue
+        for name in names:
+            if isinstance(source, Mapping):
+                value = source.get(name)
+            else:
+                value = getattr(source, name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _secret_value(secret_provider: object, key: str) -> str | None:
+    getter = getattr(secret_provider, "get_secret_optional", None)
+    if not callable(getter):
+        raise ConfigurationError("secret configuration is unavailable")
+    try:
+        value = getter(key)
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("secret configuration is unavailable") from exc
+    return value if isinstance(value, str) else None
+
+
+async def _close_runtime_parts(session: object | None, http_client: object | None) -> None:
+    if http_client is not None:
+        close = getattr(http_client, "aclose", None)
+        if callable(close):
+            await _maybe_await(close())
+    if session is not None:
+        close = getattr(session, "close", None)
+        if callable(close):
+            await _maybe_await(close())
+
+
 async def run(
     argv: Sequence[str] | None = None,
     *,
@@ -915,54 +1328,61 @@ async def run(
     sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
     random_value: Callable[[], float] = random.random,
 ) -> int:
-    """CLI-compatible async entry point with dependency injection."""
+    """CLI-compatible async entry point with optional dependency injection."""
 
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.once and args.max_cycles not in (None, 1):
         parser.error("--max-cycles is only valid with --loop")
 
-    if config is None:
-        if repository is None or provider is None:
-            try:
-                config = ReconcileConfig.from_env()
-            except ConfigurationError as exc:
-                sys.stderr.write(f"error: {exc}\n")
-                sys.stderr.flush()
-                return 2
-        else:
-            config = ReconcileConfig()
+    runtime: _RuntimeDependencies | None = None
     if repository is None or provider is None:
-        sys.stderr.write("error: billing reconciliation requires injected repository and provider\n")
-        sys.stderr.flush()
-        return 2
+        try:
+            runtime = await _build_runtime(
+                config,
+                repository=repository,
+                provider=provider,
+            )
+        except ConfigurationError as exc:
+            sys.stderr.write(f"error: {exc}\n")
+            sys.stderr.flush()
+            return 2
+        repository = runtime.repository
+        provider = runtime.provider
+        config = runtime.config
+    elif config is None:
+        config = ReconcileConfig()
 
-    report = await reconcile(
-        repository,
-        provider,
-        entitlement_service=entitlement_service,
-        config=config,
-        loop=args.loop,
-        max_cycles=args.max_cycles,
-        batch_size=args.batch_size,
-        dry_run=args.dry_run,
-        clock=clock,
-        sleeper=sleeper,
-        random_value=random_value,
-    )
-    sys.stderr.write(
-        f"billing_reconcile cycles={report.cycles} processed={report.processed} ignored={report.ignored} "
-        f"failed={report.failed} changed={report.changed} stale={report.stale} duplicates={report.duplicates} "
-        f"unresolved={report.unresolved_failures} stalled={report.stalled} dry_run={args.dry_run}\n"
-    )
-    for change in report.changes:
-        sys.stderr.write(
-            f"billing_reconcile dry_run_action inbox_row_id={change.inbox_row_id} "
-            f"provider_event_id={change.provider_event_id} tenant_id={change.tenant_id or ''} "
-            f"action={change.action}\n"
+    try:
+        report = await reconcile(
+            repository,
+            provider,
+            entitlement_service=entitlement_service,
+            config=config,
+            loop=args.loop,
+            max_cycles=args.max_cycles,
+            batch_size=args.batch_size,
+            dry_run=args.dry_run,
+            clock=clock,
+            sleeper=sleeper,
+            random_value=random_value,
         )
-    sys.stderr.flush()
-    return report.exit_code
+        sys.stderr.write(
+            f"billing_reconcile cycles={report.cycles} processed={report.processed} ignored={report.ignored} "
+            f"failed={report.failed} changed={report.changed} stale={report.stale} duplicates={report.duplicates} "
+            f"unresolved={report.unresolved_failures} stalled={report.stalled} dry_run={args.dry_run}\n"
+        )
+        for change in report.changes:
+            sys.stderr.write(
+                f"billing_reconcile dry_run_action inbox_row_id={change.inbox_row_id} "
+                f"provider_event_id={change.provider_event_id} tenant_id={change.tenant_id or ''} "
+                f"action={change.action}\n"
+            )
+        sys.stderr.flush()
+        return report.exit_code
+    finally:
+        if runtime is not None:
+            await runtime.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1333,6 +1753,18 @@ def _safe_log_id(row: object, name: str) -> str:
     if value is None:
         return "unknown"
     return str(value)
+
+
+def _entitlement_session(service: object, repository: object) -> object | None:
+    candidates = [service, getattr(service, "_repository", None), repository]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        for name in ("session", "_session"):
+            session = getattr(candidate, name, None)
+            if session is not None:
+                return session
+    return None
 
 
 async def _maybe_await(value: object) -> Any:

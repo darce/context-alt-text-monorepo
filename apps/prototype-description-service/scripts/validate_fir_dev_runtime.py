@@ -5,11 +5,16 @@ observations collected by the runtime, applies the supplied freshness and
 isolation policies, and returns a machine-readable readiness result with one
 of the stable ``ready``, ``incomplete``, or ``invalid`` statuses.
 
-The checks have a fixed precedence.  Secret-shaped values are refused before
-any other check, model identifiers are parsed only to validate their opaque
-name and suffix, and provenance is checked only at the explicit contract
-paths.  A report is built before refusal and replaces secret-shaped strings;
-role model IDs and the tenant ID are represented by coarse SHA-256 tokens.
+The checks have a fixed precedence.  Structural validation runs before the
+contract rungs, followed by secret-shape and model-id parsing, freshness,
+tenant isolation, runtime contract, database dimensions, model assets,
+provenance, and persisted-store evidence.  A report is built before refusal
+and replaces secret-shaped strings; role model IDs and the tenant ID are
+represented by coarse SHA-256 tokens.  Keep this order stable:
+``schema -> secret shape -> model-id parse -> freshness -> tenant ->
+forbidden resources -> auth -> adapter -> image -> dimension -> model
+contract -> database dimension -> weight hashes -> provenance -> database
+identity -> vector inventory -> store state``.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from collections.abc import Iterable, Mapping
@@ -37,6 +43,51 @@ ROLE_FIELDS = (
     "source_git_sha",
 )
 STORAGE_FIELDS = ("volume_ids", "network_ids", "compose_project", "blob_namespace")
+DATABASE_BASE_FIELDS = (
+    "identity",
+    "server_version",
+    "extension_versions",
+    "vector_column_inventory",
+)
+DATABASE_EVIDENCE_FIELDS = ("store_state", "embedding_provenance")
+
+EXPECTED_VECTOR_COLUMNS = frozenset(
+    {
+        "public.media_identities.embedding",
+        "public.identity_cluster_representatives.embedding",
+        "public.mv_identity_cluster_centroids.centroid",
+    }
+)
+
+EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
+    "effective_profile": "face_pipeline",
+    "embedding_dimension": 128,
+    "model_name_prefix": "opencv-sface+",
+    "model_suffix": ("128d", "l2", "cosine"),
+    "preprocessing_id": "sface-align-v1",
+}
+
+# Source of truth: recognition/infrastructure/face_pipeline/provenance.py:71.
+EXPECTED_MODEL_ASSET_HASHES = {
+    "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+    "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+}
+
+_SNAPSHOT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "captured_at",
+        "tenant_id",
+        "observations",
+        "database",
+        "storage",
+        "description_adapter",
+    }
+)
+_ROLE_WRAPPER_KEYS = frozenset({"value", "provenance"})
+_INVENTORY_WRAPPER_KEYS = frozenset({"value", "provenance", "discovery_complete"})
+_SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_UNRESOLVED_MODEL_MARKERS = ("${", "PENDING_OPERATOR_FETCH")
 
 # These are the accepted observation methods from the snapshot contract.  The
 # database paths remain here for documentation, but are intentionally excluded
@@ -54,6 +105,8 @@ OBSERVATION_METHODS: dict[str, frozenset[str]] = {
     "database.server_version": frozenset({"database_catalog"}),
     "database.extension_versions": frozenset({"database_catalog"}),
     "database.vector_column_inventory": frozenset({"database_catalog"}),
+    "database.store_state": frozenset({"database_catalog"}),
+    "database.embedding_provenance": frozenset({"database_catalog"}),
     "storage.volume_ids": frozenset({"storage_inspection"}),
     "storage.network_ids": frozenset({"storage_inspection"}),
     "storage.compose_project": frozenset({"storage_inspection"}),
@@ -74,6 +127,12 @@ _INCOMPLETE_REASON_CODES = frozenset(
         "observation_provenance_declared",
         "database_identity_version_unobserved",
         "vector_inventory_incomplete",
+        "incomplete_loaded_weight_hashes",
+        "vector_inventory_discovery_incomplete",
+        "vector_column_coverage_incomplete",
+        "vector_column_identity_invalid",
+        "fir_store_state_unobserved",
+        "embedding_provenance_unobserved",
     }
 )
 
@@ -141,9 +200,9 @@ def _redacted_field(field: Any, raw_value: Any) -> dict[str, Any]:
 
 
 def _build_report(
-    snapshot: Mapping[str, Any],
-    freshness_policy: Mapping[str, Any],
-    isolation_policy: Mapping[str, Any],
+    snapshot: Any,
+    freshness_policy: Any,
+    isolation_policy: Any,
     now: Any,
 ) -> dict[str, Any]:
     """Build the report before any validation rung can refuse the input."""
@@ -156,6 +215,9 @@ def _build_report(
     }
     redacted_snapshot = report["snapshot"]
     if not isinstance(redacted_snapshot, dict):
+        return report
+
+    if not isinstance(snapshot, Mapping):
         return report
 
     tenant_field = snapshot.get("tenant_id")
@@ -195,22 +257,43 @@ def _outcome(reason_code: str, report: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _roles(snapshot: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-    by_name = {record["role"]: record for record in snapshot["observations"]}
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list):
+        raise TypeError("snapshot observations must be a list")
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for record in observations:
+        if not isinstance(record, Mapping) or not isinstance(record.get("role"), str):
+            raise TypeError("snapshot role observation must be a mapping with a string role")
+        role = record["role"]
+        if role in by_name:
+            raise ValueError(f"duplicate role observation: {role}")
+        by_name[role] = record
+    if set(by_name) != set(ROLE_NAMES):
+        raise ValueError("snapshot role observations do not match the required role set")
     return tuple(by_name[name] for name in ROLE_NAMES)
 
 
 def _field(record: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
-    return record[field_name]
+    value = record[field_name]
+    if not isinstance(value, Mapping):
+        raise TypeError(f"observation field {field_name!r} is not a mapping wrapper")
+    return value
 
 
 def _model_id_is_parseable(value: Any) -> bool:
+    return _parse_model_id(value) is not None
+
+
+def _parse_model_id(value: Any) -> tuple[str, tuple[str, str, str]] | None:
     if not isinstance(value, str):
-        return False
+        return None
     pieces = value.rsplit("@", 1)
     if len(pieces) != 2 or not pieces[0]:
-        return False
+        return None
     suffix_parts = pieces[1].split("/")
-    return len(suffix_parts) == 3 and all(suffix_parts)
+    if len(suffix_parts) != 3 or not all(suffix_parts):
+        return None
+    return pieces[0], (suffix_parts[0], suffix_parts[1], suffix_parts[2])
 
 
 def _flatten_policy_values(value: Any) -> Iterable[Any]:
@@ -241,9 +324,7 @@ def _resource_is_forbidden(value: Any, forbidden_values: Iterable[Any]) -> bool:
     return any(value == forbidden for forbidden in forbidden_values)
 
 
-def _non_database_provenance_is_declared(
-    snapshot: Mapping[str, Any], roles: tuple[Mapping[str, Any], ...]
-) -> bool:
+def _non_database_provenance_is_declared(snapshot: Mapping[str, Any], roles: tuple[Mapping[str, Any], ...]) -> bool:
     for record in roles:
         for field_name in ROLE_FIELDS:
             path = f"observations[*].{field_name}"
@@ -277,25 +358,353 @@ def _database_identity_or_version_is_unobserved(snapshot: Mapping[str, Any]) -> 
     return False
 
 
-def _vector_inventory_is_incomplete(snapshot: Mapping[str, Any]) -> bool:
+def _is_wrapper(value: Any, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS) -> bool:
+    return isinstance(value, Mapping) and set(value) == expected_keys
+
+
+def _is_positive_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and value > 0
+
+
+def _validate_schema(
+    snapshot: Any,
+    *,
+    freshness_policy: Any,
+    isolation_policy: Any,
+    now: Any,
+) -> str | None:
+    """Validate the JSON boundary before any contract rung reads a field."""
+
+    if not isinstance(snapshot, Mapping):
+        return "snapshot_schema_invalid"
+
+    schema_version = snapshot.get("schema_version")
+    if schema_version is None or isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        return "snapshot_schema_invalid"
+    if schema_version != 1:
+        return "unsupported_schema_version"
+    if set(snapshot) != _SNAPSHOT_FIELDS:
+        return "snapshot_schema_invalid"
+
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(ROLE_NAMES):
+        return "snapshot_schema_invalid"
+    observed_roles: list[str] = []
+    expected_role_keys = {"role", *ROLE_FIELDS}
+    for record in observations:
+        if not isinstance(record, Mapping):
+            return "snapshot_schema_invalid"
+        role = record.get("role")
+        if not isinstance(role, str) or role not in ROLE_NAMES:
+            return "unknown_role_observation"
+        if role in observed_roles:
+            return "duplicate_role_observation"
+        observed_roles.append(role)
+        if set(record) != expected_role_keys:
+            return "snapshot_schema_invalid"
+        if any(not _is_wrapper(record[field_name]) for field_name in ROLE_FIELDS):
+            return "malformed_observation_wrapper"
+    if set(observed_roles) != set(ROLE_NAMES):
+        return "unknown_role_observation"
+
+    for field_name in ("captured_at", "tenant_id"):
+        if not _is_wrapper(snapshot.get(field_name)):
+            return "malformed_observation_wrapper"
+
+    database = snapshot.get("database")
+    if not isinstance(database, Mapping):
+        return "snapshot_schema_invalid"
+    database_keys = set(database)
+    allowed_database_keys = set(DATABASE_BASE_FIELDS) | set(DATABASE_EVIDENCE_FIELDS)
+    if not set(DATABASE_BASE_FIELDS).issubset(database_keys) or not database_keys <= allowed_database_keys:
+        return "snapshot_schema_invalid"
+    identity = database.get("identity")
+    if not isinstance(identity, Mapping) or set(identity) != {"database_name", "role"}:
+        return "snapshot_schema_invalid"
+    if any(not _is_wrapper(identity[field_name]) for field_name in ("database_name", "role")):
+        return "malformed_observation_wrapper"
+    for field_name in ("server_version", "extension_versions"):
+        if not _is_wrapper(database.get(field_name)):
+            return "malformed_observation_wrapper"
+    inventory = database.get("vector_column_inventory")
+    if not (_is_wrapper(inventory) or _is_wrapper(inventory, _INVENTORY_WRAPPER_KEYS)):
+        return "malformed_observation_wrapper"
+    for field_name in DATABASE_EVIDENCE_FIELDS:
+        if field_name in database and not _is_wrapper(database[field_name]):
+            return "malformed_observation_wrapper"
+
+    storage = snapshot.get("storage")
+    if not isinstance(storage, Mapping) or set(storage) != set(STORAGE_FIELDS):
+        return "snapshot_schema_invalid"
+    if any(not _is_wrapper(storage[field_name]) for field_name in STORAGE_FIELDS):
+        return "malformed_observation_wrapper"
+
+    description_adapter = snapshot.get("description_adapter")
+    description_fields = ("model_id", "model_revision", "serving_profile", "is_stub")
+    if not isinstance(description_adapter, Mapping) or set(description_adapter) != set(description_fields):
+        return "snapshot_schema_invalid"
+    if any(not _is_wrapper(description_adapter[field_name]) for field_name in description_fields):
+        return "malformed_observation_wrapper"
+
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
+        return "malformed_policy_input"
+    if (
+        not isinstance(isolation_policy, Mapping)
+        or "required_tenant_id" not in isolation_policy
+        or not isinstance(isolation_policy.get("forbidden_resource_ids"), Mapping)
+    ):
+        return "malformed_policy_input"
+
+    try:
+        _parse_timestamp(snapshot["captured_at"]["value"])
+        _parse_timestamp(now)
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_timestamp"
+    return None
+
+
+def _validate_secret_and_model_ids(snapshot: Mapping[str, Any]) -> str | None:
+    if _contains_secret_shaped(snapshot):
+        return "secret_shaped_input"
+    roles = _roles(snapshot)
+    if any(not _model_id_is_parseable(_field(record, "model_id")["value"]) for record in roles):
+        return "unparseable_model_id"
+    return None
+
+
+def _validate_freshness_and_isolation(
+    snapshot: Mapping[str, Any],
+    *,
+    freshness_policy: Mapping[str, Any],
+    isolation_policy: Mapping[str, Any],
+    now: Any,
+) -> str | None:
+    try:
+        captured_at = _parse_timestamp(snapshot["captured_at"]["value"])
+        current_time = _parse_timestamp(now)
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_timestamp"
+    if current_time - captured_at > timedelta(seconds=freshness_policy["max_age_seconds"]):
+        return "stale_snapshot"
+    if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
+        return "shared_default_tenant"
+    forbidden_values = tuple(_flatten_policy_values(isolation_policy["forbidden_resource_ids"]))
+    if any(_resource_is_forbidden(value, forbidden_values) for value in _observed_resource_values(snapshot)):
+        return "forbidden_resource_id"
+    return None
+
+
+def _model_id_has_unresolved_space_marker(value: str) -> bool:
+    if any(marker in value for marker in _UNRESOLVED_MODEL_MARKERS):
+        return True
+    parsed = _parse_model_id(value)
+    return parsed is not None and parsed[0] == EXPECTED_MODEL_CONTRACT["model_name_prefix"]
+
+
+def _validate_runtime_contract(snapshot: Mapping[str, Any]) -> str | None:
+    roles = _roles(snapshot)
+
+    if any(_field(record, "auth_enabled")["value"] is not True for record in roles):
+        return "auth_disabled"
+
+    description_adapter = snapshot["description_adapter"]
+    if description_adapter["is_stub"]["value"] is not False:
+        return "description_adapter_stub_or_seeded"
+    for field_name in ("model_id", "model_revision", "serving_profile"):
+        value = description_adapter[field_name]["value"]
+        if not isinstance(value, str) or not value.strip():
+            return "description_adapter_unverified_model"
+    if description_adapter["serving_profile"]["value"] != "remote_self_hosted":
+        return "description_adapter_unverified_model"
+
+    image_digests = [_field(record, "image_digest")["value"] for record in roles]
+    if any(value != image_digests[0] for value in image_digests[1:]):
+        return "role_image_digest_mismatch"
+    if any(not isinstance(value, str) or _SHA256_DIGEST.fullmatch(value) is None for value in image_digests):
+        return "unpinned_image_digest"
+
+    dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
+    if any(value != dimensions[0] for value in dimensions[1:]):
+        return "role_embedding_dimension_mismatch"
+    agreed_dimension = dimensions[0]
+
+    expected_profile = EXPECTED_MODEL_CONTRACT["effective_profile"]
+    if any(_field(record, "effective_profile")["value"] != expected_profile for record in roles):
+        return "unexpected_face_pipeline_profile"
+
+    model_ids = [_field(record, "model_id")["value"] for record in roles]
+    preprocessing_ids = [_field(record, "preprocessing_id")["value"] for record in roles]
+    if any(_model_id_has_unresolved_space_marker(value) for value in model_ids):
+        return "unresolved_model_space_marker"
+    if any(value != model_ids[0] for value in model_ids[1:]) or any(
+        value != preprocessing_ids[0] for value in preprocessing_ids[1:]
+    ):
+        return "model_contract_mismatch"
+
+    if agreed_dimension != EXPECTED_MODEL_CONTRACT["embedding_dimension"]:
+        return "model_space_contract_mismatch"
+
+    expected_suffix = EXPECTED_MODEL_CONTRACT["model_suffix"]
+    expected_prefix = EXPECTED_MODEL_CONTRACT["model_name_prefix"]
+    for model_id in model_ids:
+        parsed = _parse_model_id(model_id)
+        if parsed is None:
+            return "unparseable_model_id"
+        name, suffix = parsed
+        if not name.startswith(expected_prefix) or suffix != expected_suffix:
+            return "model_space_contract_mismatch"
+    if preprocessing_ids[0] != EXPECTED_MODEL_CONTRACT["preprocessing_id"]:
+        return "model_space_contract_mismatch"
+    return None
+
+
+def _validate_database_inventory(snapshot: Mapping[str, Any]) -> str | None:
+    roles = _roles(snapshot)
+    dimensions = [_field(record, "embedding_dimension")["value"] for record in roles]
+    agreed_dimension = dimensions[0]
+    inventory = snapshot["database"]["vector_column_inventory"]["value"]
+    if isinstance(inventory, (list, tuple)):
+        for item in inventory:
+            if not isinstance(item, Mapping):
+                continue
+            dimension = item.get("dimension")
+            if isinstance(dimension, int) and not isinstance(dimension, bool) and dimension != agreed_dimension:
+                return "database_dimension_mismatch"
+    return None
+
+
+def _validate_model_assets(snapshot: Mapping[str, Any]) -> str | None:
+    roles = _roles(snapshot)
+    hash_values = [_field(record, "loaded_weight_hashes")["value"] for record in roles]
+    if any(isinstance(value, Mapping) and not value for value in hash_values):
+        return "missing_loaded_weight_hashes"
+    for value in hash_values:
+        if not isinstance(value, Mapping) or set(value) != set(EXPECTED_MODEL_ASSET_HASHES):
+            return "incomplete_loaded_weight_hashes"
+        if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None for digest in value.values()):
+            return "malformed_loaded_weight_hash"
+    first_mapping = hash_values[0]
+    if any(value != first_mapping for value in hash_values[1:]):
+        return "role_loaded_weight_hash_mismatch"
+    if first_mapping != EXPECTED_MODEL_ASSET_HASHES:
+        return "model_asset_hash_unexpected"
+    return None
+
+
+def _vector_inventory_is_incomplete(snapshot: Mapping[str, Any]) -> str | None:
     inventory_field = snapshot["database"]["vector_column_inventory"]
     if inventory_field.get("provenance") != "database_catalog":
-        return True
-    inventory = inventory_field["value"]
+        return "vector_inventory_incomplete"
+    inventory = inventory_field.get("value")
     if not isinstance(inventory, (list, tuple)):
-        return True
+        return "vector_inventory_incomplete"
     for item in inventory:
         if not isinstance(item, Mapping):
-            return True
+            return "vector_inventory_incomplete"
         if item.get("provenance") != "database_catalog" or item.get("dimension") is None:
-            return True
-    return False
+            return "vector_inventory_incomplete"
+
+    if inventory_field.get("discovery_complete") is not True:
+        return "vector_inventory_discovery_incomplete"
+
+    identities: set[str] = set()
+    for item in inventory:
+        schema = item.get("schema")
+        table = item.get("table")
+        column = item.get("column")
+        dimension = item.get("dimension")
+        if (
+            not isinstance(schema, str)
+            or not schema.strip()
+            or not isinstance(table, str)
+            or not table.strip()
+            or not isinstance(column, str)
+            or not column.strip()
+            or not isinstance(dimension, int)
+            or isinstance(dimension, bool)
+        ):
+            return "vector_column_identity_invalid"
+        identities.add(f"{schema}.{table}.{column}")
+    if not EXPECTED_VECTOR_COLUMNS.issubset(identities):
+        return "vector_column_coverage_incomplete"
+    return None
+
+
+def _validate_provenance(snapshot: Mapping[str, Any]) -> str | None:
+    roles = _roles(snapshot)
+    if _non_database_provenance_is_declared(snapshot, roles):
+        return "observation_provenance_declared"
+    if _database_identity_or_version_is_unobserved(snapshot):
+        return "database_identity_version_unobserved"
+    return _vector_inventory_is_incomplete(snapshot)
+
+
+def _is_finite_vector(value: Any, expected_dimension: int) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != expected_dimension:
+        return False
+    return all(
+        isinstance(component, (int, float)) and not isinstance(component, bool) and math.isfinite(float(component))
+        for component in value
+    )
+
+
+def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
+    database = snapshot["database"]
+    store_state = database.get("store_state")
+    if not isinstance(store_state, Mapping) or store_state.get("provenance") != "database_catalog":
+        return "fir_store_state_unobserved"
+    state = store_state.get("value")
+    if state not in {"empty", "enrolled"}:
+        return "fir_store_state_unobserved"
+
+    embedding_provenance = database.get("embedding_provenance")
+    if (
+        not isinstance(embedding_provenance, Mapping)
+        or embedding_provenance.get("provenance") != "database_catalog"
+        or not isinstance(embedding_provenance.get("value"), Mapping)
+    ):
+        return "embedding_provenance_unobserved"
+    summary = embedding_provenance["value"]
+    required_summary_fields = {"row_counts", "model_id", "preprocessing_id"}
+    if not required_summary_fields.issubset(summary):
+        return "embedding_provenance_unobserved"
+    sample_names = tuple(name for name in ("representative_vector", "centroid") if name in summary)
+    if not sample_names:
+        return "embedding_provenance_unobserved"
+
+    row_counts = summary["row_counts"]
+    if not isinstance(row_counts, Mapping) or set(row_counts) != EXPECTED_VECTOR_COLUMNS:
+        return "embedding_provenance_unobserved"
+    if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in row_counts.values()):
+        return "embedding_provenance_unobserved"
+
+    if state == "empty":
+        if any(count != 0 for count in row_counts.values()):
+            return "fir_store_state_unobserved"
+        return None
+
+    if not any(count > 0 for count in row_counts.values()):
+        return "fir_store_state_unobserved"
+
+    roles = _roles(snapshot)
+    runtime_model_id = _field(roles[0], "model_id")["value"]
+    runtime_preprocessing_id = _field(roles[0], "preprocessing_id")["value"]
+    if summary["model_id"] != runtime_model_id or summary["preprocessing_id"] != runtime_preprocessing_id:
+        return "persisted_model_stamp_mismatch"
+
+    expected_dimension = EXPECTED_MODEL_CONTRACT["embedding_dimension"]
+    for sample_name in sample_names:
+        if not _is_finite_vector(summary[sample_name], expected_dimension):
+            return "non_finite_persisted_vector"
+    return None
 
 
 def _parse_timestamp(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
-    return datetime.fromisoformat(str(value))
+    if not isinstance(value, str):
+        raise TypeError("timestamp must be an ISO-8601 string or datetime")
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def validate_snapshot(
@@ -309,87 +718,48 @@ def validate_snapshot(
 
     report = _build_report(snapshot, freshness_policy, isolation_policy, now)
 
-    # Rung 1: only the documented marker family and URI userinfo passwords
-    # are secret-shaped; ordinary hashes, image digests, and URLs are allowed.
-    if _contains_secret_shaped(snapshot):
-        return _outcome("secret_shaped_input", report)
+    reason = _validate_schema(
+        snapshot,
+        freshness_policy=freshness_policy,
+        isolation_policy=isolation_policy,
+        now=now,
+    )
+    if reason is not None:
+        return _outcome(reason, report)
 
-    roles = _roles(snapshot)
-
-    # Rung 2: parse each observed model ID before comparing any cross-role data.
-    if any(not _model_id_is_parseable(_field(record, "model_id")["value"]) for record in roles):
-        return _outcome("unparseable_model_id", report)
-
-    # Rung 3: strict freshness boundary; exactly max_age_seconds is fresh.
-    captured_at = _parse_timestamp(snapshot["captured_at"]["value"])
-    current_time = _parse_timestamp(now)
-    if current_time - captured_at > timedelta(seconds=freshness_policy["max_age_seconds"]):
-        return _outcome("stale_snapshot", report)
-
-    # Rung 4: tenant isolation is exact and policy-driven.
-    if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
-        return _outcome("shared_default_tenant", report)
-
-    # Rung 5: flatten every policy category, including categories added later.
-    forbidden_values = tuple(_flatten_policy_values(isolation_policy["forbidden_resource_ids"]))
-    if any(_resource_is_forbidden(value, forbidden_values) for value in _observed_resource_values(snapshot)):
-        return _outcome("forbidden_resource_id", report)
-
-    # Rungs 6-9: invalid-tier checks intentionally read values only.
-    if any(_field(record, "auth_enabled")["value"] is False for record in roles):
-        return _outcome("auth_disabled", report)
-    if snapshot["description_adapter"]["is_stub"]["value"] is True:
-        return _outcome("description_adapter_stub_or_seeded", report)
-
-    image_digests = {_field(record, "image_digest")["value"] for record in roles}
-    if len(image_digests) != 1:
-        return _outcome("role_image_digest_mismatch", report)
-
-    dimensions = {_field(record, "embedding_dimension")["value"] for record in roles}
-    if len(dimensions) != 1:
-        return _outcome("role_embedding_dimension_mismatch", report)
-    agreed_dimension = next(iter(dimensions))
-
-    # Rung 10: compare opaque full model IDs and preprocessing IDs.
-    model_ids = {_field(record, "model_id")["value"] for record in roles}
-    preprocessing_ids = {_field(record, "preprocessing_id")["value"] for record in roles}
-    if len(model_ids) != 1 or len(preprocessing_ids) != 1:
-        return _outcome("model_contract_mismatch", report)
-
-    # Rung 11: NULL dimensions are not mismatches; discovered non-NULL values
-    # must agree with the runtime role dimension.
-    inventory = snapshot["database"]["vector_column_inventory"]["value"]
-    if any(item.get("dimension") is not None and item["dimension"] != agreed_dimension for item in inventory):
-        return _outcome("database_dimension_mismatch", report)
-
-    # Rung 12: an empty mapping means the runtime did not expose loaded hashes.
-    if any(
-        isinstance(_field(record, "loaded_weight_hashes")["value"], Mapping)
-        and not _field(record, "loaded_weight_hashes")["value"]
-        for record in roles
-    ):
-        return _outcome("missing_loaded_weight_hashes", report)
-
-    # Rung 13 intentionally excludes every database.* wrapper.  A declared
-    # database observation is classified by the next two database-specific
-    # rungs, not by this general check.
-    if _non_database_provenance_is_declared(snapshot, roles):
-        return _outcome("observation_provenance_declared", report)
-
-    # Rung 14: database identity and version facts require catalog evidence.
-    if _database_identity_or_version_is_unobserved(snapshot):
-        return _outcome("database_identity_version_unobserved", report)
-
-    # Rung 15: vector discovery is an open superset, including element-level
-    # provenance and NULL dimensions.
-    if _vector_inventory_is_incomplete(snapshot):
-        return _outcome("vector_inventory_incomplete", report)
-
+    ordered_checks = (
+        lambda: _validate_secret_and_model_ids(snapshot),
+        lambda: _validate_freshness_and_isolation(
+            snapshot,
+            freshness_policy=freshness_policy,
+            isolation_policy=isolation_policy,
+            now=now,
+        ),
+        lambda: _validate_runtime_contract(snapshot),
+        lambda: _validate_database_inventory(snapshot),
+        lambda: _validate_model_assets(snapshot),
+        lambda: _validate_provenance(snapshot),
+        lambda: _validate_store_state(snapshot),
+    )
+    for check in ordered_checks:
+        reason = check()
+        if reason is not None:
+            return _outcome(reason, report)
     return _outcome("ready", report)
 
 
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _error_outcome(reason_code: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "invalid",
+        "exit_code": 2,
+        "reason_code": reason_code,
+        "reason": f"{reason_code}: {reason}",
+        "report": {},
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -400,15 +770,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--now", required=True)
     args = parser.parse_args(argv)
 
-    snapshot = _load_json(args.snapshot)
-    freshness_policy = _load_json(args.freshness_policy)
-    isolation_policy = _load_json(args.isolation_policy)
-    result = validate_snapshot(
-        snapshot,
-        freshness_policy=freshness_policy,
-        isolation_policy=isolation_policy,
-        now=args.now,
-    )
+    try:
+        snapshot = _load_json(args.snapshot)
+        freshness_policy = _load_json(args.freshness_policy)
+        isolation_policy = _load_json(args.isolation_policy)
+        result = validate_snapshot(
+            snapshot,
+            freshness_policy=freshness_policy,
+            isolation_policy=isolation_policy,
+            now=args.now,
+        )
+    except (json.JSONDecodeError, OSError):
+        result = _error_outcome("snapshot_unreadable", "unable to read or parse JSON input")
+    except Exception:
+        result = _error_outcome("validator_internal_error", "validator failed unexpectedly")
     print(json.dumps(result, sort_keys=True))
     print(result["reason"], file=sys.stderr)
     return int(result["exit_code"])

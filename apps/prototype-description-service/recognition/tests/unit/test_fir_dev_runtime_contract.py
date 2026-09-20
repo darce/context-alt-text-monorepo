@@ -59,7 +59,6 @@ from typing import Any
 
 import pytest
 
-
 FIXTURE_DIR = Path(__file__).with_name("fixtures") / "fir_dev_runtime"
 APP_ROOT = Path(__file__).resolve().parents[3]
 MODULE_NAME = "scripts.validate_fir_dev_runtime"
@@ -83,9 +82,16 @@ DATABASE_FIELDS = (
     "server_version",
     "extension_versions",
     "vector_column_inventory",
+    "store_state",
+    "embedding_provenance",
 )
 STORAGE_FIELDS = ("volume_ids", "network_ids", "compose_project", "blob_namespace")
 DESCRIPTION_FIELDS = ("model_id", "model_revision", "serving_profile", "is_stub")
+VECTOR_COLUMN_IDENTITIES = {
+    "public.media_identities.embedding",
+    "public.identity_cluster_representatives.embedding",
+    "public.mv_identity_cluster_centroids.centroid",
+}
 
 
 # Pinned RED contract: every case in the dispatch brief has one status, exit
@@ -109,6 +115,35 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "all_declared_provenance": ("incomplete", 1, "observation_provenance_declared"),
     "unparseable_model_id": ("invalid", 2, "unparseable_model_id"),
     "fourth_vector_column_undiscovered": ("incomplete", 1, "vector_inventory_incomplete"),
+    "all_roles_512d_consistent": ("invalid", 2, "model_space_contract_mismatch"),
+    "wrong_face_pipeline_profile": ("invalid", 2, "unexpected_face_pipeline_profile"),
+    "foreign_model_space": ("invalid", 2, "model_space_contract_mismatch"),
+    "unresolved_space_token": ("invalid", 2, "unresolved_model_space_marker"),
+    "partial_model_weight_hashes": ("incomplete", 1, "incomplete_loaded_weight_hashes"),
+    "non_hash_weight_value": ("invalid", 2, "malformed_loaded_weight_hash"),
+    "divergent_role_weight_hashes": ("invalid", 2, "role_loaded_weight_hash_mismatch"),
+    "foreign_model_asset_hash": ("invalid", 2, "model_asset_hash_unexpected"),
+    "auth_enabled_null": ("invalid", 2, "auth_disabled"),
+    "auth_enabled_string": ("invalid", 2, "auth_disabled"),
+    "malformed_observation_wrapper": ("invalid", 2, "malformed_observation_wrapper"),
+    "is_stub_null": ("invalid", 2, "description_adapter_stub_or_seeded"),
+    "hosted_description_adapter": ("invalid", 2, "description_adapter_unverified_model"),
+    "mutable_image_tag": ("invalid", 2, "unpinned_image_digest"),
+    "empty_image_digest": ("invalid", 2, "unpinned_image_digest"),
+    "empty_vector_inventory": ("incomplete", 1, "vector_column_coverage_incomplete"),
+    "omitted_centroid_column": ("incomplete", 1, "vector_column_coverage_incomplete"),
+    "invalid_vector_column_identity": ("incomplete", 1, "vector_column_identity_invalid"),
+    "incomplete_schema_discovery": ("incomplete", 1, "vector_inventory_discovery_incomplete"),
+    "enrolled_store_foreign_model_stamp": ("invalid", 2, "persisted_model_stamp_mismatch"),
+    "enrolled_store_non_finite_centroid": ("invalid", 2, "non_finite_persisted_vector"),
+    "enrolled_store_missing_provenance_summary": ("incomplete", 1, "embedding_provenance_unobserved"),
+    "empty_store_with_rows": ("incomplete", 1, "fir_store_state_unobserved"),
+    "duplicate_worker_role": ("invalid", 2, "duplicate_role_observation"),
+    "unknown_role_present": ("invalid", 2, "unknown_role_observation"),
+    "schema_version_two": ("invalid", 2, "unsupported_schema_version"),
+    "missing_storage_section": ("invalid", 2, "snapshot_schema_invalid"),
+    "malformed_policy_input": ("invalid", 2, "malformed_policy_input"),
+    "malformed_timestamp": ("invalid", 2, "malformed_timestamp"),
     "redaction_secret_input": ("invalid", 2, "secret_shaped_input"),
     "import_purity": ("ready", 0, "import_pure"),
 }
@@ -166,6 +201,14 @@ OBSERVATION_METHODS: dict[str, dict[str, object]] = {
     "database.vector_column_inventory": {
         "accepted": {"database_catalog"},
         "declared_when": "hardcoded three-column list rather than schema discovery",
+    },
+    "database.store_state": {
+        "accepted": {"database_catalog"},
+        "declared_when": "fixture or migration state without a catalog query",
+    },
+    "database.embedding_provenance": {
+        "accepted": {"database_catalog"},
+        "declared_when": "expected row counts or model stamps without persisted-row evidence",
     },
     "storage.volume_ids": {
         "accepted": {"storage_inspection"},
@@ -263,15 +306,46 @@ def _set_all_provenance_declared(value: Any) -> None:
             _set_all_provenance_declared(child)
 
 
-def _case_snapshot(case_name: str) -> dict[str, Any]:
-    if case_name == "valid_enrolled_fir_store":
-        return _load_fixture("valid_enrolled_fir_store.json")
-    if case_name == "fourth_vector_column_undiscovered":
-        return _load_fixture("fourth_vector_column_undiscovered.json")
-    if case_name == "redaction_secret_input":
-        return _load_fixture("redaction_secret_input.json")
+def _enrich_snapshot_with_database_evidence(snapshot: dict[str, Any], *, enrolled: bool) -> None:
+    inventory = snapshot["database"]["vector_column_inventory"]
+    inventory["discovery_complete"] = True
+    for record in snapshot["observations"]:
+        _field(snapshot, record["role"], "loaded_weight_hashes")["value"]["sface"] = (
+            "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+        )
+    row_count = 1 if enrolled else 0
+    snapshot["database"]["store_state"] = {
+        "value": "enrolled" if enrolled else "empty",
+        "provenance": "database_catalog",
+    }
+    model_id = _field(snapshot, "api", "model_id")["value"]
+    preprocessing_id = _field(snapshot, "api", "preprocessing_id")["value"]
+    sample = [0.0] * 128 if enrolled else []
+    snapshot["database"]["embedding_provenance"] = {
+        "value": {
+            "row_counts": dict.fromkeys(VECTOR_COLUMN_IDENTITIES, row_count),
+            "model_id": model_id,
+            "preprocessing_id": preprocessing_id,
+            "representative_vector": copy.deepcopy(sample),
+            "centroid": copy.deepcopy(sample),
+        },
+        "provenance": "database_catalog",
+    }
 
-    snapshot = _load_fixture("valid_empty_fir_store.json")
+
+def _case_snapshot(case_name: str) -> dict[str, Any]:
+    fixture_name = {
+        "valid_enrolled_fir_store": "valid_enrolled_fir_store.json",
+        "fourth_vector_column_undiscovered": "fourth_vector_column_undiscovered.json",
+        "redaction_secret_input": "redaction_secret_input.json",
+    }.get(case_name, "valid_empty_fir_store.json")
+    if case_name.startswith("enrolled_store_"):
+        fixture_name = "valid_enrolled_fir_store.json"
+    snapshot = copy.deepcopy(_load_fixture(fixture_name))
+    _enrich_snapshot_with_database_evidence(
+        snapshot,
+        enrolled=fixture_name == "valid_enrolled_fir_store.json",
+    )
     if case_name == "freshness_boundary_minus_one":
         _set_captured_at(snapshot, "2026-09-20T12:00:01Z")
     elif case_name == "api_worker_dimension_mismatch":
@@ -280,9 +354,7 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         for item in snapshot["database"]["vector_column_inventory"]["value"]:
             item["dimension"] = 512
     elif case_name == "model_id_mismatch":
-        _field(snapshot, "worker", "model_id")["value"] = (
-            "opencv-sface+cv-alternate/ort99.99@128d/l2/cosine"
-        )
+        _field(snapshot, "worker", "model_id")["value"] = "opencv-sface+cv-alternate/ort99.99@128d/l2/cosine"
     elif case_name == "preprocessing_id_mismatch":
         _field(snapshot, "worker", "preprocessing_id")["value"] = "sface-align-v2"
     elif case_name == "missing_model_weight_hashes":
@@ -310,7 +382,89 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         _set_all_provenance_declared(snapshot)
     elif case_name == "unparseable_model_id":
         _field(snapshot, "api", "model_id")["value"] = "stub-detector@test"
-    elif case_name in {"valid_empty_fir_store"}:
+    elif case_name == "all_roles_512d_consistent":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "embedding_dimension")["value"] = 512
+            _field(snapshot, record["role"], "model_id")["value"] = _field(snapshot, record["role"], "model_id")[
+                "value"
+            ].replace("@128d/", "@512d/")
+    elif case_name == "wrong_face_pipeline_profile":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "effective_profile")["value"] = "stub"
+    elif case_name == "foreign_model_space":
+        for record in snapshot["observations"]:
+            role = record["role"]
+            _field(snapshot, role, "embedding_dimension")["value"] = 512
+            _field(snapshot, role, "model_id")["value"] = "insightface-buffalo_l+onnx1.17@512d/l2/cosine"
+    elif case_name == "unresolved_space_token":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "model_id")["value"] = "opencv-sface+${RUNTIME_SPACE_TOKEN}@128d/l2/cosine"
+    elif case_name == "partial_model_weight_hashes":
+        _field(snapshot, "worker", "loaded_weight_hashes")["value"].pop("yunet")
+    elif case_name == "non_hash_weight_value":
+        _field(snapshot, "worker", "loaded_weight_hashes")["value"]["sface"] = "loaded"
+    elif case_name == "divergent_role_weight_hashes":
+        _field(snapshot, "worker", "loaded_weight_hashes")["value"]["sface"] = "sha256:" + "f" * 64
+    elif case_name == "foreign_model_asset_hash":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "loaded_weight_hashes")["value"] = {
+                "yunet": "sha256:" + "f" * 64,
+                "sface": "sha256:" + "e" * 64,
+            }
+    elif case_name == "auth_enabled_null":
+        _field(snapshot, "api", "auth_enabled")["value"] = None
+    elif case_name == "auth_enabled_string":
+        _field(snapshot, "api", "auth_enabled")["value"] = "true"
+    elif case_name == "malformed_observation_wrapper":
+        _field(snapshot, "api", "auth_enabled").pop("provenance")
+    elif case_name == "is_stub_null":
+        snapshot["description_adapter"]["is_stub"]["value"] = None
+    elif case_name == "hosted_description_adapter":
+        snapshot["description_adapter"]["serving_profile"]["value"] = "hosted"
+        snapshot["description_adapter"]["model_revision"]["value"] = ""
+    elif case_name == "mutable_image_tag":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "image_digest")["value"] = "acx-dev-fir:latest"
+    elif case_name == "empty_image_digest":
+        for record in snapshot["observations"]:
+            _field(snapshot, record["role"], "image_digest")["value"] = ""
+    elif case_name == "empty_vector_inventory":
+        snapshot["database"]["vector_column_inventory"]["value"] = []
+    elif case_name == "omitted_centroid_column":
+        snapshot["database"]["vector_column_inventory"]["value"] = [
+            item
+            for item in snapshot["database"]["vector_column_inventory"]["value"]
+            if f"{item['schema']}.{item['table']}.{item['column']}" != "public.mv_identity_cluster_centroids.centroid"
+        ]
+    elif case_name == "invalid_vector_column_identity":
+        snapshot["database"]["vector_column_inventory"]["value"][0]["column"] = ""
+    elif case_name == "incomplete_schema_discovery":
+        snapshot["database"]["vector_column_inventory"]["discovery_complete"] = False
+    elif case_name == "enrolled_store_foreign_model_stamp":
+        snapshot["database"]["embedding_provenance"]["value"]["model_id"] = "foreign-model@1"
+    elif case_name == "enrolled_store_non_finite_centroid":
+        snapshot["database"]["embedding_provenance"]["value"]["centroid"] = [float("nan")] * 128
+    elif case_name == "enrolled_store_missing_provenance_summary":
+        del snapshot["database"]["embedding_provenance"]
+    elif case_name == "empty_store_with_rows":
+        snapshot["database"]["embedding_provenance"]["value"]["row_counts"]["public.media_identities.embedding"] = 1
+    elif case_name == "duplicate_worker_role":
+        _role(snapshot, "fix-blob-ownership")["role"] = "worker"
+    elif case_name == "unknown_role_present":
+        _role(snapshot, "fix-blob-ownership")["role"] = "unknown"
+    elif case_name == "schema_version_two":
+        snapshot["schema_version"] = 2
+    elif case_name == "missing_storage_section":
+        del snapshot["storage"]
+    elif case_name == "malformed_timestamp":
+        _set_captured_at(snapshot, "not-an-iso-timestamp")
+    elif case_name in {
+        "valid_empty_fir_store",
+        "valid_enrolled_fir_store",
+        "fourth_vector_column_undiscovered",
+        "redaction_secret_input",
+        "malformed_policy_input",
+    }:
         pass
     else:
         raise AssertionError(f"unhandled contract case: {case_name}")
@@ -336,11 +490,16 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
             pytrace=False,
         )
 
+    freshness_policy = _load_fixture("freshness_policy.json")
+    isolation_policy = _load_fixture("isolation_policy.json")
+    if case_name == "malformed_policy_input":
+        freshness_policy["max_age_seconds"] = 0
+
     try:
         result = function(
             snapshot,
-            freshness_policy=_load_fixture("freshness_policy.json"),
-            isolation_policy=_load_fixture("isolation_policy.json"),
+            freshness_policy=freshness_policy,
+            isolation_policy=isolation_policy,
             now=NOW,
         )
     except Exception as exc:
@@ -364,16 +523,13 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
 def _assert_pinned_outcome(case_name: str, result: Mapping[str, Any]) -> None:
     expected_status, expected_exit_code, expected_reason = CASE_OUTCOMES[case_name]
     assert result.get("status") == expected_status, (
-        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} "
-        f"reason_code={expected_reason}"
+        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} reason_code={expected_reason}"
     )
     assert result.get("exit_code") == expected_exit_code, (
-        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} "
-        f"reason_code={expected_reason}"
+        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} reason_code={expected_reason}"
     )
     assert result.get("reason_code") == expected_reason, (
-        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} "
-        f"reason_code={expected_reason}"
+        f"{case_name}: expected status={expected_status} exit_code={expected_exit_code} reason_code={expected_reason}"
     )
 
 
@@ -410,8 +566,11 @@ def test_every_contract_field_has_provenance_and_an_observation_method() -> None
     snapshot = _case_snapshot("valid_empty_fir_store")
     observed_paths: set[str] = set()
 
-    def assert_wrapper(path: str, field: Mapping[str, Any]) -> None:
-        assert set(field) == {"value", "provenance"}, path
+    def assert_wrapper(path: str, field: Mapping[str, Any], *, discovery_marker: bool = False) -> None:
+        expected_keys = {"value", "provenance"}
+        if discovery_marker:
+            expected_keys.add("discovery_complete")
+        assert set(field) == expected_keys, path
         assert isinstance(field["provenance"], str) and field["provenance"], path
         observed_paths.add(path)
         assert path in OBSERVATION_METHODS, path
@@ -421,18 +580,25 @@ def test_every_contract_field_has_provenance_and_an_observation_method() -> None
     for record in snapshot["observations"]:
         for field_name in ROLE_FIELDS:
             assert_wrapper(f"observations[*].{field_name}", record[field_name])
-    for field_name in ("server_version", "extension_versions", "vector_column_inventory"):
+    for field_name in ("server_version", "extension_versions"):
         assert_wrapper(f"database.{field_name}", snapshot["database"][field_name])
+    assert_wrapper(
+        "database.vector_column_inventory",
+        snapshot["database"]["vector_column_inventory"],
+        discovery_marker=True,
+    )
     for field_name in ("database_name", "role"):
         assert_wrapper("database.identity", snapshot["database"]["identity"][field_name])
+    assert_wrapper("database.store_state", snapshot["database"]["store_state"])
+    assert_wrapper("database.embedding_provenance", snapshot["database"]["embedding_provenance"])
     for field_name in STORAGE_FIELDS:
         assert_wrapper(f"storage.{field_name}", snapshot["storage"][field_name])
     for field_name in DESCRIPTION_FIELDS:
         assert_wrapper(f"description_adapter.{field_name}", snapshot["description_adapter"][field_name])
 
-    assert observed_paths == {
-        path for path in OBSERVATION_METHODS if path != "database.identity"
-    } | {"database.identity"}
+    assert observed_paths == {path for path in OBSERVATION_METHODS if path != "database.identity"} | {
+        "database.identity"
+    }
 
 
 def test_model_id_uses_opaque_fingerprinted_name_and_suffix_only() -> None:
@@ -452,21 +618,19 @@ def _coarse_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
 
 
-def _run_cli(tmp_path: Path, snapshot: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+def _run_cli(tmp_path: Path, snapshot: dict[str, Any] | str) -> subprocess.CompletedProcess[str]:
     snapshot_path = tmp_path / "snapshot.json"
     freshness_path = tmp_path / "freshness-policy.json"
     isolation_path = tmp_path / "isolation-policy.json"
-    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    snapshot_text = snapshot if isinstance(snapshot, str) else json.dumps(snapshot)
+    snapshot_path.write_text(snapshot_text, encoding="utf-8")
     freshness_path.write_text(json.dumps(_load_fixture("freshness_policy.json")), encoding="utf-8")
     isolation_path.write_text(json.dumps(_load_fixture("isolation_policy.json")), encoding="utf-8")
 
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        str(APP_ROOT)
-        if not existing_pythonpath
-        else f"{APP_ROOT}{os.pathsep}{existing_pythonpath}"
-    )
+    env["PYTHONPATH"] = str(APP_ROOT) if not existing_pythonpath else f"{APP_ROOT}{os.pathsep}{existing_pythonpath}"
+
     return subprocess.run(
         [
             sys.executable,
@@ -487,6 +651,17 @@ def _run_cli(tmp_path: Path, snapshot: dict[str, Any]) -> subprocess.CompletedPr
         text=True,
         check=False,
     )
+
+
+def test_cli_truncated_snapshot_returns_snapshot_unreadable_envelope(tmp_path: Path) -> None:
+    completed = _run_cli(tmp_path, '{"schema_version": 1')
+
+    assert completed.returncode == 2
+    result = json.loads(completed.stdout)
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "snapshot_unreadable"
+    assert completed.stderr.strip().startswith("snapshot_unreadable:")
 
 
 def test_redaction_refuses_secret_and_keeps_positive_coarse_tokens_in_api_report() -> None:
@@ -556,11 +731,7 @@ def test_validator_import_is_pure_in_a_subprocess() -> None:
     )
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        str(APP_ROOT)
-        if not existing_pythonpath
-        else f"{APP_ROOT}{os.pathsep}{existing_pythonpath}"
-    )
+    env["PYTHONPATH"] = str(APP_ROOT) if not existing_pythonpath else f"{APP_ROOT}{os.pathsep}{existing_pythonpath}"
     completed = subprocess.run(
         [sys.executable, "-c", probe],
         cwd=APP_ROOT,
@@ -582,4 +753,3 @@ def test_validator_import_is_pure_in_a_subprocess() -> None:
         f"import_purity: expected status={expected[0]} exit_code={expected[1]} "
         f"reason_code={expected[2]} stderr={completed.stderr!r}"
     )
-

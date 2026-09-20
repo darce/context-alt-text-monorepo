@@ -100,12 +100,16 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "valid_empty_fir_store": ("ready", 0, "ready"),
     "valid_enrolled_fir_store": ("ready", 0, "ready"),
     "freshness_boundary_minus_one": ("ready", 0, "ready"),
+    "naive_captured_at_timestamp": ("invalid", 2, "malformed_timestamp"),
+    "future_dated_snapshot": ("invalid", 2, "future_snapshot"),
     "api_worker_dimension_mismatch": ("invalid", 2, "role_embedding_dimension_mismatch"),
     "database_dimension_mismatch": ("invalid", 2, "database_dimension_mismatch"),
     "model_id_mismatch": ("invalid", 2, "model_contract_mismatch"),
     "preprocessing_id_mismatch": ("invalid", 2, "model_contract_mismatch"),
     "missing_model_weight_hashes": ("incomplete", 1, "missing_loaded_weight_hashes"),
     "database_identity_version_declared": ("incomplete", 1, "database_identity_version_unobserved"),
+    "blank_database_identity": ("incomplete", 1, "database_identity_version_unobserved"),
+    "empty_storage_id_list": ("incomplete", 1, "observation_provenance_declared"),
     "stale_snapshot": ("invalid", 2, "stale_snapshot"),
     "auth_disabled": ("invalid", 2, "auth_disabled"),
     "seeded_description_adapter": ("invalid", 2, "description_adapter_stub_or_seeded"),
@@ -143,6 +147,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "unknown_role_present": ("invalid", 2, "unknown_role_observation"),
     "schema_version_two": ("invalid", 2, "unsupported_schema_version"),
     "missing_storage_section": ("invalid", 2, "snapshot_schema_invalid"),
+    "empty_forbidden_resource_policy": ("invalid", 2, "malformed_isolation_policy"),
     "malformed_policy_input": ("invalid", 2, "malformed_policy_input"),
     "malformed_timestamp": ("invalid", 2, "malformed_timestamp"),
     "redaction_secret_input": ("invalid", 2, "secret_shaped_input"),
@@ -349,6 +354,10 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
     )
     if case_name == "freshness_boundary_minus_one":
         _set_captured_at(snapshot, "2026-09-20T12:00:01Z")
+    elif case_name == "naive_captured_at_timestamp":
+        _set_captured_at(snapshot, "2026-09-20T12:00:00")
+    elif case_name == "future_dated_snapshot":
+        _set_captured_at(snapshot, "2026-09-20T18:00:00Z")
     elif case_name == "api_worker_dimension_mismatch":
         _field(snapshot, "worker", "embedding_dimension")["value"] = 512
     elif case_name == "database_dimension_mismatch":
@@ -366,6 +375,10 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
             database["identity"][field_name]["provenance"] = "declared"
         database["server_version"]["provenance"] = "declared"
         database["extension_versions"]["provenance"] = "declared"
+    elif case_name == "blank_database_identity":
+        snapshot["database"]["identity"]["database_name"]["value"] = " "
+    elif case_name == "empty_storage_id_list":
+        snapshot["storage"]["volume_ids"]["value"] = []
     elif case_name == "stale_snapshot":
         _set_captured_at(snapshot, "2026-09-20T11:59:59Z")
     elif case_name == "auth_disabled":
@@ -459,6 +472,8 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         snapshot["schema_version"] = 2
     elif case_name == "missing_storage_section":
         del snapshot["storage"]
+    elif case_name == "empty_forbidden_resource_policy":
+        pass
     elif case_name == "malformed_timestamp":
         _set_captured_at(snapshot, "not-an-iso-timestamp")
     elif case_name in {
@@ -497,6 +512,8 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
     isolation_policy = _load_fixture("isolation_policy.json")
     if case_name == "malformed_policy_input":
         freshness_policy["max_age_seconds"] = 0
+    elif case_name == "empty_forbidden_resource_policy":
+        isolation_policy["forbidden_resource_ids"] = {}
 
     try:
         result = function(

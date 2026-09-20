@@ -44,6 +44,14 @@ from db.models.observability import (
     RecognitionEvent,
     RecognitionRun,
 )
+from db.models.portal_billing import (
+    ApiKeyRotationHistory,
+    BillingSubscriptionProjection,
+    BillingWebhookInbox,
+    PortalIdentity,
+    TenantEntitlement,
+    UsageReservation,
+)
 from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
 from db.models.tenant import ApiKey, DemoInstance, Tenant
 from db.models.worker_capability import WorkerCapability
@@ -53,6 +61,12 @@ __all__ = [
     "Tenant",
     "ApiKey",
     "DemoInstance",
+    "PortalIdentity",
+    "TenantEntitlement",
+    "UsageReservation",
+    "BillingSubscriptionProjection",
+    "BillingWebhookInbox",
+    "ApiKeyRotationHistory",
     # Identity
     "MediaIdentity",
     "IdentityCluster",

@@ -27,6 +27,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.infrastructure.face_pipeline.model_space import UnhandledModelSpaceError
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
@@ -89,25 +90,28 @@ async def build_embedding_runtime(
             reason = str(exc) or exc.__class__.__name__
             return UnavailableFaceDetector(reason), UnavailableEmbeddingGenerator(reason)
 
-    # Incumbent insightface path (production dark default).
-    try:
-        if adapter_provider is not None:
-            adapter = await adapter_provider()
-        else:
-            adapter = await get_shared_insightface_adapter()
-        return (
-            InsightFaceFaceDetector(adapter, client=http_client),
-            InsightFaceEmbeddingGenerator(adapter),
-        )
-    except Exception as exc:
-        logger.exception(
-            "InsightFace runtime unavailable; scan paths will fail closed. "
-            "Install with: pip install 'prototype-description-service[bench]' "
-            "(or: uv sync --extra bench). Required for the incumbent dark-default profile; "
-            "face_pipeline uses core deps + scripts/fetch_face_pipeline_models.py.",
-        )
-        reason = str(exc) or exc.__class__.__name__
-        return UnavailableFaceDetector(reason), UnavailableEmbeddingGenerator(reason)
+    if profile == "insightface":
+        # Incumbent insightface path (production dark default).
+        try:
+            if adapter_provider is not None:
+                adapter = await adapter_provider()
+            else:
+                adapter = await get_shared_insightface_adapter()
+            return (
+                InsightFaceFaceDetector(adapter, client=http_client),
+                InsightFaceEmbeddingGenerator(adapter),
+            )
+        except Exception as exc:
+            logger.exception(
+                "InsightFace runtime unavailable; scan paths will fail closed. "
+                "Install with: pip install 'prototype-description-service[bench]' "
+                "(or: uv sync --extra bench). Required for the incumbent dark-default profile; "
+                "face_pipeline uses core deps + scripts/fetch_face_pipeline_models.py.",
+            )
+            reason = str(exc) or exc.__class__.__name__
+            return UnavailableFaceDetector(reason), UnavailableEmbeddingGenerator(reason)
+
+    raise UnhandledModelSpaceError(f"Unhandled face pipeline profile for embedding runtime: {profile!r}")
 
 
 __all__ = [

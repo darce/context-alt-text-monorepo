@@ -10,7 +10,9 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -90,12 +92,17 @@ class ApiKey(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    lifetime_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     tenant: Mapped[Tenant] = relationship(back_populates="api_keys")
 
     __table_args__ = (
         Index("idx_api_keys_tenant", "tenant_id"),
         Index("idx_api_keys_hash", "api_key_hash"),
+        CheckConstraint(
+            "lifetime_seconds IS NULL OR lifetime_seconds > 0",
+            name="ck_api_keys_lifetime_seconds_positive",
+        ),
     )
 
 

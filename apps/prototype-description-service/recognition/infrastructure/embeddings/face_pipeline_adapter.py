@@ -52,6 +52,7 @@ from recognition.infrastructure.face_pipeline._common import (
     ZeroNormEmbeddingError,
 )
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder, OrtYuNetDetector
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
@@ -311,6 +312,20 @@ def sface_embedding_model_manifest() -> EmbeddingModelManifest:
     )
 
 
+def auraface_embedding_model_manifest() -> EmbeddingModelManifest:
+    """Map the AuraFace provenance entry to its embedding-space manifest."""
+    entry = MODEL_MANIFEST["auraface"]
+    if entry.embedding_dim is None or entry.normalization is None or entry.metric is None:
+        raise ValueError("MODEL_MANIFEST['auraface'] missing embedding contract fields")
+    return EmbeddingModelManifest(
+        framework=entry.framework,
+        name="auraface",
+        dimensions=int(entry.embedding_dim),
+        normalization=entry.normalization,
+        metric=entry.metric,
+    )
+
+
 def xywh_to_corner_bbox(bbox: Sequence[float] | np.ndarray) -> tuple[int, int, int, int]:
     """Convert OpenCV xywh bbox to corner (x1, y1, x2, y2) ints."""
     x, y, w, h = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
@@ -414,7 +429,7 @@ def _resolved_model_artifact_identity(models_dir: Path) -> tuple[Any, ...]:
 
 def _runtime_cache_key(
     *,
-    profile: str,
+    profile: ModelSpace,
     models_dir: Path,
     score_threshold: float,
     nms_threshold: float,
@@ -447,10 +462,14 @@ def _load_face_pipeline_runtime(
     score_threshold: float,
     nms_threshold: float,
     top_k: int,
+    space: ModelSpace = ModelSpace.FACE_PIPELINE,
 ) -> FacePipelineRuntime:
     """Load YuNet+SFace as one atomic unit; any failure raises (caller decides cache)."""
     assert_embedding_pgvector_pair()
-    manifest = sface_embedding_model_manifest()
+    if space is ModelSpace.AURAFACE:
+        manifest = auraface_embedding_model_manifest()
+    else:
+        manifest = sface_embedding_model_manifest()
     assert_three_way_embedding_dimensions(manifest)
     detector = OrtYuNetDetector(
         models_dir=models_dir,
@@ -458,8 +477,11 @@ def _load_face_pipeline_runtime(
         nms_threshold=nms_threshold,
         top_k=top_k,
     )
-    aligner = FivePointAligner()
-    embedder = OrtSFaceEmbedder(models_dir=models_dir)
+    aligner = FivePointAligner(space=space)
+    if space is ModelSpace.AURAFACE:
+        embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=models_dir)
+    else:
+        embedder = OrtSFaceEmbedder(models_dir=models_dir)
     return FacePipelineRuntime(
         detector=detector,
         aligner=aligner,
@@ -474,7 +496,7 @@ def _load_face_pipeline_runtime(
 
 def get_shared_face_pipeline_runtime(
     *,
-    profile: str = "face_pipeline",
+    profile: str | ModelSpace = ModelSpace.FACE_PIPELINE,
     models_dir: Path | None = None,
     score_threshold: float = DEFAULT_SCORE_THRESHOLD,
     nms_threshold: float = DEFAULT_NMS_THRESHOLD,
@@ -494,11 +516,12 @@ def get_shared_face_pipeline_runtime(
     """
     global _SHARED
 
+    space = ModelSpace(profile)
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
     pg_dim = int(get_database_settings().pgvector_dimension)
     id_dim = int(get_settings().identity_detection.embedding_dimension)
     key = _runtime_cache_key(
-        profile=profile,
+        profile=space,
         models_dir=root,
         score_threshold=score_threshold,
         nms_threshold=nms_threshold,
@@ -530,6 +553,7 @@ def get_shared_face_pipeline_runtime(
                 score_threshold=score_threshold,
                 nms_threshold=nms_threshold,
                 top_k=top_k,
+                space=space,
             )
         except FacePipelineRuntimeUnavailableError:
             raise
@@ -952,6 +976,7 @@ __all__ = [
     "FacePipelineRuntimeUnavailableError",
     "assert_embedding_pgvector_pair",
     "assert_three_way_embedding_dimensions",
+    "auraface_embedding_model_manifest",
     "decode_image_bytes",
     "face_pipeline_admission_capacity",
     "face_pipeline_pool_max_workers",

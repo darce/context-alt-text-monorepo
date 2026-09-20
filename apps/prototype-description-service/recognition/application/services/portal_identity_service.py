@@ -30,7 +30,7 @@ class _PortalIdentityRepository(Protocol):
         issuer: str,
         subject: str,
         email: str | None,
-        tenant_id: UUID,
+        invitation_token: str,
     ) -> PortalIdentity: ...
 
 
@@ -47,6 +47,11 @@ def _validate_identity_part(name: str, value: str) -> None:
 def _validate_email(email: str | None) -> None:
     if email is not None and not isinstance(email, str):
         raise ValueError("email must be a string or None")
+
+
+def _validate_invitation_token(invitation_token: str) -> None:
+    if not isinstance(invitation_token, str) or not invitation_token.strip():
+        raise PortalIdentityClaimRefused("portal identity claim was refused")
 
 
 def _is_active(identity: PortalIdentity) -> bool:
@@ -115,23 +120,20 @@ class SqlAlchemyPortalIdentityService:
         issuer: str,
         subject: str,
         email: str | None,
-        tenant_id: UUID | None = None,
+        invitation_token: str,
     ) -> PortalPrincipal:
-        """Atomically insert one active identity without transferring ownership."""
+        """Atomically redeem one invitation into one active tenant identity."""
         _validate_identity_part("issuer", issuer)
         _validate_identity_part("subject", subject)
         _validate_email(email)
-        if tenant_id is None:
-            raise PortalIdentityClaimRefused("tenant_id is required to claim an existing tenant")
-        if not isinstance(tenant_id, UUID):
-            raise ValueError("tenant_id must be a UUID")
+        _validate_invitation_token(invitation_token)
         try:
             identity = await _with_timeout(
                 self._repository.claim(
                     issuer=issuer,
                     subject=subject,
                     email=email,
-                    tenant_id=tenant_id,
+                    invitation_token=invitation_token,
                 ),
                 self._timeout_s,
             )

@@ -157,7 +157,7 @@ class BillingRepository:
         provider_event_id: str,
         event_position: datetime | str,
     ) -> bool:
-        """Apply a newer event position without allowing stale overwrite."""
+        """Apply a newer event position and report whether it was applied."""
         _validate_uuid("tenant_id", tenant_id)
         _validate_non_empty("provider", provider)
         _validate_non_empty("provider_customer_id", provider_customer_id)
@@ -172,17 +172,21 @@ class BillingRepository:
         # WHY: the projection has one row per tenant and is FORCE-RLS protected;
         # keep its read/compare/write sequence inside one tenant context.
         async with self._tenant_context(tenant_id):
-            return await self._upsert_projection(
-                tenant_id=tenant_id,
-                provider=provider,
-                provider_customer_id=provider_customer_id,
-                provider_subscription_id=provider_subscription_id,
-                status=normalized_status,
-                current_period_end=normalized_period_end,
-                past_due_since=normalized_past_due_since,
-                provider_event_id=provider_event_id,
-                event_position=normalized_position,
-            )
+            try:
+                async with self._session.begin_nested():
+                    return await self._upsert_projection(
+                        tenant_id=tenant_id,
+                        provider=provider,
+                        provider_customer_id=provider_customer_id,
+                        provider_subscription_id=provider_subscription_id,
+                        status=normalized_status,
+                        current_period_end=normalized_period_end,
+                        past_due_since=normalized_past_due_since,
+                        provider_event_id=provider_event_id,
+                        event_position=normalized_position,
+                    )
+            except IntegrityError:
+                return False
 
     async def _upsert_projection(
         self,

@@ -8,12 +8,16 @@ These docs can inform planning, but they are not themselves active epics or task
 
 ## Active Assessments
 
+- [FIR Model Capacity and Training](current/fir-model-capacity-and-training-2026-09-19.md) answers 128D vs 512D, checks higher-dimensional checkpoint licenses, and separates A10 feasibility from training-data readiness.
+- [Concrete FIR Corpus Population Allocation](current/fir-corpus-population-allocation-2026-09-19.md) maps 646 records into reproducible private review queues, preserves duplicate/identity dependencies and leaves unseen-test/training claims unassigned.
+- [FIR Development and Measurement Wave](current/fir-development-wave-assessment-2026-09-19.md) reconciles shipped FIR code, semantic handoff history, isolated LocalWP/remote deployment, PG19 timing and canon constraints into E24/FIRDV.
+- [FIR Occlusion Corpus and Metric Vocabulary](current/fir-occlusion-corpus-and-metrics-2026-09-19.md) defines the Golden-150 successor, face-level occlusion protocol, normalized metrics and targeted reassessment of 38 OCC papers.
 - [E16-7 API Keys and Subscription Self-Service Build/Buy Assessment](current/e16-7-keys-and-subscriptions-build-buy-2026-09-16.md) records the in-house key decision, bounded rotation and recovery requirements, and the separate billing/entitlement slice.
 - [Google Edge-AI Stack Evaluation vs FIR Face Pipeline](current/google-edge-ai-stack-evaluation-fir-2026-07-18.md) rejects LiteRT/MediaPipe/XNNPACK/WebNN/litert-lm for E22 (decision #2685); one open rider: `onnxruntime>=1.22` bump routed to FIR-4.
 - [Portfolio Quadrant & MVP Strategy Assessment](current/portfolio-quadrant-mvp-strategy-assessment-2026-06-11.md) is the strategy reference for quadrant placement (Cooper framework), MVP cut list, and non-code moat actions. Review when the demo URL is live or 2026-09-01.
-- [Public Demo WP Plugin Launch Assessment](public-demo-wp-plugin-launch-assessment-2026-04-30.md) is the primary product and hosting assessment for `demo.altcontext.com`.
-- [WP Demo Provisioning Assessment Triage](wp-demo-provisioning-assessment-triage-2026-04-30.md) orders the current provisioning work and gate sequence.
-- [Refactoring Opportunities — `apps/prototype-wp-alt-context`](wp-alt-context-cross-cutting-assessment.md) remains actionable as a plugin hardening backlog.
+- [Public Demo WP Plugin Launch Assessment](current/public-demo-wp-plugin-launch-assessment-2026-04-30.md) is the primary product and hosting assessment for `demo.altcontext.com`.
+- [WP Demo Provisioning Assessment Triage](current/wp-demo-provisioning-assessment-triage-2026-04-30.md) orders the current provisioning work and gate sequence.
+- [Refactoring Opportunities — `apps/prototype-wp-alt-context`](current/wp-alt-context-cross-cutting-assessment.md) remains actionable as a plugin hardening backlog.
 - [Clustering Pipeline & Postgres Refactor — Literature Crosswalk](clustering-pipeline-postgres-refactor-literature-2026-04-26.md) remains actionable as a backend hardening/source-crosswalk input.
 - [PgCache and Description-Service DB Read/Write Mechanics Assessment](pgcache-description-service-db-read-write-assessment-2026-04-30.md) remains actionable as a deferred architecture/performance decision.
 - [context7 Usefulness Audit & Reintroduction Criteria](current/context7-usefulness-audit-2026-06-18.md) records why context7 stays removed (zero realized usage in the handoff ledger) and the criteria that would justify reintroduction.

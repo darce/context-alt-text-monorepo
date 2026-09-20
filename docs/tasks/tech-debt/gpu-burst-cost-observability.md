@@ -1,5 +1,7 @@
 # GPU Burst Cost Observability
 
+> **Integration consumer, 2026-09-19:** [FIRDV-2 S7](../firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md#s7--burst-cost-instrumentation-and-gated-live-run) requires this sanctioned aggregation/burst ledger for the self-hosted description bake-off. Implement it once under coordinated ownership; estimated hourly-rate overlays do not close this debt.
+
 ## Problem
 
 Cost per image description cannot be measured from any sanctioned surface. The description service persists per-run timing on `image_description_runs` (`queue_ms`, `ramp_up_ms`, `processing_ms_p50`, `processing_ms_max`, `server_elapsed_ms`, `items_timed`, `startup_id`), but:

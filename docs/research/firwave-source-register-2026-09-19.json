@@ -1,0 +1,384 @@
+{
+  "version": 1,
+  "assessed_at": "2026-09-19",
+  "task_ref": "MAINT-FIRWAVE-20260919",
+  "source_checkout": "6b1921465ada734b6af90f9a706ed3a3844507e1",
+  "requested_report": {
+    "path": "benchmarks/reports/fir-embeddings-dims-detectors-qa-20260723.html",
+    "sha256": "e13cda3a5d8c6bc8dc4732d5128a9ef466e95adad220069e5b25fad32366895f",
+    "current_revision": "v11 / 2026-09-04",
+    "precedence": "Current v11 reconciliation supersedes historical July claims; not a passed qualification gate."
+  },
+  "occ_source_root": "/Users/daniel/Documents/__research_papers/OCC",
+  "method": "Read-only pdftotext extraction of all 38 PDFs, targeted original-text checks of listed mechanisms; no replication and no claim all 38 papers were read in full. Local PDFs were not sent to the remote worker.",
+  "papers": [
+    {
+      "filename": "A Survey on Periocular Biometrics Research.pdf",
+      "sha256": "683bbb21dbc52171db7933066f7493bbbc05ee9b4e7f0cbeee082cb73163c2cc",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "capture and support limitations"
+    },
+    {
+      "filename": "A survey of face recognition techniques under occlusion.pdf",
+      "sha256": "38fdd3e5fde7c9dbac7ba15804e7ef779fe11f539051c04b935252b1fe0ad8ed",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "taxonomy, detection/alignment and real-vs-synthetic protocols"
+    },
+    {
+      "filename": "AA- A MULTI-VIEW MULTIMODAL DATASET FOR SCREEN-BASED GAZE ESTIMATION.pdf",
+      "sha256": "d5e2fb6b0e0ffca95bf4993fa21b50878be2358da9a85fcb6a9666fdd93c9d4c",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "ATTENTION-GUIDED EFFICIENTNET ARCHITECTURE FOR PRECISE CRIMINAL IDENTIFICATION IN SURVEILLANCE IMAGES.pdf",
+      "sha256": "e7621962ec63220214cca18ac12daa469e54f05fa15f84819c64b15f3648fd64",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "A_novel_Facial_Recognition_technique_with_Focusing.pdf",
+      "sha256": "d2d67ef55c6e0a4ea92bcd42cb25b2c97605a1ce10d35ded9724a36bee5637f5",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Attribute-Based Deep Periocular Recognition- Leveraging Soft Biometrics to Improve Periocular Recognition.pdf",
+      "sha256": "db7ffe01b8a1c8396f69eb8dcaece469270c5078ad50dd51f884599d955c0eac",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "method and attribute assumptions; not adopted"
+    },
+    {
+      "filename": "CHAIN -OF-TALKERS (C O TALK)- Fast Human Annotation of Dense Image Captions.pdf",
+      "sha256": "31cd71a2dd8ab586d36152ed972ef8f1e4ce7a847c00e19e6ab34d9aab909933",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "abstract/method; bounded annotation pilot"
+    },
+    {
+      "filename": "Corrupted and Occluded Face Recognition via Cooperative Sparse Representation (Zhao et al, Pattern Recognition 2016).pdf",
+      "sha256": "9588e1e1853ccd9d1ed39cde5c1c4fa1e0d68389bab0f69576e5ed77c06ebeb1",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Cross-spectral Periocular Recognition- A Survey.pdf",
+      "sha256": "a4e3159b83d3e1a6f0f4e0a87ec4e86210b057806b03959122ed9ae0fe4d80ca",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "capture/spectrum mismatch"
+    },
+    {
+      "filename": "End-to-End Object Detection with Transformers.pdf",
+      "sha256": "d4b846bd44896e1d21527f48eddc422c263c9a4f8a3fa4be249750956882698d",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Expression Recognition Using the Periocular Region- A Feasibility Study.pdf",
+      "sha256": "82527ec72880c51b1d55abeecb70f40f06c95758148bc61af53a4975cd0f23fa",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Facial Expression Recognition on Partially Occluded Faces using Component Based Ensemble Stacked CNN (Bellamkonda et al, 2023).pdf",
+      "sha256": "ec79e97726fb00bc15084961d06bcf3b8d4be073e957da39c350070f87199a00",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Handling Occlusions via Occlusion-aware Labels (Amerehi & Healy, IMVIP 2024).pdf",
+      "sha256": "ce1c00792cfea782ba4a1d45066d12f9a3072c0a8ad14689852a0e8957e0e50a",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Head Similarity- Modeling Structured Whole-Head Appearance Beyond Face Recognition.pdf",
+      "sha256": "62234b8e11d94ef8914131eeee25bfe427802a86e1199c30a66c6b3a3499edd1",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "sections 3, 5, 7; appearance-sensitive objective and limitations"
+    },
+    {
+      "filename": "Improving Face Identification Accuracy of Mask-Wearing Individuals.pdf",
+      "sha256": "61eb805736e94afd7079e00b8cc41c070b654cb0853115263684cb92da949084",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Joint Face Detection and Alignment using Multi-task Cascaded Convolutional Networks (MTCNN).pdf",
+      "sha256": "4e731bde125ac008ed4ef335f542c918704db2fe60341133209461f4e32f9f1e",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "LaCoVL-FER- Landmark-Guided Contrastive Learning Network with Vision-Language Enhancement for Facial Expression Recognition.pdf",
+      "sha256": "3316a5e97d0150b3c0691f58514082f80b61496b2ce93650ecf235e5334272d4",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "MVRD-Bench- Multi-View Learning and Benchmarking for Dynamic Remote Photoplethysmography under Occlusion.pdf",
+      "sha256": "24490a1c99e10e850ec2ae551658bef9ec702562c468618357dec93e5d065699",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "OCFR 2022- Competition on Occluded Face Recognition From Synthetically Generated Structure-Aware Occlusions.pdf",
+      "sha256": "e3c0bd45e3031267f306e4e557c0b2dbf07c2136b4c711a004d9e5a0e5e5cab4",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "protocols and result discussion; enrollment/probe condition matrix"
+    },
+    {
+      "filename": "OccFace- Unified Occlusion-Aware Facial Landmark Detection with Per-Point Visibility.pdf",
+      "sha256": "6426c54386b5a117a2cc505d5a678bc5e8d7a1dbcefd00c6c60f029fe894d7ec",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "sections 3.3, 4.1-4.2; visibility and landmark metrics"
+    },
+    {
+      "filename": "Occlusion-Adaptive Deep Network for Robust Facial Expression Recognition.pdf",
+      "sha256": "863046b8a8a8331cf4705b9a4a2cbda6e3ea32813eda0922b33998e542691576",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "OcularAge- A Comparative Study of Iris and Periocular Images for Pediatric Age Estimation.pdf",
+      "sha256": "5526c275aae00e19195bd1c787008edfb63927f2028182970f0b6230889bcdd8",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "PERIOCULAR BIOMETRICS- DATABASES, ALGORITHMS AND DIRECTIONS.pdf",
+      "sha256": "09c63374ecf7c8f76a54c6d6d96aa5959c45ad75bbc27ffd0c2b6fdbd60415eb",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "PLGSA-Transformer- Periocular Landmark-Guided Attention with Occlusion-Adaptive Cosine Thresholding for Cross-Modal Masked and Unmasked Face Recognition.pdf",
+      "sha256": "3ac24ba01dace938e2d5588b07483440e14b8849d0e009cffab8de77202cec46",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "sections 3.6, 5.6, 6; OACT range and limitations"
+    },
+    {
+      "filename": "Periocular Biometrics and its Relevance to Partially Masked Faces- A Survey.pdf",
+      "sha256": "e6030a893147766b62523b4337a2074e461a6f28477430fabde1702cef13c66d",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "masked-face conditions and limitations"
+    },
+    {
+      "filename": "Periocular Biometrics- A Modality for Unconstrained Scenarios.pdf",
+      "sha256": "77b28d1d3835552d6c842fc13e18328960a4dab493aece51a3b6ca8e3314e5b4",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Periocular Recognition in the Wild with Orthogonal Combination of Local Binary Coded Pattern in Dual-stream Convolutional Neural Network.pdf",
+      "sha256": "37c873b35d33ca78e64713eeedaf4f902c90df17913a1d9439f70d50784041c8",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Privacy-Preserving Person Re-Identification from Temporal Sequences with Transformer and Hungarian Optimization.pdf",
+      "sha256": "ef99a3c3538b8efddb479a0b6edfb7e4d0aceb00a34cc07a4bba62df3151fcc5",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Robust Face Super-Resolution and Recognition Through Multi-Feature Aggregation in Diffusion Models.pdf",
+      "sha256": "8bce02e79f697c83ac90bc185c8908ece83c66327424344da4ba50fb19d1e8d2",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "S3POT- Contrast-Driven Face Occlusion Segmentation via Self-Supervised Prompt Learning.pdf",
+      "sha256": "cbd239218732f4484594b24d79a8a3234ebcde50df3c1e45a8a1b1eafdbdce13",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "section 4/Table 1; standard vs per-image-overfit regime"
+    },
+    {
+      "filename": "SFace- Sigmoid-Constrained Hypersphere Loss for Robust Face Recognition.pdf",
+      "sha256": "541d05cf3cec915aae7bba10816f76e66e82d792c90ff45b218bfb66781f43ab",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Song_Occlusion_Robust_Face_Recognition_Based_on_Mask_Learning_With_Pairwise_ICCV_2019_paper.pdf",
+      "sha256": "07e86685ffd34eb01214c03ab11dca4cf4f47f7df643fca5334e88962bf907c5",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Structured Occlusion Coding for Robust Face Recognition.pdf",
+      "sha256": "7e54d7b29b096a66c468c98212a1422325cd10bb7dad379eed3324ee4e7e611d",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "Surveillance Facial Image Quality Assessment- A Multi-dimensional Dataset and Lightweight Model.pdf",
+      "sha256": "dfa140c92aa7bf47ccb556dc2567191000918f70eaa53084ea38832ba565aa2e",
+      "text_extraction_succeeded": true,
+      "review_depth": "targeted_original_text",
+      "focus": "abstract and benchmark/method sections; quality vs identity fidelity"
+    },
+    {
+      "filename": "UMAP- Uniform Manifold Approximation and Projection for Dimension Reduction.pdf",
+      "sha256": "45ca6cfcd08d5808ab20b5cf53364d2b2d5ab19dca95a594f54af515a15421c3",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "automatic sports video summarization with identity aware highlights selection.pdf",
+      "sha256": "d9b680d59a27da262f767336dabe12d43cf940da1a78631a36285725c4b85a64",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "torralbaEyeMovements.pdf",
+      "sha256": "0af87819e54cdda8690c942935cbae83c3e86566d0f0f91e9d65a1f8edb8decb",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    },
+    {
+      "filename": "xCos An Explainable Cosine Metric for Face Verification.pdf",
+      "sha256": "da18019035f73ae83452c5c86d3d2b150f68899ccaa1e42258cfefd806f87f48",
+      "text_extraction_succeeded": true,
+      "review_depth": "inventory_and_relevance_triage",
+      "focus": "No fresh source-specific quantitative claim; no full-paper appraisal claimed."
+    }
+  ],
+  "canon": {
+    "upstream": "https://github.com/darce/heuristics-canon",
+    "local_root": "/Users/daniel/Development/heuristics-canon-research",
+    "sources": [
+      {
+        "path": "distilled/ml-systems/occluded-face-recognition-survey.md",
+        "sha256": "13ab5cd6761ff558ecf508ee1cb313d7468ccee28e5836ae7f194e9db130686a",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/plgsa-periocular-attention.md",
+        "sha256": "54644970446ffdb284083bfca5372327829a651582349b5795cd0ada6d8d216d",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/occface-per-point-visibility.md",
+        "sha256": "e351c3f1558c8369756883f5cd3cccf874c0c26e35470d962df73abedd5349b0",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/s3pot-occlusion-segmentation.md",
+        "sha256": "0c5c099d9cce2610426e0900db6ddf3d2dd25bcd2000d2c48ec59337fb493cc1",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/janus-benchmark-c.md",
+        "sha256": "f001564e26f7af485f6046e33ae4491123a26f35fa18b8089ac00d97333fa13f",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/bruch-vector-retrieval.md",
+        "sha256": "b0ea4a49549e02ee1b66eb0e64a2525b6443d57607342116cd4f63660d54565f",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/zezula-similarity-search.md",
+        "sha256": "9a50e04c42cca9f3be1b0f1e7e525aa9f53be893ac1dcfdb9ce2fae13d922c72",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/pepe-medical-test-evaluation.md",
+        "sha256": "3f861316819ddffda5961e53b60f4072fba44d4ce6fc1f491fe81697bc69b9ea",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/handbook-face-recognition.md",
+        "sha256": "f2a38753175bd95fdb11b8d6dc1c618d2ac42320adae6d2d20e6f7c6d9f0f220",
+        "available": true
+      },
+      {
+        "path": "distilled/ml-systems/model-cards.md",
+        "sha256": "7085e9fb439fa9928d3a111e3d7ca0bbe8505f161e435cedfb382bb29f57f326",
+        "available": true
+      },
+      {
+        "path": "distilled/interaction/visualization-analysis-design-munzner.md",
+        "sha256": "dd64e751de9c122554c95d424656682c5843176bad805d255f6f3834a724050e",
+        "available": true
+      }
+    ]
+  },
+  "semantic_prior_art": {
+    "store": "handoff.db via find_related_prior_work",
+    "provider": "gte-base-en-v1.5",
+    "status": "ok_with_results",
+    "decisions": [
+      2947,
+      2950,
+      3250,
+      3470,
+      4273,
+      4315,
+      10861,
+      10888,
+      2798,
+      2800,
+      2806,
+      2825,
+      2584,
+      2629,
+      3240
+    ],
+    "intake_decisions": [
+      12780,
+      12781,
+      12782
+    ]
+  },
+  "external_primary_sources": [
+    "https://www.postgresql.org/about/news/postgresql-186-1711-1615-1519-1424-and-19-beta-3-released-3365/",
+    "https://github.com/pgvector/pgvector",
+    "https://pages.nist.gov/frvt/html/frvt1N.html",
+    "https://arxiv.org/abs/2605.07766"
+  ],
+  "worker": {
+    "backend": "codex-remote",
+    "served_model": "gpt-5.6-luna",
+    "reasoning_effort": "max",
+    "pass_id": "firwave-research-20260919-pass2",
+    "outcome": "error: review handoff submit failed",
+    "use": "Partial unverified observations only; coordinator independently checked cited claims. No formal review pass, tests or implementation claimed."
+  }
+}

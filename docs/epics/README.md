@@ -10,6 +10,7 @@ Release-scoped planning documents live here.
 
 ## Contents
 
+- [E24 FIR Development Installation and Comparative Measurement](v0.5.0/fir-development-and-measurement-epic.md): LocalWP with isolated remote FIR, corpus/metric repair, cluster comparisons and self-hosted VLM quality/cost bake-off preparation.
 - `v0.1.0/` through `v0.3.1/`: release-line epic sets
 
 ## Maintenance Notes

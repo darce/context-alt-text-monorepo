@@ -1,5 +1,7 @@
 # PostgreSQL 17 → 19 Upgrade Evaluation (v0.2)
 
+> **FIR follow-up, 2026-09-19:** the [FIR development assessment](../assessments/current/fir-development-wave-assessment-2026-09-19.md#would-postgresql-19-help-fir) finds no PG19 dependency for 128D SFace or occlusion work. E24 retains PG17 with a supported patched minor; §11 below remains the canonical major-upgrade policy.
+
 > **Status:** Evaluation re-run 2026-09-16 under task `PG19-1`. Supersedes [roadmap-pg18-upgrade.md](roadmap-pg18-upgrade.md) (v0.1, PG17→18, April 2026).
 > **Target:** PostgreSQL 19 — beta 3 released 2026-08-13; GA not yet dated. PG18 GA'd 2025-09-25 and is skipped as an intermediate hop.
 > **Verdict:** **Skip 18. Upgrade 17 → 19 in one hop.** Hard gates: PG19 GA, PG19 minor **≥ 19.1** (never `19.0`), a **pinned** arm64 `pgvector/pgvector:pg19` image digest that passed the dump/restore rehearsal, and one product trigger (§11). Build nothing against the beta. This document's §11 is the **only** canonical timing/trigger policy. Now: take the 17.11 minor (28 CVEs), finish the PG-independent items already half-done (§7 "Now"), keep the demo-launch freeze from the portfolio-quadrant assessment intact.

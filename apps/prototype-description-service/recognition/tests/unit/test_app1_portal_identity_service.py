@@ -1,11 +1,11 @@
-"""APP-1 portal identity service and repository tests."""
+"""APP-1 portal identity service tests."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from db.models import PortalIdentity
 from recognition.application.services.portal_identity_service import (
@@ -13,15 +13,28 @@ from recognition.application.services.portal_identity_service import (
     SqlAlchemyPortalIdentityService,
 )
 from recognition.domain.portal_contracts import PortalIdentityService, PortalIdentityStatus
-from recognition.infrastructure.repositories.portal_identity_repository import SqlAlchemyPortalIdentityRepository
+
+
+@dataclass
+class _Invitation:
+    token: str
+    tenant_id: UUID
+    email: str
 
 
 class _InMemoryPortalIdentityRepository:
-    """Insert-only double that models both database uniqueness constraints."""
+    """Redemption double that models the invitation gate and both uniqueness constraints."""
 
     def __init__(self) -> None:
         self.rows: list[PortalIdentity] = []
         self.lookup_keys: list[tuple[str, str]] = []
+        self.invitations: dict[str, _Invitation] = {}
+        self.redeemed: set[str] = set()
+
+    def invite(self, tenant_id: UUID, email: str) -> str:
+        token = f"invite-{len(self.invitations)}"
+        self.invitations[token] = _Invitation(token=token, tenant_id=tenant_id, email=email)
+        return token
 
     async def get_by_issuer_subject(self, issuer: str, subject: str) -> PortalIdentity | None:
         self.lookup_keys.append((issuer, subject))
@@ -36,20 +49,26 @@ class _InMemoryPortalIdentityRepository:
         issuer: str,
         subject: str,
         email: str | None,
-        tenant_id: UUID,
+        invitation_token: str,
     ) -> PortalIdentity:
+        invitation = self.invitations.get(invitation_token)
+        if invitation is None or invitation_token in self.redeemed:
+            raise PortalIdentityClaimRefused("portal identity claim was refused")
+        if email is None or email.strip().lower() != invitation.email:
+            raise PortalIdentityClaimRefused("portal identity claim was refused")
         if any(row.issuer == issuer and row.subject == subject for row in self.rows):
             raise PortalIdentityClaimRefused("portal identity claim was refused")
-        if any(row.tenant_id == tenant_id for row in self.rows):
+        if any(row.tenant_id == invitation.tenant_id for row in self.rows):
             raise PortalIdentityClaimRefused("portal identity claim was refused")
         row = PortalIdentity(
-            tenant_id=tenant_id,
+            tenant_id=invitation.tenant_id,
             issuer=issuer,
             subject=subject,
             email=email,
             status=PortalIdentityStatus.ACTIVE,
         )
         self.rows.append(row)
+        self.redeemed.add(invitation_token)
         return row
 
 
@@ -57,13 +76,14 @@ class _InMemoryPortalIdentityRepository:
 async def test_claim_and_resolve_return_the_owned_active_principal() -> None:
     repository = _InMemoryPortalIdentityRepository()
     tenant_id = uuid4()
+    token = repository.invite(tenant_id, "person@example.test")
     service = SqlAlchemyPortalIdentityService(repository)
 
     principal = await service.claim_tenant(
         issuer="https://issuer.example.test",
         subject="subject-1",
         email="person@example.test",
-        tenant_id=tenant_id,
+        invitation_token=token,
     )
 
     assert isinstance(service, PortalIdentityService)
@@ -114,13 +134,14 @@ async def test_resolve_never_falls_back_to_email() -> None:
 async def test_claim_refuses_pair_conflict_without_transferring_owner() -> None:
     repository = _InMemoryPortalIdentityRepository()
     owner_tenant = uuid4()
-    replacement_tenant = uuid4()
+    owner_token = repository.invite(owner_tenant, "owner@example.test")
+    attacker_token = repository.invite(uuid4(), "attacker@example.test")
     service = SqlAlchemyPortalIdentityService(repository)
     await service.claim_tenant(
         issuer="https://issuer.example.test",
         subject="stable-subject",
         email="owner@example.test",
-        tenant_id=owner_tenant,
+        invitation_token=owner_token,
     )
 
     with pytest.raises(PortalIdentityClaimRefused):
@@ -128,7 +149,7 @@ async def test_claim_refuses_pair_conflict_without_transferring_owner() -> None:
             issuer="https://issuer.example.test",
             subject="stable-subject",
             email="attacker@example.test",
-            tenant_id=replacement_tenant,
+            invitation_token=attacker_token,
         )
 
     resolved = await service.resolve_principal("https://issuer.example.test", "stable-subject")
@@ -141,12 +162,14 @@ async def test_claim_refuses_pair_conflict_without_transferring_owner() -> None:
 async def test_claim_refuses_tenant_conflict_without_reassigning_it() -> None:
     repository = _InMemoryPortalIdentityRepository()
     tenant_id = uuid4()
+    first_token = repository.invite(tenant_id, "first@example.test")
+    second_token = repository.invite(tenant_id, "second@example.test")
     service = SqlAlchemyPortalIdentityService(repository)
     await service.claim_tenant(
         issuer="https://issuer.example.test",
         subject="first-subject",
         email="first@example.test",
-        tenant_id=tenant_id,
+        invitation_token=first_token,
     )
 
     with pytest.raises(PortalIdentityClaimRefused):
@@ -154,7 +177,7 @@ async def test_claim_refuses_tenant_conflict_without_reassigning_it() -> None:
             issuer="https://issuer.example.test",
             subject="second-subject",
             email="second@example.test",
-            tenant_id=tenant_id,
+            invitation_token=second_token,
         )
 
     resolved = await service.resolve_principal("https://issuer.example.test", "first-subject")
@@ -163,7 +186,7 @@ async def test_claim_refuses_tenant_conflict_without_reassigning_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_tenant_id_is_refused_without_a_claim() -> None:
+async def test_blank_invitation_token_is_refused_without_a_claim() -> None:
     repository = _InMemoryPortalIdentityRepository()
     service = SqlAlchemyPortalIdentityService(repository)
 
@@ -171,49 +194,48 @@ async def test_missing_tenant_id_is_refused_without_a_claim() -> None:
         await service.claim_tenant(
             issuer="https://issuer.example.test",
             subject="subject-1",
-            email=None,
+            email="person@example.test",
+            invitation_token="   ",
         )
 
     assert repository.rows == []
 
 
-class _InsertOnlySession:
-    def __init__(self) -> None:
-        self.added: PortalIdentity | None = None
-        self.flushed = False
-        self.rolled_back = False
+@pytest.mark.asyncio
+async def test_unknown_invitation_token_is_refused_without_a_claim() -> None:
+    repository = _InMemoryPortalIdentityRepository()
+    service = SqlAlchemyPortalIdentityService(repository)
 
-    def add(self, value: PortalIdentity) -> None:
-        self.added = value
+    with pytest.raises(PortalIdentityClaimRefused):
+        await service.claim_tenant(
+            issuer="https://issuer.example.test",
+            subject="subject-1",
+            email="person@example.test",
+            invitation_token="never-issued",
+        )
 
-    async def flush(self) -> None:
-        self.flushed = True
-
-    async def rollback(self) -> None:
-        self.rolled_back = True
-
-    async def execute(self, *args, **kwargs):
-        raise AssertionError("claim must not read before inserting")
-
-
-class _ConflictingSession(_InsertOnlySession):
-    async def flush(self) -> None:
-        raise IntegrityError("insert", {}, RuntimeError("unique conflict"))
+    assert repository.rows == []
 
 
 @pytest.mark.asyncio
-async def test_repository_claim_is_insert_only_and_translates_integrity_refusal() -> None:
-    session = _ConflictingSession()
-    repository = SqlAlchemyPortalIdentityRepository(session)
+async def test_invitation_cannot_be_redeemed_twice() -> None:
+    repository = _InMemoryPortalIdentityRepository()
+    tenant_id = uuid4()
+    token = repository.invite(tenant_id, "person@example.test")
+    service = SqlAlchemyPortalIdentityService(repository)
+    await service.claim_tenant(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="person@example.test",
+        invitation_token=token,
+    )
 
     with pytest.raises(PortalIdentityClaimRefused):
-        await repository.claim(
-            issuer="https://issuer.example.test",
-            subject="subject-1",
-            email=None,
-            tenant_id=uuid4(),
+        await service.claim_tenant(
+            issuer="https://other-issuer.example.test",
+            subject="subject-2",
+            email="person@example.test",
+            invitation_token=token,
         )
 
-    assert session.added is not None
-    assert session.flushed is False
-    assert session.rolled_back is True
+    assert len(repository.rows) == 1

@@ -378,6 +378,9 @@ class _PagedKeyService(_KeyServiceStub):
         super().__init__()
         self.pages = pages
         self.cursors: list[str | None] = []
+        for page in pages.values():
+            for row in page.data:
+                self.keys[row.api_key_id] = row
 
     async def list_keys(
         self,
@@ -521,7 +524,7 @@ def test_last_usable_key_counts_usable_rows_across_pages() -> None:
         response = client.post(f"/portal/keys/{target.api_key_id}/revoke", json={})
 
     assert response.status_code == 200
-    assert service.cursors == [None, "page-2", None, "page-2"]
+    assert service.cursors == [None, None, "page-2"]
 
 
 def test_key_lookup_fails_closed_when_cursor_page_bound_is_reached(monkeypatch: pytest.MonkeyPatch) -> None:

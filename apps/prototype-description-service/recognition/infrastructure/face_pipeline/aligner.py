@@ -23,6 +23,9 @@ from typing import Final
 import cv2
 import numpy as np
 
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+
 # OpenCV FaceRecognizerSF canonical targets for 112×112 SFace crops.
 # Source: opencv modules/objdetect/src/face_recognize.cpp (4.x).
 SFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
@@ -40,6 +43,13 @@ SFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
 _SFACE_DST_MEAN: Final[tuple[float, float]] = (56.0262, 71.9008)
 
 ALIGNED_SIZE: Final[int] = 112
+
+_SPACE_ARTIFACT: Final[dict[ModelSpace, str]] = {
+    ModelSpace.FACE_PIPELINE: "sface",
+    ModelSpace.AURAFACE: "auraface",
+}
+_SFACE_TEMPLATE_ID: Final[str] = "sface-5pt-112"
+_DEFAULT_CHANNEL_ORDER: Final[str] = "BGR"
 
 YUNET_LANDMARK_NAMES: Final[tuple[str, ...]] = (
     "right_eye",
@@ -153,13 +163,24 @@ class FivePointAligner:
     uses the same similarity transform + INTER_LINEAR warp as alignCrop.
     """
 
-    def __init__(self, *, output_size: int = ALIGNED_SIZE) -> None:
+    def __init__(
+        self,
+        *,
+        output_size: int = ALIGNED_SIZE,
+        space: ModelSpace = ModelSpace.FACE_PIPELINE,
+    ) -> None:
         if output_size != ALIGNED_SIZE:
             # SFace canonical landmarks are defined for 112 only.
             raise ValueError(
                 f"FivePointAligner only supports output_size={ALIGNED_SIZE} (SFace canonical), got {output_size}"
             )
         self.output_size = output_size
+        self.space = ModelSpace(space)
+        self.dst_landmarks = SFACE_CANONICAL_LANDMARKS_112
+        entry = MODEL_MANIFEST.get(_SPACE_ARTIFACT.get(self.space, "sface"))
+        preprocessing = entry.preprocessing if entry is not None else None
+        self.template_id = preprocessing.alignment_template_id if preprocessing else _SFACE_TEMPLATE_ID
+        self.channel_order = preprocessing.channel_order if preprocessing else _DEFAULT_CHANNEL_ORDER
 
     def align(
         self,
@@ -195,6 +216,8 @@ class FivePointAligner:
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0.0,
         )
+        if self.channel_order == "RGB":
+            crop = np.ascontiguousarray(crop[..., ::-1])
         return AlignmentResult(crop=crop, affine=affine)
 
 

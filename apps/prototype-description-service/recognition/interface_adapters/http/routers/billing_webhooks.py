@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
-from recognition.domain.portal_contracts import BillingProvider, BillingSubscriptionStatus, WebhookInboxStatus
+from recognition.domain.portal_contracts import BillingProvider, BillingSubscriptionStatus
+from recognition.infrastructure.billing.polar_provider import _billing_status as _provider_billing_status
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
 
 logger = logging.getLogger(__name__)
@@ -47,15 +48,6 @@ _EVENT_STATUS: Final[dict[str, BillingSubscriptionStatus]] = {
     "subscription.refunded": BillingSubscriptionStatus.REFUND_HOLD,
     "order.refunded": BillingSubscriptionStatus.REFUND_HOLD,
     "refund.created": BillingSubscriptionStatus.REFUND_HOLD,
-}
-
-_PAYLOAD_STATUS: Final[dict[str, BillingSubscriptionStatus]] = {
-    BillingSubscriptionStatus.ACTIVE.value: BillingSubscriptionStatus.ACTIVE,
-    BillingSubscriptionStatus.PAST_DUE.value: BillingSubscriptionStatus.PAST_DUE,
-    BillingSubscriptionStatus.CANCELED.value: BillingSubscriptionStatus.CANCELED,
-    "cancelled": BillingSubscriptionStatus.CANCELED,
-    "trialing": BillingSubscriptionStatus.ACTIVE,
-    BillingSubscriptionStatus.REFUND_HOLD.value: BillingSubscriptionStatus.REFUND_HOLD,
 }
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -161,15 +153,68 @@ async def receive_polar_webhook(
         ) from exc
 
     if inserted is not True:
+        try:
+            projected = await _duplicate_projection_is_ready(
+                repository,
+                provider_event_id=event_id,
+                event_type=event_type,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception("Failed to check the existing Polar webhook projection")
+            projected = False
+        if projected is not True:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Webhook projection unavailable",
+                headers={"Retry-After": "1"},
+            )
         return _accepted_response()
 
-    await _project_and_mark(
+    projected = await _project_and_mark(
         repository,
         provider_event_id=event_id,
         event_type=event_type,
         payload=payload,
     )
+    if projected is not True:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook projection unavailable",
+            headers={"Retry-After": "1"},
+        )
     return _accepted_response()
+
+
+async def _duplicate_projection_is_ready(
+    repository: BillingRepository,
+    *,
+    provider_event_id: str,
+    event_type: str,
+    payload: Mapping[str, object],
+) -> bool:
+    projection = _projection_arguments(payload, event_type)
+    if projection is None:
+        return True
+    get_projection = getattr(repository, "get_projection", None)
+    if not callable(get_projection):
+        return True
+    current = await get_projection(cast(UUID, projection["tenant_id"]), provider=POLAR_PROVIDER)
+    if current is not None:
+        if isinstance(current, Mapping):
+            current_event_id = current.get("last_event_id", current.get("provider_event_id"))
+        else:
+            current_event_id = getattr(current, "last_event_id", None)
+            if current_event_id is None:
+                current_event_id = getattr(current, "provider_event_id", None)
+        if current_event_id == provider_event_id:
+            return True
+    return await _project_and_mark(
+        repository,
+        provider_event_id=provider_event_id,
+        event_type=event_type,
+        payload=payload,
+    )
 
 
 async def _project_and_mark(
@@ -178,14 +223,22 @@ async def _project_and_mark(
     provider_event_id: str,
     event_type: str,
     payload: Mapping[str, object],
-) -> None:
-    """Apply one inbox event at most once, leaving failed work pending."""
+) -> bool:
+    """Project one inbox event while leaving entitlement work to the worker."""
     projection = _projection_arguments(payload, event_type)
     if projection is None:
-        # WHY: a processed marker records an intentional ignore instead of
-        # allowing a retry to turn an unsupported event into a guess.
-        await _mark_webhook(repository, provider_event_id, WebhookInboxStatus.PROCESSED)
-        return
+        logger.warning("Polar webhook was not projected; inbox row remains pending")
+        return True
+
+    if projection["provider_subscription_id"] is None and not _is_subscription_event(event_type):
+        try:
+            projection["provider_subscription_id"] = await _existing_provider_subscription_id(
+                repository,
+                cast(UUID, projection["tenant_id"]),
+            )
+        except Exception:
+            logger.exception("Failed to read the existing Polar subscription pointer; inbox row remains pending")
+            return False
 
     try:
         async with asyncio.timeout(WEBHOOK_PROJECTION_TIMEOUT_SECONDS):
@@ -202,26 +255,17 @@ async def _project_and_mark(
             )
     except TimeoutError:
         logger.warning("Polar webhook projection timed out; inbox row remains pending")
-        return
+        return False
     except Exception:
         logger.exception("Failed to project Polar webhook; inbox row remains pending")
-        return
+        return False
 
     # WHY: repository ordering under its row lock makes False an observable
     # duplicate/older-event skip rather than a state regression.
-    marker = WebhookInboxStatus.PROCESSED if applied is True else WebhookInboxStatus.DISCARDED
-    await _mark_webhook(repository, provider_event_id, marker)
-
-
-async def _mark_webhook(repository: BillingRepository, provider_event_id: str, marker: WebhookInboxStatus) -> None:
-    try:
-        await repository.mark_webhook_processed(
-            provider=POLAR_PROVIDER,
-            provider_event_id=provider_event_id,
-            status=marker,
-        )
-    except Exception:
-        logger.exception("Failed to mark Polar webhook inbox row")
+    if applied is not True:
+        logger.warning("Polar webhook projection did not apply; inbox row remains pending")
+        return False
+    return True
 
 
 async def _read_bounded_body(request: Request) -> bytes:
@@ -285,7 +329,9 @@ def _projection_arguments(payload: Mapping[str, object], event_type: str) -> dic
     provider_customer_id = _provider_customer_id(data)
     provider_subscription_id = _provider_subscription_id(data)
     event_position = payload.get("timestamp")
-    if tenant_id is None or provider_customer_id is None or provider_subscription_id is None:
+    if tenant_id is None or provider_customer_id is None:
+        return None
+    if _is_subscription_event(event_type) and provider_subscription_id is None:
         return None
     if not isinstance(event_position, str) or not event_position:
         return None
@@ -319,8 +365,17 @@ def _status_for_event(payload: Mapping[str, object], event_type: str) -> Billing
         return None
     provider_status = data.get("status")
     if not isinstance(provider_status, str):
+        logger.warning("Polar webhook subscription.updated is missing a subscription status")
         return None
-    return _PAYLOAD_STATUS.get(provider_status)
+    try:
+        return _provider_billing_status(provider_status)
+    except ValueError:
+        logger.warning("Polar webhook has an unmapped subscription status: %s", provider_status)
+        return None
+
+
+def _is_subscription_event(event_type: str) -> bool:
+    return event_type.startswith("subscription.")
 
 
 def _tenant_id(payload: Mapping[str, object], data: Mapping[str, object]) -> UUID | None:
@@ -357,11 +412,26 @@ def _provider_customer_id(data: Mapping[str, object]) -> str | None:
 
 
 def _provider_subscription_id(data: Mapping[str, object]) -> str | None:
-    for field in ("subscription_id", "id"):
+    for field in ("provider_subscription_id", "subscription_id"):
         value = data.get(field)
         if isinstance(value, str) and value:
             return value
     return None
+
+
+async def _existing_provider_subscription_id(repository: BillingRepository, tenant_id: UUID) -> str | None:
+    projection = await repository.get_projection(tenant_id, provider=POLAR_PROVIDER)
+    if projection is None:
+        return None
+    if isinstance(projection, Mapping):
+        value = projection.get("provider_subscription_id")
+    else:
+        value = getattr(projection, "provider_subscription_id", None)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError("existing provider subscription id is invalid")
+    return value
 
 
 def _optional_datetime(value: object) -> datetime | None:

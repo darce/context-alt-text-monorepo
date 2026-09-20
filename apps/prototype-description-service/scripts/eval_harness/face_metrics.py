@@ -559,6 +559,10 @@ class PrResult:
     matched_ious: list[float] = field(default_factory=list)
     geometry_incomplete_gt: int = 0
     iou_sensitivity: dict[float, dict[str, int]] | None = None
+    # Strict detection policy inputs are part of the result provenance.  In
+    # particular, the IoU threshold changes the accepted pairs and must not be
+    # silently lost when the result is serialized.
+    policy: dict[str, Any] = field(default_factory=dict)
 
     @property
     def precision(self) -> float | None:
@@ -647,7 +651,12 @@ def has_human_adjudicated_gt_lineage(box: Any) -> bool:
     return (
         label_source != LabelSource.LEGACY_IMPORT
         and saw_machine_proposals is False
-        and decision == LabelDecision.NAMED
+        and decision
+        in (
+            LabelDecision.NAMED,
+            LabelDecision.STRANGER,
+            LabelDecision.INCONCLUSIVE,
+        )
     )
 
 
@@ -660,6 +669,40 @@ def _strict_gt_box_dimension(box: Any, name: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _strict_detection_overlaps_incomplete_gt(
+    detection: Sequence[float],
+    box: Any,
+    image_size: Sequence[int],
+) -> bool:
+    """Return whether a detection falls in an incomplete GT box's x-span.
+
+    ``associate_detections`` intentionally excludes GT boxes whose ``y`` is
+    missing because no 2-D IoU can be established.  The x centre/width remain
+    observed, though, so an unmatched detection with horizontal overlap is a
+    plausible detection of that ignored face.  Do not charge that detection as
+    an FP; with no y coordinate available, the horizontal projection is the
+    only safe region we can exclude.
+    """
+    if len(detection) < 3 or not image_size:
+        return False
+    gt_x = _strict_gt_box_dimension(box, "x")
+    gt_width = _strict_gt_box_dimension(box, "w")
+    if gt_x is None or gt_width is None or gt_width <= 0.0:
+        return False
+    try:
+        detection_x = float(detection[0])
+        detection_width = float(detection[2])
+        image_width = float(image_size[0])
+    except (IndexError, TypeError, ValueError):
+        return False
+    if detection_width <= 0.0 or image_width <= 0.0:
+        return False
+    gt_left = (gt_x - gt_width / 2.0) * image_width
+    gt_right = (gt_x + gt_width / 2.0) * image_width
+    detection_right = detection_x + detection_width
+    return detection_right > gt_left and detection_x < gt_right
 
 
 def _strict_iou_threshold(run_manifest: Mapping[str, Any] | None) -> float:
@@ -714,13 +757,17 @@ def detection_pr_strict(
                 invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
             )
     for row in items:
-        if (
+        carries_geometry = bool(row.gt_boxes or row.detections_bbox_px)
+        frame_missing = carries_geometry and row.detection_frame_size is None
+        frame_mismatch = (
             row.image_size is not None
             and row.detection_frame_size is not None
             and row.image_size != row.detection_frame_size
-        ):
+        )
+        if frame_missing or frame_mismatch:
             raise ManifestError(
-                "strict detection scoring requires image and detector frame sizes to agree",
+                "strict detection scoring requires a declared detector frame "
+                "matching the image frame",
                 invariant=ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT,
             )
     for row in items:
@@ -766,7 +813,22 @@ def detection_pr_strict(
             iou_threshold=threshold,
         )
         true_positives += len(result.pairs)
-        false_positives += len(result.unmatched_detections)
+        incomplete_gt_boxes = tuple(
+            row.gt_boxes[index] for index in result.geometry_incomplete_gt
+        )
+        scored_unmatched_detections = tuple(
+            detection_index
+            for detection_index in result.unmatched_detections
+            if not any(
+                _strict_detection_overlaps_incomplete_gt(
+                    row.detections_bbox_px[detection_index],
+                    box,
+                    row.image_size,
+                )
+                for box in incomplete_gt_boxes
+            )
+        )
+        false_positives += len(scored_unmatched_detections)
         false_negatives += len(result.unmatched_gt)
         incomplete_count = len(result.geometry_incomplete_gt)
         geometry_incomplete_gt += incomplete_count
@@ -774,7 +836,8 @@ def detection_pr_strict(
         matched_ious.extend(accepted_ious)
         row_sensitivity.append(
             (
-                len(row.detections_bbox_px),
+                len(row.detections_bbox_px)
+                - (len(result.unmatched_detections) - len(scored_unmatched_detections)),
                 len(row.gt_boxes) - incomplete_count,
                 accepted_ious,
             )
@@ -807,6 +870,7 @@ def detection_pr_strict(
         matched_ious=sorted(matched_ious),
         geometry_incomplete_gt=geometry_incomplete_gt,
         iou_sensitivity=iou_sensitivity,
+        policy={"iou_threshold": threshold},
     )
 
 

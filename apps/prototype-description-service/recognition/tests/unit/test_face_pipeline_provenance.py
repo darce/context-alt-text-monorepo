@@ -219,8 +219,8 @@ def test_load_verified_model_license_hash_mismatch_raises(tmp_path: Path, monkey
 
 
 def test_module_manifest_covers_yunet_and_sface() -> None:
-    """Production manifest registers both models with required provenance fields."""
-    assert set(MODEL_MANIFEST) == {"yunet", "sface"}
+    """Production manifest registers baseline models and declarable candidates."""
+    assert set(MODEL_MANIFEST) == {"yunet", "sface", "auraface"}
     for _key, entry in MODEL_MANIFEST.items():
         assert isinstance(entry, ModelProvenance)
         assert entry.file_name.endswith(".onnx")
@@ -249,12 +249,18 @@ def test_module_manifest_covers_yunet_and_sface() -> None:
     assert sface.metric == "cosine"
     assert sface.framework == "opencv"
 
+    auraface = MODEL_MANIFEST["auraface"]
+    assert auraface.embedding_dim == 512
+    assert auraface.normalization == "l2"
+    assert auraface.metric == "cosine"
+    assert auraface.sha256 == PENDING_OPERATOR_FETCH
+
 
 def test_committed_license_files_match_manifest() -> None:
     """Offline: committed LICENSE.* sha256 must match production pins (local finding BR-04, no network)."""
     for name, entry in MODEL_MANIFEST.items():
         if entry.license_sha256 == PENDING_OPERATOR_FETCH:
-            pytest.skip(f"{name} license still PENDING_OPERATOR_FETCH")
+            continue
         license_path = DEFAULT_MODELS_DIR / entry.license_file
         assert license_path.is_file(), f"missing committed license: {license_path}"
         actual = _file_sha256(license_path)

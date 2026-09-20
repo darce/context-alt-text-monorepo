@@ -75,6 +75,17 @@ async def get_billing_repository(request: Request) -> BillingRepository:
     return cast(BillingRepository, repository)
 
 
+async def _commit_billing_transaction(repository: BillingRepository) -> None:
+    try:
+        await repository.session.commit()
+    except Exception as exc:
+        logger.exception("Failed to commit Polar webhook")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook persistence unavailable",
+        ) from exc
+
+
 @router.post("/webhooks/polar", status_code=status.HTTP_202_ACCEPTED)
 async def receive_polar_webhook(
     request: Request,
@@ -169,6 +180,7 @@ async def receive_polar_webhook(
                 detail="Webhook projection unavailable",
                 headers={"Retry-After": "1"},
             )
+        await _commit_billing_transaction(repository)
         return _accepted_response()
 
     projected = await _project_and_mark(
@@ -183,6 +195,7 @@ async def receive_polar_webhook(
             detail="Webhook projection unavailable",
             headers={"Retry-After": "1"},
         )
+    await _commit_billing_transaction(repository)
     return _accepted_response()
 
 

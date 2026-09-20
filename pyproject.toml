@@ -71,5 +71,11 @@ indent-style = "space"
 # blocked every frontend/PHP lane (GPUUX-1 blocker 296). npm/composer/node/php are
 # reserved by workbay because they can launch arbitrary repo scripts: JS lanes use
 # `npx vitest ...`, PHP lanes use `vendor/bin/phpunit ...`.
+# `uv` is declared for the same reason as `npx`: a bare `python3 -m pytest` at the
+# repo root has no service dependencies and dies in conftest before collecting, so
+# self_verify fails for an environmental reason that is indistinguishable from a
+# real test failure. `uv run --directory <svc>` selects the service env, and shell
+# connectors (`cd <svc> && ...`) are rejected by the arbiter, so it is the only form
+# that works. Like `npx`, `uv` only selects a runner; it cannot launch a repo script.
 runner_commands = ["vitest", "phpunit", "tsc", "playwright"]
-runner_selecting_wrappers = ["npx"]
+runner_selecting_wrappers = ["npx", "uv"]

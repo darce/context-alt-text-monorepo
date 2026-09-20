@@ -363,11 +363,22 @@ class SqlAlchemyTenantEntitlementRepository:
             if beta_current and normalized_status in _BETA_PRESERVING_BILLING_STATUSES:
                 return row
 
-            preserve_allowance = current_period and existing_status in {
-                EntitlementStatus.BETA_ACTIVE,
+            # WHY: dunning is not a new billing period. The admission path keys
+            # consumed usage on period_start, so moving it when a card fails
+            # after period_end hands the tenant a second full allowance.
+            entering_or_staying_past_due = normalized_status is EntitlementStatus.PAST_DUE and existing_status in {
                 EntitlementStatus.PAID_ACTIVE,
                 EntitlementStatus.PAST_DUE,
             }
+            preserve_allowance = entering_or_staying_past_due or (
+                current_period
+                and existing_status
+                in {
+                    EntitlementStatus.BETA_ACTIVE,
+                    EntitlementStatus.PAID_ACTIVE,
+                    EntitlementStatus.PAST_DUE,
+                }
+            )
             transitioning_from_beta_to_paid = (
                 existing_status is EntitlementStatus.BETA_ACTIVE
                 and normalized_status is EntitlementStatus.PAID_ACTIVE
@@ -384,16 +395,26 @@ class SqlAlchemyTenantEntitlementRepository:
                     raise ValueError("active paid entitlement requires period_end")
                 row.period_start = normalized_now
                 row.period_end = normalized_period_end
-            elif not current_period:
+            elif not current_period and not entering_or_staying_past_due:
                 row.period_start = normalized_now
                 row.period_end = normalized_period_end or normalized_now
             elif normalized_period_end is not None:
                 row.period_end = normalized_period_end
             if normalized_status is EntitlementStatus.PAST_DUE:
-                normalized_grace_until = self._past_due_grace_until(
-                    normalized_now,
-                    normalized_grace_until,
-                )
+                # WHY: the grace window is anchored to the first past-due event.
+                # Re-stamping it on every dunning redelivery would slide the
+                # deadline forward forever and the window would never close.
+                if (
+                    normalized_grace_until is None
+                    and existing_status is EntitlementStatus.PAST_DUE
+                    and existing_grace_until is not None
+                ):
+                    normalized_grace_until = existing_grace_until
+                else:
+                    normalized_grace_until = self._past_due_grace_until(
+                        normalized_now,
+                        normalized_grace_until,
+                    )
             row.plan_code = normalized_plan_code
             row.status = normalized_status
             row.source = source

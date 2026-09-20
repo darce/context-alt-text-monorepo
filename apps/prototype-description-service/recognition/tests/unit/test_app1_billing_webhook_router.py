@@ -351,11 +351,46 @@ def test_older_provider_event_does_not_regress_projection_and_stays_pending() ->
 
     projection = repository.projections[TENANT_ID]
     assert first.status_code == 202
-    assert second.status_code == 503
+    assert second.status_code == 202
     assert projection.status is BillingSubscriptionStatus.ACTIVE
     assert projection.provider_event_id == "evt-new"
     assert repository.skipped == []
     assert repository.rows["evt-old"].status == WebhookInboxStatus.RECEIVED.value
+
+
+def test_redelivered_superseded_event_is_acknowledged_instead_of_retried_forever() -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    newer = _event_body(event_id="evt-new", timestamp="2026-09-20T12:00:00Z")
+    older = _event_body(
+        event_id="evt-old",
+        event_type="subscription.canceled",
+        timestamp="2026-09-20T11:00:00Z",
+    )
+
+    with TestClient(_app(provider, repository)) as client:
+        client.post(
+            "/billing/webhooks/polar",
+            content=newer,
+            headers={"webhook-signature": _signature(newer)},
+        )
+        client.post(
+            "/billing/webhooks/polar",
+            content=older,
+            headers={"webhook-signature": _signature(older)},
+        )
+        redelivery = client.post(
+            "/billing/webhooks/polar",
+            content=older,
+            headers={"webhook-signature": _signature(older)},
+        )
+
+    projection = repository.projections[TENANT_ID]
+    assert redelivery.status_code == 202
+    assert "Retry-After" not in redelivery.headers
+    assert len(repository.rows) == 2
+    assert projection.provider_event_id == "evt-new"
+    assert projection.status is BillingSubscriptionStatus.ACTIVE
 
 
 def test_foreign_customer_cannot_repoint_another_tenants_projection() -> None:

@@ -678,7 +678,7 @@ async def test_retry_sleeper_is_injected_without_real_sleep() -> None:
             return await super().retrieve_state(
                 provider_customer_id=provider_customer_id,
                 provider_subscription_id=provider_subscription_id,
-                    request_timeout=request_timeout,
+                request_timeout=request_timeout,
             )
 
     provider = _RetryProvider()
@@ -723,3 +723,60 @@ async def test_timeout_does_not_use_unbounded_provider_call() -> None:
 
     assert report.exit_code == 1
     assert repository.upserts == []
+
+
+@pytest.mark.asyncio
+async def test_external_customer_id_names_the_tenant_not_the_provider_customer() -> None:
+    row = _row("evt-external")
+    row.payload = {
+        "type": "subscription.active",
+        "data": {
+            "external_customer_id": str(_TENANT_ID),
+            "customer": {"id": "cus-nested"},
+            "subscription_id": "sub-external",
+        },
+    }
+    repository = _Repository([row])
+    provider = _Provider()
+
+    report = await reconcile(repository, provider, config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 0
+    assert repository.upserts
+    upsert = repository.upserts[0]
+    assert upsert["tenant_id"] == _TENANT_ID
+    assert upsert["provider_customer_id"] == "cus-nested"
+    assert upsert["provider_customer_id"] != str(_TENANT_ID)
+
+
+@pytest.mark.asyncio
+async def test_refund_payload_id_never_overwrites_the_subscription_pointer() -> None:
+    row = _row("evt-refund")
+    row.event_type = "refund.created"
+    row.payload = {
+        "type": "refund.created",
+        "data": {
+            "id": "rfnd_abc",
+            "tenant_id": str(_TENANT_ID),
+            "customer_id": "cus-bound",
+        },
+    }
+    repository = _Repository([row])
+    repository.projections[_TENANT_ID] = SimpleNamespace(
+        provider="polar",
+        provider_customer_id="cus-bound",
+        provider_subscription_id="sub-existing",
+        status=BillingSubscriptionStatus.ACTIVE.value,
+        current_period_end=None,
+        past_due_since=None,
+        last_event_id="evt-older",
+        updated_at=_BASE_POSITION - timedelta(hours=1),
+    )
+    provider = _Provider()
+
+    await reconcile(repository, provider, config=_config(), sleeper=_no_sleep)
+
+    for call in provider.calls:
+        assert call.get("provider_subscription_id") != "rfnd_abc"
+    for upsert in repository.upserts:
+        assert upsert.get("provider_subscription_id") != "rfnd_abc"

@@ -113,9 +113,9 @@ class PortalIdentityService(Protocol):
         issuer: str,
         subject: str,
         email: str | None,
-        tenant_id: UUID | None = None,
+        invitation_token: str,
     ) -> PortalPrincipal:
-        """Atomically claim one tenant without transferring an existing owner."""
+        """Atomically redeem one single-use invitation into one owned tenant."""
         ...
 
 

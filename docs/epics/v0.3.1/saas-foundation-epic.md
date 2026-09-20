@@ -1,5 +1,7 @@
 # E16. SaaS Foundation (Epic)
 
+> **2026-09-19 recommended beta sequence:** [APP-1 Plan 0001](../../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md) is the proposed integration owner for Clerk identity, existing local tenant/API-key authority, capped free self-service and Polar sandbox-complete billing before beta. The separate business database, new credential service and deferred quota/billing sequence below are historical design, not prerequisites for APP-1. The existing repository now has create/list/revoke operations as recorded in APP-1's evidence. Keep E16-7 findings/cases as inherited work; no parallel implementation or shipped-status claim is implied.
+
 > **Epic Short ID**: E16
 > **Status**: planning -- no implementation started
 > **Parent**: [roadmap-saas-operations.md](../../roadmaps/roadmap-saas-operations.md) Phase 1

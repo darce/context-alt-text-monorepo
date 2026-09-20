@@ -1,69 +1,58 @@
-# ADR-014: Payment Processor & Merchant-of-Record Selection
+# ADR-014: Payment processor and merchant-of-record selection
 
-- **Status:** Proposed
-- **Date:** 2026-07-12
-- **Deciders:** Founder (Daniel)
-- **Context task:** INV-NEXTVER-01
-- **Supersedes/Refines:** GTM launch plan §7 (which pre-selected Polar without a merchant-of-record rationale)
-- **Related:** [ADR-012](ADR-012-customer-tenant-management-crm-ready-admin.md) (tenant/CRM admin), [ADR-010](ADR-010-agentic-plugin-distribution.md), [ADR-011](ADR-011-retire-on-device-recognition-remote-only.md)
+- **Status:** Proposed; recommendation updated 2026-09-19, not accepted or implemented.
+- **Original date:** 2026-07-12.
+- **Decider:** Founder (Daniel).
+- **Context:** INV-NEXTVER-01; current implementation proposal APP-1.
+- **Evidence:** [vendor comparison](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md), [launch recommendation with source-book corpus](../assessments/current/app-portal-launch-recommendation-2026-09-19.md).
+- **Execution:** [Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md); [SaaS roadmap](../roadmaps/roadmap-saas-operations.md).
 
 ## Context
 
-The GTM plan (`docs/gtm/altcontext-productization-launch-plan.md` §7) names Polar as the payments vendor but never justified **merchant-of-record (MoR) vs. direct processor**, and the choice predates two 2026 market shifts. This ADR reviews the decision with current facts.
+The immediate objective is a bounded free self-service beta that exposes signup, key installation, usage and recovery behavior. Paid conversion must be implemented and sandbox-tested before beta admission, with live checkout disabled until the paid release gate. The founder's attention and compute exposure are more consequential initially than small processing-rate differences.
 
-Project constraints that drive the decision:
+The July decision favored a merchant of record (MoR) for a solo global launch. That remains a useful operating assumption, not proof of the actual seller's jurisdiction or tax obligations. Confirm seller/product/payout eligibility. A MoR handles the contracted transaction tax/payment responsibilities; it does not eliminate seller accounting, all fees, product obligations or incident work.
 
-- **Solo founder, global sales (EU + US).** A one-person operation cannot absorb VAT/GST/US-sales-tax registration and remittance across dozens of jurisdictions.
-- **Two sales motions:** concierge (DM → payment link → manual `/admin` provision) *now*, and self-serve (Clerk → checkout → webhook → tenant) at Phase 2.
-- **Architecture:** the Business API is the single tenant-lifecycle authority; billing notifies via **idempotent webhooks** (§7). The processor is a *notifier*, not the source of truth.
-- **Founder thesis:** accessibility-as-architecture, sovereign/self-hostable posture, open-source credibility as distribution.
-- **Fastest-dollar rule:** do not gate the first sale on billing machinery `[PROD-03]`.
+The July decision also overstated Polar's self-hosting exit, Stripe Managed Payments' exclusion and payment portability. This revision removes those claims. The commercial facts and counter-cases are in the linked assessment, refreshed from primary sources on 2026-09-19.
 
-## Decision
+## Recommended decision
 
-**Adopt a merchant-of-record model, keep Polar for launch, and isolate it behind a thin MoR adapter interface** so the concrete vendor is a swappable implementation detail.
+**Use Polar Starter as the first and only billing implementation for APP-1. Buy hosted checkout and customer subscription management. Keep a small provider adapter and local entitlement projection.**
 
-1. **MoR over direct (Stripe-direct rejected).** MoR shifts tax registration/remittance and fraud/chargeback liability to the vendor. For a solo global launch this removes an unbounded compliance-ops burden that direct Stripe (even with Stripe Tax) leaves on us.
-2. **Polar for launch.** Best developer DX, clean webhook API that fits "Business API owns lifecycle," open-source (self-host optionality + thesis alignment), and payment links that make the concierge fast-path (AP-7) work with zero webhook build.
-3. **Adapter isolation (the risk hedge).** Define a `BillingProvider` seam (checkout-link creation + normalized `subscription.*`/`payment.*` webhook events → tenant lifecycle). Polar is the first implementation. This turns a future switch to Paddle or Stripe Managed Payments into a webhook-mapping change, not a rebuild — directly answering Polar's main weakness (depth/longevity).
+This is a reasoned choice under uncertainty, not a measured assertion of best developer experience. Polar's hosted flow, sandbox and customer-state interface fit one subscription offer and the existing planned lifecycle. There is no demonstrated integration advantage that justifies another mandatory vendor bake-off. Prove this path early; reopen only on concrete failure or meaningful new evidence.
 
-## Options considered (2026 facts)
+- Clerk owns human identity; AltContext retains local API-key issuance/verification and tenant authorization.
+- Polar owns subscription/payment facts; AltContext derives access according to explicit entitlement policy. The processor is not merely a notifier whose financial truth we edit locally.
+- Use the existing service/customer-state authority for beta, with restricted reset roles and tested restore. No second writable credential database.
+- A local beta grant creates no paid subscription, payment instrument requirement, charge or arrears.
+- Start with one monthly offer and allowance; defer overages, annual pricing, multiple tiers and bespoke billing UI.
+- Verify signatures, persist/dedupe webhooks before acknowledgement, reconcile missed/reordered events and keep billing network calls off the recognition path.
 
-| Option | Model | Effective fee (indie, intl) | Fit / DX | Risk |
-|---|---|---|---|---|
-| **Polar** | MoR, open-source | New orgs (post-2026-05-27) **5% + 50¢**, +1.5% intl, $15 chargeback; grandfathered 4%+40¢ only if org created earlier; paid plans ($20/$100/$400) buy the rate down | **Best DX**, dev-first webhooks, payment links, self-host option | Thinner subscription/jurisdiction depth; newer co.; longevity unproven |
-| **Paddle** | MoR | **5% + 50¢ all-in** (no intl/subscription surcharge) → often cheaper for intl-heavy | Enterprise-grade API/webhooks | Slower onboarding + approval gate; assumes payment domain knowledge |
-| **Lemon Squeezy** | MoR | ~5%+50¢, intl subs ~7%+50¢ | Digital-goods features (license keys, storefront) | **Acquired by Stripe; being folded into Stripe Managed Payments — do not build new on it** |
-| **Stripe Managed Payments (SMP)** | MoR (new) | Stripe-tier | Stripe DX + MoR combined; 35+ countries | **Public preview Feb 2026, GA "soon"** — too early to launch on, strongest medium-term hedge |
-| **Stripe (direct)** | Not MoR | 2.9%+30¢ + Stripe Tax ~0.5% | Best ecosystem/control | **We become merchant → we register & remit tax globally** — rejected for solo launch |
+## Alternatives and counter-cases
 
-## Consequences
+| Option | Decision for this launch | When it becomes preferable |
+| --- | --- | --- |
+| Polar Starter | Recommended implementation | Passes actual eligibility and sandbox lifecycle proof |
+| Stripe Managed Payments | Eligible contender; do not exclude by old preview status | Existing eligible Stripe setup or required capability materially reduces remaining work; accepts its actual fee schedule |
+| Paddle | Credible MoR alternative | Account approval, coverage, operations or measured international economics favor it |
+| Stripe direct + Billing | Defer | Explicit seller-owned tax/compliance operating plan and a concrete business benefit justify it |
+| Dodo Payments | Reserve | Approval/integration benefit or total effective cost, including payout/recovery fees, wins |
+| Lemon Squeezy | Lower priority for new integration | Specific existing account/capability advantage outweighs its announced Stripe Managed Payments direction; no shutdown is presumed |
+| Clerk Billing + Stripe | Defer | Accepted merchant/tax/currency requirements fit its actual limitations; it is not a MoR substitute |
 
-**Positive**
-- First dollar unblocked now: Polar **payment link** for concierge (AP-7), no self-serve/webhook dependency.
-- Tax/compliance liability offloaded from day one.
-- Adapter seam caps switching cost; effective fees are ~parity across MoRs in 2026, so the decision rightly rests on DX + switching cost + thesis fit — all favoring Polar today.
+## Cost and exit
 
-**Negative / watch**
-- Polar's 2026-05-27 repricing means the "4%" premise in GTM §7 is **stale**. Action: confirm the Polar org's creation date — if grandfathering (4%+40¢) is still capturable, create the org immediately; otherwise plan on 5%+50¢ parity.
-- MoR sets the price *to the buyer* including its fee; keep the rate-floor `[BOOT-04]` in pricing.
-- If B2B/agency-tier (ADR-012 CRM) needs invoicing/jurisdiction depth Polar lacks, the adapter allows promoting Paddle or SMP for those plans without abandoning Polar for self-serve.
+Polar Starter currently lists 5% + US$0.50, with a non-US card surcharge and payout/dispute costs. Do not assume the old Early Member rate can be captured now. Use actual transaction size/volume before buying a paid rate reduction. [Polar pricing](https://polar.sh/resources/pricing)
 
-## Falsifiers
+Stripe Managed Payments adds 3.5% to Payments fees; optional Billing is separate. Its early-volume cost difference is insufficient by itself to justify rejecting it. [Stripe pricing](https://stripe.com/managed-payments)
 
-- Polar payout unsupported in the founder's country → forces Paddle/SMP; verify before committing.
-- Polar webhook `subscription.*` semantics can't cleanly drive idempotent tenant lifecycle → adapter exposes it early; re-evaluate.
-- Effective Polar rate (post-hike + intl surcharge) materially exceeds Paddle's all-in 5%+50¢ at real volume → revisit at MRR review.
+Export tenant/provider/customer/catalog mappings and preserve direct customer contact subject to consent. An adapter limits code coupling; it cannot guarantee moving subscriptions or payment methods. A switch may require provider cooperation and customer reauthorization. Polar's open-source code does not reproduce its merchant agreements or payout operation.
 
-## Action items
+## Execution and falsifiers
 
-1. Verify Polar payout support + org creation date (grandfather capture) — **blocking gate before AP-5**.
-2. Implement `BillingProvider` adapter (Polar impl) in the Business API; normalize webhook events to tenant lifecycle.
-3. Ship AP-7 concierge payment link first (no webhook), decoupled from the self-serve checkout (AP-5).
+1. S0 records actual seller/product/payout eligibility and one offer's required lifecycle. S1 performs the chosen integration proof; the proposed two engineer-day timebox is discovery, not complete billing delivery.
+2. If Polar fails a required contract or eligibility check, inspect one matching fallback before production integration. Use the current comparison; do not silently add a second provider.
+3. S5 completes checkout, signed inbox, reconciliation, cancellation/payment recovery and hosted portal. S6 proves no-charge beta plus recovery and cost containment. S7 enables explicit paid conversion only after the paid-ready gate.
+4. Reassess at the first paid-cohort review and material geography/volume changes. Measure support/engineering burden and effective cost, not vendor affinity.
 
-## Sources
-
-- [Polar — Fees](https://polar.sh/docs/merchant-of-record/fees) · [Polar.sh 2026 pricing review](https://dodopayments.com/blogs/polar-sh-review)
-- [Stripe vs Paddle vs Lemon Squeezy vs Polar — MoR decision 2026](https://fintechspecs.com/blog/stripe-vs-paddle-vs-lemon-squeezy-vs-polar-merchant-of-record-b2b-saas/)
-- [Lemon Squeezy + Stripe Managed Payments (2026 update)](https://www.lemonsqueezy.com/blog/2026-update)
-- [Lemon Squeezy vs Polar vs Paddle MoR comparison 2026](https://www.buildmvpfast.com/blog/lemon-squeezy-vs-polar-paddle-merchant-of-record-2026)
+Canon basis: Lean UX ch-3/10/12 (learning/outcomes), Good Strategy Bad Strategy ch-5/8 (bottleneck/coherence), The 4-Hour Workweek ch-8/10/11 (owner attention and demand), Modern Software Engineering ch-11/12 (small adapters), DDIA ch-7/8/11/12 (transaction/projection correctness). The linked recommendation traces these to the local `distilled/` corpus, lexicons, reasoning cards and principles, including disconfirmers.

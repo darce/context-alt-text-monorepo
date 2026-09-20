@@ -29,6 +29,13 @@ IDENTITY_VECTOR_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 TENANT_TABLES = [
+    "portal_identity",
+    "tenant_entitlement",
+    "usage_reservation",
+    "billing_subscription_projection",
+    "api_key_rotation_history",
+    "tenant_key_idempotency",
+    "portal_tenant_invitation",
     "describe_operations",
     "describe_demand_leases",
     "media_identities",
@@ -93,6 +100,14 @@ EXPECTED_SCHEMA_TABLES = [
     "describe_load_snapshot_revisions",
     "tenants",
     "api_keys",
+    "portal_identity",
+    "tenant_entitlement",
+    "usage_reservation",
+    "billing_subscription_projection",
+    "billing_webhook_inbox",
+    "api_key_rotation_history",
+    "tenant_key_idempotency",
+    "portal_tenant_invitation",
     "demo_instances",
     "worker_capabilities",
     "media_identities",
@@ -131,6 +146,14 @@ DOWNGRADE_TABLE_ORDER = [
     "describe_demand_leases",
     "describe_operations",
     "describe_startups",
+    "portal_tenant_invitation",
+    "tenant_key_idempotency",
+    "api_key_rotation_history",
+    "billing_webhook_inbox",
+    "billing_subscription_projection",
+    "usage_reservation",
+    "tenant_entitlement",
+    "portal_identity",
     "identity_atlas_queue_dispositions",
     "identity_atlas_points",
     "identity_atlas_runs",
@@ -482,6 +505,261 @@ def ensure_tables(op) -> None:
         sa.Column("last_used_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("lifetime_seconds", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "lifetime_seconds IS NULL OR lifetime_seconds > 0",
+            name="ck_api_keys_lifetime_seconds_positive",
+        ),
+    )
+
+    # Reclaim key: status + updated_at; the portal identity retention job purges old tombstones.
+    _ensure_table(
+        op,
+        "portal_identity",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("issuer", sa.Text(), nullable=False),
+        sa.Column("subject", sa.Text(), nullable=False),
+        sa.Column("email", sa.Text(), nullable=True),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'active'")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            onupdate=sa.func.now(),
+            nullable=False,
+        ),
+        sa.UniqueConstraint("tenant_id", name="uq_portal_identity_tenant_id"),
+        sa.UniqueConstraint("issuer", "subject", name="uq_portal_identity_issuer_subject"),
+    )
+    _ensure_index(op, "idx_portal_identity_reclaim", "portal_identity", ["status", "updated_at"])
+
+    # Reclaim key: updated_at; the entitlement retention job purges superseded projections.
+    _ensure_table(
+        op,
+        "tenant_entitlement",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("plan_code", sa.Text(), nullable=False),
+        sa.Column("allowance_version", sa.Text(), nullable=False),
+        sa.Column("allowance_jobs", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("period_end", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'expired'")),
+        sa.Column("source", sa.Text(), nullable=False),
+        sa.Column("grace_until", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            onupdate=sa.func.now(),
+            nullable=False,
+        ),
+        sa.UniqueConstraint("tenant_id", name="uq_tenant_entitlement_tenant_id"),
+    )
+    _ensure_index(op, "idx_tenant_entitlement_reclaim", "tenant_entitlement", ["updated_at"])
+
+    # Reclaim key: settled_at; the usage-retention job purges settled reservations after the retention window.
+    _ensure_table(
+        op,
+        "usage_reservation",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("job_id", sa.Text(), nullable=True),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'reserved'")),
+        sa.Column("reserved_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("settled_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("cost_units", sa.Integer(), nullable=False),
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
+        # A zero or negative charge would mint allowance back to the tenant.
+        sa.CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        # Usage accounting sums only 'reserved' and 'committed'; an unknown
+        # status silently drops the row out of every allowance calculation.
+        sa.CheckConstraint(
+            "status IN ('reserved', 'committed', 'released', 'expired')",
+            name="ck_usage_reservation_status",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_usage_reservation_tenant_period_status",
+        "usage_reservation",
+        ["tenant_id", "period_start", "status"],
+    )
+    _ensure_index(op, "idx_usage_reservation_reclaim", "usage_reservation", ["status", "settled_at"])
+
+    # Reclaim key: updated_at; the billing projection retention job purges obsolete inactive projections.
+    _ensure_table(
+        op,
+        "billing_subscription_projection",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("provider_customer_id", sa.Text(), nullable=False),
+        sa.Column("provider_subscription_id", sa.Text(), nullable=True),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'none'")),
+        sa.Column("current_period_end", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("past_due_since", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("last_event_id", sa.Text(), nullable=True),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("tenant_id", name="uq_billing_subscription_projection_tenant_id"),
+        sa.UniqueConstraint(
+            "provider",
+            "provider_customer_id",
+            name="uq_billing_subscription_projection_provider_customer",
+        ),
+        sa.CheckConstraint(
+            "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
+            name="ck_billing_subscription_projection_status",
+        ),
+    )
+    _ensure_index(op, "idx_billing_subscription_projection_reclaim", "billing_subscription_projection", ["updated_at"])
+
+    # Reclaim key: processed_at; the webhook retention job purges processed/discarded inbox rows.
+    _ensure_table(
+        op,
+        "billing_webhook_inbox",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("provider_event_id", sa.Text(), nullable=False),
+        sa.Column("event_type", sa.Text(), nullable=False),
+        sa.Column("signature_verified", sa.Boolean(), nullable=False),
+        sa.Column("payload", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("received_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("processed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("attempts", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("quarantined_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'received'")),
+        sa.UniqueConstraint(
+            "provider",
+            "provider_event_id",
+            name="uq_billing_webhook_inbox_provider_event",
+        ),
+    )
+    _ensure_index(op, "idx_billing_webhook_inbox_reclaim", "billing_webhook_inbox", ["status", "processed_at"])
+    _ensure_index(op, "idx_billing_webhook_inbox_pending", "billing_webhook_inbox", ["status", "next_attempt_at"])
+
+    # Reclaim key: created_at; the API-key history retention job purges old rotation records.
+    _ensure_table(
+        op,
+        "api_key_rotation_history",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "api_key_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("api_keys.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "replaced_by_key_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("api_keys.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column("cutoff_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+    _ensure_index(
+        op, "idx_api_key_rotation_history_tenant_created", "api_key_rotation_history", ["tenant_id", "created_at"]
+    )
+    _ensure_index(op, "idx_api_key_rotation_history_reclaim", "api_key_rotation_history", ["created_at"])
+
+    # Reclaim key: created_at; lifecycle reservations expire once the portal
+    # replay window closes. (tenant_id, operation, idempotency_key) is the
+    # replay identity; request_fingerprint detects key reuse under a
+    # different normalized request.
+    _ensure_table(
+        op,
+        "tenant_key_idempotency",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("operation", sa.Text(), nullable=False),
+        sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("request_fingerprint", sa.Text(), nullable=False),
+        sa.Column(
+            "api_key_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("api_keys.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "operation",
+            "idempotency_key",
+            name="uq_tenant_key_idempotency_replay",
+        ),
+    )
+    _ensure_index(op, "idx_tenant_key_idempotency_reclaim", "tenant_key_idempotency", ["created_at"])
+
+    # APP-R1: the invitation is the ONLY evidence that authorises binding a new
+    # (issuer, subject) to an existing tenant. Only the hash is stored, so a
+    # database read cannot mint a usable token [SECD-03].
+    _ensure_table(
+        op,
+        "portal_tenant_invitation",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("invited_email", sa.Text(), nullable=False),
+        sa.Column("token_hash", sa.Text(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("accepted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "accepted_by_identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("portal_identity.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint("token_hash", name="uq_portal_tenant_invitation_token_hash"),
+    )
+    _ensure_index(
+        op,
+        "idx_portal_tenant_invitation_reclaim",
+        "portal_tenant_invitation",
+        ["expires_at", "accepted_at"],
     )
 
     # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
@@ -2875,6 +3153,17 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
+    op.drop_index("idx_portal_tenant_invitation_reclaim", table_name="portal_tenant_invitation")
+    op.drop_index("idx_tenant_key_idempotency_reclaim", table_name="tenant_key_idempotency")
+    op.drop_index("idx_api_key_rotation_history_reclaim", table_name="api_key_rotation_history")
+    op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
+    op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_subscription_projection_reclaim", table_name="billing_subscription_projection")
+    op.drop_index("idx_usage_reservation_reclaim", table_name="usage_reservation")
+    op.drop_index("idx_usage_reservation_tenant_period_status", table_name="usage_reservation")
+    op.drop_index("idx_tenant_entitlement_reclaim", table_name="tenant_entitlement")
+    op.drop_index("idx_portal_identity_reclaim", table_name="portal_identity")
     op.drop_index("idx_api_keys_hash", table_name="api_keys")
     op.drop_index("idx_api_keys_tenant", table_name="api_keys")
     op.drop_index("idx_demo_instances_api_key_ref", table_name="demo_instances")

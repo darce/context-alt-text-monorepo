@@ -1,4 +1,4 @@
-"""Model provenance manifest + fail-closed loader for YuNet + SFace ONNX.
+"""Model provenance manifest + fail-closed loader for face-pipeline ONNX.
 
 FIR-3 S1: pin model bytes by sha256 with source URL/ref and license hashes.
 Adapters (S2/S3) load models only through ``load_verified_model``.
@@ -20,9 +20,16 @@ PENDING_OPERATOR_FETCH = "PENDING_OPERATOR_FETCH"
 OPENCV_ZOO_COMMIT = "47534e27c9851bb1128ccc0102f1145e27f23f98"
 _OPENCV_ZOO_MEDIA = f"https://media.githubusercontent.com/media/opencv/opencv_zoo/{OPENCV_ZOO_COMMIT}"
 _OPENCV_ZOO_RAW = f"https://raw.githubusercontent.com/opencv/opencv_zoo/{OPENCV_ZOO_COMMIT}"
+AURAFACE_REVISION = "af6d057c9b0ec4071d4c49c80e3539258798b609"
+_AURAFACE_REPOSITORY = "https://huggingface.co/fal/AuraFace-v1"
+_AURAFACE_ARTIFACT = "glintr100.onnx"
 
 # Default on-disk directory next to this module.
 DEFAULT_MODELS_DIR = Path(__file__).resolve().parent / "models"
+
+# The required gate/preflight baseline is deliberately independent of the
+# declarable manifest, whose candidates may remain operator-pinned and opt-in.
+REQUIRED_MODELS: tuple[str, ...] = ("yunet", "sface")
 
 
 class ModelIntegrityError(Exception):
@@ -39,6 +46,17 @@ class ModelMissingError(Exception):
     Not a subclass of ``ModelIntegrityError``. Non-sticky: correcting
     ``models_dir`` (fetch + pin) must recover without process restart.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class InputPreprocessing:
+    """Declared input preprocessing metadata for a candidate model space."""
+
+    input_size: tuple[int, int]
+    channel_order: str
+    input_scale: float
+    alignment_template_id: str
+    output_l2_normalized: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +81,7 @@ class ModelProvenance:
     embedding_dim: int | None = None
     normalization: str | None = None
     metric: str | None = None
+    preprocessing: InputPreprocessing | None = None
 
 
 # Hashes computed from bytes downloaded in-sandbox at FIR-3 S1 from the
@@ -96,6 +115,30 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
         embedding_dim=128,
         normalization="l2",
         metric="cosine",
+    ),
+    # Grounded in docs/research/fir-capacity-primary-source-register-2026-09-19.json
+    # and docs/assessments/current/fir-model-capacity-and-training-2026-09-19.md:23,30;
+    # license_id is the publisher-declared Apache-2.0 grant, not an independent rights finding.
+    "auraface": ModelProvenance(
+        file_name=_AURAFACE_ARTIFACT,
+        sha256=PENDING_OPERATOR_FETCH,
+        source_url=f"{_AURAFACE_REPOSITORY}/resolve/{AURAFACE_REVISION}/{_AURAFACE_ARTIFACT}",
+        source_ref=AURAFACE_REVISION,
+        license_id="Apache-2.0",
+        license_file="LICENSE.auraface",
+        license_sha256=PENDING_OPERATOR_FETCH,
+        size_bytes=260_694_151,
+        framework="insightface",
+        embedding_dim=512,
+        normalization="l2",
+        metric="cosine",
+        preprocessing=InputPreprocessing(
+            input_size=(112, 112),
+            channel_order="RGB",
+            input_scale=1.0 / 127.5,  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure input scaling.
+            alignment_template_id="arcface-112-unverified",  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure alignment template.
+            output_l2_normalized=True,  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure output normalization.
+        ),
     ),
 }
 
@@ -281,10 +324,7 @@ def verify_face_pipeline_model(name: str, *, models_dir: Path | None = None) -> 
 
 def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, ModelVerifyOutcome]:
     """Eagerly verify both YuNet and SFace; returns per-artifact outcomes."""
-    return {
-        "yunet": verify_face_pipeline_model("yunet", models_dir=models_dir),
-        "sface": verify_face_pipeline_model("sface", models_dir=models_dir),
-    }
+    return {name: verify_face_pipeline_model(name, models_dir=models_dir) for name in REQUIRED_MODELS}
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +443,8 @@ def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
 
 __all__ = [
     "DEFAULT_MODELS_DIR",
+    "AURAFACE_REVISION",
+    "InputPreprocessing",
     "LICENSE_SOURCE_URLS",
     "MODEL_MANIFEST",
     "ModelIntegrityError",
@@ -412,6 +454,7 @@ __all__ = [
     "NumericRuntimeFingerprint",
     "OPENCV_ZOO_COMMIT",
     "PENDING_OPERATOR_FETCH",
+    "REQUIRED_MODELS",
     "load_verified_model",
     "numeric_runtime_fingerprint",
     "verify_face_pipeline_model",

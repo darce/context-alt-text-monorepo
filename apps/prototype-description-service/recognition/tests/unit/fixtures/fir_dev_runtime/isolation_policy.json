@@ -1,0 +1,32 @@
+{
+  "required_tenant_id": "11111111-2222-7333-8444-555555555555",
+  "forbidden_resource_ids": {
+    "volumes": [
+      "acx-dev-pgdata",
+      "acx-dev-blobs",
+      "acx-prod-pgdata",
+      "acx-prod-blobs"
+    ],
+    "networks": [
+      "acx-dev-net",
+      "acx-prod-net"
+    ],
+    "compose_projects": [
+      "acx-dev",
+      "acx-prod"
+    ],
+    "database_names": [
+      "alt_context",
+      "acx_dev"
+    ],
+    "database_roles": [
+      "acx_dev",
+      "acx_prod",
+      "postgres"
+    ],
+    "blob_namespaces": [
+      "acx-dev",
+      "acx-prod"
+    ]
+  }
+}

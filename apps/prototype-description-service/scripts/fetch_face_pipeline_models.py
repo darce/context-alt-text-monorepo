@@ -43,6 +43,7 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     LICENSE_SOURCE_URLS,
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
+    REQUIRED_MODELS,
     ModelIntegrityError,
     ModelMissingError,
     ModelProvenance,
@@ -269,10 +270,13 @@ def fetch_all(
     dest_dir: Path | None = None,
     models: tuple[str, ...] | None = None,
 ) -> list[Path]:
-    """Fetch and verify the requested models (default: all in the manifest)."""
+    """Fetch requested models; default to required baseline ("yunet", "sface").
+
+    Declarable candidates must be named explicitly with ``models``.
+    """
     root = Path(dest_dir) if dest_dir is not None else DEFAULT_MODELS_DIR
     root.mkdir(parents=True, exist_ok=True)
-    names = models if models is not None else tuple(MODEL_MANIFEST.keys())
+    names = models if models is not None else REQUIRED_MODELS
     paths: list[Path] = []
     for name in names:
         paths.append(fetch_one(name, dest_dir=root))
@@ -284,13 +288,14 @@ def verify_only(
     dest_dir: Path | None = None,
     models: tuple[str, ...] | None = None,
 ) -> list[Path]:
-    """Verify local model + license files against the manifest (no network).
+    """Verify local files; default to required baseline ("yunet", "sface").
 
     Raises ``ModelFetchError`` wrapping integrity failures so callers share the
     same exit path as fetch. Does not download or write files.
+    Declarable candidates must be named explicitly with ``models``.
     """
     root = Path(dest_dir) if dest_dir is not None else DEFAULT_MODELS_DIR
-    names = models if models is not None else tuple(MODEL_MANIFEST.keys())
+    names = models if models is not None else REQUIRED_MODELS
     paths: list[Path] = []
     for name in names:
         entry = MODEL_MANIFEST.get(name)
@@ -318,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         choices=sorted(MODEL_MANIFEST.keys()),
         default=None,
-        help="Subset of models to fetch (default: all)",
+        help='Subset of models to fetch (default: required baseline ("yunet", "sface"); declarable candidates must be named explicitly)',
     )
     parser.add_argument(
         "--verify-only",

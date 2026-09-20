@@ -1,10 +1,4 @@
-"""RED-only promotion seam for the existing benchmark outcome ledger.
-
-The GREEN implementation must delegate persistence to
-``scripts.bench.corpus.ItemOutcomeStore`` and denominator/attrition arithmetic
-to ``scripts.bench.score_report.compute_accepted_set``.  It must not introduce
-another ``items.jsonl`` store or reimplement accepted-set arithmetic.
-"""
+"""Promotion seam for the existing benchmark outcome ledger."""
 
 from __future__ import annotations
 
@@ -16,42 +10,49 @@ from scripts.bench.score_report import AcceptedSet, compute_accepted_set
 
 
 class OutcomeLedger:
-    """RED placeholder for a facade that delegates to ``ItemOutcomeStore``."""
+    """Facade over exactly one existing ``ItemOutcomeStore`` instance."""
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
+        self._store = ItemOutcomeStore(self.path)
 
-    def append(self, _record: dict[str, Any]) -> None:
-        """RED placeholder; append must delegate to the existing store."""
+    def append(self, record: dict[str, Any]) -> None:
+        """Append one record using the existing store's serialization semantics."""
+        self._store.append(record)
 
     def read_all(self) -> list[dict[str, Any]]:
-        """RED placeholder; read must return the existing JSONL records verbatim."""
+        """Return records using the existing store's validation and ordering."""
+        return self._store.read_all()
 
-        return []
-
-    def latest(self, _manifest_media_id: int, _phase: str) -> dict[str, Any] | None:
-        """RED placeholder for the existing last-record semantics."""
-
-        return None
+    def latest(self, manifest_media_id: int, phase: str) -> dict[str, Any] | None:
+        """Return the existing store's last matching record."""
+        return self._store.latest(manifest_media_id, phase)
 
 
-def summarize_run(_run_dir: Path | str) -> dict[str, Any]:
-    """RED placeholder for accepted-set and attrition fields from the existing scorer."""
-
-    return {}
+def summarize_run(run_dir: Path | str) -> dict[str, Any]:
+    accepted = compute_accepted_set(run_dir)
+    return {
+        "manifest_entry_count": accepted.manifest_entry_count,
+        "accepted_set_size": accepted.accepted_set_size,
+        "resolved_floor_count": accepted.resolved_floor_count,
+        "manifest_media_ids": accepted.manifest_media_ids,
+        "attrition_ingest_analyze": accepted.attrition_ingest_analyze,
+        "attrition_join": accepted.attrition_join,
+        "zero_detection_media_count": accepted.zero_detection_media_count,
+    }
 
 
 def accepted_set_for_run(run_dir: Path | str) -> AcceptedSet:
-    """Promoted accepted-set entry point reserved for the GREEN implementation."""
+    """Promoted accepted-set entry point."""
 
     return compute_accepted_set(run_dir)
 
 
-__all__ = [
+__all__ = (
     "AcceptedSet",
     "ItemOutcomeStore",
     "OutcomeLedger",
     "accepted_set_for_run",
     "compute_accepted_set",
     "summarize_run",
-]
+)

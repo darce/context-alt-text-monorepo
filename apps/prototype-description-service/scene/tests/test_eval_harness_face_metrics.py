@@ -12,14 +12,15 @@ import dataclasses
 import numpy as np
 import pytest
 
+from scripts.eval_harness import face_assignment as face_assignment_mod
+from scripts.eval_harness import face_metrics as face_metrics_mod
 from scripts.eval_harness.face_assignment import (
     FaceDecision,
+    associate_detections,
     collect_matched_faces,
     gt_box_name,
     score_face_assignment,
 )
-from scripts.eval_harness import face_metrics as face_metrics_mod
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
     POSITIONAL_EVAL_NOT_EVALUABLE,
@@ -30,6 +31,7 @@ from scripts.eval_harness.face_metrics import (
     UNLABELED_COHORT_KEY,
     ImageDetection,
     ImageIdentities,
+    LabeledOrderResult,
     clustering_metrics_at_cut,
     clustering_sweep,
     demographic_rollup,
@@ -37,7 +39,6 @@ from scripts.eval_harness.face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
-    LabeledOrderResult,
     labeled_left_to_right,
     labeled_order,
     latency_summary,
@@ -49,8 +50,16 @@ from scripts.eval_harness.face_metrics import (
     sort_identity_rows_by_normalized_centre,
     wire_bbox_normalized_centre,
 )
-
-
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    FaceBox,
+    LabelConfidence,
+    LabelDecision,
+    LabelLineage,
+    LabelSource,
+    ManifestError,
+    ScoreInvariant,
+)
 
 # --- detection level (identity-agnostic) ---
 
@@ -1574,3 +1583,295 @@ def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
     assert result.false_negatives == fn
     assert result.false_positives >= 0
     assert result.false_negatives >= 0
+
+
+# --- FIRDV-2 S3a: strict localization adapter (RED-only contract) ---
+
+
+@dataclasses.dataclass(frozen=True)
+class _StrictDetectionRow:
+    """Synthetic strict-adapter row with raw boxes and GT provenance.
+
+    ``ImageDetection`` remains the historical count-only row.  The S3a adapter
+    needs the additional evidence here so it can derive one-to-one association
+    from raw boxes, inspect every GT box's lineage, and retain the association
+    audit fields without changing the legacy row's constructor.
+    """
+
+    image: str
+    pred_faces: int
+    labeled_faces: int
+    matched_faces: int | None
+    detections_bbox_px: tuple[tuple[float, float, float, float], ...] = ()
+    gt_boxes: tuple[object, ...] = ()
+    image_size: tuple[int, int] = (1000, 1000)
+    media_id: int = 1
+
+
+def _strict_detection_pr(rows, *, run_manifest=None):
+    """Call either allowed strict API shape while the RED lane is portable.
+
+    The implementation may add ``require_localization=True`` to ``detection_pr``
+    or expose ``detection_pr_strict`` as a sibling.  Keeping this dispatch in
+    the tests lets the implementation choose without weakening the contract.
+    """
+
+    kwargs = {"annotation_mode": AnnotationMode.EXHAUSTIVE}
+    if run_manifest is not None:
+        kwargs["run_manifest"] = run_manifest
+    strict = getattr(face_metrics_mod, "detection_pr_strict", None)
+    if strict is not None:
+        return strict(rows, **kwargs)
+    return detection_pr(rows, require_localization=True, **kwargs)
+
+
+_STRICT_HUMAN_LINEAGE = LabelLineage(
+    labeler_id="s3a-human",
+    batch_id="s3a-red-batch",
+    capture_session_id="s3a-red-session",
+    pass_index=0,
+    labeled_at="2026-09-19T00:00:00Z",
+    tool_version="s3a-red",
+    saw_machine_proposals=False,
+    label_source=LabelSource.OPERATOR_BLIND,
+    decision=LabelDecision.NAMED,
+    confidence=LabelConfidence.HIGH,
+)
+_STRICT_MACHINE_SEEDED_LINEAGE = _STRICT_HUMAN_LINEAGE.model_copy(
+    update={"saw_machine_proposals": True, "label_source": LabelSource.OPERATOR_REPASS}
+)
+_STRICT_LEGACY_LINEAGE = _STRICT_HUMAN_LINEAGE.model_copy(
+    update={"label_source": LabelSource.LEGACY_IMPORT}
+)
+
+
+def _strict_box(
+    *,
+    x: float = 0.5,
+    y: float | None = 0.5,
+    name: str | None = "Alice",
+    lineage: LabelLineage | None = _STRICT_HUMAN_LINEAGE,
+) -> FaceBox:
+    return FaceBox(x=x, y=y, w=0.2, h=0.2, name=name, source="operator", lineage=lineage)
+
+
+def _strict_row(
+    *,
+    gt_boxes: tuple[object, ...],
+    detections_bbox_px: tuple[tuple[float, float, float, float], ...],
+    matched_faces: int | None,
+    image: str = "s3a.jpg",
+) -> _StrictDetectionRow:
+    return _StrictDetectionRow(
+        image=image,
+        pred_faces=len(detections_bbox_px),
+        labeled_faces=len(gt_boxes),
+        matched_faces=matched_faces,
+        detections_bbox_px=detections_bbox_px,
+        gt_boxes=gt_boxes,
+    )
+
+
+def _invariant_value(error: ManifestError) -> object:
+    invariant = error.invariant
+    return getattr(invariant, "value", invariant)
+
+
+def test_detection_pr_default_count_only_is_still_historical():
+    """S3a strictness is opt-in; the published count-only replay stays intact."""
+    result = detection_pr(
+        [ImageDetection(image="legacy.jpg", pred_faces=2, labeled_faces=2)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+    )
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (2, 0, 0)
+
+
+def test_detection_pr_strict_rejects_missing_localization_evidence():
+    row = _strict_row(
+        gt_boxes=(_strict_box(), _strict_box(x=0.7)),
+        detections_bbox_px=((400.0, 400.0, 200.0, 200.0), (400.0, 400.0, 200.0, 200.0)),
+        matched_faces=None,
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row])
+    assert _invariant_value(exc_info.value) == "detection_requires_localization"
+
+
+def test_detection_pr_strict_scores_full_localization():
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((400.0, 400.0, 200.0, 200.0),),
+        matched_faces=1,
+    )
+    result = _strict_detection_pr([row])
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (1, 0, 0)
+
+
+def test_detection_pr_strict_rejects_wrong_locations_even_when_counts_match():
+    row = _strict_row(
+        gt_boxes=(_strict_box(), _strict_box(x=0.7)),
+        detections_bbox_px=((50.0, 50.0, 100.0, 100.0), (850.0, 850.0, 100.0, 100.0)),
+        matched_faces=0,
+    )
+    result = _strict_detection_pr([row])
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (0, 2, 2)
+
+
+def test_detection_pr_strict_rejects_duplicate_predictions_over_one_gt():
+    row = _strict_row(
+        gt_boxes=(_strict_box(), _strict_box(x=0.7)),
+        detections_bbox_px=((400.0, 400.0, 200.0, 200.0), (400.0, 400.0, 200.0, 200.0)),
+        matched_faces=1,
+    )
+    result = _strict_detection_pr([row])
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("lineage", "case"),
+    [
+        (None, "missing-lineage"),
+        (_STRICT_MACHINE_SEEDED_LINEAGE, "machine-proposals"),
+        (_STRICT_LEGACY_LINEAGE, "non-human-source"),
+    ],
+)
+def test_detection_pr_strict_requires_independent_human_gt_lineage(lineage, case):
+    """Exhaustive + matching boxes cannot substitute for independent provenance."""
+    row = _strict_row(
+        gt_boxes=(_strict_box(lineage=lineage),),
+        detections_bbox_px=((400.0, 400.0, 200.0, 200.0),),
+        matched_faces=1,
+    )
+    with pytest.raises(ManifestError, match="(?i)lineage|human|provenance|machine"):
+        _strict_detection_pr([row])
+    assert case
+
+
+def test_detection_pr_strict_reads_iou_threshold_from_run_manifest():
+    """Same geometry must pair at .30 and miss at .50; .50 is only proposed."""
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        # IoU = 1/3 against the GT [400, 400, 200, 200] box.
+        detections_bbox_px=((500.0, 400.0, 200.0, 200.0),),
+        matched_faces=0,
+    )
+    low = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.30})
+    high = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.50})
+    assert (low.true_positives, low.false_positives, low.false_negatives) == (1, 0, 0)
+    assert (high.true_positives, high.false_positives, high.false_negatives) == (0, 1, 1)
+
+
+def test_detection_pr_strict_does_not_mutate_iou_match_constant():
+    before = face_assignment_mod.IOU_MATCH_THRESHOLD
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((500.0, 400.0, 200.0, 200.0),),
+        matched_faces=0,
+    )
+    try:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.30})
+    finally:
+        assert face_assignment_mod.IOU_MATCH_THRESHOLD == before == 0.5
+
+
+def test_detection_pr_strict_excludes_geometry_incomplete_gt_from_fn():
+    row = _strict_row(
+        gt_boxes=(_strict_box(), _strict_box(x=0.7, y=None)),
+        detections_bbox_px=(),
+        matched_faces=0,
+    )
+    result = _strict_detection_pr([row])
+    assert result.false_negatives == 1
+    assert result.geometry_incomplete_gt == 1
+
+
+def test_detection_pr_strict_emits_matched_iou_distribution_from_association():
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((400.0, 400.0, 200.0, 200.0),),
+        matched_faces=1,
+    )
+    association = associate_detections(
+        row.detections_bbox_px,
+        row.gt_boxes,
+        row.image_size,
+        iou_threshold=0.5,
+    )
+    result = _strict_detection_pr([row])
+    assert association.ious == ((0, 0, 1.0),)
+    assert result.matched_ious == pytest.approx([iou for _det, _gt, iou in association.ious])
+
+
+def test_score_run_record_count_only_output_is_unchanged():
+    from scripts.eval_harness.report import score_run_record
+
+    entry = {
+        "path": "legacy.jpg",
+        "media_id": 1,
+        "face_count": 2,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "annotation_mode": "exhaustive",
+        "face_boxes": [
+            {"x": 0.3, "y": 0.5, "w": 0.2, "h": 0.2, "name": None, "source": "operator"},
+            {"x": 0.7, "y": 0.5, "w": 0.2, "h": 0.2, "name": None, "source": "operator"},
+        ],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "legacy.jpg",
+                "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+                "identities": [],
+                "face_count": 2,
+                "error": None,
+            }
+        ],
+    }
+    scored = score_run_record(record, [entry])
+    assert scored["faces"]["detection"] == {
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+    }
+
+
+def test_score_head_to_head_count_only_cell_is_unchanged(tmp_path):
+    """The bench diagnostic still re-scores matched-face rows after stripping localization."""
+    from scripts.bench.score_report import score_head_to_head
+    from scripts.bench.tests.conftest import golden_entry
+    from scripts.bench.tests.test_score_head_to_head import (
+        A_STACK,
+        B_STACK,
+        _cells,
+        _init,
+        _pred,
+        _write_leg,
+    )
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[{"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": "Alice Q", "source": "iptc"}])
+        for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    _write_leg(run_dir, A_STACK, [_pred(1), _pred(2)], [1, 2])
+    _write_leg(run_dir, B_STACK, [_pred(1), _pred(2)], [1, 2])
+    score_head_to_head(run_dir)
+    cells = _cells(run_dir, "detection_count_only@frame_e2e/label_map_primary")
+    assert len(cells) == 2
+    assert all(
+        (cell["true_positives"], cell["false_positives"], cell["false_negatives"]) == (2, 0, 0)
+        for cell in cells
+    )

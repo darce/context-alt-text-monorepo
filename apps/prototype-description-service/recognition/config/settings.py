@@ -526,13 +526,15 @@ class ResolvedFacePipelineKnobs:
     ``oact_coefficient`` is forced to 0.0 and factor floors are forced to the
     canonical no-op triple (profile gate — residual face_pipeline-scored rows /
     env-set floors must not activate OACT or enrollment gating under insightface;
-    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` they read the
-    FacePipelineSettings overrides including OACT and floors.
+    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` and ``auraface`` they read
+    the FacePipelineSettings overrides including OACT and floors. AuraFace
+    shares this tuning surface but remains activation-gated until its
+    operator-provisioned artifact is pinned and verified.
     ``joint_assignment_enabled`` always comes from FacePipelineSettings
     (consumers under insightface must still treat joint assignment as un-wired until S2).
     """
 
-    profile: Literal["insightface", "face_pipeline"]
+    profile: Literal["insightface", "face_pipeline", "auraface"]
     similarity_threshold: float
     complete_link_threshold: float
     suggestion_floor: float
@@ -556,11 +558,12 @@ def resolve_face_pipeline_knobs(
     """Resolve effective thresholds for the active face-pipeline profile (rg-008).
 
     Single ownership for S1/S2 consumers: mutate FacePipelineSettings overrides and
-    re-resolve; insightface anchors are never silently replaced. OACT is profile-gated:
-    only ``face_pipeline`` can surface a non-zero coefficient.
+    re-resolve; insightface anchors are never silently replaced. OACT is
+    profile-gated: only ``face_pipeline`` and ``auraface`` can surface a
+    non-zero coefficient.
     """
     profile = face_pipeline.profile
-    if profile == "face_pipeline":
+    if profile in {"face_pipeline", "auraface"}:
         return ResolvedFacePipelineKnobs(
             profile=profile,
             similarity_threshold=float(face_pipeline.face_similarity_threshold),

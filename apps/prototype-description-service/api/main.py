@@ -8,7 +8,6 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-from dataclasses import replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from ipaddress import ip_address
@@ -44,7 +43,7 @@ from recognition.config.security import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
-from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST, PENDING_OPERATOR_FETCH
+from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.auth import require_auth
@@ -711,14 +710,7 @@ def resolve_model_space_probe(
         store = supplied_store if supplied_store is not None else settings.auraface_models_dir
 
         def probe() -> CheckResult:
-            result = check_model_space(space, store)
-            entry = MODEL_MANIFEST.get(ModelSpace.AURAFACE.value)
-            pending = entry is not None and (
-                entry.sha256 == PENDING_OPERATOR_FETCH or entry.license_sha256 == PENDING_OPERATOR_FETCH
-            )
-            if pending and result.status is HealthStatus.UNHEALTHY:
-                return replace(result, status=HealthStatus.DEGRADED)
-            return result
+            return check_model_space(space, store)
 
         return probe, store, "auraface"
 

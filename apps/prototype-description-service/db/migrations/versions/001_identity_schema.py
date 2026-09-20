@@ -34,6 +34,7 @@ TENANT_TABLES = [
     "usage_reservation",
     "billing_subscription_projection",
     "api_key_rotation_history",
+    "tenant_key_idempotency",
     "describe_operations",
     "describe_demand_leases",
     "media_identities",
@@ -104,6 +105,7 @@ EXPECTED_SCHEMA_TABLES = [
     "billing_subscription_projection",
     "billing_webhook_inbox",
     "api_key_rotation_history",
+    "tenant_key_idempotency",
     "demo_instances",
     "worker_capabilities",
     "media_identities",
@@ -142,6 +144,7 @@ DOWNGRADE_TABLE_ORDER = [
     "describe_demand_leases",
     "describe_operations",
     "describe_startups",
+    "tenant_key_idempotency",
     "api_key_rotation_history",
     "billing_webhook_inbox",
     "billing_subscription_projection",
@@ -499,6 +502,11 @@ def ensure_tables(op) -> None:
         sa.Column("last_used_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("lifetime_seconds", sa.BigInteger(), nullable=True),
+        sa.CheckConstraint(
+            "lifetime_seconds IS NULL OR lifetime_seconds > 0",
+            name="ck_api_keys_lifetime_seconds_positive",
+        ),
     )
 
     # Reclaim key: status + updated_at; the portal identity retention job purges old tombstones.
@@ -677,8 +685,43 @@ def ensure_tables(op) -> None:
         sa.Column("reason", sa.Text(), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    _ensure_index(op, "idx_api_key_rotation_history_tenant_created", "api_key_rotation_history", ["tenant_id", "created_at"])
+    _ensure_index(
+        op, "idx_api_key_rotation_history_tenant_created", "api_key_rotation_history", ["tenant_id", "created_at"]
+    )
     _ensure_index(op, "idx_api_key_rotation_history_reclaim", "api_key_rotation_history", ["created_at"])
+
+    # Reclaim key: created_at; lifecycle reservations expire once the portal
+    # replay window closes. (tenant_id, operation, idempotency_key) is the
+    # replay identity; request_fingerprint detects key reuse under a
+    # different normalized request.
+    _ensure_table(
+        op,
+        "tenant_key_idempotency",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("operation", sa.Text(), nullable=False),
+        sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("request_fingerprint", sa.Text(), nullable=False),
+        sa.Column(
+            "api_key_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("api_keys.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "operation",
+            "idempotency_key",
+            name="uq_tenant_key_idempotency_replay",
+        ),
+    )
+    _ensure_index(op, "idx_tenant_key_idempotency_reclaim", "tenant_key_idempotency", ["created_at"])
 
     # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
     # slug (not tenant_id); raw API key is never stored — only a hash/ref.

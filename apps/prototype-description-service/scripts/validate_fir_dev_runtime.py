@@ -410,9 +410,7 @@ def _resource_is_forbidden(
             normalized_forbidden = forbidden.strip().casefold()
             if normalized_value == normalized_forbidden:
                 return True
-            if allow_compose_prefix and normalized_forbidden and normalized_value.endswith(
-                f"_{normalized_forbidden}"
-            ):
+            if allow_compose_prefix and normalized_forbidden and normalized_value.endswith(f"_{normalized_forbidden}"):
                 return True
         elif value == forbidden:
             return True
@@ -587,10 +585,7 @@ def _validate_schema(
 
     if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
         return "malformed_policy_input"
-    if (
-        not isinstance(isolation_policy, Mapping)
-        or "required_tenant_id" not in isolation_policy
-    ):
+    if not isinstance(isolation_policy, Mapping) or "required_tenant_id" not in isolation_policy:
         return "malformed_policy_input"
     isolation_reason = _validate_isolation_policy_shape(isolation_policy.get("forbidden_resource_ids"))
     if isolation_reason is not None:

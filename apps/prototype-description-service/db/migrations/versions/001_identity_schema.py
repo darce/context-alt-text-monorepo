@@ -579,6 +579,14 @@ def ensure_tables(op) -> None:
         sa.Column("settled_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("cost_units", sa.Integer(), nullable=False),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
+        # A zero or negative charge would mint allowance back to the tenant.
+        sa.CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        # Usage accounting sums only 'reserved' and 'committed'; an unknown
+        # status silently drops the row out of every allowance calculation.
+        sa.CheckConstraint(
+            "status IN ('reserved', 'committed', 'released', 'expired')",
+            name="ck_usage_reservation_status",
+        ),
     )
     _ensure_index(
         op,
@@ -612,6 +620,10 @@ def ensure_tables(op) -> None:
             "provider",
             "provider_customer_id",
             name="uq_billing_subscription_projection_provider_customer",
+        ),
+        sa.CheckConstraint(
+            "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
+            name="ck_billing_subscription_projection_status",
         ),
     )
     _ensure_index(op, "idx_billing_subscription_projection_reclaim", "billing_subscription_projection", ["updated_at"])

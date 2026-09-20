@@ -182,3 +182,41 @@ def test_stub_omitting_a_required_method_fails_structural_check() -> None:
 def test_missing_entitlement_is_fail_safe_zero_allowance() -> None:
     assert DEFAULT_ALLOWANCE_JOBS == 0
     assert DEFAULT_ENTITLEMENT_STATUS is EntitlementStatus.EXPIRED
+
+
+def test_billing_state_requires_customer_for_persistable_status() -> None:
+    """A non-``none`` status must carry the customer id the projection requires."""
+    tenant_id = uuid4()
+    for status in (
+        BillingSubscriptionStatus.ACTIVE,
+        BillingSubscriptionStatus.PAST_DUE,
+        BillingSubscriptionStatus.CANCELED,
+        BillingSubscriptionStatus.REFUND_HOLD,
+    ):
+        with pytest.raises(ValueError, match="provider_customer_id is required"):
+            BillingState(tenant_id, status, None, None, None)
+
+    # The derived "no projection row" state stays representable.
+    assert BillingState(tenant_id, BillingSubscriptionStatus.NONE, None, None, None).provider_customer_id is None
+
+
+def test_usage_and_billing_tables_reject_out_of_enum_and_non_positive_writes() -> None:
+    """Direct DB writes cannot bypass the service-layer guards ([sr-007], [COST-10])."""
+    from db.models.portal_billing import BillingSubscriptionProjection, UsageReservation
+
+    reservation_checks = {
+        c.name: str(c.sqltext) for c in UsageReservation.__table__.constraints if hasattr(c, "sqltext")
+    }
+    assert "ck_usage_reservation_cost_units_positive" in reservation_checks
+    assert "cost_units > 0" in reservation_checks["ck_usage_reservation_cost_units_positive"]
+
+    reservation_statuses = reservation_checks["ck_usage_reservation_status"]
+    for member in UsageReservationStatus:
+        assert f"'{member.value}'" in reservation_statuses
+
+    projection_checks = {
+        c.name: str(c.sqltext) for c in BillingSubscriptionProjection.__table__.constraints if hasattr(c, "sqltext")
+    }
+    projection_statuses = projection_checks["ck_billing_subscription_projection_status"]
+    for member in BillingSubscriptionStatus:
+        assert f"'{member.value}'" in projection_statuses

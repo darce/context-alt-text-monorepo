@@ -38,9 +38,9 @@ is not a parseable model id and must be rejected.
 The refuse-vs-redact contract is intentional.  A snapshot carrying the
 ``REPLACE_ME_DEV_FIR_PG`` secret-shaped sentinel is refused, while the
 validator's own report is still redacted.  Redaction assertions cover stdout,
-the parsed JSON report, and the exit-reason string.  They are anti-vacuous:
-each surface check also requires the positive coarse token for the model id
-and tenant id, using the runtime's first-eight-hex-SHA256 convention.
+the parsed JSON report, and the exit-reason string.  Tenant IDs use the
+runtime's first-eight-hex-SHA256 coarse token; ordinary model IDs remain full
+on both the role-observation and database-provenance paths for diagnostics.
 """
 
 from __future__ import annotations
@@ -146,6 +146,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "enrolled_store_missing_centroid_sample": ("incomplete", 1, "embedding_provenance_unobserved"),
     "enrolled_store_missing_provenance_summary": ("incomplete", 1, "embedding_provenance_unobserved"),
     "empty_store_with_rows": ("incomplete", 1, "fir_store_state_unobserved"),
+    "empty_store_with_vector_payload": ("invalid", 2, "empty_store_vector_payload"),
     "fourth_vector_column_nonzero": ("incomplete", 1, "fir_store_state_unobserved"),
     "fourth_vector_column_zero": ("ready", 0, "ready"),
     "duplicate_worker_role": ("invalid", 2, "duplicate_role_observation"),
@@ -154,6 +155,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "missing_storage_section": ("invalid", 2, "snapshot_schema_invalid"),
     "empty_forbidden_resource_policy": ("invalid", 2, "malformed_isolation_policy"),
     "malformed_policy_input": ("invalid", 2, "malformed_policy_input"),
+    "max_age_seconds_overflow": ("invalid", 2, "malformed_policy_input"),
     "malformed_timestamp": ("invalid", 2, "malformed_timestamp"),
     "keyword_value_dsn_secret": ("invalid", 2, "secret_shaped_input"),
     "redaction_secret_input": ("invalid", 2, "secret_shaped_input"),
@@ -278,6 +280,14 @@ def _runtime_space_token() -> str:
     return f"cv{opencv_version}/ort{ort_major_minor}"
 
 
+def _runtime_preprocessing_id() -> str:
+    """Read the preprocessing identifier emitted by the runtime aligner."""
+
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+
+    return FivePointAligner().template_id
+
+
 def _materialize(value: Any) -> Any:
     """Replace fixture-only runtime token markers recursively."""
 
@@ -286,7 +296,8 @@ def _materialize(value: Any) -> Any:
     if isinstance(value, list):
         return [_materialize(item) for item in value]
     if isinstance(value, str):
-        return value.replace("${RUNTIME_SPACE_TOKEN}", _runtime_space_token())
+        value = value.replace("${RUNTIME_SPACE_TOKEN}", _runtime_space_token())
+        return value.replace("sface-align-v1", _runtime_preprocessing_id())
     return value
 
 
@@ -474,6 +485,10 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         del snapshot["database"]["embedding_provenance"]
     elif case_name == "empty_store_with_rows":
         snapshot["database"]["embedding_provenance"]["value"]["row_counts"]["public.media_identities.embedding"] = 1
+    elif case_name == "empty_store_with_vector_payload":
+        summary = snapshot["database"]["embedding_provenance"]["value"]
+        summary["centroid"] = [float("nan")] * 128
+        summary["representative_vector"] = [0.1] * 128
     elif case_name in {"fourth_vector_column_nonzero", "fourth_vector_column_zero"}:
         extra_identity = "public.audit_embeddings.embedding"
         snapshot["database"]["vector_column_inventory"]["value"].append(
@@ -508,10 +523,11 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
     elif case_name in {
         "valid_empty_fir_store",
         "valid_enrolled_fir_store",
-        "fourth_vector_column_undiscovered",
-        "redaction_secret_input",
-        "malformed_policy_input",
-    }:
+            "fourth_vector_column_undiscovered",
+            "redaction_secret_input",
+            "malformed_policy_input",
+            "max_age_seconds_overflow",
+        }:
         pass
     else:
         raise AssertionError(f"unhandled contract case: {case_name}")
@@ -541,6 +557,8 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
     isolation_policy = _load_fixture("isolation_policy.json")
     if case_name == "malformed_policy_input":
         freshness_policy["max_age_seconds"] = 0
+    elif case_name == "max_age_seconds_overflow":
+        freshness_policy["max_age_seconds"] = 1e308
     elif case_name == "empty_forbidden_resource_policy":
         isolation_policy["forbidden_resource_ids"] = {}
 
@@ -625,6 +643,20 @@ def test_snapshot_v1_is_role_keyed_and_closed() -> None:
     assert set(snapshot["description_adapter"]) == set(DESCRIPTION_FIELDS)
 
 
+@pytest.mark.parametrize("required_tenant_id", (None, "", 0))
+def test_required_tenant_id_must_be_a_nonempty_string(required_tenant_id: Any) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    isolation_policy = _load_fixture("isolation_policy.json")
+    isolation_policy["required_tenant_id"] = required_tenant_id
+
+    result = _validate_custom_snapshot(snapshot, isolation_policy=isolation_policy)
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "malformed_policy_input"
+    assert "required_tenant_id" in result["reason"]
+
+
 def test_every_contract_field_has_provenance_and_an_observation_method() -> None:
     snapshot = _case_snapshot("valid_empty_fir_store")
     observed_paths: set[str] = set()
@@ -681,14 +713,24 @@ def _coarse_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
 
 
-def _run_cli(tmp_path: Path, snapshot: dict[str, Any] | str) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    tmp_path: Path,
+    snapshot: dict[str, Any] | str,
+    *,
+    freshness_policy: dict[str, Any] | None = None,
+    isolation_policy: dict[str, Any] | None = None,
+) -> subprocess.CompletedProcess[str]:
     snapshot_path = tmp_path / "snapshot.json"
     freshness_path = tmp_path / "freshness-policy.json"
     isolation_path = tmp_path / "isolation-policy.json"
     snapshot_text = snapshot if isinstance(snapshot, str) else json.dumps(snapshot)
     snapshot_path.write_text(snapshot_text, encoding="utf-8")
-    freshness_path.write_text(json.dumps(_load_fixture("freshness_policy.json")), encoding="utf-8")
-    isolation_path.write_text(json.dumps(_load_fixture("isolation_policy.json")), encoding="utf-8")
+    if freshness_policy is None:
+        freshness_policy = _load_fixture("freshness_policy.json")
+    if isolation_policy is None:
+        isolation_policy = _load_fixture("isolation_policy.json")
+    freshness_path.write_text(json.dumps(freshness_policy), encoding="utf-8")
+    isolation_path.write_text(json.dumps(isolation_policy), encoding="utf-8")
 
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
@@ -727,7 +769,7 @@ def test_cli_truncated_snapshot_returns_snapshot_unreadable_envelope(tmp_path: P
     assert completed.stderr.strip().startswith("snapshot_unreadable:")
 
 
-def test_redaction_refuses_secret_and_keeps_positive_coarse_tokens_in_api_report() -> None:
+def test_redaction_refuses_secret_and_keeps_positive_tenant_coarse_token() -> None:
     case_name = "redaction_secret_input"
     snapshot = _case_snapshot(case_name)
     result = _validator_result(case_name, snapshot)
@@ -735,11 +777,9 @@ def test_redaction_refuses_secret_and_keeps_positive_coarse_tokens_in_api_report
 
     report_json = json.dumps(result.get("report", result), sort_keys=True)
     exit_reason = str(result.get("reason", ""))
-    model_id = _field(snapshot, "api", "model_id")["value"]
     tenant_id = snapshot["tenant_id"]["value"]
     for surface in (report_json, exit_reason):
         assert SENTINEL not in surface
-    assert _coarse_token(model_id) in report_json
     assert _coarse_token(tenant_id) in report_json
     assert exit_reason
 
@@ -766,15 +806,33 @@ def test_redaction_surfaces_cover_stdout_json_report_and_exit_reason(tmp_path: P
     report = json.loads(stdout)
     report_json = json.dumps(report, sort_keys=True)
     exit_reason = completed.stderr.strip()
-    model_id = _field(snapshot, "api", "model_id")["value"]
     tenant_id = snapshot["tenant_id"]["value"]
     for surface in (stdout, report_json, exit_reason):
         assert SENTINEL not in surface
-    assert _coarse_token(model_id) in stdout
     assert _coarse_token(tenant_id) in stdout
-    assert _coarse_token(model_id) in report_json
     assert _coarse_token(tenant_id) in report_json
     assert expected[2] in exit_reason
+
+
+def test_model_ids_remain_full_on_observation_and_provenance_report_paths(tmp_path: Path) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    model_id = _field(snapshot, "api", "model_id")["value"]
+
+    result = _validate_custom_snapshot(snapshot)
+    assert result["status"] == "ready"
+    report_snapshot = result["report"]["snapshot"]
+    assert report_snapshot["observations"][0]["model_id"]["value"] == model_id
+    assert report_snapshot["database"]["embedding_provenance"]["value"]["model_id"] == model_id
+    report_json = json.dumps(result["report"], sort_keys=True)
+    assert model_id in report_json
+    assert _coarse_token(model_id) not in report_json
+
+    completed = _run_cli(tmp_path, snapshot)
+    assert completed.returncode == 0
+    cli_report_snapshot = json.loads(completed.stdout)["report"]["snapshot"]
+    assert cli_report_snapshot["observations"][0]["model_id"]["value"] == model_id
+    assert cli_report_snapshot["database"]["embedding_provenance"]["value"]["model_id"] == model_id
+    assert _coarse_token(model_id) not in completed.stdout
 
 
 def test_keyword_value_dsn_is_refused_and_never_emitted_in_cli_report(tmp_path: Path) -> None:
@@ -897,6 +955,7 @@ def test_compose_prefixed_networks_and_blob_namespaces_are_refused(
 
 
 def test_validator_model_constants_match_manifest() -> None:
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
     from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 
     validator = importlib.import_module(MODULE_NAME)
@@ -914,6 +973,11 @@ def test_validator_model_constants_match_manifest() -> None:
     assert validator.EXPECTED_MODEL_CONTRACT["model_suffix"] == manifest_contract, (
         f"{source_files}: EXPECTED_MODEL_CONTRACT model suffix is out of parity with MODEL_MANIFEST"
     )
+    runtime_preprocessing_id = FivePointAligner().template_id
+    assert validator.EXPECTED_MODEL_CONTRACT["preprocessing_id"] == runtime_preprocessing_id, (
+        f"{source_files} and recognition/infrastructure/face_pipeline/aligner.py: "
+        "EXPECTED_MODEL_CONTRACT preprocessing id is out of parity with the runtime aligner"
+    )
 
 
 def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:
@@ -924,6 +988,45 @@ def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:
     zero_case = "fourth_vector_column_zero"
     zero_result = _validator_result(zero_case, _case_snapshot(zero_case))
     _assert_pinned_outcome(zero_case, zero_result)
+
+
+@pytest.mark.parametrize("vector_representation", ("absent", "null"))
+def test_empty_store_without_vector_payload_is_ready(vector_representation: str) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    summary = snapshot["database"]["embedding_provenance"]["value"]
+    if vector_representation == "absent":
+        for sample_name in ("representative_vector", "centroid"):
+            del summary[sample_name]
+    else:
+        summary["representative_vector"] = None
+        summary["centroid"] = None
+
+    result = _validate_custom_snapshot(snapshot)
+
+    assert result["status"] == "ready"
+    assert result["exit_code"] == 0
+    assert result["reason_code"] == "ready"
+
+
+def test_empty_store_vector_payload_is_refused() -> None:
+    case_name = "empty_store_with_vector_payload"
+    _assert_pinned_outcome(case_name, _validator_result(case_name, _case_snapshot(case_name)))
+
+
+def test_cli_large_max_age_is_malformed_policy_not_internal_error(tmp_path: Path) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    freshness_policy = _load_fixture("freshness_policy.json")
+    freshness_policy["max_age_seconds"] = 1e308
+
+    completed = _run_cli(tmp_path, snapshot, freshness_policy=freshness_policy)
+
+    assert completed.returncode == 2
+    result = json.loads(completed.stdout)
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "malformed_policy_input"
+    assert result["reason_code"] != "validator_internal_error"
+    assert "max_age_seconds" in completed.stderr
 
 
 def test_compose_prefixed_forbidden_volume_id_is_refused() -> None:

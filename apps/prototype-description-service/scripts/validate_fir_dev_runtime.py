@@ -9,8 +9,9 @@ The checks have a fixed precedence.  Structural validation runs before the
 contract rungs, followed by secret-shape and model-id parsing, freshness,
 tenant isolation, runtime contract, database dimensions, model assets,
 provenance, and persisted-store evidence.  A report is built before refusal
-and replaces secret-shaped strings; role model IDs and the tenant ID are
-represented by coarse SHA-256 tokens.  Keep this order stable:
+and replaces secret-shaped strings; the tenant ID is represented by a coarse
+SHA-256 token while model IDs remain visible for diagnostics.  Keep this
+order stable:
 ``schema -> secret shape -> model-id parse -> freshness -> tenant ->
 forbidden resources -> auth -> adapter -> image -> dimension -> model
 contract -> database dimension -> weight hashes -> provenance -> database
@@ -65,7 +66,7 @@ EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
     "embedding_dimension": 128,
     "model_name_prefix": "opencv-sface+",
     "model_suffix": ("128d", "l2", "cosine"),
-    "preprocessing_id": "sface-align-v1",
+    "preprocessing_id": "sface-5pt-112",
 }
 
 # Source of truth: recognition/infrastructure/face_pipeline/provenance.py:93 (yunet), :107 (sface).
@@ -137,6 +138,11 @@ _BEARER_TOKEN_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _MAX_CLOCK_SKEW = timedelta(seconds=60)
+# Keep this below ``timedelta.max.total_seconds()``: converting that rounded
+# float back to a timedelta overflows to 1,000,000,000 days.  The integer
+# whole-second ceiling is the largest value this validator can safely pass to
+# ``timedelta(seconds=...)``.
+_MAX_TIMEDELTA_SECONDS = timedelta.max.days * 24 * 60 * 60 + timedelta.max.seconds
 _ISOLATION_RESOURCE_CATEGORIES = frozenset(
     {
         "volumes",
@@ -296,20 +302,15 @@ def _build_report(
     if isinstance(tenant_field, Mapping) and "value" in tenant_field:
         redacted_snapshot["tenant_id"] = _redacted_field(tenant_field, tenant_field["value"])
 
-    raw_observations = snapshot.get("observations")
-    redacted_observations = redacted_snapshot.get("observations")
-    if isinstance(raw_observations, list) and isinstance(redacted_observations, list):
-        for index, raw_record in enumerate(raw_observations):
-            if not isinstance(raw_record, Mapping) or index >= len(redacted_observations):
-                continue
-            redacted_record = redacted_observations[index]
-            model_field = raw_record.get("model_id")
-            if isinstance(redacted_record, dict) and isinstance(model_field, Mapping) and "value" in model_field:
-                redacted_record["model_id"] = _redacted_field(model_field, model_field["value"])
     return report
 
 
-def _outcome(reason_code: str, report: Mapping[str, Any]) -> dict[str, Any]:
+def _outcome(
+    reason_code: str,
+    report: Mapping[str, Any],
+    *,
+    detail: str | None = None,
+) -> dict[str, Any]:
     if reason_code == "ready":
         status, exit_code = "ready", 0
         reason = "ready: snapshot satisfies the FIR development-runtime contract"
@@ -319,6 +320,8 @@ def _outcome(reason_code: str, report: Mapping[str, Any]) -> dict[str, Any]:
     else:
         status, exit_code = "invalid", 2
         reason = f"{reason_code}: snapshot violates the FIR development-runtime contract"
+    if detail:
+        reason = f"{reason}: {detail}"
     return {
         "status": status,
         "exit_code": exit_code,
@@ -326,6 +329,20 @@ def _outcome(reason_code: str, report: Mapping[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "report": report,
     }
+
+
+def _policy_input_error_detail(freshness_policy: Any, isolation_policy: Any) -> str:
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(
+        freshness_policy.get("max_age_seconds")
+    ):
+        return "freshness_policy.max_age_seconds is invalid"
+    if (
+        not isinstance(isolation_policy, Mapping)
+        or not isinstance(isolation_policy.get("required_tenant_id"), str)
+        or not isolation_policy["required_tenant_id"].strip()
+    ):
+        return "isolation_policy.required_tenant_id is invalid"
+    return "policy input is invalid"
 
 
 def _roles(snapshot: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
@@ -475,7 +492,12 @@ def _is_wrapper(value: Any, expected_keys: frozenset[str] = _ROLE_WRAPPER_KEYS) 
 
 
 def _is_positive_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and value > 0
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return 0 < value <= _MAX_TIMEDELTA_SECONDS and math.isfinite(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 def _is_nonempty_identity(value: Any) -> bool:
@@ -602,9 +624,16 @@ def _validate_schema(
     if any(not _is_wrapper(description_adapter[field_name]) for field_name in description_fields):
         return "malformed_observation_wrapper"
 
-    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
+    if (
+        not isinstance(freshness_policy, Mapping)
+        or not _is_positive_number(freshness_policy.get("max_age_seconds"))
+    ):
         return "malformed_policy_input"
-    if not isinstance(isolation_policy, Mapping) or "required_tenant_id" not in isolation_policy:
+    if (
+        not isinstance(isolation_policy, Mapping)
+        or not isinstance(isolation_policy.get("required_tenant_id"), str)
+        or not isolation_policy["required_tenant_id"].strip()
+    ):
         return "malformed_policy_input"
     isolation_reason = _validate_isolation_policy_shape(isolation_policy.get("forbidden_resource_ids"))
     if isolation_reason is not None:
@@ -639,10 +668,14 @@ def _validate_freshness_and_isolation(
         current_time = _parse_timestamp(now)
     except (TypeError, ValueError, OverflowError):
         return "malformed_timestamp"
+    try:
+        max_age = timedelta(seconds=freshness_policy["max_age_seconds"])
+    except (TypeError, ValueError, OverflowError):
+        return "malformed_policy_input"
     age = current_time - captured_at
     if age < -_MAX_CLOCK_SKEW:
         return "future_snapshot"
-    if age > timedelta(seconds=freshness_policy["max_age_seconds"]):
+    if age > max_age:
         return "stale_snapshot"
     if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
         return "shared_default_tenant"
@@ -823,6 +856,12 @@ def _is_finite_vector(value: Any, expected_dimension: int) -> bool:
     )
 
 
+def _vector_payload_is_populated(value: Any) -> bool:
+    """Return whether a store summary carries a non-empty vector payload."""
+
+    return value is not None and (not isinstance(value, (list, tuple)) or bool(value))
+
+
 def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     database = snapshot["database"]
     store_state = database.get("store_state")
@@ -840,7 +879,7 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     ):
         return "embedding_provenance_unobserved"
     summary = embedding_provenance["value"]
-    required_summary_fields = {"row_counts", "model_id", "preprocessing_id", *_VECTOR_SAMPLE_NAMES}
+    required_summary_fields = {"row_counts", "model_id", "preprocessing_id"}
     if not required_summary_fields.issubset(summary):
         return "embedding_provenance_unobserved"
 
@@ -864,6 +903,11 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     if state == "empty":
         if any(count != 0 for count in row_counts.values()):
             return "fir_store_state_unobserved"
+        if any(
+            sample_name in summary and _vector_payload_is_populated(summary[sample_name])
+            for sample_name in _VECTOR_SAMPLE_NAMES
+        ):
+            return "empty_store_vector_payload"
         return None
 
     if not any(count > 0 for count in row_counts.values()):
@@ -877,6 +921,8 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
 
     expected_dimension = EXPECTED_MODEL_CONTRACT["embedding_dimension"]
     for sample_name in _VECTOR_SAMPLE_NAMES:
+        if sample_name not in summary:
+            return "embedding_provenance_unobserved"
         if not _is_finite_vector(summary[sample_name], expected_dimension):
             return "non_finite_persisted_vector"
     return None
@@ -912,7 +958,12 @@ def validate_snapshot(
         now=now,
     )
     if reason is not None:
-        return _outcome(reason, report)
+        detail = (
+            _policy_input_error_detail(freshness_policy, isolation_policy)
+            if reason == "malformed_policy_input"
+            else None
+        )
+        return _outcome(reason, report, detail=detail)
 
     ordered_checks = (
         lambda: _validate_secret_and_model_ids(snapshot),

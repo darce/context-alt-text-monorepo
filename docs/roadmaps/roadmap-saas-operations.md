@@ -1,193 +1,70 @@
-# SaaS Operations Roadmap -- Business Infrastructure for Alt Context
+# SaaS operations roadmap: bounded free beta to paid self-service
 
-> **Status:** Planning -- no implementation started.
-> **Predecessor:** [roadmap-v4.md](roadmap-v4.md) (product UX), [self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) (deployment baseline)
-> **Scope:** Everything required to operate Alt Context as a paid SaaS product: user accounts, billing, API key distribution, usage metering, observability, email, feedback, and compliance.
-> **Key input:** The `altcontext-marketing-monorepo` has proven patterns for API key management, analytics rollups, and GDPR compliance that can be ported to the OCI infrastructure. Auth is vendor-managed (not in-house).
+> **Status:** Proposed implementation direction, revised 2026-09-19; no APP-1 implementation is claimed.
+> **Execution owner:** [APP-1 Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md).
+> **Decision basis:** [launch recommendation and original source-book distillations](../assessments/current/app-portal-launch-recommendation-2026-09-19.md); [current vendor comparison](../assessments/current/app-portal-build-buy-reassessment-2026-09-19.md).
+> **Product direction:** [managed-default workflow/governance roadmap](local-ai-managed-default-roadmap-2026-07-31.md).
 
----
+## Outcome
 
-## Objective
+A qualified WordPress customer signs up, obtains a tenant key, connects the plugin, produces an accepted caption, returns, and can later explicitly purchase continued service. Normal onboarding requires no operator provisioning. Recruitment may be curated; observed sessions and support remain useful learning channels.
 
-Transform Alt Context from a self-hosted developer tool into an operational SaaS product where WordPress site owners can sign up, get an API key, manage their usage, pay for the service, and receive support -- without any manual provisioning by the operator.
+Recommend Clerk for human identity, the existing local API-key backend, and Polar Starter for checkout/subscription operations. Build the smallest portal that connects these responsibilities. In-house API-key management is **retained**, not replaced by Clerk machine authentication in this beta. The plan remains subject to review and actual account eligibility/integration evidence.
 
-## Problem Statement
+## Changes from the earlier roadmap
 
-The recognition service (E14) is deployed on OCI with multi-tenant Postgres, API key auth, and rate limiting. The marketing platform (`altcontext-marketing-monorepo`) has proven patterns for API key lifecycle, analytics, and lead management but runs on Fly.io with limited capacity (256MB, frequent crashes under load). Neither system has billing, transactional email, or vendor-managed auth.
+| Earlier direction | Current recommended contract |
+| --- | --- |
+| New `acx_business` database and Business API before onboarding | Extend the existing service and credential authority; protect customer state against recognition resets and prove restore |
+| Port marketing key services into a new authority | Reuse the local Python repository/minter already present; add tenant-safe lifecycle and a thin panel |
+| Uncapped implicit free tier until Phase 2 | Enforce per-tenant allowances and global compute admission budgets before the first beta user |
+| Billing is a later build | Complete and test the Polar paid lifecycle in sandbox before beta; live activation is a later operational gate |
+| WorkOS versus Clerk remains open | Clerk identity is the recommendation; no new operator IdP |
+| Framework/dashboard scaffold is the first milestone | Prove signup -> key -> real WordPress result, using a small FastAPI portal with supported Clerk JS |
+| Fixed Free/Pro/Business prices and quotas | One monthly offer/allowance; price and currency require an explicit hypothesis and later paid evidence |
+| Marketing backend migration and expanded telemetry | Reuse available instrumentation; no CRM migration or analytics warehouse as a beta dependency |
 
-Every new customer requires manual provisioning: generate an API key, email it, track usage by hand. This doesn't scale past the first 5 users.
+Historical architecture and rate assumptions are retained in Git history and the linked prior-art inventory. Older E16/AP decomposition is a source of cases, not a parallel project to dispatch unchanged.
 
-## Design Principles
+## Authority and operating boundaries
 
-1. **Vendor-managed auth.** Authentication is security-critical infrastructure. Use WorkOS or Clerk for user management, session handling, and future OAuth/SSO. Do not roll in-house auth regardless of existing code.
-2. **Separate business and recognition data.** Two Postgres databases on the same OCI VM: one for business (accounts, API keys, billing, CRM, usage) and one for recognition (embeddings, clusters, scans). Shared tenant UUIDs provide the RLS bridge.
-3. **Consolidate on OCI.** Port the viable services from the Fly.io marketing backend to the OCI VM. One infrastructure provider, one deployment target, more capacity (24GB RAM vs. 256MB).
-4. **Reuse proven patterns, not code.** The marketing backend's API key management, rollup architecture, and GDPR compliance patterns are valuable design inputs. Port the patterns into the Python/FastAPI stack on OCI rather than running a separate Node.js service.
-5. **Buy commodity infrastructure.** Auth (WorkOS/Clerk), billing (Polar), email (Resend), error tracking (Sentry), analytics (PostHog).
-6. **Self-serve from day one.** Sign up → get key → install plugin → working.
+- Clerk: login, user recovery, sessions; server verifies actual claims and binds stable issuer/subject to local tenant UUID.
+- Local service/database: tenant, keys, beta grants, usage/cost admission, authorization and audit. One writable credential authority.
+- Polar: payment/subscription facts and hosted billing UI. Local billing state is a verified, reconcilable projection.
+- WordPress: installed key and publishing/review workflow. A portal cannot silently replace `wp-config.php`/filter-managed credentials.
+- Operator: current Tailscale/admin boundary, budget stop, account recovery and tested restoration.
 
-## Data Architecture
+Colocation is an initial simplicity choice, not independent availability. Restrict reset roles, bound portal/webhook capacity and prove off-host recovery before beta. Split services/data authority later if isolation cannot be enforced or measured contention justifies the change. No vendor API call is added to normal recognition key verification.
 
-### Two databases, one tenant UUID
+## Ordered delivery and gates
 
-```
-OCI VM (129.213.40.111)
-├── Business Postgres (acx_business)
-│   ├── tenants          ← canonical tenant registry (UUID, plan, billing_id)
-│   ├── api_keys         ← all API keys (recognition + future services)
-│   ├── usage_daily      ← metered API calls per tenant per day
-│   ├── leads            ← CRM / marketing leads
-│   └── billing_events   ← Polar webhook audit log
-│
-├── Recognition Postgres (alt_context_service) — existing
-│   ├── tenant_id column on all tables (FK concept, not enforced cross-DB)
-│   ├── RLS policies check tenant_id from session context
-│   └── Validates API keys by calling business DB or cached lookup
-│
-└── Shared contract: tenant UUID
-    - Business DB is the authority for tenant lifecycle and API key validity
-    - Recognition DB trusts tenant_id set in session context after auth middleware validates
-    - API key validation flow: request → auth middleware checks key against business DB → sets tenant context → recognition queries scoped by RLS
-```
+| Stage | APP-1 slices | Exit evidence |
+| --- | --- | --- |
+| Contract and integration feasibility | S0/S1 | Reviewed scope/roles/state transitions; disposition E16-7 cases/findings and E20-7 usage ownership; actual Clerk session and Polar sandbox proof; key reuse characterized |
+| Real account and installation journey | S2/S3 | Tenant-safe create/list/rotate/revoke, stable owner binding, invitation redemption, working WordPress connection and accepted-output observation path |
+| Cost and paid lifecycle readiness | S4/S5 | Atomic job allowances/cost reservations, bounded queues, Polar checkout/webhooks/reconciliation/cancel/recovery, local entitlements and hosted portal |
+| Free beta release | S6 | APP-SC-01..18 evidence, zero-charge invariant, restore/isolation/alert/privacy/accessibility checks; live checkout disabled |
+| Cohort learning | S6 observation | APP-SC-19: proposed first 10 attempts, 5 observed sessions, unassisted activation/repeat use/accepted output/support data; expand up to 20 after fixing largest failure |
+| Explicit paid activation | S7 | APP-SC-20: eligibility, catalog, notice, live canary and recovery evidence; actual customer opt-in; no beta arrears |
 
-### Why separate databases
+Proposed discovery timebox for S1: two engineer-days to identify blockers and estimate remaining work, not a promise that complete production billing fits that time. Proof of the chosen stack replaces mandatory multi-vendor implementation. An actual mismatch opens one targeted fallback.
 
-- **Different lifecycles.** Business data (users, billing, CRM) changes when the product evolves. Recognition data (embeddings, clusters) changes when the ML pipeline evolves. Coupling them creates deployment friction.
-- **Different backup/retention needs.** Business data has legal retention requirements (billing records). Recognition data is disposable under the greenfield policy.
-- **Different access patterns.** Business queries are simple key lookups and aggregations. Recognition queries involve vector similarity search with pgvector.
-- **Clean blast radius.** A recognition schema migration cannot break user login or billing.
+The detailed acceptance contract and 20-case eval data live in Plan 0001. This roadmap summarizes sequencing and does not introduce a second test ledger.
 
-## Vendor Stack
+## Free-beta economics and measurement
 
-| Function | Vendor | Rationale |
-|----------|--------|-----------|
-| **Auth & user management** | WorkOS or Clerk | API-first, webhook events, OAuth/SSO ready, free tier. Security-critical — don't roll in-house. |
-| **Billing** | Polar | Merchant of record. Handles VAT/tax/compliance. Developer-focused. Webhook events for subscription lifecycle. |
-| **Error tracking** | Sentry | Python + JS SDKs. Free 5K errors/mo. |
-| **Product analytics** | PostHog | Usage events, session replay, feature flags. Free 1M events/mo. |
-| **Transactional email** | Resend | React Email or HTML templates. Branded `mail.altcontext.com`. |
+Proposed starting envelope: 10 invited users, capacity for up to 20 after fixes, 30 days, 200 successful jobs per tenant and one active job per tenant. Proposed incremental 30-day budget: US$50 excluding committed hosting. These are review inputs, not approved spending or a guarantee that the workload fits. Measure and reserve worst-case dispatch costs, including failures/cold starts/idle exposure, before admitting work.
 
-## What to Build In-House
+No payment instrument is required; no subscription is silently activated; expiration pauses new processing and offers an honest next action. Account/key/usage access remains available for recovery. Keep beta allowance distinct from vendor billing state.
 
-| Component | Stack | Rationale |
-|-----------|-------|-----------|
-| Business API service | Python/FastAPI on OCI | Tenant CRUD, API key lifecycle, usage metering, billing webhooks. Same stack as recognition for deployment simplicity. |
-| Customer dashboard | SvelteKit or Next.js at `app.altcontext.com` | Account info, API keys, usage, billing portal link. Auth via WorkOS/Clerk SDK. Can deploy on OCI or Vercel. |
-| API key lifecycle | Port pattern from marketing backend | Create, hash (SHA-256), scope, rotate, revoke, timing-safe validation. Proven pattern, rewrite in Python. |
-| Usage metering | Port rollup pattern from marketing backend | Daily counters per tenant, aggregation jobs. Same architecture, Python implementation. |
-| Auth middleware (recognition) | Extend existing FastAPI middleware | Validate keys against business DB (or cache), set tenant context for RLS. |
+Report attempt denominators, assistance, time to first successful and accepted caption, repeat-day use, cap encounters and support minutes. Current proposed learning gates: 8/10 unassisted activations and 5 repeat-day users in 14 days. Stop expansion for missed gates and repair the limiting flow; zero customers or a tiny successful sample does not validate demand.
 
-## What to Port from Marketing Backend
+Before paid offers, declare the price/allowance hypothesis and observation window. Count real offers/purchases/cancellations and contribution after compute, vendor fees and support. Free usage and sandbox payments cannot validate willingness to pay. Review effective processing fees after paid evidence makes them consequential.
 
-The `altcontext-marketing-monorepo` has production-proven patterns worth porting to the OCI/Python stack:
+## Deferred work and reconsideration
 
-| Pattern | Source (Node.js/Prisma) | Target (Python/SQLAlchemy) |
-|---------|------------------------|---------------------------|
-| API key generation + hashing | `backend/src/services/api-keys.ts` | New `business/services/api_key_service.py` |
-| Timing-safe key validation | `backend/src/services/api-keys.ts` | Extend recognition auth middleware |
-| Daily metric rollups | `backend/src/services/metrics.ts` | New `business/services/usage_rollup.py` |
-| GDPR consent tracking | `backend/src/services/consent.ts` | New `business/models/consent.py` |
-| Tenant resolution middleware | `backend/src/lib/tenant-resolution.ts` | Extend existing FastAPI tenant middleware |
+Defer private workers, agency/team hierarchy, multi-tier/annual/overage billing, generic key gateways, multiple payment implementations, custom billing forms, rich usage charts, CRM relocation and additional analytics infrastructure. Resume only for observed demand or a demonstrated operating constraint.
 
-### What stays on Fly.io (for now)
+Reopen Polar on account/product/payout failure or a required lifecycle mismatch; choose Stripe Managed Payments or Paddle according to the actual failing requirement. Reopen key outsourcing on measured remaining-work/support advantage, including migration and outage/custody tradeoffs. Fix installation UX before treating every key support request as an authority problem.
 
-- Marketing analytics dashboard (lead tracking, traffic sources, geo visualization)
-- Marketing-specific event ingestion
-- These can migrate to OCI later or remain as a separate marketing tool
-
-## Phase 1 Free Tier Contract
-
-Before billing exists (Phase 2), Phase 1 operates as an implicit free tier:
-
-- All tenants are `plan = 'free'` in the business DB (the column exists; no enforcement logic yet)
-- No image quota enforcement — all authenticated requests are served
-- API key creation is unrestricted (no per-plan key limits)
-- Usage metering records calls for visibility but does not enforce limits
-
-Phase 2 adds Polar integration, plan enforcement, and the billing model below.
-
-## Billing Model (Phase 2 — not enforced until Polar integration)
-
-| Plan | Price | Includes |
-|------|-------|----------|
-| **Free** | $0/mo | 100 images/mo, 1 API key, community support |
-| **Pro** | $19/mo | 5,000 images/mo, 3 API keys, email support |
-| **Business** | $49/mo | 25,000 images/mo, 10 API keys, priority support |
-
-Concrete quotas and enforcement logic are deferred to the Phase 2 billing epic. The table above is a planning target, not a Phase 1 deliverable.
-
-## Architecture
-
-```
-User Browser
-  │
-  ├─ app.altcontext.com (Customer Dashboard)
-  │    ├─ Auth: WorkOS/Clerk SDK (login, signup, session)
-  │    ├─ API Keys: CRUD via business API
-  │    ├─ Usage: charts via business API
-  │    └─ Billing: Polar checkout/portal link
-  │
-  ├─ WordPress Admin (Plugin Settings, E15-3)
-  │    └─ Enter API URL + key from dashboard
-  │
-  └─ OCI VM (129.213.40.111)
-       ├─ api.altcontext.com → Recognition Service (existing FastAPI)
-       │    ├─ Auth middleware validates key against business DB
-       │    ├─ Tenant-scoped RLS (existing)
-       │    └─ Errors → Sentry, events → PostHog
-       │
-       ├─ Business API Service (NEW FastAPI)
-       │    ├─ /admin/tenants — tenant lifecycle
-       │    ├─ /admin/api-keys — key CRUD
-       │    ├─ /admin/usage — metered usage
-       │    ├─ /webhooks/auth — WorkOS/Clerk account events
-       │    ├─ /webhooks/billing — Polar subscription events
-       │    └─ Postgres: acx_business
-       │
-       └─ Two Postgres instances
-            ├─ acx_business (accounts, keys, usage, CRM)
-            └─ alt_context_service (recognition data)
-```
-
-## Implementation Phases
-
-### Phase 1: Foundation (Epic E16)
-
-- Business Postgres setup on OCI VM
-- Business API service (tenant CRUD, API key lifecycle, usage metering)
-- Auth vendor integration (WorkOS or Clerk)
-- Customer dashboard scaffold
-- Sentry + PostHog integration
-- Recognition auth middleware updated to validate against business DB
-
-### Phase 2: Billing
-
-- Polar integration (products, checkout, webhooks)
-- Plan enforcement (key limits, rate tier based on plan)
-- Usage dashboard with plan comparison
-- Billing portal link in dashboard
-
-### Phase 3: Email & Lifecycle
-
-- Resend integration with `mail.altcontext.com`
-- Welcome email with setup instructions
-- Usage alerts, key rotation reminders
-- Billing receipts (via Polar webhooks)
-
-### Phase 4: Growth & Support
-
-- In-plugin feedback form
-- Public changelog
-- PostHog onboarding funnels
-- OAuth providers (Google, GitHub) via auth vendor
-
----
-
-## Decisions to Make Before Implementation
-
-1. **Auth vendor**: WorkOS vs. Clerk — evaluate free tiers, B2B features, webhook flexibility
-2. **Dashboard hosting**: OCI VM (co-located) vs. Vercel/Netlify (edge, simpler deploys)
-3. **Business API deployment**: Separate compose service on OCI or separate process in existing stack?
-4. **Tenant UUID coordination**: business DB generates UUID, recognition service trusts it? Or recognition service creates tenant on first authenticated request?
-5. **Pricing validation**: survey potential users before committing to plan structure
-6. **Marketing backend migration**: port to OCI now (Phase 1) or keep on Fly.io until Phase 4?
+Keep standard provider exit information and exportable tenant mappings. Privacy, tenant isolation, immediate emergency revoke, no accidental charges and bounded compute remain release requirements.

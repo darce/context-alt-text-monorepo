@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -22,6 +23,19 @@ from recognition.interface_adapters.http.routers import portal
 TENANT_ID = uuid4()
 FOREIGN_TENANT_ID = uuid4()
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+
+
+class _SessionStub:
+    def __init__(self, *, events: list[str] | None = None, fail_commit: bool = False) -> None:
+        self.events = events if events is not None else []
+        self.fail_commit = fail_commit
+        self.commit_calls = 0
+
+    async def commit(self) -> None:
+        self.events.append("commit")
+        self.commit_calls += 1
+        if self.fail_commit:
+            raise RuntimeError("commit failed")
 
 
 def _key(
@@ -48,11 +62,12 @@ def _key(
 
 
 class _KeyServiceStub:
-    def __init__(self) -> None:
+    def __init__(self, *, events: list[str] | None = None) -> None:
         self.keys: dict[UUID, KeyIssueResult] = {}
         self.create_calls: list[tuple[UUID, str, int | None, str | None]] = []
         self.rotate_calls: list[tuple[UUID, UUID, str, str]] = []
         self.list_limits: list[int] = []
+        self.events = events if events is not None else []
         self._create_requests: dict[tuple[UUID, str], tuple[int | None, str | None, UUID]] = {}
         self._raw_counter = 0
 
@@ -64,6 +79,7 @@ class _KeyServiceStub:
         lifetime_seconds: int | None = None,
         rate_limit_tier: str | None = None,
     ) -> KeyIssueResult:
+        self.events.append("create")
         normalized_key = idempotency_key.strip()
         self.create_calls.append((tenant_id, normalized_key, lifetime_seconds, rate_limit_tier))
         request_key = (tenant_id, normalized_key)
@@ -167,9 +183,11 @@ def _app(
     key_service: _KeyServiceStub | None = None,
     entitlement_service: _EntitlementStub | None = None,
     authenticate: bool = True,
+    session: _SessionStub | None = None,
 ) -> FastAPI:
     application = FastAPI()
     application.include_router(portal.router)
+    portal_session = session or _SessionStub()
     if authenticate:
         application.dependency_overrides[require_portal_principal] = _principal
     else:
@@ -191,6 +209,11 @@ def _app(
         return None
 
     application.dependency_overrides[portal.get_portal_usage_service] = override_usage_service
+
+    async def override_portal_session() -> _SessionStub:
+        return portal_session
+
+    application.dependency_overrides[portal.get_portal_session] = override_portal_session
     return application
 
 
@@ -331,7 +354,7 @@ def test_limit_above_maximum_is_clamped_and_applied_limit_is_returned() -> None:
     assert key_service.list_limits == [100]
 
 
-def test_usage_has_as_of_and_does_not_invent_reserved_count() -> None:
+def test_usage_uses_authoritative_entitlement_provenance_without_inventing_metadata() -> None:
     application = _app(key_service=_KeyServiceStub(), entitlement_service=_EntitlementStub())
 
     with TestClient(application) as client:
@@ -343,7 +366,172 @@ def test_usage_has_as_of_and_does_not_invent_reserved_count() -> None:
     assert payload["reserved"] is None
     assert payload["remaining"] == 7
     assert payload["status"] == EntitlementStatus.BETA_ACTIVE.value
-    assert payload["data_source"] == "pending"
+    assert payload["status"] in {member.value for member in EntitlementStatus}
+    assert payload["data_source"] == "authoritative"
     assert payload["period_start"] == NOW.isoformat().replace("+00:00", "Z")
     assert payload["period"]["start"] == payload["period_start"]
-    assert isinstance(payload["as_of"], str)
+    assert payload["as_of"] is None
+
+
+class _PagedKeyService(_KeyServiceStub):
+    def __init__(self, pages: dict[str | None, KeyPage]) -> None:
+        super().__init__()
+        self.pages = pages
+        self.cursors: list[str | None] = []
+
+    async def list_keys(
+        self,
+        tenant_id: UUID,
+        *,
+        cursor: str | None = None,
+        limit: int = 25,
+        include_revoked: bool = True,
+    ) -> KeyPage:
+        self.cursors.append(cursor)
+        return self.pages[cursor]
+
+
+class _InfiniteCursorKeyService(_KeyServiceStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cursors: list[str | None] = []
+
+    async def list_keys(
+        self,
+        tenant_id: UUID,
+        *,
+        cursor: str | None = None,
+        limit: int = 25,
+        include_revoked: bool = True,
+    ) -> KeyPage:
+        self.cursors.append(cursor)
+        next_cursor = f"cursor-{len(self.cursors)}"
+        return KeyPage(data=(), next_cursor=next_cursor, limit=limit, total=0, cursor=cursor)
+
+
+@pytest.mark.parametrize("operation", ["create", "rotate", "revoke"])
+def test_mutating_portal_operations_fail_before_returning_any_secret_when_commit_raises(
+    operation: str,
+) -> None:
+    key_service = _KeyServiceStub()
+    key = _key(TENANT_ID)
+    key_service.keys[key.api_key_id] = key
+    session = _SessionStub(fail_commit=True)
+    application = _app(key_service=key_service, entitlement_service=_EntitlementStub(), session=session)
+
+    with TestClient(application) as client:
+        if operation == "create":
+            response = client.post("/portal/keys", headers={"Idempotency-Key": "create-fails"}, json={})
+        elif operation == "rotate":
+            response = client.post(
+                f"/portal/keys/{key.api_key_id}/rotate",
+                headers={"Idempotency-Key": "rotate-fails"},
+                json={},
+            )
+        else:
+            response = client.post(
+                f"/portal/keys/{key.api_key_id}/revoke",
+                json={"emergency": True},
+            )
+
+    assert response.status_code == 500
+    assert response.status_code >= 500
+    assert "raw-secret" not in response.text
+    assert "replacement-secret" not in response.text
+
+
+@pytest.mark.parametrize("operation", ["create", "rotate", "revoke"])
+def test_mutating_portal_operations_commit_before_response(operation: str) -> None:
+    key_service = _KeyServiceStub()
+    key = _key(TENANT_ID)
+    key_service.keys[key.api_key_id] = key
+    session = _SessionStub()
+    application = _app(key_service=key_service, entitlement_service=_EntitlementStub(), session=session)
+
+    with TestClient(application) as client:
+        if operation == "create":
+            response = client.post("/portal/keys", headers={"Idempotency-Key": "create-order"}, json={})
+        elif operation == "rotate":
+            response = client.post(
+                f"/portal/keys/{key.api_key_id}/rotate",
+                headers={"Idempotency-Key": "rotate-order"},
+                json={},
+            )
+        else:
+            response = client.post(
+                f"/portal/keys/{key.api_key_id}/revoke",
+                json={"emergency": True},
+            )
+
+    assert response.status_code == 200
+    assert session.commit_calls == 1
+
+
+def test_create_commits_before_response_body_is_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    key_service = _KeyServiceStub(events=events)
+    session = _SessionStub(events=events)
+    application = _app(key_service=key_service, entitlement_service=_EntitlementStub(), session=session)
+    original_issue_response = portal._issue_response
+
+    def observed_issue_response(result: KeyIssueResult, *, tenant_id: UUID):
+        events.append("response")
+        return original_issue_response(result, tenant_id=tenant_id)
+
+    monkeypatch.setattr(portal, "_issue_response", observed_issue_response)
+
+    with TestClient(application) as client:
+        response = client.post("/portal/keys", headers={"Idempotency-Key": "create-order"}, json={})
+
+    assert response.status_code == 200
+    assert events == ["create", "commit", "response"]
+
+
+def test_find_key_follows_cursor_to_second_page() -> None:
+    first = _key(TENANT_ID)
+    target = _key(TENANT_ID)
+    service = _PagedKeyService(
+        {
+            None: KeyPage(data=(first,), next_cursor="page-2", limit=100, total=2, cursor=None),
+            "page-2": KeyPage(data=(target,), next_cursor=None, limit=100, total=2, cursor="page-2"),
+        }
+    )
+    application = _app(key_service=service, entitlement_service=_EntitlementStub())
+
+    with TestClient(application) as client:
+        response = client.get(f"/portal/keys/{target.api_key_id}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(target.api_key_id)
+    assert service.cursors == [None, "page-2"]
+
+
+def test_last_usable_key_counts_usable_rows_across_pages() -> None:
+    target = _key(TENANT_ID)
+    second_usable = _key(TENANT_ID)
+    service = _PagedKeyService(
+        {
+            None: KeyPage(data=(target,), next_cursor="page-2", limit=100, total=2, cursor=None),
+            "page-2": KeyPage(data=(second_usable,), next_cursor=None, limit=100, total=2, cursor="page-2"),
+        }
+    )
+    application = _app(key_service=service, entitlement_service=_EntitlementStub())
+
+    with TestClient(application) as client:
+        response = client.post(f"/portal/keys/{target.api_key_id}/revoke", json={})
+
+    assert response.status_code == 200
+    assert service.cursors == [None, "page-2", None, "page-2"]
+
+
+def test_key_lookup_fails_closed_when_cursor_page_bound_is_reached(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(portal, "MAX_KEY_LOOKUP_PAGES", 2)
+    service = _InfiniteCursorKeyService()
+    application = _app(key_service=service, entitlement_service=_EntitlementStub())
+
+    with TestClient(application) as client:
+        response = client.get(f"/portal/keys/{uuid4()}")
+
+    assert response.status_code == 503
+    assert "page bound" in response.text
+    assert len(service.cursors) == 2

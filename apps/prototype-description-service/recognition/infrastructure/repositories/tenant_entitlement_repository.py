@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,6 +18,13 @@ from db.models import TenantEntitlement, UsageReservation
 from recognition.domain.portal_contracts import EntitlementStatus, UsageReservationStatus
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
+_BETA_PRESERVING_BILLING_STATUSES = frozenset(
+    {
+        EntitlementStatus.PAST_DUE,
+        EntitlementStatus.EXPIRED,
+        EntitlementStatus.REVOKED,
+    }
+)
 
 
 class TenantEntitlementTimeoutError(TimeoutError):
@@ -47,6 +54,28 @@ def _validate_tenant_id(tenant_id: UUID) -> UUID:
     return tenant_id
 
 
+def _validate_plan_allowances(value: Mapping[str, int]) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        raise ValueError("plan allowances must be a mapping")
+    allowances: dict[str, int] = {}
+    for plan_code, allowance_jobs in value.items():
+        if not isinstance(plan_code, str) or not plan_code.strip():
+            raise ValueError("plan allowance keys must be non-empty strings")
+        if isinstance(allowance_jobs, bool) or not isinstance(allowance_jobs, int) or allowance_jobs < 0:
+            raise ValueError("plan allowances must be non-negative integers")
+        allowances[plan_code.strip()] = allowance_jobs
+    return allowances
+
+
+def _entitlement_status(value: object) -> EntitlementStatus:
+    if isinstance(value, EntitlementStatus):
+        return value
+    try:
+        return EntitlementStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tenant entitlement has an unknown status") from exc
+
+
 def _as_utc(value: datetime) -> datetime:
     """Normalize timestamps returned by SQLite, which drops timezone metadata."""
     if value.tzinfo is None:
@@ -72,14 +101,59 @@ class SqlAlchemyTenantEntitlementRepository:
     and write an audit event in that same transaction.
     """
 
-    def __init__(self, session: AsyncSession, *, timeout_s: float = _DEFAULT_OPERATION_TIMEOUT_S) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        timeout_s: float = _DEFAULT_OPERATION_TIMEOUT_S,
+        plan_allowances: Mapping[str, int] | None = None,
+        allowance_by_plan: Mapping[str, int] | None = None,
+        past_due_grace: timedelta | None = None,
+        past_due_grace_s: float | None = None,
+    ) -> None:
         self._session = session
         self._timeout_s = _validate_timeout(timeout_s)
+        if plan_allowances is not None and allowance_by_plan is not None:
+            raise ValueError("provide one plan allowance configuration")
+        configured_allowances = plan_allowances if plan_allowances is not None else allowance_by_plan
+        self._plan_allowances = _validate_plan_allowances(configured_allowances or {})
+        if past_due_grace is not None and past_due_grace_s is not None:
+            raise ValueError("provide one past_due grace configuration")
+        if past_due_grace_s is not None:
+            if (
+                isinstance(past_due_grace_s, bool)
+                or not isinstance(past_due_grace_s, (int, float))
+                or not math.isfinite(float(past_due_grace_s))
+                or past_due_grace_s <= 0
+            ):
+                raise ValueError("past_due_grace_s must be a finite positive number")
+            past_due_grace = timedelta(seconds=float(past_due_grace_s))
+        if past_due_grace is not None and (
+            not isinstance(past_due_grace, timedelta) or past_due_grace <= timedelta(0)
+        ):
+            raise ValueError("past_due_grace must be a positive timedelta")
+        self._past_due_grace = past_due_grace
 
     @property
     def session(self) -> AsyncSession:
         """Expose the request-scoped session to the transactional audit seam."""
         return self._session
+
+    def _allowance_for_plan(self, plan_code: str) -> int:
+        if not isinstance(plan_code, str) or not plan_code.strip():
+            raise ValueError("plan_code must be a non-empty string")
+        normalized_plan = plan_code.strip()
+        try:
+            return self._plan_allowances[normalized_plan]
+        except KeyError as exc:
+            raise ValueError(f"unknown entitlement plan {normalized_plan!r}") from exc
+
+    def _past_due_grace_until(self, now: datetime, configured: datetime | None) -> datetime:
+        if configured is not None:
+            return configured
+        if self._past_due_grace is None:
+            raise ValueError("past_due grace window is not configured")
+        return now + self._past_due_grace
 
     async def get(self, tenant_id: UUID, *, for_update: bool = False) -> TenantEntitlement | None:
         """Return the singleton entitlement row for exactly one tenant."""
@@ -164,6 +238,10 @@ class SqlAlchemyTenantEntitlementRepository:
                     "source": excluded.source,
                     "grace_until": excluded.grace_until,
                 },
+                # WHY: active paid billing outranks a beta grant; an
+                # unexpired beta grant outranks non-active billing, so a
+                # repeated beta grant must never erase paid authorization.
+                where=TenantEntitlement.status != EntitlementStatus.PAID_ACTIVE.value,
             )
             await _with_timeout(
                 self._session.execute(statement),
@@ -179,7 +257,7 @@ class SqlAlchemyTenantEntitlementRepository:
             if row is None:
                 row = TenantEntitlement(**values)
                 self._session.add(row)
-            else:
+            elif _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE:
                 self._set_beta_values(row, values)
 
         await _with_timeout(
@@ -209,21 +287,33 @@ class SqlAlchemyTenantEntitlementRepository:
     ) -> TenantEntitlement:
         """Map billing state without resetting usage from a current period."""
         tenant_uuid = _validate_tenant_id(tenant_id)
+        normalized_status = _entitlement_status(status)
+        if not isinstance(plan_code, str) or not plan_code.strip():
+            raise ValueError("plan_code must be a non-empty string")
+        normalized_plan_code = plan_code.strip()
         normalized_now = _as_utc(now)
         normalized_period_end = _as_utc(period_end) if period_end is not None else None
         normalized_grace_until = _as_utc(grace_until) if grace_until is not None else None
         row = await self.get(tenant_uuid, for_update=True)
 
         if row is None:
+            if normalized_status is EntitlementStatus.PAID_ACTIVE and normalized_period_end is None:
+                raise ValueError("active paid entitlement requires period_end")
+            allowance_jobs = self._allowance_for_plan(normalized_plan_code)
+            if normalized_status is EntitlementStatus.PAST_DUE:
+                normalized_grace_until = self._past_due_grace_until(
+                    normalized_now,
+                    normalized_grace_until,
+                )
             row = TenantEntitlement(
                 id=uuid4(),
                 tenant_id=tenant_uuid,
-                plan_code=plan_code,
+                plan_code=normalized_plan_code,
                 allowance_version="billing",
-                allowance_jobs=0,
+                allowance_jobs=allowance_jobs,
                 period_start=normalized_now,
                 period_end=normalized_period_end or normalized_now,
-                status=status,
+                status=normalized_status,
                 source=source,
                 grace_until=normalized_grace_until,
             )
@@ -232,15 +322,42 @@ class SqlAlchemyTenantEntitlementRepository:
             existing_period_start = _as_utc(row.period_start)
             existing_period_end = _as_utc(row.period_end)
             existing_grace_until = _as_utc(row.grace_until) if row.grace_until is not None else None
+            existing_status = _entitlement_status(row.status)
             current_period = existing_period_start <= normalized_now and (
                 normalized_now < existing_period_end
                 or (existing_grace_until is not None and normalized_now <= existing_grace_until)
             )
+            beta_current = (
+                row.plan_code == "beta"
+                and existing_status is EntitlementStatus.BETA_ACTIVE
+                and current_period
+            )
+            # WHY: active paid billing outranks beta, but an unexpired beta
+            # grant remains an independent authorization while billing is
+            # past_due, canceled, or revoked.
+            if beta_current and normalized_status in _BETA_PRESERVING_BILLING_STATUSES:
+                return row
+
+            preserve_allowance = current_period and existing_status in {
+                EntitlementStatus.BETA_ACTIVE,
+                EntitlementStatus.PAID_ACTIVE,
+                EntitlementStatus.PAST_DUE,
+            }
+            if not preserve_allowance:
+                row.allowance_jobs = self._allowance_for_plan(normalized_plan_code)
+                row.allowance_version = "billing"
             if not current_period:
                 row.period_start = normalized_now
-            row.period_end = normalized_period_end or row.period_end
-            row.plan_code = plan_code
-            row.status = status
+                row.period_end = normalized_period_end or normalized_now
+            elif normalized_period_end is not None:
+                row.period_end = normalized_period_end
+            if normalized_status is EntitlementStatus.PAST_DUE:
+                normalized_grace_until = self._past_due_grace_until(
+                    normalized_now,
+                    normalized_grace_until,
+                )
+            row.plan_code = normalized_plan_code
+            row.status = normalized_status
             row.source = source
             row.grace_until = normalized_grace_until
 

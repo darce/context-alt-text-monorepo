@@ -1,5 +1,7 @@
 # E16-7: API keys and subscription self-service — build/buy assessment
 
+> **Current APP-1 recommendation (2026-09-19):** [launch decision and source-book grounding](app-portal-launch-recommendation-2026-09-19.md) recommends Clerk identity, retained local API-key management and Polar Starter. It supersedes open-ended vendor selection and keys-only/later-billing scope for APP-1. The analysis below is retained as dated prior art; it is not evidence of implementation.
+
 Date: 2026-09-16  
 Status: planning decision; E16-7 is still a draft, and billing is a later scope
 

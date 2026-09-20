@@ -7,8 +7,10 @@ type-safe defaults. Override by instantiating with explicit values in code.
 
 from __future__ import annotations
 
+import json
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -30,7 +32,7 @@ from recognition.infrastructure.face_pipeline._common import (
 )
 from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
 
-_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
+_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline", "auraface"})
 
 # Legacy insightface anchors (seeded onto FacePipelineSettings as dark placeholders;
 # S4 replaces face_pipeline values via a calibration apply-commit — never mutate these).
@@ -44,6 +46,11 @@ _LEGACY_DETECTION_DEFAULT_THRESHOLD = 0.45
 # No-op factor floors (aliases of the canonical enrollment triple — FIR6S3B-M-02).
 _NOOP_FACTOR_FLOOR = ENROLLMENT_NOOP_FLOOR_SHARPNESS
 _NOOP_OCCLUSION_CEILING = ENROLLMENT_NOOP_CEILING_OCCLUSION
+
+_DEFAULT_PLAN_ALLOWANCES: dict[str, int] = {"paid": 100}
+_PLAN_ALLOWANCES_ENV = "RECOGNITION_PLAN_ALLOWANCES"
+_DEFAULT_PAST_DUE_GRACE_SECONDS: float = 72 * 60 * 60
+_PAST_DUE_GRACE_ENV = "RECOGNITION_PAST_DUE_GRACE_SECONDS"
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -77,6 +84,12 @@ def _resolve_face_pipeline_models_dir() -> Path | None:
     return Path(raw)
 
 
+def _resolve_auraface_models_dir() -> Path:
+    """Resolve the optional operator-provisioned AuraFace models directory."""
+    raw = os.environ.get("RECOGNITION_AURAFACE_MODELS_DIR", "").strip()
+    return Path(raw) if raw else DEFAULT_MODELS_DIR
+
+
 def _resolve_embedding_dimension() -> int:
     """Bind identity_detection.embedding_dimension to DatabaseSettings.pgvector_dimension.
 
@@ -102,24 +115,15 @@ def _resolve_face_pipeline_max_workers() -> int:
         return 2
     stripped = raw.strip()
     if not stripped:
-        raise ValueError(
-            "Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS: empty value; "
-            "must be a positive integer"
-        )
+        raise ValueError("Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS: empty value; must be a positive integer")
     # Reject floats ("1.5") and non-numeric tokens; only optional sign + digits.
     if stripped[0] in "+-" and not stripped[1:].isdigit():
-        raise ValueError(
-            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
-        )
+        raise ValueError(f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer")
     if stripped[0] not in "+-" and not stripped.isdigit():
-        raise ValueError(
-            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer"
-        )
+        raise ValueError(f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={raw!r}; must be a positive integer")
     value = int(stripped)
     if value <= 0:
-        raise ValueError(
-            f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={value}; must be a positive integer"
-        )
+        raise ValueError(f"Invalid RECOGNITION_FACE_PIPELINE_MAX_WORKERS={value}; must be a positive integer")
     return value
 
 
@@ -151,9 +155,7 @@ def _parse_finite_float(value: object, *, field_name: str) -> float:
         try:
             value = float(stripped)
         except ValueError as exc:
-            raise ValueError(
-                f"Invalid face_pipeline {field_name}={value!r}; must be a finite number"
-            ) from exc
+            raise ValueError(f"Invalid face_pipeline {field_name}={value!r}; must be a finite number") from exc
     if isinstance(value, int):
         value = float(value)
     if not isinstance(value, float):
@@ -251,15 +253,11 @@ def _resolve_face_suggestion_ceiling() -> float:
 
 
 def _resolve_face_limits_similarity_threshold() -> float:
-    return _env_or_default_unit(
-        "RECOGNITION_FACE_LIMITS_SIMILARITY_THRESHOLD", _LEGACY_LIMITS_SIMILARITY_THRESHOLD
-    )
+    return _env_or_default_unit("RECOGNITION_FACE_LIMITS_SIMILARITY_THRESHOLD", _LEGACY_LIMITS_SIMILARITY_THRESHOLD)
 
 
 def _resolve_face_detection_default_threshold() -> float:
-    return _env_or_default_unit(
-        "RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD", _LEGACY_DETECTION_DEFAULT_THRESHOLD
-    )
+    return _env_or_default_unit("RECOGNITION_FACE_DETECTION_DEFAULT_THRESHOLD", _LEGACY_DETECTION_DEFAULT_THRESHOLD)
 
 
 def _resolve_face_oact_coefficient() -> float:
@@ -297,7 +295,7 @@ class FacePipelineSettings(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    profile: Literal["insightface", "face_pipeline"] = Field(
+    profile: Literal["insightface", "face_pipeline", "auraface"] = Field(
         default_factory=_resolve_face_pipeline_profile,  # type: ignore[arg-type]
         validate_default=True,
         description="Active face pipeline profile (dark default: insightface).",
@@ -349,8 +347,7 @@ class FacePipelineSettings(BaseModel):
     face_suggestion_floor: float = Field(
         default_factory=_resolve_face_suggestion_floor,
         description=(
-            "face_pipeline override for ClusteringSettings.suggestion_floor. "
-            "Env: RECOGNITION_FACE_SUGGESTION_FLOOR."
+            "face_pipeline override for ClusteringSettings.suggestion_floor. Env: RECOGNITION_FACE_SUGGESTION_FLOOR."
         ),
     )
     face_suggestion_ceiling: float = Field(
@@ -433,8 +430,10 @@ class FacePipelineSettings(BaseModel):
             value = int(value)
         if isinstance(value, str):
             stripped = value.strip()
-            if not stripped or (stripped[0] in "+-" and not stripped[1:].isdigit()) or (
-                stripped[0] not in "+-" and not stripped.isdigit()
+            if (
+                not stripped
+                or (stripped[0] in "+-" and not stripped[1:].isdigit())
+                or (stripped[0] not in "+-" and not stripped.isdigit())
             ):
                 raise ValueError(f"Invalid face_pipeline max_workers={value!r}; must be a positive integer")
             value = int(stripped)
@@ -527,13 +526,15 @@ class ResolvedFacePipelineKnobs:
     ``oact_coefficient`` is forced to 0.0 and factor floors are forced to the
     canonical no-op triple (profile gate — residual face_pipeline-scored rows /
     env-set floors must not activate OACT or enrollment gating under insightface;
-    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` they read the
-    FacePipelineSettings overrides including OACT and floors.
+    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` and ``auraface`` they read
+    the FacePipelineSettings overrides including OACT and floors. AuraFace
+    shares this tuning surface but remains activation-gated until its
+    operator-provisioned artifact is pinned and verified.
     ``joint_assignment_enabled`` always comes from FacePipelineSettings
     (consumers under insightface must still treat joint assignment as un-wired until S2).
     """
 
-    profile: Literal["insightface", "face_pipeline"]
+    profile: Literal["insightface", "face_pipeline", "auraface"]
     similarity_threshold: float
     complete_link_threshold: float
     suggestion_floor: float
@@ -557,11 +558,12 @@ def resolve_face_pipeline_knobs(
     """Resolve effective thresholds for the active face-pipeline profile (rg-008).
 
     Single ownership for S1/S2 consumers: mutate FacePipelineSettings overrides and
-    re-resolve; insightface anchors are never silently replaced. OACT is profile-gated:
-    only ``face_pipeline`` can surface a non-zero coefficient.
+    re-resolve; insightface anchors are never silently replaced. OACT is
+    profile-gated: only ``face_pipeline`` and ``auraface`` can surface a
+    non-zero coefficient.
     """
     profile = face_pipeline.profile
-    if profile == "face_pipeline":
+    if profile in {"face_pipeline", "auraface"}:
         return ResolvedFacePipelineKnobs(
             profile=profile,
             similarity_threshold=float(face_pipeline.face_similarity_threshold),
@@ -595,9 +597,7 @@ def resolve_face_pipeline_knobs(
             joint_assignment_enabled=bool(face_pipeline.joint_assignment_enabled),
         )
     # Defensive: pydantic already restricts profile; keep fail-closed for callers.
-    raise ValueError(
-        f"Invalid face_pipeline profile={profile!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}"
-    )
+    raise ValueError(f"Invalid face_pipeline profile={profile!r}; allowed values: {sorted(_FACE_PIPELINE_PROFILES)}")
 
 
 def apply_resolved_clustering_settings(
@@ -675,6 +675,7 @@ def resolve_effective_detection_settings(
     )
     return apply_resolved_detection_settings(settings.identity_detection, knobs)
 
+
 def bridge_oact_into_quality_settings(
     quality: QualitySettings,
     knobs: ResolvedFacePipelineKnobs,
@@ -689,9 +690,7 @@ def bridge_oact_into_quality_settings(
     """
     coeff = float(knobs.oact_coefficient)
     if coeff < 0.0:
-        raise ValueError(
-            f"Invalid oact_coefficient={coeff!r}; must be >= 0 (negative rewards occlusion)"
-        )
+        raise ValueError(f"Invalid oact_coefficient={coeff!r}; must be >= 0 (negative rewards occlusion)")
     floor_s = float(knobs.factor_floor_sharpness)
     floor_n = float(knobs.factor_floor_embedding_norm)
     ceil_o = float(knobs.factor_ceiling_occlusion)
@@ -769,6 +768,38 @@ def _parse_allowed_upload_mime_types(raw: str) -> list[str]:
     return items
 
 
+def _resolve_past_due_grace_seconds() -> float:
+    """Read the past-due grace window, failing fast rather than at webhook time."""
+    raw = os.environ.get(_PAST_DUE_GRACE_ENV)
+    if raw is None or not raw.strip():
+        return _DEFAULT_PAST_DUE_GRACE_SECONDS
+    try:
+        seconds = float(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid {_PAST_DUE_GRACE_ENV}: value must be a positive number of seconds") from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"Invalid {_PAST_DUE_GRACE_ENV}: value must be a positive number of seconds")
+    return seconds
+
+
+def _resolve_plan_allowances() -> dict[str, object]:
+    """Read the plan allowance mapping from the established flat env convention."""
+    raw = os.environ.get(_PLAN_ALLOWANCES_ENV)
+    if raw is None:
+        return dict(_DEFAULT_PLAN_ALLOWANCES)
+    if not raw.strip():
+        raise ValueError(f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances")
+    return value
+
+
 class RecognitionSettings(BaseModel):
     """Top-level recognition settings container."""
 
@@ -776,10 +807,31 @@ class RecognitionSettings(BaseModel):
 
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     face_pipeline: FacePipelineSettings = Field(default_factory=FacePipelineSettings)
+    auraface_models_dir: Path = Field(
+        default_factory=_resolve_auraface_models_dir,
+        description="Operator-provisioned AuraFace ONNX models directory.",
+    )
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
     scan: ScanSettings = Field(default_factory=ScanSettings)
+    plan_allowances: dict[str, int] = Field(
+        default_factory=_resolve_plan_allowances,
+        validate_default=True,
+        description=(
+            "Plan-code to non-negative job allowance mapping. "
+            "Env: RECOGNITION_PLAN_ALLOWANCES as a JSON object. "
+            "The paid allowance defaults to 100 as a placeholder pending the PR-04 allowance-units decision."
+        ),
+    )
+    past_due_grace_seconds: float = Field(
+        default_factory=_resolve_past_due_grace_seconds,
+        validate_default=True,
+        description=(
+            "Seconds a past-due paid tenant keeps its entitlement before the subscription lapses. "
+            "Env: RECOGNITION_PAST_DUE_GRACE_SECONDS. Defaults to the fixed 72h window in plan 0001."
+        ),
+    )
     retention_export_max_identities: int = Field(
         default=50000,
         description="Max identities allowed for synchronous retention export responses.",
@@ -817,6 +869,34 @@ class RecognitionSettings(BaseModel):
         ),
         description="MIME allow-list for image_<media_id> parts on the multipart route.",
     )
+
+    @field_validator("past_due_grace_seconds")
+    @classmethod
+    def _validate_past_due_grace_seconds(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("past_due_grace_seconds must be a positive number of seconds")
+        seconds = float(value)
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("past_due_grace_seconds must be a positive number of seconds")
+        return seconds
+
+    @field_validator("plan_allowances", mode="before")
+    @classmethod
+    def _validate_plan_allowances(cls, value: object) -> dict[str, int]:
+        if not isinstance(value, Mapping):
+            raise ValueError("plan_allowances must be a mapping")
+
+        allowances: dict[str, int] = {}
+        for plan_code, allowance_jobs in value.items():
+            if not isinstance(plan_code, str) or not plan_code.strip():
+                raise ValueError("plan allowance keys must be non-empty strings")
+            if isinstance(allowance_jobs, bool) or not isinstance(allowance_jobs, int) or allowance_jobs < 0:
+                raise ValueError("plan allowances must be non-negative integers")
+            allowances[plan_code.strip()] = allowance_jobs
+
+        if "paid" not in allowances:
+            raise ValueError("plan_allowances must configure the billable 'paid' plan")
+        return allowances
 
     @model_validator(mode="after")
     def _check_embedding_pgvector_pair(self) -> RecognitionSettings:

@@ -106,7 +106,10 @@ class _RepositoryStub:
         assert provider == billing_webhooks.POLAR_PROVIDER
         assert provider_customer_id
         assert current_period_end is not None
-        assert past_due_since is None
+        if status is BillingSubscriptionStatus.PAST_DUE:
+            assert past_due_since is not None
+        else:
+            assert past_due_since is None
         if self.projection_result is not None:
             return self.projection_result
         position = (

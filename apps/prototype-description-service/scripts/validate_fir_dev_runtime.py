@@ -68,7 +68,7 @@ EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
     "preprocessing_id": "sface-align-v1",
 }
 
-# Source of truth: recognition/infrastructure/face_pipeline/provenance.py:71.
+# Source of truth: recognition/infrastructure/face_pipeline/provenance.py:93 (yunet), :107 (sface).
 EXPECTED_MODEL_ASSET_HASHES = {
     "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
     "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
@@ -121,13 +121,15 @@ OBSERVATION_METHODS: dict[str, frozenset[str]] = {
 }
 
 _SECRET_MARKER = re.compile(r"REPLACE_ME[_A-Z0-9]*")
-_CREDENTIAL_KEY = re.compile(
-    r"^(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)$",
-    re.IGNORECASE,
+_CREDENTIAL_KEY_PATTERN = (
+    r"(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key|"
+    r"auth[-_]?token|client[-_]?secret|pgpassword|bearer[-_]?token|dsn)"
 )
+_CREDENTIAL_KEY = re.compile(r"^" + _CREDENTIAL_KEY_PATTERN + r"$", re.IGNORECASE)
 _CREDENTIAL_KEY_VALUE = re.compile(
-    r"(?:^|\s)(?:password|passwd|pwd|secret|token|api[-_]?key|access[-_]?key)"
-    r"\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*=)[^\s]+)",
+    r'''(?:^|[\s?&;,{"'])['"]?'''
+    + _CREDENTIAL_KEY_PATTERN
+    + r'''['"]?\s*(?:=|:)\s*(?P<value>"[^"]*"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*(?:=|:))[^\s,;&}]+)''',
     re.IGNORECASE,
 )
 _BEARER_TOKEN_PREFIX = re.compile(
@@ -168,12 +170,14 @@ def _coarse_space_token(value: str) -> str:
 
 
 def _uri_has_password(value: str) -> bool:
-    """Return whether a URI string has non-empty userinfo password data."""
+    """Return whether a URI string has non-empty userinfo or query credentials."""
 
     try:
         parsed = urlsplit(value.strip())
     except ValueError:
         return False
+    if parsed.query and _keyword_value_has_credential(parsed.query):
+        return True
     if not parsed.scheme or not parsed.netloc or "@" not in parsed.netloc:
         return False
     userinfo = parsed.netloc.rsplit("@", 1)[0]
@@ -400,9 +404,20 @@ def _resource_is_forbidden(
     value: Any,
     forbidden_values: Iterable[Any],
     *,
+    compose_project: Any = None,
+    forbidden_projects: Iterable[Any] = (),
     allow_compose_prefix: bool = True,
 ) -> bool:
-    """Match strip/casefold-normalized IDs, including Compose volume suffixes when enabled."""
+    """Match normalized IDs, including policy-owned Compose prefixes when enabled."""
+
+    normalized_compose_project = (
+        compose_project.strip().casefold() if isinstance(compose_project, str) else None
+    )
+    normalized_forbidden_projects = tuple(
+        project.strip().casefold()
+        for project in forbidden_projects
+        if isinstance(project, str) and project.strip()
+    )
 
     for forbidden in forbidden_values:
         if isinstance(value, str) and isinstance(forbidden, str):
@@ -410,8 +425,12 @@ def _resource_is_forbidden(
             normalized_forbidden = forbidden.strip().casefold()
             if normalized_value == normalized_forbidden:
                 return True
-            if allow_compose_prefix and normalized_forbidden and normalized_value.endswith(f"_{normalized_forbidden}"):
-                return True
+            if allow_compose_prefix and normalized_forbidden:
+                for forbidden_project in normalized_forbidden_projects:
+                    if forbidden_project == normalized_compose_project:
+                        continue
+                    if normalized_value == f"{forbidden_project}_{normalized_forbidden}":
+                        return True
         elif value == forbidden:
             return True
     return False
@@ -628,11 +647,21 @@ def _validate_freshness_and_isolation(
     if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
         return "shared_default_tenant"
     # Policy contract: string IDs are compared after strip/casefold normalization. Collectors may emit
-    # Docker Compose volume IDs as ``<project>_<declared-name>``; volume policy IDs match that suffix.
+    # Compose-managed resources as ``<project>_<declared-name>``; only prefixes owned by a forbidden
+    # Compose project are eligible for the expanded comparison. The observed project prevents its own
+    # prefix from being interpreted as a foreign policy resource.
     forbidden_resources = isolation_policy["forbidden_resource_ids"]
+    compose_project = snapshot["storage"]["compose_project"]["value"]
+    forbidden_projects = tuple(_flatten_policy_values(forbidden_resources["compose_projects"]))
     for category, value in _observed_resource_values(snapshot):
         forbidden_values = tuple(_flatten_policy_values(forbidden_resources[category]))
-        if _resource_is_forbidden(value, forbidden_values, allow_compose_prefix=category == "volumes"):
+        if _resource_is_forbidden(
+            value,
+            forbidden_values,
+            compose_project=compose_project,
+            forbidden_projects=forbidden_projects,
+            allow_compose_prefix=category in {"volumes", "networks", "blob_namespaces"},
+        ):
             return "forbidden_resource_id"
     return None
 

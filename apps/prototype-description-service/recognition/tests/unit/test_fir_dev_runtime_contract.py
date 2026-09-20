@@ -569,6 +569,20 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
     return result
 
 
+def _validate_custom_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    isolation_policy: dict[str, Any] | None = None,
+) -> Mapping[str, Any]:
+    validator = importlib.import_module(MODULE_NAME)
+    return validator.validate_snapshot(
+        snapshot,
+        freshness_policy=_load_fixture("freshness_policy.json"),
+        isolation_policy=isolation_policy or _load_fixture("isolation_policy.json"),
+        now=NOW,
+    )
+
+
 def _assert_pinned_outcome(case_name: str, result: Mapping[str, Any]) -> None:
     expected_status, expected_exit_code, expected_reason = CASE_OUTCOMES[case_name]
     assert result.get("status") == expected_status, (
@@ -774,6 +788,132 @@ def test_keyword_value_dsn_is_refused_and_never_emitted_in_cli_report(tmp_path: 
     assert DSN_PASSWORD not in completed.stdout
     assert DSN_PASSWORD not in completed.stderr
     assert DSN_PASSWORD not in json.dumps(json.loads(completed.stdout), sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    ("shape_name", "value_template"),
+    (
+        (
+            "uri_password_first",
+            "postgresql://collector@postgres/alt_context?password={secret}&sslmode=require",
+        ),
+        (
+            "uri_password_last",
+            "postgresql://collector@postgres/alt_context?sslmode=require&password={secret}",
+        ),
+        ("uri_api_key", "postgresql://postgres/alt_context?api_key={secret}"),
+        ("pgpassword", "PGPASSWORD={secret}"),
+        ("ado_pwd", "Server=pg;Pwd={secret};"),
+        ("json_password", '{{"password":"{secret}"}}'),
+        ("yaml_password", "password: {secret}"),
+        ("auth_token", "auth_token={secret}"),
+        ("client_secret", "client_secret={secret}"),
+        ("bearer_token", "bearer_token={secret}"),
+        ("dsn", "dsn={secret}"),
+    ),
+)
+def test_credential_shapes_are_refused_and_never_emitted_in_cli_report(
+    tmp_path: Path,
+    shape_name: str,
+    value_template: str,
+) -> None:
+    secret = f"harm01-{shape_name}-must-not-appear"
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    snapshot["database"]["identity"]["database_name"]["value"] = value_template.format(secret=secret)
+
+    result = _validate_custom_snapshot(snapshot)
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "secret_shaped_input"
+
+    completed = _run_cli(tmp_path, snapshot)
+    assert completed.returncode == 2
+    assert secret not in completed.stdout
+    assert secret not in completed.stderr
+    assert secret not in json.dumps(json.loads(completed.stdout), sort_keys=True)
+
+
+def test_legitimate_collector_values_are_not_secret_shaped() -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    snapshot["database"]["identity"]["database_name"]["value"] = "alt_context_dev_fir"
+    snapshot["database"]["identity"]["role"]["value"] = "acx_dev_fir"
+    snapshot["database"]["server_version"]["value"] = (
+        "PostgreSQL 16.4 (Debian 16.4-1.pgdg120+1) on x86_64-pc-linux-gnu, "
+        "compiled by gcc (Debian 12.2.0-14) 12.2.0, 64-bit"
+    )
+    snapshot["storage"]["volume_ids"]["value"][1] = "acx-dev-fir_acx_blobs"
+
+    result = _validate_custom_snapshot(snapshot)
+    assert result["status"] == "ready"
+    assert result["exit_code"] == 0
+    assert result["reason_code"] == "ready"
+
+
+def test_compose_prefix_matches_only_foreign_forbidden_projects() -> None:
+    isolation_policy = _load_fixture("isolation_policy.json")
+    isolation_policy["forbidden_resource_ids"]["volumes"] = ["acx_blobs"]
+
+    foreign_snapshot = _case_snapshot("valid_empty_fir_store")
+    foreign_snapshot["storage"]["volume_ids"]["value"][0] = "acx-dev_acx_blobs"
+    foreign_result = _validate_custom_snapshot(foreign_snapshot, isolation_policy=isolation_policy)
+    assert foreign_result["status"] == "invalid"
+    assert foreign_result["exit_code"] == 2
+    assert foreign_result["reason_code"] == "forbidden_resource_id"
+
+    own_snapshot = _case_snapshot("valid_empty_fir_store")
+    own_snapshot["storage"]["volume_ids"]["value"][0] = "acx-dev-fir_acx_blobs"
+    own_result = _validate_custom_snapshot(own_snapshot, isolation_policy=isolation_policy)
+    assert own_result["status"] == "ready"
+    assert own_result["exit_code"] == 0
+    assert own_result["reason_code"] == "ready"
+
+
+@pytest.mark.parametrize(
+    ("storage_field", "category", "observed_value", "forbidden_value"),
+    (
+        ("network_ids", "networks", "acx-dev_acx-dev-net", "acx-dev-net"),
+        ("blob_namespace", "blob_namespaces", "acx-dev_acx-dev", "acx-dev"),
+    ),
+)
+def test_compose_prefixed_networks_and_blob_namespaces_are_refused(
+    storage_field: str,
+    category: str,
+    observed_value: str,
+    forbidden_value: str,
+) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    storage_value = snapshot["storage"][storage_field]["value"]
+    if isinstance(storage_value, list):
+        storage_value[0] = observed_value
+    else:
+        snapshot["storage"][storage_field]["value"] = observed_value
+
+    isolation_policy = _load_fixture("isolation_policy.json")
+    isolation_policy["forbidden_resource_ids"][category] = [forbidden_value]
+    result = _validate_custom_snapshot(snapshot, isolation_policy=isolation_policy)
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "forbidden_resource_id"
+
+
+def test_validator_model_constants_match_manifest() -> None:
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+
+    validator = importlib.import_module(MODULE_NAME)
+    source_files = "scripts/validate_fir_dev_runtime.py and recognition/infrastructure/face_pipeline/provenance.py"
+    expected_hashes = {name: f"sha256:{MODEL_MANIFEST[name].sha256}" for name in ("yunet", "sface")}
+    assert expected_hashes == validator.EXPECTED_MODEL_ASSET_HASHES, (
+        f"{source_files}: EXPECTED_MODEL_ASSET_HASHES is out of parity with MODEL_MANIFEST"
+    )
+
+    sface = MODEL_MANIFEST["sface"]
+    manifest_contract = (f"{sface.embedding_dim}d", sface.normalization, sface.metric)
+    assert validator.EXPECTED_MODEL_CONTRACT["embedding_dimension"] == sface.embedding_dim, (
+        f"{source_files}: EXPECTED_MODEL_CONTRACT embedding dimension is out of parity with MODEL_MANIFEST"
+    )
+    assert validator.EXPECTED_MODEL_CONTRACT["model_suffix"] == manifest_contract, (
+        f"{source_files}: EXPECTED_MODEL_CONTRACT model suffix is out of parity with MODEL_MANIFEST"
+    )
 
 
 def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:

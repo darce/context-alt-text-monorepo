@@ -30,7 +30,7 @@ from recognition.infrastructure.face_pipeline._common import (
 )
 from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
 
-_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
+_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline", "auraface"})
 
 # Legacy insightface anchors (seeded onto FacePipelineSettings as dark placeholders;
 # S4 replaces face_pipeline values via a calibration apply-commit — never mutate these).
@@ -75,6 +75,12 @@ def _resolve_face_pipeline_models_dir() -> Path | None:
     if not raw:
         return None
     return Path(raw)
+
+
+def _resolve_auraface_models_dir() -> Path:
+    """Resolve the optional operator-provisioned AuraFace models directory."""
+    raw = os.environ.get("RECOGNITION_AURAFACE_MODELS_DIR", "").strip()
+    return Path(raw) if raw else DEFAULT_MODELS_DIR
 
 
 def _resolve_embedding_dimension() -> int:
@@ -297,7 +303,7 @@ class FacePipelineSettings(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    profile: Literal["insightface", "face_pipeline"] = Field(
+    profile: Literal["insightface", "face_pipeline", "auraface"] = Field(
         default_factory=_resolve_face_pipeline_profile,  # type: ignore[arg-type]
         validate_default=True,
         description="Active face pipeline profile (dark default: insightface).",
@@ -776,6 +782,10 @@ class RecognitionSettings(BaseModel):
 
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     face_pipeline: FacePipelineSettings = Field(default_factory=FacePipelineSettings)
+    auraface_models_dir: Path = Field(
+        default_factory=_resolve_auraface_models_dir,
+        description="Operator-provisioned AuraFace ONNX models directory.",
+    )
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)

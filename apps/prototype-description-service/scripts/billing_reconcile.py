@@ -1,0 +1,1809 @@
+"""Bounded reconciliation of the verified billing webhook inbox.
+
+The worker keeps repository and provider injection for tests, while the module
+entrypoint composes the production dependencies from service configuration.
+Provider calls and entitlement writes remain bounded and transaction-aware.
+
+Usage:
+    python -m scripts.billing_reconcile --once --batch-size 100
+    python -m scripts.billing_reconcile --loop --max-cycles 2
+
+The standalone command validates configuration before opening a worker cycle.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import inspect
+import json
+import logging
+import math
+import os
+import random
+import sys
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any, Protocol, cast
+from uuid import UUID
+
+from sqlalchemy import select
+
+from db.models import BillingWebhookInbox
+from db.tenant_context import clear_tenant_context, set_tenant_context
+from recognition.config.settings import RecognitionSettings
+from recognition.domain.portal_contracts import (
+    BillingProvider,
+    BillingState,
+    BillingSubscriptionStatus,
+    WebhookInboxStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_BATCH_SIZE = 100
+MAX_BATCH_SIZE = 1000
+DEFAULT_PROVIDER_TIMEOUT_SECONDS = 10.0
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_INITIAL_DELAY_SECONDS = 0.25
+DEFAULT_RETRY_MAX_DELAY_SECONDS = 5.0
+DEFAULT_RETRY_JITTER_SECONDS = 0.25
+DEFAULT_STALL_LIMIT = 3
+DEFAULT_POLL_INTERVAL_SECONDS = 900.0
+
+_PENDING_STATUSES = frozenset(
+    {
+        WebhookInboxStatus.RECEIVED.value,
+        WebhookInboxStatus.FAILED.value,
+    }
+)
+_PROVIDER_METHOD_NAMES = (
+    "retrieve_state",
+    "retrieve_billing_state",
+    "retrieve_customer_state",
+    "retrieve_subscription_state",
+    "get_authoritative_state",
+    "get_billing_state",
+    "get_customer_state",
+    "get_subscription_state",
+    "get_state",
+    "fetch_billing_state",
+    "fetch_state",
+)
+_CUSTOMER_PARAMETER_NAMES = (
+    "provider_customer_id",
+    "customer_id",
+    "customer",
+    "external_customer_id",
+)
+_SUBSCRIPTION_PARAMETER_NAMES = (
+    "provider_subscription_id",
+    "subscription_id",
+)
+_TIMEOUT_PARAMETER_NAMES = ("timeout", "request_timeout", "timeout_seconds", "timeout_s")
+
+
+class ConfigurationError(ValueError):
+    """Raised when worker configuration is missing or structurally invalid."""
+
+
+class ReconciliationError(RuntimeError):
+    """Raised when an inbox row cannot be reconciled safely."""
+
+
+class ProviderUnavailableError(ReconciliationError):
+    """Raised after the provider retry budget is exhausted."""
+
+
+class UnsupportedWebhookError(ReconciliationError):
+    """Raised for a valid inbox event with no safe reconciliation target."""
+
+
+ProviderUnavailable = ProviderUnavailableError
+UnsupportedWebhook = UnsupportedWebhookError
+
+
+@dataclass(slots=True)
+class _RuntimeDependencies:
+    repository: BillingRepositoryLike
+    provider: ReconciliationProvider
+    config: ReconcileConfig
+    session: object | None = None
+    http_client: object | None = None
+
+    async def close(self) -> None:
+        try:
+            if self.http_client is not None:
+                close = getattr(self.http_client, "aclose", None)
+                if callable(close):
+                    await _maybe_await(close())
+        finally:
+            if self.session is not None:
+                close = getattr(self.session, "close", None)
+                if callable(close):
+                    await _maybe_await(close())
+
+
+class _HttpxBillingClient:
+    """Adapt httpx's timeout keyword to the provider transport protocol."""
+
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        request_timeout: float,
+    ) -> object:
+        method = getattr(self._client, "get", None)
+        if not callable(method):
+            raise ReconciliationError("billing HTTP client does not expose GET")
+        return await _maybe_await(method(url, headers=headers, timeout=request_timeout))
+
+    async def post(
+        self,
+        url: str,
+        *,
+        json: Mapping[str, object],
+        headers: Mapping[str, str],
+        request_timeout: float,
+    ) -> object:
+        method = getattr(self._client, "post", None)
+        if not callable(method):
+            raise ReconciliationError("billing HTTP client does not expose POST")
+        return await _maybe_await(method(url, json=json, headers=headers, timeout=request_timeout))
+
+
+class BillingRepositoryLike(Protocol):
+    async def list_pending_webhooks(self, *, limit: int) -> Sequence[object]:
+        ...
+
+    async def get_projection(self, tenant_id: UUID, *, provider: str | None = None) -> object | None:
+        ...
+
+    async def upsert_projection(self, **kwargs: object) -> bool:
+        ...
+
+    async def mark_webhook_processed(
+        self,
+        *,
+        provider: str,
+        provider_event_id: str,
+        status: WebhookInboxStatus,
+        processed_at: datetime | None = None,
+    ) -> bool:
+        ...
+
+
+class EntitlementServiceLike(Protocol):
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> object:
+        ...
+
+
+class ReconciliationProvider(BillingProvider, Protocol):
+    """The injected provider seam used by the reconciliation worker.
+
+    The canonical portal protocol intentionally remains small.  The provider
+    supplied to this worker additionally exposes one of the retrieval method
+    names in ``_PROVIDER_METHOD_NAMES``; each method receives an explicit
+    timeout when its signature accepts one, and is also wrapped in
+    ``asyncio.wait_for``.
+    """
+
+    async def retrieve_state(
+        self,
+        *,
+        provider_customer_id: str,
+        provider_subscription_id: str | None,
+        request_timeout: float,
+    ) -> object:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileConfig:
+    """Validated timeout, retry, polling, and stall policy."""
+
+    provider_timeout_s: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS
+    retry_attempts: int = DEFAULT_RETRY_ATTEMPTS
+    retry_initial_delay_s: float = DEFAULT_RETRY_INITIAL_DELAY_SECONDS
+    retry_max_delay_s: float = DEFAULT_RETRY_MAX_DELAY_SECONDS
+    retry_jitter_s: float = DEFAULT_RETRY_JITTER_SECONDS
+    stall_limit: int = DEFAULT_STALL_LIMIT
+    poll_interval_s: float = DEFAULT_POLL_INTERVAL_SECONDS
+
+    def __post_init__(self) -> None:
+        _positive_finite("provider_timeout_s", self.provider_timeout_s)
+        _bounded_int("retry_attempts", self.retry_attempts, minimum=1, maximum=10)
+        _non_negative_finite("retry_initial_delay_s", self.retry_initial_delay_s)
+        _positive_finite("retry_max_delay_s", self.retry_max_delay_s)
+        if self.retry_initial_delay_s > self.retry_max_delay_s:
+            raise ConfigurationError("retry_initial_delay_s must not exceed retry_max_delay_s")
+        _non_negative_finite("retry_jitter_s", self.retry_jitter_s)
+        _bounded_int("stall_limit", self.stall_limit, minimum=1, maximum=100)
+        _non_negative_finite("poll_interval_s", self.poll_interval_s)
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> ReconcileConfig:
+        """Load numerically typed settings and fail closed on bad input.
+
+        The provider timeout is required for a standalone deployment.  The
+        remaining controls have explicit, bounded defaults rather than an empty
+        or silently disabled value.
+        """
+
+        values = os.environ if environ is None else environ
+        timeout_raw = values.get("BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS")
+        if timeout_raw is None or not timeout_raw.strip():
+            raise ConfigurationError(
+                "missing required configuration BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS"
+            )
+        return cls(
+            provider_timeout_s=_parse_float_env(
+                "BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS", timeout_raw
+            ),
+            retry_attempts=_parse_int_env(
+                "BILLING_RECONCILE_RETRY_ATTEMPTS",
+                values.get("BILLING_RECONCILE_RETRY_ATTEMPTS", str(DEFAULT_RETRY_ATTEMPTS)),
+            ),
+            retry_initial_delay_s=_parse_float_env(
+                "BILLING_RECONCILE_RETRY_INITIAL_DELAY_SECONDS",
+                values.get(
+                    "BILLING_RECONCILE_RETRY_INITIAL_DELAY_SECONDS",
+                    str(DEFAULT_RETRY_INITIAL_DELAY_SECONDS),
+                ),
+            ),
+            retry_max_delay_s=_parse_float_env(
+                "BILLING_RECONCILE_RETRY_MAX_DELAY_SECONDS",
+                values.get("BILLING_RECONCILE_RETRY_MAX_DELAY_SECONDS", str(DEFAULT_RETRY_MAX_DELAY_SECONDS)),
+            ),
+            retry_jitter_s=_parse_float_env(
+                "BILLING_RECONCILE_RETRY_JITTER_SECONDS",
+                values.get("BILLING_RECONCILE_RETRY_JITTER_SECONDS", str(DEFAULT_RETRY_JITTER_SECONDS)),
+            ),
+            stall_limit=_parse_int_env(
+                "BILLING_RECONCILE_STALL_LIMIT",
+                values.get("BILLING_RECONCILE_STALL_LIMIT", str(DEFAULT_STALL_LIMIT)),
+            ),
+            poll_interval_s=_parse_float_env(
+                "BILLING_RECONCILE_POLL_INTERVAL_SECONDS",
+                values.get("BILLING_RECONCILE_POLL_INTERVAL_SECONDS", str(DEFAULT_POLL_INTERVAL_SECONDS)),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoritativeBillingState:
+    """Normalized provider state accepted by the projection repository."""
+
+    tenant_id: UUID
+    provider_customer_id: str
+    provider_subscription_id: str | None
+    status: BillingSubscriptionStatus
+    current_period_end: datetime | None
+    past_due_since: datetime | None
+    event_position: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DryRunChange:
+    """One read-only action reported by ``--dry-run``."""
+
+    inbox_row_id: str
+    provider_event_id: str
+    tenant_id: str | None
+    action: str
+
+
+@dataclass(slots=True)
+class ReconcileReport:
+    """Counters and dry-run actions produced by one worker invocation."""
+
+    cycles: int = 0
+    processed: int = 0
+    ignored: int = 0
+    failed: int = 0
+    changed: int = 0
+    stale: int = 0
+    duplicates: int = 0
+    would_change: int = 0
+    stalled: bool = False
+    unresolved_failures: int = 0
+    changes: list[DryRunChange] = field(default_factory=list)
+
+    @property
+    def exit_code(self) -> int:
+        return 1 if self.stalled or self.unresolved_failures else 0
+
+
+@dataclass(frozen=True, slots=True)
+class _EventContext:
+    tenant_id: UUID
+    provider_customer_id: str
+    provider_subscription_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RowOutcome:
+    progressed: bool = False
+    failed: bool = False
+    changed: bool = False
+    ignored: bool = False
+    stale: bool = False
+    duplicate: bool = False
+    dry_run_change: DryRunChange | None = None
+
+
+class BillingReconciliationWorker:
+    """Drain pending inbox rows with bounded provider work and isolated failures."""
+
+    def __init__(
+        self,
+        repository: BillingRepositoryLike,
+        provider: ReconciliationProvider,
+        *,
+        entitlement_service: EntitlementServiceLike | None = None,
+        config: ReconcileConfig | None = None,
+        clock: Callable[[], datetime] | None = None,
+        sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
+        random_value: Callable[[], float] = random.random,
+        log: logging.Logger | None = None,
+    ) -> None:
+        self._repository = repository
+        self._provider = provider
+        self._entitlement_service = entitlement_service
+        self._config = config or ReconcileConfig()
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._sleeper = sleeper
+        self._random_value = random_value
+        self._logger = log or logger
+
+    async def run(
+        self,
+        *,
+        loop: bool = False,
+        max_cycles: int | None = None,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        dry_run: bool = False,
+    ) -> ReconcileReport:
+        """Run one cycle or a bounded/unbounded polling loop."""
+
+        batch_size = validate_batch_size(batch_size)
+        if isinstance(max_cycles, bool) or (
+            max_cycles is not None and (not isinstance(max_cycles, int) or max_cycles <= 0)
+        ):
+            raise ValueError("max_cycles must be a positive integer when provided")
+        if not loop and max_cycles not in (None, 1):
+            raise ValueError("max_cycles is only valid with loop mode")
+
+        report = ReconcileReport()
+        no_progress: dict[str, int] = {}
+        unresolved: set[str] = set()
+        cycle_limit = max_cycles if loop else 1
+
+        while cycle_limit is None or report.cycles < cycle_limit:
+            report.cycles += 1
+            try:
+                rows = await _maybe_await(self._repository.list_pending_webhooks(limit=batch_size))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                unresolved.add("list_pending_webhooks")
+                report.failed += 1
+                self._logger.error(
+                    "billing_reconcile cycle_failed operation=list_pending_webhooks error_type=%s",
+                    type(exc).__name__,
+                )
+                break
+
+            bounded_rows = list(rows)[:batch_size]
+            cycle_stalled = False
+            for row in bounded_rows:
+                row_key = _row_key(row)
+                outcome = await self._process_row(row, dry_run=dry_run)
+                if outcome.failed:
+                    report.failed += 1
+                    unresolved.add(row_key)
+                    no_progress[row_key] = no_progress.get(row_key, 0) + 1
+                    if no_progress[row_key] >= self._config.stall_limit:
+                        cycle_stalled = True
+                        self._logger.error(
+                            "billing_reconcile row_stalled inbox_row_id=%s provider_event_id=%s threshold=%s",
+                            _safe_log_id(row, "id"),
+                            _safe_log_id(row, "provider_event_id"),
+                            self._config.stall_limit,
+                        )
+                elif outcome.progressed:
+                    no_progress.pop(row_key, None)
+                    unresolved.discard(row_key)
+
+                report.processed += int(outcome.progressed and not outcome.ignored and not dry_run)
+                report.ignored += int(outcome.ignored and not dry_run)
+                report.changed += int(outcome.changed)
+                report.stale += int(outcome.stale)
+                report.duplicates += int(outcome.duplicate)
+                if outcome.dry_run_change is not None:
+                    report.changes.append(outcome.dry_run_change)
+                    report.would_change += int(outcome.dry_run_change.action in {"create_projection", "update_projection"})
+
+            if cycle_stalled:
+                report.stalled = True
+                break
+            if not loop or (cycle_limit is not None and report.cycles >= cycle_limit):
+                break
+            await _maybe_await(self._sleeper(self._config.poll_interval_s))
+
+        report.unresolved_failures = len(unresolved)
+        return report
+
+    async def run_once(
+        self,
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        dry_run: bool = False,
+    ) -> ReconcileReport:
+        """Run one cycle without enabling loop-specific behavior."""
+
+        return await self.run(batch_size=batch_size, dry_run=dry_run)
+
+    async def _process_row(self, row: object, *, dry_run: bool) -> _RowOutcome:
+        provider_name = _safe_log_id(row, "provider")
+        provider_event_id = _safe_log_id(row, "provider_event_id")
+        inbox_row_id = _safe_log_id(row, "id")
+        try:
+            claimed = await self._claim_row(row)
+            if claimed is None:
+                return _RowOutcome()
+            row = _snapshot_row(claimed)
+            provider_name = _required_text(_row_value(row, "provider"), "provider")
+            provider_event_id = _required_text(_row_value(row, "provider_event_id"), "provider_event_id")
+            inbox_row_id = _safe_log_id(row, "id")
+            expected_attempts = _row_attempts(row)
+
+            payload = _row_value(row, "payload")
+            event_type = _required_text(_row_value(row, "event_type"), "event_type")
+            if not isinstance(payload, Mapping):
+                raise ReconciliationError("inbox payload must be an object")
+
+            context, projection = await self._context_and_projection(
+                payload,
+                provider=provider_name,
+                event_type=event_type,
+            )
+            if projection is not None and _same_event(projection, provider_event_id):
+                change = DryRunChange(
+                    inbox_row_id=inbox_row_id,
+                    provider_event_id=provider_event_id,
+                    tenant_id=str(context.tenant_id),
+                    action="skip_duplicate",
+                )
+                if dry_run:
+                    self._log_row(row, "dry_run", action=change.action)
+                    await self._rollback()
+                    return _RowOutcome(progressed=True, duplicate=True, dry_run_change=change)
+                writable_row = await self._recheck_row(
+                    row,
+                    expected_attempts=expected_attempts,
+                    for_update=True,
+                )
+                if writable_row is None:
+                    await self._rollback()
+                    return _RowOutcome()
+                await self._apply_billing_state(self._state_from_projection(projection, context))
+                await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
+                self._log_row(row, "processed", action=change.action)
+                return _RowOutcome(progressed=True, duplicate=True)
+
+            # WHY: the provider is untrusted network I/O; release the inbox
+            # transaction before retry/backoff so a slow provider cannot pin a
+            # row lock or database connection.
+            await self._rollback()
+            state = await self._retrieve_state(context)
+            if state.tenant_id != context.tenant_id:
+                raise ReconciliationError("provider state tenant does not match inbox tenant")
+            if state.provider_customer_id != context.provider_customer_id:
+                raise ReconciliationError("provider state customer does not match inbox customer")
+
+            writable_row = await self._recheck_row(
+                row,
+                expected_attempts=expected_attempts,
+                for_update=not dry_run,
+            )
+            if writable_row is None:
+                await self._rollback()
+                return _RowOutcome()
+            current_projection = await self._get_projection(context.tenant_id, provider_name)
+            stored_customer_id = _projection_value(current_projection, "provider_customer_id")
+            if stored_customer_id is not None and _normalize_customer_id(stored_customer_id) != context.provider_customer_id:
+                raise ReconciliationError("tenant projection customer does not match inbox customer")
+            projection = current_projection
+
+            action = _projection_action(projection, state, provider_event_id, provider_name)
+            change = DryRunChange(
+                inbox_row_id=inbox_row_id,
+                provider_event_id=provider_event_id,
+                tenant_id=str(state.tenant_id),
+                action=action,
+            )
+            if dry_run:
+                self._log_row(row, "dry_run", action=action)
+                await self._rollback()
+                return _RowOutcome(
+                    progressed=True,
+                    changed=action in {"create_projection", "update_projection"},
+                    stale=action == "skip_stale",
+                    duplicate=action == "skip_duplicate",
+                    dry_run_change=change,
+                )
+
+            if action == "skip_stale":
+                await self._apply_billing_state(self._state_from_projection(projection, context))
+                await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
+                self._log_row(row, "processed", action=action)
+                return _RowOutcome(progressed=True, stale=True)
+
+            changed = await _maybe_await(
+                self._repository.upsert_projection(
+                    tenant_id=state.tenant_id,
+                    provider=provider_name,
+                    provider_customer_id=state.provider_customer_id,
+                    provider_subscription_id=state.provider_subscription_id,
+                    status=state.status,
+                    current_period_end=state.current_period_end,
+                    past_due_since=state.past_due_since,
+                    provider_event_id=provider_event_id,
+                    event_position=state.event_position,
+                )
+            )
+            if changed:
+                await self._apply_billing_state(state)
+            elif action == "skip_duplicate":
+                await self._apply_billing_state(self._state_from_projection(projection, context))
+            await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
+            self._log_row(row, "processed", action="update_projection" if changed else "skip_stale")
+            return _RowOutcome(
+                progressed=True,
+                changed=bool(changed),
+                stale=not changed,
+            )
+        except asyncio.CancelledError:
+            raise
+        except UnsupportedWebhook:
+            if dry_run:
+                change = DryRunChange(
+                    inbox_row_id=inbox_row_id,
+                    provider_event_id=provider_event_id,
+                    tenant_id=None,
+                    action="ignore_unknown",
+                )
+                await self._rollback()
+                self._log_row(row, "dry_run", action=change.action)
+                return _RowOutcome(progressed=True, ignored=True, dry_run_change=change)
+            try:
+                writable_row = await self._recheck_row(
+                    row,
+                    expected_attempts=_row_attempts(row),
+                    for_update=True,
+                )
+                if writable_row is None:
+                    await self._rollback()
+                    return _RowOutcome()
+                await self._mark(writable_row, status=WebhookInboxStatus.DISCARDED)
+            except Exception as exc:  # noqa: BLE001
+                await self._rollback()
+                self._log_failure(row, "discard_failed", exc)
+                return _RowOutcome(failed=True)
+            self._log_row(row, "discarded", action="ignore_unknown")
+            return _RowOutcome(progressed=True, ignored=True)
+        except ProviderUnavailable as exc:
+            if dry_run:
+                return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
+            await self._mark_failure(row, exc)
+            return _RowOutcome(failed=True)
+        except Exception as exc:  # noqa: BLE001
+            if dry_run:
+                return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
+            await self._mark_failure(row, exc)
+            return _RowOutcome(failed=True)
+
+    async def _apply_billing_state(self, state: AuthoritativeBillingState) -> None:
+        service = self._entitlement_service
+        if service is None:
+            service = getattr(self._repository, "entitlement_service", None)
+        if service is None:
+            apply_state = getattr(self._repository, "apply_billing_state", None)
+            if callable(apply_state):
+                service = self._repository
+        if service is None:
+            session = getattr(self._repository, "session", None)
+            if session is not None:
+                from recognition.application.services.tenant_entitlement_service import TenantEntitlementService
+
+                service = TenantEntitlementService(session)
+        if service is None:
+            raise ReconciliationError(
+                "entitlement service unavailable; refusing to mark inbox row processed"
+            )
+
+        apply_state = getattr(service, "apply_billing_state", None)
+        if not callable(apply_state):
+            raise ReconciliationError("entitlement service does not expose apply_billing_state")
+        billing_state = BillingState(
+            tenant_id=state.tenant_id,
+            status=state.status,
+            provider_customer_id=state.provider_customer_id,
+            current_period_end=state.current_period_end,
+            past_due_since=state.past_due_since,
+        )
+        async with self._entitlement_tenant_context(service, state.tenant_id):
+            await _maybe_await(apply_state(state.tenant_id, billing_state))
+
+    @contextlib.asynccontextmanager
+    async def _entitlement_tenant_context(
+        self,
+        service: object,
+        tenant_id: UUID,
+    ) -> AsyncIterator[None]:
+        session = _entitlement_session(service, self._repository)
+        if session is None:
+            yield
+            return
+        try:
+            await set_tenant_context(session, tenant_id)
+            yield
+        finally:
+            await clear_tenant_context(session)
+
+    def _state_from_projection(
+        self,
+        projection: object | None,
+        context: _EventContext,
+    ) -> AuthoritativeBillingState:
+        if projection is None:
+            raise ReconciliationError("billing projection is required before entitlement application")
+        status_value = _projection_value(projection, "status")
+        try:
+            status = (
+                status_value
+                if isinstance(status_value, BillingSubscriptionStatus)
+                else BillingSubscriptionStatus(status_value)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ReconciliationError("billing projection has an unknown subscription status") from exc
+        provider_customer_id = _normalize_customer_id(_projection_value(projection, "provider_customer_id"))
+        provider_subscription_id = _projection_value(projection, "provider_subscription_id")
+        if provider_subscription_id is not None and not isinstance(provider_subscription_id, str):
+            raise ReconciliationError("billing projection subscription id must be a string")
+        return AuthoritativeBillingState(
+            tenant_id=context.tenant_id,
+            provider_customer_id=provider_customer_id,
+            provider_subscription_id=provider_subscription_id,
+            status=status,
+            current_period_end=_optional_datetime(
+                _projection_value(projection, "current_period_end"),
+                "billing projection current_period_end",
+            ),
+            past_due_since=_optional_datetime(
+                _projection_value(projection, "past_due_since"),
+                "billing projection past_due_since",
+            ),
+            event_position=_parse_datetime(
+                _projection_value(projection, "updated_at"),
+                "billing projection event position",
+            ),
+        )
+
+    async def _dry_run_failure(
+        self,
+        row: object,
+        provider_event_id: str,
+        inbox_row_id: str,
+        exc: BaseException,
+    ) -> _RowOutcome:
+        await self._rollback()
+        change = DryRunChange(
+            inbox_row_id=inbox_row_id,
+            provider_event_id=provider_event_id,
+            tenant_id=None,
+            action="would_fail",
+        )
+        self._log_failure(row, "dry_run_row_failed", exc)
+        return _RowOutcome(failed=True, dry_run_change=change)
+
+    async def _context_and_projection(
+        self,
+        payload: Mapping[str, object],
+        *,
+        provider: str,
+        event_type: str,
+    ) -> tuple[_EventContext, object | None]:
+        data_value = payload.get("data")
+        data: Mapping[str, object]
+        if isinstance(data_value, Mapping):
+            data = data_value
+        else:
+            data = payload
+
+        metadata_value = data.get("metadata")
+        metadata = metadata_value if isinstance(metadata_value, Mapping) else {}
+        # WHY: external_customer_id is the merchant-side id, which this app sets to
+        # the tenant uuid. The webhook writer reads it as the tenant; the two
+        # writers of this projection must agree on which field names which entity.
+        tenant_value = _first_value(
+            payload.get("tenant_id"),
+            data.get("tenant_id"),
+            metadata.get("tenant_id"),
+            data.get("external_customer_id"),
+        )
+        if tenant_value is None:
+            raise UnsupportedWebhook(f"event {event_type} has no tenant reference")
+        tenant_id = _parse_uuid(tenant_value, "tenant_id")
+        projection = await self._get_projection(tenant_id, provider)
+
+        customer_value = _first_value(
+            data.get("provider_customer_id"),
+            data.get("customer_id"),
+            _nested_value(data.get("customer"), "id"),
+            metadata.get("provider_customer_id"),
+            metadata.get("customer_id"),
+            _projection_value(projection, "provider_customer_id"),
+        )
+        try:
+            normalized_customer_id = _normalize_customer_id(customer_value)
+        except ReconciliationError as exc:
+            raise UnsupportedWebhook(f"event {event_type} has no provider customer reference") from exc
+        stored_customer_id = _projection_value(projection, "provider_customer_id")
+        if stored_customer_id is not None and _normalize_customer_id(stored_customer_id) != normalized_customer_id:
+            raise ReconciliationError("inbox customer does not match tenant projection customer")
+
+        subscription_value = _first_value(
+            data.get("provider_subscription_id"),
+            data.get("subscription_id"),
+            # WHY: data["id"] is the subscription only when data IS the subscription
+            # object. On a refund or order payload it is that object's own id, and
+            # accepting it would overwrite the tenant's subscription pointer.
+            data.get("id") if event_type.startswith("subscription.") else None,
+            _nested_value(data.get("subscription"), "id"),
+            _projection_value(projection, "provider_subscription_id"),
+        )
+        if subscription_value is not None and not isinstance(subscription_value, str):
+            raise ReconciliationError("provider subscription id must be a string")
+        return _EventContext(tenant_id, normalized_customer_id, subscription_value), projection
+
+    async def _get_projection(self, tenant_id: UUID, provider: str) -> object | None:
+        method = getattr(self._repository, "get_projection", None)
+        if not callable(method):
+            raise ReconciliationError("repository does not expose get_projection")
+        method = cast(Callable[..., object], method)
+        parameters = _callable_parameters(method)
+        if "provider" in parameters or _accepts_var_kwargs(parameters):
+            result = cast(object | None, await _maybe_await(method(tenant_id, provider=provider)))
+        else:
+            result = cast(object | None, await _maybe_await(method(tenant_id)))
+        return _snapshot_projection(result)
+
+    async def _retrieve_state(self, context: _EventContext) -> AuthoritativeBillingState:
+        method = _provider_method(self._provider)
+
+        async def call() -> object:
+            kwargs = _provider_kwargs(
+                method,
+                tenant_id=context.tenant_id,
+                provider_customer_id=context.provider_customer_id,
+                provider_subscription_id=context.provider_subscription_id,
+                timeout=self._config.provider_timeout_s,
+            )
+            result = method(**kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        raw_state = await _retry_provider_call(
+            call,
+            timeout_s=self._config.provider_timeout_s,
+            attempts=self._config.retry_attempts,
+            initial_delay_s=self._config.retry_initial_delay_s,
+            max_delay_s=self._config.retry_max_delay_s,
+            jitter_s=self._config.retry_jitter_s,
+            sleeper=self._sleeper,
+            random_value=self._random_value,
+        )
+        return _normalize_state(raw_state, context)
+
+    async def _recheck_row(
+        self,
+        row: object,
+        *,
+        expected_attempts: int,
+        for_update: bool,
+    ) -> object | None:
+        session = getattr(self._repository, "session", None)
+        row_id = _row_value(row, "id", None)
+        execute = getattr(session, "execute", None)
+        if session is not None and row_id is not None and callable(execute):
+            statement = select(BillingWebhookInbox).where(
+                BillingWebhookInbox.id == row_id,
+                BillingWebhookInbox.provider == _required_text(_row_value(row, "provider"), "provider"),
+                BillingWebhookInbox.provider_event_id
+                == _required_text(_row_value(row, "provider_event_id"), "provider_event_id"),
+            )
+            if for_update:
+                statement = statement.with_for_update()
+            result = await _maybe_await(execute(statement.limit(1)))
+            scalar_one_or_none = getattr(result, "scalar_one_or_none", None)
+            if callable(scalar_one_or_none):
+                current = cast(object | None, scalar_one_or_none())
+            else:
+                scalars = getattr(result, "scalars", None)
+                first = getattr(scalars(), "first", None) if callable(scalars) else None
+                current = cast(object | None, first()) if callable(first) else None
+        else:
+            get_webhook = getattr(self._repository, "get_webhook", None)
+            if callable(get_webhook):
+                current = cast(
+                    object | None,
+                    await _maybe_await(
+                        get_webhook(
+                            provider=_required_text(_row_value(row, "provider"), "provider"),
+                            provider_event_id=_required_text(
+                                _row_value(row, "provider_event_id"), "provider_event_id"
+                            ),
+                        )
+                    ),
+                )
+            else:
+                current = row
+        if current is None:
+            return None
+        status = _inbox_status(_row_value(current, "status", WebhookInboxStatus.RECEIVED.value))
+        if status not in {WebhookInboxStatus.RECEIVED, WebhookInboxStatus.FAILED}:
+            return None
+        if _row_attempts(current) != expected_attempts:
+            return None
+        return current
+
+    async def _claim_row(self, row: object) -> object | None:
+        status = _inbox_status(_row_value(row, "status", WebhookInboxStatus.RECEIVED.value))
+        if status not in {WebhookInboxStatus.RECEIVED, WebhookInboxStatus.FAILED}:
+            return None
+        return row
+
+    async def _mark(self, row: object, *, status: WebhookInboxStatus) -> None:
+        await _maybe_await(
+            self._repository.mark_webhook_processed(
+                provider=_required_text(_row_value(row, "provider"), "provider"),
+                provider_event_id=_required_text(
+                    _row_value(row, "provider_event_id"), "provider_event_id"
+                ),
+                status=status,
+                processed_at=self._clock() if status is WebhookInboxStatus.PROCESSED else None,
+            )
+        )
+        await self._commit()
+
+    async def _mark_failure(self, row: object, exc: BaseException) -> None:
+        try:
+            await self._rollback()
+            await _maybe_await(
+                self._repository.mark_webhook_processed(
+                    provider=_safe_log_id(row, "provider"),
+                    provider_event_id=_safe_log_id(row, "provider_event_id"),
+                    status=WebhookInboxStatus.FAILED,
+                )
+            )
+            await self._commit()
+        except Exception as mark_exc:  # noqa: BLE001
+            await self._rollback()
+            self._log_failure(row, "failure_record_failed", mark_exc)
+        self._log_failure(row, "row_failed", exc)
+
+    async def _commit(self) -> None:
+        target = getattr(self._repository, "session", self._repository)
+        commit = getattr(target, "commit", None)
+        if callable(commit):
+            await _maybe_await(commit())
+
+    async def _rollback(self) -> None:
+        target = getattr(self._repository, "session", self._repository)
+        rollback = getattr(target, "rollback", None)
+        if callable(rollback):
+            try:
+                await _maybe_await(rollback())
+            except Exception as exc:  # noqa: BLE001
+                self._logger.error(
+                    "billing_reconcile rollback_failed error_type=%s",
+                    type(exc).__name__,
+                )
+
+    def _log_row(self, row: object, outcome: str, *, action: str) -> None:
+        self._logger.info(
+            "billing_reconcile row_%s inbox_row_id=%s provider_event_id=%s action=%s",
+            outcome,
+            _safe_log_id(row, "id"),
+            _safe_log_id(row, "provider_event_id"),
+            action,
+        )
+
+    def _log_failure(self, row: object, code: str, exc: BaseException) -> None:
+        self._logger.error(
+            "billing_reconcile row_failed inbox_row_id=%s provider_event_id=%s error_code=%s error_type=%s",
+            _safe_log_id(row, "id"),
+            _safe_log_id(row, "provider_event_id"),
+            code,
+            type(exc).__name__,
+        )
+
+
+async def reconcile(
+    repository: BillingRepositoryLike,
+    provider: ReconciliationProvider,
+    *,
+    entitlement_service: EntitlementServiceLike | None = None,
+    config: ReconcileConfig | None = None,
+    loop: bool = False,
+    max_cycles: int | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    dry_run: bool = False,
+    clock: Callable[[], datetime] | None = None,
+    sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
+    random_value: Callable[[], float] = random.random,
+) -> ReconcileReport:
+    """Functional entry point used by tests and application wiring."""
+
+    return await BillingReconciliationWorker(
+        repository,
+        provider,
+        entitlement_service=entitlement_service,
+        config=config,
+        clock=clock,
+        sleeper=sleeper,
+        random_value=random_value,
+    ).run(
+        loop=loop,
+        max_cycles=max_cycles,
+        batch_size=batch_size,
+        dry_run=dry_run,
+    )
+
+
+async def reconcile_once(
+    repository: BillingRepositoryLike,
+    provider: ReconciliationProvider,
+    *,
+    entitlement_service: EntitlementServiceLike | None = None,
+    config: ReconcileConfig | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    dry_run: bool = False,
+    clock: Callable[[], datetime] | None = None,
+    sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
+    random_value: Callable[[], float] = random.random,
+) -> ReconcileReport:
+    """Process one bounded batch through the same worker used by the CLI."""
+
+    return await reconcile(
+        repository,
+        provider,
+        entitlement_service=entitlement_service,
+        config=config,
+        batch_size=batch_size,
+        dry_run=dry_run,
+        clock=clock,
+        sleeper=sleeper,
+        random_value=random_value,
+    )
+
+
+def validate_batch_size(value: object) -> int:
+    """Validate the repository result-set cap shared by CLI and worker APIs."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= MAX_BATCH_SIZE:
+        raise ValueError(f"batch_size must be between 1 and {MAX_BATCH_SIZE}")
+    return value
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="billing_reconcile")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--once", action="store_true", help="process one bounded batch and exit")
+    mode.add_argument("--loop", action="store_true", help="poll bounded batches until stopped")
+    parser.add_argument(
+        "--batch-size",
+        type=_batch_size_arg,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"pending rows per cycle (1-{MAX_BATCH_SIZE}; default {DEFAULT_BATCH_SIZE})",
+    )
+    parser.add_argument(
+        "--max-cycles",
+        type=_positive_int_arg,
+        default=None,
+        help="maximum loop cycles; required for bounded operation",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="read and report without any writes")
+    return parser
+
+
+async def _build_runtime(
+    config: ReconcileConfig | None,
+    *,
+    repository: BillingRepositoryLike | None,
+    provider: ReconciliationProvider | None,
+) -> _RuntimeDependencies:
+    settings = _load_recognition_settings()
+    secret_provider = _load_secret_provider()
+    resolved_config = config or _reconcile_config_from_settings(settings, secret_provider)
+    session: object | None = None
+    http_client: object | None = None
+    try:
+        if repository is None:
+            from db.session import async_session_factory
+            from recognition.infrastructure.repositories.billing_repository import BillingRepository
+
+            session = async_session_factory()
+            repository = BillingRepository(session)
+        if provider is None:
+            import httpx
+
+            from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
+
+            webhook_secret = _required_runtime_value(
+                settings,
+                secret_provider,
+                names=("polar_webhook_secret", "webhook_secret"),
+                keys=("POLAR_WEBHOOK_SECRET",),
+            )
+            access_token = _required_runtime_value(
+                settings,
+                secret_provider,
+                names=("polar_access_token", "polar_api_token", "access_token", "api_token"),
+                keys=("POLAR_ACCESS_TOKEN", "POLAR_API_TOKEN"),
+            )
+            product_ids = _product_ids_from_runtime(settings, secret_provider)
+            base_url = _runtime_text_value(
+                settings,
+                secret_provider,
+                names=("polar_base_url", "base_url"),
+                keys=("POLAR_BASE_URL", "POLAR_API_BASE_URL"),
+                default="https://api.polar.sh",
+            )
+            environment = _runtime_text_value(
+                settings,
+                secret_provider,
+                names=("polar_environment", "environment"),
+                keys=("POLAR_ENVIRONMENT",),
+                default="sandbox",
+            )
+            payments_enabled = _runtime_bool_value(
+                settings,
+                secret_provider,
+                names=("polar_payments_enabled", "payments_enabled"),
+                keys=("POLAR_PAYMENTS_ENABLED",),
+                default=False,
+            )
+            transport = httpx.AsyncClient(timeout=resolved_config.provider_timeout_s)
+            http_client = transport
+            provider = PolarBillingProvider(
+                _HttpxBillingClient(transport),
+                webhook_secret=webhook_secret,
+                access_token=access_token,
+                product_ids=product_ids,
+                base_url=base_url,
+                timeout=resolved_config.provider_timeout_s,
+                payments_enabled=payments_enabled,
+                environment=environment,
+            )
+    except ConfigurationError:
+        await _close_runtime_parts(session, http_client)
+        raise
+    except ValueError as exc:
+        await _close_runtime_parts(session, http_client)
+        raise ConfigurationError("invalid billing reconciliation runtime configuration") from exc
+    except Exception:
+        await _close_runtime_parts(session, http_client)
+        raise
+    if repository is None or provider is None:
+        await _close_runtime_parts(session, http_client)
+        raise ConfigurationError("billing reconciliation runtime dependencies are incomplete")
+    return _RuntimeDependencies(
+        repository=repository,
+        provider=provider,
+        config=resolved_config,
+        session=session,
+        http_client=http_client,
+    )
+
+
+def _load_recognition_settings() -> RecognitionSettings:
+    try:
+        return RecognitionSettings()
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("recognition settings are invalid") from exc
+
+
+def _load_secret_provider() -> object:
+    try:
+        from shared.secrets import get_secret_provider
+
+        return get_secret_provider()
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("secret configuration is unavailable") from exc
+
+
+def _reconcile_config_from_settings(settings: object, secret_provider: object) -> ReconcileConfig:
+    values: dict[str, str] = {}
+    config_names = {
+        "BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS": (
+            "billing_reconcile_provider_timeout_seconds",
+            "provider_timeout_seconds",
+            "provider_timeout_s",
+        ),
+        "BILLING_RECONCILE_RETRY_ATTEMPTS": ("billing_reconcile_retry_attempts", "retry_attempts"),
+        "BILLING_RECONCILE_RETRY_INITIAL_DELAY_SECONDS": (
+            "billing_reconcile_retry_initial_delay_seconds",
+            "retry_initial_delay_seconds",
+            "retry_initial_delay_s",
+        ),
+        "BILLING_RECONCILE_RETRY_MAX_DELAY_SECONDS": (
+            "billing_reconcile_retry_max_delay_seconds",
+            "retry_max_delay_seconds",
+            "retry_max_delay_s",
+        ),
+        "BILLING_RECONCILE_RETRY_JITTER_SECONDS": (
+            "billing_reconcile_retry_jitter_seconds",
+            "retry_jitter_seconds",
+            "retry_jitter_s",
+        ),
+        "BILLING_RECONCILE_STALL_LIMIT": ("billing_reconcile_stall_limit", "stall_limit"),
+        "BILLING_RECONCILE_POLL_INTERVAL_SECONDS": (
+            "billing_reconcile_poll_interval_seconds",
+            "poll_interval_seconds",
+            "poll_interval_s",
+        ),
+    }
+    for key, names in config_names.items():
+        value = _runtime_setting_value(settings, names)
+        if value is None:
+            value = _secret_value(secret_provider, key)
+        if value is not None:
+            values[key] = str(value)
+    try:
+        return ReconcileConfig.from_env(values)
+    except ConfigurationError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("billing reconciliation settings are invalid") from exc
+
+
+def _required_runtime_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+) -> str:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"missing required configuration {keys[0]}")
+    return value
+
+
+def _runtime_text_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+    default: str,
+) -> str:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"invalid configuration {keys[0]}")
+    return value.strip()
+
+
+def _runtime_bool_value(
+    settings: object,
+    secret_provider: object,
+    *,
+    names: Sequence[str],
+    keys: Sequence[str],
+    default: bool,
+) -> bool:
+    value = _runtime_setting_value(settings, names)
+    if value is None:
+        for key in keys:
+            value = _secret_value(secret_provider, key)
+            if value is not None:
+                break
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"invalid configuration {keys[0]}")
+
+
+def _product_ids_from_runtime(settings: object, secret_provider: object) -> dict[str, str]:
+    value = _runtime_setting_value(settings, ("polar_product_ids", "product_ids"))
+    if value is None:
+        value = _secret_value(secret_provider, "POLAR_PRODUCT_IDS")
+    if value is None:
+        single = _secret_value(secret_provider, "POLAR_PRODUCT_ID")
+        if single is not None:
+            value = {"paid": single}
+    if isinstance(value, Mapping):
+        result = {str(key).strip(): str(item).strip() for key, item in value.items()}
+    elif isinstance(value, str):
+        result = _parse_product_ids(value)
+    else:
+        result = {}
+    if not result or any(not key or not item for key, item in result.items()):
+        raise ConfigurationError("missing required configuration POLAR_PRODUCT_IDS")
+    return result
+
+
+def _parse_product_ids(raw: str) -> dict[str, str]:
+    stripped = raw.strip()
+    if not stripped:
+        return {}
+    if stripped.startswith("{"):
+        try:
+            decoded = json.loads(stripped)
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS") from exc
+        if not isinstance(decoded, Mapping):
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS")
+        return {str(key).strip(): str(value).strip() for key, value in decoded.items()}
+    result: dict[str, str] = {}
+    for item in stripped.split(","):
+        separator = "=" if "=" in item else ":"
+        if separator not in item:
+            raise ConfigurationError("invalid configuration POLAR_PRODUCT_IDS")
+        plan, product_id = item.split(separator, 1)
+        result[plan.strip()] = product_id.strip()
+    return result
+
+
+def _runtime_setting_value(settings: object, names: Sequence[str]) -> object | None:
+    sources = (
+        settings,
+        getattr(settings, "billing", None),
+        getattr(settings, "polar", None),
+    )
+    for source in sources:
+        if source is None:
+            continue
+        for name in names:
+            if isinstance(source, Mapping):
+                value = source.get(name)
+            else:
+                value = getattr(source, name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _secret_value(secret_provider: object, key: str) -> str | None:
+    getter = getattr(secret_provider, "get_secret_optional", None)
+    if not callable(getter):
+        raise ConfigurationError("secret configuration is unavailable")
+    try:
+        value = getter(key)
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigurationError("secret configuration is unavailable") from exc
+    return value if isinstance(value, str) else None
+
+
+async def _close_runtime_parts(session: object | None, http_client: object | None) -> None:
+    if http_client is not None:
+        close = getattr(http_client, "aclose", None)
+        if callable(close):
+            await _maybe_await(close())
+    if session is not None:
+        close = getattr(session, "close", None)
+        if callable(close):
+            await _maybe_await(close())
+
+
+async def run(
+    argv: Sequence[str] | None = None,
+    *,
+    repository: BillingRepositoryLike | None = None,
+    provider: ReconciliationProvider | None = None,
+    entitlement_service: EntitlementServiceLike | None = None,
+    config: ReconcileConfig | None = None,
+    clock: Callable[[], datetime] | None = None,
+    sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
+    random_value: Callable[[], float] = random.random,
+) -> int:
+    """CLI-compatible async entry point with optional dependency injection."""
+
+    parser = _build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.once and args.max_cycles not in (None, 1):
+        parser.error("--max-cycles is only valid with --loop")
+
+    runtime: _RuntimeDependencies | None = None
+    if repository is None or provider is None:
+        try:
+            runtime = await _build_runtime(
+                config,
+                repository=repository,
+                provider=provider,
+            )
+        except ConfigurationError as exc:
+            sys.stderr.write(f"error: {exc}\n")
+            sys.stderr.flush()
+            return 2
+        repository = runtime.repository
+        provider = runtime.provider
+        config = runtime.config
+    elif config is None:
+        config = ReconcileConfig()
+
+    try:
+        report = await reconcile(
+            repository,
+            provider,
+            entitlement_service=entitlement_service,
+            config=config,
+            loop=args.loop,
+            max_cycles=args.max_cycles,
+            batch_size=args.batch_size,
+            dry_run=args.dry_run,
+            clock=clock,
+            sleeper=sleeper,
+            random_value=random_value,
+        )
+        sys.stderr.write(
+            f"billing_reconcile cycles={report.cycles} processed={report.processed} ignored={report.ignored} "
+            f"failed={report.failed} changed={report.changed} stale={report.stale} duplicates={report.duplicates} "
+            f"unresolved={report.unresolved_failures} stalled={report.stalled} dry_run={args.dry_run}\n"
+        )
+        for change in report.changes:
+            sys.stderr.write(
+                f"billing_reconcile dry_run_action inbox_row_id={change.inbox_row_id} "
+                f"provider_event_id={change.provider_event_id} tenant_id={change.tenant_id or ''} "
+                f"action={change.action}\n"
+            )
+        sys.stderr.flush()
+        return report.exit_code
+    finally:
+        if runtime is not None:
+            await runtime.close()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    return asyncio.run(run(argv))
+
+
+def _parse_float_env(name: str, raw: str) -> float:
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be a finite number") from exc
+
+
+def _parse_int_env(name: str, raw: str) -> int:
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError(f"{name} must be an integer") from exc
+
+
+def _positive_finite(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value <= 0:
+        raise ConfigurationError(f"{name} must be a finite positive number")
+
+
+def _non_negative_finite(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value < 0:
+        raise ConfigurationError(f"{name} must be a finite non-negative number")
+
+
+def _bounded_int(name: str, value: object, *, minimum: int, maximum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ConfigurationError(f"{name} must be an integer between {minimum} and {maximum}")
+
+
+def _batch_size_arg(raw: str) -> int:
+    try:
+        return validate_batch_size(int(raw))
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _positive_int_arg(raw: str) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+async def _retry_provider_call(
+    call: Callable[[], Awaitable[object]],
+    *,
+    timeout_s: float,
+    attempts: int,
+    initial_delay_s: float,
+    max_delay_s: float,
+    jitter_s: float,
+    sleeper: Callable[[float], Awaitable[object]],
+    random_value: Callable[[], float],
+) -> object:
+    last_error: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return await asyncio.wait_for(call(), timeout=timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt + 1 >= attempts:
+                break
+            exponential = min(max_delay_s, initial_delay_s * (2**attempt))
+            jitter = max(0.0, min(1.0, float(random_value()))) * jitter_s
+            await _maybe_await(sleeper(exponential + jitter))
+    raise ProviderUnavailableError("provider retry budget exhausted") from last_error
+
+
+def _provider_method(provider: object) -> Callable[..., object]:
+    for name in _PROVIDER_METHOD_NAMES:
+        method = getattr(provider, name, None)
+        if callable(method):
+            return cast(Callable[..., object], method)
+    raise ReconciliationError("provider does not expose an authoritative state retrieval method")
+
+
+def _provider_kwargs(
+    method: Callable[..., object],
+    *,
+    tenant_id: UUID,
+    provider_customer_id: str,
+    provider_subscription_id: str | None,
+    timeout: float,
+) -> dict[str, object]:
+    parameters = _callable_parameters(method)
+    accepts_kwargs = _accepts_var_kwargs(parameters)
+    kwargs: dict[str, object] = {}
+    if accepts_kwargs or "tenant_id" in parameters:
+        kwargs["tenant_id"] = tenant_id
+    if accepts_kwargs:
+        kwargs["provider_customer_id"] = provider_customer_id
+        kwargs["provider_subscription_id"] = provider_subscription_id
+        kwargs["timeout"] = timeout
+        return kwargs
+    for name in _CUSTOMER_PARAMETER_NAMES:
+        if name in parameters:
+            kwargs[name] = provider_customer_id
+            break
+    for name in _SUBSCRIPTION_PARAMETER_NAMES:
+        if name in parameters:
+            kwargs[name] = provider_subscription_id
+            break
+    for name in _TIMEOUT_PARAMETER_NAMES:
+        if name in parameters:
+            kwargs[name] = timeout
+            break
+    return kwargs
+
+
+def _callable_parameters(method: Callable[..., object]) -> dict[str, inspect.Parameter]:
+    try:
+        return dict(inspect.signature(method).parameters)
+    except (TypeError, ValueError):
+        return {}
+
+
+def _accepts_var_kwargs(parameters: Mapping[str, inspect.Parameter]) -> bool:
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+
+
+def _normalize_state(raw_state: object, context: _EventContext) -> AuthoritativeBillingState:
+    if isinstance(raw_state, AuthoritativeBillingState):
+        if raw_state.tenant_id != context.tenant_id:
+            raise ReconciliationError("provider state tenant does not match inbox tenant")
+        return AuthoritativeBillingState(
+            tenant_id=raw_state.tenant_id,
+            provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
+            provider_subscription_id=raw_state.provider_subscription_id,
+            status=raw_state.status,
+            current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
+            past_due_since=_optional_datetime(raw_state.past_due_since, "past_due_since"),
+            event_position=_parse_datetime(raw_state.event_position, "provider event position"),
+        )
+
+    if isinstance(raw_state, Mapping):
+        candidate: object = raw_state.get("state", raw_state)
+        if isinstance(candidate, Mapping) and isinstance(raw_state.get("data"), Mapping) and "status" not in candidate:
+            candidate = raw_state["data"]
+    else:
+        candidate = raw_state
+
+    state_tenant = _object_value(candidate, "tenant_id")
+    tenant_id = context.tenant_id if state_tenant is None else _parse_uuid(state_tenant, "provider tenant_id")
+    customer_value = _first_value(
+        _object_value(candidate, "provider_customer_id"),
+        _object_value(candidate, "customer_id"),
+        context.provider_customer_id,
+    )
+    customer_id = _normalize_customer_id(customer_value)
+
+    subscription_value = _first_value(
+        _object_value(candidate, "provider_subscription_id"),
+        _object_value(candidate, "subscription_id"),
+        _nested_value(_object_value(candidate, "subscription"), "id"),
+        context.provider_subscription_id,
+    )
+    if subscription_value is not None and not isinstance(subscription_value, str):
+        raise ReconciliationError("provider state subscription id must be a string")
+
+    status_value = _first_value(
+        _object_value(candidate, "status"),
+        _nested_value(_object_value(candidate, "subscription"), "status"),
+    )
+    try:
+        status = (
+            status_value
+            if isinstance(status_value, BillingSubscriptionStatus)
+            else BillingSubscriptionStatus(cast(str, status_value))
+        )
+    except (TypeError, ValueError) as exc:
+        raise ReconciliationError("provider state has an unknown subscription status") from exc
+
+    event_position_value = _first_value(
+        _object_value(candidate, "event_position"),
+        _object_value(candidate, "provider_event_position"),
+        _object_value(candidate, "updated_at"),
+        _object_value(candidate, "last_updated_at"),
+        _object_value(candidate, "modified_at"),
+    )
+    event_position = _parse_datetime(event_position_value, "provider event position")
+    period_end = _optional_datetime(
+        _first_value(
+            _object_value(candidate, "current_period_end"),
+            _nested_value(_object_value(candidate, "subscription"), "current_period_end"),
+        ),
+        "current_period_end",
+    )
+    past_due_since = _optional_datetime(
+        _first_value(
+            _object_value(candidate, "past_due_since"),
+            _nested_value(_object_value(candidate, "subscription"), "past_due_since"),
+        ),
+        "past_due_since",
+    )
+    return AuthoritativeBillingState(
+        tenant_id=tenant_id,
+        provider_customer_id=customer_id,
+        provider_subscription_id=subscription_value,
+        status=status,
+        current_period_end=period_end,
+        past_due_since=past_due_since,
+        event_position=event_position,
+    )
+
+
+def _projection_action(
+    projection: object | None,
+    state: AuthoritativeBillingState,
+    provider_event_id: str,
+    provider: str,
+) -> str:
+    if projection is None:
+        return "create_projection"
+    stored_provider = _projection_value(projection, "provider")
+    if stored_provider != provider:
+        raise ReconciliationError("tenant projection is owned by another provider")
+    if _same_event(projection, provider_event_id):
+        return "skip_duplicate"
+    stored_event_id = _projection_value(projection, "last_event_id")
+    if stored_event_id is not None:
+        stored_position = _parse_datetime(
+            _projection_value(projection, "updated_at"),
+            "projection event position",
+        )
+        if state.event_position <= stored_position:
+            return "skip_stale"
+    return "update_projection"
+
+
+def _same_event(projection: object, provider_event_id: str) -> bool:
+    return _projection_value(projection, "last_event_id") == provider_event_id
+
+
+def _projection_value(projection: object | None, name: str) -> object | None:
+    if projection is None:
+        return None
+    return _object_value(projection, name)
+
+
+def _snapshot_projection(projection: object | None) -> object | None:
+    if projection is None:
+        return None
+    return {
+        name: _projection_value(projection, name)
+        for name in (
+            "provider",
+            "provider_customer_id",
+            "provider_subscription_id",
+            "status",
+            "current_period_end",
+            "past_due_since",
+            "last_event_id",
+            "updated_at",
+        )
+    }
+
+
+def _snapshot_row(row: object) -> Mapping[str, object]:
+    return {
+        name: _row_value(row, name)
+        for name in ("id", "provider", "provider_event_id", "event_type", "payload", "status", "attempts")
+    }
+
+
+def _row_attempts(row: object) -> int:
+    value = _row_value(row, "attempts", 0)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReconciliationError("inbox attempts must be a non-negative integer")
+    return value
+
+
+def _object_value(value: object, name: str, default: object | None = None) -> object | None:
+    if isinstance(value, Mapping):
+        return cast(object | None, value.get(name, default))
+    return cast(object | None, getattr(value, name, default))
+
+
+def _nested_value(value: object, name: str) -> object | None:
+    return _object_value(value, name) if isinstance(value, Mapping) or value is not None else None
+
+
+def _row_value(row: object, name: str, default: object = None) -> object:
+    return _object_value(row, name, default)
+
+
+def _first_value(*values: object | None) -> object | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _required_text(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ReconciliationError(f"{name} must be a non-empty string")
+    return value
+
+
+def _normalize_customer_id(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ReconciliationError("provider customer id must be a non-empty string")
+    return value.strip()
+
+
+def _parse_uuid(value: object, name: str) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str) or not value:
+        raise ReconciliationError(f"{name} must be a UUID")
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise ReconciliationError(f"{name} must be a UUID") from exc
+
+
+def _parse_datetime(value: object, name: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ReconciliationError(f"{name} must be an ISO timestamp") from exc
+    else:
+        raise ReconciliationError(f"{name} must be an ISO timestamp")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _optional_datetime(value: object | None, name: str) -> datetime | None:
+    if value is None:
+        return None
+    return _parse_datetime(value, name)
+
+
+def _inbox_status(value: object) -> WebhookInboxStatus:
+    if isinstance(value, WebhookInboxStatus):
+        return value
+    try:
+        return WebhookInboxStatus(cast(str, value))
+    except (TypeError, ValueError) as exc:
+        raise ReconciliationError("inbox row has an unknown status") from exc
+
+
+def _row_key(row: object) -> str:
+    row_id = _row_value(row, "id", None)
+    if row_id is not None:
+        return f"row:{row_id}"
+    return f"event:{_safe_log_id(row, 'provider')}:{_safe_log_id(row, 'provider_event_id')}"
+
+
+def _safe_log_id(row: object, name: str) -> str:
+    value = _row_value(row, name, "unknown")
+    if value is None:
+        return "unknown"
+    return str(value)
+
+
+def _entitlement_session(service: object, repository: object) -> object | None:
+    candidates = [service, getattr(service, "_repository", None), repository]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        for name in ("session", "_session"):
+            session = getattr(candidate, name, None)
+            if session is not None:
+                return session
+    return None
+
+
+async def _maybe_await(value: object) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+BillingReconcileWorker = BillingReconciliationWorker
+
+
+__all__ = [
+    "AuthoritativeBillingState",
+    "BillingReconcileWorker",
+    "BillingReconciliationWorker",
+    "ConfigurationError",
+    "DEFAULT_BATCH_SIZE",
+    "EntitlementServiceLike",
+    "MAX_BATCH_SIZE",
+    "ProviderUnavailable",
+    "ProviderUnavailableError",
+    "ReconcileConfig",
+    "ReconcileReport",
+    "ReconciliationProvider",
+    "UnsupportedWebhook",
+    "UnsupportedWebhookError",
+    "main",
+    "reconcile",
+    "reconcile_once",
+    "run",
+    "validate_batch_size",
+]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

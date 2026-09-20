@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -20,10 +20,15 @@ from db.base import Base
 from db.models import BillingSubscriptionProjection, BillingWebhookInbox, Tenant
 from recognition.domain.portal_contracts import (
     BillingProvider,
+    BillingState,
     BillingSubscriptionStatus,
     WebhookInboxStatus,
 )
-from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
+from recognition.infrastructure.billing.polar_provider import (
+    CheckoutAmbiguityError,
+    PaymentsDisabledError,
+    PolarBillingProvider,
+)
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
 
 
@@ -41,16 +46,34 @@ class FakeResponse:
 
 
 class FakeHttpClient:
-    def __init__(self, response: FakeResponse) -> None:
+    def __init__(self, response: FakeResponse, *, get_response: FakeResponse | None = None) -> None:
         self.response = response
+        self.get_response = get_response or response
         self.calls: list[dict[str, object]] = []
+        self.get_calls: list[dict[str, object]] = []
+        self.post_error: BaseException | None = None
 
     async def post(self, url: str, **kwargs: object) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
+        if self.post_error is not None:
+            raise self.post_error
         return self.response
 
+    async def get(self, url: str, **kwargs: object) -> FakeResponse:
+        self.get_calls.append({"url": url, **kwargs})
+        return self.get_response
 
-def _provider(client: FakeHttpClient, *, secret: str = "test-webhook-secret") -> PolarBillingProvider:
+
+_WEBHOOK_NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+
+
+def _provider(
+    client: FakeHttpClient,
+    *,
+    secret: str = "test-webhook-secret",
+    payments_enabled: bool = True,
+    environment: str = "sandbox",
+) -> PolarBillingProvider:
     return PolarBillingProvider(
         client=client,
         access_token="test-access-token",
@@ -58,22 +81,33 @@ def _provider(client: FakeHttpClient, *, secret: str = "test-webhook-secret") ->
         product_ids={"pro": "product-pro"},
         base_url="https://sandbox.example.test",
         timeout=2.5,
+        payments_enabled=payments_enabled,
+        environment=environment,
+        allowed_return_origins={"https://app.example.test"},
+        clock=lambda: _WEBHOOK_NOW,
     )
 
 
-def _event_body(*, event_id: str = "evt-1", event_type: str = "subscription.active") -> bytes:
-    return json.dumps(
-        {
-            "id": event_id,
-            "type": event_type,
-            "timestamp": "2026-09-20T12:00:00Z",
-            "data": {
-                "id": "sub-1",
-                "customer_id": "cus-1",
-                "status": "active",
-                "current_period_end": "2026-10-20T12:00:00Z",
-            },
+def _event_body(
+    *,
+    event_id: str | None = "evt-1",
+    event_type: str = "subscription.active",
+    timestamp: datetime = _WEBHOOK_NOW,
+) -> bytes:
+    payload: dict[str, object] = {
+        "type": event_type,
+        "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
+        "data": {
+            "id": "sub-1",
+            "customer_id": "cus-1",
+            "status": "active",
+            "current_period_end": "2026-10-20T12:00:00Z",
         },
+    }
+    if event_id is not None:
+        payload["id"] = event_id
+    return json.dumps(
+        payload,
         separators=(",", ":"),
     ).encode()
 
@@ -98,13 +132,152 @@ async def test_polar_provider_is_runtime_checkable_and_uses_timeout() -> None:
     )
 
     assert checkout_url == "https://checkout.example.test/session"
-    assert client.calls[0]["timeout"] == 2.5
+    assert client.calls[0]["request_timeout"] == 2.5
     assert client.calls[0]["json"] == {
         "products": ["product-pro"],
-        "metadata": {"tenant_id": str(tenant_id)},
+        "metadata": {"tenant_id": str(tenant_id), "environment": "sandbox"},
         "success_url": "https://app.example.test/success",
         "return_url": "https://app.example.test/cancel",
     }
+    headers = client.calls[0]["headers"]
+    assert isinstance(headers, dict)
+    assert isinstance(headers["Idempotency-Key"], str)
+    assert headers["Idempotency-Key"].startswith("sandbox-")
+
+
+@pytest.mark.asyncio
+async def test_h3_retrieve_state_returns_authoritative_billing_state() -> None:
+    tenant_id = uuid4()
+    client = FakeHttpClient(
+        FakeResponse(
+            {
+                "id": "sub-1",
+                "customer_id": "cus-1",
+                "tenant_id": str(tenant_id),
+                "status": "active",
+                "current_period_end": "2026-10-20T12:00:00Z",
+                "updated_at": "2026-09-20T12:00:00Z",
+            }
+        )
+    )
+    provider = _provider(client)
+
+    state = await provider.retrieve_state(
+        provider_customer_id="sandbox:cus-1",
+        provider_subscription_id="sandbox:sub-1",
+        request_timeout=1.75,
+    )
+
+    assert isinstance(state, BillingState)
+    assert state.tenant_id == tenant_id
+    assert state.status is BillingSubscriptionStatus.ACTIVE
+    assert state.provider_customer_id == "sandbox:cus-1"
+    assert state.provider_subscription_id == "sandbox:sub-1"
+    assert state.event_position == _WEBHOOK_NOW
+    assert client.get_calls == [
+        {
+            "url": "https://sandbox.example.test/v1/subscriptions/sub-1",
+            "headers": {"Authorization": "Bearer test-access-token"},
+            "request_timeout": 1.75,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_h7_checkout_and_portal_refuse_when_payments_are_disabled() -> None:
+    client = FakeHttpClient(FakeResponse({"url": "https://unused.example.test/session"}))
+    provider = _provider(client, payments_enabled=False)
+    tenant_id = uuid4()
+
+    with pytest.raises(PaymentsDisabledError, match="payments are disabled"):
+        await provider.create_checkout_session(
+            tenant_id=tenant_id,
+            plan_code="pro",
+            success_url="https://app.example.test/success",
+            cancel_url="https://app.example.test/cancel",
+        )
+    with pytest.raises(PaymentsDisabledError, match="payments are disabled"):
+        await provider.create_portal_session(tenant_id=tenant_id, return_url="https://app.example.test/return")
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_h5_timed_out_checkout_does_not_retry_creation() -> None:
+    client = FakeHttpClient(FakeResponse({"url": "unused"}))
+    client.post_error = TimeoutError("simulated timeout")
+    provider = _provider(client)
+
+    with pytest.raises(CheckoutAmbiguityError, match="outcome is ambiguous"):
+        await provider.create_checkout_session(
+            tenant_id=uuid4(),
+            plan_code="pro",
+            success_url="https://app.example.test/success",
+            cancel_url="https://app.example.test/cancel",
+        )
+
+    assert len(client.calls) == 1
+    headers = client.calls[0]["headers"]
+    assert isinstance(headers, dict)
+    assert isinstance(headers["Idempotency-Key"], str)
+
+
+@pytest.mark.asyncio
+async def test_h5_checkout_idempotency_key_is_stable_for_same_request() -> None:
+    client = FakeHttpClient(FakeResponse({"url": "https://checkout.example.test/session"}))
+    provider = _provider(client)
+    request = {
+        "tenant_id": uuid4(),
+        "plan_code": "pro",
+        "success_url": "https://app.example.test/success",
+        "cancel_url": "https://app.example.test/cancel",
+    }
+
+    await provider.create_checkout_session(**request)
+    await provider.create_checkout_session(**request)
+
+    first_headers = client.calls[0]["headers"]
+    second_headers = client.calls[1]["headers"]
+    assert isinstance(first_headers, dict)
+    assert isinstance(second_headers, dict)
+    assert first_headers["Idempotency-Key"] == second_headers["Idempotency-Key"]
+
+
+@pytest.mark.asyncio
+async def test_m11_replayed_or_skewed_webhook_is_rejected() -> None:
+    client = FakeHttpClient(FakeResponse({"url": "unused"}))
+    provider = _provider(client)
+
+    stale = _event_body(timestamp=_WEBHOOK_NOW - timedelta(minutes=6))
+    assert await provider.verify_webhook(stale, _signature(stale, "test-webhook-secret")) is False
+
+    missing_id = _event_body(event_id=None)
+    assert await provider.verify_webhook(missing_id, _signature(missing_id, "test-webhook-secret")) is False
+
+    missing_timestamp_payload = json.loads(_event_body())
+    del missing_timestamp_payload["timestamp"]
+    missing_timestamp = json.dumps(missing_timestamp_payload, separators=(",", ":")).encode()
+    assert (
+        await provider.verify_webhook(missing_timestamp, _signature(missing_timestamp, "test-webhook-secret")) is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_m18_non_allowlisted_return_url_is_rejected() -> None:
+    client = FakeHttpClient(FakeResponse({"url": "https://checkout.example.test/session"}))
+    provider = _provider(client)
+    tenant_id = uuid4()
+
+    with pytest.raises(ValueError, match="not allowlisted"):
+        await provider.create_checkout_session(
+            tenant_id=tenant_id,
+            plan_code="pro",
+            success_url="https://evil.example.test/success",
+            cancel_url="https://app.example.test/cancel",
+        )
+    with pytest.raises(ValueError, match="not allowlisted"):
+        await provider.create_portal_session(tenant_id=tenant_id, return_url="https://evil.example.test/return")
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -132,7 +305,11 @@ async def test_parse_event_requires_verified_payload_and_does_not_add_metadata()
 
     assert await provider.verify_webhook(body, _signature(body, "test-webhook-secret")) is True
     parsed = await provider.parse_event(body)
-    assert parsed == json.loads(body)
+    expected = json.loads(body)
+    expected["id"] = "sandbox:evt-1"
+    expected["data"]["id"] = "sandbox:sub-1"
+    expected["data"]["customer_id"] = "sandbox:cus-1"
+    assert parsed == expected
     assert "provider" not in parsed
     assert "signature_verified" not in parsed
 
@@ -141,10 +318,10 @@ async def test_parse_event_requires_verified_payload_and_does_not_add_metadata()
 async def test_parse_event_rejects_unexpected_shape_after_verification() -> None:
     client = FakeHttpClient(FakeResponse({"url": "unused"}))
     provider = _provider(client)
-    body = b'{"event":{"type":"subscription.active"}}'
+    body = b'{"id":"evt-1","type":"subscription.active","timestamp":"2026-09-20T12:00:00Z","data":[]}'
 
-    assert await provider.verify_webhook(body, _signature(body, "test-webhook-secret")) is True
-    with pytest.raises(ValueError, match="type|timestamp|data"):
+    assert await provider.verify_webhook(body, _signature(body, "test-webhook-secret")) is False
+    with pytest.raises(ValueError, match="verified"):
         await provider.parse_event(body)
 
 

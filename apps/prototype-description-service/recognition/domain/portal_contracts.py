@@ -93,6 +93,8 @@ class BillingState:
     provider_customer_id: str | None
     current_period_end: datetime | None
     past_due_since: datetime | None
+    provider_subscription_id: str | None = None
+    event_position: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.status is not BillingSubscriptionStatus.NONE and not self.provider_customer_id:
@@ -178,6 +180,16 @@ class BillingProvider(Protocol):
 
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
         """Create a hosted billing session only for the tenant's mapped customer."""
+        ...
+
+    async def retrieve_state(
+        self,
+        *,
+        provider_customer_id: str,
+        provider_subscription_id: str | None,
+        request_timeout: float,
+    ) -> object:
+        """Read authoritative provider state for the reconciliation worker."""
         ...
 
     async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:

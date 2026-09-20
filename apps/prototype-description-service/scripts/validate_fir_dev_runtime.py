@@ -121,6 +121,17 @@ OBSERVATION_METHODS: dict[str, frozenset[str]] = {
 }
 
 _SECRET_MARKER = re.compile(r"REPLACE_ME[_A-Z0-9]*")
+_MAX_CLOCK_SKEW = timedelta(seconds=60)
+_ISOLATION_RESOURCE_CATEGORIES = frozenset(
+    {
+        "volumes",
+        "networks",
+        "compose_projects",
+        "database_names",
+        "database_roles",
+        "blob_namespaces",
+    }
+)
 
 _INCOMPLETE_REASON_CODES = frozenset(
     {
@@ -367,6 +378,50 @@ def _is_positive_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and value > 0
 
 
+def _is_nonempty_identity(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(isinstance(item, str) and bool(item.strip()) for item in value)
+    return False
+
+
+def _validate_isolation_policy_shape(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return "malformed_isolation_policy"
+    for category in _ISOLATION_RESOURCE_CATEGORIES:
+        category_values = value.get(category)
+        if not isinstance(category_values, (list, tuple)) or not category_values:
+            return "malformed_isolation_policy"
+    return None
+
+
+def _validate_required_identity_values(snapshot: Mapping[str, Any]) -> str | None:
+    database = snapshot["database"]
+    identity = database["identity"]
+    if any(not _is_nonempty_identity(identity[field_name]["value"]) for field_name in ("database_name", "role")):
+        return "database_identity_version_unobserved"
+    if not _is_nonempty_identity(database["server_version"]["value"]):
+        return "database_identity_version_unobserved"
+
+    extension_versions = database["extension_versions"]["value"]
+    if (
+        not isinstance(extension_versions, Mapping)
+        or not extension_versions
+        or any(not _is_nonempty_identity(value) for value in extension_versions.values())
+    ):
+        return "database_identity_version_unobserved"
+
+    storage = snapshot["storage"]
+    if any(not _is_nonempty_identity(storage[field_name]["value"]) for field_name in STORAGE_FIELDS):
+        return "observation_provenance_declared"
+
+    roles = _roles(snapshot)
+    if any(not _is_nonempty_identity(_field(record, "source_git_sha")["value"]) for record in roles):
+        return "observation_provenance_declared"
+    return None
+
+
 def _validate_schema(
     snapshot: Any,
     *,
@@ -452,9 +507,11 @@ def _validate_schema(
     if (
         not isinstance(isolation_policy, Mapping)
         or "required_tenant_id" not in isolation_policy
-        or not isinstance(isolation_policy.get("forbidden_resource_ids"), Mapping)
     ):
         return "malformed_policy_input"
+    isolation_reason = _validate_isolation_policy_shape(isolation_policy.get("forbidden_resource_ids"))
+    if isolation_reason is not None:
+        return isolation_reason
 
     try:
         _parse_timestamp(snapshot["captured_at"]["value"])
@@ -485,7 +542,10 @@ def _validate_freshness_and_isolation(
         current_time = _parse_timestamp(now)
     except (TypeError, ValueError, OverflowError):
         return "malformed_timestamp"
-    if current_time - captured_at > timedelta(seconds=freshness_policy["max_age_seconds"]):
+    age = current_time - captured_at
+    if age < -_MAX_CLOCK_SKEW:
+        return "future_snapshot"
+    if age > timedelta(seconds=freshness_policy["max_age_seconds"]):
         return "stale_snapshot"
     if snapshot["tenant_id"]["value"] != isolation_policy["required_tenant_id"]:
         return "shared_default_tenant"
@@ -635,6 +695,9 @@ def _validate_provenance(snapshot: Mapping[str, Any]) -> str | None:
     roles = _roles(snapshot)
     if _non_database_provenance_is_declared(snapshot, roles):
         return "observation_provenance_declared"
+    identity_reason = _validate_required_identity_values(snapshot)
+    if identity_reason is not None:
+        return identity_reason
     if _database_identity_or_version_is_unobserved(snapshot):
         return "database_identity_version_unobserved"
     return _vector_inventory_is_incomplete(snapshot)
@@ -699,10 +762,14 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
 
 def _parse_timestamp(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
         raise TypeError("timestamp must be an ISO-8601 string or datetime")
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return parsed
 
 
 def validate_snapshot(

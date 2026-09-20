@@ -38,6 +38,7 @@ class _Projection:
     event_position: datetime
     provider_event_id: str
     provider_subscription_id: str | None = None
+    provider_customer_id: str | None = None
 
 
 class _SessionStub:
@@ -132,7 +133,9 @@ class _RepositoryStub:
         existing = self.projections.get(tenant_id)
         if existing is not None and position <= existing.event_position:
             return False
-        self.projections[tenant_id] = _Projection(status, position, provider_event_id, provider_subscription_id)
+        self.projections[tenant_id] = _Projection(
+            status, position, provider_event_id, provider_subscription_id, provider_customer_id
+        )
         self.transitions.append(provider_event_id)
         return True
 
@@ -175,10 +178,11 @@ def _event_body(
     status_value: str = "active",
     data_id: str = "sub-1",
     subscription_id: str | None = "sub-1",
+    customer_id: str = "cus-1",
 ) -> bytes:
     data: dict[str, object] = {
         "id": data_id,
-        "customer_id": "cus-1",
+        "customer_id": customer_id,
         "tenant_id": str(TENANT_ID),
         "status": status_value,
         "current_period_end": "2026-10-20T12:00:00Z",
@@ -352,6 +356,64 @@ def test_older_provider_event_does_not_regress_projection_and_stays_pending() ->
     assert projection.provider_event_id == "evt-new"
     assert repository.skipped == []
     assert repository.rows["evt-old"].status == WebhookInboxStatus.RECEIVED.value
+
+
+def test_foreign_customer_cannot_repoint_another_tenants_projection() -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    bound = _event_body(event_id="evt-bound", timestamp="2026-09-20T12:00:00Z")
+    foreign = _event_body(
+        event_id="evt-foreign",
+        event_type="subscription.canceled",
+        timestamp="2026-09-20T13:00:00Z",
+        customer_id="cus-attacker",
+        data_id="sub-attacker",
+        subscription_id="sub-attacker",
+    )
+
+    with TestClient(_app(provider, repository)) as client:
+        first = client.post(
+            "/billing/webhooks/polar",
+            content=bound,
+            headers={"webhook-signature": _signature(bound)},
+        )
+        second = client.post(
+            "/billing/webhooks/polar",
+            content=foreign,
+            headers={"webhook-signature": _signature(foreign)},
+        )
+
+    projection = repository.projections[TENANT_ID]
+    assert first.status_code == 202
+    assert second.status_code == 503
+    assert projection.provider_customer_id == "cus-1"
+    assert projection.status is BillingSubscriptionStatus.ACTIVE
+    assert projection.provider_event_id == "evt-bound"
+    assert repository.rows["evt-foreign"].status == WebhookInboxStatus.RECEIVED.value
+
+
+def test_bound_customer_still_projects_later_events() -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    first_body = _event_body(event_id="evt-1", timestamp="2026-09-20T12:00:00Z")
+    later = _event_body(
+        event_id="evt-2",
+        event_type="subscription.canceled",
+        timestamp="2026-09-20T13:00:00Z",
+    )
+
+    with TestClient(_app(provider, repository)) as client:
+        for raw in (first_body, later):
+            response = client.post(
+                "/billing/webhooks/polar",
+                content=raw,
+                headers={"webhook-signature": _signature(raw)},
+            )
+            assert response.status_code == 202
+
+    projection = repository.projections[TENANT_ID]
+    assert projection.provider_event_id == "evt-2"
+    assert projection.provider_customer_id == "cus-1"
 
 
 def test_unknown_event_is_stored_and_acknowledged_without_projection() -> None:

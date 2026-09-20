@@ -254,6 +254,21 @@ async def _project_and_mark(
             return False
 
     try:
+        bound_customer_id = await _existing_provider_customer_id(
+            repository,
+            cast(UUID, projection["tenant_id"]),
+        )
+    except Exception:
+        logger.exception("Failed to read the existing Polar customer binding; inbox row remains pending")
+        return False
+    # WHY: the HMAC proves the delivery channel, not the authority of the payload's
+    # tenant_id. Mirror the reconciler's binding check so a customer cannot be
+    # repointed at another tenant's projection through webhook metadata alone.
+    if bound_customer_id is not None and bound_customer_id != cast(str, projection["provider_customer_id"]).strip():
+        logger.error("Polar webhook customer does not match the tenant's bound customer; inbox row remains pending")
+        return False
+
+    try:
         async with asyncio.timeout(WEBHOOK_PROJECTION_TIMEOUT_SECONDS):
             applied = await repository.upsert_projection(
                 tenant_id=projection["tenant_id"],
@@ -430,6 +445,21 @@ def _provider_subscription_id(data: Mapping[str, object]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+async def _existing_provider_customer_id(repository: BillingRepository, tenant_id: UUID) -> str | None:
+    projection = await repository.get_projection(tenant_id, provider=POLAR_PROVIDER)
+    if projection is None:
+        return None
+    if isinstance(projection, Mapping):
+        value = projection.get("provider_customer_id")
+    else:
+        value = getattr(projection, "provider_customer_id", None)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("existing provider customer id is invalid")
+    return value.strip()
 
 
 async def _existing_provider_subscription_id(repository: BillingRepository, tenant_id: UUID) -> str | None:

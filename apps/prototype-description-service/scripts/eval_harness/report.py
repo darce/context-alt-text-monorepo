@@ -66,6 +66,7 @@ from .face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
+    has_human_adjudicated_gt_lineage,
     labeled_order,
     named_box_name,
     positional_identification,
@@ -2046,6 +2047,7 @@ def score_run_record(
     manifest_roster: list[str] | None = None,
     rubric_gate: str = "enforce",
     annotation_mode: AnnotationMode | str | None = None,
+    run_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure scoring: run record + manifest labels -> metrics dict.
 
@@ -2060,6 +2062,17 @@ def score_run_record(
     """
     # identity_names lives in this module (VLM6-RH-07) — no lazy cli import.
     _validate_record_kind(run_record)
+    if run_manifest is not None:
+        for entry_index, entry in enumerate(manifest_entries):
+            for box_index, box in enumerate(entry.get("face_boxes") or []):
+                if not has_human_adjudicated_gt_lineage(box):
+                    raise ManifestError(
+                        "strict detection scoring requires human-adjudicated lineage on every GT box "
+                        f"(entry_index={entry_index}, box_index={box_index})",
+                        invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+                        entry_index=entry_index,
+                        entry_path=str(entry.get("path", "")),
+                    )
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")

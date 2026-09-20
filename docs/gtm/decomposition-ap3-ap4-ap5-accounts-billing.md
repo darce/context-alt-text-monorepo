@@ -1,7 +1,11 @@
 # Decomposition — AP-3 (Clerk Auth) + AP-4 (Dashboard) + AP-5 (Polar Billing)
 
+> **Current proposed execution owner (2026-09-19):** [APP-1 Plan 0001](../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md), justified by the [launch recommendation](../assessments/current/app-portal-launch-recommendation-2026-09-19.md). The AP tables below are historical decomposition, not independently dispatchable alongside APP-1.
+>
+> Current mapping: AP-3 -> S1/S3 (supported Clerk browser SDK, invitation-bound transactional onboarding; no raw key minted in `user.created`); AP-4 -> S2/S3/S4 (existing local key service, small FastAPI portal, bounded usage); AP-5 -> S1/S5/S7 (one Polar adapter, sandbox lifecycle before beta, explicit opt-in live conversion). S4 cost/quota enforcement and S6 recovery/UX evidence precede beta admission. Do not wait for an unbuilt `acx_business` authority, add multiple paid tiers, or postpone caps until paid launch. Polar owns financial truth; AltContext owns tenant authorization/usage and projects billing state.
+
 > The three **Epic** slices from the launch plan §14 that form the self-serve accounts + money path (Phases 1–2). Each is broken into **atomic** sub-slices with a self-contained end-state and a scoped `TEST_CMD`, ready to offload one at a time.
-> **Engineering heuristics v2** (stable IDs, cite in every slice): [`docs/strategy/engineering-heuristics.md`](../strategy/engineering-heuristics.md). Business rules: [`docs/strategy/business-marketing-heuristics.md`](../strategy/business-marketing-heuristics.md).
+> **Engineering heuristics v2** (stable IDs, cite in every slice): [current engineering lexicon](../../../heuristics-canon-research/lexicons/engineering.md). Business rules: [current business-marketing lexicon](../../../heuristics-canon-research/lexicons/business-marketing.md).
 > **Depends on:** AP-1 (`acx_business` schema) + AP-2 (business API), decomposed in [`decomposition-ap1-ap2.md`](decomposition-ap1-ap2.md). Ownership map = launch-plan §6.3.
 > **Ordering:** AP-1/AP-2 → AP-3 → AP-4 → AP-5. AP-3f and AP-5b share the idempotent-webhook pattern; build AP-3b first, reuse it.
 

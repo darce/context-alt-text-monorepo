@@ -1,5 +1,7 @@
 # FIR Open-Set Gate & Occlusion-Robust Recognition Roadmap (v1)
 
+> **2026-09-19 next phase:** use [E24/FIRDV](../epics/v0.5.0/fir-development-and-measurement-epic.md) and the [corpus/metrics reassessment](../assessments/current/fir-occlusion-corpus-and-metrics-2026-09-19.md) for the new development installation, face-instance corpus successor, cluster visualizations and self-hosted VLM quality/cost comparisons. The gate contract and OACT sign fix described as pending below now exist; operating-point ratification and live qualification remain separate. This note preserves historical plans and E22's production gates.
+
 > **Date**: 2026-09-11
 > **Author**: Claude Fable 5.1 (claude-fable-5-1) via sonnet drafting agent
 > **Status**: draft

@@ -1,5 +1,7 @@
 # E22. Commercial Face Identity Replacement
 
+> **2026-09-19 reconciliation:** [E24/FIRDV](fir-development-and-measurement-epic.md) owns the newly requested LocalWP + isolated remote FIR development installation and expanded comparative harness. [Current evidence](../../assessments/current/fir-development-wave-assessment-2026-09-19.md) confirms FIR23 tooling, FIR-13 gate code and FIR-17's OACT sign correction are already merged; older status text below is historical. E22 retains production switch-over and its ratified evidence gates. Development installation may precede occlusion qualification; no production flip is implied.
+
 > **Metadata**
 >
 > - **Date**: 2026-09-11

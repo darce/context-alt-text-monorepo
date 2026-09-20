@@ -51,6 +51,7 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     initialize_clustering_circuit_breaker,
 )
+from recognition.interface_adapters.http.deps.portal_composition import install_portal_composition
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
@@ -596,6 +597,7 @@ def create_app() -> FastAPI:
     app.include_router(gpu_router, prefix="/scene")
 
     if os.environ.get("RECOGNITION_PORTAL_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        install_portal_composition(app, settings=recognition_settings)
         app.include_router(portal_router)
         app.include_router(billing_webhooks_router)
 

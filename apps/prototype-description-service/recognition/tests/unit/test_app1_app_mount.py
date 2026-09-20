@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import inspect
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
+from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
+from recognition.interface_adapters.http.deps import session as session_deps
 from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.interface_adapters.http.deps.portal_auth import require_portal_principal
+from recognition.interface_adapters.http.deps.portal_composition import BillingRepositoryFactory
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.interface_adapters.http.routers.billing_webhooks import receive_polar_webhook
 
 _PORTAL_ENV = "RECOGNITION_PORTAL_ENABLED"
+_PORTAL_TEST_SETTINGS = {
+    "ACX_CLERK_ISSUER": "https://issuer.example.test",
+    "ACX_CLERK_JWKS_URL": "https://jwks.example.test/keys",
+    "ACX_CLERK_AUTHORIZED_PARTIES": "portal-api",
+    "POLAR_WEBHOOK_SECRET": "test-webhook-secret",
+    "POLAR_PRODUCT_IDS": "starter=prod_starter",
+}
 _NEW_ROUTE_SIGNATURES = {
     ("/portal/me", frozenset({"GET"})),
     ("/portal/keys", frozenset({"GET"})),
@@ -26,18 +37,42 @@ _NEW_ROUTE_SIGNATURES = {
 }
 
 
-def _create_app(monkeypatch: pytest.MonkeyPatch, *, enabled: bool) -> FastAPI:
+def _create_app(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    enabled: bool,
+    configure_enabled: bool = True,
+) -> FastAPI:
     monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
     monkeypatch.delenv("RECOGNITION_ADMIN_ENABLED", raising=False)
     monkeypatch.delenv("RECOGNITION_ADMIN_TOKEN", raising=False)
     if enabled:
         monkeypatch.setenv(_PORTAL_ENV, "1")
+        if configure_enabled:
+            for name, value in _PORTAL_TEST_SETTINGS.items():
+                monkeypatch.setenv(name, value)
     else:
         monkeypatch.delenv(_PORTAL_ENV, raising=False)
 
     from api.main import create_app
 
     return create_app()
+
+
+class _SessionStub:
+    bind = None
+
+    async def execute(self, _statement: object) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 def _route_signatures(app: FastAPI) -> set[tuple[str, frozenset[str]]]:
@@ -123,3 +158,31 @@ def test_enabled_mount_has_each_expected_path_and_method_once(monkeypatch: pytes
                 and route.path == path
                 and method in (route.methods or set())
             ) == 1
+
+
+@pytest.mark.asyncio
+async def test_enabled_mount_resolves_real_portal_and_billing_composition(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_deps, "async_session_factory", _SessionStub)
+    app = _create_app(monkeypatch, enabled=True)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        portal_response = await client.get("/portal/me")
+        billing_response = await client.post("/billing/webhooks/polar", content=b"{}")
+
+    assert portal_response.status_code == 401
+    assert billing_response.status_code == 401
+    assert callable(getattr(app.state.portal_token_verifier, "verify", None))
+    assert isinstance(app.state.billing_provider, PolarBillingProvider)
+    assert isinstance(app.state.billing_repository, BillingRepositoryFactory)
+
+
+def test_enabled_mount_fails_before_mounting_when_required_setting_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in _PORTAL_TEST_SETTINGS.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("ACX_CLERK_JWKS_URL", raising=False)
+
+    with pytest.raises(ValueError, match="ACX_CLERK_JWKS_URL"):
+        _create_app(monkeypatch, enabled=True, configure_enabled=False)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.services.audit_service import AuditService
+from recognition.config.settings import RecognitionSettings
 from recognition.domain.portal_contracts import (
     DEFAULT_ALLOWANCE_JOBS,
     DEFAULT_ENTITLEMENT_STATUS,
@@ -95,6 +96,15 @@ def _clock_read(clock: Callable[[], datetime]) -> datetime:
     return _as_utc(value)
 
 
+def _settings_plan_allowances(settings: object) -> Mapping[str, int] | None:
+    """Read the billable plan table without coupling to settings internals."""
+    for field_name in ("plan_allowances", "allowance_by_plan", "entitlement_plan_allowances"):
+        configured = getattr(settings, field_name, None)
+        if configured is not None:
+            return configured
+    return None
+
+
 class TenantEntitlementService:
     """Implement the published tenant entitlement protocol.
 
@@ -112,6 +122,8 @@ class TenantEntitlementService:
         audit_service: Any | None = None,
         clock: Callable[[], datetime] | None = None,
         timeout_s: float = _DEFAULT_OPERATION_TIMEOUT_S,
+        settings: object | None = None,
+        plan_allowances: Mapping[str, int] | None = None,
     ) -> None:
         if session_or_repository is not None and (session is not None or repository is not None):
             raise ValueError("provide one session or repository")
@@ -119,6 +131,8 @@ class TenantEntitlementService:
             raise ValueError("provide a session or repository, not both")
         if clock is not None and not callable(clock):
             raise ValueError("clock must be callable")
+        if settings is not None and plan_allowances is not None:
+            raise ValueError("provide settings or plan_allowances, not both")
 
         self._timeout_s = _validate_timeout(timeout_s)
         candidate: Any = repository if repository is not None else session
@@ -141,7 +155,18 @@ class TenantEntitlementService:
             self._session = getattr(candidate, "session", None)
         else:
             self._session = candidate
-            self._repository = SqlAlchemyTenantEntitlementRepository(candidate, timeout_s=self._timeout_s)
+            configured_settings = settings
+            if plan_allowances is None:
+                if configured_settings is None:
+                    configured_settings = RecognitionSettings()
+                plan_allowances = _settings_plan_allowances(configured_settings)
+            if plan_allowances is None:
+                raise ValueError("RecognitionSettings must configure plan_allowances for paid entitlements")
+            self._repository = SqlAlchemyTenantEntitlementRepository(
+                candidate,
+                timeout_s=self._timeout_s,
+                plan_allowances=plan_allowances,
+            )
 
         self._clock = clock or _utc_now
         self._audit_service = audit_service

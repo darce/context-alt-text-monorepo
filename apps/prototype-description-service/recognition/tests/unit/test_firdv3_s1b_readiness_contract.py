@@ -441,7 +441,12 @@ async def test_each_model_space_routes_to_its_own_check_and_store(
     )
     response = await _get_ready(app)
 
-    assert response.status_code == 200, response.text
+    # This test's subject is routing, not the verdict. Only insightface and
+    # face_pipeline have their checks patched to OK above; auraface's real check runs,
+    # and its manifest entry is PENDING_OPERATOR_FETCH, so it must not report ready --
+    # see test_real_auraface_entry_blocks_activation_while_hash_pending.
+    expected_code = 503 if space is ModelSpace.AURAFACE else 200
+    assert response.status_code == expected_code, response.text
     assert resolver_calls and resolver_calls[-1][0] is space
     expected_store = {
         ModelSpace.INSIGHTFACE: insightface_dir,

@@ -730,10 +730,14 @@ class BillingReconciliationWorker:
 
         metadata_value = data.get("metadata")
         metadata = metadata_value if isinstance(metadata_value, Mapping) else {}
+        # WHY: external_customer_id is the merchant-side id, which this app sets to
+        # the tenant uuid. The webhook writer reads it as the tenant; the two
+        # writers of this projection must agree on which field names which entity.
         tenant_value = _first_value(
             payload.get("tenant_id"),
             data.get("tenant_id"),
             metadata.get("tenant_id"),
+            data.get("external_customer_id"),
         )
         if tenant_value is None:
             raise UnsupportedWebhook(f"event {event_type} has no tenant reference")
@@ -743,7 +747,6 @@ class BillingReconciliationWorker:
         customer_value = _first_value(
             data.get("provider_customer_id"),
             data.get("customer_id"),
-            data.get("external_customer_id"),
             _nested_value(data.get("customer"), "id"),
             metadata.get("provider_customer_id"),
             metadata.get("customer_id"),
@@ -760,7 +763,10 @@ class BillingReconciliationWorker:
         subscription_value = _first_value(
             data.get("provider_subscription_id"),
             data.get("subscription_id"),
-            data.get("id") if data.get("type") != "customer" else None,
+            # WHY: data["id"] is the subscription only when data IS the subscription
+            # object. On a refund or order payload it is that object's own id, and
+            # accepting it would overwrite the tenant's subscription pointer.
+            data.get("id") if event_type.startswith("subscription.") else None,
             _nested_value(data.get("subscription"), "id"),
             _projection_value(projection, "provider_subscription_id"),
         )

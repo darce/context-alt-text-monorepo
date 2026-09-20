@@ -267,3 +267,94 @@ async def test_invalid_plan_allowances_fail_at_service_construction(database, al
                 clock=lambda: now,
                 settings=SimpleNamespace(plan_allowances=allowances),
             )
+
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_dunning_after_period_end_does_not_reopen_the_consumed_period(database) -> None:
+    session_factory, tenant_id, now = database
+    period_start = now - timedelta(days=40)
+    period_end = now - timedelta(days=1)
+    async with session_factory() as session:
+        session.add(
+            TenantEntitlement(
+                tenant_id=tenant_id,
+                plan_code="paid",
+                allowance_version="billing",
+                allowance_jobs=5000,
+                period_start=period_start,
+                period_end=period_end,
+                status=EntitlementStatus.PAID_ACTIVE,
+                source="billing",
+            )
+        )
+        session.add(
+            UsageReservation(
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key="usage-exhausted",
+                status=UsageReservationStatus.COMMITTED,
+                cost_units=5000,
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 5000},
+            past_due_grace=timedelta(days=3),
+        )
+        row = await repository.apply_billing_state(
+            tenant_id,
+            status=EntitlementStatus.PAST_DUE,
+            now=now,
+            period_end=period_end,
+            source="billing",
+        )
+        used = await repository.used_jobs(tenant_id, row.period_start)
+
+    assert EntitlementStatus(row.status) is EntitlementStatus.PAST_DUE
+    assert _utc(row.period_start) == period_start
+    assert _utc(row.period_end) == period_end
+    assert _utc(row.period_end) > _utc(row.period_start)
+    assert used == 5000
+
+
+@pytest.mark.asyncio
+async def test_repeated_dunning_events_do_not_slide_the_grace_deadline(database) -> None:
+    session_factory, tenant_id, now = database
+    period_end = now + timedelta(days=30)
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 5000},
+            past_due_grace=timedelta(hours=72),
+        )
+        service = TenantEntitlementService(repository=repository, clock=lambda: now)
+        await service.apply_billing_state(
+            tenant_id,
+            _billing_state(tenant_id, BillingSubscriptionStatus.ACTIVE, now),
+        )
+        first = await repository.apply_billing_state(
+            tenant_id,
+            status=EntitlementStatus.PAST_DUE,
+            now=now,
+            period_end=period_end,
+            source="billing",
+        )
+        first_grace = _utc(first.grace_until)
+        later = now + timedelta(hours=48)
+        second = await repository.apply_billing_state(
+            tenant_id,
+            status=EntitlementStatus.PAST_DUE,
+            now=later,
+            period_end=period_end,
+            source="billing",
+        )
+
+    assert first_grace == now + timedelta(hours=72)
+    assert _utc(second.grace_until) == first_grace

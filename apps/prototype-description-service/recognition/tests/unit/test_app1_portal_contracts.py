@@ -77,9 +77,11 @@ class _PortalIdentityStub:
         issuer: str,
         subject: str,
         email: str | None,
-        tenant_id: UUID | None = None,
+        invitation_token: str,
     ) -> PortalPrincipal:
-        return PortalPrincipal(tenant_id or uuid4(), issuer, subject, email)
+        if not invitation_token:
+            raise ValueError("invitation_token is required")
+        return PortalPrincipal(uuid4(), issuer, subject, email)
 
 
 class _TenantEntitlementStub:

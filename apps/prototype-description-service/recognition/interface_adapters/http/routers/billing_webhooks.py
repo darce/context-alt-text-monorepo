@@ -7,6 +7,7 @@ import hashlib
 import logging
 from collections.abc import Mapping
 from datetime import datetime
+from enum import StrEnum
 from typing import Final, cast
 from uuid import UUID
 
@@ -21,6 +22,16 @@ from recognition.infrastructure.repositories.billing_repository import BillingRe
 logger = logging.getLogger(__name__)
 
 POLAR_PROVIDER: Final[str] = "polar"
+
+
+class _ProjectionOutcome(StrEnum):
+    """Why a projection attempt ended, so only real failures are retried."""
+
+    APPLIED = "applied"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
 # WHY: the request stream is consumed incrementally so a peer cannot make this
 # endpoint allocate an unbounded body before signature verification.
 MAX_WEBHOOK_BODY_BYTES: Final[int] = 1_048_576
@@ -165,7 +176,7 @@ async def receive_polar_webhook(
 
     if inserted is not True:
         try:
-            projected = await _duplicate_projection_is_ready(
+            outcome = await _duplicate_projection_outcome(
                 repository,
                 provider_event_id=event_id,
                 event_type=event_type,
@@ -173,8 +184,8 @@ async def receive_polar_webhook(
             )
         except Exception:
             logger.exception("Failed to check the existing Polar webhook projection")
-            projected = False
-        if projected is not True:
+            outcome = _ProjectionOutcome.FAILED
+        if outcome is _ProjectionOutcome.FAILED:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Webhook projection unavailable",
@@ -183,13 +194,13 @@ async def receive_polar_webhook(
         await _commit_billing_transaction(repository)
         return _accepted_response()
 
-    projected = await _project_and_mark(
+    outcome = await _project_and_mark(
         repository,
         provider_event_id=event_id,
         event_type=event_type,
         payload=payload,
     )
-    if projected is not True:
+    if outcome is _ProjectionOutcome.FAILED:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Webhook projection unavailable",
@@ -199,19 +210,19 @@ async def receive_polar_webhook(
     return _accepted_response()
 
 
-async def _duplicate_projection_is_ready(
+async def _duplicate_projection_outcome(
     repository: BillingRepository,
     *,
     provider_event_id: str,
     event_type: str,
     payload: Mapping[str, object],
-) -> bool:
+) -> _ProjectionOutcome:
     projection = _projection_arguments(payload, event_type)
     if projection is None:
-        return True
+        return _ProjectionOutcome.SKIPPED
     get_projection = getattr(repository, "get_projection", None)
     if not callable(get_projection):
-        return True
+        return _ProjectionOutcome.SKIPPED
     current = await get_projection(cast(UUID, projection["tenant_id"]), provider=POLAR_PROVIDER)
     if current is not None:
         if isinstance(current, Mapping):
@@ -221,7 +232,7 @@ async def _duplicate_projection_is_ready(
             if current_event_id is None:
                 current_event_id = getattr(current, "provider_event_id", None)
         if current_event_id == provider_event_id:
-            return True
+            return _ProjectionOutcome.APPLIED
     return await _project_and_mark(
         repository,
         provider_event_id=provider_event_id,
@@ -230,18 +241,53 @@ async def _duplicate_projection_is_ready(
     )
 
 
+async def _projection_supersedes(
+    repository: BillingRepository,
+    *,
+    tenant_id: UUID,
+    provider_event_id: str,
+    event_position: object,
+) -> bool:
+    """Report whether the stored projection already reflects a newer event."""
+    get_projection = getattr(repository, "get_projection", None)
+    if not callable(get_projection):
+        return False
+    current = await get_projection(tenant_id, provider=POLAR_PROVIDER)
+    if current is None:
+        return False
+    if isinstance(current, Mapping):
+        current_event_id = current.get("last_event_id", current.get("provider_event_id"))
+        stored_value = current.get("updated_at", current.get("event_position"))
+    else:
+        current_event_id = getattr(current, "last_event_id", None) or getattr(current, "provider_event_id", None)
+        stored_value = getattr(current, "updated_at", None) or getattr(current, "event_position", None)
+    if current_event_id == provider_event_id:
+        return True
+    if current_event_id is None:
+        return False
+    stored_position = _optional_datetime(stored_value)
+    incoming_position = _optional_datetime(event_position)
+    if stored_position is None or incoming_position is None:
+        return False
+    # WHY: an unanswerable comparison must read as "not superseded" so the event
+    # is retried rather than silently acknowledged.
+    if (stored_position.tzinfo is None) != (incoming_position.tzinfo is None):
+        return False
+    return incoming_position <= stored_position
+
+
 async def _project_and_mark(
     repository: BillingRepository,
     *,
     provider_event_id: str,
     event_type: str,
     payload: Mapping[str, object],
-) -> bool:
+) -> _ProjectionOutcome:
     """Project one inbox event while leaving entitlement work to the worker."""
     projection = _projection_arguments(payload, event_type)
     if projection is None:
         logger.warning("Polar webhook was not projected; inbox row remains pending")
-        return True
+        return _ProjectionOutcome.SKIPPED
 
     if projection["provider_subscription_id"] is None and not _is_subscription_event(event_type):
         try:
@@ -251,7 +297,7 @@ async def _project_and_mark(
             )
         except Exception:
             logger.exception("Failed to read the existing Polar subscription pointer; inbox row remains pending")
-            return False
+            return _ProjectionOutcome.FAILED
 
     try:
         bound_customer_id = await _existing_provider_customer_id(
@@ -260,13 +306,13 @@ async def _project_and_mark(
         )
     except Exception:
         logger.exception("Failed to read the existing Polar customer binding; inbox row remains pending")
-        return False
+        return _ProjectionOutcome.FAILED
     # WHY: the HMAC proves the delivery channel, not the authority of the payload's
     # tenant_id. Mirror the reconciler's binding check so a customer cannot be
     # repointed at another tenant's projection through webhook metadata alone.
     if bound_customer_id is not None and bound_customer_id != cast(str, projection["provider_customer_id"]).strip():
         logger.error("Polar webhook customer does not match the tenant's bound customer; inbox row remains pending")
-        return False
+        return _ProjectionOutcome.FAILED
 
     try:
         async with asyncio.timeout(WEBHOOK_PROJECTION_TIMEOUT_SECONDS):
@@ -283,17 +329,32 @@ async def _project_and_mark(
             )
     except TimeoutError:
         logger.warning("Polar webhook projection timed out; inbox row remains pending")
-        return False
+        return _ProjectionOutcome.FAILED
     except Exception:
         logger.exception("Failed to project Polar webhook; inbox row remains pending")
-        return False
+        return _ProjectionOutcome.FAILED
 
-    # WHY: repository ordering under its row lock makes False an observable
-    # duplicate/older-event skip rather than a state regression.
+    # WHY: the repository returns False both for an ordering skip and for a
+    # constraint conflict. Only the first is permanent and harmless, so confirm
+    # against the stored projection; answering 503 to a superseded redelivery
+    # would make the provider retry forever and disable the endpoint.
     if applied is not True:
+        try:
+            superseded = await _projection_supersedes(
+                repository,
+                tenant_id=cast(UUID, projection["tenant_id"]),
+                provider_event_id=provider_event_id,
+                event_position=projection["event_position"],
+            )
+        except Exception:
+            logger.exception("Failed to confirm the Polar projection position; inbox row remains pending")
+            return _ProjectionOutcome.FAILED
+        if superseded:
+            logger.info("Polar webhook event was superseded by a newer projection; acknowledging")
+            return _ProjectionOutcome.SKIPPED
         logger.warning("Polar webhook projection did not apply; inbox row remains pending")
-        return False
-    return True
+        return _ProjectionOutcome.FAILED
+    return _ProjectionOutcome.APPLIED
 
 
 async def _read_bounded_body(request: Request) -> bytes:

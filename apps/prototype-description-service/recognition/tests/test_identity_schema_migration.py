@@ -102,6 +102,7 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "billing_webhook_inbox",
         "api_key_rotation_history",
         "tenant_key_idempotency",
+        "portal_tenant_invitation",
         "demo_instances",
         "worker_capabilities",
         "media_identities",

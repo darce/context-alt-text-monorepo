@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from recognition.config import get_settings
+from recognition.infrastructure.face_pipeline.model_space import UnhandledModelSpaceError
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +119,12 @@ def active_embedding_model_id() -> str:
         )
 
         model_id = sface_embedding_model_manifest().model_id
-    else:
+    elif settings.face_pipeline.profile == "insightface":
         model_id = incumbent_embedding_model_manifest().model_id
+    else:
+        raise UnhandledModelSpaceError(
+            f"Unhandled face pipeline profile for embedding model id: {settings.face_pipeline.profile!r}"
+        )
     if not model_id or not str(model_id).strip():
         raise RuntimeError("active embedding_model unresolved (empty model_id)")
     return str(model_id).strip()

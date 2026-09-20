@@ -20,9 +20,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
+    PENDING_OPERATOR_FETCH,
     ModelVerifyOutcome,
+    load_verified_model,
     verify_face_pipeline_model,
 )
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -512,6 +515,48 @@ def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckRe
     return CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
 
 
+def expected_embedding_dimension(space: ModelSpace) -> int:
+    """Return the embedding dimension declared by the requested model space."""
+    if space is ModelSpace.INSIGHTFACE:
+        from recognition.config import get_settings
+
+        return int(get_settings().identity_detection.embedding_dimension)
+    if space is ModelSpace.FACE_PIPELINE:
+        model_name = "sface"
+    elif space is ModelSpace.AURAFACE:
+        model_name = "auraface"
+    else:
+        raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
+    entry = MODEL_MANIFEST.get(model_name)
+    if entry is None or entry.embedding_dim is None:
+        raise ValueError(f"model space {space.value!r} has no embedding dimension")
+    return int(entry.embedding_dim)
+
+
+def assert_space_activatable(space: ModelSpace) -> None:
+    """Refuse activation while a space's provenance or preprocessing is unverified."""
+    if space is ModelSpace.INSIGHTFACE:
+        return
+    if space is ModelSpace.FACE_PIPELINE:
+        model_names = ("yunet", "sface")
+    elif space is ModelSpace.AURAFACE:
+        model_names = ("auraface",)
+    else:
+        raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
+
+    for model_name in model_names:
+        entry = MODEL_MANIFEST.get(model_name)
+        if entry is None:
+            raise ValueError(f"model space {space.value!r} is missing manifest entry {model_name!r}")
+        if entry.sha256 == PENDING_OPERATOR_FETCH or entry.license_sha256 == PENDING_OPERATOR_FETCH:
+            raise ValueError(f"model {model_name!r} remains {PENDING_OPERATOR_FETCH}")
+        if space is ModelSpace.AURAFACE:
+            preprocessing = entry.preprocessing
+            template_id = preprocessing.alignment_template_id if preprocessing is not None else "missing"
+            if preprocessing is None or "unverified" in template_id.lower():
+                raise ValueError(f"model {model_name!r} alignment template {template_id!r} is -unverified")
+
+
 def _stat_file_identity(path: Path) -> tuple[int, int] | None:
     """Return (mtime_ns, size) for an existing file; None on missing/race ([DRIFT-02])."""
     try:
@@ -634,6 +679,58 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             f"runtime unavailable: {exc}",
         )
     return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+
+
+def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
+    """Run the readiness check belonging to one model space."""
+    if space is ModelSpace.INSIGHTFACE:
+        from recognition.config import get_settings
+
+        settings = get_settings()
+        return check_model_cache(store, model_name=settings.insightface.model_name)
+    if space is ModelSpace.FACE_PIPELINE:
+        return check_face_pipeline_models(store)
+    if space is not ModelSpace.AURAFACE:
+        raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
+
+    try:
+        load_verified_model("auraface", models_dir=store)
+    except Exception as exc:  # noqa: BLE001 - provenance detail is the readiness contract
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc))
+
+    try:
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            assert_three_way_embedding_dimensions,
+            auraface_embedding_model_manifest,
+        )
+
+        # Keep the dimension guard ahead of runtime construction so a healthy
+        # incumbent stub cannot make a mismatched AuraFace space appear ready.
+        assert_three_way_embedding_dimensions(auraface_embedding_model_manifest())
+    except Exception as exc:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            f"auraface embedding dimension mismatch: {exc}",
+        )
+
+    try:
+        from recognition.config import get_settings
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            get_shared_face_pipeline_runtime,
+        )
+
+        face_pipeline = get_settings().face_pipeline
+        get_shared_face_pipeline_runtime(
+            profile=space,
+            models_dir=store,
+            score_threshold=float(face_pipeline.score_threshold),
+            nms_threshold=float(face_pipeline.nms_threshold),
+            top_k=int(face_pipeline.top_k),
+        )
+    except Exception as exc:
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
+    return CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
 
 
 def reset_face_pipeline_verify_cache_for_tests() -> None:

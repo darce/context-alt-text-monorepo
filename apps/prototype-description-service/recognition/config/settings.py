@@ -32,7 +32,7 @@ from recognition.infrastructure.face_pipeline._common import (
 )
 from recognition.infrastructure.face_pipeline.provenance import DEFAULT_MODELS_DIR
 
-_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline"})
+_FACE_PIPELINE_PROFILES: frozenset[str] = frozenset({"insightface", "face_pipeline", "auraface"})
 
 # Legacy insightface anchors (seeded onto FacePipelineSettings as dark placeholders;
 # S4 replaces face_pipeline values via a calibration apply-commit — never mutate these).
@@ -82,6 +82,12 @@ def _resolve_face_pipeline_models_dir() -> Path | None:
     if not raw:
         return None
     return Path(raw)
+
+
+def _resolve_auraface_models_dir() -> Path:
+    """Resolve the optional operator-provisioned AuraFace models directory."""
+    raw = os.environ.get("RECOGNITION_AURAFACE_MODELS_DIR", "").strip()
+    return Path(raw) if raw else DEFAULT_MODELS_DIR
 
 
 def _resolve_embedding_dimension() -> int:
@@ -289,7 +295,7 @@ class FacePipelineSettings(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    profile: Literal["insightface", "face_pipeline"] = Field(
+    profile: Literal["insightface", "face_pipeline", "auraface"] = Field(
         default_factory=_resolve_face_pipeline_profile,  # type: ignore[arg-type]
         validate_default=True,
         description="Active face pipeline profile (dark default: insightface).",
@@ -520,13 +526,15 @@ class ResolvedFacePipelineKnobs:
     ``oact_coefficient`` is forced to 0.0 and factor floors are forced to the
     canonical no-op triple (profile gate — residual face_pipeline-scored rows /
     env-set floors must not activate OACT or enrollment gating under insightface;
-    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` they read the
-    FacePipelineSettings overrides including OACT and floors.
+    FIR6S3B-M-02 / EMB-07). Under ``face_pipeline`` and ``auraface`` they read
+    the FacePipelineSettings overrides including OACT and floors. AuraFace
+    shares this tuning surface but remains activation-gated until its
+    operator-provisioned artifact is pinned and verified.
     ``joint_assignment_enabled`` always comes from FacePipelineSettings
     (consumers under insightface must still treat joint assignment as un-wired until S2).
     """
 
-    profile: Literal["insightface", "face_pipeline"]
+    profile: Literal["insightface", "face_pipeline", "auraface"]
     similarity_threshold: float
     complete_link_threshold: float
     suggestion_floor: float
@@ -550,11 +558,12 @@ def resolve_face_pipeline_knobs(
     """Resolve effective thresholds for the active face-pipeline profile (rg-008).
 
     Single ownership for S1/S2 consumers: mutate FacePipelineSettings overrides and
-    re-resolve; insightface anchors are never silently replaced. OACT is profile-gated:
-    only ``face_pipeline`` can surface a non-zero coefficient.
+    re-resolve; insightface anchors are never silently replaced. OACT is
+    profile-gated: only ``face_pipeline`` and ``auraface`` can surface a
+    non-zero coefficient.
     """
     profile = face_pipeline.profile
-    if profile == "face_pipeline":
+    if profile in {"face_pipeline", "auraface"}:
         return ResolvedFacePipelineKnobs(
             profile=profile,
             similarity_threshold=float(face_pipeline.face_similarity_threshold),
@@ -798,6 +807,10 @@ class RecognitionSettings(BaseModel):
 
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     face_pipeline: FacePipelineSettings = Field(default_factory=FacePipelineSettings)
+    auraface_models_dir: Path = Field(
+        default_factory=_resolve_auraface_models_dir,
+        description="Operator-provisioned AuraFace ONNX models directory.",
+    )
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)

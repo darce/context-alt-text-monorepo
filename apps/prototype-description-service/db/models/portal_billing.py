@@ -162,11 +162,14 @@ class BillingWebhookInbox(Base):
     received_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    next_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    quarantined_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'received'"))
 
     __table_args__ = (
         UniqueConstraint("provider", "provider_event_id", name="uq_billing_webhook_inbox_provider_event"),
         Index("idx_billing_webhook_inbox_reclaim", "status", "processed_at"),
+        Index("idx_billing_webhook_inbox_pending", "status", "next_attempt_at"),
     )
 
 

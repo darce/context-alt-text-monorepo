@@ -652,6 +652,8 @@ def ensure_tables(op) -> None:
         sa.Column("received_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("processed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("attempts", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("quarantined_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'received'")),
         sa.UniqueConstraint(
             "provider",
@@ -660,6 +662,7 @@ def ensure_tables(op) -> None:
         ),
     )
     _ensure_index(op, "idx_billing_webhook_inbox_reclaim", "billing_webhook_inbox", ["status", "processed_at"])
+    _ensure_index(op, "idx_billing_webhook_inbox_pending", "billing_webhook_inbox", ["status", "next_attempt_at"])
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
     _ensure_table(
@@ -3155,6 +3158,7 @@ def downgrade() -> None:
     op.drop_index("idx_api_key_rotation_history_reclaim", table_name="api_key_rotation_history")
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_subscription_projection_reclaim", table_name="billing_subscription_projection")
     op.drop_index("idx_usage_reservation_reclaim", table_name="usage_reservation")
     op.drop_index("idx_usage_reservation_tenant_period_status", table_name="usage_reservation")

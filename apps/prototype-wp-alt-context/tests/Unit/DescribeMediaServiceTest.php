@@ -71,6 +71,24 @@ class DescribeMediaServiceTest extends TestCase
         return $path;
     }
 
+    private function dispatchedDescribeMultipartBody(int $mediaId = 42): string
+    {
+        $this->plantAttachment($mediaId, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody($mediaId)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', $mediaId);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+
+        return $body;
+    }
+
     /**
      * @return array<string,mixed>
      */
@@ -174,6 +192,93 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertSame(1, $usage['attempts']);
         $this->assertSame(1, $usage['successes']);
         $this->assertSame(0, $usage['failures']);
+
+        // Z6: site recognition policy is a sibling form field (not inside the
+        // extra='forbid' request JSON envelope), matching the bulk run path.
+        $this->assertMatchesRegularExpression(
+            '/name="recognition_enabled"\r\n\r\nfalse\r\n/',
+            $body
+        );
+    }
+
+    /**
+     * @dataProvider recognitionEnabledPolicyCases
+     */
+    #[DataProvider('recognitionEnabledPolicyCases')]
+    public function testMultipartForwardsRecognitionEnabledFromSitePolicy(?string $stored, string $expected): void
+    {
+        if (null === $stored) {
+            $this->assertNull(get_option('acx_recognition_enabled', null));
+        } else {
+            $this->setOption('acx_recognition_enabled', $stored);
+        }
+
+        $body = $this->dispatchedDescribeMultipartBody();
+        $this->assertMatchesRegularExpression(
+            '/name="recognition_enabled"\r\n\r\n' . preg_quote($expected, '/') . '\r\n/',
+            $body
+        );
+        preg_match('/name="request".*?\r\n\r\n(\{.*?\})\r\n/s', $body, $m);
+        $envelope = json_decode($m[1] ?? '', true);
+        $this->assertIsArray($envelope);
+        $this->assertArrayNotHasKey('recognition_enabled', $envelope);
+    }
+
+    /**
+     * @return array<string, array{0: ?string, 1: string}>
+     */
+    public static function recognitionEnabledPolicyCases(): array
+    {
+        return [
+            'option_absent_defaults_off' => [null, 'false'],
+            'option_off' => ['0', 'false'],
+            'option_on' => ['1', 'true'],
+        ];
+    }
+
+    public function testClientRecognitionEnabledDoesNotOverrideSitePolicy(): void
+    {
+        $this->setOption('acx_recognition_enabled', '0');
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+        $this->queueHttpResponse(array(
+            'response' => array('code' => 200, 'message' => 'OK'),
+            'body'     => (string) json_encode($this->validBackendBody(42)),
+        ));
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $req->set_param('recognition_enabled', true);
+        $req->set_body_params(['recognition_enabled' => 'true']);
+        $this->controller->describe_media($req);
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertIsString($body);
+        $this->assertMatchesRegularExpression(
+            '/name="recognition_enabled"\r\n\r\nfalse\r\n/',
+            $body
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/name="recognition_enabled"\r\n\r\ntrue\r\n/',
+            $body
+        );
+    }
+
+    public function testDescribeMediaPutsRecognitionEnabledOnServiceMultipartBody(): void
+    {
+        $this->setOption('acx_recognition_enabled', '1');
+        $this->plantAttachment(42, "\xff\xd8\xff\xe0bytes", 'jpg');
+
+        $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
+        $service = new DescribeMediaService($host, null, new NullIdentityMembersRepository());
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/describe');
+        $req->set_param('media_id', 42);
+        $service->describe_media($req);
+
+        $this->assertSame('true', $host->lastBody['recognition_enabled'] ?? null);
+        $envelope = json_decode((string) ($host->lastBody['request'] ?? ''), true);
+        $this->assertIsArray($envelope);
+        $this->assertSame(array('tenant_id', 'media_id', 'context_pack'), array_keys($envelope));
     }
 
     public function testRegisterRoutesExposesWriteIntentArgs(): void

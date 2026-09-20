@@ -220,6 +220,54 @@ describe('fetchApi HTTPError', () => {
       expect(error).not.toBeInstanceOf(HTTPError);
     }
   });
+
+  it('attaches a typed unavailable envelope parsed from a long nested WP_Error body', async () => {
+    const body = JSON.stringify({
+      code: 'acx_service_unavailable',
+      message: `The description service is unavailable. ${'x'.repeat(500)}`,
+      data: {
+        status: 503,
+        unavailable: {
+          reason: 'timeout',
+          service: 'scene',
+          http_status: 503,
+          retry_after_seconds: 15,
+          checked_at: '2026-09-18T14:03:22Z',
+        },
+      },
+    });
+    expect(body.length).toBeGreaterThan(600);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, { status: 503 }));
+
+    try {
+      await fetchApi('http://example.test/gpu/status');
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).unavailable).toEqual({
+        reason: 'timeout',
+        service: 'scene',
+        http_status: 503,
+        retry_after_seconds: 15,
+        checked_at: '2026-09-18T14:03:22Z',
+      });
+      expect((error as HTTPError).bodyPreview.endsWith('...')).toBe(true);
+      expect((error as HTTPError).bodyPreview.length).toBe(243);
+      expect(() => JSON.parse((error as HTTPError).bodyPreview)).toThrow();
+    }
+  });
+
+  it('leaves unavailable null when the error body is not JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('backend unavailable', { status: 503 }));
+
+    try {
+      await fetchApi('http://example.test/endpoint');
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).unavailable).toBeNull();
+    }
+  });
 });
 
 describe('parseRetryAfter', () => {

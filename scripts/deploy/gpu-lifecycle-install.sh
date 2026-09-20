@@ -104,6 +104,13 @@ verify_gpu_lifecycle_timers() {
             return 1
             ;;
     esac
+    case "$exec_start" in
+        *"--ready-url"*) ;;
+        *)
+            echo "error: effective acx-gpu-reap.service lacks the ready-url argument" >&2
+            return 1
+            ;;
+    esac
     grep -Fqx "MAX_LEASE_SECONDS=${expected_max_lease}" "$expected_env_file" || {
         echo "error: effective reaper max lease is not ${expected_max_lease}s" >&2
         return 1
@@ -801,7 +808,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer} + acx-gpu-intent.path"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
-    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
+    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} --ready-url \${READY_URL} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
     echo "--- dry run: would verify systemctl is-enabled + is-active for lifecycle timers and acx-gpu-intent.path"
     exit 0
 fi
@@ -970,7 +977,7 @@ StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --intent-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT

@@ -44,6 +44,3 @@ export const gatedClusterCopy = (count: number, truncated = false, servedCount =
     count,
   );
 };
-
-export const faceGroupsBadge = (count: number): string =>
-  sprintf(_n('%d face group', '%d face groups', count, 'alt-context'), count);

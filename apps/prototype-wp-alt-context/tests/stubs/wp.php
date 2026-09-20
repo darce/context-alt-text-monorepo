@@ -3073,7 +3073,7 @@ if (!isset($GLOBALS['wpdb'])) {
                 ];
             }
 
-            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?$/i', $query, $matches) !== 1) {
+            if (preg_match('/^SELECT\s+(?P<select>.+?)\s+FROM\s+`?(?P<table>[A-Za-z0-9_]+)`?(?:\s+WHERE\s+(?P<where>.+?))?(?:\s+ORDER BY\s+`?(?P<order>[A-Za-z0-9_]+)`?\s+(?P<direction>ASC|DESC))?(?:\s+LIMIT\s+(?P<limit>\d+))?(?:\s+FOR\s+UPDATE)?$/i', $query, $matches) !== 1) {
                 return null;
             }
 

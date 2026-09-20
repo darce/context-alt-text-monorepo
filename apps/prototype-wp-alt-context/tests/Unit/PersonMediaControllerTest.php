@@ -29,6 +29,9 @@ class PersonMediaControllerTest extends TestCase
         $this->assertSame('/roster/persons/(?P<id>[1-9][0-9]*)/media', $route['route']);
         $this->assertSame('GET', $route['args']['methods']);
         $this->assertSame($permission, $route['args']['permission_callback']);
+        $this->assertArrayHasKey('with_person_ids', $route['args']['args']);
+        $this->assertSame('array', $route['args']['args']['with_person_ids']['type']);
+        $this->assertFalse($route['args']['args']['with_person_ids']['required']);
     }
 
     public function testUnknownPersonReturns404AndDoesNotQueryMedia(): void
@@ -108,7 +111,33 @@ class PersonMediaControllerTest extends TestCase
             'person_id' => 7,
             'limit' => 2,
             'offset' => 0,
+            'with_person_ids' => [],
         ], $source->calls[0]);
+    }
+
+    public function testDuplicateDetectionsOnOneAttachmentReturnOnePhoto(): void
+    {
+        $this->seedPerson(7);
+        $GLOBALS['__ac_attachment_urls'][22] = 'https://example.test/media/22.jpg';
+        $source = $this->source([[
+            'total_count' => 1,
+            'identity_uuid' => 'id-earlier',
+            'attachment_id' => 22,
+            'cluster_uuid' => 'cluster-a',
+        ]]);
+
+        $response = (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'limit' => 50, 'offset' => 0])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertCount(1, $data['media']);
+        $this->assertSame(22, $data['media'][0]['media_id']);
+        $this->assertSame('id-earlier', $data['media'][0]['identity_id']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
     }
 
     public function testEmptyFirstPageIs200WithTotalZero(): void
@@ -227,10 +256,18 @@ class PersonMediaControllerTest extends TestCase
         $this->assertNotSame([], $captured);
         $sql = $captured[0];
         $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
+        $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY m.attachment_id ORDER BY m.assigned_at ASC, m.identity_uuid ASC)', $sql);
         $this->assertStringContainsString('tenant_id', $sql);
         $this->assertStringContainsString("'" . addslashes(self::currentTenantId()) . "'", $sql);
         $this->assertStringContainsString('person_id', $sql);
         $this->assertStringContainsString('LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringContainsString('ORDER BY assigned_at ASC, identity_uuid LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringNotContainsString('HAVING COUNT(DISTINCT', $sql);
+        $rnPos = strpos($sql, 'rn = 1');
+        $limitPos = strpos($sql, 'LIMIT 10 OFFSET 2');
+        $this->assertNotFalse($rnPos);
+        $this->assertNotFalse($limitPos);
+        $this->assertLessThan($limitPos, $rnPos);
         $this->assertSame(1, $response->get_data()['total']);
         $this->assertFalse($response->get_data()['truncated']);
     }
@@ -353,13 +390,158 @@ class PersonMediaControllerTest extends TestCase
         $this->assertNull($item['bbox']);
     }
 
+    public function testInvalidWithPersonIdsRejected(): void
+    {
+        $this->seedPerson(7);
+        $source = $this->source();
+        $controller = new PersonMediaController($source);
+
+        foreach ([0, -1, 1.5, 'x', '2x', [0], [-1], ['x'], [[8]], true, false, new \stdClass()] as $value) {
+            $result = $controller->get_media($this->mediaRequest(['id' => 7, 'with_person_ids' => $value]));
+            $this->assertInstanceOf(WP_Error::class, $result, (string) json_encode($value));
+            $this->assertSame(400, $result->get_error_data()['status'], (string) json_encode($value));
+            $this->assertSame('invalid_with_person_ids', $result->get_error_code());
+        }
+
+        $result = $controller->get_media(
+            $this->mediaRequest(['id' => 7, 'with_person_ids' => [1, 2, 3, 4, 5, 6]])
+        );
+        $this->assertSame(400, $result->get_error_data()['status']);
+        $this->assertSame('invalid_with_person_ids', $result->get_error_code());
+        $this->assertSame([], $source->calls);
+    }
+
+    public function testEmptyWithPersonIdsDoesNotFilter(): void
+    {
+        $this->seedPerson(7);
+        $source = $this->source([]);
+
+        $response = (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'with_person_ids' => []])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame([], $source->calls[0]['with_person_ids']);
+    }
+
+    public function testSingleWithPersonIdIsAccepted(): void
+    {
+        $this->seedPerson(7);
+        $source = $this->source([[
+            'total_count' => 1,
+            'identity_uuid' => 'id-1',
+            'attachment_id' => 22,
+            'cluster_uuid' => 'cluster-a',
+        ]]);
+
+        $response = (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'with_person_ids' => 8])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame([8], $source->calls[0]['with_person_ids']);
+    }
+
+    public function testWithPersonIdsDeduplicatesWithinMax(): void
+    {
+        $this->seedPerson(7);
+        $source = $this->source([['total_count' => 0]]);
+
+        (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'with_person_ids' => [8, 8, 9]])
+        );
+
+        $this->assertSame([8, 9], $source->calls[0]['with_person_ids']);
+    }
+
+    public function testWithPersonIdsIntersectionUsesQueryTotal(): void
+    {
+        $this->seedPerson(7);
+        $GLOBALS['__ac_attachment_urls'][22] = 'https://example.test/media/22.jpg';
+        $source = $this->source([[
+            'total_count' => 3,
+            'identity_uuid' => 'id-1',
+            'attachment_id' => 22,
+            'cluster_uuid' => 'cluster-a',
+        ]]);
+
+        $response = (new PersonMediaController($source))->get_media(
+            $this->mediaRequest(['id' => 7, 'limit' => 2, 'offset' => 0, 'with_person_ids' => [8, 9]])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(2, $data['limit']);
+        $this->assertSame(0, $data['offset']);
+        $this->assertSame(3, $data['total']);
+        $this->assertTrue($data['truncated']);
+        $this->assertCount(1, $data['media']);
+        $this->assertSame(22, $data['media'][0]['media_id']);
+        $this->assertSame([
+            'tenant_id' => self::currentTenantId(),
+            'person_id' => 7,
+            'limit' => 2,
+            'offset' => 0,
+            'with_person_ids' => [8, 9],
+        ], $source->calls[0]);
+    }
+
+    public function testWithPersonIdsIntersectionIsComputedInSql(): void
+    {
+        $this->seedPerson(7);
+        global $wpdb;
+        $captured = [];
+        $wpdb->onGetResults = static function (string $sql) use (&$captured): array {
+            $captured[] = $sql;
+            return [[
+                'total_count' => 4,
+                'identity_uuid' => 'id-1',
+                'attachment_id' => 22,
+                'cluster_uuid' => 'cluster-a',
+                'bbox_json' => null,
+                'thumb_path' => '',
+            ]];
+        };
+        $GLOBALS['__ac_attachment_urls'][22] = 'https://example.test/media/22.jpg';
+
+        $response = (new PersonMediaController())->get_media(
+            $this->mediaRequest(['id' => 7, 'limit' => 10, 'offset' => 2, 'with_person_ids' => [8, 9]])
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $this->assertSame(4, $response->get_data()['total']);
+        $this->assertCount(1, $captured);
+        $sql = $captured[0];
+        $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
+        $this->assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY m.attachment_id ORDER BY m.assigned_at ASC, m.identity_uuid ASC)', $sql);
+        $this->assertStringContainsString('m.attachment_id', $sql);
+        $this->assertStringContainsString('GROUP BY mx.attachment_id', $sql);
+        $this->assertStringContainsString('HAVING COUNT(DISTINCT cx.person_id) = 3', $sql);
+        $this->assertStringContainsString('cx.person_id IN (7, 8, 9)', $sql);
+        $this->assertStringContainsString('c.person_id = 7', $sql);
+        $this->assertStringContainsString('`wp_acx_identity_members`', $sql);
+        $this->assertStringContainsString('`wp_acx_clusters`', $sql);
+        $this->assertStringContainsString("'" . addslashes(self::currentTenantId()) . "'", $sql);
+        $this->assertStringContainsString('LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringContainsString('ORDER BY assigned_at ASC, identity_uuid LIMIT 10 OFFSET 2', $sql);
+        $this->assertStringNotContainsString('%i', $sql);
+        $havingPos = strpos($sql, 'HAVING COUNT(DISTINCT cx.person_id) = 3');
+        $rnPos = strpos($sql, 'rn = 1');
+        $limitPos = strpos($sql, 'LIMIT 10 OFFSET 2');
+        $this->assertNotFalse($havingPos);
+        $this->assertNotFalse($rnPos);
+        $this->assertNotFalse($limitPos);
+        $this->assertLessThan($rnPos, $havingPos);
+        $this->assertLessThan($limitPos, $rnPos);
+    }
+
     /**
      * @param array<int, array<string, mixed>> $rows
      */
     private function source(array $rows = []): PersonMediaRowsSource
     {
         return new class ($rows) implements PersonMediaRowsSource {
-            /** @var list<array{tenant_id:string,person_id:int,limit:int,offset:int}> */
+            /** @var list<array{tenant_id:string,person_id:int,limit:int,offset:int,with_person_ids:array<int,int>}> */
             public array $calls = [];
 
             /**
@@ -373,9 +555,10 @@ class PersonMediaControllerTest extends TestCase
                 string $tenant_id,
                 int $person_id,
                 int $limit,
-                int $offset
+                int $offset,
+                array $with_person_ids = []
             ): array {
-                $this->calls[] = compact('tenant_id', 'person_id', 'limit', 'offset');
+                $this->calls[] = compact('tenant_id', 'person_id', 'limit', 'offset', 'with_person_ids');
                 return $this->rows;
             }
         };

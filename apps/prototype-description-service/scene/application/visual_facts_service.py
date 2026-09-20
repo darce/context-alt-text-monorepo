@@ -23,8 +23,8 @@ from scene.application.description_adapter import AdapterResult, DescriptionAdap
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.fusion.reconcile import Attachment, reconcile_context_facts
 from scene.application.hashing import compute_context_hash, compute_image_hash
-from scene.application.identity_merge.merge import ConfirmedFace, NormalizedBox, PhraseBox
-from scene.application.identity_merge.policy import NamingPolicy
+from scene.application.identity_merge.merge import ConfirmedFace, NormalizedBox, PhraseBox, merge_identities
+from scene.application.identity_merge.policy import NamingPolicy, NamingSkipReason, NamingStatus
 from scene.application.visual_facts_pass import (
     VisualFactsPass,
     VisualFactsPrior,
@@ -37,9 +37,13 @@ from scene.interface_adapters.http.schemas.responses import (
     AttachmentFactProvenance,
     AttachmentProvenance,
     ContextUsed,
+    InjectedName,
     ProviderDisclosure,
     VisualFacts,
     VisualFactsResponse,
+)
+from scene.interface_adapters.http.schemas.responses import (
+    NamingProvenance as NamingProvenanceModel,
 )
 
 _logger = logging.getLogger(__name__)
@@ -215,9 +219,13 @@ class VisualFactsService:
         timing = AdapterAttemptTiming()
         try:
             response = await self._describe(
-                tenant_id=tenant_id, media_id=media_id, image_bytes=image_bytes,
-                context=context, confirmed_faces=confirmed_faces,
-                naming_policy=naming_policy, before_compute=before_compute,
+                tenant_id=tenant_id,
+                media_id=media_id,
+                image_bytes=image_bytes,
+                context=context,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
+                before_compute=before_compute,
                 timing=timing,
             )
         except BaseException as exc:
@@ -231,8 +239,13 @@ class VisualFactsService:
             self._metrics.observe_readiness_wait(adapter=self._adapter.kind.value, seconds=ms / 1000)
 
     async def _describe(
-        self, *, tenant_id: uuid.UUID, media_id: int, image_bytes: bytes,
-        context: Mapping[str, Any] | None, confirmed_faces: Sequence[ConfirmedFace],
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_id: int,
+        image_bytes: bytes,
+        context: Mapping[str, Any] | None,
+        confirmed_faces: Sequence[ConfirmedFace],
         naming_policy: NamingPolicy | None,
         before_compute: Callable[[], Awaitable[None]] | None,
         timing: AdapterAttemptTiming,
@@ -425,6 +438,10 @@ class VisualFactsService:
         restored phrase boxes is deterministic (no inference), so a cache hit
         carries the same attachment provenance as the original generation.
         Fail-open like the fresh path: a recompute failure yields ``None``.
+
+        Naming is also re-realized against CURRENT confirmed faces (no VLM):
+        merge_identities runs over the stored unnamed base caption so a face
+        named after the draft was cached still reaches alt_text_draft.
         """
         response = self._row_to_response(row, cached=True, duration_ms=_elapsed_ms(start), media_id=media_id)
         self.last_phrase_boxes = _phrase_boxes_from_json(row.phrase_boxes)
@@ -455,8 +472,26 @@ class VisualFactsService:
         except Exception:  # noqa: BLE001 - provenance must never fail the describe
             _logger.exception("fusion recompute failed on cache hit; degrading to no attachment provenance")
             attachments, provenance = (), None
-        self.last_attachments = attachments
-        return response.model_copy(update={"attachment_provenance": provenance})
+            self.last_attachments = attachments
+            # Fail closed: a Stage-2 recompute fault must not name anyone.
+            preview_faces: Sequence[ConfirmedFace] = ()
+        else:
+            self.last_attachments = attachments
+            from scene.application.naming_preview_service import faces_for_naming_preview
+
+            preview_faces = faces_for_naming_preview(
+                list(confirmed_faces), attachments, self.last_phrase_boxes
+            )
+        update: dict[str, Any] = {"attachment_provenance": provenance}
+        realized = _rerealize_cached_names(
+            row,
+            phrase_boxes=self.last_phrase_boxes,
+            confirmed_faces=preview_faces,
+            naming_policy=naming_policy,
+        )
+        if realized is not None:
+            update.update(realized)
+        return response.model_copy(update=update)
 
     async def _record_cache_hit(self, *, tenant_id: uuid.UUID, media_id: int, image_hash: str) -> None:
         if self._audit is not None:
@@ -571,6 +606,113 @@ class VisualFactsService:
             retention_class=response.retention_class.value,
             duration_ms=response.duration_ms,
         )
+
+
+def _cached_unnamed_base(row: ImageDescription) -> str | None:
+    """Unnamed merge input stored with the cache row.
+
+    ``visual_facts.caption`` is the adapter caption (the stored base field).
+    When it is absent/empty, only a named draft may remain — callers must not
+    invent a base, and naming_status stays unchanged.
+    """
+    facts = dict(row.visual_facts or {})
+    caption = facts.get("caption")
+    if isinstance(caption, str) and caption:
+        return caption
+    return None
+
+
+def _merge_provenance_to_response(provenance: Any) -> NamingProvenanceModel | None:
+    if provenance is None:
+        return None
+    injected = tuple(getattr(provenance, "injected_names", ()) or ())
+    names_applied = list(getattr(provenance, "names_applied", ()) or ())
+    if not names_applied:
+        names_applied = [n.name for n in injected]
+    status = getattr(provenance, "status", None)
+    if status is None:
+        if provenance.naming_allowed and names_applied:
+            status = NamingStatus.APPLIED
+        elif provenance.reason is NamingSkipReason.AGREEMENT_DISABLED:
+            status = NamingStatus.DISABLED
+        else:
+            status = NamingStatus.NO_FACES
+    reason = provenance.reason
+    mode = provenance.mode
+    return NamingProvenanceModel(
+        injected_names=[
+            InjectedName(
+                name=n.name,
+                cluster_id=str(n.cluster_id),
+                roster_id=str(n.roster_id) if n.roster_id is not None else None,
+                detection_confidence=n.detection_confidence,
+            )
+            for n in injected
+        ],
+        naming_allowed=bool(provenance.naming_allowed),
+        reason=str(reason) if reason is not None else None,
+        mode=str(mode) if mode is not None else None,
+        status=status,
+        realizer=provenance.realizer,
+        names_applied=names_applied,
+    )
+
+
+def cached_naming_preview_skipped(response: VisualFactsResponse) -> bool:
+    """True when cache-hit naming was skipped because no unnamed base exists.
+
+    The cached ``alt_text_draft`` may already hold names; the route must not
+    run naming preview on it (N-R-03). Decided from stored drafts, not from a
+    reused budget-skip status — SKIPPED_BUDGET is a worker time-budget skip
+    (N-R2-02 / sr-007).
+    """
+    return response.named_draft is not None and response.generic_draft is None
+
+
+def _no_base_naming_update(row: ImageDescription) -> dict[str, Any]:
+    """Keep the cached draft and skip re-merge when no unnamed base is stored.
+
+    Do not rewrite ``naming_provenance``: a genuine budget skip must stay
+    distinguishable from a missing unnamed base (N-R2-02).
+    """
+    return {
+        "generic_draft": None,
+        "named_draft": row.alt_text_draft,
+    }
+
+
+def _rerealize_cached_names(
+    row: ImageDescription,
+    *,
+    phrase_boxes: Sequence[PhraseBox],
+    confirmed_faces: Sequence[ConfirmedFace],
+    naming_policy: NamingPolicy | None,
+) -> dict[str, Any] | None:
+    """Re-run merge_identities over the cached base caption (no VLM).
+
+    Returns response-field updates. When there is no stored base field,
+    keep the cached draft as ``named_draft`` and skip naming (N-R-03). A
+    merge policy reject stays generic — a wrong name is worse than no name.
+    """
+    base = _cached_unnamed_base(row)
+    if base is None:
+        return _no_base_naming_update(row)
+    try:
+        result = merge_identities(
+            caption=base,
+            phrase_boxes=list(phrase_boxes),
+            confirmed_faces=list(confirmed_faces),
+            policy=naming_policy,
+        )
+    except Exception:  # noqa: BLE001 - naming must never fail a cache-hit describe
+        _logger.exception("name re-realize failed on cache hit; returning cached draft")
+        return None
+    return {
+        "alt_text_draft": result.named_draft,
+        "generic_draft": result.generic_draft,
+        "named_draft": result.named_draft,
+        "naming_provenance": _merge_provenance_to_response(result.provenance),
+    }
 
 
 def _coerce_context_pack(context: Mapping[str, Any] | None) -> ContextPack | None:

@@ -84,3 +84,62 @@ def test_describe_run_response_round_trips_recognition_enabled():
     )
     assert omitted.recognition_enabled is True
     _validate(omitted.model_dump(mode="json"), "scene-describe-run.schema.json")
+
+
+def test_describe_run_response_round_trips_terminal_and_fallback_reason():
+    from scene.application.describe_run_worker import (
+        DescribeRunTerminalCode,
+        DescribeRunTerminalReason,
+    )
+    from scene.application.gpu_state import GpuState
+    from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
+    from scene.interface_adapters.http.schemas.responses import DescribeRunResponse, DescribeRunTerminal
+
+    failed = DescribeRunResponse(
+        tenant_id=TENANT_ID,
+        run_id=str(uuid.uuid4()),
+        status=DescribeRunStatus.FAILED,
+        phase=DescribeRunPhase.FAILED,
+        completed=0,
+        failed=1,
+        skipped=0,
+        total=1,
+        cancel_requested=False,
+        eta_seconds=None,
+        gpu_state=GpuState.UNKNOWN,
+        terminal=DescribeRunTerminal(
+            code=DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT,
+            retryable=True,
+            startup_budget_seconds=1,
+        ),
+    )
+    failed_dump = failed.model_dump(mode="json")
+    assert failed_dump["terminal"]["code"] == DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+    assert failed_dump["terminal"]["retryable"] is True
+    assert failed_dump["fallback_reason"] is None
+    restored_failed = DescribeRunResponse.model_validate(failed_dump)
+    assert restored_failed.terminal is not None
+    assert restored_failed.terminal.code == DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+    _validate(failed_dump, "scene-describe-run.schema.json")
+
+    continued = DescribeRunResponse(
+        tenant_id=TENANT_ID,
+        run_id=str(uuid.uuid4()),
+        status=DescribeRunStatus.COMPLETED,
+        phase=DescribeRunPhase.COMPLETE,
+        completed=1,
+        failed=0,
+        skipped=0,
+        total=1,
+        cancel_requested=False,
+        eta_seconds=None,
+        gpu_state=GpuState.UNKNOWN,
+        fallback_reason=DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT,
+    )
+    continued_dump = continued.model_dump(mode="json")
+    assert continued_dump["fallback_reason"] == DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+    assert continued_dump["terminal"] is None
+    restored_continued = DescribeRunResponse.model_validate(continued_dump)
+    assert restored_continued.fallback_reason == DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+    assert restored_continued.terminal is None
+    _validate(continued_dump, "scene-describe-run.schema.json")

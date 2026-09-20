@@ -40,6 +40,10 @@ const TERMINAL_STATUS = {
   DISCARDED: 'discarded',
 } as const;
 
+const OPERATION_STATUS = {
+  FAILED: 'failed',
+} as const;
+
 const TERMINAL_ERROR_CODE_SET = new Set<string>(Object.values(TERMINAL_ERROR_CODES));
 
 const BULK_DISCARD_OUTCOME = {
@@ -388,6 +392,9 @@ const isTerminalOperation = (operation: OutboxOperation): boolean =>
   (operation.last_error_code !== null && TERMINAL_ERROR_CODE_SET.has(operation.last_error_code)) ||
   readAutoAttempts(operation.payload) >= MAX_AUTO_ATTEMPTS;
 
+const isFailedOperation = (operation: OutboxOperation): boolean =>
+  operation.status === OPERATION_STATUS.FAILED;
+
 const isOlderThanRetention = (
   operation: FailureAgeOperation,
   nowMs: number | null,
@@ -431,6 +438,92 @@ const formatBulkDiscardResult = (result: BulkDiscardRowResult): string => {
       return exhaustive;
     }
   }
+};
+
+type DeadLetterRowVariant = 'failed-list' | 'timeline';
+
+interface DeadLetterOperationRowProps {
+  operation: OutboxOperation;
+  variant: DeadLetterRowVariant;
+  displayNowMs: number;
+  pendingDiscardId: number | null;
+  mutationPending: boolean;
+  onRetry: (operation: OutboxOperation) => void;
+  onDiscard: (operation: OutboxOperation) => void;
+}
+
+const DeadLetterOperationRow = ({
+  operation,
+  variant,
+  displayNowMs,
+  pendingDiscardId,
+  mutationPending,
+  onRetry,
+  onDiscard,
+}: DeadLetterOperationRowProps): React.JSX.Element => {
+  const payloadSummary = formatPayloadSummary(operation.payload);
+  const discardPending = pendingDiscardId === operation.id;
+  const terminal = isTerminalOperation(operation);
+  const showFailedRecovery = variant === 'failed-list' || isFailedOperation(operation);
+  const showLastAttempted = variant === 'failed-list' || Boolean(operation.last_attempted_at);
+
+  return (
+    <>
+      <div>
+        <strong>{formatOperationType(operation.operation_type)}</strong>
+        {variant === 'timeline' ? (
+          <p>{sprintf(__('Status: %s', 'alt-context'), formatStatusLabel(operation.status))}</p>
+        ) : null}
+        <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+        {showFailedRecovery ? <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p> : null}
+        {variant === 'timeline' ? (
+          <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
+        ) : null}
+        <p>{formatAge(operation.created_at, displayNowMs)}</p>
+        {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
+        {showLastAttempted ? (
+          <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
+        ) : null}
+        {showFailedRecovery ? (
+          <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p>
+        ) : null}
+        {variant === 'failed-list' && payloadSummary ? <p>{payloadSummary}</p> : null}
+        {variant === 'timeline' && operation.acknowledged_at ? (
+          <p>{sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}</p>
+        ) : null}
+      </div>
+      {showFailedRecovery ? (
+        <div className="acx-dashboard__actions">
+          {terminal ? null : (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void onRetry(operation);
+              }}
+              disabled={mutationPending}
+              aria-disabled={mutationPending ? true : undefined}
+              aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+            >
+              {__('Retry', 'alt-context')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              void onDiscard(operation);
+            }}
+            disabled={mutationPending}
+            aria-disabled={mutationPending ? true : undefined}
+            aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
+          >
+            {discardPending ? __('Confirm discard', 'alt-context') : __('Discard', 'alt-context')}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
 };
 
 export const DeadLetterPanel = (): React.JSX.Element => {
@@ -929,33 +1022,15 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                 <ul className="acx-dashboard__activity-list">
                   {timelineQuery.data.items.map((operation) => (
                     <li key={`timeline-${operation.id}`} className="acx-dashboard__activity-item">
-                      <div>
-                        <strong>{formatOperationType(operation.operation_type)}</strong>
-                        <p>{sprintf(__('Status: %s', 'alt-context'), formatStatusLabel(operation.status))}</p>
-                        <p>
-                          {sprintf(
-                            __('Entity: %1$s (%2$s)', 'alt-context'),
-                            operation.entity_key,
-                            operation.entity_type,
-                          )}
-                        </p>
-                        <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
-                        <p>{formatAge(operation.created_at, displayNowMs)}</p>
-                        {isTerminalOperation(operation) ? <p>{__('Will not retry', 'alt-context')}</p> : null}
-                        {operation.last_attempted_at ? (
-                          <p>
-                            {sprintf(
-                              __('Last attempted: %s', 'alt-context'),
-                              formatTimestamp(operation.last_attempted_at),
-                            )}
-                          </p>
-                        ) : null}
-                        {operation.acknowledged_at ? (
-                          <p>
-                            {sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}
-                          </p>
-                        ) : null}
-                      </div>
+                      <DeadLetterOperationRow
+                        operation={operation}
+                        variant="timeline"
+                        displayNowMs={displayNowMs}
+                        pendingDiscardId={pendingDiscardId}
+                        mutationPending={mutationPending}
+                        onRetry={handleRetry}
+                        onDiscard={handleDiscard}
+                      />
                     </li>
                   ))}
                 </ul>
@@ -996,58 +1071,19 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       ) : (
         <>
           <ul className="acx-dashboard__activity-list">
-            {items.map((operation) => {
-              const payloadSummary = formatPayloadSummary(operation.payload);
-              const discardPending = pendingDiscardId === operation.id;
-              const terminal = isTerminalOperation(operation);
-
-              return (
-                <li key={operation.id} className="acx-dashboard__activity-item">
-                  <div>
-                    <strong>{formatOperationType(operation.operation_type)}</strong>
-                    <p>
-                      {sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}
-                    </p>
-                    <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
-                    <p>{formatAge(operation.created_at, displayNowMs)}</p>
-                    {terminal ? <p>{__('Will not retry', 'alt-context')}</p> : null}
-                    <p>
-                      {sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}
-                    </p>
-                    <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p>
-                    {payloadSummary ? <p>{payloadSummary}</p> : null}
-                  </div>
-                  <div className="acx-dashboard__actions">
-                    {terminal ? null : (
-                      <button
-                        type="button"
-                        className="button button-secondary"
-                        onClick={() => {
-                          void handleRetry(operation);
-                        }}
-                        disabled={mutationPending}
-                        aria-disabled={mutationPending ? true : undefined}
-                        aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
-                      >
-                        {__('Retry', 'alt-context')}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => {
-                        void handleDiscard(operation);
-                      }}
-                      disabled={mutationPending}
-                      aria-disabled={mutationPending ? true : undefined}
-                      aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
-                    >
-                      {discardPending ? __('Confirm discard', 'alt-context') : __('Discard', 'alt-context')}
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
+            {items.map((operation) => (
+              <li key={operation.id} className="acx-dashboard__activity-item">
+                <DeadLetterOperationRow
+                  operation={operation}
+                  variant="failed-list"
+                  displayNowMs={displayNowMs}
+                  pendingDiscardId={pendingDiscardId}
+                  mutationPending={mutationPending}
+                  onRetry={handleRetry}
+                  onDiscard={handleDiscard}
+                />
+              </li>
+            ))}
           </ul>
           <div className="acx-dashboard__actions">
             <button

@@ -14,11 +14,13 @@ require_once __DIR__ . '/../class-alt-text-write-status.php';
 require_once __DIR__ . '/../class-description-write-status.php';
 require_once __DIR__ . '/class-description-history-service.php';
 require_once __DIR__ . '/trait-expects-meta-after-core-transforms.php';
+require_once __DIR__ . '/../../settings/class-recognition-policy.php';
 
 use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescriptionWriteStatus;
 use AltContext\Api\DescribeHostInterface;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Sovereign\ProjectionQueryException;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
@@ -188,6 +190,7 @@ class DescribeMediaService {
 					'context_pack' => $this->build_context_pack( $media_id, $path ),
 				)
 			),
+			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
 			'image_' . $media_id => array(
 				'filename'     => basename( $path ),
 				'content'      => $bytes,

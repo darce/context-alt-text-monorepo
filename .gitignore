@@ -185,6 +185,13 @@ local/*-worktrees.txt
 !/benchmarks/plans/
 !/benchmarks/manifests/
 !/benchmarks/reports/
+# Sampling-frame generators are lineage, not output: the population arms cited by
+# docs/assessments/current/fir-corpus-population-allocation-2026-09-19.md (seeds,
+# inclusion probabilities) cannot be reproduced off this laptop without the script.
+# Track the code; the CSV/JSON it emits stay local (personal-image metadata).
+!/benchmarks/tools/
+/benchmarks/tools/*
+!/benchmarks/tools/fir_corpus_population_draft_20260919.py
 # generated review-board HTML bundles are derived from the tracked json/md (regenerable, ~30 MB)
 /benchmarks/reports/*.html
 /benchmarks/reports/*_files/

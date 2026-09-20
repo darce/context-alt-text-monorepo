@@ -5,7 +5,7 @@
  * presentation table is exhaustive over the frontend GpuState union; unknown
  * wire values are narrowed to UNKNOWN at the describeApi boundary.
  */
-import { __ } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { GPU_STATE, type GpuState } from '../../api/describeApi';
 
@@ -56,10 +56,29 @@ export const GPU_STATE_VOCABULARY = {
   warmingToast: __('GPU warming — CPU drafts first', 'alt-context'),
   readyToast: __('GPU ready — review results for compute tiers', 'alt-context'),
   degradedToast: __('GPU unavailable — CPU drafts kept', 'alt-context'),
+  doneToast: (draftCount: number): string =>
+    sprintf(
+      _n('%d draft ready to review', '%d drafts ready to review', draftCount, 'alt-context'),
+      draftCount,
+    ),
+  failedToastWarmupTimeout: __('GPU warm-up timed out. Retry to continue.', 'alt-context'),
+  failedToastDescribePoll: __('Lost connection to the describe run.', 'alt-context'),
+  failedToastGpuUnavailable: __('Description Service status unavailable', 'alt-context'),
+  failedToastCancelled: __('Run cancelled', 'alt-context'),
+  failedToastScanFailed: __('People identification failed.', 'alt-context'),
+  failedToastFailed: __('Describe run failed.', 'alt-context'),
+  failedToastGeneric: __('Run failed', 'alt-context'),
+  failedToastWithReason: (reason: string): string =>
+    sprintf(__('Run failed (%s)', 'alt-context'), reason),
   backToRun: __('Back to run', 'alt-context'),
   backToRunAltText: __('Return to the active describe run', 'alt-context'),
   reviewResults: __('Review results', 'alt-context'),
   reviewResultsAltText: __('Review the active describe run results', 'alt-context'),
+  reviewDrafts: (draftCount: number): string =>
+    sprintf(_n('Review %d draft', 'Review %d drafts', draftCount, 'alt-context'), draftCount),
+  reviewDraftsAltText: __('Open the review queue for this run', 'alt-context'),
+  retry: __('Retry', 'alt-context'),
+  retryAltText: __('Retry the failed run', 'alt-context'),
 } as const;
 
 export const GPU_STATE_PRESENTATION = {

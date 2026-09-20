@@ -23,9 +23,13 @@ from scene.domain.describe_run import (
     DescribeItemStatus,
     DescribeJobStatus,
     DescribeRunStatus,
+    describe_job_error,
     describe_job_status,
 )
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
+from scene.interface_adapters.http.routers.describe_run import _run_response
+from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse
 from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
 
 HealthHandler = Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]]
@@ -95,6 +99,27 @@ def _final_outcome(media_id: int) -> wmod.DescribeItemOutcome:
         provenance={"adapter": "gpu_qwen30b"},
         tier=DescriptionResultTier.FINAL_GPU,
     )
+
+
+def _cpu_outcome(media_id: int) -> wmod.DescribeItemOutcome:
+    return wmod.DescribeItemOutcome(
+        alt_text_draft=f"cpu alt {media_id}",
+        caption=f"cpu caption {media_id}",
+        provenance={"adapter": "florence_small"},
+        tier=DescriptionResultTier.PROVISIONAL_CPU,
+    )
+
+
+def _refusing_health_handler() -> HealthHandler:
+    async def health_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("GPU endpoint refused connection", request=request)
+
+    return health_handler
+
+
+def _warmup_timeout_detail(error_message: str | None) -> dict:
+    assert error_message is not None
+    return json.loads(error_message)
 
 
 def test_composed_gpu_warm_start_reaches_final_without_degrading(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,9 +195,7 @@ def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout(
     # reach the timespan validator and fail loudly instead of being silently
     # replaced by the default. Accept either form so this budget coupling keeps
     # measuring the default value, not the substitution operator.
-    start_interval_match = re.search(
-        r'^START_INTERVAL="\$\{START_INTERVAL:?-(\d+)s\}"$', installer, re.MULTILINE
-    )
+    start_interval_match = re.search(r'^START_INTERVAL="\$\{START_INTERVAL:?-(\d+)s\}"$', installer, re.MULTILINE)
     assert start_interval_match is not None, "installer START_INTERVAL default is missing"
     start_interval = int(start_interval_match.group(1))
     load_max_age = JsonFileJobLoadSource.__dataclass_fields__["max_age_seconds"].default
@@ -343,7 +366,341 @@ def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPat
         assert describe_calls == 0
         assert run is not None
         assert run.status == DescribeRunStatus.FAILED
-        assert run.error_message is not None and "did not become ready" in run.error_message
+        detail = _warmup_timeout_detail(run.error_message)
+        assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert detail["retryable"] is True
+        assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
+        envelope = _run_response(run)
+        assert envelope.status is DescribeRunStatus.FAILED
+        assert envelope.terminal is not None
+        assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal.retryable is True
+        assert envelope.fallback_reason is None
         assert items[0].status == DescribeItemStatus.FAILED
+        assert items[0].image_bytes is None
 
     asyncio.run(body())
+
+
+def test_gpu_warmup_timeout_startup_budget_rounds_positive_timeout() -> None:
+    detail = _warmup_timeout_detail(
+        wmod._gpu_warmup_timeout_detail(timeout_seconds=17.5, error=TimeoutError("still starting"))
+    )
+    assert detail["startup_budget_seconds"] == 18
+    assert wmod._startup_budget_seconds(0.1) == 1
+    assert wmod._startup_budget_seconds(1.0) == 1
+    assert wmod._startup_budget_seconds(0.0) is None
+    assert wmod._startup_budget_seconds(-2.0) is None
+
+
+def test_warmup_timeout_degrades_to_cpu_adapter_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [7, 8])
+            gpu_calls: list[int] = []
+            cpu_calls: list[int] = []
+
+            async def gpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                gpu_calls.append(media_id)
+                return _final_outcome(media_id)
+
+            async def cpu_describe_one(
+                media_id: int,
+                image_bytes: bytes | None,
+                content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                cpu_calls.append(media_id)
+                assert image_bytes == b"rawbytes"
+                assert content_type == "image/png"
+                return _cpu_outcome(media_id)
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=gpu_describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=cpu_describe_one,
+                ),
+                timeout=2.0,
+            )
+            run, items = await _read_run(session_factory, run_id)
+
+        assert gpu_calls == []
+        assert cpu_calls == [7, 8]
+        assert run is not None
+        assert run.status == DescribeRunStatus.COMPLETED
+        persisted = _warmup_timeout_detail(run.error_message)
+        assert persisted["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert "code" not in persisted
+        envelope = _run_response(run)
+        assert envelope.fallback_reason == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal is None
+        assert run.first_ready_at is None
+        assert run.ramp_up_ms is None
+        assert [item.status for item in items] == [DescribeItemStatus.COMPLETED, DescribeItemStatus.COMPLETED]
+        for item in items:
+            assert item.tier == DescriptionResultTier.PROVISIONAL_CPU
+            assert item.provenance is not None
+            assert item.provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+            assert item.alt_text_draft == f"cpu alt {item.media_id}"
+            projected = describe_job_status(item)
+            assert projected is DescribeJobStatus.DEGRADED
+            assert projected is not DescribeJobStatus.FINAL
+            validated = DescribeRunItemResponse.model_validate(
+                {
+                    "media_id": item.media_id,
+                    "status": item.status,
+                    "alt_text_draft": item.alt_text_draft,
+                    "caption": item.caption,
+                    "provenance": item.provenance,
+                    "error": describe_job_error(item),
+                    "tier": item.tier,
+                    "result_generation": item.result_generation,
+                    "processing_ms": item.processing_ms,
+                }
+            )
+            assert validated.tier is DescriptionResultTier.PROVISIONAL_CPU
+
+    asyncio.run(body())
+
+
+def test_warmup_timeout_unavailable_cpu_ends_with_typed_retryable_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [5])
+            describe_calls = 0
+
+            async def describe_one(
+                _media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                nonlocal describe_calls
+                describe_calls += 1
+                return _final_outcome(5)
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=UnavailableDescriptionAdapter("florence_small extra missing"),
+                ),
+                timeout=2.0,
+            )
+            run, items = await _read_run(session_factory, run_id)
+
+        assert describe_calls == 0
+        assert run is not None
+        assert run.status == DescribeRunStatus.FAILED
+        detail = _warmup_timeout_detail(run.error_message)
+        assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert detail["retryable"] is True
+        assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
+        envelope = _run_response(run)
+        assert envelope.status is DescribeRunStatus.FAILED
+        assert envelope.terminal is not None
+        assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal.retryable is True
+        assert envelope.fallback_reason is None
+        assert items[0].status == DescribeItemStatus.FAILED
+        assert items[0].image_bytes is None
+
+    asyncio.run(body())
+
+
+def test_warmup_cpu_fallback_forces_provisional_cpu_when_adapter_returns_final_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [3])
+
+            async def gpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            async def cpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=gpu_describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=cpu_describe_one,
+                ),
+                timeout=2.0,
+            )
+            run, items = await _read_run(session_factory, run_id)
+
+        assert run is not None
+        assert run.status == DescribeRunStatus.COMPLETED
+        envelope = _run_response(run)
+        assert envelope.fallback_reason == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert envelope.terminal is None
+        assert items[0].tier == DescriptionResultTier.PROVISIONAL_CPU
+        assert items[0].tier != DescriptionResultTier.FINAL_GPU
+        assert items[0].provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert describe_job_status(items[0]) is DescribeJobStatus.DEGRADED
+
+    asyncio.run(body())
+
+
+def test_warmup_cpu_fallback_failed_item_keeps_fallback_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_mock_transport(monkeypatch, _refusing_health_handler())
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+
+    async def body() -> None:
+        async with _database() as (session_factory, _engine):
+            run_id = await _create_run(session_factory, [3])
+
+            async def gpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                return _final_outcome(media_id)
+
+            async def cpu_describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
+                raise RuntimeError("cpu adapter crashed")
+
+            await asyncio.wait_for(
+                wmod.run_describe_job(
+                    tenant_id=TENANT_ID,
+                    run_id=run_id,
+                    session_factory=session_factory,
+                    describe_one=gpu_describe_one,
+                    timeout_seconds=0.5,
+                    gpu_policy=_gpu_policy(),
+                    cpu_describe_one=cpu_describe_one,
+                ),
+                timeout=2.0,
+            )
+            _run, items = await _read_run(session_factory, run_id)
+
+        assert items[0].status == DescribeItemStatus.FAILED
+        assert items[0].tier == DescriptionResultTier.PROVISIONAL_CPU
+        assert items[0].provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+
+    asyncio.run(body())
+
+
+def test_describe_run_item_response_accepts_warmup_cpu_fallback_row() -> None:
+    item = DescribeRunItemResponse.model_validate(
+        {
+            "media_id": 7,
+            "status": "completed",
+            "alt_text_draft": "cpu alt 7",
+            "caption": "cpu caption 7",
+            "provenance": {"adapter": "florence_small", "fallback_reason": "gpu_warmup_timeout"},
+            "tier": "provisional_cpu",
+            "result_generation": 0,
+        }
+    )
+    assert item.tier is DescriptionResultTier.PROVISIONAL_CPU
+    assert item.provenance is not None
+    assert item.provenance["fallback_reason"] == wmod.DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+
+
+def test_naming_preview_timeout_stamps_skipped_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def hang(**_kwargs):
+        raise TimeoutError("preview timed out")
+
+    monkeypatch.setattr(wmod, "naming_preview", hang)
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=wmod.DescribeItemOutcome(alt_text_draft="generic"),
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    naming = asyncio.run(body()).provenance["naming"]
+    assert naming["status"] == wmod.NamingStatus.SKIPPED_BUDGET
+
+
+def test_naming_preview_unexpected_exception_stamps_merge_error_not_no_faces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("preview exploded")
+
+    monkeypatch.setattr(wmod, "naming_preview", boom)
+
+    async def body():
+        return await wmod._apply_naming_preview(
+            enabled=True,
+            session=object(),
+            tenant=object(),
+            tenant_id=TENANT_ID,
+            media_id=1,
+            image_bytes=b"raw",
+            outcome=wmod.DescribeItemOutcome(alt_text_draft="generic"),
+            naming_inputs=wmod.FusionNamingInputs(confirmed_faces=[], naming_policy=object()),
+            item_started=time.monotonic(),
+            item_envelope=30.0,
+        )
+
+    naming = asyncio.run(body()).provenance["naming"]
+    assert naming["reason"] == wmod.NamingSkipReason.MERGE_ERROR
+    assert naming["status"] != wmod.NamingStatus.NO_FACES
+    assert naming["status"] != wmod.NamingStatus.SKIPPED_BUDGET

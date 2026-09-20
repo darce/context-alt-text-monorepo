@@ -214,6 +214,28 @@ describe('useJobProgressStream', () => {
     expect(result.current.stalledForSeconds).toBeNull();
   });
 
+  it('holds the warming stall clock at the startup budget instead of 30s (G3)', async () => {
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() =>
+      useJobProgressStream('job-warming', { stallPhase: 'warming', startupBudgetSeconds: 120 }),
+    );
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      vi.advanceTimersByTime(31_000);
+    });
+    expect(result.current.stalledForSeconds).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(90_000);
+    });
+    await waitFor(() => {
+      expect(result.current.stalledForSeconds).toBe(121);
+    });
+  });
+
   it('rebuilds EventSource URL with live nonce after setNonce between reconnects [TEST-15]', async () => {
     const { result } = renderHook(() => useJobProgressStream('job-nonce'));
 

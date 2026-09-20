@@ -22,6 +22,7 @@ GPU_STATE_PATH_ENV = "ACX_GPU_STATE_PATH"
 DEFAULT_GPU_STATE_PATH = "/run/acx/gpu-state.json"
 DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS = 180.0
 DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS = 5.0
+DEFAULT_READY_PROBE_FAILURES_TO_LEAVE = 2
 
 
 class GpuLifecycleState(StrEnum):
@@ -134,6 +135,8 @@ def _snapshot_reason_is_valid(payload: dict[str, object], state: GpuLifecycleSta
     reason = payload.get("reason")
     if state is GpuLifecycleState.DEGRADED:
         return isinstance(reason, str) and bool(reason.strip())
+    if state is GpuLifecycleState.STARTING:
+        return reason is None or (isinstance(reason, str) and bool(reason.strip()))
     return reason is None
 
 
@@ -246,10 +249,108 @@ def read_previous_gpu_state(
     return state
 
 
+def hold_ready_until_consecutive_failures(
+    *,
+    candidate: GpuLifecycleState,
+    previous: GpuLifecycleState | None,
+    consecutive_failures: int,
+    failures_to_leave: int = DEFAULT_READY_PROBE_FAILURES_TO_LEAVE,
+) -> tuple[GpuLifecycleState, int]:
+    """Hold ready until N consecutive failed probes; since stays until a real leave."""
+    if isinstance(failures_to_leave, bool) or not isinstance(failures_to_leave, int) or failures_to_leave < 1:
+        raise ValueError("failures_to_leave must be a positive integer")
+    if isinstance(consecutive_failures, bool) or not isinstance(consecutive_failures, int) or consecutive_failures < 0:
+        raise ValueError("consecutive_failures must be a non-negative integer")
+    if previous is not GpuLifecycleState.READY:
+        return candidate, 0
+    if candidate is GpuLifecycleState.READY:
+        return candidate, 0
+    if candidate in {GpuLifecycleState.STOPPED, GpuLifecycleState.STARTING}:
+        return candidate, 0
+    next_count = consecutive_failures + 1
+    if next_count < failures_to_leave:
+        return GpuLifecycleState.READY, next_count
+    return candidate, 0
+
+
+def ready_probe_failure_sidecar_path(snapshot_path: str | Path) -> Path:
+    """Sidecar that counts consecutive ready-probe misses across oneshot cycles."""
+    target = Path(snapshot_path)
+    return target.with_name(f".{target.name}.ready-probe-failures")
+
+
+def read_ready_probe_failure_count(
+    snapshot_path: str | Path | None,
+    *,
+    instance_id: str | None,
+) -> int:
+    """Read the durable consecutive-failure count for the reconciled instance."""
+    if snapshot_path is None or instance_id is None:
+        return 0
+    payload = _read_snapshot_payload(ready_probe_failure_sidecar_path(snapshot_path))
+    if not isinstance(payload, dict):
+        return 0
+    stored_id = payload.get("instance_id")
+    count = payload.get("count")
+    if stored_id != instance_id:
+        return 0
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return 0
+    return count
+
+
+def write_ready_probe_failure_count(
+    snapshot_path: str | Path | None,
+    *,
+    instance_id: str | None,
+    count: int,
+) -> bool:
+    """Persist or clear the consecutive ready-probe failure count.
+
+    Returns True when the durable counter matches ``count``. A positive count
+    that cannot be persisted returns False so callers can fail closed.
+    """
+    if count <= 0:
+        if snapshot_path is not None:
+            sidecar = ready_probe_failure_sidecar_path(snapshot_path)
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                return False
+        return True
+    if snapshot_path is None or instance_id is None:
+        return False
+    sidecar = ready_probe_failure_sidecar_path(snapshot_path)
+    payload = {"instance_id": instance_id, "count": count}
+    temporary: Path | None = None
+    try:
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=sidecar.parent,
+            prefix=f".{sidecar.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o644)
+        os.replace(temporary, sidecar)
+    except OSError as exc:
+        logger.warning("failed to persist ready-probe failure count %s: %s", sidecar, exc)
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def state_for_instances(
     instance_states: list[str],
-    *,
-    previous_state: GpuLifecycleState | None = None,
 ) -> GpuLifecycleState:
     """Reduce the configured instances to one fail-closed service state."""
     if not instance_states:
@@ -259,7 +360,6 @@ def state_for_instances(
     # only WARMING, so neither verdict may displace it on a later unprobed
     # cycle. This gives DEGRADED an exit edge and prevents stale READY evidence
     # from being republished as though a current readiness probe produced it.
-    del previous_state
     for state in (
         GpuLifecycleState.DEGRADED,
         GpuLifecycleState.READY,
@@ -325,8 +425,13 @@ def _validate_snapshot_reason(
     if published_state is GpuLifecycleState.DEGRADED:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("degraded GPU lifecycle snapshots require a reason")
-    elif reason is not None:
-        raise ValueError("reason is only valid for degraded GPU lifecycle snapshots")
+        return
+    if published_state is GpuLifecycleState.STARTING:
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
+            raise ValueError("starting GPU lifecycle snapshot reason must be a non-blank string or None")
+        return
+    if reason is not None:
+        raise ValueError("reason is only valid for degraded or starting GPU lifecycle snapshots")
 
 
 def _coerce_snapshot_intent(intent: IntentAction | str | None | object) -> IntentAction:

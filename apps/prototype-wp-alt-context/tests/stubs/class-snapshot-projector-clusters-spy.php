@@ -22,6 +22,8 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
     public array $mergedClusterBatches = [];
     public bool $shouldThrow = false;
     public int $tenantPageSize = 0;
+    public bool $mergedIsComplete = false;
+    public bool $prepareIsComplete = false;
     /** @var array<int,array<string,mixed>> */
     public array $topUnlabeledRows = [];
     /** @var array<string,array<string,mixed>> */
@@ -35,7 +37,7 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         $this->curatedClusters = $curatedClusters;
     }
 
-    public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
+    public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false): void
     {
         if ($this->shouldThrow) {
             throw new RuntimeException('clusters-failure');
@@ -46,6 +48,7 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         $this->mergedClusters = $clusters;
         $this->mergedClusterBatches[] = $clusters;
         $this->snapshotVersion = $snapshot_version;
+        $this->mergedIsComplete = $is_complete;
         $this->topUnlabeledRows = array_values(
             array_filter(
                 $clusters,
@@ -73,9 +76,10 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         );
     }
 
-    public function prepare_snapshot_merge_for_tenant(string $tenant_id, array $incoming_cluster_ids): void
+    public function prepare_snapshot_merge_for_tenant(string $tenant_id, array $incoming_cluster_ids, bool $is_complete = false): void
     {
         $this->tenantId = $tenant_id;
+        $this->prepareIsComplete = $is_complete;
     }
 
     public function merge_snapshot_batch_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void

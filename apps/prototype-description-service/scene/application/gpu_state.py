@@ -141,9 +141,14 @@ def _state_from_payload(payload: dict[str, Any], *, now: float) -> GpuState:
     ):
         return GpuState.UNKNOWN
 
+    # Mirrors the writer's _validate_snapshot_reason: starting may name why it is still starting
+    # (readiness_wait_timeout), so a slow boot stays visible instead of reading as UNKNOWN.
     reason = payload.get("reason")
     if state is GpuState.DEGRADED:
         if not isinstance(reason, str) or not reason.strip():
+            return GpuState.UNKNOWN
+    elif state is GpuState.STARTING:
+        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
             return GpuState.UNKNOWN
     elif reason is not None:
         return GpuState.UNKNOWN

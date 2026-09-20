@@ -16,6 +16,33 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
+vi.mock('../ActivityStatusStrip', () => ({
+  ActivityStatusStrip: ({
+    scan,
+  }: {
+    scan?: {
+      isScanning?: boolean;
+      isCancelling?: boolean;
+      progress?: { completed: number; total: number } | null;
+      cancelScan?: () => void;
+    };
+  }) => (
+    <div
+      data-testid="activity-status-strip"
+      data-scanning={scan?.isScanning ? 'true' : 'false'}
+      data-cancelling={scan?.isCancelling ? 'true' : 'false'}
+      data-progress-completed={scan?.progress ? String(scan.progress.completed) : ''}
+      data-progress-total={scan?.progress ? String(scan.progress.total) : ''}
+    >
+      {scan?.cancelScan ? (
+        <button type="button" onClick={scan.cancelScan} disabled={Boolean(scan.isCancelling)}>
+          {scan.isCancelling ? 'Cancelling…' : 'Cancel run'}
+        </button>
+      ) : null}
+    </div>
+  ),
+}));
+
 // ---------------------------------------------------------------------------
 // ScanActionPanel
 // ---------------------------------------------------------------------------
@@ -25,16 +52,21 @@ describe('ScanActionPanel', () => {
     isScanning: false,
   };
 
-  it('does not render progress section when total is 0', () => {
+  it('does not render a native progress bar when total is 0', () => {
     const progress: JobProgress = { completed: 0, total: 0 };
     render(<ScanActionPanel scanRun={{ ...baseScanRun, progress }} onCancelScan={vi.fn()} />);
+    expect(screen.getByTestId('activity-status-strip')).toBeTruthy();
     expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
-  it('renders progress bar and image count when progress is active', () => {
+  it('mounts ActivityStatusStrip and keeps processed-count detail when progress is active', () => {
     const progress: JobProgress = { completed: 4, total: 10, images_processed: 4, faces_found: 2 };
-    render(<ScanActionPanel scanRun={{ ...baseScanRun, progress }} onCancelScan={vi.fn()} />);
-    expect(screen.getByRole('progressbar')).toBeTruthy();
+    render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true, progress }} onCancelScan={vi.fn()} />);
+    const strip = screen.getByTestId('activity-status-strip');
+    expect(strip).toHaveAttribute('data-scanning', 'true');
+    expect(strip).toHaveAttribute('data-progress-completed', '4');
+    expect(strip).toHaveAttribute('data-progress-total', '10');
+    expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText('Processed 4/10 images · 2 faces found')).toBeTruthy();
   });
 
@@ -85,16 +117,18 @@ describe('ScanActionPanel', () => {
     expect(onRetryClustering).toHaveBeenCalledOnce();
   });
 
-  it('renders cancel button and calls handler', async () => {
+  it('hands cancel to the strip instead of a second Cancel scan control', async () => {
     const onCancelScan = vi.fn();
     render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true }} onCancelScan={onCancelScan} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel scan' }));
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
     expect(onCancelScan).toHaveBeenCalledOnce();
   });
 
-  it('hides cancel when idle and shows scan region description (L3R-05)', () => {
+  it('hides local cancel when idle and shows scan region description (L3R-05)', () => {
     render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: false }} onCancelScan={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
+    expect(screen.getByTestId('activity-status-strip')).toBeTruthy();
     expect(
       screen.getByText(
         'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
@@ -102,7 +136,7 @@ describe('ScanActionPanel', () => {
     ).toBeTruthy();
   });
 
-  it('suppresses cancel and progress bar when suppressPrimaryChrome is set (L3R-02)', () => {
+  it('suppresses the strip, cancel, and progress bar when suppressPrimaryChrome is set (L3R-02)', () => {
     const progress: JobProgress = { completed: 4, total: 10, phase: 'detecting' };
     render(
       <ScanActionPanel
@@ -111,13 +145,14 @@ describe('ScanActionPanel', () => {
         suppressPrimaryChrome
       />,
     );
+    expect(screen.queryByTestId('activity-status-strip')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(screen.getByText(/Job pending: working/)).toBeTruthy();
     expect(screen.getByText('Processed 4/10 images')).toBeTruthy();
   });
 
-  it('L3R-01 residual: live region stays phase-stable while per-tick statusText updates visually', () => {
+  it('L3R-01 residual: suppressed-chrome live region stays phase-stable while per-tick statusText updates visually', () => {
     const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
     const { rerender } = render(
       <ScanActionPanel
@@ -129,6 +164,7 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
 
@@ -152,6 +188,7 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
     expect(screen.getByTestId('scan-status-visual').textContent).toBe('Job job-1: Processed 5/10 images');
@@ -168,9 +205,23 @@ describe('ScanActionPanel', () => {
           jobId: 'job-1',
         }}
         onCancelScan={vi.fn()}
+        suppressPrimaryChrome
       />,
     );
     expect(screen.getByTestId('scan-status-announce').textContent).toBe('Job job-1: Clustering');
+  });
+
+  it('leaves the scan live region to the activity strip when it is shown', () => {
+    const progress: JobProgress = { completed: 1, total: 10, phase: 'detecting' };
+    render(
+      <ScanActionPanel
+        scanRun={{ ...baseScanRun, isScanning: true, progress, statusText: 'Processed 1/10 images', jobId: 'job-1' }}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('activity-status-strip')).toBeTruthy();
+    expect(screen.queryByTestId('scan-status-announce')).toBeNull();
+    expect(screen.queryAllByRole('status')).toHaveLength(0);
   });
 
   it('buildCoarseJobAnnouncement ignores count-bearing statusText without a phase', () => {
@@ -259,10 +310,11 @@ describe('ScanActionPanel', () => {
     expect(screen.queryByRole('button', { name: 'Cancel scan' })).toBeNull();
   });
 
-  it('disables cancel button while cancelling', () => {
+  it('disables strip cancel while cancelling', () => {
     render(
       <ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true, isCancelling: true }} onCancelScan={vi.fn()} />,
     );
+    expect(screen.getByTestId('activity-status-strip')).toHaveAttribute('data-cancelling', 'true');
     expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
   });
 
@@ -304,13 +356,16 @@ describe('ScanActionPanel', () => {
     expect(screen.getByText(/last error: TIMEOUT/)).toBeTruthy();
   });
 
-  it('shows "Clustering progress" aria-label on progress bar during clustering phase', () => {
+  it('hands clustering progress counts to the strip instead of a bare progress bar', () => {
     const progress: JobProgress = { completed: 50, total: 150, phase: 'clustering' };
-    render(<ScanActionPanel scanRun={{ ...baseScanRun, progress }} onCancelScan={vi.fn()} />);
-    expect(screen.getByRole('progressbar', { name: 'Clustering progress' })).toBeTruthy();
+    render(<ScanActionPanel scanRun={{ ...baseScanRun, isScanning: true, progress }} onCancelScan={vi.fn()} />);
+    const strip = screen.getByTestId('activity-status-strip');
+    expect(strip).toHaveAttribute('data-progress-completed', '50');
+    expect(strip).toHaveAttribute('data-progress-total', '150');
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
-  it('renders compact variant as a single-row strip with progress and cancel', async () => {
+  it('renders compact variant as ActivityStatusStrip with cancel (U1b)', async () => {
     const onCancelScan = vi.fn();
     const progress: JobProgress = { completed: 42, total: 100, phase: 'clustering' };
     const { container } = render(
@@ -322,16 +377,16 @@ describe('ScanActionPanel', () => {
     );
 
     expect(container.querySelector('[data-variant="compact"]')).toBeTruthy();
-    expect(screen.getByRole('progressbar')).toBeTruthy();
-    // L3R-06: leading verb derived from phase (clustering), not hardcoded Scanning…
-    expect(screen.getByText(/Clustering…/)).toBeTruthy();
-    expect(screen.getByText(/42%/)).toBeTruthy();
-    expect(screen.getByText(/phase: Clustering/i)).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const strip = screen.getByTestId('activity-status-strip');
+    expect(strip).toHaveAttribute('data-scanning', 'true');
+    expect(strip).toHaveAttribute('data-progress-completed', '42');
+    expect(strip).toHaveAttribute('data-progress-total', '100');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel run' }));
     expect(onCancelScan).toHaveBeenCalledOnce();
   });
 
-  it('derives compact leading verb from currentPhase (L3R-06)', () => {
+  it('compact variant still mounts the strip when currentPhase is projecting', () => {
     const progress: JobProgress = { completed: 10, total: 100, phase: 'detecting' };
     render(
       <ScanActionPanel
@@ -341,8 +396,8 @@ describe('ScanActionPanel', () => {
         onCancelScan={vi.fn()}
       />,
     );
-    expect(screen.getByText(/Syncing results…/)).toBeTruthy();
-    expect(screen.queryByText(/^Scanning…/)).toBeNull();
+    expect(screen.getByTestId('activity-status-strip')).toHaveAttribute('data-progress-completed', '10');
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 });
 

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Sovereign\Sync\OutboxStatus;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServiceTest extends TestCase
@@ -351,6 +353,183 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertFalse($service->retry_failed_operations_bulk('   '));
     }
 
+    public function testMaybeSchedulePurgeUsesActionSchedulerWhenAvailable(): void
+    {
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+        $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+        $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+        $this->assertGreaterThan(time(), (int) $this->actionSchedulerPurgeTimestamp());
+    }
+
+    public function testMaybeSchedulePurgeFallsBackToWpCronWhenActionSchedulerFails(): void
+    {
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertFalse($this->actionSchedulerPurgeTimestamp());
+        $scheduled = wp_next_scheduled('acx_sync_purge_terminal_rows', []);
+        $this->assertNotFalse($scheduled, 'Expected the WP-Cron fallback to book the purge.');
+        $this->assertGreaterThan(time(), (int) $scheduled);
+    }
+
+    public function testMaybeSchedulePurgeDoesNotDuplicateAnExistingActionSchedulerPurge(): void
+    {
+        wp_schedule_event(time() + 7200, 'daily', 'acx_sync_purge_terminal_rows', []);
+        as_schedule_single_action(time() + 120, 'acx_sync_purge_terminal_rows', [], 'acx-sync');
+        $existing = $this->actionSchedulerPurgeTimestamp();
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertSame($existing, $this->actionSchedulerPurgeTimestamp());
+        $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+    }
+
+    public function testMaybeSchedulePurgeClearsWpCronWhenActionSchedulerOwnsTheHook(): void
+    {
+        wp_schedule_event(time() + 7200, 'daily', 'acx_sync_purge_terminal_rows', []);
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+
+        OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
+        $this->assertFalse(
+            wp_next_scheduled('acx_sync_purge_terminal_rows', []),
+            'Action Scheduler ownership must call wp_clear_scheduled_hook for the purge hook.'
+        );
+        $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+        $this->assertGreaterThan(time(), (int) $this->actionSchedulerPurgeTimestamp());
+    }
+
+    public function testOrphanDiscardRechecksEntityGoneTenantScopedAndWritesDurableAuditRow(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-recheck';
+        $otherTenantId = 'tenant-other';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOrphanOutboxRow(301, $tenantId, 'cluster_not_found', 'cluster', 'cluster-gone'),
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-gone',
+                'tenant_id' => $otherTenantId,
+            ],
+        ];
+
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts'
+        );
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(1, $purged['orphaned']);
+        $this->assertSame(OutboxStatus::DISCARDED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+
+        $lockQuery = $this->findQueryContaining($wpdb->queries, 'LIMIT 1 FOR UPDATE');
+        $this->assertStringContainsString('FROM `wp_acx_sync_outbox`', $lockQuery);
+        $this->assertStringContainsString("tenant_id = '{$tenantId}'", $lockQuery);
+        $this->assertStringContainsString('id = 301', $lockQuery);
+
+        $clusterGoneQuery = $this->findQueryContaining($wpdb->queries, 'FROM `wp_acx_clusters`');
+        $this->assertStringContainsString("cluster_uuid = 'cluster-gone'", $clusterGoneQuery);
+        $this->assertStringContainsString("tenant_id = '{$tenantId}'", $clusterGoneQuery);
+        $this->assertStringContainsString('FOR UPDATE', $clusterGoneQuery);
+
+        $auditRows = $this->orphanAuditOutboxRows($wpdb->tableRows['wp_acx_sync_outbox'] ?? []);
+        $this->assertCount(1, $auditRows);
+        $this->assertSame($tenantId, $auditRows[0]['tenant_id']);
+        $this->assertSame('orphan_discard_audit', $auditRows[0]['operation_type']);
+        $this->assertSame(OutboxStatus::DISCARDED, $auditRows[0]['status']);
+        $this->assertSame('cluster', $auditRows[0]['entity_type']);
+        $this->assertSame('cluster-gone', $auditRows[0]['entity_key']);
+        $auditPayload = json_decode((string) $auditRows[0]['payload'], true);
+        $this->assertIsArray($auditPayload);
+        $this->assertSame(301, $auditPayload['outbox_id']);
+        $this->assertSame('cluster_not_found', $auditPayload['last_error_code']);
+        $this->assertSame('orphaned', $auditPayload['reason']);
+        $this->assertSame('cluster', $auditPayload['entity_type']);
+        $this->assertSame('cluster-gone', $auditPayload['entity_key']);
+
+        $auditInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'orphan_discard_audit'", $auditInsert);
+        $this->assertStringContainsString("'{$tenantId}'", $auditInsert);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $orphanAudits = $this->actionsNamed('acx_sync_outbox_orphan_discarded');
+        $this->assertCount(1, $orphanAudits);
+        $this->assertSame(301, $orphanAudits[0]['args'][0]['outbox_id']);
+        $this->assertSame($tenantId, $orphanAudits[0]['args'][0]['tenant_id']);
+        $this->assertSame('orphaned', $orphanAudits[0]['args'][0]['reason']);
+    }
+
+    public function testOrphanDiscardSkipsWhenLocalEntityStillExistsForTenant(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-still-present';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOrphanOutboxRow(302, $tenantId, 'cluster_not_found', 'cluster', 'cluster-live'),
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-live',
+                'tenant_id' => $tenantId,
+            ],
+        ];
+
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts'
+        );
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['orphaned']);
+        $this->assertSame(OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertSame([], $this->orphanAuditOutboxRows($wpdb->tableRows['wp_acx_sync_outbox'] ?? []));
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+        $this->assertSame([], array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_contains($query, "'orphan_discard_audit'")
+        )));
+    }
+
+    public function testOrphanDiscardAuditInsertFailureRollsBackDiscard(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-orphan-audit-fail';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->defaultInsertResult = false;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildFailedOrphanOutboxRow(303, $tenantId, 'http_404', 'cluster', 'cluster-missing'),
+        ];
+
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts'
+        );
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertFalse($purged);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+        $this->assertNotSame([], array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $query): bool => str_contains($query, "'orphan_discard_audit'")
+        )));
+    }
+
     /**
      * @return array<string,mixed>
      */
@@ -478,5 +657,85 @@ class OutboxMaintenanceServiceTest extends TestCase
         }
 
         return false;
+    }
+
+    private function actionSchedulerPurgeTimestamp(): int|false
+    {
+        foreach ($GLOBALS['__ac_action_scheduler'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === 'acx_sync_purge_terminal_rows') {
+                return (int) $entry['timestamp'];
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function buildFailedOrphanOutboxRow(
+        int $id,
+        string $tenantId,
+        string $errorCode,
+        string $entityType,
+        string $entityKey
+    ): array {
+        return [
+            'id' => $id,
+            'tenant_id' => $tenantId,
+            'status' => OutboxStatus::FAILED,
+            'attempts' => 1,
+            'last_error_code' => $errorCode,
+            'last_error_message' => 'failed',
+            'last_error_retryable' => 0,
+            'first_failed_at' => '2026-09-16 00:00:00',
+            'last_attempted_at' => '2026-09-16 00:00:00',
+            'created_at' => '2026-09-16 00:00:00',
+            'payload' => '{}',
+            'next_attempt_at' => null,
+            'entity_type' => $entityType,
+            'entity_key' => $entityKey,
+        ];
+    }
+
+    private function trackingSyncStateRepository(): SyncStateRepository
+    {
+        return new class() extends SyncStateRepository {
+            public int $refreshCount = 0;
+            public ?string $lastTenantId = null;
+
+            public function refresh_curation_metrics(string $tenant_id): void
+            {
+                ++$this->refreshCount;
+                $this->lastTenantId = $tenant_id;
+            }
+        };
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function orphanAuditOutboxRows(array $rows): array
+    {
+        return array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => 'orphan_discard_audit' === ($row['operation_type'] ?? '')
+        ));
+    }
+
+    /**
+     * @return array<int,array{hook:string,args:array<int,mixed>}>
+     */
+    private function actionsNamed(string $hook): array
+    {
+        $matches = [];
+        foreach ($GLOBALS['__ac_do_action_log'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === $hook) {
+                $matches[] = $entry;
+            }
+        }
+
+        return $matches;
     }
 }

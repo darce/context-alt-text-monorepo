@@ -195,11 +195,40 @@ class ApiKeyRotationHistory(Base):
     )
 
 
+class TenantKeyIdempotency(Base):
+    __tablename__ = "tenant_key_idempotency"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "operation",
+            "idempotency_key",
+            name="uq_tenant_key_idempotency_replay",
+        ),
+        Index("idx_tenant_key_idempotency_reclaim", "created_at"),
+    )
+
+
 __all__ = [
     "ApiKeyRotationHistory",
     "BillingSubscriptionProjection",
     "BillingWebhookInbox",
     "PortalIdentity",
     "TenantEntitlement",
+    "TenantKeyIdempotency",
     "UsageReservation",
 ]

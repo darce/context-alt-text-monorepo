@@ -79,11 +79,24 @@ class UsageTicket:
 
 @dataclass(frozen=True, slots=True)
 class BillingState:
+    """Authoritative provider billing state for one tenant.
+
+    ``provider_customer_id`` is optional only for :attr:`BillingSubscriptionStatus.NONE`,
+    which is the derived state of a tenant that has no projection row at all.
+    Every persistable status carries a customer id, because
+    ``billing_subscription_projection.provider_customer_id`` is ``NOT NULL`` and
+    a row only exists because a provider event created it ([rg-005]).
+    """
+
     tenant_id: UUID
     status: BillingSubscriptionStatus
     provider_customer_id: str | None
     current_period_end: datetime | None
     past_due_since: datetime | None
+
+    def __post_init__(self) -> None:
+        if self.status is not BillingSubscriptionStatus.NONE and not self.provider_customer_id:
+            raise ValueError(f"provider_customer_id is required for billing status {self.status.value}")
 
 
 @runtime_checkable

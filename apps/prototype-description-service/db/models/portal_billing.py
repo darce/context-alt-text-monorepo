@@ -11,6 +11,7 @@ from db.models.base_imports import (
     UUID,
     Base,
     Boolean,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -108,6 +109,11 @@ class UsageReservation(Base):
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
         Index("idx_usage_reservation_tenant_period_status", "tenant_id", "period_start", "status"),
         Index("idx_usage_reservation_reclaim", "status", "settled_at"),
+        CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        CheckConstraint(
+            "status IN ('reserved', 'committed', 'released', 'expired')",
+            name="ck_usage_reservation_status",
+        ),
     )
 
 
@@ -137,6 +143,10 @@ class BillingSubscriptionProjection(Base):
             name="uq_billing_subscription_projection_provider_customer",
         ),
         Index("idx_billing_subscription_projection_reclaim", "updated_at"),
+        CheckConstraint(
+            "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
+            name="ck_billing_subscription_projection_status",
+        ),
     )
 
 

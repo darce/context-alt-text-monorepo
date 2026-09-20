@@ -50,6 +50,7 @@ from db.models.portal_billing import (
     BillingWebhookInbox,
     PortalIdentity,
     TenantEntitlement,
+    TenantKeyIdempotency,
     UsageReservation,
 )
 from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
@@ -63,6 +64,7 @@ __all__ = [
     "DemoInstance",
     "PortalIdentity",
     "TenantEntitlement",
+    "TenantKeyIdempotency",
     "UsageReservation",
     "BillingSubscriptionProjection",
     "BillingWebhookInbox",

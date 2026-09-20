@@ -58,6 +58,7 @@ EXPECTED_VECTOR_COLUMNS = frozenset(
         "public.mv_identity_cluster_centroids.centroid",
     }
 )
+_VECTOR_SAMPLE_NAMES = ("representative_vector", "centroid")
 
 EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
     "effective_profile": "face_pipeline",
@@ -665,11 +666,8 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     ):
         return "embedding_provenance_unobserved"
     summary = embedding_provenance["value"]
-    required_summary_fields = {"row_counts", "model_id", "preprocessing_id"}
+    required_summary_fields = {"row_counts", "model_id", "preprocessing_id", *_VECTOR_SAMPLE_NAMES}
     if not required_summary_fields.issubset(summary):
-        return "embedding_provenance_unobserved"
-    sample_names = tuple(name for name in ("representative_vector", "centroid") if name in summary)
-    if not sample_names:
         return "embedding_provenance_unobserved"
 
     row_counts = summary["row_counts"]
@@ -693,7 +691,7 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
         return "persisted_model_stamp_mismatch"
 
     expected_dimension = EXPECTED_MODEL_CONTRACT["embedding_dimension"]
-    for sample_name in sample_names:
+    for sample_name in _VECTOR_SAMPLE_NAMES:
         if not _is_finite_vector(summary[sample_name], expected_dimension):
             return "non_finite_persisted_vector"
     return None

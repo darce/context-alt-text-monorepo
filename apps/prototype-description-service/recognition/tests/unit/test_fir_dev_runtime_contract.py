@@ -136,6 +136,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "incomplete_schema_discovery": ("incomplete", 1, "vector_inventory_discovery_incomplete"),
     "enrolled_store_foreign_model_stamp": ("invalid", 2, "persisted_model_stamp_mismatch"),
     "enrolled_store_non_finite_centroid": ("invalid", 2, "non_finite_persisted_vector"),
+    "enrolled_store_missing_centroid_sample": ("incomplete", 1, "embedding_provenance_unobserved"),
     "enrolled_store_missing_provenance_summary": ("incomplete", 1, "embedding_provenance_unobserved"),
     "empty_store_with_rows": ("incomplete", 1, "fir_store_state_unobserved"),
     "duplicate_worker_role": ("invalid", 2, "duplicate_role_observation"),
@@ -444,6 +445,8 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
         snapshot["database"]["embedding_provenance"]["value"]["model_id"] = "foreign-model@1"
     elif case_name == "enrolled_store_non_finite_centroid":
         snapshot["database"]["embedding_provenance"]["value"]["centroid"] = [float("nan")] * 128
+    elif case_name == "enrolled_store_missing_centroid_sample":
+        del snapshot["database"]["embedding_provenance"]["value"]["centroid"]
     elif case_name == "enrolled_store_missing_provenance_summary":
         del snapshot["database"]["embedding_provenance"]
     elif case_name == "empty_store_with_rows":

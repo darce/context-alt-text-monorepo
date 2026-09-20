@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
-from typing import NoReturn, cast
+from typing import Final, NoReturn, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -28,7 +28,7 @@ from recognition.application.services.tenant_key_service import (
     KeyPage,
     TenantKeyService,
 )
-from recognition.domain.portal_contracts import PortalPrincipal
+from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal
 from recognition.interface_adapters.http.deps.portal_auth import require_portal_principal
 from recognition.shared.db.dialect import is_postgres
 
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_KEY_PAGE_LIMIT = 25
 MAX_KEY_PAGE_LIMIT = 100
+MAX_KEY_LOOKUP_PAGES: Final[int] = 100
 NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 router = APIRouter(prefix="/portal", tags=["portal"])
@@ -147,8 +148,8 @@ class PortalUsageResponse(BaseModel):
     period_start: datetime
     period_end: datetime
     period: PortalUsagePeriodResponse
-    as_of: datetime
-    status: str
+    as_of: datetime | None
+    status: EntitlementStatus | None
     data_source: str
 
 
@@ -222,7 +223,7 @@ def _key_error(exc: Exception) -> HTTPException:
     if isinstance(exc, KeyConflictError):
         return _no_store_error(status.HTTP_409_CONFLICT, "portal key state conflict")
     if isinstance(exc, KeyLifecycleCorruptionError):
-        return _no_store_error(status.HTTP_503_SERVICE_UNAVAILABLE, "portal key service unavailable")
+        return _no_store_error(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc) or "portal key service unavailable")
     return _no_store_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "portal key service unavailable")
 
 
@@ -359,15 +360,38 @@ async def _find_key(
             return None
         result_id = _uuid_value(_attribute(result, "api_key_id", "key_id", "id"), field_name="api_key_id")
         return result if result_id == api_key_id else None
-    page = await service.list_keys(tenant_id, cursor=None, limit=MAX_KEY_PAGE_LIMIT, include_revoked=True)
-    for result in _page_data(page):
-        result_tenant_id = _uuid_value(_attribute(result, "tenant_id"), field_name="tenant_id")
-        if result_tenant_id != tenant_id:
-            continue
-        result_id = _uuid_value(_attribute(result, "api_key_id", "key_id", "id"), field_name="api_key_id")
-        if result_id == api_key_id:
-            return result
+    async for page in _iter_key_pages(service, tenant_id):
+        for result in _page_data(page):
+            result_tenant_id = _uuid_value(_attribute(result, "tenant_id"), field_name="tenant_id")
+            if result_tenant_id != tenant_id:
+                continue
+            result_id = _uuid_value(_attribute(result, "api_key_id", "key_id", "id"), field_name="api_key_id")
+            if result_id == api_key_id:
+                return result
     return None
+
+
+async def _iter_key_pages(service: TenantKeyService, tenant_id: UUID) -> AsyncIterator[object]:
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    for _ in range(MAX_KEY_LOOKUP_PAGES):
+        page = await service.list_keys(
+            tenant_id,
+            cursor=cursor,
+            limit=MAX_KEY_PAGE_LIMIT,
+            include_revoked=True,
+        )
+        yield page
+        next_cursor = _attribute(page, "next_cursor")
+        if next_cursor is None:
+            return
+        if not isinstance(next_cursor, str) or not next_cursor:
+            raise KeyLifecycleCorruptionError("portal key page cursor is invalid")
+        if next_cursor == cursor or next_cursor in seen_cursors:
+            raise KeyLifecycleCorruptionError("portal key page cursor repeated")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise KeyLifecycleCorruptionError("portal key lookup page bound reached")
 
 
 async def _last_usable_key(
@@ -375,20 +399,19 @@ async def _last_usable_key(
     tenant_id: UUID,
     api_key_id: UUID,
 ) -> bool:
-    page = await service.list_keys(tenant_id, cursor=None, limit=MAX_KEY_PAGE_LIMIT, include_revoked=True)
-    rows = _page_data(page)
     target_seen = False
     usable_count = 0
     now = _utc_now()
-    for row in rows:
-        row_tenant_id = _uuid_value(_attribute(row, "tenant_id"), field_name="tenant_id")
-        if row_tenant_id != tenant_id:
-            continue
-        row_id = _uuid_value(_attribute(row, "api_key_id", "key_id", "id"), field_name="api_key_id")
-        if row_id == api_key_id:
-            target_seen = True
-        if _is_usable(row, now=now):
-            usable_count += 1
+    async for page in _iter_key_pages(service, tenant_id):
+        for row in _page_data(page):
+            row_tenant_id = _uuid_value(_attribute(row, "tenant_id"), field_name="tenant_id")
+            if row_tenant_id != tenant_id:
+                continue
+            row_id = _uuid_value(_attribute(row, "api_key_id", "key_id", "id"), field_name="api_key_id")
+            if row_id == api_key_id:
+                target_seen = True
+            if _is_usable(row, now=now):
+                usable_count += 1
     return target_seen and usable_count == 1
 
 
@@ -451,6 +474,7 @@ async def create_portal_key(
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     principal: PortalPrincipal = Depends(require_portal_principal),
     service: TenantKeyService = Depends(get_tenant_key_service),
+    session: AsyncSession = Depends(get_portal_session),
 ) -> PortalKeyIssueResponse:
     """Create one tenant key and expose its raw secret only in this response."""
     response.headers.update(NO_STORE_HEADERS)
@@ -461,6 +485,7 @@ async def create_portal_key(
             lifetime_seconds=body.lifetime_seconds,
             rate_limit_tier=body.rate_limit_tier,
         )
+        await session.commit()
         return _issue_response(result, tenant_id=principal.tenant_id)
     except Exception as exc:
         _raise_key_error(exc, operation="create")
@@ -474,6 +499,7 @@ async def rotate_portal_key(
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
     principal: PortalPrincipal = Depends(require_portal_principal),
     service: TenantKeyService = Depends(get_tenant_key_service),
+    session: AsyncSession = Depends(get_portal_session),
 ) -> PortalKeyIssueResponse:
     """Rotate one tenant key through the durable service idempotency boundary."""
     response.headers.update(NO_STORE_HEADERS)
@@ -486,6 +512,7 @@ async def rotate_portal_key(
             idempotency_key=idempotency_key,
             reason=body.reason,
         )
+        await session.commit()
         return _issue_response(result, tenant_id=principal.tenant_id)
     except Exception as exc:
         _raise_key_error(exc, operation="rotate")
@@ -498,6 +525,7 @@ async def revoke_portal_key(
     response: Response,
     principal: PortalPrincipal = Depends(require_portal_principal),
     service: TenantKeyService = Depends(get_tenant_key_service),
+    session: AsyncSession = Depends(get_portal_session),
 ) -> RevokeKeyResponse:
     """Immediately revoke a key, warning before the tenant loses its last usable key."""
     response.headers.update(NO_STORE_HEADERS)
@@ -518,6 +546,7 @@ async def revoke_portal_key(
                 },
             )
         await service.revoke_key(principal.tenant_id, api_key_id, reason=body.reason)
+        await session.commit()
         return RevokeKeyResponse(id=api_key_id, tenant_id=principal.tenant_id, revoked=True)
     except HTTPException:
         raise
@@ -605,15 +634,19 @@ async def get_portal_usage(
             remaining = max(0, allowance - used - (reserved or 0))
 
         data_source = _attribute(source, "data_source", "freshness")
-        stale = bool(_attribute(source, "stale", "pending", default=False))
+        stale = _attribute(source, "stale", "pending", default=False) is True
         missing_split = reserved is None
-        if not isinstance(data_source, str) or not data_source:
+        if source is entitlement:
+            data_source = "authoritative"
+        elif not isinstance(data_source, str) or not data_source:
             data_source = "pending" if stale or missing_split else "authoritative"
         source_status = _attribute(source, "status", default=None)
         status_value = source_status.value if hasattr(source_status, "value") else source_status
-        if not isinstance(status_value, str) or not status_value:
-            status_value = "pending" if stale or (used is None and allowance is None) else "current"
-        as_of = _datetime_value(source, "as_of", "observed_at", "updated_at") or _utc_now()
+        try:
+            usage_status = EntitlementStatus(status_value) if isinstance(status_value, str) else None
+        except ValueError:
+            usage_status = None
+        as_of = _datetime_value(source, "as_of", "observed_at", "updated_at")
 
         return PortalUsageResponse(
             tenant_id=principal.tenant_id,
@@ -625,8 +658,8 @@ async def get_portal_usage(
             period_end=period_end,
             period=PortalUsagePeriodResponse(start=period_start, end=period_end),
             as_of=as_of,
-            status=status_value,
-            data_source=data_source,
+            status=usage_status,
+            data_source=cast(str, data_source),
         )
     except HTTPException:
         raise
@@ -641,6 +674,7 @@ async def get_portal_usage(
 __all__ = [
     "CreateKeyRequest",
     "MAX_KEY_PAGE_LIMIT",
+    "MAX_KEY_LOOKUP_PAGES",
     "NO_STORE_HEADERS",
     "PortalKeyIssueResponse",
     "PortalKeyMetadataResponse",

@@ -12,14 +12,16 @@ import dataclasses
 import numpy as np
 import pytest
 
+from scripts.eval_harness import face_assignment as face_assignment_mod
+from scripts.eval_harness import face_metrics as face_metrics_mod
+from scripts.eval_harness import manifest as manifest_mod
 from scripts.eval_harness.face_assignment import (
     FaceDecision,
+    associate_detections,
     collect_matched_faces,
     gt_box_name,
     score_face_assignment,
 )
-from scripts.eval_harness import face_metrics as face_metrics_mod
-from scripts.eval_harness.manifest import AnnotationMode, ManifestError, ScoreInvariant
 from scripts.eval_harness.face_metrics import (
     DEMOGRAPHIC_SECTION_HEADER,
     POSITIONAL_EVAL_NOT_EVALUABLE,
@@ -30,6 +32,7 @@ from scripts.eval_harness.face_metrics import (
     UNLABELED_COHORT_KEY,
     ImageDetection,
     ImageIdentities,
+    LabeledOrderResult,
     clustering_metrics_at_cut,
     clustering_sweep,
     demographic_rollup,
@@ -37,7 +40,6 @@ from scripts.eval_harness.face_metrics import (
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
-    LabeledOrderResult,
     labeled_left_to_right,
     labeled_order,
     latency_summary,
@@ -49,8 +51,16 @@ from scripts.eval_harness.face_metrics import (
     sort_identity_rows_by_normalized_centre,
     wire_bbox_normalized_centre,
 )
-
-
+from scripts.eval_harness.manifest import (
+    AnnotationMode,
+    FaceBox,
+    LabelConfidence,
+    LabelDecision,
+    LabelLineage,
+    LabelSource,
+    ManifestError,
+    ScoreInvariant,
+)
 
 # --- detection level (identity-agnostic) ---
 
@@ -1574,3 +1584,641 @@ def test_matched_faces_bounds_table(matched, expect_ok, fp, fn):
     assert result.false_negatives == fn
     assert result.false_positives >= 0
     assert result.false_negatives >= 0
+
+
+# --- FIRDV-2 S3a: strict localization adapter (RED-only contract) ---
+
+
+def _strict_detection_pr(rows, *, run_manifest):
+    """Call either allowed strict API shape while the RED lane is portable.
+
+    The implementation may add ``require_localization=True`` to ``detection_pr``
+    or expose ``detection_pr_strict`` as a sibling.  Keeping this dispatch in
+    the tests lets the implementation choose without weakening the contract.
+    """
+
+    kwargs = {
+        "annotation_mode": AnnotationMode.EXHAUSTIVE,
+        "run_manifest": run_manifest,
+    }
+    strict = getattr(face_metrics_mod, "detection_pr_strict", None)
+    if strict is not None:
+        return strict(rows, **kwargs)
+    return detection_pr(rows, require_localization=True, **kwargs)
+
+
+_STRICT_HUMAN_LINEAGE = LabelLineage(
+    labeler_id="s3a-human",
+    batch_id="s3a-red-batch",
+    capture_session_id="s3a-red-session",
+    pass_index=0,
+    labeled_at="2026-09-19T00:00:00Z",
+    tool_version="s3a-red",
+    saw_machine_proposals=False,
+    label_source=LabelSource.OPERATOR_BLIND,
+    decision=LabelDecision.NAMED,
+    confidence=LabelConfidence.HIGH,
+)
+_STRICT_MACHINE_SEEDED_LINEAGE = _STRICT_HUMAN_LINEAGE.model_copy(
+    update={"saw_machine_proposals": True, "label_source": LabelSource.OPERATOR_REPASS}
+)
+_STRICT_LEGACY_LINEAGE = _STRICT_HUMAN_LINEAGE.model_copy(
+    update={"label_source": LabelSource.LEGACY_IMPORT}
+)
+
+
+def _strict_box(
+    *,
+    x: float = 0.5,
+    y: float | None = 0.5,
+    w: float = 0.2,
+    h: float = 0.2,
+    name: str | None = "Alice",
+    lineage: LabelLineage | None = _STRICT_HUMAN_LINEAGE,
+    label_source: LabelSource | None = None,
+    saw_machine_proposals: bool | None = None,
+    decision: LabelDecision | None = None,
+) -> FaceBox:
+    updates: dict[str, object] = {}
+    if label_source is not None:
+        updates["label_source"] = label_source
+    if saw_machine_proposals is not None:
+        updates["saw_machine_proposals"] = saw_machine_proposals
+    if decision is not None:
+        updates["decision"] = decision
+    if updates:
+        lineage = (lineage or _STRICT_HUMAN_LINEAGE).model_copy(update=updates)
+    return FaceBox(x=x, y=y, w=w, h=h, name=name, source="operator", lineage=lineage)
+
+
+def _strict_row(
+    *,
+    gt_boxes: tuple[object, ...] = (),
+    detections_bbox_px: tuple[tuple[float, float, float, float], ...] = (),
+    matched_faces: int | None = None,
+    image: str = "s3a.jpg",
+    image_size: tuple[int, int] = (1600, 900),
+    detection_frame_size: tuple[int, int] | None = None,
+    pred_faces: int | None = None,
+    labeled_faces: int | None = None,
+) -> ImageDetection:
+    if detection_frame_size is None:
+        detection_frame_size = image_size
+    return face_metrics_mod.ImageDetection(
+        image=image,
+        pred_faces=len(detections_bbox_px) if pred_faces is None else pred_faces,
+        labeled_faces=len(gt_boxes) if labeled_faces is None else labeled_faces,
+        matched_faces=matched_faces,
+        detections_bbox_px=detections_bbox_px,
+        gt_boxes=gt_boxes,
+        image_size=image_size,
+        detection_frame_size=detection_frame_size,
+    )
+
+
+def _invariant_value(error: ManifestError) -> object:
+    invariant = error.invariant
+    return getattr(invariant, "value", invariant)
+
+
+def test_detection_pr_default_count_only_is_still_historical():
+    """S3a strictness is opt-in; the published count-only replay stays intact."""
+    result = detection_pr(
+        [ImageDetection(image="legacy.jpg", pred_faces=2, labeled_faces=2)],
+        annotation_mode=AnnotationMode.EXHAUSTIVE,
+    )
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (2, 0, 0)
+
+
+def test_strict_scoring_row_type_carries_geometry_and_lineage():
+    fields = {field.name: field for field in dataclasses.fields(face_metrics_mod.ImageDetection)}
+    for name in ("detections_bbox_px", "gt_boxes", "image_size", "detection_frame_size"):
+        assert name in fields
+
+    row = face_metrics_mod.ImageDetection("legacy.jpg", 2, 2)
+    assert row.detections_bbox_px == ()
+    assert row.gt_boxes == ()
+    assert row.image_size is None
+    assert row.detection_frame_size is None
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ("disjoint", (0, 2, 2)),
+        ("duplicate-over-one-gt", (1, 1, 1)),
+        ("aligned-but-count-says-zero", (1, 0, 0)),
+    ],
+)
+def test_detection_pr_strict_derives_pairs_from_geometry_not_counts(case, expected):
+    if case == "disjoint":
+        row = _strict_row(
+            gt_boxes=(_strict_box(x=0.25), _strict_box(x=0.75)),
+            detections_bbox_px=((0.0, 0.0, 100.0, 100.0), (1500.0, 800.0, 100.0, 100.0)),
+            matched_faces=2,
+        )
+    elif case == "duplicate-over-one-gt":
+        row = _strict_row(
+            gt_boxes=(_strict_box(x=0.3), _strict_box(x=0.75)),
+            detections_bbox_px=((320.0, 360.0, 320.0, 180.0),) * 2,
+            matched_faces=2,
+        )
+    else:
+        row = _strict_row(
+            gt_boxes=(_strict_box(),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+            matched_faces=0,
+        )
+    result = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert (result.true_positives, result.false_positives, result.false_negatives) == expected
+
+
+def test_detection_pr_strict_calls_association_with_row_geometry(monkeypatch):
+    """The adapter resolves face_assignment.associate_detections at call time."""
+    row = _strict_row(
+        gt_boxes=(_strict_box(x=0.3),),
+        detections_bbox_px=((320.0, 360.0, 320.0, 180.0),),
+    )
+    real_associate = face_assignment_mod.associate_detections
+    calls = []
+
+    def spy(detections_bbox_px, gt_boxes, image_size, **kwargs):
+        calls.append((detections_bbox_px, gt_boxes, image_size, kwargs))
+        return real_associate(detections_bbox_px, gt_boxes, image_size, **kwargs)
+
+    monkeypatch.setattr(face_assignment_mod, "associate_detections", spy)
+    _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+
+    assert len(calls) == 1
+    detections, gt_boxes, image_size, kwargs = calls[0]
+    assert detections == row.detections_bbox_px
+    assert gt_boxes == row.gt_boxes
+    assert image_size == row.image_size
+    assert kwargs["iou_threshold"] == 0.5
+
+
+def test_detection_pr_strict_uses_declared_width_and_height_in_order():
+    row = _strict_row(
+        image_size=(1600, 900),
+        gt_boxes=(_strict_box(x=0.375, y=0.6, w=0.25, h=0.2),),
+        # GT pixel corner is [400, 450, 400, 180]; the shifted detection gives IoU ~= .6981.
+        detections_bbox_px=((430.0, 470.0, 400.0, 180.0),),
+    )
+    result = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (1, 0, 0)
+    assert result.matched_ious == pytest.approx([0.6981], abs=1e-4)
+
+
+def test_detection_pr_strict_refuses_image_size_frame_mismatch():
+    row = _strict_row(
+        image_size=(1600, 900),
+        detection_frame_size=(800, 450),
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_requires_localization_frame_agreement"
+
+
+@pytest.mark.parametrize("case", ["empty-gt", "empty-detections", "zero-area-gt"])
+def test_detection_pr_strict_refuses_unusable_geometry(case):
+    if case == "empty-gt":
+        row = _strict_row(
+            gt_boxes=(),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),) * 2,
+            labeled_faces=2,
+            matched_faces=2,
+        )
+    elif case == "empty-detections":
+        row = _strict_row(
+            gt_boxes=(_strict_box(),),
+            detections_bbox_px=(),
+            pred_faces=2,
+            matched_faces=0,
+        )
+    else:
+        row = _strict_row(
+            gt_boxes=(_strict_box(w=0.0, h=0.0),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+            matched_faces=1,
+        )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_requires_localization"
+
+
+def test_detection_pr_strict_scores_complete_geometry_without_matched_faces():
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        matched_faces=None,
+    )
+    result = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (1, 0, 0)
+
+
+def test_detection_pr_strict_excludes_geometry_incomplete_gt_from_fn():
+    row = _strict_row(
+        gt_boxes=(_strict_box(), _strict_box(x=0.7, y=None)),
+        detections_bbox_px=(),
+        matched_faces=0,
+    )
+    result = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert result.false_negatives == 1
+    assert result.geometry_incomplete_gt == 1
+
+
+@pytest.mark.parametrize("case", ["uncovered-gt-count", "uncovered-detection-count"])
+def test_detection_pr_strict_refuses_count_and_box_desynchronisation(case):
+    good = _strict_row(
+        gt_boxes=(_strict_box(x=0.3), _strict_box(x=0.7)),
+        detections_bbox_px=((320.0, 360.0, 320.0, 180.0), (960.0, 360.0, 320.0, 180.0)),
+    )
+    good_result = _strict_detection_pr([good], run_manifest={"iou_threshold": 0.5})
+    assert (good_result.true_positives, good_result.false_positives, good_result.false_negatives) == (2, 0, 0)
+
+    if case == "uncovered-gt-count":
+        row = _strict_row(
+            gt_boxes=(_strict_box(x=0.3), _strict_box(x=0.7)),
+            detections_bbox_px=((320.0, 360.0, 320.0, 180.0), (960.0, 360.0, 320.0, 180.0)),
+            labeled_faces=3,
+        )
+    else:
+        row = _strict_row(
+            gt_boxes=(_strict_box(x=0.2), _strict_box(x=0.5), _strict_box(x=0.8)),
+            detections_bbox_px=(
+                (160.0, 360.0, 320.0, 180.0),
+                (640.0, 360.0, 320.0, 180.0),
+                (1120.0, 360.0, 320.0, 180.0),
+            ),
+            pred_faces=2,
+        )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_refuses_uncovered_face_count"
+
+
+def _heterogeneous_strict_row() -> ImageDetection:
+    gt_boxes = (
+        _strict_box(x=0.2, w=0.1),
+        _strict_box(x=0.5, w=0.1),
+        _strict_box(x=0.8, w=0.1),
+    )
+    # Equal 160x180 boxes shifted by d have IoU=(160-d)/(160+d):
+    # d=20/3 -> .92, d=1440/31 -> .55, and d=1440/11 -> .10.
+    detections = (
+        (240.0 + 20.0 / 3.0, 360.0, 160.0, 180.0),
+        (720.0 + 1440.0 / 31.0, 360.0, 160.0, 180.0),
+        (1200.0 + 1440.0 / 11.0, 360.0, 160.0, 180.0),
+    )
+    return _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=detections,
+        matched_faces=None,
+    )
+
+
+def test_detection_pr_strict_emits_only_accepted_pair_ious():
+    result = _strict_detection_pr(
+        [_heterogeneous_strict_row()],
+        run_manifest={"iou_threshold": 0.5},
+    )
+    assert result.matched_ious == pytest.approx([0.55, 0.92], abs=1e-6)
+    assert all(iou != pytest.approx(0.10, abs=1e-3) for iou in result.matched_ious)
+    assert len(result.matched_ious) == result.true_positives
+    assert (result.true_positives, result.false_positives, result.false_negatives) == (2, 1, 1)
+
+
+def test_detection_pr_strict_reports_iou_sensitivity_across_thresholds():
+    result = _strict_detection_pr(
+        [_heterogeneous_strict_row()],
+        run_manifest={"iou_threshold": 0.5},
+    )
+    sensitivity = getattr(result, "iou_sensitivity", None)
+    assert sensitivity is not None
+    assert isinstance(sensitivity, dict)
+
+    def counts_at(threshold):
+        block = sensitivity.get(threshold, sensitivity.get(str(threshold)))
+        assert block is not None
+        return (block["tp"], block["fp"], block["fn"])
+
+    at_half = counts_at(0.5)
+    at_nine = counts_at(0.9)
+    assert at_half == (2, 1, 1)
+    assert at_nine == (1, 2, 2)
+    assert at_half != at_nine
+
+
+def test_detection_pr_strict_reads_threshold_from_run_manifest_during_the_call(monkeypatch):
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        # IoU = 1/3 against the GT [640, 360, 320, 180] box.
+        detections_bbox_px=((800.0, 360.0, 320.0, 180.0),),
+    )
+    real_associate = face_assignment_mod.associate_detections
+
+    def spy(detections_bbox_px, gt_boxes, image_size, **kwargs):
+        assert kwargs["iou_threshold"] == 0.30
+        assert face_assignment_mod.IOU_MATCH_THRESHOLD == 0.5
+        return real_associate(detections_bbox_px, gt_boxes, image_size, **kwargs)
+
+    monkeypatch.setattr(face_assignment_mod, "associate_detections", spy)
+    _strict_detection_pr([row], run_manifest={"iou_threshold": 0.30})
+    assert face_assignment_mod.IOU_MATCH_THRESHOLD == 0.5
+
+
+@pytest.mark.parametrize(
+    "run_manifest",
+    [None, {}, {"iou_threshold": 0.0}, {"iou_threshold": 1.4}, {"iou_threshold": "0.5"}],
+    ids=["missing", "empty", "zero", "above-one", "string"],
+)
+def test_detection_pr_strict_refuses_missing_or_unratified_threshold(run_manifest):
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+    )
+    with pytest.raises(ManifestError):
+        _strict_detection_pr([row], run_manifest=run_manifest)
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["mixed", "lineage-none", "legacy-import", "machine-proposals"],
+)
+def test_detection_pr_strict_refuses_unadjudicated_gt_box(case):
+    human_box = _strict_box(x=0.3)
+    if case == "mixed":
+        other_box = _strict_box(x=0.7, lineage=_STRICT_MACHINE_SEEDED_LINEAGE)
+    elif case == "lineage-none":
+        other_box = _strict_box(x=0.7, lineage=None)
+    elif case == "legacy-import":
+        other_box = _strict_box(x=0.7, label_source=LabelSource.LEGACY_IMPORT)
+    elif case == "machine-proposals":
+        other_box = _strict_box(x=0.7, saw_machine_proposals=True)
+    else:
+        raise AssertionError(f"unexpected lineage case: {case}")
+    row = _strict_row(
+        gt_boxes=(human_box, other_box),
+        detections_bbox_px=(
+            (320.0, 360.0, 320.0, 180.0),
+            (960.0, 360.0, 320.0, 180.0),
+        ),
+        matched_faces=2,
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_requires_human_adjudicated_gt_lineage"
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [LabelDecision.STRANGER, LabelDecision.INCONCLUSIVE],
+)
+def test_detection_pr_strict_scores_adjudicated_non_named_gt(decision):
+    gt_boxes = (
+        _strict_box(x=0.3),
+        _strict_box(x=0.7, name=None, decision=decision),
+    )
+    found = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=(
+            (400.0, 360.0, 320.0, 180.0),
+            (960.0, 360.0, 320.0, 180.0),
+        ),
+    )
+    missed = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=((400.0, 360.0, 320.0, 180.0),),
+    )
+
+    found_result = _strict_detection_pr([found], run_manifest={"iou_threshold": 0.5})
+    missed_result = _strict_detection_pr([missed], run_manifest={"iou_threshold": 0.5})
+
+    assert (found_result.true_positives, found_result.false_positives) == (2, 0)
+    assert found_result.recall > missed_result.recall
+
+
+def test_detection_pr_strict_excludes_geometry_incomplete_gt_from_fp():
+    gt_boxes = (_strict_box(x=0.3), _strict_box(x=0.7, y=None))
+    found = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=(
+            (400.0, 360.0, 320.0, 180.0),
+            (960.0, 360.0, 320.0, 180.0),
+        ),
+    )
+    missed = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=((400.0, 360.0, 320.0, 180.0),),
+    )
+
+    found_result = _strict_detection_pr([found], run_manifest={"iou_threshold": 0.5})
+    missed_result = _strict_detection_pr([missed], run_manifest={"iou_threshold": 0.5})
+
+    assert found_result.false_positives == 0
+    assert found_result.iou_sensitivity[0.5]["fp"] == 0
+    assert found_result.precision >= missed_result.precision
+
+
+def test_detection_pr_strict_refuses_missing_detection_frame_declaration():
+    row = ImageDetection(
+        image="missing-frame.jpg",
+        pred_faces=1,
+        labeled_faces=1,
+        detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        gt_boxes=(_strict_box(),),
+        image_size=(1600, 900),
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_requires_localization_frame_agreement"
+
+
+def test_detection_pr_strict_policy_records_iou_threshold():
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        # IoU = 1/3 against the GT [640, 360, 320, 180] box.
+        detections_bbox_px=((800.0, 360.0, 320.0, 180.0),),
+    )
+    lower = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.30})
+    higher = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.50})
+
+    assert lower.policy["iou_threshold"] == pytest.approx(0.30)
+    assert higher.policy["iou_threshold"] == pytest.approx(0.50)
+    assert lower.policy != higher.policy
+
+
+@pytest.mark.parametrize(
+    "case, expected",
+    [
+        ("frame-mismatch", "detection_requires_localization_frame_agreement"),
+        ("unusable-geometry", "detection_requires_localization"),
+        ("coverage", "detection_refuses_uncovered_face_count"),
+        ("threshold", "detection_requires_ratified_iou_threshold"),
+        ("lineage", "detection_requires_human_adjudicated_gt_lineage"),
+    ],
+)
+def test_detection_pr_strict_refusals_name_published_invariants(case, expected):
+    if case == "frame-mismatch":
+        row = _strict_row(
+            detection_frame_size=(800, 450),
+            gt_boxes=(_strict_box(),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        )
+        run_manifest = {"iou_threshold": 0.5}
+    elif case == "unusable-geometry":
+        row = _strict_row(
+            gt_boxes=(),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+            labeled_faces=1,
+            matched_faces=1,
+        )
+        run_manifest = {"iou_threshold": 0.5}
+    elif case == "coverage":
+        row = _strict_row(
+            gt_boxes=(_strict_box(),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+            labeled_faces=2,
+        )
+        run_manifest = {"iou_threshold": 0.5}
+    elif case == "threshold":
+        row = _strict_row(
+            gt_boxes=(_strict_box(),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        )
+        run_manifest = {}
+    else:
+        row = _strict_row(
+            gt_boxes=(_strict_box(lineage=None),),
+            detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        )
+        run_manifest = {"iou_threshold": 0.5}
+
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest=run_manifest)
+    error = exc_info.value
+    assert isinstance(error.invariant, manifest_mod.ScoreInvariant)
+    assert error.invariant.value == expected
+    assert manifest_mod.REFUSAL_EXPLANATIONS[error.invariant].strip()
+
+
+def test_score_run_record_strict_refuses_corpus_without_gt_lineage():
+    from scripts.eval_harness import report as report_mod
+
+    entry = {
+        "path": "unprovenanced.jpg",
+        "media_id": 1,
+        "face_count": 1,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "annotation_mode": "exhaustive",
+        "face_boxes": [
+            {"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": None, "source": "operator"}
+        ],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "unprovenanced.jpg",
+                "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+                "identities": [],
+                "face_count": 1,
+                "error": None,
+            }
+        ],
+    }
+    with pytest.raises(ManifestError) as exc_info:
+        report_mod.score_run_record(
+            record,
+            [entry],
+            annotation_mode=AnnotationMode.EXHAUSTIVE,
+            run_manifest={"iou_threshold": 0.5},
+        )
+    assert _invariant_value(exc_info.value) == "detection_requires_human_adjudicated_gt_lineage"
+
+
+def test_score_run_record_count_only_output_is_unchanged():
+    from scripts.eval_harness.report import score_run_record
+
+    entry = {
+        "path": "legacy.jpg",
+        "media_id": 1,
+        "face_count": 2,
+        "present_identities": [],
+        "must_right": [],
+        "easy_wrong": [],
+        "policy": {"recognition_enabled": True},
+        "annotation_mode": "exhaustive",
+        "face_boxes": [
+            {"x": 0.3, "y": 0.5, "w": 0.2, "h": 0.2, "name": None, "source": "operator"},
+            {"x": 0.7, "y": 0.5, "w": 0.2, "h": 0.2, "name": None, "source": "operator"},
+        ],
+    }
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "legacy.jpg",
+                "describe": {"alt_text_draft": "A photo.", "visual_facts": {"objects": []}},
+                "identities": [],
+                "face_count": 2,
+                "error": None,
+            }
+        ],
+    }
+    scored = score_run_record(record, [entry])
+    assert scored["faces"]["detection"] == {
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+    }
+
+
+def test_score_head_to_head_count_only_cell_is_unchanged(tmp_path):
+    """The bench diagnostic still re-scores matched-face rows after stripping localization."""
+    from scripts.bench.score_report import score_head_to_head
+    from scripts.bench.tests.conftest import golden_entry
+    from scripts.bench.tests.test_score_head_to_head import (
+        A_STACK,
+        B_STACK,
+        _cells,
+        _init,
+        _pred,
+        _write_leg,
+    )
+
+    entries = [
+        golden_entry(i, face_count=1, present_identities=["Alice Q"], face_boxes=[{"x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2, "name": "Alice Q", "source": "iptc"}])
+        for i in (1, 2)
+    ]
+    run_dir = _init(tmp_path, [1, 2], entries)
+    _write_leg(run_dir, A_STACK, [_pred(1), _pred(2)], [1, 2])
+    _write_leg(run_dir, B_STACK, [_pred(1), _pred(2)], [1, 2])
+    score_head_to_head(run_dir)
+    cells = _cells(run_dir, "detection_count_only@frame_e2e/label_map_primary")
+    assert len(cells) == 2
+    assert all(
+        (cell["true_positives"], cell["false_positives"], cell["false_negatives"]) == (2, 0, 0)
+        for cell in cells
+    )

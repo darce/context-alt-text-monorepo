@@ -35,7 +35,14 @@ from typing import Any
 
 import numpy as np
 
-from .manifest import AnnotationMode, ManifestError, ScoreInvariant, parse_annotation_mode
+from .manifest import (
+    AnnotationMode,
+    LabelDecision,
+    LabelSource,
+    ManifestError,
+    ScoreInvariant,
+    parse_annotation_mode,
+)
 
 # Re-exports of the canonical ScoreInvariant members. New call sites should
 # import ScoreInvariant directly.
@@ -155,6 +162,10 @@ class ImageDetection:
     image: str
     pred_faces: int
     labeled_faces: int
+    detections_bbox_px: tuple[tuple[float, float, float, float], ...] = ()
+    gt_boxes: tuple[Any, ...] = ()
+    image_size: tuple[int, int] | None = None
+    detection_frame_size: tuple[int, int] | None = None
     matched_faces: int | None = None
 
 
@@ -545,6 +556,13 @@ class PrResult:
     wrong_names: list[tuple[str, str]] = field(default_factory=list)
     per_identity: dict[str, IdentityPr] = field(default_factory=dict)
     excluded_images: list[str] = field(default_factory=list)
+    matched_ious: list[float] = field(default_factory=list)
+    geometry_incomplete_gt: int = 0
+    iou_sensitivity: dict[float, dict[str, int]] | None = None
+    # Strict detection policy inputs are part of the result provenance.  In
+    # particular, the IoU threshold changes the accepted pairs and must not be
+    # silently lost when the result is serialized.
+    policy: dict[str, Any] = field(default_factory=dict)
 
     @property
     def precision(self) -> float | None:
@@ -604,6 +622,256 @@ def detection_pr(
         fp += max(item.pred_faces - matched, 0)
         fn += max(item.labeled_faces - matched, 0)
     return PrResult(true_positives=tp, false_positives=fp, false_negatives=fn)
+
+
+IOU_SENSITIVITY_GRID: tuple[float, ...] = (0.3, 0.5, 0.7, 0.9)
+
+
+def has_human_adjudicated_gt_lineage(box: Any) -> bool:
+    """Return whether a GT box carries the strict human-adjudication lineage.
+
+    The score-time report path sees raw mappings while strict detection tests and
+    association use ``FaceBox`` models, so this predicate intentionally accepts
+    both representations.
+    """
+    if isinstance(box, Mapping):
+        lineage = box.get("lineage")
+    else:
+        lineage = getattr(box, "lineage", None)
+    if lineage is None:
+        return False
+    if isinstance(lineage, Mapping):
+        label_source = lineage.get("label_source")
+        saw_machine_proposals = lineage.get("saw_machine_proposals")
+        decision = lineage.get("decision")
+    else:
+        label_source = getattr(lineage, "label_source", None)
+        saw_machine_proposals = getattr(lineage, "saw_machine_proposals", None)
+        decision = getattr(lineage, "decision", None)
+    return (
+        label_source != LabelSource.LEGACY_IMPORT
+        and saw_machine_proposals is False
+        and decision
+        in (
+            LabelDecision.NAMED,
+            LabelDecision.STRANGER,
+            LabelDecision.INCONCLUSIVE,
+        )
+    )
+
+
+def _strict_gt_box_dimension(box: Any, name: str) -> float | None:
+    if isinstance(box, Mapping):
+        value = box.get(name)
+    else:
+        value = getattr(box, name, None)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strict_detection_overlaps_incomplete_gt(
+    detection: Sequence[float],
+    box: Any,
+    image_size: Sequence[int],
+) -> bool:
+    """Return whether a detection falls in an incomplete GT box's x-span.
+
+    ``associate_detections`` intentionally excludes GT boxes whose ``y`` is
+    missing because no 2-D IoU can be established.  The x centre/width remain
+    observed, though, so an unmatched detection with horizontal overlap is a
+    plausible detection of that ignored face.  Do not charge that detection as
+    an FP; with no y coordinate available, the horizontal projection is the
+    only safe region we can exclude.
+    """
+    if len(detection) < 3 or not image_size:
+        return False
+    gt_x = _strict_gt_box_dimension(box, "x")
+    gt_width = _strict_gt_box_dimension(box, "w")
+    if gt_x is None or gt_width is None or gt_width <= 0.0:
+        return False
+    try:
+        detection_x = float(detection[0])
+        detection_width = float(detection[2])
+        image_width = float(image_size[0])
+    except (IndexError, TypeError, ValueError):
+        return False
+    if detection_width <= 0.0 or image_width <= 0.0:
+        return False
+    gt_left = (gt_x - gt_width / 2.0) * image_width
+    gt_right = (gt_x + gt_width / 2.0) * image_width
+    detection_right = detection_x + detection_width
+    return detection_right > gt_left and detection_x < gt_right
+
+
+def _strict_iou_threshold(run_manifest: Mapping[str, Any] | None) -> float:
+    if not isinstance(run_manifest, Mapping) or "iou_threshold" not in run_manifest:
+        raise ManifestError(
+            "strict detection scoring requires a ratified iou_threshold in run_manifest",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD,
+        )
+    value = run_manifest["iou_threshold"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ManifestError(
+            "strict detection scoring requires iou_threshold to be a real number",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD,
+        )
+    threshold = float(value)
+    if not 0.0 < threshold <= 1.0:
+        raise ManifestError(
+            "strict detection scoring requires 0 < iou_threshold <= 1",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD,
+        )
+    return threshold
+
+
+def detection_pr_strict(
+    items: Sequence[ImageDetection],
+    *,
+    annotation_mode: AnnotationMode | str | None = None,
+    run_manifest: Mapping[str, Any] | None = None,
+) -> PrResult:
+    """Strict localization-backed detection P/R for exhaustive annotations."""
+    mode = parse_annotation_mode(annotation_mode)
+    if mode is None:
+        raise ManifestError(
+            "detection_pr requires annotation_mode; omission is not exhaustive",
+            invariant=ScoreInvariant.DETECTION_REQUIRES_ANNOTATION_MODE,
+        )
+    if mode is not AnnotationMode.EXHAUSTIVE:
+        raise ManifestError(
+            "detection_pr refuses roster_only manifests; unlabeled non-roster "
+            "faces would be scored as false positives",
+            invariant=ScoreInvariant.DETECTION_REFUSES_ROSTER_ONLY,
+        )
+
+    threshold = _strict_iou_threshold(run_manifest)
+
+    # Refusal order is part of the strict contract: threshold, lineage, frame,
+    # usable geometry, and finally independent count/box coverage.
+    for row in items:
+        if any(not has_human_adjudicated_gt_lineage(box) for box in row.gt_boxes):
+            raise ManifestError(
+                "strict detection scoring requires human-adjudicated lineage on every GT box",
+                invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+            )
+    for row in items:
+        carries_geometry = bool(row.gt_boxes or row.detections_bbox_px)
+        frame_missing = carries_geometry and row.detection_frame_size is None
+        frame_mismatch = (
+            row.image_size is not None
+            and row.detection_frame_size is not None
+            and row.image_size != row.detection_frame_size
+        )
+        if frame_missing or frame_mismatch:
+            raise ManifestError(
+                "strict detection scoring requires a declared detector frame "
+                "matching the image frame",
+                invariant=ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT,
+            )
+    for row in items:
+        carries_geometry = bool(row.gt_boxes or row.detections_bbox_px)
+        invalid_gt_geometry = any(
+            (width := _strict_gt_box_dimension(box, "w")) is None
+            or (height := _strict_gt_box_dimension(box, "h")) is None
+            or width <= 0.0
+            or height <= 0.0
+            for box in row.gt_boxes
+        )
+        if (
+            (row.labeled_faces > 0 and not row.gt_boxes)
+            or (row.pred_faces > 0 and not row.detections_bbox_px)
+            or invalid_gt_geometry
+            or (row.image_size is None and carries_geometry)
+        ):
+            raise ManifestError(
+                "strict detection scoring requires usable localization geometry",
+                invariant=ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION,
+            )
+    for row in items:
+        if (
+            row.labeled_faces != len(row.gt_boxes)
+            or row.pred_faces != len(row.detections_bbox_px)
+        ):
+            raise ManifestError(
+                "strict detection scoring requires face counts to cover every geometry row",
+                invariant=DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+            )
+
+    from . import face_assignment
+
+    true_positives = false_positives = false_negatives = 0
+    geometry_incomplete_gt = 0
+    matched_ious: list[float] = []
+    row_sensitivity: list[tuple[int, int, list[float]]] = []
+    for row in items:
+        result = face_assignment.associate_detections(
+            row.detections_bbox_px,
+            row.gt_boxes,
+            row.image_size,
+            iou_threshold=threshold,
+        )
+        true_positives += len(result.pairs)
+        incomplete_gt_boxes = tuple(
+            row.gt_boxes[index] for index in result.geometry_incomplete_gt
+        )
+        scored_unmatched_detections = tuple(
+            detection_index
+            for detection_index in result.unmatched_detections
+            if not any(
+                _strict_detection_overlaps_incomplete_gt(
+                    row.detections_bbox_px[detection_index],
+                    box,
+                    row.image_size,
+                )
+                for box in incomplete_gt_boxes
+            )
+        )
+        false_positives += len(scored_unmatched_detections)
+        false_negatives += len(result.unmatched_gt)
+        incomplete_count = len(result.geometry_incomplete_gt)
+        geometry_incomplete_gt += incomplete_count
+        accepted_ious = [float(pair.iou) for pair in result.pairs]
+        matched_ious.extend(accepted_ious)
+        row_sensitivity.append(
+            (
+                len(row.detections_bbox_px)
+                - (len(result.unmatched_detections) - len(scored_unmatched_detections)),
+                len(row.gt_boxes) - incomplete_count,
+                accepted_ious,
+            )
+        )
+
+    sensitivity_thresholds = sorted(
+        {threshold, *(grid for grid in IOU_SENSITIVITY_GRID if grid >= threshold)}
+    )
+    iou_sensitivity: dict[float, dict[str, int]] = {}
+    for sensitivity_threshold in sensitivity_thresholds:
+        sensitivity_tp = 0
+        total_detections = 0
+        total_complete_gt = 0
+        for n_detections, n_complete_gt, accepted_ious in row_sensitivity:
+            sensitivity_tp += sum(
+                iou >= sensitivity_threshold for iou in accepted_ious
+            )
+            total_detections += n_detections
+            total_complete_gt += n_complete_gt
+        iou_sensitivity[sensitivity_threshold] = {
+            "tp": sensitivity_tp,
+            "fp": total_detections - sensitivity_tp,
+            "fn": total_complete_gt - sensitivity_tp,
+        }
+
+    return PrResult(
+        true_positives=true_positives,
+        false_positives=false_positives,
+        false_negatives=false_negatives,
+        matched_ious=sorted(matched_ious),
+        geometry_incomplete_gt=geometry_incomplete_gt,
+        iou_sensitivity=iou_sensitivity,
+        policy={"iou_threshold": threshold},
+    )
 
 
 def boxed_identity_names(entry: Mapping[str, Any]) -> frozenset[str]:

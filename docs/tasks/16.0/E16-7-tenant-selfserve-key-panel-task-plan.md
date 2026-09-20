@@ -1,5 +1,7 @@
 # E16-7. Tenant self-serve API key panel
 
+> **APP-1 integration successor (2026-09-19, proposed):** [Plan 0001](../../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md) incorporates these key/security requirements into signup, a capped free beta and sandbox-ready Polar billing. Clerk remains identity-only; local API-key management is retained. Do not dispatch this historical keys-only/no-Clerk-JS plan alongside APP-1. APP-1 S0 must disposition deferred findings and crosswalk the inherited cases; this note does not resolve findings or approve either plan.
+
 - **Date**: 2026-09-16
 - **Author**: Daniel Arcé
 - **Owning Epic**: `docs/epics/v0.3.1/saas-foundation-epic.md`

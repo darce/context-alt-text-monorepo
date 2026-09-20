@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
@@ -28,6 +29,7 @@ from recognition.application.health import (
     check_disk_headroom,
     check_face_pipeline_models,
     check_model_cache,
+    check_model_space,
     disk_headroom_probe_failure,
 )
 from recognition.application.scan.capability import (
@@ -40,6 +42,7 @@ from recognition.config.security import (
     validate_required_secrets,
 )
 from recognition.config.settings import RecognitionSettings
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 from recognition.interface_adapters.http import deps as http_deps
 from recognition.interface_adapters.http import router as recognition_router
@@ -51,6 +54,7 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     initialize_clustering_circuit_breaker,
 )
+from recognition.interface_adapters.http.deps.portal_composition import install_portal_composition
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
@@ -58,6 +62,8 @@ from recognition.interface_adapters.http.middleware.metrics import (
     get_default_metrics,
 )
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
+from recognition.interface_adapters.http.routers.billing_webhooks import router as billing_webhooks_router
+from recognition.interface_adapters.http.routers.portal import router as portal_router
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.application.seeded_adapter import SeededDescriptionAdapter
@@ -566,7 +572,7 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_origin_regex=None,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
+        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", "Idempotency-Key"],
         max_age=600,
     )
     app.add_middleware(CorrelationIdMiddleware)
@@ -592,6 +598,11 @@ def create_app() -> FastAPI:
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
     app.include_router(gpu_router, prefix="/scene")
+
+    if os.environ.get("RECOGNITION_PORTAL_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        install_portal_composition(app, settings=recognition_settings)
+        app.include_router(portal_router)
+        app.include_router(billing_webhooks_router)
 
     # DS-2: public demo slug resolve at root (GET /x/{slug}). Not under
     # /recognition — that surface carries require_auth on analyze children.
@@ -667,11 +678,51 @@ def register_metrics_route(app: FastAPI) -> None:
         )
 
 
+def resolve_model_space_probe(
+    space: ModelSpace,
+    *,
+    insightface_cache_dir: Path,
+    insightface_model_name: str,
+    models_dirs: dict[ModelSpace, Path] | None = None,
+) -> tuple[Callable[[], CheckResult], Path, str]:
+    """Resolve a deferred readiness probe and its operator-facing store label."""
+    if space is ModelSpace.INSIGHTFACE:
+        store = insightface_cache_dir
+
+        def probe() -> CheckResult:
+            return check_model_cache(store, model_name=insightface_model_name)
+
+        return probe, store, insightface_model_name
+
+    if space is ModelSpace.FACE_PIPELINE:
+        settings = RecognitionSettings()
+        supplied_store = models_dirs.get(space) if models_dirs is not None else None
+        store = supplied_store if supplied_store is not None else settings.face_pipeline.resolved_models_dir
+
+        def probe() -> CheckResult:
+            return check_face_pipeline_models(store)
+
+        return probe, store, "yunet+sface"
+
+    if space is ModelSpace.AURAFACE:
+        settings = RecognitionSettings()
+        supplied_store = models_dirs.get(space) if models_dirs is not None else None
+        store = supplied_store if supplied_store is not None else settings.auraface_models_dir
+
+        def probe() -> CheckResult:
+            return check_model_space(space, store)
+
+        return probe, store, "auraface"
+
+    raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
+
+
 def register_health_probes(
     app: FastAPI,
     *,
     model_cache_dir: Path | None = None,
     description_profile: DescriptionProfile | None = None,
+    models_dirs: dict[ModelSpace, Path] | None = None,
 ) -> None:
     """Attach root /health (bounded DB pool check) + /ready (deps) to the given app.
 
@@ -688,11 +739,12 @@ def register_health_probes(
 
     Model-cache probe is profile-aware ([OBS-08]): insightface uses the
     existing onnx-count check; face_pipeline uses eager sha256 verification
-    with mtime/size drift re-verify ([EMB-05]).
+    with mtime/size drift re-verify ([EMB-05]); auraface uses its own
+    provenance and embedding-space readiness check.
 
     Settings are constructed once at registration (S3CR-06), including the
-    description profile validation; the request path uses that validated
-    profile instead of re-parsing the environment.
+    description profile validation; the face model profile is re-read from
+    the environment for each probe so profile changes fail closed.
     """
     if description_profile is None:
         description_profile = _resolve_description_profile()
@@ -704,8 +756,6 @@ def register_health_probes(
     settings = RecognitionSettings()
     insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
     insightface_model_name = settings.insightface.model_name
-    face_pipeline_models_dir = settings.face_pipeline.resolved_models_dir
-    _allowed_profiles = frozenset({"insightface", "face_pipeline"})
 
     def _current_profile() -> str:
         """Cheap per-probe profile re-read (env only; no full settings re-parse)."""
@@ -718,25 +768,27 @@ def register_health_probes(
         face_pipeline verification runs off the event loop (S3CR-03).
         Invalid profile → UNHEALTHY CheckResult (S3CR-04), not HTTP 500.
         """
-        profile = _current_profile()
-        if profile not in _allowed_profiles:
+        raw_profile = _current_profile()
+        try:
+            profile = ModelSpace(raw_profile)
+        except (ValueError, UnhandledModelSpaceError):
+            known = ", ".join(member.value for member in ModelSpace)
             return (
                 CheckResult(
                     "model_cache",
                     HealthStatus.UNHEALTHY,
-                    f"invalid face_pipeline profile: {profile}",
+                    f"invalid face_pipeline profile: {raw_profile}; known spaces: {known}",
                 ),
                 insightface_cache_dir,
                 insightface_model_name,
             )
-        if profile == "face_pipeline":
-            mc_check = await asyncio.to_thread(check_face_pipeline_models, face_pipeline_models_dir)
-            return mc_check, face_pipeline_models_dir, "yunet+sface"
-        return (
-            check_model_cache(insightface_cache_dir, model_name=insightface_model_name),
-            insightface_cache_dir,
-            insightface_model_name,
+        probe, store, label = resolve_model_space_probe(
+            profile,
+            insightface_cache_dir=insightface_cache_dir,
+            insightface_model_name=insightface_model_name,
+            models_dirs=models_dirs,
         )
+        return await asyncio.to_thread(probe), store, label
 
     async def _disk_headroom_probe() -> CheckResult:
         """Run the synchronous filesystem probe under the liveness timeout."""

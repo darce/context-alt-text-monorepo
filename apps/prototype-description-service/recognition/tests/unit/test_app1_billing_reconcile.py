@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 
-from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
+from recognition.domain.portal_contracts import BillingState, BillingSubscriptionStatus, WebhookInboxStatus
 from scripts.billing_reconcile import (
     MAX_BATCH_SIZE,
     ReconcileConfig,
@@ -136,6 +136,10 @@ class _Provider:
                 "timeout": request_timeout,
             }
         )
+        position = self.positions.get(
+            provider_subscription_id or "",
+            self.positions.get(provider_customer_id, _BASE_POSITION),
+        )
         return {
             "tenant_id": str(_TENANT_ID),
             "provider_customer_id": provider_customer_id,
@@ -143,7 +147,7 @@ class _Provider:
             "status": BillingSubscriptionStatus.ACTIVE.value,
             "current_period_end": "2026-10-20T12:00:00Z",
             "past_due_since": None,
-            "event_position": self.positions.get(provider_customer_id, _BASE_POSITION),
+            "event_position": position,
         }
 
 
@@ -171,6 +175,15 @@ class _PoisonProvider(_Provider):
         )
 
 
+class _EntitlementService:
+    def __init__(self) -> None:
+        self.states: list[BillingState] = []
+
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> None:
+        assert tenant_id == state.tenant_id
+        self.states.append(state)
+
+
 def _config(**updates: object) -> ReconcileConfig:
     values: dict[str, object] = {
         "provider_timeout_s": 0.1,
@@ -191,12 +204,18 @@ async def _no_sleep(_delay: float) -> None:
 
 @pytest.mark.asyncio
 async def test_clean_batch_processes_every_row_and_exits_zero() -> None:
-    repository = _Repository([_row("evt-1"), _row("evt-2"), _row("evt-3")])
+    repository = _Repository(
+        [
+            _row("evt-1", customer_id="cus-shared"),
+            _row("evt-2", customer_id="cus-shared"),
+            _row("evt-3", customer_id="cus-shared"),
+        ]
+    )
     provider = _Provider(
         positions={
-            "cus-evt-1": _BASE_POSITION,
-            "cus-evt-2": _BASE_POSITION + timedelta(minutes=1),
-            "cus-evt-3": _BASE_POSITION + timedelta(minutes=2),
+            "sub-evt-1": _BASE_POSITION,
+            "sub-evt-2": _BASE_POSITION + timedelta(minutes=1),
+            "sub-evt-3": _BASE_POSITION + timedelta(minutes=2),
         }
     )
 
@@ -215,6 +234,100 @@ async def test_clean_batch_processes_every_row_and_exits_zero() -> None:
     assert repository.list_limits == [100]
     assert all(row.status == WebhookInboxStatus.PROCESSED.value for row in repository.rows)
     assert all(call["timeout"] == 0.1 for call in provider.calls)
+
+
+@pytest.mark.asyncio
+async def test_h1_success_applies_billing_state_before_acknowledging_event() -> None:
+    repository = _Repository([_row("evt-apply")])
+    provider = _Provider()
+    entitlement_service = _EntitlementService()
+
+    report = await reconcile(
+        repository,
+        provider,
+        entitlement_service=entitlement_service,
+        config=_config(),
+        sleeper=_no_sleep,
+    )
+
+    assert report.exit_code == 0
+    assert len(entitlement_service.states) == 1
+    assert entitlement_service.states[0].status is BillingSubscriptionStatus.ACTIVE
+    assert repository.marks[-1]["status"] is WebhookInboxStatus.PROCESSED
+
+
+@pytest.mark.asyncio
+async def test_h1_dry_run_does_not_apply_billing_state() -> None:
+    repository = _Repository([_row("evt-apply-dry")])
+    entitlement_service = _EntitlementService()
+
+    report = await reconcile(
+        repository,
+        _Provider(),
+        entitlement_service=entitlement_service,
+        config=_config(),
+        dry_run=True,
+        sleeper=_no_sleep,
+    )
+
+    assert report.exit_code == 0
+    assert entitlement_service.states == []
+    assert repository.upserts == []
+    assert repository.marks == []
+
+
+@pytest.mark.asyncio
+async def test_h9_projection_customer_mismatch_fails_closed_before_provider_call() -> None:
+    row = _row("evt-customer-mismatch", customer_id="cus-stale")
+    repository = _Repository([row])
+    repository.projections[_TENANT_ID] = SimpleNamespace(
+        provider="polar",
+        provider_customer_id="cus-current",
+        provider_subscription_id="sub-current",
+        status=BillingSubscriptionStatus.ACTIVE.value,
+        current_period_end=None,
+        past_due_since=None,
+        last_event_id="evt-current",
+        updated_at=_BASE_POSITION,
+    )
+    provider = _Provider()
+
+    report = await reconcile(repository, provider, config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert provider.calls == []
+    assert repository.upserts == []
+    assert repository.rows[0].status == WebhookInboxStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_h9_provider_customer_mismatch_fails_closed_before_projection_write() -> None:
+    class _MismatchedProvider(_Provider):
+        async def retrieve_state(
+            self,
+            *,
+            provider_customer_id: str,
+            provider_subscription_id: str | None,
+            request_timeout: float,
+        ) -> dict[str, object]:
+            state = await super().retrieve_state(
+                provider_customer_id=provider_customer_id,
+                provider_subscription_id=provider_subscription_id,
+                request_timeout=request_timeout,
+            )
+            state["provider_customer_id"] = "cus-other"
+            return state
+
+    repository = _Repository([_row("evt-provider-customer")])
+    provider = _MismatchedProvider()
+
+    report = await reconcile(repository, provider, config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert repository.upserts == []
+    assert repository.rows[0].status == WebhookInboxStatus.FAILED.value
 
 
 @pytest.mark.asyncio
@@ -280,6 +393,66 @@ async def test_provider_timeout_leaves_row_pending_without_projection_write() ->
     assert repository.upserts == []
     assert [mark["status"] for mark in repository.marks] == [WebhookInboxStatus.FAILED]
     assert len(provider.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_m15_dry_run_provider_failure_does_not_update_retry_state() -> None:
+    repository = _Repository([_row("evt-dry-failure")])
+    provider = _PoisonProvider(timeout_error=True)
+
+    report = await reconcile(
+        repository,
+        provider,
+        config=_config(retry_attempts=2),
+        dry_run=True,
+        sleeper=_no_sleep,
+    )
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert [change.action for change in report.changes] == ["would_fail"]
+    assert repository.marks == []
+    assert repository.rows[0].status == WebhookInboxStatus.RECEIVED.value
+
+
+@pytest.mark.asyncio
+async def test_m16_recheck_skips_write_when_another_worker_changes_attempts() -> None:
+    repository = _Repository([_row("evt-attempt-race")])
+
+    class _RecheckRepository(_Repository):
+        async def get_webhook(self, *, provider: str, provider_event_id: str) -> SimpleNamespace | None:
+            return next(
+                (
+                    candidate
+                    for candidate in self.rows
+                    if candidate.provider == provider and candidate.provider_event_id == provider_event_id
+                ),
+                None,
+            )
+
+    repository = _RecheckRepository(repository.rows)
+
+    class _AttemptChangingProvider(_Provider):
+        async def retrieve_state(
+            self,
+            *,
+            provider_customer_id: str,
+            provider_subscription_id: str | None,
+            request_timeout: float,
+        ) -> dict[str, object]:
+            repository.rows[0].attempts = 1
+            return await super().retrieve_state(
+                provider_customer_id=provider_customer_id,
+                provider_subscription_id=provider_subscription_id,
+                request_timeout=request_timeout,
+            )
+
+    report = await reconcile(repository, _AttemptChangingProvider(), config=_config(), sleeper=_no_sleep)
+
+    assert report.exit_code == 0
+    assert report.processed == 0
+    assert repository.upserts == []
+    assert repository.marks == []
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ from sqlalchemy import select
 from db.models import BillingWebhookInbox
 from recognition.domain.portal_contracts import (
     BillingProvider,
+    BillingState,
     BillingSubscriptionStatus,
     WebhookInboxStatus,
 )
@@ -121,6 +122,11 @@ class BillingRepositoryLike(Protocol):
         status: WebhookInboxStatus,
         processed_at: datetime | None = None,
     ) -> bool:
+        ...
+
+
+class EntitlementServiceLike(Protocol):
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> object:
         ...
 
 
@@ -286,6 +292,7 @@ class BillingReconciliationWorker:
         repository: BillingRepositoryLike,
         provider: ReconciliationProvider,
         *,
+        entitlement_service: EntitlementServiceLike | None = None,
         config: ReconcileConfig | None = None,
         clock: Callable[[], datetime] | None = None,
         sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
@@ -294,6 +301,7 @@ class BillingReconciliationWorker:
     ) -> None:
         self._repository = repository
         self._provider = provider
+        self._entitlement_service = entitlement_service
         self._config = config or ReconcileConfig()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleeper = sleeper
@@ -396,10 +404,11 @@ class BillingReconciliationWorker:
             claimed = await self._claim_row(row)
             if claimed is None:
                 return _RowOutcome()
-            row = claimed
+            row = _snapshot_row(claimed)
             provider_name = _required_text(_row_value(row, "provider"), "provider")
             provider_event_id = _required_text(_row_value(row, "provider_event_id"), "provider_event_id")
             inbox_row_id = _safe_log_id(row, "id")
+            expected_attempts = _row_attempts(row)
 
             payload = _row_value(row, "payload")
             event_type = _required_text(_row_value(row, "event_type"), "event_type")
@@ -422,13 +431,41 @@ class BillingReconciliationWorker:
                     self._log_row(row, "dry_run", action=change.action)
                     await self._rollback()
                     return _RowOutcome(progressed=True, duplicate=True, dry_run_change=change)
-                await self._mark(row, status=WebhookInboxStatus.PROCESSED)
+                writable_row = await self._recheck_row(
+                    row,
+                    expected_attempts=expected_attempts,
+                    for_update=True,
+                )
+                if writable_row is None:
+                    await self._rollback()
+                    return _RowOutcome()
+                await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
                 self._log_row(row, "processed", action=change.action)
                 return _RowOutcome(progressed=True, duplicate=True)
 
+            # WHY: the provider is untrusted network I/O; release the inbox
+            # transaction before retry/backoff so a slow provider cannot pin a
+            # row lock or database connection.
+            await self._rollback()
             state = await self._retrieve_state(context)
             if state.tenant_id != context.tenant_id:
                 raise ReconciliationError("provider state tenant does not match inbox tenant")
+            if state.provider_customer_id != context.provider_customer_id:
+                raise ReconciliationError("provider state customer does not match inbox customer")
+
+            writable_row = await self._recheck_row(
+                row,
+                expected_attempts=expected_attempts,
+                for_update=not dry_run,
+            )
+            if writable_row is None:
+                await self._rollback()
+                return _RowOutcome()
+            current_projection = await self._get_projection(context.tenant_id, provider_name)
+            stored_customer_id = _projection_value(current_projection, "provider_customer_id")
+            if stored_customer_id is not None and _normalize_customer_id(stored_customer_id) != context.provider_customer_id:
+                raise ReconciliationError("tenant projection customer does not match inbox customer")
+            projection = current_projection
 
             action = _projection_action(projection, state, provider_event_id, provider_name)
             change = DryRunChange(
@@ -449,7 +486,7 @@ class BillingReconciliationWorker:
                 )
 
             if action == "skip_stale":
-                await self._mark(row, status=WebhookInboxStatus.PROCESSED)
+                await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
                 self._log_row(row, "processed", action=action)
                 return _RowOutcome(progressed=True, stale=True)
 
@@ -466,7 +503,9 @@ class BillingReconciliationWorker:
                     event_position=state.event_position,
                 )
             )
-            await self._mark(row, status=WebhookInboxStatus.PROCESSED)
+            if changed:
+                await self._apply_billing_state(state)
+            await self._mark(writable_row, status=WebhookInboxStatus.PROCESSED)
             self._log_row(row, "processed", action="update_projection" if changed else "skip_stale")
             return _RowOutcome(
                 progressed=True,
@@ -487,7 +526,15 @@ class BillingReconciliationWorker:
                 self._log_row(row, "dry_run", action=change.action)
                 return _RowOutcome(progressed=True, ignored=True, dry_run_change=change)
             try:
-                await self._mark(row, status=WebhookInboxStatus.DISCARDED)
+                writable_row = await self._recheck_row(
+                    row,
+                    expected_attempts=_row_attempts(row),
+                    for_update=True,
+                )
+                if writable_row is None:
+                    await self._rollback()
+                    return _RowOutcome()
+                await self._mark(writable_row, status=WebhookInboxStatus.DISCARDED)
             except Exception as exc:  # noqa: BLE001
                 await self._rollback()
                 self._log_failure(row, "discard_failed", exc)
@@ -495,11 +542,61 @@ class BillingReconciliationWorker:
             self._log_row(row, "discarded", action="ignore_unknown")
             return _RowOutcome(progressed=True, ignored=True)
         except ProviderUnavailable as exc:
+            if dry_run:
+                return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
             await self._mark_failure(row, exc)
             return _RowOutcome(failed=True)
         except Exception as exc:  # noqa: BLE001
+            if dry_run:
+                return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
             await self._mark_failure(row, exc)
             return _RowOutcome(failed=True)
+
+    async def _apply_billing_state(self, state: AuthoritativeBillingState) -> None:
+        service = self._entitlement_service
+        if service is None:
+            service = getattr(self._repository, "entitlement_service", None)
+        if service is None:
+            apply_state = getattr(self._repository, "apply_billing_state", None)
+            if callable(apply_state):
+                service = self._repository
+        if service is None:
+            session = getattr(self._repository, "session", None)
+            if session is not None:
+                from recognition.application.services.tenant_entitlement_service import TenantEntitlementService
+
+                service = TenantEntitlementService(session)
+        if service is None:
+            return
+
+        apply_state = getattr(service, "apply_billing_state", None)
+        if not callable(apply_state):
+            raise ReconciliationError("entitlement service does not expose apply_billing_state")
+        billing_state = BillingState(
+            tenant_id=state.tenant_id,
+            status=state.status,
+            provider_customer_id=state.provider_customer_id,
+            current_period_end=state.current_period_end,
+            past_due_since=state.past_due_since,
+        )
+        await _maybe_await(apply_state(state.tenant_id, billing_state))
+
+    async def _dry_run_failure(
+        self,
+        row: object,
+        provider_event_id: str,
+        inbox_row_id: str,
+        exc: BaseException,
+    ) -> _RowOutcome:
+        await self._rollback()
+        change = DryRunChange(
+            inbox_row_id=inbox_row_id,
+            provider_event_id=provider_event_id,
+            tenant_id=None,
+            action="would_fail",
+        )
+        self._log_failure(row, "dry_run_row_failed", exc)
+        return _RowOutcome(failed=True, dry_run_change=change)
 
     async def _context_and_projection(
         self,
@@ -536,8 +633,13 @@ class BillingReconciliationWorker:
             metadata.get("customer_id"),
             _projection_value(projection, "provider_customer_id"),
         )
-        if not isinstance(customer_value, str) or not customer_value:
-            raise UnsupportedWebhook(f"event {event_type} has no provider customer reference")
+        try:
+            normalized_customer_id = _normalize_customer_id(customer_value)
+        except ReconciliationError as exc:
+            raise UnsupportedWebhook(f"event {event_type} has no provider customer reference") from exc
+        stored_customer_id = _projection_value(projection, "provider_customer_id")
+        if stored_customer_id is not None and _normalize_customer_id(stored_customer_id) != normalized_customer_id:
+            raise ReconciliationError("inbox customer does not match tenant projection customer")
 
         subscription_value = _first_value(
             data.get("provider_subscription_id"),
@@ -548,7 +650,7 @@ class BillingReconciliationWorker:
         )
         if subscription_value is not None and not isinstance(subscription_value, str):
             raise ReconciliationError("provider subscription id must be a string")
-        return _EventContext(tenant_id, customer_value, subscription_value), projection
+        return _EventContext(tenant_id, normalized_customer_id, subscription_value), projection
 
     async def _get_projection(self, tenant_id: UUID, provider: str) -> object | None:
         method = getattr(self._repository, "get_projection", None)
@@ -557,8 +659,10 @@ class BillingReconciliationWorker:
         method = cast(Callable[..., object], method)
         parameters = _callable_parameters(method)
         if "provider" in parameters or _accepts_var_kwargs(parameters):
-            return cast(object | None, await _maybe_await(method(tenant_id, provider=provider)))
-        return cast(object | None, await _maybe_await(method(tenant_id)))
+            result = cast(object | None, await _maybe_await(method(tenant_id, provider=provider)))
+        else:
+            result = cast(object | None, await _maybe_await(method(tenant_id)))
+        return _snapshot_projection(result)
 
     async def _retrieve_state(self, context: _EventContext) -> AuthoritativeBillingState:
         method = _provider_method(self._provider)
@@ -588,53 +692,63 @@ class BillingReconciliationWorker:
         )
         return _normalize_state(raw_state, context)
 
-    async def _claim_row(self, row: object) -> object | None:
-        status = _inbox_status(_row_value(row, "status", WebhookInboxStatus.RECEIVED.value))
-        if status not in {WebhookInboxStatus.RECEIVED, WebhookInboxStatus.FAILED}:
-            return None
-
-        custom_claim = getattr(self._repository, "claim_webhook", None)
-        if callable(custom_claim):
-            result = await _maybe_await(
-                custom_claim(
-                    provider=_required_text(_row_value(row, "provider"), "provider"),
-                    provider_event_id=_required_text(
-                        _row_value(row, "provider_event_id"), "provider_event_id"
-                    ),
-                )
-            )
-            if isinstance(result, bool):
-                return row if result else None
-            return cast(object | None, result)
-
+    async def _recheck_row(
+        self,
+        row: object,
+        *,
+        expected_attempts: int,
+        for_update: bool,
+    ) -> object | None:
         session = getattr(self._repository, "session", None)
         row_id = _row_value(row, "id", None)
         execute = getattr(session, "execute", None)
-        if session is None or row_id is None or not callable(execute):
-            return row
-
-        statement = (
-            select(BillingWebhookInbox)
-            .where(
+        if session is not None and row_id is not None and callable(execute):
+            statement = select(BillingWebhookInbox).where(
                 BillingWebhookInbox.id == row_id,
                 BillingWebhookInbox.provider == _required_text(_row_value(row, "provider"), "provider"),
                 BillingWebhookInbox.provider_event_id
                 == _required_text(_row_value(row, "provider_event_id"), "provider_event_id"),
-                BillingWebhookInbox.status.in_(tuple(_PENDING_STATUSES)),
             )
-            .with_for_update()
-            .limit(1)
-        )
-        result = await _maybe_await(execute(statement))
-        scalar_one_or_none = getattr(result, "scalar_one_or_none", None)
-        if callable(scalar_one_or_none):
-            return cast(object | None, scalar_one_or_none())
-        scalars = getattr(result, "scalars", None)
-        if callable(scalars):
-            first = getattr(scalars(), "first", None)
-            if callable(first):
-                return cast(object | None, first())
-        raise ReconciliationError("repository row-lock result is not scalar")
+            if for_update:
+                statement = statement.with_for_update()
+            result = await _maybe_await(execute(statement.limit(1)))
+            scalar_one_or_none = getattr(result, "scalar_one_or_none", None)
+            if callable(scalar_one_or_none):
+                current = cast(object | None, scalar_one_or_none())
+            else:
+                scalars = getattr(result, "scalars", None)
+                first = getattr(scalars(), "first", None) if callable(scalars) else None
+                current = cast(object | None, first()) if callable(first) else None
+        else:
+            get_webhook = getattr(self._repository, "get_webhook", None)
+            if callable(get_webhook):
+                current = cast(
+                    object | None,
+                    await _maybe_await(
+                        get_webhook(
+                            provider=_required_text(_row_value(row, "provider"), "provider"),
+                            provider_event_id=_required_text(
+                                _row_value(row, "provider_event_id"), "provider_event_id"
+                            ),
+                        )
+                    ),
+                )
+            else:
+                current = row
+        if current is None:
+            return None
+        status = _inbox_status(_row_value(current, "status", WebhookInboxStatus.RECEIVED.value))
+        if status not in {WebhookInboxStatus.RECEIVED, WebhookInboxStatus.FAILED}:
+            return None
+        if _row_attempts(current) != expected_attempts:
+            return None
+        return current
+
+    async def _claim_row(self, row: object) -> object | None:
+        status = _inbox_status(_row_value(row, "status", WebhookInboxStatus.RECEIVED.value))
+        if status not in {WebhookInboxStatus.RECEIVED, WebhookInboxStatus.FAILED}:
+            return None
+        return row
 
     async def _mark(self, row: object, *, status: WebhookInboxStatus) -> None:
         await _maybe_await(
@@ -651,6 +765,7 @@ class BillingReconciliationWorker:
 
     async def _mark_failure(self, row: object, exc: BaseException) -> None:
         try:
+            await self._rollback()
             await _maybe_await(
                 self._repository.mark_webhook_processed(
                     provider=_safe_log_id(row, "provider"),
@@ -705,6 +820,7 @@ async def reconcile(
     repository: BillingRepositoryLike,
     provider: ReconciliationProvider,
     *,
+    entitlement_service: EntitlementServiceLike | None = None,
     config: ReconcileConfig | None = None,
     loop: bool = False,
     max_cycles: int | None = None,
@@ -719,6 +835,7 @@ async def reconcile(
     return await BillingReconciliationWorker(
         repository,
         provider,
+        entitlement_service=entitlement_service,
         config=config,
         clock=clock,
         sleeper=sleeper,
@@ -735,6 +852,7 @@ async def reconcile_once(
     repository: BillingRepositoryLike,
     provider: ReconciliationProvider,
     *,
+    entitlement_service: EntitlementServiceLike | None = None,
     config: ReconcileConfig | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
@@ -747,6 +865,7 @@ async def reconcile_once(
     return await reconcile(
         repository,
         provider,
+        entitlement_service=entitlement_service,
         config=config,
         batch_size=batch_size,
         dry_run=dry_run,
@@ -790,6 +909,7 @@ async def run(
     *,
     repository: BillingRepositoryLike | None = None,
     provider: ReconciliationProvider | None = None,
+    entitlement_service: EntitlementServiceLike | None = None,
     config: ReconcileConfig | None = None,
     clock: Callable[[], datetime] | None = None,
     sleeper: Callable[[float], Awaitable[object]] = asyncio.sleep,
@@ -820,6 +940,7 @@ async def run(
     report = await reconcile(
         repository,
         provider,
+        entitlement_service=entitlement_service,
         config=config,
         loop=args.loop,
         max_cycles=args.max_cycles,
@@ -979,7 +1100,7 @@ def _normalize_state(raw_state: object, context: _EventContext) -> Authoritative
             raise ReconciliationError("provider state tenant does not match inbox tenant")
         return AuthoritativeBillingState(
             tenant_id=raw_state.tenant_id,
-            provider_customer_id=_required_text(raw_state.provider_customer_id, "provider customer id"),
+            provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
             provider_subscription_id=raw_state.provider_subscription_id,
             status=raw_state.status,
             current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
@@ -1001,8 +1122,7 @@ def _normalize_state(raw_state: object, context: _EventContext) -> Authoritative
         _object_value(candidate, "customer_id"),
         context.provider_customer_id,
     )
-    if not isinstance(customer_value, str) or not customer_value:
-        raise ReconciliationError("provider state has no customer id")
+    customer_id = _normalize_customer_id(customer_value)
 
     subscription_value = _first_value(
         _object_value(candidate, "provider_subscription_id"),
@@ -1050,7 +1170,7 @@ def _normalize_state(raw_state: object, context: _EventContext) -> Authoritative
     )
     return AuthoritativeBillingState(
         tenant_id=tenant_id,
-        provider_customer_id=customer_value,
+        provider_customer_id=customer_id,
         provider_subscription_id=subscription_value,
         status=status,
         current_period_end=period_end,
@@ -1093,6 +1213,40 @@ def _projection_value(projection: object | None, name: str) -> object | None:
     return _object_value(projection, name)
 
 
+def _snapshot_projection(projection: object | None) -> object | None:
+    if projection is None:
+        return None
+    return {
+        name: _projection_value(projection, name)
+        for name in (
+            "provider",
+            "provider_customer_id",
+            "provider_subscription_id",
+            "status",
+            "current_period_end",
+            "past_due_since",
+            "last_event_id",
+            "updated_at",
+        )
+    }
+
+
+def _snapshot_row(row: object) -> Mapping[str, object]:
+    return {
+        name: _row_value(row, name)
+        for name in ("id", "provider", "provider_event_id", "event_type", "payload", "status", "attempts")
+    }
+
+
+def _row_attempts(row: object) -> int:
+    value = _row_value(row, "attempts", 0)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReconciliationError("inbox attempts must be a non-negative integer")
+    return value
+
+
 def _object_value(value: object, name: str, default: object | None = None) -> object | None:
     if isinstance(value, Mapping):
         return cast(object | None, value.get(name, default))
@@ -1118,6 +1272,12 @@ def _required_text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ReconciliationError(f"{name} must be a non-empty string")
     return value
+
+
+def _normalize_customer_id(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ReconciliationError("provider customer id must be a non-empty string")
+    return value.strip()
 
 
 def _parse_uuid(value: object, name: str) -> UUID:
@@ -1190,6 +1350,7 @@ __all__ = [
     "BillingReconciliationWorker",
     "ConfigurationError",
     "DEFAULT_BATCH_SIZE",
+    "EntitlementServiceLike",
     "MAX_BATCH_SIZE",
     "ProviderUnavailable",
     "ProviderUnavailableError",

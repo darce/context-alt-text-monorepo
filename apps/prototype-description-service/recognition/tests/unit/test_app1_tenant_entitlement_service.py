@@ -96,8 +96,13 @@ def _service(
     now: datetime,
     *,
     audit_service: object | None = None,
+    repository: object | None = None,
 ) -> TenantEntitlementService:
-    return TenantEntitlementService(session, clock=lambda: now, audit_service=audit_service)
+    return TenantEntitlementService(
+        repository if repository is not None else session,
+        clock=lambda: now,
+        audit_service=audit_service,
+    )
 
 
 def test_service_satisfies_published_runtime_protocol() -> None:
@@ -264,6 +269,137 @@ async def test_apply_paid_state_preserves_current_period_usage_without_arrears(d
     assert snapshot.allowance_jobs == 10
     assert snapshot.used_jobs == 3
     assert snapshot.period_start == period_start
+
+
+@pytest.mark.asyncio
+async def test_h4_canceled_billing_state_does_not_revoke_unexpired_beta_grant(database) -> None:
+    session_factory, tenant_id, now = database
+    period_end = now + timedelta(days=30)
+    async with session_factory() as session:
+        session.add(
+            TenantEntitlement(
+                tenant_id=tenant_id,
+                plan_code="beta",
+                allowance_version="beta-v1",
+                allowance_jobs=25,
+                period_start=now,
+                period_end=period_end,
+                status=EntitlementStatus.BETA_ACTIVE,
+                source="operator:alice",
+            )
+        )
+        await session.commit()
+
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.CANCELED,
+        provider_customer_id="customer-1",
+        current_period_end=period_end,
+        past_due_since=None,
+    )
+    async with session_factory() as session:
+        snapshot = await _service(session, now).apply_billing_state(tenant_id, state)
+
+    assert snapshot.status is EntitlementStatus.BETA_ACTIVE
+    assert snapshot.allowance_jobs == 25
+
+
+@pytest.mark.asyncio
+async def test_h4_beta_upsert_does_not_clear_active_paid_status(database) -> None:
+    session_factory, tenant_id, now = database
+    period_end = now + timedelta(days=30)
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.ACTIVE,
+        provider_customer_id="customer-paid",
+        current_period_end=period_end,
+        past_due_since=None,
+    )
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 40},
+        )
+        service = _service(session, now, repository=repository)
+        await service.apply_billing_state(tenant_id, state)
+        snapshot = await service.grant_beta(
+            tenant_id,
+            allowance_jobs=12,
+            allowance_version="beta-v1",
+            period_start=now,
+            period_end=period_end,
+            source="operator:alice",
+        )
+
+    assert snapshot.status is EntitlementStatus.PAID_ACTIVE
+    assert snapshot.allowance_jobs == 40
+
+
+@pytest.mark.asyncio
+async def test_h6_active_paid_state_uses_configured_plan_allowance(database) -> None:
+    session_factory, tenant_id, now = database
+    period_end = now + timedelta(days=30)
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.ACTIVE,
+        provider_customer_id="customer-configured",
+        current_period_end=period_end,
+        past_due_since=None,
+    )
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            allowance_by_plan={"paid": 73},
+        )
+        snapshot = await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+
+    assert snapshot.status is EntitlementStatus.PAID_ACTIVE
+    assert snapshot.allowance_jobs == 73
+
+
+@pytest.mark.asyncio
+async def test_h6_unknown_plan_refuses_instead_of_defaulting_allowance_to_zero(database) -> None:
+    session_factory, tenant_id, now = database
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.ACTIVE,
+        provider_customer_id="customer-unknown-plan",
+        current_period_end=now + timedelta(days=30),
+        past_due_since=None,
+    )
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"other": 20})
+        with pytest.raises(ValueError, match="unknown entitlement plan"):
+            await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+
+
+@pytest.mark.asyncio
+async def test_h6_past_due_state_gets_configured_allowance_and_grace_window(database) -> None:
+    session_factory, tenant_id, now = database
+    period_end = now + timedelta(days=1)
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.PAST_DUE,
+        provider_customer_id="customer-past-due",
+        current_period_end=period_end,
+        past_due_since=now,
+    )
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 73},
+            past_due_grace=timedelta(hours=2),
+        )
+        await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+        row = await repository.get(tenant_id)
+
+    assert row is not None
+    assert row.allowance_jobs == 73
+    assert row.grace_until is not None
+    assert row.grace_until.replace(tzinfo=UTC) == now + timedelta(hours=2)
 
 
 @pytest.mark.asyncio

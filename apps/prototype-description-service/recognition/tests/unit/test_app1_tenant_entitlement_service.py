@@ -413,6 +413,82 @@ async def test_h6_past_due_state_gets_configured_allowance_and_grace_window(data
 
 
 @pytest.mark.asyncio
+async def test_past_due_tenant_keeps_its_allowance_inside_the_grace_window(database) -> None:
+    session_factory, tenant_id, now = database
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.PAST_DUE,
+        provider_customer_id="customer-past-due",
+        current_period_end=now + timedelta(days=1),
+        past_due_since=now,
+    )
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 73},
+            past_due_grace=timedelta(hours=72),
+        )
+        snapshot = await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+
+    assert snapshot.status is EntitlementStatus.PAST_DUE
+    assert snapshot.allowance_jobs == 73
+    assert snapshot.grace_until == now + timedelta(hours=72)
+
+
+@pytest.mark.asyncio
+async def test_past_due_tenant_loses_its_allowance_once_the_grace_window_closes(database) -> None:
+    session_factory, tenant_id, now = database
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.PAST_DUE,
+        provider_customer_id="customer-past-due",
+        current_period_end=now + timedelta(days=1),
+        past_due_since=now,
+    )
+
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 73},
+            past_due_grace=timedelta(hours=2),
+        )
+        await _service(session, now, repository=repository).apply_billing_state(tenant_id, state)
+        await session.commit()
+
+    expired = now + timedelta(hours=3)
+    async with session_factory() as session:
+        repository = SqlAlchemyTenantEntitlementRepository(
+            session,
+            plan_allowances={"paid": 73},
+            past_due_grace=timedelta(hours=2),
+        )
+        snapshot = await _service(session, expired, repository=repository).snapshot(tenant_id)
+
+    assert snapshot.allowance_jobs == DEFAULT_ALLOWANCE_JOBS
+
+
+@pytest.mark.asyncio
+async def test_production_settings_configure_the_past_due_grace_window(database) -> None:
+    session_factory, tenant_id, now = database
+    state = BillingState(
+        tenant_id=tenant_id,
+        status=BillingSubscriptionStatus.PAST_DUE,
+        provider_customer_id="customer-past-due",
+        current_period_end=now + timedelta(days=1),
+        past_due_since=now,
+    )
+
+    # The service must source the grace window from settings; leaving it unset made every
+    # past_due webhook raise "past_due grace window is not configured" and retry forever.
+    async with session_factory() as session:
+        snapshot = await _service(session, now).apply_billing_state(tenant_id, state)
+
+    assert snapshot.status is EntitlementStatus.PAST_DUE
+    assert snapshot.grace_until == now + timedelta(hours=72)
+
+
+@pytest.mark.asyncio
 async def test_billing_state_cannot_mutate_another_tenant(database) -> None:
     session_factory, tenant_id, now = database
     foreign_tenant_id = uuid4()

@@ -13,7 +13,7 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import TenantEntitlement, UsageReservation
@@ -155,9 +155,20 @@ class SqlAlchemyUsageRepository:
             select(TenantEntitlement)
             .where(
                 TenantEntitlement.tenant_id == tenant_id,
-                TenantEntitlement.status.in_(_ACTIVE_ENTITLEMENT_STATUSES),
                 TenantEntitlement.period_start <= now,
-                TenantEntitlement.period_end > now,
+                # Mirrors TenantEntitlementService.snapshot: a past-due tenant stays
+                # admissible until its grace window closes, even past period_end.
+                or_(
+                    and_(
+                        TenantEntitlement.status.in_(_ACTIVE_ENTITLEMENT_STATUSES),
+                        TenantEntitlement.period_end > now,
+                    ),
+                    and_(
+                        TenantEntitlement.status == EntitlementStatus.PAST_DUE,
+                        TenantEntitlement.grace_until.is_not(None),
+                        TenantEntitlement.grace_until >= now,
+                    ),
+                ),
             )
             .with_for_update()
             .limit(1)

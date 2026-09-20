@@ -178,15 +178,18 @@ def _portal_auth_settings(
         environment_names=("ACX_CLERK_JWKS_URL",),
         missing=missing,
     )
-    authorized_parties = _required_text_setting(
-        settings,
-        sections=sections,
-        setting_names=("authorized_parties", "audience", "portal_audience"),
-        environment_names=("ACX_CLERK_AUTHORIZED_PARTIES",),
-        missing=missing,
-    )
+    parties_setting = _setting_value(settings, sections, ("authorized_parties",))
+    party_values = _text_values(parties_setting) or _text_values(_environment_value(("ACX_CLERK_AUTHORIZED_PARTIES",)))
     audience = _setting_value(settings, sections, ("audience", "portal_audience"))
-    audience_values = _text_values(audience) or _text_values(authorized_parties)
+    audience_values = _text_values(audience)
+    # When a distinct audience is configured the authorized-parties setting is a genuine
+    # origin pin, so it must reach the azp check instead of silently serving as the audience.
+    # Deployments that configure only ACX_CLERK_AUTHORIZED_PARTIES keep using it as the
+    # audience; pinning azp to the same value there would reject every legitimate token.
+    enforced_parties: tuple[str, ...] | None = party_values or None
+    if not audience_values:
+        audience_values = party_values
+        enforced_parties = None
     if not audience_values:
         missing.append("ACX_CLERK_AUTHORIZED_PARTIES")
     if not issuer or not jwks_url or not audience_values:
@@ -195,6 +198,7 @@ def _portal_auth_settings(
         issuer=issuer,
         jwks_url=jwks_url,
         audience=audience_values,
+        authorized_parties=enforced_parties,
     )
 
 

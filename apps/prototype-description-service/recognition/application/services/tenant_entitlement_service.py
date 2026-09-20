@@ -105,6 +105,15 @@ def _settings_plan_allowances(settings: object) -> Mapping[str, int] | None:
     return None
 
 
+def _settings_past_due_grace_s(settings: object) -> float | None:
+    """Read the past-due grace window without coupling to settings internals."""
+    for field_name in ("past_due_grace_seconds", "past_due_grace_s"):
+        configured = getattr(settings, field_name, None)
+        if configured is not None:
+            return float(configured)
+    return None
+
+
 class TenantEntitlementService:
     """Implement the published tenant entitlement protocol.
 
@@ -166,6 +175,7 @@ class TenantEntitlementService:
                 candidate,
                 timeout_s=self._timeout_s,
                 plan_allowances=plan_allowances,
+                past_due_grace_s=_settings_past_due_grace_s(configured_settings),
             )
 
         self._clock = clock or _utc_now
@@ -211,7 +221,10 @@ class TenantEntitlementService:
             return self._default_snapshot(tenant_uuid, now, period_start=period_start, period_end=period_end)
 
         allowance_jobs = max(0, int(row.allowance_jobs))
-        if status not in _ACTIVE_ENTITLEMENT_STATUSES:
+        # Plan 0001 promises a past-due customer a fixed grace window to fix their card;
+        # cutting the allowance to zero the moment the first payment fails defeats it.
+        within_past_due_grace = status is EntitlementStatus.PAST_DUE and grace_until is not None and now <= grace_until
+        if status not in _ACTIVE_ENTITLEMENT_STATUSES and not within_past_due_grace:
             return EntitlementSnapshot(
                 tenant_id=tenant_uuid,
                 status=status,

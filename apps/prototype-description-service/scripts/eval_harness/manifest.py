@@ -361,6 +361,16 @@ class ScoreInvariant(StrEnum):
     DETECTION_REFUSES_UNCOVERED_FACE_COUNT = "detection_refuses_uncovered_face_count"
     DETECTION_REFUSES_EMPTY_OBSERVATIONS = "detection_refuses_empty_observations"
     IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS = "identification_refuses_empty_observations"
+    DETECTION_REQUIRES_LOCALIZATION = "detection_requires_localization"
+    DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT = (
+        "detection_requires_localization_frame_agreement"
+    )
+    DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD = (
+        "detection_requires_ratified_iou_threshold"
+    )
+    DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE = (
+        "detection_requires_human_adjudicated_gt_lineage"
+    )
 
 
 # Published markdown explanation per fired invariant (S2R5-04). A refusal
@@ -397,6 +407,20 @@ REFUSAL_EXPLANATIONS: dict[ScoreInvariant, str] = {
     ),
     ScoreInvariant.IDENTIFICATION_REFUSES_EMPTY_OBSERVATIONS: (
         "identification P/R is not computed from zero scored observations"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION: (
+        "detection P/R is not computed from rows without usable localization geometry"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT: (
+        "detection P/R is not computed from detector boxes measured in a frame that "
+        "differs from the declared image size"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_RATIFIED_IOU_THRESHOLD: (
+        "detection P/R is not computed from an absent or unratified IoU threshold"
+    ),
+    ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE: (
+        "detection P/R is not computed from ground-truth boxes without human-adjudicated "
+        "lineage"
     ),
 }
 if frozenset(REFUSAL_EXPLANATIONS) != frozenset(ScoreInvariant):

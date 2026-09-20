@@ -58,6 +58,8 @@ from recognition.interface_adapters.http.middleware.metrics import (
     get_default_metrics,
 )
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
+from recognition.interface_adapters.http.routers.billing_webhooks import router as billing_webhooks_router
+from recognition.interface_adapters.http.routers.portal import router as portal_router
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from scene.application.seeded_adapter import SeededDescriptionAdapter
@@ -566,7 +568,7 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_origin_regex=None,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
+        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", "Idempotency-Key"],
         max_age=600,
     )
     app.add_middleware(CorrelationIdMiddleware)
@@ -592,6 +594,10 @@ def create_app() -> FastAPI:
     app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
     app.include_router(gpu_router, prefix="/scene")
+
+    if os.environ.get("RECOGNITION_PORTAL_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        app.include_router(portal_router)
+        app.include_router(billing_webhooks_router)
 
     # DS-2: public demo slug resolve at root (GET /x/{slug}). Not under
     # /recognition — that surface carries require_auth on analyze children.

@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "captured_at": {
+    "value": "2026-09-20T12:00:00Z",
+    "provenance": "collector_clock"
+  },
+  "tenant_id": {
+    "value": "11111111-2222-7333-8444-555555555555",
+    "provenance": "request_context"
+  },
+  "observations": [
+    {
+      "role": "api",
+      "effective_profile": {
+        "value": "face_pipeline",
+        "provenance": "runtime_probe"
+      },
+      "embedding_dimension": {
+        "value": 128,
+        "provenance": "runtime_probe"
+      },
+      "model_id": {
+        "value": "opencv-sface+${RUNTIME_SPACE_TOKEN}@128d/l2/cosine",
+        "provenance": "runtime_probe"
+      },
+      "preprocessing_id": {
+        "value": "sface-align-v1",
+        "provenance": "runtime_probe"
+      },
+      "image_digest": {
+        "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "provenance": "runtime_resolved_digest"
+      },
+      "loaded_weight_hashes": {
+        "value": {
+          "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+          "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+        },
+        "provenance": "runtime_loaded_artifact"
+      },
+      "auth_enabled": {
+        "value": true,
+        "provenance": "runtime_auth_probe"
+      },
+      "source_git_sha": {
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "provenance": "binary_identity"
+      }
+    },
+    {
+      "role": "worker",
+      "effective_profile": {
+        "value": "face_pipeline",
+        "provenance": "runtime_probe"
+      },
+      "embedding_dimension": {
+        "value": 128,
+        "provenance": "runtime_probe"
+      },
+      "model_id": {
+        "value": "opencv-sface+${RUNTIME_SPACE_TOKEN}@128d/l2/cosine",
+        "provenance": "runtime_probe"
+      },
+      "preprocessing_id": {
+        "value": "sface-align-v1",
+        "provenance": "runtime_probe"
+      },
+      "image_digest": {
+        "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "provenance": "runtime_resolved_digest"
+      },
+      "loaded_weight_hashes": {
+        "value": {
+          "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+          "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+        },
+        "provenance": "runtime_loaded_artifact"
+      },
+      "auth_enabled": {
+        "value": true,
+        "provenance": "runtime_auth_probe"
+      },
+      "source_git_sha": {
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "provenance": "binary_identity"
+      }
+    },
+    {
+      "role": "fix-blob-ownership",
+      "effective_profile": {
+        "value": "face_pipeline",
+        "provenance": "runtime_probe"
+      },
+      "embedding_dimension": {
+        "value": 128,
+        "provenance": "runtime_probe"
+      },
+      "model_id": {
+        "value": "opencv-sface+${RUNTIME_SPACE_TOKEN}@128d/l2/cosine",
+        "provenance": "runtime_probe"
+      },
+      "preprocessing_id": {
+        "value": "sface-align-v1",
+        "provenance": "runtime_probe"
+      },
+      "image_digest": {
+        "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "provenance": "runtime_resolved_digest"
+      },
+      "loaded_weight_hashes": {
+        "value": {
+          "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+          "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+        },
+        "provenance": "runtime_loaded_artifact"
+      },
+      "auth_enabled": {
+        "value": true,
+        "provenance": "runtime_auth_probe"
+      },
+      "source_git_sha": {
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "provenance": "binary_identity"
+      }
+    }
+  ],
+  "database": {
+    "identity": {
+      "database_name": {
+        "value": "alt_context_dev_fir",
+        "provenance": "database_catalog"
+      },
+      "role": {
+        "value": "acx_dev_fir",
+        "provenance": "database_catalog"
+      }
+    },
+    "server_version": {
+      "value": "PostgreSQL 17.6",
+      "provenance": "database_catalog"
+    },
+    "extension_versions": {
+      "value": {
+        "vector": "0.8.0"
+      },
+      "provenance": "database_catalog"
+    },
+    "vector_column_inventory": {
+      "value": [
+        {
+          "schema": "public",
+          "table": "media_identities",
+          "column": "embedding",
+          "dimension": 128,
+          "provenance": "database_catalog"
+        },
+        {
+          "schema": "public",
+          "table": "identity_cluster_representatives",
+          "column": "embedding",
+          "dimension": 128,
+          "provenance": "database_catalog"
+        },
+        {
+          "schema": "public",
+          "table": "mv_identity_cluster_centroids",
+          "column": "centroid",
+          "dimension": 128,
+          "provenance": "database_catalog"
+        }
+      ],
+      "provenance": "database_catalog"
+    }
+  },
+  "storage": {
+    "volume_ids": {
+      "value": [
+        "acx-dev-fir-pgdata",
+        "acx-dev-fir-blobs",
+        "acx-dev-fir-models"
+      ],
+      "provenance": "storage_inspection"
+    },
+    "network_ids": {
+      "value": ["acx-dev-fir-net"],
+      "provenance": "storage_inspection"
+    },
+    "compose_project": {
+      "value": "acx-dev-fir",
+      "provenance": "storage_inspection"
+    },
+    "blob_namespace": {
+      "value": "acx-dev-fir",
+      "provenance": "storage_inspection"
+    }
+  },
+  "description_adapter": {
+    "model_id": {
+      "value": "Qwen3-VL-8B-Instruct",
+      "provenance": "description_probe"
+    },
+    "model_revision": {
+      "value": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "provenance": "description_probe"
+    },
+    "serving_profile": {
+      "value": "remote_self_hosted",
+      "provenance": "description_probe"
+    },
+    "is_stub": {
+      "value": false,
+      "provenance": "description_probe"
+    }
+  }
+}

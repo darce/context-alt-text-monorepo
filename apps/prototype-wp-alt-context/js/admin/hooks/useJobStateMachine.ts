@@ -11,6 +11,9 @@ import { useJobStateMachineEffects, type ProjectionSyncState } from './useJobSta
 import { useJobStateMachineMutations } from './useJobStateMachineMutations';
 import { useJobPersistence } from './useJobPersistence';
 import { useJobProgressStream } from './useJobProgressStream';
+import { GPU_STATE } from '../api/describeApi';
+import { STALL_PHASE } from './jobMachine';
+import { useGpuServiceStatus } from './useGpuServiceStatus';
 import { useCombinedScanStatus } from './useRecognitionHooks';
 
 export type { PipelinePhase } from './jobStateMachineUtils';
@@ -154,6 +157,7 @@ export const useJobStateMachine = ({
   // teardown signal the stream hook already honours (pinned in its own suite), so the release
   // path has one implementation rather than a second close() API on the hook.
   const streamJobId = latestJobId === cancelledStreamJobId ? null : latestJobId;
+  const { gpuState } = useGpuServiceStatus();
 
   // The scan-submit -> SSE correlation seam (FEBT2-LB-NEW-03). This hook is the only place
   // that sees both the submit unit and the stream, so it is the only place the join can be
@@ -167,7 +171,10 @@ export const useJobStateMachine = ({
     isPrimary,
     stalledForSeconds,
     retry: retryScanStream,
-  } = useJobProgressStream(streamJobId, { resolveRequestId: resolveScanRequestId });
+  } = useJobProgressStream(streamJobId, {
+    resolveRequestId: resolveScanRequestId,
+    stallPhase: gpuState === GPU_STATE.STARTING || gpuState === GPU_STATE.WARMING ? STALL_PHASE.WARMING : STALL_PHASE.PROCESSING,
+  });
   const syncTrigger = useSyncTrigger(false);
 
   useJobStateMachineEffects({

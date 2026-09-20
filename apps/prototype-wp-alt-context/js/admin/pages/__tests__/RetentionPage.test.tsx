@@ -420,6 +420,117 @@ describe('RetentionSection', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
+  const typedUnavailable = (
+    checkedAt: string,
+    overrides: {
+      reason?: string;
+      service?: string;
+      http_status?: number | null;
+      retry_after_seconds?: number | null;
+    } = {},
+  ) => ({
+    available: false as const,
+    policy: null,
+    recent_audit_events: [],
+    unavailable: {
+      reason: 'circuit_open',
+      service: 'recognition',
+      http_status: null,
+      retry_after_seconds: 30,
+      checked_at: checkedAt,
+      ...overrides,
+    },
+  });
+
+  it('names the service, reason, fix, last checked, and retry countdown from unavailable', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:03:22Z'),
+        refetch,
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    expect(screen.queryByText('Backend unavailable — retention status cannot be loaded.')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Recognition service is unavailable because the circuit breaker is open.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Wait for the cooldown, then Retry.')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.getByText('Retry in 30 s')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-retention-unavailable-icon')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-retention-unavailable')).toHaveClass('acx-sync-status--warning');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('updates last checked after Retry and keeps Retry pending while fetching', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:03:22Z'),
+        refetch,
+      }),
+    );
+    const { rerender } = render(<RetentionSection />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:03:22Z'),
+        isFetching: true,
+        refetch,
+      }),
+    );
+    rerender(<RetentionSection />);
+    expect(screen.getByRole('button', { name: 'Fetching…' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Fetching retention status…');
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:04:05Z'),
+        refetch,
+      }),
+    );
+    rerender(<RetentionSection />);
+    expect(screen.getByText('Last checked 14:04:05')).toBeInTheDocument();
+    expect(screen.queryByText('Last checked 14:03:22')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('omits a retry countdown when retry_after_seconds is absent', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:03:22Z', { retry_after_seconds: null }),
+        refetch,
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.queryByText(/Retry in /)).not.toBeInTheDocument();
+  });
+
+  it('uses generic copy plus the reason code for an unknown unavailable reason', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: typedUnavailable('2026-09-18T14:03:22Z', { reason: 'mystery_code', retry_after_seconds: null }),
+        refetch,
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    expect(
+      screen.getByText('Recognition service is unavailable because an unexpected error occurred (mystery_code).'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Retry. If it continues, check Settings and the service logs.')).toBeInTheDocument();
+  });
+
   it('opens import dialog and calls importMutateAsync on confirm', async () => {
     const fileContent = JSON.stringify({ schema_version: 2, clusters: [] });
     const user = userEvent.setup();

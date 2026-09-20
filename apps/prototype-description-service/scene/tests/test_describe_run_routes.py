@@ -13,13 +13,20 @@ import asyncio
 import json
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.application.describe_run_repository import DescribeRunRepository
-from scene.domain.describe_run import DescribeRunStatus
-from scene.domain.description import DescriptionResultTier
+from scene.application.describe_run_worker import (
+    DescribeRunTerminalCode,
+    DescribeRunTerminalReason,
+    _gpu_warmup_timeout_detail,
+)
+from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
+from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
 from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
@@ -38,13 +45,14 @@ def _create_run(client) -> str:
     return response.json()["run_id"]
 
 
-def test_submit_omitted_recognition_enabled_defaults_true(monkeypatch):
+def test_submit_omitted_recognition_enabled_defaults_false(monkeypatch):
+    """Omitted recognition_enabled is false so identity fusion is opt-in (SEC-01)."""
     _no_worker(monkeypatch)
     with _client() as (client, sf):
         response = _submit(client, [70])
         assert response.status_code == 202, response.text
         body = response.json()
-        assert body["recognition_enabled"] is True
+        assert body["recognition_enabled"] is False
 
         async def _assert_row():
             async with sf() as s:
@@ -52,7 +60,7 @@ def test_submit_omitted_recognition_enabled_defaults_true(monkeypatch):
                     tenant_id=uuid.UUID(body["tenant_id"]), run_id=uuid.UUID(body["run_id"])
                 )
             assert run is not None
-            assert run.recognition_enabled is True
+            assert run.recognition_enabled is False
 
         asyncio.run(_assert_row())
 
@@ -108,6 +116,27 @@ def test_submit_accepts_case_insensitive_true_false_recognition_enabled(monkeypa
             assert run.recognition_enabled is expected
 
         asyncio.run(_assert_row())
+
+
+def test_describe_run_schema_recognition_enabled_does_not_advertise_true_default():
+    """Contract: omitted recognition_enabled is opt-in false, not default-true."""
+    schema_path = (
+        Path(__file__).resolve().parents[4]
+        / "packages"
+        / "shared-contracts"
+        / "schemas"
+        / "scene-describe-run.schema.json"
+    )
+    schema = json.loads(schema_path.read_text())
+    prop = schema["properties"]["recognition_enabled"]
+    assert prop.get("default") is not True
+    description = (prop.get("description") or "").lower()
+    assert "defaults to true" not in description
+    assert "default true" not in description
+    assert "omitted means false" in description
+    root = (schema.get("description") or "").lower()
+    assert "default true" not in root
+    assert "defaults to true" not in root
 
 
 def _spy_fusion_loader(monkeypatch, loads: list, result):
@@ -378,6 +407,80 @@ def test_status_route_returns_run_snapshot(monkeypatch):
         assert "timing" not in body
         assert "operation_id" not in body
         assert "startup_id" not in body
+        assert body["terminal"] is None
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_exposes_gpu_warmup_timeout_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                await DescribeRunRepository(s).mark_run_failed(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    error_message=_gpu_warmup_timeout_detail(
+                        timeout_seconds=0.1,
+                        error=TimeoutError("GPU endpoint did not become ready"),
+                    ),
+                )
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.FAILED
+        assert body["terminal"]["code"] == DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+        assert body["terminal"]["retryable"] is True
+        assert body["terminal"]["startup_budget_seconds"] == 1
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_legacy_error_message_has_null_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                await DescribeRunRepository(s).mark_run_failed(
+                    tenant_id=TENANT_ID,
+                    run_id=rid,
+                    error_message="legacy plain failure",
+                )
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.FAILED
+        assert body["terminal"] is None
+        assert body["fallback_reason"] is None
+
+
+def test_status_route_cpu_fallback_exposes_fallback_reason_without_terminal(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        run_id = _create_run(client)
+        rid = uuid.UUID(run_id)
+
+        async def seed():
+            async with sf() as s:
+                repo = DescribeRunRepository(s)
+                run = await repo.get_run(tenant_id=TENANT_ID, run_id=rid)
+                assert run is not None
+                run.status = DescribeRunStatus.COMPLETED
+                run.phase = DescribeRunPhase.COMPLETE
+                run.error_message = json.dumps({"fallback_reason": DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT})
+                await s.commit()
+
+        asyncio.run(seed())
+        body = client.get(f"/scene/describe/run/{run_id}").json()
+        assert body["status"] == DescribeRunStatus.COMPLETED
+        assert body["fallback_reason"] == DescribeRunTerminalReason.GPU_WARMUP_TIMEOUT
+        assert body["terminal"] is None
 
 
 def test_submit_omits_unobserved_timing_and_operation_ids(monkeypatch):
@@ -440,6 +543,43 @@ def test_create_run_publishes_demand_without_stop_flags(monkeypatch):
         response = _submit(client, [70])
         assert response.status_code == 202, response.text
     assert len(calls) == 1
+
+
+class _StubCpuAdapter:
+    kind = DescriptionAdapterKind.LOCAL_CPU
+
+
+def test_submit_queues_cpu_describe_one_when_cpu_adapter_resolves(monkeypatch):
+    captured: dict = {}
+
+    async def _spy(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _spy)
+    monkeypatch.setattr(describe_run_mod, "get_cpu_description_adapter", lambda: _StubCpuAdapter())
+    with _client() as (client, _):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+    assert captured["cpu_describe_one"] is not None
+    assert callable(captured["cpu_describe_one"])
+
+
+def test_submit_queues_none_cpu_describe_one_when_cpu_adapter_unavailable(monkeypatch):
+    captured: dict = {}
+
+    async def _spy(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _spy)
+    monkeypatch.setattr(
+        describe_run_mod,
+        "get_cpu_description_adapter",
+        lambda: UnavailableDescriptionAdapter("florence_small extra missing"),
+    )
+    with _client() as (client, _):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+    assert captured["cpu_describe_one"] is None
 
 
 def test_status_route_404_for_unknown_run(monkeypatch):

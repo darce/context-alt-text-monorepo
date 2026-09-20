@@ -61,6 +61,21 @@ describe('parseDescribeRunResponse', () => {
     expect(() => parseDescribeRunResponse({ ...validRun, run_id: '' })).toThrow(/response\.run_id/);
   });
 
+  it('carries the C2 terminal and fallback_reason from the wire and rejects malformed shapes', () => {
+    const terminal = { code: 'gpu_warmup_timeout', retryable: true, startup_budget_seconds: 510 };
+    const parsed = parseDescribeRunResponse({ ...validRun, terminal, fallback_reason: 'gpu_warmup_timeout' });
+    expect(parsed.terminal).toEqual(terminal);
+    expect(parsed.fallback_reason).toBe('gpu_warmup_timeout');
+    expect(parseDescribeRunResponse({ ...validRun, terminal: null, fallback_reason: null }).terminal).toBeNull();
+    expect(() => parseDescribeRunResponse({ ...validRun, terminal: { ...terminal, retryable: 'yes' } })).toThrow(
+      /response\.terminal/,
+    );
+    expect(() =>
+      parseDescribeRunResponse({ ...validRun, terminal: { ...terminal, startup_budget_seconds: 1.5 } }),
+    ).toThrow(/response\.terminal/);
+    expect(() => parseDescribeRunResponse({ ...validRun, fallback_reason: 7 })).toThrow(/response\.fallback_reason/);
+  });
+
   it('rejects a null or unknown gpu_state', () => {
     expect(() => parseDescribeRunResponse({ ...validRun, gpu_state: null })).toThrow(/response\.gpu_state/);
     expect(() => parseDescribeRunResponse({ ...validRun, gpu_state: 'cold' })).toThrow(/response\.gpu_state/);

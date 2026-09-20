@@ -1,8 +1,14 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
+import { AlertTriangle } from 'lucide-react';
 
 import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
 import { toWorkbench } from '../../navigation/appLinks';
+import {
+  readUnavailable,
+  unavailableReasonCopy,
+  unavailableServiceLabel,
+} from '../../utils/serviceUnavailable';
 import { GPU_STATE_ICON, GPU_STATE_TONE, gpuStatePresentation } from '../workbench/gpuStatePresentation';
 import { useGpuControl } from './useGpuControl';
 
@@ -153,6 +159,30 @@ const errorCopy = (error: unknown): string => {
     : 'Could not reach the description service. Retrying in 15 s.';
 };
 
+const intentFailureCopy = (
+  action: typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO | null,
+  error: unknown,
+): string | null => {
+  if (error == null || readUnavailable(error) !== null) {
+    return null;
+  }
+  switch (action) {
+    case GpuIntentAction.START:
+      return __('Start request failed', 'alt-context');
+    case GpuIntentAction.STOP:
+      return __('Stop request failed', 'alt-context');
+    default:
+      return null;
+  }
+};
+
+const retryCountdownSeconds = (retryAfterSeconds: number | null): number | null => {
+  if (retryAfterSeconds === null || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return null;
+  }
+  return Math.floor(retryAfterSeconds);
+};
+
 export const GpuControlCard = (): React.JSX.Element => {
   const {
     data,
@@ -168,9 +198,13 @@ export const GpuControlCard = (): React.JSX.Element => {
     canReturnToAuto,
     requestIntent,
     isIntentPending,
+    intentError,
   } = useGpuControl();
   const [confirmation, setConfirmation] = React.useState<ConfirmationAction | null>(null);
   const [clearedConfirmationReason, setClearedConfirmationReason] = React.useState<string | null>(null);
+  const [lastIntentAction, setLastIntentAction] = React.useState<
+    typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO | null
+  >(null);
   const startHeld = !canStart || isIntentPending;
   const stopHeld = !canStop || isIntentPending;
   const pendingReason = isIntentPending ? __('a service request is already in flight', 'alt-context') : null;
@@ -182,6 +216,19 @@ export const GpuControlCard = (): React.JSX.Element => {
     : null;
   const stopReason = !canStop ? stopBlockedReason : pendingReason;
   const displayedState = data && data.snapshot_fresh ? data.gpu_state.state : GPU_STATE.UNKNOWN;
+  const unavailable = readUnavailable(data) ?? readUnavailable(intentError) ?? readUnavailable(error);
+  const unavailableService = unavailable ? unavailableServiceLabel(unavailable.service) : null;
+  const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
+  const lastChecked = unavailable ? formatClock(unavailable.checked_at) : null;
+  const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+  const intentFailureNotice = intentFailureCopy(lastIntentAction, intentError);
+
+  const submitIntent = (
+    action: typeof GpuIntentAction.START | typeof GpuIntentAction.STOP | typeof GpuIntentAction.AUTO,
+  ): void => {
+    setLastIntentAction(action);
+    requestIntent(action);
+  };
 
   React.useEffect(() => {
     if (confirmation === null) {
@@ -204,9 +251,9 @@ export const GpuControlCard = (): React.JSX.Element => {
   const confirm = (): void => {
     const action = confirmation;
     if (action === GpuIntentAction.START && canStart) {
-      requestIntent(action);
+      submitIntent(action);
     } else if (action === GpuIntentAction.STOP && canStop) {
-      requestIntent(action);
+      submitIntent(action);
     }
     setConfirmation(null);
   };
@@ -219,6 +266,18 @@ export const GpuControlCard = (): React.JSX.Element => {
       disabled={isFetching}
     >
       <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
+    </button>
+  );
+
+  const retryControl = (
+    <button
+      type="button"
+      className="acx-button acx-button--tertiary"
+      onClick={() => void refetch()}
+      disabled={isFetching}
+      aria-busy={isFetching}
+    >
+      {isFetching ? __('Fetching…', 'alt-context') : __('Retry', 'alt-context')}
     </button>
   );
 
@@ -237,11 +296,60 @@ export const GpuControlCard = (): React.JSX.Element => {
         aria-atomic="true"
       >
         {isLoading && !data ? <span>{__('Loading service status…', 'alt-context')}</span> : null}
-        {isError ? <span className="notice-error">{errorCopy(error)}</span> : null}
+        {unavailable && unavailableService && unavailableCopy ? (
+          <span
+            data-testid="gpu-unavailable-status"
+            data-tone={GPU_STATE_TONE.WARNING}
+            className={stateToneClass(GPU_STATE_TONE.WARNING)}
+          >
+            <span aria-hidden="true" className="acx-gpu-control__state-icon" data-testid="gpu-unavailable-icon">
+              {GPU_STATE_GLYPHS[GPU_STATE_ICON.DEGRADED]}
+            </span>{' '}
+            <span>
+              {sprintf(
+                __('%s is unavailable because %s.', 'alt-context'),
+                unavailableService,
+                unavailableCopy.why,
+              )}
+            </span>{' '}
+            <span>{unavailableCopy.fix}</span>
+            {lastChecked ? (
+              <>
+                {' '}
+                <span>{sprintf(__('Last checked %s', 'alt-context'), lastChecked)}</span>
+              </>
+            ) : null}
+            {retryInSeconds !== null ? (
+              <>
+                {' '}
+                <span>{sprintf(__('Retry in %d s', 'alt-context'), retryInSeconds)}</span>
+              </>
+            ) : null}
+            {isFetching ? (
+              <>
+                {' '}
+                <span>{__('Checking service status…', 'alt-context')}</span>
+              </>
+            ) : null}
+          </span>
+        ) : isError ? (
+          <span className="notice-error">{errorCopy(error)}</span>
+        ) : null}
+        {intentFailureNotice ? (
+          <span className="notice-error" role="alert" data-testid="gpu-intent-failure">
+            <AlertTriangle
+              className="acx-gpu-control__state-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="gpu-intent-failure-icon"
+            />{' '}
+            <span>{intentFailureNotice}</span>
+          </span>
+        ) : null}
         {clearedConfirmationReason ? (
           <span data-testid="gpu-confirmation-cleared-reason">{clearedConfirmationReason}</span>
         ) : null}
-        {data
+        {data && !unavailable
           ? (() => {
               const presentation = gpuStatePresentation(displayedState);
               const age = relativeAge(data.snapshot_age_seconds);
@@ -346,7 +454,7 @@ export const GpuControlCard = (): React.JSX.Element => {
               <button
                 type="button"
                 className="acx-button acx-button--secondary"
-                onClick={() => requestIntent(GpuIntentAction.AUTO)}
+                onClick={() => submitIntent(GpuIntentAction.AUTO)}
                 disabled={isIntentPending}
               >
                 <span aria-hidden="true">↺</span> {__('Return to automatic', 'alt-context')}
@@ -422,7 +530,7 @@ export const GpuControlCard = (): React.JSX.Element => {
 
       {isError && !data ? (
         <div id="z-gpu-controls" data-testid="z-gpu-controls" className="acx-gpu-control__actions">
-          {refreshControl}
+          {unavailable ? retryControl : refreshControl}
         </div>
       ) : null}
     </section>

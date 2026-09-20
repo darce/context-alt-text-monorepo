@@ -183,8 +183,13 @@ def merge_identities(
     Realizer selection lives here, behind the ``ReflowRealizer`` seam — no
     inline mode ladder inside realizers. An injected ``realizer`` always wins;
     otherwise: grounded associations → ``DeterministicNlgRealizer``; no phrase
-    boxes at all → ``PositionalFallbackRealizer`` (Approach B); phrase boxes
-    present but matching ambiguous/empty → generic (never guess).
+    boxes, exactly one confirmed person, and exactly one leading generic
+    person NP → ``N1SubstitutionRealizer``; no phrase boxes, exactly one
+    confirmed person, and substitution does not apply →
+    ``PositionalFallbackRealizer`` (Approach B, n==1 only); two or more
+    ungrounded people → generic until n>=2 position evaluation is accepted;
+    one person but two or more generic NPs → generic (never guess); phrase
+    boxes present but matching ambiguous/empty → generic (never guess).
 
     When a ``NamingPolicy`` is passed, the consent gate filters faces before
     matching and the result carries ``NamingProvenance`` (generic-only results
@@ -203,22 +208,60 @@ def merge_identities(
     )
     from scene.application.identity_merge.realizer import (
         DeterministicNlgRealizer,
+        N1SubstitutionRealizer,
         PositionalFallbackRealizer,
+        find_generic_person_nps,
+        leading_generic_person_np,
     )
+
+    realizer_for_mode = {
+        NamingMode.GROUNDED: NamingRealizer.GROUNDED,
+        NamingMode.POSITIONAL: NamingRealizer.POSITIONAL_FALLBACK,
+        NamingMode.SUBSTITUTED: NamingRealizer.SUBSTITUTED,
+    }
+
+    def _status_for_skip_reason(reason: NamingSkipReason) -> NamingStatus:
+        # C4 / OBS-08 / sr-007: skip statuses are NamingStatus members. Do not
+        # return the SkipReason object (Pydantic then rejects it and the wire
+        # collapses to no_faces). NO_FACES is only for genuinely absent faces,
+        # which this merge path never produces.
+        mapping = {
+            NamingSkipReason.AGREEMENT_DISABLED: NamingStatus.DISABLED,
+            NamingSkipReason.NO_CONFIRMED_IDENTITIES: NamingStatus.NO_CONFIRMED_IDENTITIES,
+            NamingSkipReason.NO_ELIGIBLE_IDENTITIES: NamingStatus.NO_ELIGIBLE_IDENTITIES,
+            NamingSkipReason.AMBIGUOUS_GROUNDING: NamingStatus.AMBIGUOUS_GROUNDING,
+        }
+        try:
+            return mapping[reason]
+        except KeyError as exc:
+            raise ValueError(f"no NamingStatus mapping for skip reason {reason!s}") from exc
 
     def _generic(reason: Any) -> MergeResult:
         if policy is None:
             provenance = None
         else:
-            status = NamingStatus.DISABLED if reason is NamingSkipReason.AGREEMENT_DISABLED else NamingStatus.NO_FACES
             provenance = NamingProvenance(
                 naming_allowed=False,
                 reason=reason,
-                status=status,
+                status=_status_for_skip_reason(reason),
                 realizer=None,
                 names_applied=(),
             )
         return MergeResult(generic_draft=caption, named_draft=caption, provenance=provenance)
+
+    def _ungrounded_naming(
+        caption_text: str, ungrounded_faces: list[ConfirmedFace]
+    ) -> tuple[list[ConfirmedFace], Any, Any]:
+        people = _distinct_faces_by_person(sorted(ungrounded_faces, key=lambda f: f.box.center[0]))
+        if len(people) != 1:
+            # n>=2 ungrounded naming abstains until position evaluation accepts it.
+            return [], None, None
+        nps = find_generic_person_nps(caption_text)
+        if len(nps) > 1:
+            return [], None, None
+        if leading_generic_person_np(caption_text) is not None:
+            return people, NamingMode.SUBSTITUTED, N1SubstitutionRealizer()
+        return people, NamingMode.POSITIONAL, PositionalFallbackRealizer()
 
     faces = list(confirmed_faces)
     if policy is not None:
@@ -236,6 +279,7 @@ def merge_identities(
     associations = containment_match(faces, groundable)
     mode: Any = None
     named_faces: list[ConfirmedFace]
+    selected: ReflowRealizer | None = None
     if associations:
         # Provenance counts only faces whose span the realizer will actually
         # replace; duplicate mentions of one person collapse to one entry.
@@ -246,18 +290,15 @@ def merge_identities(
             dedup.setdefault(_person_key(a.face), a.face)
         named_faces = list(dedup.values())
         mode = NamingMode.GROUNDED
-    elif not phrase_boxes and faces:
-        named_faces = _distinct_faces_by_person(sorted(faces, key=lambda f: f.box.center[0]))
-        mode = NamingMode.POSITIONAL
+        selected = DeterministicNlgRealizer()
+    elif not groundable and faces:
+        named_faces, mode, selected = _ungrounded_naming(caption, faces)
     else:
         named_faces = []
 
     if realizer is None:
-        if associations:
-            realizer = DeterministicNlgRealizer()
-        elif not phrase_boxes and faces:
-            realizer = PositionalFallbackRealizer()
-    realizer_faces = named_faces if not associations and not phrase_boxes else faces
+        realizer = selected
+    realizer_faces = named_faces if not associations and not groundable else faces
     named_draft = (
         realizer.realize(caption=caption, associations=associations, confirmed_faces=realizer_faces)
         if realizer is not None
@@ -281,18 +322,14 @@ def merge_identities(
                 reason=None,
                 mode=mode,
                 status=NamingStatus.APPLIED,
-                realizer=(
-                    NamingRealizer.GROUNDED
-                    if mode is NamingMode.GROUNDED
-                    else NamingRealizer.POSITIONAL_FALLBACK
-                ),
+                realizer=realizer_for_mode[mode],
                 names_applied=tuple(f.label for f in named_faces),
             )
         else:
             provenance = NamingProvenance(
                 naming_allowed=False,
                 reason=NamingSkipReason.AMBIGUOUS_GROUNDING,
-                status=NamingStatus.NO_FACES,
+                status=_status_for_skip_reason(NamingSkipReason.AMBIGUOUS_GROUNDING),
                 realizer=None,
                 names_applied=(),
             )

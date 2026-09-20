@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
+import { HTTPError } from '../../../utils/http';
 import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
 import { GpuControlCard } from '../GpuControlCard';
 import * as gpuControl from '../useGpuControl';
@@ -79,6 +80,7 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
     canReturnToAuto: data.gpu_state.intent !== GPU_INTENT_ACTION.AUTO,
     requestIntent: vi.fn(),
     isIntentPending: false,
+    intentError: null,
     ...overrides,
   } as ReturnType<typeof gpuControl.useGpuControl>);
 };
@@ -446,5 +448,200 @@ describe('GpuControlCard', () => {
     mockControl(statusResponse({ intent: GPU_INTENT_ACTION.START }));
     render(<GpuControlCard />);
     expect(screen.getByRole('button', { name: 'Return to automatic' })).toBeEnabled();
+  });
+
+  const unavailableError = (
+    checkedAt: string,
+    overrides: {
+      reason?: string;
+      service?: string;
+      http_status?: number | null;
+      retry_after_seconds?: number | null;
+    } = {},
+  ) =>
+    Object.assign(new Error('502 Bad Gateway'), {
+      unavailable: {
+        reason: 'circuit_open',
+        service: 'scene',
+        http_status: 502,
+        retry_after_seconds: 30,
+        checked_at: checkedAt,
+        ...overrides,
+      },
+    });
+
+  it('names the service, reason, fix, last checked, and retry countdown from unavailable', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      refetch,
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.queryByText(/Could not reach the description service/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Description service is unavailable because the circuit breaker is open.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Wait for the cooldown, then Retry.')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.getByText('Retry in 30 s')).toBeInTheDocument();
+    expect(screen.getByTestId('gpu-unavailable-icon')).toBeInTheDocument();
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveAttribute('data-tone', 'warning');
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveClass('acx-sync-status--warning');
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it('updates last checked after Retry and keeps Retry pending while fetching', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      refetch,
+    });
+    const { rerender } = render(<GpuControlCard />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledOnce();
+
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z'),
+      isFetching: true,
+      refetch,
+    });
+    rerender(<GpuControlCard />);
+    expect(screen.getByRole('button', { name: 'Fetching…' })).toBeDisabled();
+    expect(screen.getByTestId('gpu-unavailable-status')).toHaveTextContent('Checking service status…');
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:04:05Z'),
+      refetch,
+    });
+    rerender(<GpuControlCard />);
+    expect(screen.getByText('Last checked 14:04:05')).toBeInTheDocument();
+    expect(screen.queryByText('Last checked 14:03:22')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('omits a retry countdown when unavailable retry_after_seconds is absent', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z', { retry_after_seconds: null }),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.queryByText(/Retry in /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retrying in 15 s/)).not.toBeInTheDocument();
+  });
+
+  it('uses generic copy plus the reason code for an unknown unavailable reason', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: unavailableError('2026-09-18T14:03:22Z', { reason: 'mystery_code', retry_after_seconds: null }),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(
+      screen.getByText('Description service is unavailable because an unexpected error occurred (mystery_code).'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Retry. If it continues, check Settings and the service logs.')).toBeInTheDocument();
+  });
+
+  it('renders specific unavailable copy from a typed envelope when bodyPreview is truncated', () => {
+    const payload = {
+      code: 'acx_service_unavailable',
+      message: `The description service is unavailable. ${'x'.repeat(500)}`,
+      data: {
+        status: 503,
+        unavailable: {
+          reason: 'timeout',
+          service: 'scene',
+          http_status: 503,
+          retry_after_seconds: 15,
+          checked_at: '2026-09-18T14:03:22Z',
+        },
+      },
+    };
+    const raw = JSON.stringify(payload);
+    expect(raw.length).toBeGreaterThan(600);
+    const truncated = `${raw.replace(/\s+/g, ' ').trim().slice(0, 240)}...`;
+    expect(() => JSON.parse(truncated)).toThrow();
+
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: new HTTPError({
+        status: 503,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/gpu/status',
+        bodyPreview: truncated,
+        unavailable: {
+          reason: 'timeout',
+          service: 'scene',
+          http_status: 503,
+          retry_after_seconds: 15,
+          checked_at: '2026-09-18T14:03:22Z',
+        },
+        message: `Request to /acx/v1/gpu/status failed (503): ${raw}`,
+      }),
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(
+      screen.getByText('Description service is unavailable because it did not respond in time.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Retry. If it continues, check that the host is reachable.')).toBeInTheDocument();
+  });
+
+  it('shows the unavailable reason when a start intent is rejected with an envelope', () => {
+    mockControl(statusResponse(), {
+      intentError: unavailableError('2026-09-18T14:03:22Z'),
+    });
+    render(<GpuControlCard />);
+
+    expect(
+      screen.getByText('Description service is unavailable because the circuit breaker is open.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Wait for the cooldown, then Retry.')).toBeInTheDocument();
+    expect(screen.queryByTestId('gpu-intent-failure')).not.toBeInTheDocument();
+  });
+
+  it('shows a generic alert when a stop intent is rejected without an envelope', () => {
+    const requestIntent = vi.fn();
+    mockControl(statusResponse({ state: 'ready' }), { requestIntent });
+    const { rerender } = render(<GpuControlCard />);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop service' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
+    expect(requestIntent).toHaveBeenCalledWith(GPU_INTENT_ACTION.STOP);
+
+    mockControl(statusResponse({ state: 'ready' }), {
+      requestIntent,
+      intentError: new Error('500 Internal Server Error'),
+    });
+    rerender(<GpuControlCard />);
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Stop request failed');
+    expect(alert).toHaveClass('notice-error');
+    expect(screen.getByTestId('gpu-intent-failure-icon')).toBeInTheDocument();
+    expect(screen.queryByText(/the circuit breaker is open/)).not.toBeInTheDocument();
   });
 });

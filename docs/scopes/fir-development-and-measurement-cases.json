@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "suite_id": "fir-development-and-measurement",
+  "status": "provisional",
+  "note": "Intent data only. Implemented tests, human labels and live evidence are required; file presence is not acceptance.",
+  "cases": [
+    {
+      "id": "INSTALL-01",
+      "success_criteria": [
+        "SC-01"
+      ],
+      "owner": "FIRDV-1 S4",
+      "fixture_or_scenario": "Fresh LocalWP sends local-only image bytes to authenticated remote dev-fir; confirm roster and save real caption",
+      "expected": "Pass only with correlated FIR and actual VLM run IDs plus saved WP output; no remote .local URL fetch",
+      "evidence": "Private sanitized live-smoke report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "SPACE-01",
+      "success_criteria": [
+        "SC-02"
+      ],
+      "owner": "FIRDV-1 S1",
+      "fixture_or_scenario": "API/worker128 but actual DB512; same-dimension foreign model or preprocessing; missing hashes",
+      "expected": "Invalid/incomplete with distinct reason codes; no fallback",
+      "evidence": "Contract tests and actual schema/model evidence",
+      "status": "not_implemented"
+    },
+    {
+      "id": "ISOLATION-01",
+      "success_criteria": [
+        "SC-02",
+        "SC-08"
+      ],
+      "owner": "FIRDV-1 S2-S5",
+      "fixture_or_scenario": "Shared dev image/storage, disabled auth, tenant mismatch; isolated rollback/restart",
+      "expected": "Reject shared resources/auth gap; demonstrate only dev-fir changes and persistence",
+      "evidence": "Rendered deploy fixtures and sanitized live resource inventory",
+      "status": "not_implemented"
+    },
+    {
+      "id": "FAILURE-01",
+      "success_criteria": [
+        "SC-03"
+      ],
+      "owner": "FIRDV-1 S5",
+      "fixture_or_scenario": "Unknown, missing landmarks, service outage, expired key, retry",
+      "expected": "No InsightFace or unverified name; typed outcomes; no duplicate logical result",
+      "evidence": "Fault fixtures and limited live failure smoke",
+      "status": "not_implemented"
+    },
+    {
+      "id": "CORPUS-01",
+      "success_criteria": [
+        "SC-04"
+      ],
+      "owner": "FIRDV-2 S2",
+      "fixture_or_scenario": "Two people; only one wears sunglasses; image tag supplied",
+      "expected": "Only annotated wearer gets condition; image tag cannot become face truth",
+      "evidence": "Face-level annotation validator fixture",
+      "status": "not_implemented"
+    },
+    {
+      "id": "CORPUS-02",
+      "success_criteria": [
+        "SC-04"
+      ],
+      "owner": "FIRDV-2 S1-S2",
+      "fixture_or_scenario": "Expected image fails, detector misses GT face, unreviewed negative, missing fact labels",
+      "expected": "Retain all expected units and reasons; no denominator shrink; mark unscorable facts",
+      "evidence": "Ledger tests and annotation coverage report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "CORPUS-03",
+      "success_criteria": [
+        "SC-04",
+        "SC-06"
+      ],
+      "owner": "FIRDV-2 S2",
+      "fixture_or_scenario": "Duplicate capture/synthetic sibling crosses split; challenge arm mixed into probability arm",
+      "expected": "Refuse leakage/unsupported pooled estimator; retain independent-unit counts",
+      "evidence": "Sampling/group validator fixtures",
+      "status": "not_implemented"
+    },
+    {
+      "id": "CLUSTER-01",
+      "success_criteria": [
+        "SC-05"
+      ],
+      "owner": "FIRDV-2 S3-S4",
+      "fixture_or_scenario": "Known merge/split/noise; arbitrary cluster IDs permuted",
+      "expected": "Identical metrics after relabeling; linked grid/table exposes merge/split/noise",
+      "evidence": "Original-space metric tests and rendered report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "PROJECTION-01",
+      "success_criteria": [
+        "SC-05"
+      ],
+      "owner": "FIRDV-2 S4",
+      "fixture_or_scenario": "Same embeddings different projection seed; different embedder space",
+      "expected": "Metrics unchanged; shared cached projection for clustering-only comparison; incompatible spaces labeled separately",
+      "evidence": "Projection-invariance test plus visual inspection",
+      "status": "not_implemented"
+    },
+    {
+      "id": "VISUAL-01",
+      "success_criteria": [
+        "SC-05",
+        "SC-08"
+      ],
+      "owner": "FIRDV-2 S4",
+      "fixture_or_scenario": "Keyboard selection, empty filter, missing thumbnail, foreign tenant artifact",
+      "expected": "Linked stable IDs, accessible table alternative, explicit empty/error, no cross-tenant access or live mutation",
+      "evidence": "Rendered desktop/narrow report and artifact access tests",
+      "status": "not_implemented"
+    },
+    {
+      "id": "SCORE-01",
+      "success_criteria": [
+        "SC-06"
+      ],
+      "owner": "FIRDV-2 S3",
+      "fixture_or_scenario": "Only detector confidence available; all-negative gallery; empty gallery",
+      "expected": "No fabricated match score; distinguish negative best match from absent gallery",
+      "evidence": "Real export/client adapter regression fixtures",
+      "status": "not_implemented"
+    },
+    {
+      "id": "SCORE-02",
+      "success_criteria": [
+        "SC-04",
+        "SC-06"
+      ],
+      "owner": "FIRDV-2 S3",
+      "fixture_or_scenario": "Threshold equality, nonfinite score, no mated/nonmated probes, missed detections",
+      "expected": "Versioned boundary semantics; invalid scores rejected; no measured zero for missing strata",
+      "evidence": "Open-set scorer regression tests",
+      "status": "not_implemented"
+    },
+    {
+      "id": "GATE-01",
+      "success_criteria": [
+        "SC-06"
+      ],
+      "owner": "FIRDV-2 S3-S5",
+      "fixture_or_scenario": "Null ratification/max_fpi, test-tuned tau, changed gallery, insufficient independent units",
+      "expected": "No adoption verdict; fixed FPI count and denominator; diagnostic tier with limitations",
+      "evidence": "Gate refusal tests and frozen calibration manifest",
+      "status": "not_implemented"
+    },
+    {
+      "id": "VLM-01",
+      "success_criteria": [
+        "SC-07"
+      ],
+      "owner": "FIRDV-2 S6",
+      "fixture_or_scenario": "Correct name set but swapped people; empty caption; missing reference facts",
+      "expected": "Placement failure; empty output cannot win; unlabeled factuality is not evaluable",
+      "evidence": "Grounding/fact-scoring fixtures and human rubric",
+      "status": "not_implemented"
+    },
+    {
+      "id": "VLM-02",
+      "success_criteria": [
+        "SC-07",
+        "SC-08"
+      ],
+      "owner": "FIRDV-2 S6",
+      "fixture_or_scenario": "Candidates use different FIR evidence or a hosted provider endpoint",
+      "expected": "Reject primary paired comparison or explicitly separate diagnostic arm; reject hosted endpoint for this phase",
+      "evidence": "Candidate/request manifest tests",
+      "status": "not_implemented"
+    },
+    {
+      "id": "COST-01",
+      "success_criteria": [
+        "SC-07",
+        "SC-08"
+      ],
+      "owner": "FIRDV-2 S7",
+      "fixture_or_scenario": "Shared startup, failed request retry, idle tail, zero quality-accepted outputs",
+      "expected": "Burst counted once; allocated costs reconcile; failures included; accepted unit cost null for zero denominator",
+      "evidence": "Deterministic priced-burst fixture and billing reconciliation",
+      "status": "not_implemented"
+    },
+    {
+      "id": "REPLAY-01",
+      "success_criteria": [
+        "SC-08"
+      ],
+      "owner": "FIRDV-2 S1",
+      "fixture_or_scenario": "Resume interrupted run; same input new model/hash; rescore offline",
+      "expected": "No duplicated logical observation; new run for changed config; deterministic metric replay",
+      "evidence": "Ledger/replay tests and artifact hashes",
+      "status": "not_implemented"
+    },
+    {
+      "id": "BUDGET-01",
+      "success_criteria": [
+        "SC-07",
+        "SC-08"
+      ],
+      "owner": "FIRDV-2 S7",
+      "fixture_or_scenario": "Missing rate/budget, exceeded lease, model OOM, partial run",
+      "expected": "No unbudgeted live execution; terminal partial outcomes and verified teardown",
+      "evidence": "CPU dry-run stop tests then bounded live metering evidence",
+      "status": "not_implemented"
+    },
+    {
+      "id": "CAPACITY-01",
+      "success_criteria": [
+        "SC-09"
+      ],
+      "owner": "FIRDV-3 S1-S2",
+      "fixture_or_scenario": "AuraFace512 artifact paired with SFace128 or buffalo512 store, missing preprocessing/hash/license record, automatic model-pack loading",
+      "expected": "Reject incompatible or unapproved contract; SFace baseline retained; gain requires own calibrated paired metric evidence, not dimension ratio",
+      "evidence": "Artifact/adapter RED tests and separately stored comparison run",
+      "status": "not_implemented"
+    },
+    {
+      "id": "TRAINING-01",
+      "success_criteria": [
+        "SC-09"
+      ],
+      "owner": "FIRDV-3 S3-S5",
+      "fixture_or_scenario": "Legacy evaluation corpus proposed as new foundation training set, missing trainable backbone, missing data rights or unpriced GPU lease",
+      "expected": "No live training; explicit readiness gap or no-go. Feasible hardware alone does not pass data/quality gate.",
+      "evidence": "CPU-only training-feasibility packet and any separately authorized measured hardware probe",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DETECT-SPATIAL-01",
+      "success_criteria": [
+        "SC-10"
+      ],
+      "owner": "FIRDV-2 S3a",
+      "fixture_or_scenario": "Equal prediction/GT counts at wrong locations; duplicate proposals over one of two faces; absent matched_faces evidence",
+      "expected": "Strict comparison rejects missing localization evidence; wrong locations and duplicate predictions cannot earn true positives; legacy count-only replay remains labeled historical",
+      "evidence": "Synthetic localization fixtures and strict-adapter tests",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DETECT-TRUTH-01",
+      "success_criteria": [
+        "SC-04",
+        "SC-10"
+      ],
+      "owner": "FIRDV-2 S2/S3a",
+      "fixture_or_scenario": "Both detectors miss a human-annotated occluded face; no-face image; one detected plus one missed person; EXIF/resize mismatch",
+      "expected": "Independent full-image annotation/provenance required; all eligible GT faces persist; invalid coordinate joins refuse scoring; zero proposals is not no-face truth",
+      "evidence": "Human annotation packet plus synthetic ledger/transform fixtures",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DETECT-POLICY-01",
+      "success_criteria": [
+        "SC-10"
+      ],
+      "owner": "FIRDV-2 S3a/S5",
+      "fixture_or_scenario": "Candidate gains recall by flooding false positives, regresses clean faces, times out, or tunes threshold on test",
+      "expected": "Report all denominators and failures; calibration-frozen FPPI/latency/clean-regression policy governs adoption; absent ratification or inadequate evidence refuses qualification",
+      "evidence": "Metric/gate fixtures and later paired detector report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DETECT-ATTRIBUTION-01",
+      "success_criteria": [
+        "SC-05",
+        "SC-10"
+      ],
+      "owner": "FIRDV-2 S3a/S4/S5",
+      "fixture_or_scenario": "Face missing from all embedding tables; matched face with invalid landmarks; oracle box plus landmark rescue; fused comparator re-detects",
+      "expected": "Miss/FP galleries include GT-only faces; reference-geometry gain labeled combined when appropriate; no pure embedder attribution from re-detecting comparator; cluster metrics cannot conceal detector failures",
+      "evidence": "Stage-ledger fixtures and rendered detector diagnosis report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DEV512-SPACE-01",
+      "success_criteria": [
+        "SC-02",
+        "SC-11"
+      ],
+      "owner": "FIRDV-3 S6",
+      "fixture_or_scenario": "Approved candidate512 expected model contract versus SFace128, foreign512, wrong centroid typmod or API/worker model mismatch",
+      "expected": "Readiness validates exact weight/preprocessing/model space and actual schema; dimension alone never passes; SFace128 expectation remains unchanged",
+      "evidence": "Expected-space validator and actual DB/runtime evidence",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DEV512-LIVE-01",
+      "success_criteria": [
+        "SC-01",
+        "SC-03",
+        "SC-11"
+      ],
+      "owner": "FIRDV-3 S6",
+      "fixture_or_scenario": "New LocalWP endpoint sends pixels to isolated512 service, fresh enrollment and human confirmation, actual remote description saved; unknown and missing-landmark cases",
+      "expected": "Correlated model512/tenant/run and saved WP evidence; no baseline/InsightFace fallback or fabricated identity; quality qualification reported separately",
+      "evidence": "Private sanitized512 live-smoke report",
+      "status": "not_implemented"
+    },
+    {
+      "id": "DEV512-ROLLBACK-01",
+      "success_criteria": [
+        "SC-08",
+        "SC-11"
+      ],
+      "owner": "FIRDV-3 S6",
+      "fixture_or_scenario": "Candidate512 service restart and deliberate LocalWP configuration rollback with separate128 resources",
+      "expected": "Persistence and isolation verified; rollback uses declared compatible endpoint/config without mixing vectors or modifying incumbent resources",
+      "evidence": "Routing/config fixtures and live restart/rollback runbook",
+      "status": "not_implemented"
+    }
+  ]
+}

@@ -36,6 +36,8 @@ class NamingMode(StrEnum):
 
     GROUNDED = "grounded"
     POSITIONAL = "positional"
+    # N1: the lone leading generic person NP is swapped for the name without a phrase box.
+    SUBSTITUTED = "substituted"
 
 
 class NamingStatus(StrEnum):
@@ -45,6 +47,9 @@ class NamingStatus(StrEnum):
     DISABLED = "disabled"
     SKIPPED_BUDGET = "skipped_budget"
     NO_FACES = "no_faces"
+    NO_CONFIRMED_IDENTITIES = "no_confirmed_identities"
+    NO_ELIGIBLE_IDENTITIES = "no_eligible_identities"
+    AMBIGUOUS_GROUNDING = "ambiguous_grounding"
 
 
 class NamingRealizer(StrEnum):
@@ -52,6 +57,7 @@ class NamingRealizer(StrEnum):
 
     GROUNDED = "grounded"
     POSITIONAL_FALLBACK = "positional_fallback"
+    SUBSTITUTED = "substituted"
 
 
 @dataclass(frozen=True)

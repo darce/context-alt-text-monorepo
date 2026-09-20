@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_STARTUP_BUDGET_SECONDS,
   JOB_EVENT,
   JOB_MACHINE_MAX_TICK_DELTA_MS,
   JOB_MACHINE_RECONNECT_CEILING,
   JOB_MACHINE_STALL_THRESHOLD_MS,
+  JOB_MACHINE_WARMING_STALL_CEILING_MS,
   JOB_STATUS,
+  STALL_PHASE,
   initialJobState,
   isTerminalJobState,
   jobReducer,
+  stallThresholdMs,
   type JobEvent,
   type JobMachineState,
   type JobStatus,
@@ -749,5 +753,86 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       const next = jobReducer(fixtureFor(JOB_STATUS.IDLE), { type: JOB_EVENT.RESET });
       expect(next).toEqual(initialJobState);
     });
+  });
+});
+
+describe('stallThresholdMs (G3 / REL0024-M-05)', () => {
+  it('keeps the processing-phase clock on JOB_MACHINE_STALL_THRESHOLD_MS', () => {
+    expect(JOB_MACHINE_STALL_THRESHOLD_MS).toBe(30_000);
+    expect(stallThresholdMs(STALL_PHASE.PROCESSING)).toBe(JOB_MACHINE_STALL_THRESHOLD_MS);
+    expect(stallThresholdMs(STALL_PHASE.PROCESSING, 510)).toBe(30_000);
+    expect(stallThresholdMs(STALL_PHASE.PROCESSING, 12)).toBe(30_000);
+  });
+
+  it('uses startup_budget_seconds * 1000 while warming or GPU-not-ready', () => {
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 510)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 120)).toBe(120_000);
+  });
+
+  it('clamps the warming threshold to [30s, 900s] and falls back on overflow', () => {
+    expect(JOB_MACHINE_WARMING_STALL_CEILING_MS).toBe(900_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 17.5)).toBe(JOB_MACHINE_STALL_THRESHOLD_MS);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 12)).toBe(JOB_MACHINE_STALL_THRESHOLD_MS);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 1)).toBe(30_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 900)).toBe(JOB_MACHINE_WARMING_STALL_CEILING_MS);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 901)).toBe(JOB_MACHINE_WARMING_STALL_CEILING_MS);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 10_000)).toBe(900_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, Number.MAX_VALUE)).toBe(
+      DEFAULT_STARTUP_BUDGET_SECONDS * 1000,
+    );
+  });
+
+  it('falls back to 510s when the run payload omits a usable startup budget', () => {
+    expect(DEFAULT_STARTUP_BUDGET_SECONDS).toBe(510);
+    expect(stallThresholdMs(STALL_PHASE.WARMING)).toBe(DEFAULT_STARTUP_BUDGET_SECONDS * 1000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, null)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, undefined)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, 0)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, -1)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, Number.NaN)).toBe(510_000);
+    expect(stallThresholdMs(STALL_PHASE.WARMING, Number.POSITIVE_INFINITY)).toBe(510_000);
+  });
+
+  it('does not stall a processing job before 30s and does stall at the processing threshold', () => {
+    const state = fixtureFor(JOB_STATUS.RUNNING);
+    const below = jobReducer(state, {
+      type: JOB_EVENT.STALL_TICK,
+      now: AT + stallThresholdMs(STALL_PHASE.PROCESSING) - 1,
+    });
+    expect(below.status).toBe(JOB_STATUS.RUNNING);
+
+    const atThreshold = jobReducer(state, {
+      type: JOB_EVENT.STALL_TICK,
+      now: AT + stallThresholdMs(STALL_PHASE.PROCESSING),
+    });
+    expect(atThreshold.status).toBe(JOB_STATUS.STALLED);
+  });
+
+  it('does not stall a warming job after 30s quiet when the startup budget is 510s', () => {
+    const state = fixtureFor(JOB_STATUS.RUNNING);
+    const next = jobReducer(state, {
+      type: JOB_EVENT.STALL_TICK,
+      now: AT + 30_000,
+      phase: STALL_PHASE.WARMING,
+      startupBudgetSeconds: 510,
+    });
+    expect(next.status).toBe(JOB_STATUS.RUNNING);
+  });
+
+  it('stalls a warming job once quiet exceeds the 510s startup budget', () => {
+    const state = fixtureFor(JOB_STATUS.RUNNING);
+    const next = jobReducer(state, {
+      type: JOB_EVENT.STALL_TICK,
+      now: AT + 511_000,
+      phase: STALL_PHASE.WARMING,
+      startupBudgetSeconds: 510,
+    });
+    expect(next.status).toBe(JOB_STATUS.STALLED);
+  });
+
+  it('stalls at 30s when STALL_TICK omits phase (processing default)', () => {
+    const state = fixtureFor(JOB_STATUS.RUNNING);
+    const next = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 30_000 });
+    expect(next.status).toBe(JOB_STATUS.STALLED);
   });
 });

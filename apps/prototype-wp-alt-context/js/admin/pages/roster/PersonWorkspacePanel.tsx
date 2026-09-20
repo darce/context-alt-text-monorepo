@@ -1,8 +1,13 @@
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import type { RosterEntry } from '../../api/rosterApi';
+import { getConfig, getEndpoint } from '../../api/config';
+import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
+import { queryKeys } from '../../api/queryKeys';
+import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { formatTimestamp } from '../../utils/formatTimestamp';
+import { Combobox } from '../../../components/ui/combobox';
 import { FaceLightbox } from '../../../components/ui/FaceLightbox';
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { isCroppableBbox } from '../../../components/ui/faceGeometry';
@@ -41,12 +46,200 @@ const QUEUE_SECTIONS = [
 ] as const;
 
 const EVIDENCE_IMAGE_SIZE = 96;
+const PERSON_MEDIA_PAGE_SIZE = 50;
+const ALSO_WITH_PERSON_LIMIT = 5;
+const PERSON_MEDIA_LOAD_ERROR_COPY = __('Could not load this person\'s photos.', 'alt-context');
+const COVER_UPDATED_COPY = __('Cover photo updated.', 'alt-context');
+const COVER_RESTORED_COPY = __('Cover photo restored.', 'alt-context');
+const ALSO_WITH_LABEL = __('Also with…', 'alt-context');
 
 interface LightboxSelection {
   mediaUrl: string;
   bbox: BoundingBox;
   label: string;
 }
+
+interface PersonMediaItem {
+  identity_id: string;
+  media_id: number;
+  media_url: string | null;
+  bbox: RosterEntryInstance['bbox'];
+  similarity: number | null;
+  cluster_id: string;
+}
+
+interface PersonMediaPage {
+  media: PersonMediaItem[];
+  limit: number;
+  offset: number;
+  total: number;
+  truncated: boolean;
+}
+
+interface CoverPin {
+  clusterId: string;
+  identityId: string;
+}
+
+interface CoverToast {
+  clusterId: string;
+  identityId: string;
+  previousIdentityId: string | null;
+}
+
+interface CoverPending extends CoverToast {
+  kind: 'set' | 'undo';
+}
+
+interface AlsoWithPerson {
+  id: number;
+  name: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
+
+const isUnitInterval = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+
+const isBoundingBox = (value: unknown): value is BoundingBox =>
+  isRecord(value) &&
+  isNonNegativeInteger(value.x) &&
+  isNonNegativeInteger(value.y) &&
+  isPositiveInteger(value.width) &&
+  isPositiveInteger(value.height);
+
+const parsePersonMediaItem = (value: unknown): PersonMediaItem => {
+  if (!isRecord(value)) {
+    throw new Error('Person media item is missing or malformed.');
+  }
+  if (typeof value.identity_id !== 'string' || typeof value.cluster_id !== 'string') {
+    throw new Error('Person media item is missing identity or cluster.');
+  }
+  if (!isPositiveInteger(value.media_id)) {
+    throw new Error('Person media item is missing media_id.');
+  }
+  if (value.media_url !== null && typeof value.media_url !== 'string') {
+    throw new Error('Person media item has a malformed media_url.');
+  }
+  if (value.bbox !== null && !isBoundingBox(value.bbox)) {
+    throw new Error('Person media item has a malformed bbox.');
+  }
+  if (value.similarity !== null && !isUnitInterval(value.similarity)) {
+    throw new Error('Person media item has a malformed similarity.');
+  }
+  return {
+    identity_id: value.identity_id,
+    media_id: value.media_id,
+    media_url: value.media_url,
+    bbox: value.bbox,
+    similarity: value.similarity,
+    cluster_id: value.cluster_id,
+  };
+};
+
+const parsePersonMediaPage = (payload: unknown): PersonMediaPage => {
+  if (!isRecord(payload) || !Array.isArray(payload.media)) {
+    throw new Error('Person media response is missing or malformed.');
+  }
+  if (
+    !isPositiveInteger(payload.limit) ||
+    !isNonNegativeInteger(payload.offset) ||
+    !isNonNegativeInteger(payload.total) ||
+    typeof payload.truncated !== 'boolean'
+  ) {
+    throw new Error('Person media response is missing pagination metadata.');
+  }
+  return {
+    media: payload.media.map(parsePersonMediaItem),
+    limit: payload.limit,
+    offset: payload.offset,
+    total: payload.total,
+    truncated: payload.truncated,
+  };
+};
+
+const listPersonMedia = async (
+  personId: number,
+  params: { limit: number; offset: number; withPersonIds?: readonly number[] },
+  signal?: AbortSignal,
+): Promise<PersonMediaPage> => {
+  const requestUrl = new URL(
+    `${stripTrailingSlash(getEndpoint('rosterPersons'))}/${personId}/media`,
+    window.location.origin,
+  );
+  requestUrl.searchParams.set('limit', String(params.limit));
+  requestUrl.searchParams.set('offset', String(params.offset));
+  (params.withPersonIds ?? []).forEach((id) => {
+    requestUrl.searchParams.append('with_person_ids[]', String(id));
+  });
+  const payload = await fetchRequiredApi<unknown>(requestUrl.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal,
+  });
+  return parsePersonMediaPage(payload);
+};
+
+const canQueryPersonMedia = (personId: number): boolean => {
+  if (!Number.isInteger(personId) || personId < 1) {
+    return false;
+  }
+  try {
+    getEndpoint('rosterPersons');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const canQueryRosterEntries = (): boolean => {
+  try {
+    getEndpoint('rosterEntries');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const formatAlsoWithNames = (names: readonly string[]): string => {
+  if (names.length === 0) {
+    return '';
+  }
+  if (names.length === 1) {
+    return names[0] ?? '';
+  }
+  const head = names.slice(0, -1).join(', ');
+  const last = names[names.length - 1] ?? '';
+  return sprintf(__('%s and %s', 'alt-context'), head, last);
+};
+
+const previousRepresentativeId = (entry: RosterEntry, clusterId: string): string | null => {
+  const cluster = entry.clusters.find((candidate) => candidate.cluster_id === clusterId);
+  const identityId = cluster?.representative_identity?.identity_id;
+  return typeof identityId === 'string' && identityId.length > 0 ? identityId : null;
+};
+
+const isPinnedCover = (
+  optimistic: CoverPin | null,
+  clusterId: string,
+  identityId: string,
+  entry: RosterEntry,
+): boolean => {
+  if (optimistic) {
+    return optimistic.clusterId === clusterId && optimistic.identityId === identityId;
+  }
+  return entry.clusters.some(
+    (cluster) =>
+      cluster.cluster_id === clusterId && cluster.representative_identity?.identity_id === identityId,
+  );
+};
 
 const renderEvidenceMedia = ({
   mediaUrl,
@@ -107,6 +300,12 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   const personUuid = typeof entry.person_uuid === 'string' && entry.person_uuid.length > 0 ? entry.person_uuid : null;
   const entryIdentity = `${entry.id}:${typeof entry.person_uuid === 'string' ? entry.person_uuid : ''}`;
   const [lightbox, setLightbox] = React.useState<LightboxSelection | null>(null);
+  const [photoOffset, setPhotoOffset] = React.useState(0);
+  const [alsoWithPeople, setAlsoWithPeople] = React.useState<AlsoWithPerson[]>([]);
+  const [coverUi, setCoverUi] = React.useState<{ optimistic: CoverPin | null; toast: CoverToast | null }>({
+    optimistic: null,
+    toast: null,
+  });
   const faces = React.useMemo(() => collectPersonFaces(entry), [entry]);
   const visibleIds = React.useMemo(() => faces.map((face) => face.faceId), [faces]);
   const { requestedFaceId, writeFace } = useRosterFaceRoute();
@@ -118,6 +317,39 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   const railCallbackRefs = React.useRef(new Map<string, (node: HTMLDivElement | null) => void>());
   const scrollLeftByRailRef = React.useRef(new Map<string, number>());
   const previousSelectedIdRef = React.useRef<string | null>(selectedId);
+  const pendingCoverRef = React.useRef<CoverPending | null>(null);
+  const seenCoverPinRef = React.useRef(false);
+  const mediaEnabled = canQueryPersonMedia(entry.id);
+  const rosterEnabled = canQueryRosterEntries();
+  const withPersonIds = React.useMemo(
+    () => alsoWithPeople.map((person) => person.id),
+    [alsoWithPeople],
+  );
+  const rosterQuery = useQuery({
+    queryKey: queryKeys.roster.entries(),
+    queryFn: () => listRosterEntries(),
+    enabled: rosterEnabled,
+  });
+  const personMediaQuery = useQuery({
+    queryKey: [...queryKeys.roster.entries(), 'media', entry.id, { limit: PERSON_MEDIA_PAGE_SIZE, offset: photoOffset, withPersonIds }],
+    queryFn: ({ signal }) =>
+      listPersonMedia(entry.id, { limit: PERSON_MEDIA_PAGE_SIZE, offset: photoOffset, withPersonIds }, signal),
+    enabled: mediaEnabled,
+  });
+  const alsoWithOptions = React.useMemo(() => {
+    const selectedIds = new Set(withPersonIds);
+    return (rosterQuery.data ?? [])
+      .filter(
+        (person) =>
+          Number.isInteger(person.id) &&
+          person.id >= 1 &&
+          person.id !== entry.id &&
+          !selectedIds.has(person.id) &&
+          person.name.trim().length > 0,
+      )
+      .map((person) => ({ value: String(person.id), label: person.name }));
+  }, [entry.id, rosterQuery.data, withPersonIds]);
+  const alsoWithAtLimit = alsoWithPeople.length >= ALSO_WITH_PERSON_LIMIT;
 
   const bindRailRef = React.useCallback((clusterId: string) => {
     const existing = railCallbackRefs.current.get(clusterId);
@@ -142,6 +374,11 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
 
   React.useEffect(() => {
     setLightbox(null);
+    setPhotoOffset(0);
+    setAlsoWithPeople([]);
+    setCoverUi({ optimistic: null, toast: null });
+    pendingCoverRef.current = null;
+    seenCoverPinRef.current = false;
   }, [entryIdentity]);
 
   React.useEffect(() => {
@@ -207,6 +444,123 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
   );
 
   const canPin = Boolean(selectedFace && !selectedFace.isRepresentative && selectedFace.clusterId);
+  const selectedIsCover = Boolean(
+    selectedFace &&
+      isPinnedCover(coverUi.optimistic, selectedFace.clusterId, selectedFace.identityId, entry),
+  );
+  const canUseAsCover = Boolean(selectedFace?.clusterId && selectedFace.identityId && !selectedIsCover && !isPinning);
+
+  const useAsCover = React.useCallback(
+    (clusterId: string, identityId: string, kind: CoverPending['kind'] = 'set') => {
+      if (!clusterId || !identityId || isPinning) {
+        return;
+      }
+      const previousIdentityId =
+        kind === 'undo'
+          ? identityId === coverUi.toast?.identityId
+            ? coverUi.toast.previousIdentityId
+            : previousRepresentativeId(entry, clusterId)
+          : previousRepresentativeId(entry, clusterId);
+      const nextOptimistic: CoverPin | null =
+        kind === 'undo' && !previousIdentityId ? null : { clusterId, identityId };
+      pendingCoverRef.current = { kind, clusterId, identityId, previousIdentityId };
+      setCoverUi({ optimistic: nextOptimistic, toast: kind === 'set' ? null : coverUi.toast });
+      pin(clusterId, identityId, true);
+      seenCoverPinRef.current = true;
+    },
+    [coverUi.toast, entry, isPinning, pin],
+  );
+
+  const undoCover = React.useCallback(() => {
+    const toast = coverUi.toast;
+    if (!toast || isPinning) {
+      return;
+    }
+    if (toast.previousIdentityId) {
+      useAsCover(toast.clusterId, toast.previousIdentityId, 'undo');
+      return;
+    }
+    pendingCoverRef.current = {
+      kind: 'undo',
+      clusterId: toast.clusterId,
+      identityId: toast.identityId,
+      previousIdentityId: null,
+    };
+    setCoverUi({ optimistic: null, toast });
+    pin(toast.clusterId, toast.identityId, false);
+    seenCoverPinRef.current = true;
+  }, [coverUi.toast, isPinning, pin, useAsCover]);
+
+  React.useEffect(() => {
+    if (isPinning) {
+      seenCoverPinRef.current = true;
+      return;
+    }
+    const pending = pendingCoverRef.current;
+    if (!pending) {
+      seenCoverPinRef.current = false;
+      return;
+    }
+    if (!seenCoverPinRef.current) {
+      return;
+    }
+    seenCoverPinRef.current = false;
+    pendingCoverRef.current = null;
+    if (pinError) {
+      setCoverUi({ optimistic: null, toast: null });
+      return;
+    }
+    if (pending.kind === 'undo') {
+      setCoverUi({
+        optimistic: pending.previousIdentityId
+          ? { clusterId: pending.clusterId, identityId: pending.identityId }
+          : null,
+        toast: null,
+      });
+      announce(COVER_RESTORED_COPY);
+      return;
+    }
+    setCoverUi({
+      optimistic: { clusterId: pending.clusterId, identityId: pending.identityId },
+      toast: {
+        clusterId: pending.clusterId,
+        identityId: pending.identityId,
+        previousIdentityId: pending.previousIdentityId,
+      },
+    });
+    announce(COVER_UPDATED_COPY);
+  }, [announce, isPinning, pinError]);
+
+  const addAlsoWithPerson = React.useCallback(
+    (personId: number, name: string) => {
+      if (!Number.isInteger(personId) || personId < 1 || personId === entry.id || name.trim().length === 0) {
+        return;
+      }
+      setAlsoWithPeople((current) => {
+        if (current.length >= ALSO_WITH_PERSON_LIMIT || current.some((person) => person.id === personId)) {
+          return current;
+        }
+        return [...current, { id: personId, name }];
+      });
+      setPhotoOffset(0);
+    },
+    [entry.id],
+  );
+
+  const removeAlsoWithPerson = React.useCallback((personId: number) => {
+    setAlsoWithPeople((current) => current.filter((person) => person.id !== personId));
+    setPhotoOffset(0);
+  }, []);
+
+  const photoPage = personMediaQuery.data ?? null;
+  const alsoWithEmptyCopy =
+    alsoWithPeople.length > 0
+      ? sprintf(
+          __('No photos of %s also with %s.', 'alt-context'),
+          entry.name,
+          formatAlsoWithNames(alsoWithPeople.map((person) => person.name)),
+        )
+      : __('No photos of this person yet.', 'alt-context');
 
   return (
     <section
@@ -295,6 +649,33 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
             >
               {__('Set as representative', 'alt-context')}
             </button>
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              disabled={!canUseAsCover}
+              onClick={() => {
+                if (!selectedFace) {
+                  return;
+                }
+                useAsCover(selectedFace.clusterId, selectedFace.identityId);
+              }}
+            >
+              {selectedIsCover ? __('Already the cover', 'alt-context') : __('Use as cover', 'alt-context')}
+            </button>
+            {coverUi.toast ? (
+              <div
+                className="acx-roster__person-workspace-live"
+                role="status"
+                data-testid="acx-person-cover-toast"
+                aria-live="polite"
+                aria-label={__('Cover photo status', 'alt-context')}
+              >
+                <p>{COVER_UPDATED_COPY}</p>
+                <button type="button" className="acx-button" onClick={undoCover}>
+                  {__('Undo', 'alt-context')}
+                </button>
+              </div>
+            ) : null}
             {pinError ? (
               <UserFacingErrorNotice error={pinError} fallback={PIN_REPRESENTATIVE_ERROR_COPY} />
             ) : null}
@@ -360,6 +741,135 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           </div>
         ) : (
           <p>{__('Face evidence will appear after the next refresh.', 'alt-context')}</p>
+        )}
+      </section>
+
+      <section
+        aria-labelledby="acx-person-workspace-photos"
+        data-testid="acx-person-photo-grid"
+        role="region"
+        aria-label={__('Photos', 'alt-context')}
+      >
+        <h4 id="acx-person-workspace-photos">{__('Photos', 'alt-context')}</h4>
+        <div role="search" aria-label={ALSO_WITH_LABEL}>
+          <Combobox
+            options={alsoWithOptions}
+            onSelect={(value) => {
+              const selected = alsoWithOptions.find((option) => option.value === value);
+              if (!selected) {
+                return;
+              }
+              addAlsoWithPerson(Number(selected.value), selected.label);
+            }}
+            placeholder={ALSO_WITH_LABEL}
+            searchPlaceholder={__('Search people', 'alt-context')}
+            emptyText={__('No named people found.', 'alt-context')}
+            ariaLabel={ALSO_WITH_LABEL}
+            disabled={!rosterEnabled || alsoWithAtLimit}
+            isLoading={rosterEnabled && rosterQuery.isLoading}
+          />
+          {alsoWithPeople.length > 0 ? (
+            <ul aria-label={__('Also with people', 'alt-context')}>
+              {alsoWithPeople.map((person) => (
+                <li key={person.id}>
+                  <span>{person.name}</span>
+                  <button
+                    type="button"
+                    className="acx-button"
+                    aria-label={sprintf(__('Remove %s', 'alt-context'), person.name)}
+                    onClick={() => {
+                      removeAlsoWithPerson(person.id);
+                    }}
+                  >
+                    {__('Remove', 'alt-context')}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        {!mediaEnabled ? (
+          <p>{__('Photos will appear after the next refresh.', 'alt-context')}</p>
+        ) : personMediaQuery.isLoading ? (
+          <p role="status">{__('Loading photos…', 'alt-context')}</p>
+        ) : personMediaQuery.isError ? (
+          <UserFacingErrorNotice error={personMediaQuery.error} fallback={PERSON_MEDIA_LOAD_ERROR_COPY} />
+        ) : photoPage && photoPage.media.length === 0 ? (
+          <p>{alsoWithEmptyCopy}</p>
+        ) : photoPage ? (
+          <>
+            <ul>
+              {photoPage.media.map((item) => {
+                const itemIsCover = isPinnedCover(
+                  coverUi.optimistic,
+                  item.cluster_id,
+                  item.identity_id,
+                  entry,
+                );
+                const photoAlt = sprintf(__('Photo from media %d', 'alt-context'), item.media_id);
+                const coverLabel = itemIsCover
+                  ? sprintf(__('Media %d is already the cover', 'alt-context'), item.media_id)
+                  : sprintf(__('Use media %d as cover', 'alt-context'), item.media_id);
+                const canCoverItem =
+                  item.cluster_id.length > 0 && item.identity_id.length > 0 && !itemIsCover && !isPinning;
+                return (
+                  <li key={`${item.cluster_id}-${item.identity_id}-${item.media_id}`}>
+                    {renderEvidenceMedia({
+                      mediaUrl: item.media_url,
+                      bbox: item.bbox,
+                      alt: photoAlt,
+                      onOpenLightbox: setLightbox,
+                    })}
+                    <p>{sprintf(__('Media %d', 'alt-context'), item.media_id)}</p>
+                    {itemIsCover ? <p>{__('Current cover', 'alt-context')}</p> : null}
+                    <button
+                      type="button"
+                      className="acx-button"
+                      disabled={!canCoverItem}
+                      aria-label={coverLabel}
+                      onClick={() => {
+                        useAsCover(item.cluster_id, item.identity_id);
+                      }}
+                    >
+                      {itemIsCover ? __('Already the cover', 'alt-context') : __('Use as cover', 'alt-context')}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <p>
+              {photoPage.total > 0
+                ? sprintf(
+                    __('%d–%d of %d photos', 'alt-context'),
+                    photoPage.offset + 1,
+                    photoPage.offset + photoPage.media.length,
+                    photoPage.total,
+                  )
+                : null}
+            </p>
+            <button
+              type="button"
+              className="acx-button"
+              disabled={photoPage.offset <= 0 || isPinning}
+              onClick={() => {
+                setPhotoOffset(Math.max(0, photoPage.offset - photoPage.limit));
+              }}
+            >
+              {__('Previous photos', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button"
+              disabled={!photoPage.truncated || isPinning}
+              onClick={() => {
+                setPhotoOffset(photoPage.offset + photoPage.limit);
+              }}
+            >
+              {__('Next photos', 'alt-context')}
+            </button>
+          </>
+        ) : (
+          <p>{__('Photos will appear after the next refresh.', 'alt-context')}</p>
         )}
       </section>
 

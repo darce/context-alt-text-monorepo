@@ -161,6 +161,8 @@ def test_missing_or_non_numeric_written_at_is_unknown(snapshot_path: Path) -> No
         {"state": "ready", "written_at": NOW, "reason": "readiness_timeout"},
         {"state": "ready", "written_at": NOW, "instance_id": " \t"},
         {"state": "ready", "written_at": NOW, "since": NOW + 0.001},
+        {"state": "starting", "written_at": NOW, "reason": " "},
+        {"state": "starting", "written_at": NOW, "reason": 7},
     ],
 )
 def test_producer_invalid_shape_is_unknown(
@@ -170,6 +172,15 @@ def test_producer_invalid_shape_is_unknown(
     snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert read_gpu_state(now=NOW) is GpuState.UNKNOWN
+
+
+def test_starting_with_readiness_wait_timeout_reason_reads_starting(snapshot_path: Path) -> None:
+    snapshot_path.write_text(
+        json.dumps({"state": "starting", "written_at": NOW, "reason": "readiness_wait_timeout"}),
+        encoding="utf-8",
+    )
+
+    assert read_gpu_state(now=NOW) is GpuState.STARTING
 
 
 def test_transition_logs_once_per_state_change(snapshot_path: Path, caplog: pytest.LogCaptureFixture) -> None:

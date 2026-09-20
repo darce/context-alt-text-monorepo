@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import type { DescribeRunResponse } from '../../../api/describeApi';
-import { BulkDescribeProgress } from '../MediaSelection';
+import { BulkDescribeProgress, workbenchDraftQueueHref } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -167,7 +167,7 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
     expect(screen.queryByText(/need review/)).toBeNull();
   });
 
-  it('renders named done-state counts, Review drafts as a history link, and Dismiss that clears the panel', async () => {
+  it('renders named done-state counts, Review drafts as a queue filter link, and Dismiss that clears the panel', async () => {
     const Harness = () => {
       const [visible, setVisible] = useState(true);
       if (!visible) {
@@ -201,7 +201,8 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
 
     expect(screen.getByText('✔ 12 drafts ready to review · 2 failed')).toBeInTheDocument();
     const reviewDrafts = screen.getByRole('link', { name: 'Review drafts' });
-    expect(reviewDrafts).toHaveAttribute('href', '#/description-history?run=run-1');
+    expect(reviewDrafts).toHaveAttribute('href', workbenchDraftQueueHref('run-1'));
+    expect(reviewDrafts.getAttribute('href')).toBe('#/workbench?hasDraft=1&run=run-1');
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.getByText('cleared')).toBeInTheDocument();
     expect(screen.queryByText('✔ 12 drafts ready to review · 2 failed')).toBeNull();

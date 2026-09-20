@@ -24,6 +24,13 @@ from recognition.infrastructure.repositories.api_key_repository import SqlAlchem
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """The SQLite test substrate returns naive datetimes; PostgreSQL returns aware ones."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def key_lifecycle_tables(db_session: AsyncSession) -> None:
     """Add the portal foundation tables omitted by the broad recognition fixture."""
@@ -109,11 +116,11 @@ async def test_rotation_shortens_old_key_and_preserves_original_lifetime(
     assert old is not None
     assert old.revoked_at is None
     assert old.expires_at is not None
-    assert old.expires_at <= NOW + timedelta(days=7)
+    assert _as_utc(old.expires_at) <= NOW + timedelta(days=7)
     assert replacement_row is not None
     assert replacement_row.lifetime_seconds == lifetime
     assert replacement_row.expires_at is not None
-    assert replacement_row.expires_at >= NOW + timedelta(seconds=lifetime)
+    assert _as_utc(replacement_row.expires_at) >= NOW + timedelta(seconds=lifetime)
     assert history_count == 1
 
     with pytest.raises(KeyAlreadyRotatedError):
@@ -154,7 +161,7 @@ async def test_revoke_is_immediate_and_repeated_portal_revoke_is_refused(
 
     row = await SqlAlchemyApiKeyRepository(db_session).get_by_id(result.api_key_id, tenant_id=tenant.id)
     assert row is not None
-    assert row.revoked_at == NOW
+    assert _as_utc(row.revoked_at) == NOW
 
 
 @pytest.mark.asyncio

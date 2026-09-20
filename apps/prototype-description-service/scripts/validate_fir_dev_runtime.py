@@ -234,13 +234,7 @@ def _contains_secret_shaped(value: Any) -> bool:
 
 def _redact_credential_value(value: Any) -> Any:
     if isinstance(value, Mapping):
-        redacted: dict[Any, Any] = {}
-        for key, item in value.items():
-            if key == "value" and _credential_value_is_nonempty(item):
-                redacted[key] = "[redacted-secret]"
-            else:
-                redacted[key] = _redact_value(item)
-        return redacted
+        return {key: _redact_credential_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_redact_credential_value(item) for item in value]
     return "[redacted-secret]"
@@ -289,8 +283,14 @@ def _build_report(
         "snapshot": _redact_value(snapshot),
         "freshness_policy": _redact_value(freshness_policy),
         "isolation_policy": _redact_value(isolation_policy),
-        "now": _redact_value(now),
+        "now": _redact_value(now.isoformat() if isinstance(now, datetime) else now),
     }
+    redacted_isolation_policy = report["isolation_policy"]
+    if isinstance(redacted_isolation_policy, dict) and isinstance(isolation_policy, Mapping):
+        required_tenant_id = isolation_policy.get("required_tenant_id")
+        if isinstance(required_tenant_id, str):
+            redacted_isolation_policy["required_tenant_id"] = _coarse_space_token(required_tenant_id)
+
     redacted_snapshot = report["snapshot"]
     if not isinstance(redacted_snapshot, dict):
         return report
@@ -301,6 +301,8 @@ def _build_report(
     tenant_field = snapshot.get("tenant_id")
     if isinstance(tenant_field, Mapping) and "value" in tenant_field:
         redacted_snapshot["tenant_id"] = _redacted_field(tenant_field, tenant_field["value"])
+    elif isinstance(tenant_field, str):
+        redacted_snapshot["tenant_id"] = _coarse_space_token(tenant_field)
 
     return report
 
@@ -413,8 +415,17 @@ def _observed_resource_values(snapshot: Mapping[str, Any]) -> Iterable[tuple[str
         else:
             yield category, value
     identity = snapshot["database"]["identity"]
-    yield "database_names", identity["database_name"]["value"]
-    yield "database_roles", identity["role"]["value"]
+    identity_categories = {
+        "database_name": "database_names",
+        "role": "database_roles",
+    }
+    for field_name, category in identity_categories.items():
+        value = identity[field_name]["value"]
+        if isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                yield category, item
+        else:
+            yield category, value
 
 
 def _resource_is_forbidden(
@@ -600,6 +611,8 @@ def _validate_schema(
     if not isinstance(identity, Mapping) or set(identity) != {"database_name", "role"}:
         return "snapshot_schema_invalid"
     if any(not _is_wrapper(identity[field_name]) for field_name in ("database_name", "role")):
+        return "malformed_observation_wrapper"
+    if any(not isinstance(identity[field_name]["value"], str) for field_name in ("database_name", "role")):
         return "malformed_observation_wrapper"
     for field_name in ("server_version", "extension_versions"):
         if not _is_wrapper(database.get(field_name)):
@@ -850,10 +863,15 @@ def _validate_provenance(snapshot: Mapping[str, Any]) -> str | None:
 def _is_finite_vector(value: Any, expected_dimension: int) -> bool:
     if not isinstance(value, (list, tuple)) or len(value) != expected_dimension:
         return False
-    return all(
-        isinstance(component, (int, float)) and not isinstance(component, bool) and math.isfinite(float(component))
-        for component in value
-    )
+    for component in value:
+        if not isinstance(component, (int, float)) or isinstance(component, bool):
+            return False
+        try:
+            if not math.isfinite(float(component)):
+                return False
+        except (OverflowError, TypeError, ValueError):
+            return False
+    return True
 
 
 def _vector_payload_is_populated(value: Any) -> bool:

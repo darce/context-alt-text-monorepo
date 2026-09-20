@@ -54,6 +54,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,7 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "redaction_secret_input": ("invalid", 2, "secret_shaped_input"),
     "import_purity": ("ready", 0, "import_pure"),
 }
+PINNED_RUNTIME_CASE_EXCLUSIONS = frozenset({"redaction_secret_input", "import_purity"})
 
 
 # Observation-method contract.  A service/env/compose echo is a declaration,
@@ -614,7 +616,10 @@ def _assert_pinned_outcome(case_name: str, result: Mapping[str, Any]) -> None:
     )
 
 
-@pytest.mark.parametrize("case_name", tuple(CASE_OUTCOMES)[:-2])
+@pytest.mark.parametrize(
+    "case_name",
+    tuple(case_name for case_name in CASE_OUTCOMES if case_name not in PINNED_RUNTIME_CASE_EXCLUSIONS),
+)
 def test_pinned_runtime_snapshot_cases(case_name: str) -> None:
     """Every RED case targets a stable outcome, not an implementation helper."""
 
@@ -814,6 +819,28 @@ def test_redaction_surfaces_cover_stdout_json_report_and_exit_reason(tmp_path: P
     assert expected[2] in exit_reason
 
 
+@pytest.mark.parametrize(
+    "tenant_as_wrapper",
+    (True, False),
+    ids=("mapping-wrapped", "bare-string"),
+)
+def test_tenant_and_required_policy_id_are_coarsely_tokenized_in_report(tenant_as_wrapper: bool) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    isolation_policy = _load_fixture("isolation_policy.json")
+    tenant_id = isolation_policy["required_tenant_id"]
+    assert snapshot["tenant_id"]["value"] == tenant_id
+    if not tenant_as_wrapper:
+        snapshot["tenant_id"] = tenant_id
+
+    result = _validate_custom_snapshot(snapshot, isolation_policy=isolation_policy)
+    report_json = json.dumps(result["report"], sort_keys=True)
+    coarse_token = _coarse_token(tenant_id)
+
+    assert tenant_id not in report_json
+    assert coarse_token in report_json
+    assert result["report"]["isolation_policy"]["required_tenant_id"] == coarse_token
+
+
 def test_model_ids_remain_full_on_observation_and_provenance_report_paths(tmp_path: Path) -> None:
     snapshot = _case_snapshot("valid_empty_fir_store")
     model_id = _field(snapshot, "api", "model_id")["value"]
@@ -889,6 +916,28 @@ def test_credential_shapes_are_refused_and_never_emitted_in_cli_report(
     assert secret not in completed.stdout
     assert secret not in completed.stderr
     assert secret not in json.dumps(json.loads(completed.stdout), sort_keys=True)
+
+
+@pytest.mark.parametrize("shape_name", ("mapping", "list_of_mappings", "nested_mapping"))
+def test_structured_credential_values_are_fully_redacted(shape_name: str) -> None:
+    secret = f"structured-{shape_name}-must-not-appear"
+    if shape_name == "mapping":
+        credential_value = {"password": {"raw": secret}}
+    elif shape_name == "list_of_mappings":
+        credential_value = {"token": [{"t": secret}]}
+    else:
+        credential_value = {"outer": {"inner": {"password": secret}}}
+
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    snapshot["database"]["extension_versions"]["value"] = credential_value
+
+    result = _validate_custom_snapshot(snapshot)
+    report_json = json.dumps(result["report"], sort_keys=True)
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "secret_shaped_input"
+    assert secret not in report_json
 
 
 def test_legitimate_collector_values_are_not_secret_shaped() -> None:
@@ -1013,6 +1062,34 @@ def test_empty_store_vector_payload_is_refused() -> None:
     _assert_pinned_outcome(case_name, _validator_result(case_name, _case_snapshot(case_name)))
 
 
+def test_overflowing_persisted_vector_returns_non_finite_reason() -> None:
+    snapshot = _case_snapshot("valid_enrolled_fir_store")
+    snapshot["database"]["embedding_provenance"]["value"]["centroid"] = [10**400] * 128
+
+    result = _validate_custom_snapshot(snapshot)
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "non_finite_persisted_vector"
+
+
+def test_datetime_now_is_normalized_in_json_serializable_report() -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    now = datetime(2026, 9, 20, 12, 1, tzinfo=UTC)
+    validator = importlib.import_module(MODULE_NAME)
+
+    result = validator.validate_snapshot(
+        snapshot,
+        freshness_policy=_load_fixture("freshness_policy.json"),
+        isolation_policy=_load_fixture("isolation_policy.json"),
+        now=now,
+    )
+
+    assert result["status"] == "ready"
+    assert result["report"]["now"] == now.isoformat()
+    json.dumps(result, sort_keys=True)
+
+
 def test_cli_large_max_age_is_malformed_policy_not_internal_error(tmp_path: Path) -> None:
     snapshot = _case_snapshot("valid_empty_fir_store")
     freshness_policy = _load_fixture("freshness_policy.json")
@@ -1037,6 +1114,35 @@ def test_compose_prefixed_forbidden_volume_id_is_refused() -> None:
 def test_casefolded_forbidden_database_name_is_refused() -> None:
     case_name = "casefolded_forbidden_database"
     _assert_pinned_outcome(case_name, _validator_result(case_name, _case_snapshot(case_name)))
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_value"),
+    (("database_name", ["alt_context"]), ("role", ["postgres"])),
+)
+def test_database_identity_lists_are_rejected_at_schema_boundary(
+    identity_field: str,
+    identity_value: list[str],
+) -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    snapshot["database"]["identity"][identity_field]["value"] = identity_value
+
+    result = _validate_custom_snapshot(snapshot)
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "malformed_observation_wrapper"
+
+
+def test_scalar_forbidden_database_identity_is_still_rejected() -> None:
+    snapshot = _case_snapshot("valid_empty_fir_store")
+    snapshot["database"]["identity"]["database_name"]["value"] = "alt_context"
+
+    result = _validate_custom_snapshot(snapshot)
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "forbidden_resource_id"
 
 
 def test_validator_import_is_pure_in_a_subprocess() -> None:

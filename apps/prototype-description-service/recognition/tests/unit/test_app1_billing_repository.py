@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 import recognition.infrastructure.repositories.billing_repository as billing_module
 from db.base import Base
 from db.models import BillingSubscriptionProjection, BillingWebhookInbox, Tenant
-from recognition.domain.portal_contracts import WebhookInboxStatus
+from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
 
 
@@ -211,3 +211,79 @@ async def test_failed_inbox_rows_back_off_and_quarantine_at_ceiling(
     assert quarantine_row.next_attempt_at is None
     pending = await backoff_repo.list_pending_webhooks(limit=10)
     assert quarantine_row not in pending
+
+
+@pytest.mark.asyncio
+async def test_duplicate_projection_race_uses_savepoint_and_reports_discard(
+    billing_session: _AsyncSessionFacade,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = BillingRepository(billing_session)
+    first_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    second_tenant_id = UUID("00000000-0000-0000-0000-000000000002")
+    event_position = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+
+    assert (
+        await repo.upsert_projection(
+            tenant_id=first_tenant_id,
+            provider="polar",
+            provider_customer_id="cus-1",
+            provider_subscription_id="sub-1",
+            status=BillingSubscriptionStatus.ACTIVE,
+            current_period_end=None,
+            past_due_since=None,
+            provider_event_id="evt-1",
+            event_position=event_position,
+        )
+        is True
+    )
+
+    original_execute = billing_session.execute
+    race_query = True
+
+    async def hide_winner(statement: object) -> object:
+        nonlocal race_query
+        if race_query:
+            race_query = False
+            return _Result()
+        return await original_execute(statement)
+
+    monkeypatch.setattr(billing_session, "execute", hide_winner)
+    assert (
+        await repo.upsert_projection(
+            tenant_id=first_tenant_id,
+            provider="polar",
+            provider_customer_id="cus-1",
+            provider_subscription_id="sub-1",
+            status=BillingSubscriptionStatus.ACTIVE,
+            current_period_end=None,
+            past_due_since=None,
+            provider_event_id="evt-1",
+            event_position=event_position,
+        )
+        is False
+    )
+
+    monkeypatch.setattr(billing_session, "execute", original_execute)
+    assert (
+        await repo.upsert_projection(
+            tenant_id=second_tenant_id,
+            provider="polar",
+            provider_customer_id="cus-2",
+            provider_subscription_id="sub-2",
+            status=BillingSubscriptionStatus.ACTIVE,
+            current_period_end=None,
+            past_due_since=None,
+            provider_event_id="evt-2",
+            event_position=event_position,
+        )
+        is True
+    )
+    await billing_session.commit()
+
+    first_projection = await repo.get_projection(first_tenant_id)
+    second_projection = await repo.get_projection(second_tenant_id)
+    assert first_projection is not None
+    assert first_projection.last_event_id == "evt-1"
+    assert second_projection is not None
+    assert second_projection.last_event_id == "evt-2"

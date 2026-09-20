@@ -1945,9 +1945,9 @@ def test_detection_pr_strict_refuses_missing_or_unratified_threshold(run_manifes
 
 @pytest.mark.parametrize(
     "case",
-    ["mixed", "lineage-none", "legacy-import", "machine-proposals", "inconclusive", "stranger"],
+    ["mixed", "lineage-none", "legacy-import", "machine-proposals"],
 )
-def test_detection_pr_strict_refuses_any_non_adjudicated_gt_box(case):
+def test_detection_pr_strict_refuses_unadjudicated_gt_box(case):
     human_box = _strict_box(x=0.3)
     if case == "mixed":
         other_box = _strict_box(x=0.7, lineage=_STRICT_MACHINE_SEEDED_LINEAGE)
@@ -1957,10 +1957,8 @@ def test_detection_pr_strict_refuses_any_non_adjudicated_gt_box(case):
         other_box = _strict_box(x=0.7, label_source=LabelSource.LEGACY_IMPORT)
     elif case == "machine-proposals":
         other_box = _strict_box(x=0.7, saw_machine_proposals=True)
-    elif case == "inconclusive":
-        other_box = _strict_box(x=0.7, decision=LabelDecision.INCONCLUSIVE)
     else:
-        other_box = _strict_box(x=0.7, decision=LabelDecision.STRANGER)
+        raise AssertionError(f"unexpected lineage case: {case}")
     row = _strict_row(
         gt_boxes=(human_box, other_box),
         detections_bbox_px=(
@@ -1972,6 +1970,84 @@ def test_detection_pr_strict_refuses_any_non_adjudicated_gt_box(case):
     with pytest.raises(ManifestError) as exc_info:
         _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
     assert _invariant_value(exc_info.value) == "detection_requires_human_adjudicated_gt_lineage"
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [LabelDecision.STRANGER, LabelDecision.INCONCLUSIVE],
+)
+def test_detection_pr_strict_scores_adjudicated_non_named_gt(decision):
+    gt_boxes = (
+        _strict_box(x=0.3),
+        _strict_box(x=0.7, name=None, decision=decision),
+    )
+    found = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=(
+            (400.0, 360.0, 320.0, 180.0),
+            (960.0, 360.0, 320.0, 180.0),
+        ),
+    )
+    missed = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=((400.0, 360.0, 320.0, 180.0),),
+    )
+
+    found_result = _strict_detection_pr([found], run_manifest={"iou_threshold": 0.5})
+    missed_result = _strict_detection_pr([missed], run_manifest={"iou_threshold": 0.5})
+
+    assert (found_result.true_positives, found_result.false_positives) == (2, 0)
+    assert found_result.recall > missed_result.recall
+
+
+def test_detection_pr_strict_excludes_geometry_incomplete_gt_from_fp():
+    gt_boxes = (_strict_box(x=0.3), _strict_box(x=0.7, y=None))
+    found = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=(
+            (400.0, 360.0, 320.0, 180.0),
+            (960.0, 360.0, 320.0, 180.0),
+        ),
+    )
+    missed = _strict_row(
+        gt_boxes=gt_boxes,
+        detections_bbox_px=((400.0, 360.0, 320.0, 180.0),),
+    )
+
+    found_result = _strict_detection_pr([found], run_manifest={"iou_threshold": 0.5})
+    missed_result = _strict_detection_pr([missed], run_manifest={"iou_threshold": 0.5})
+
+    assert found_result.false_positives == 0
+    assert found_result.iou_sensitivity[0.5]["fp"] == 0
+    assert found_result.precision >= missed_result.precision
+
+
+def test_detection_pr_strict_refuses_missing_detection_frame_declaration():
+    row = ImageDetection(
+        image="missing-frame.jpg",
+        pred_faces=1,
+        labeled_faces=1,
+        detections_bbox_px=((640.0, 360.0, 320.0, 180.0),),
+        gt_boxes=(_strict_box(),),
+        image_size=(1600, 900),
+    )
+    with pytest.raises(ManifestError) as exc_info:
+        _strict_detection_pr([row], run_manifest={"iou_threshold": 0.5})
+    assert _invariant_value(exc_info.value) == "detection_requires_localization_frame_agreement"
+
+
+def test_detection_pr_strict_policy_records_iou_threshold():
+    row = _strict_row(
+        gt_boxes=(_strict_box(),),
+        # IoU = 1/3 against the GT [640, 360, 320, 180] box.
+        detections_bbox_px=((800.0, 360.0, 320.0, 180.0),),
+    )
+    lower = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.30})
+    higher = _strict_detection_pr([row], run_manifest={"iou_threshold": 0.50})
+
+    assert lower.policy["iou_threshold"] == pytest.approx(0.30)
+    assert higher.policy["iou_threshold"] == pytest.approx(0.50)
+    assert lower.policy != higher.policy
 
 
 @pytest.mark.parametrize(

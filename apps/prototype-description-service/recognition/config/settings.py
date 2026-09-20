@@ -7,8 +7,10 @@ type-safe defaults. Override by instantiating with explicit values in code.
 
 from __future__ import annotations
 
+import json
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -44,6 +46,9 @@ _LEGACY_DETECTION_DEFAULT_THRESHOLD = 0.45
 # No-op factor floors (aliases of the canonical enrollment triple — FIR6S3B-M-02).
 _NOOP_FACTOR_FLOOR = ENROLLMENT_NOOP_FLOOR_SHARPNESS
 _NOOP_OCCLUSION_CEILING = ENROLLMENT_NOOP_CEILING_OCCLUSION
+
+_DEFAULT_PLAN_ALLOWANCES: dict[str, int] = {"paid": 100}
+_PLAN_ALLOWANCES_ENV = "RECOGNITION_PLAN_ALLOWANCES"
 
 
 def _resolve_insightface_cache_root() -> Path:
@@ -769,6 +774,22 @@ def _parse_allowed_upload_mime_types(raw: str) -> list[str]:
     return items
 
 
+def _resolve_plan_allowances() -> dict[str, object]:
+    """Read the plan allowance mapping from the established flat env convention."""
+    raw = os.environ.get(_PLAN_ALLOWANCES_ENV)
+    if raw is None:
+        return dict(_DEFAULT_PLAN_ALLOWANCES)
+    if not raw.strip():
+        raise ValueError(f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid {_PLAN_ALLOWANCES_ENV}: value must be a JSON object of plan-code allowances")
+    return value
+
+
 class RecognitionSettings(BaseModel):
     """Top-level recognition settings container."""
 
@@ -780,6 +801,15 @@ class RecognitionSettings(BaseModel):
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
     scan: ScanSettings = Field(default_factory=ScanSettings)
+    plan_allowances: dict[str, int] = Field(
+        default_factory=_resolve_plan_allowances,
+        validate_default=True,
+        description=(
+            "Plan-code to non-negative job allowance mapping. "
+            "Env: RECOGNITION_PLAN_ALLOWANCES as a JSON object. "
+            "The paid allowance defaults to 100 as a placeholder pending the PR-04 allowance-units decision."
+        ),
+    )
     retention_export_max_identities: int = Field(
         default=50000,
         description="Max identities allowed for synchronous retention export responses.",
@@ -817,6 +847,24 @@ class RecognitionSettings(BaseModel):
         ),
         description="MIME allow-list for image_<media_id> parts on the multipart route.",
     )
+
+    @field_validator("plan_allowances", mode="before")
+    @classmethod
+    def _validate_plan_allowances(cls, value: object) -> dict[str, int]:
+        if not isinstance(value, Mapping):
+            raise ValueError("plan_allowances must be a mapping")
+
+        allowances: dict[str, int] = {}
+        for plan_code, allowance_jobs in value.items():
+            if not isinstance(plan_code, str) or not plan_code.strip():
+                raise ValueError("plan allowance keys must be non-empty strings")
+            if isinstance(allowance_jobs, bool) or not isinstance(allowance_jobs, int) or allowance_jobs < 0:
+                raise ValueError("plan allowances must be non-negative integers")
+            allowances[plan_code.strip()] = allowance_jobs
+
+        if "paid" not in allowances:
+            raise ValueError("plan_allowances must configure the billable 'paid' plan")
+        return allowances
 
     @model_validator(mode="after")
     def _check_embedding_pgvector_pair(self) -> RecognitionSettings:

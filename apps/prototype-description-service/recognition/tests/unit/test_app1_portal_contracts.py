@@ -144,6 +144,19 @@ class _BillingProviderStub:
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
         return return_url
 
+    async def retrieve_state(
+        self,
+        *,
+        provider_customer_id: str,
+        provider_subscription_id: str | None,
+        request_timeout: float,
+    ) -> object:
+        return {
+            "provider_customer_id": provider_customer_id,
+            "provider_subscription_id": provider_subscription_id,
+            "request_timeout": request_timeout,
+        }
+
     async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
         return bool(raw_body and signature)
 

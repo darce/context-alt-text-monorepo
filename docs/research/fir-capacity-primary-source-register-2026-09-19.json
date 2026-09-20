@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "assessed_at": "2026-09-19",
+  "auraface": {
+    "publisher": "fal",
+    "repository": "https://huggingface.co/fal/AuraFace-v1",
+    "revision": "af6d057c9b0ec4071d4c49c80e3539258798b609",
+    "artifact": "glintr100.onnx",
+    "publisher_advertised_sha256": "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+    "file_size_bytes": 260694151,
+    "observed_content_range": "bytes 260685959-260694150/260694151",
+    "output_value_info_hex": "62170a0431333333120f0a0d080112090a0208010a03088004",
+    "output_name": "1333",
+    "output_element_type": "FLOAT",
+    "output_shape": [
+      1,
+      512
+    ],
+    "input_shape": [
+      "None",
+      3,
+      112,
+      112
+    ],
+    "range_sha256": "556d942ee00b6f520d7674e541e2712f3bf72d1f8d21e212b52c2ccb088936a0",
+    "full_file_hash_verified": false,
+    "inference_run": false,
+    "weight_license_source": "https://huggingface.co/fal/AuraFace-v1/blob/main/LICENSE.md",
+    "license_claim": "Apache-2.0 publisher grant; no independent training-source rights adjudication"
+  },
+  "other_primary_sources": [
+    "https://arxiv.org/pdf/1503.03832",
+    "https://github.com/mk-minchul/AdaFace",
+    "https://github.com/mk-minchul/CVLface",
+    "https://huggingface.co/minchul/cvlface_adaface_ir101_webface12m",
+    "https://github.com/timesler/facenet-pytorch",
+    "https://arxiv.org/pdf/2204.00964",
+    "https://docs.oracle.com/en-us/iaas/Content/Compute/References/computeshapes.htm"
+  ],
+  "limitations": [
+    "No ACX recognition or training benchmark performed",
+    "No current GPU allocation or pricing verified",
+    "No blanket approval of AdaFace/FaceNet pretrained checkpoints based on code license"
+  ],
+  "remote_audit": {
+    "task_ref": "FIRCAP-90",
+    "pass_id": "fircap-research-20260919-pass1",
+    "backend": "codex-remote",
+    "model": "gpt-5.6-luna",
+    "effort": "max",
+    "branch": "feature/fircap-90",
+    "branch_commit": "03d0073cb551475e6599ef566ba6be8c36d7c80b",
+    "outcome": "error",
+    "failed_stage": "review",
+    "merge_status": "not_merge_ready",
+    "merged_to_main": false,
+    "review_findings": {
+      "medium": 2,
+      "low": 1
+    },
+    "self_verify": {
+      "command": "pytest scripts/train/occlusion/test_license_policy.py -q -k TestGate31OperatorOwnedSourcePassWitnesses",
+      "passed": 6,
+      "deselected": 2425,
+      "exit_code": 0
+    },
+    "disposition": "Unmerged advisory audit retained in worktree. Coordinator independently verified facts used in assessment; rejected guarantees of implemented measurement or complete training-lineage enforcement. No training or recognition benchmark performed."
+  }
+}

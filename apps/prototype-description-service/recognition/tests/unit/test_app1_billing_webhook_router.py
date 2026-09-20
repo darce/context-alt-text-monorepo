@@ -40,6 +40,17 @@ class _Projection:
     provider_subscription_id: str | None = None
 
 
+class _SessionStub:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+        self.fail_commit = False
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+        if self.fail_commit:
+            raise RuntimeError("commit failed")
+
+
 class _ProviderStub:
     def __init__(self, *, replay_window_valid: bool = True) -> None:
         self.verify_calls: list[bytes] = []
@@ -64,6 +75,7 @@ class _ProviderStub:
 
 class _RepositoryStub:
     def __init__(self) -> None:
+        self.session = _SessionStub()
         self.rows: dict[str, _InboxRow] = {}
         self.projections: dict[UUID, _Projection] = {}
         self.transitions: list[str] = []
@@ -467,3 +479,21 @@ def test_unknown_subscription_status_stays_pending_and_is_logged(caplog: pytest.
     assert repository.rows["evt-unknown-status"].status == WebhookInboxStatus.RECEIVED.value
     assert repository.transitions == []
     assert "mystery_status" in caplog.text
+
+
+def test_commit_failure_is_not_acknowledged_as_accepted() -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    repository.session.fail_commit = True
+    raw_body = _event_body(event_id="evt-commit-fails")
+
+    with TestClient(_app(provider, repository)) as client:
+        response = client.post(
+            "/billing/webhooks/polar",
+            content=raw_body,
+            headers={"webhook-signature": _signature(raw_body)},
+        )
+
+    assert response.status_code >= 500
+    assert response.status_code != 202
+    assert repository.session.commit_calls == 1

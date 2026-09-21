@@ -21,6 +21,7 @@ export interface PublicDemoEnvelope {
   progress: { done: number; total: number };
   deadline_seconds?: number;
   description?: string;
+  /** Null/absent means the upstream did not prove a tier; the UI renders degraded. */
   description_tier?: 'provisional_cpu' | 'final_gpu' | null;
   error?: { code: string; message: string };
 }
@@ -46,7 +47,7 @@ export interface PollRunOptions {
 export function parsePublicDemoEnvelope(body: unknown): PublicDemoEnvelope;
 export function pollRun(options: PollRunOptions): Promise<PublicDemoEnvelope & { description: string }>;
 export function statusPresentation(body: PublicDemoEnvelope): {
-  state: 'queued' | 'warming' | 'describing' | 'completed' | 'failed';
+  state: 'queued' | 'warming' | 'describing' | 'completed' | 'degraded' | 'failed';
   message: string;
 };
 export function initializeDemo(root: HTMLElement): void;

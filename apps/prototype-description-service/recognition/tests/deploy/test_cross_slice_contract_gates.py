@@ -1195,36 +1195,46 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
 
 
 def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
-    """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
+    """R0811-D-05 / D-06: ship appends on its own line via a sudo remote program.
 
-    Behavioural: the fake SSH/resource seams apply the operation to a local file
-    that lacks a trailing newline; result must be prior secret intact plus
-    ACX_IMAGE_REPO on a new line, and the recorded command must use sudo.
+    Drives the real `image_repo_resource ship`. The only seam is ssh itself: the
+    remote directory handed to the resource IS a local temp dir, so the genuine
+    remote program rewrites the genuine file. A stubbed resource would assert
+    the double's newline handling rather than the shipped contract.
     """
-    log = tmp_path / "ssh.log"
-    env_file = tmp_path / "prod.env"
-    # No trailing newline — the D-05 failure input.
-    env_file.write_bytes(b"POSTGRES_PASSWORD=hunter2")
+    owner = "0123456789abcdef0123456789abcdef"
+    # Base repo, no variant suffix: with ACX_IMAGE_VARIANT empty the script
+    # normalises a `-vlm` suffix away, which is a different contract than the
+    # newline/sudo pair under test here.
+    repo = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    argv_log = tmp_path / "ssh.argv"
+    remote_head = tmp_path / "ssh.remote-head"
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    env_file = remote_dir / ".env"
+    # Claimed-state line FIRST and the secret LAST with no trailing newline:
+    # the D-05 failure input, and the only ordering where the missing newline
+    # can actually concatenate.
+    env_file.write_bytes(
+        b'# ACX_IMAGE_REPO_OWNER={"owner":"'
+        + owner.encode()
+        + b'","prior":"","current":"","phase":"claimed"}\n'
+        + b"POSTGRES_PASSWORD=hunter2"
+    )
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    # Fake ssh: record argv, map remote path to local env_file, run snippet with
-    # a local `sudo` shim that just execs the rest.
-    (bindir / "sudo").write_text(
-        '#!/bin/sh\nexec "$@"\n',
-        encoding="utf-8",
-    )
+    (bindir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
     (bindir / "sudo").chmod(0o755)
     (bindir / "ssh").write_text(
         textwrap.dedent(
             f"""\
-            #!/bin/sh
-            echo "ssh $@" >> "{log}"
-            # Last arg is the remote shell snippet (may contain spaces).
+            #!/bin/bash
+            # bash, not sh: remote_quote is `printf %q`, whose ANSI-C $'...'
+            # output dash cannot eval.
+            for a in "$@"; do printf '%s\\n' "$a" >> "{argv_log}"; done
             remote=""
             for a in "$@"; do remote="$a"; done
-            # Rewrite the fixed remote env path to our temp file.
-            remote=$(printf '%s' "$remote" | sed 's|/opt/acx-backend/[^/]*/\\.env|{env_file}|g')
-            # shellcheck disable=SC2086
+            printf '%s' "$remote" | head -c 32 >> "{remote_head}"
             eval "$remote"
             exit $?
             """
@@ -1237,49 +1247,37 @@ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "ACX_BUILD_TARGET": "",
         "ACX_IMAGE_VARIANT": "",
+        "ACX_IMAGE_REPO": repo,
+        "ACX_IMAGE_REPO_OWNER_ID": owner,
     }
     script = textwrap.dedent(
         f"""\
         source "{DEPLOY_SCRIPT}"
-        image_repo_resource() {{
-          case "$1" in
-            ship)
-              ssh -l "$OCI_USER" -- "$OCI_HOST" "sudo true"
-              echo "sudo tail -c1 {env_file}" >> "{log}"
-              last_byte="$(tail -c1 "{env_file}" | od -An -t x1 | tr -d '[:space:]')"
-              if [ -n "$last_byte" ] && [ "$last_byte" != "0a" ]; then
-                echo >> "{env_file}"
-              fi
-              echo "ACX_IMAGE_REPO=$4" >> "{env_file}"
-              ;;
-            *) return 1 ;;
-          esac
-        }}
-        ship_remote_image_repo_env /opt/acx-backend/dev
+        ship_remote_image_repo_env "{remote_dir}"
         """
     )
     proc = subprocess.run(
-        [
-            "bash",
-            "-c",
-            script,
-        ],
+        ["bash", "-c", script],
         env=env,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     raw = env_file.read_bytes()
     text = raw.decode()
-    assert "POSTGRES_PASSWORD=hunter2\n" in text or text.startswith("POSTGRES_PASSWORD=hunter2\n"), (
-        f"secret line must keep trailing newline separation; got {raw!r}"
-    )
+    # D-05: the secret survives on its own line and is not run together with the
+    # appended assignment.
     assert "hunter2ACX_IMAGE_REPO" not in text, f"concatenated secret: {raw!r}"
-    assert re.search(r"(?m)^ACX_IMAGE_REPO=", text), text
-    logged = log.read_text()
-    assert "sudo" in logged, f"ship must use sudo for root-owned .env:\n{logged}"
-    assert "tail -c1" in logged or "tee -a" in logged, logged
+    assert re.search(r"(?m)^POSTGRES_PASSWORD=hunter2$", text), raw
+    assert re.search(r"(?m)^ACX_IMAGE_REPO=" + re.escape(repo) + r"$", text), raw
+    # Only the real program advances the sticky phase; no double wrote this.
+    assert '"phase":"shipped"' in text, raw
+    # D-06: the remote program runs under sudo, and ssh keeps -l/-- separation.
+    argv = argv_log.read_text().splitlines()
+    assert "-l" in argv, argv
+    assert "--" in argv, argv
+    assert remote_head.read_text().startswith("sudo python3"), remote_head.read_text()
 
 
 def test_bare_verify_prefers_remote_image_repo(tmp_path: Path) -> None:
@@ -1398,9 +1396,61 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
 
 
 def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
-    """S2-A-06: restore_prior_image_repo_env re-ships prior value after failure."""
-    log = tmp_path / "ship.log"
-    log.write_text("")
+    """S2-A-06: restore returns the sticky repo to its prior value after failure.
+
+    Drives the real `image_repo_resource restore`. Only `env_to_remote_dir` is
+    stubbed — that is the env-name-to-path seam, not the restore contract — so
+    the genuine remote program rewrites a genuine .env. Stubbing the resource
+    (or ship) here would assert the double's behaviour instead of S2-A-06.
+    """
+    owner = "0123456789abcdef0123456789abcdef"
+    prior = "iad.ocir.io/ns/acx-backend-prior"
+    shipped = "iad.ocir.io/ns/acx-backend-new"
+    argv_log = tmp_path / "ssh.argv"
+    remote_head = tmp_path / "ssh.remote-head"
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    env_file = remote_dir / ".env"
+    # Post-ship state: sticky repo moved to `shipped`, prior retained.
+    env_file.write_bytes(
+        b'# ACX_IMAGE_REPO_OWNER={"owner":"'
+        + owner.encode()
+        + b'","prior":"'
+        + prior.encode()
+        + b'","current":"'
+        + shipped.encode()
+        + b'","phase":"shipped"}\n'
+        + b"ACX_IMAGE_REPO="
+        + shipped.encode()
+        + b"\nPOSTGRES_PASSWORD=hunter2\n"
+    )
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "sudo").write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+    (bindir / "sudo").chmod(0o755)
+    (bindir / "ssh").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/bash
+            # bash, not sh: remote_quote is `printf %q`, whose ANSI-C $'...'
+            # output dash cannot eval.
+            for a in "$@"; do printf '%s\\n' "$a" >> "{argv_log}"; done
+            remote=""
+            for a in "$@"; do remote="$a"; done
+            printf '%s' "$remote" | head -c 32 >> "{remote_head}"
+            eval "$remote"
+            exit $?
+            """
+        ),
+        encoding="utf-8",
+    )
+    (bindir / "ssh").chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "ACX_PRIOR_IMAGE_REPO_ENV": "prod",
+        "ACX_IMAGE_REPO_OWNER_ID": owner,
+    }
     proc = subprocess.run(
         [
             "bash",
@@ -1408,35 +1458,29 @@ def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
             textwrap.dedent(
                 f"""\
                 source "{DEPLOY_SCRIPT}"
-                image_repo_resource() {{
-                  case "$1" in
-                    restore)
-                      echo "resource action=restore" >> "{log}"
-                      ACX_IMAGE_REPO="$ACX_PRIOR_IMAGE_REPO" ship_remote_image_repo_env "$2"
-                      ;;
-                    *) return 1 ;;
-                  esac
-                }}
-                ship_remote_image_repo_env() {{
-                  echo "ship repo=$ACX_IMAGE_REPO dir=$1" >> "{log}"
-                }}
-                clear_remote_image_repo_env() {{
-                  echo "clear $1" >> "{log}"
-                }}
-                ACX_PRIOR_IMAGE_REPO=iad.ocir.io/ns/acx-backend-vlm
-                ACX_PRIOR_IMAGE_REPO_ENV=prod
+                env_to_remote_dir() {{ printf '%s\\n' "{remote_dir}"; }}
                 restore_prior_image_repo_env
                 """
             ),
         ],
+        env=env,
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=60,
     )
-    assert proc.returncode == 0, proc.stderr
-    logged = log.read_text()
-    assert "acx-backend-vlm" in logged, logged
-    assert "ship repo=" in logged, logged
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    raw = env_file.read_bytes()
+    text = raw.decode()
+    # The sticky repo is back to `prior`, and the shipped value is gone.
+    assert re.search(r"(?m)^ACX_IMAGE_REPO=" + re.escape(prior) + r"$", text), raw
+    assert not re.search(r"(?m)^ACX_IMAGE_REPO=" + re.escape(shipped) + r"$", text), raw
+    # Only the real program advances the sticky phase; no double wrote this.
+    assert '"phase":"restored"' in text, raw
+    assert re.search(r"(?m)^POSTGRES_PASSWORD=hunter2$", text), raw
+    argv = argv_log.read_text().splitlines()
+    assert "-l" in argv, argv
+    assert "--" in argv, argv
+    assert remote_head.read_text().startswith("sudo python3"), remote_head.read_text()
 
 
 def test_repair_skips_chown_when_root_uid_matches(tmp_path: Path) -> None:

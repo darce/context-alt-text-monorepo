@@ -326,9 +326,10 @@ test-gpu-lifecycle:
 
 # Integration/pg/timing tests (serial — shared DB fixtures; wall-clock-sensitive
 # timing tests stay out of the parallel lane so worker contention cannot flake them)
+# The pg suite must not silently skip on the gate; set IDENTITY_PG_REQUIRED=0 to opt out locally.
 test-integration:
 	@echo "Running integration tests..."
-	@$(UV_RUN) pytest -m "integration or pg or timing" --durations=25
+	@IDENTITY_PG_REQUIRED=$${IDENTITY_PG_REQUIRED:-1} $(UV_RUN) pytest -m "integration or pg or timing" --durations=25
 
 # Auto-fix and test (for CI; fast lane + serial integration/timing lane)
 ci: format typecheck test test-integration

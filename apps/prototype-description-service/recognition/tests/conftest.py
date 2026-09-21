@@ -7,6 +7,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, Iterable, Sequence
 from datetime import UTC, datetime
+from typing import NoReturn
 
 import numpy as np
 import pytest
@@ -315,13 +316,14 @@ def cluster_service(
 # (not skip) if the test role is privileged — a skip would leave the gate
 # green while isolation is untested. [FL30B-GATE-01] [rg-008]
 #
-# Skips (never fails) only when Postgres is unreachable or the admin role
-# lacks CREATE DATABASE / vector privileges.
+# By default, skips only when Postgres is unreachable or the admin role lacks
+# CREATE DATABASE / vector privileges; IDENTITY_PG_REQUIRED=1 fails instead.
 
 IDENTITY_PG_TEST_URL = os.environ.get(
     "IDENTITY_PG_TEST_URL",
     "postgresql+psycopg://context:context@localhost:5432/acx_identity_test",
 )
+IDENTITY_PG_REQUIRED = os.environ.get("IDENTITY_PG_REQUIRED", "") == "1"
 
 
 def rls_unenforceable_role_message(
@@ -387,8 +389,14 @@ def _pg_scratch_urls(suffix: str) -> tuple[str, str, str, str]:
     return scratch_url, admin_url, db_name, owner
 
 
+def _pg_unavailable(reason: str) -> NoReturn:
+    if IDENTITY_PG_REQUIRED:
+        pytest.fail(reason + " (IDENTITY_PG_REQUIRED=1: the pg suite may not skip)", pytrace=False)
+    pytest.skip(reason)
+
+
 def _pg_create_scratch_db(admin_url: str, db_name: str, owner: str):
-    """Create a fresh scratch DB (+vector extension); skip when PG unusable."""
+    """Create a fresh scratch DB (+vector extension); handle unusable PG."""
     from sqlalchemy import create_engine
     from sqlalchemy.exc import ProgrammingError
 
@@ -404,10 +412,10 @@ def _pg_create_scratch_db(admin_url: str, db_name: str, owner: str):
         scratch_admin.dispose()
     except OperationalError:
         admin.dispose()
-        pytest.skip(f"Postgres unreachable at {admin_url}; start it with `make postgres-start`")
+        _pg_unavailable(f"Postgres unreachable at {admin_url}; start it with `make postgres-start`")
     except ProgrammingError as exc:
         admin.dispose()
-        pytest.skip(
+        _pg_unavailable(
             f"Postgres at {admin_url} unusable for scratch DBs ({exc.orig!r}); "
             "IDENTITY_PG_ADMIN_URL must be a superuser/CREATEDB role with the vector extension"
         )

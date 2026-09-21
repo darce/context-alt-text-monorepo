@@ -13,7 +13,8 @@ from scene.interface_adapters.http.schemas.responses import (
     VisualFactsResponse,
 )
 
-# 15 contract-locked core fields + additive optional preview/fusion fields.
+# The 15 required contract fields stay locked by name; additive fields may be
+# optional/defaulted so older payloads remain readable.
 PREVIEW_FIELDS = {
     "generic_draft",
     "named_draft",
@@ -28,7 +29,7 @@ OPERATION_FIELDS = {
     "startup_id",
     "timing",
 }
-EXPECTED_FIELDS = {
+REQUIRED_FIELDS = {
     "tenant_id",
     "media_id",
     "image_hash",
@@ -44,9 +45,10 @@ EXPECTED_FIELDS = {
     "cached",
     "duration_ms",
     "retention_class",
-    "tier",
-    "result_generation",
 }
+# GPUFLOW-1 and VLM-5 fields are additive/defaulted, not part of the required
+# 15-field compatibility contract.
+ADDITIVE_CORE_FIELDS = {"tier", "result_generation"}
 # GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
 OPERATION_FIELDS = {
     "operation_id",
@@ -78,11 +80,17 @@ def _sample_response() -> dict:
 
 
 def test_response_has_exactly_15_contract_fields():
-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
-    assert len(EXPECTED_FIELDS) == 17
-    for name in OPERATION_FIELDS:
-        assert not VisualFactsResponse.model_fields[name].is_required()
-        assert MultipartDescribeResponse.model_fields[name].is_required()
+    required_fields = {name for name, field in VisualFactsResponse.model_fields.items() if field.is_required()}
+    assert set(VisualFactsResponse.model_fields) >= REQUIRED_FIELDS
+    assert required_fields == REQUIRED_FIELDS
+
+    multipart_required_fields = {
+        name for name, field in MultipartDescribeResponse.model_fields.items() if field.is_required()
+    }
+    assert multipart_required_fields == REQUIRED_FIELDS | {"startup_id", "timing"}
+    # No durable operation is a valid multipart result; the serializer omits
+    # operation_id in that case rather than fabricating a poll target.
+    assert not MultipartDescribeResponse.model_fields["operation_id"].is_required()
 
 
 def test_response_round_trip_typed_provenance():
@@ -91,7 +99,7 @@ def test_response_round_trip_typed_provenance():
     assert r.retention_class is RetentionClass.RETAIN_ALL
     assert r.provider_disclosure.provider is ProviderMode.NONE
     dumped = r.model_dump()
-    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
+    assert set(dumped.keys()) == REQUIRED_FIELDS | ADDITIVE_CORE_FIELDS | PREVIEW_FIELDS
     assert OPERATION_FIELDS.isdisjoint(dumped)
     assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
     # Preview fields default to None when the merge layer is not run.

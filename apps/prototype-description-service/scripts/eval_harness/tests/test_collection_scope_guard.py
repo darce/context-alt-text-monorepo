@@ -30,6 +30,11 @@ def _run(
     config, receipt = _write_project(tmp_path)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SERVICE_ROOT)
+    # strict_env alone decides the child's gate state. Without the pop, an
+    # ambient ACX_STRICT_GATE=1 -- which the remote-gate runbook tells
+    # operators to set -- reaches the child and fails every case here that
+    # expects narrowing to be allowed.
+    env.pop("ACX_STRICT_GATE", None)
     if strict_env:
         env["ACX_STRICT_GATE"] = "1"
     args = [

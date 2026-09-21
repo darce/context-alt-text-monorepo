@@ -7,6 +7,10 @@
 #   scripts/gate_ops.sh reap                # dry run; CONFIRM=REAP to send SIGTERM
 #   scripts/gate_ops.sh gc-tmp              # dry run; DAYS=<n> CONFIRM=GC to delete
 #
+# reap exit codes: 0 lock free and tree gone | 1 lock still held | 2 usage or
+# config error | 3 lock released but orphans survived. 3 is distinct from 2 so a
+# wrapper can tell "you invoked it wrong" from "the kill worked but left RSS".
+#
 # Why this exists: remote_gate.sh does `exec 9>.gate.lock`, so every descendant
 # of the remote run inherits that open file description. flock is held by the
 # description, not by the calling PID, so aborting the LOCAL `make check-remote`
@@ -35,6 +39,11 @@ config_file="$repo_root/.workbay/remote-gate.env"
 
 REMOTE_HOST="${_env_host:-${REMOTE_GATE_HOST:-}}"
 [ -n "$REMOTE_HOST" ] || die "host not configured - set WORKBAY_REMOTE_GATE_HOST or REMOTE_GATE_HOST in .workbay/remote-gate.env"
+# Not safe(): that charset has no '@' or ':', which every user@host form needs.
+# Validated all the same, because the host is now also spliced into the
+# single-quoted arg list the remote shell parses, not just passed to ssh as an
+# argv element -- a quote in it would break out of those quotes.
+case "$REMOTE_HOST" in *[!A-Za-z0-9._@:-]*) die "refusing REMOTE_HOST with unsafe value" ;; esac
 REMOTE_DIR="${_env_dir:-${REMOTE_GATE_DIR:-src/${repo_slug}}}"
 case "$REMOTE_DIR" in ""|.|/*|*..*) die "invalid REMOTE_DIR '${REMOTE_DIR}'" ;; esac
 safe REMOTE_DIR "$REMOTE_DIR"
@@ -61,12 +70,21 @@ esac
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$REMOTE_HOST" \
-    "bash -s -- '$mode' '$REMOTE_DIR' '$SAMPLE_GAP' '$confirm' '$days'" <<'REMOTE_EOF'
+    "bash -s -- '$mode' '$REMOTE_DIR' '$SAMPLE_GAP' '$confirm' '$days' '$REMOTE_HOST'" <<'REMOTE_EOF'
 set -u
-mode="$1"; dir="$2"; gap="$3"; confirm="$4"; days="$5"
+mode="$1"; dir="$2"; gap="$3"; confirm="$4"; days="$5"; host="$6"
 
 holders_of() { fuser .gate.lock 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' || true; }
 cpu_ns() { cut -d' ' -f1 "/proc/$1/schedstat" 2>/dev/null || echo 0; }
+# `wc -w` is allowed to pad its count on BSD/macOS. Keep these interpolated
+# counts portable without depending on an external word-count implementation.
+count_words() { set -- $1; printf '%s\n' "$#"; }
+# Field 22 of /proc/<pid>/stat, read by stripping through the last ')' first --
+# comm is parenthesised and may itself contain spaces or parens, which shifts
+# every positional field. After the strip the remainder begins at field 3, so
+# field 22 overall is field 20 here. Used as a PID-reuse guard: a pid whose
+# start time changed across the kill is a recycled pid, not a survivor.
+starttime_of() { s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0; printf '%s\n' "${s##*) }" | cut -d' ' -f20; }
 
 # fuser names only the processes still holding fd 9: the parent chain
 # (bash -> make -> sh -> uv -> pytest master). pytest-xdist workers are spawned
@@ -103,7 +121,7 @@ status)
         echo 'lock: FREE - no process holds .gate.lock'
     else
         tree="$(descendants_of "$holders" | sort -n)"
-        echo "lock: HELD - $(echo $holders | wc -w) holder(s) of fd 9, $(echo $tree | wc -w) process(es) in the run tree"
+        echo "lock: HELD - $(count_words "$holders") holder(s) of fd 9, $(count_words "$tree") process(es) in the run tree"
         ps -o pid,ppid,stat,etimes,cputimes,args -p $(echo $tree | tr ' ' ',') 2>/dev/null | cut -c1-150
         echo
         for p in $tree; do echo "$p $(cpu_ns $p)"; done > "/tmp/.gate-ops-s1.$$"
@@ -166,12 +184,64 @@ reap)
     fi
     # Individual PIDs only. Never kill -- -<PGID>: the tree's pgrp belongs to
     # tailscaled, so a process-group kill takes the VM off Tailscale. Only the
-    # fd-9 holders are signalled; the workers exit when the master closes.
+    # fd-9 holders are signalled; the workers are expected to exit when the
+    # master closes their pipe -- but that is an expectation, not a guarantee.
+    # A worker wedged inside a C call (onnxruntime, BLAS, hdbscan, asyncpg) is
+    # not at a point where it can notice the close, and the per-test timeout
+    # cannot abort it either. So verify the tree afterwards instead of
+    # inferring success from the lock alone: an orphan holds RSS that the next
+    # run's memory admission probe counts, which surfaces later and far from
+    # here as a mystery exit 74.
+    tree_sig=''
+    for p in $tree; do tree_sig="$tree_sig $p:$(starttime_of "$p")"; done
     echo "sending SIGTERM to: $(echo $holders | tr '\n' ' ')"
     for p in $holders; do kill -TERM "$p" 2>/dev/null || echo "  pid $p already gone"; done
-    sleep 5
+
+    # Give the whole captured tree time to converge before checking the lock.
+    # This deliberately keeps STILL HELD/exit 1 ahead of orphan reporting: a
+    # surviving fd-9 holder is still a lock failure, while workers that lost
+    # their master need the full execnet teardown ladder before we classify
+    # them as orphans.
+    reap_ceiling=20
+    elapsed=0
+    orphans=''
+    while [ "$elapsed" -le "$reap_ceiling" ]; do
+        orphans=''
+        for sig in $tree_sig; do
+            p="${sig%%:*}"; was="${sig#*:}"
+            kill -0 "$p" 2>/dev/null || continue
+            [ "$(starttime_of "$p")" = "$was" ] || continue
+            orphans="$orphans $p"
+        done
+        [ -z "$orphans" ] && break
+        [ "$elapsed" -ge "$reap_ceiling" ] && break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
     left="$(holders_of)"
-    if [ -z "$left" ]; then echo 'lock: RELEASED'; else echo "lock: STILL HELD by $(echo $left | tr '\n' ' ') (re-run; SIGKILL only if SIGTERM fails twice)"; exit 1; fi
+    if [ -n "$left" ]; then
+        echo "lock: STILL HELD by $(echo $left | tr '\n' ' ') (re-run; SIGKILL only if SIGTERM fails twice)"
+        exit 1
+    fi
+    echo 'lock: RELEASED'
+
+    # $tree_sig was captured before the kill, so survivors are checked by pid
+    # rather than by re-walking from roots that no longer exist. The start-time
+    # half of each pair is load-bearing: between the SIGTERM and this check the
+    # kernel can hand a dead tree member's pid to an unrelated new process, and
+    # a bare `kill -0` would then report it as an orphan and print a remediation
+    # line telling the operator to kill it. Requiring the start time to be
+    # unchanged rules that out -- a recycled pid always has a later one.
+    if [ -n "$orphans" ]; then
+        echo "orphans: $(count_words "$orphans") process(es) still alive ${elapsed}s after SIGTERM"
+        ps -o pid,ppid,stat,etimes,cputimes,rss,args -p $(echo $orphans | tr ' ' ',') 2>/dev/null | cut -c1-150
+        echo 'These no longer hold the lock, so the next run will start -- but their'
+        echo 'RSS counts against its admission probe. Reap them explicitly:'
+        echo "  ssh $host kill -TERM$orphans"
+        exit 3
+    fi
+    echo 'orphans: none - whole run tree is gone'
     ;;
 gc-tmp)
     me=$(id -un)

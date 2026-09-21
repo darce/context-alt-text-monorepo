@@ -625,6 +625,7 @@ test-scripts:
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		scripts/test_check_controlled_vocabulary.py \
 		scripts/test_remote_gate_guards.py \
+		scripts/test_gate_ops_guards.py \
 		scripts/train/occlusion/test_license_policy.py \
 		scripts/train/occlusion/test_license_policy_hardening.py \
 		scripts/train/occlusion/test_equivalence_claims.py \

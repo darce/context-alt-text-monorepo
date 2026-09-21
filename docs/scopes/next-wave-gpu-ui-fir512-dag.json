@@ -114,6 +114,16 @@
       "consumes": "Integrated behavior and receipts"
     },
     {
+      "from": "F6",
+      "to": "GATE",
+      "consumes": "FIR rollback rehearsal receipt"
+    },
+    {
+      "from": "Q",
+      "to": "GATE",
+      "consumes": "FIR quality-gate verdict (recall/precision thresholds)"
+    },
+    {
       "from": "F1a",
       "to": "F1c",
       "consumes": "Pinned identity"
@@ -323,16 +333,17 @@
       1
     ],
     "critical_path": [
-      "S1A",
-      "S1B",
-      "S2A",
-      "S2B",
-      "G2",
-      "I",
+      "F1a",
+      "F1c",
+      "F1e",
+      "F3",
+      "F5",
+      "F6",
       "GATE"
     ],
     "unit_weight_floor": 7,
     "admitted_width": 10,
-    "meaning": "Analysis only, not workers provisioned or resource-admitted."
+    "meaning": "Analysis only, not workers provisioned or resource-admitted.",
+    "critical_path_note": "Longest path over the corrected edge set. F6 (rollback rehearsal) and Q (FIR quality gate) now feed GATE, so a FIR failure blocks the release declaration even when S1-S5 and I are green (DEMOHEAL-1-PR-08)."
   }
 }

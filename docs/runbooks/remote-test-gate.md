@@ -53,6 +53,192 @@ make check-remote                       # configured targets (default: desc-serv
 make check-remote TARGETS="test lint"   # explicit targets, run in REMOTE_GATE_WORKDIR
 ```
 
+## Two ways a gate run lies, and the flags that stop them
+
+Both were observed on the same run (2026-09-21). Neither surfaces as a
+failure, which is the point: a gate that reports nothing is not reporting
+success ([OBS-08]).
+
+**It ran only part of the suite.** `conftest.py` writes a collection-scope
+receipt on every run and compares the collected roots against the five
+declared in `testpaths`. The comparison is *advisory* unless you ask for
+it. That run's receipt read `scope: "narrowed"`, `collected_roots:
+["recognition/tests"]` — one of five — and the run said nothing. Make it
+fail instead:
+
+```bash
+make check-remote TARGETS=test
+```
+
+**Do not set `WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1"` by hand.** A
+previous revision of this page told you to, and that command is now strictly
+worse than the bare one (AR-04). `Makefile` resolves
+`${WORKBAY_REMOTE_GATE_ENV:-$(GATE_ENV)}`, and `GATE_ENV` already defaults to
+
+```
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ACX_STRICT_GATE=1
+```
+
+so the flag is already on, and setting the variable inline *replaces* that
+default — silently dropping the three BLAS caps. Those caps are not
+cosmetic: without them BLAS oversubscription exhausts the gate user's
+`pids.max=512` slice, which surfaces as `EAGAIN` → `no tests ran` → `EXIT=2`.
+You would be paying a harder-to-read failure for a flag you already had.
+
+Pin the target to `test`. The flag demands a *full* collection, and any
+target that selects by marker is narrowed by construction —
+`test-integration` is `pytest -m "integration or pg or timing"`, and
+`scene/tests` and `scripts/eval_harness/tests` contain none of those markers,
+so the run aborts at collection with zero tests executed and the message
+`full collection required; collection was narrowed`. That is the same phrase
+this section just taught you to read as the greenwash symptom, which makes it
+a particularly bad way to fail. So: strict gate on the `test` lane, which is
+the default; never on the integration lane.
+
+If you do need to add environment for one run, remember that
+`WORKBAY_REMOTE_GATE_ENV` *overrides* rather than appends — restate the four
+defaults above alongside whatever you are adding.
+
+Note also that a `REMOTE_GATE_ENV=` line in `.workbay/remote-gate.env` never
+reaches a `make check-remote` run at all (AR-09). The Makefile always exports
+a non-empty `WORKBAY_REMOTE_GATE_ENV`, and `remote_gate.sh` resolves
+`GATE_EXTRA_ENV="${_env_extra:-${REMOTE_GATE_ENV:-}}"`, so the file's value is
+unconditionally shadowed. Put DSNs on the `make` invocation, not in the file,
+or invoke `scripts/remote_gate.sh` directly.
+
+Read the receipt afterwards either way; it is written even on a green run:
+
+```bash
+ssh gate@<your-gate-host> \
+  cat /tmp/prototype-description-service-pytest-collection-scope.json
+```
+
+**It hung and held the mutex.** The gate serialises on `.gate.lock` and has
+no liveness bound of its own — it cannot tell a frozen output stream from a
+slow test, so a deadlocked test holds the lock until someone intervenes,
+and the run's partial results are unrecoverable (stdout goes to a deleted
+`/tmp/#<inode>` whose `/proc/<pid>/fd/1` reopens write-only). A bound now
+lives in the suite, so it needs no flag and cannot be forgotten at the call
+site: `apps/prototype-description-service/pyproject.toml` declares
+`faulthandler_timeout` (dump every thread's stack, keep running) and
+`timeout` (abort the test, name it, let the other xdist workers finish).
+A test that legitimately needs longer overrides it with
+`@pytest.mark.timeout(n)` — do not raise the global ceiling.
+
+Set your expectations for the stack dump low (AR-05). It tells you a worker
+is wedged rather than slow, and little else: the dumps from the real incident
+are entirely library frames (`selectors.select` → `asyncio` →
+`pytest_asyncio` → `_pytest` → `xdist` → `execnet`), because a suspended
+coroutine has no live frame to show, and they carry no `[gw0]`/`[gw1]` label,
+so with two workers you are matching raw thread-id prefixes by hand. The
+*abort* is what names the test — which means in the C-wedge case below,
+where the abort never fires, the unlabelled dump is the only artifact you get.
+
+**That bound covers the test phase only, and only Python-level hangs.**
+Three gaps remain, all of which still hold the mutex:
+
+- `timeout_method = "signal"` raises inside the test, so the abort arrives
+  as an ordinary failure report naming the test — but a Python signal
+  handler cannot run while the interpreter is inside a C call. A wedge in
+  `onnxruntime` `session.run`, an hdbscan/BLAS/OpenCV kernel, or an asyncpg
+  C path is *dumped* by `faulthandler` and never *aborted*. (Measured:
+  `hashlib.pbkdf2_hmac(sha512, 200M)` under a 3s bound was not aborted until
+  the call returned at 112.53s.)
+
+  **`timeout_method = "thread"` is the fix for this, not a trap.** An
+  earlier revision of this page said not to use it because it `os._exit`s
+  the worker and loses its results. That is wrong, and it steered you away
+  from the only control for the gap the bullet above describes (AR-02).
+  xdist streams each test's report to the controller as it completes, so a
+  thread-method abort loses only the *in-flight* test — and xdist still
+  names it: `worker 'gw1' crashed while running 'test_x.py::test_hang'`
+  (measured: `1 failed, 3 passed in 5.99s` under `-n 2`). The same pbkdf2
+  wedge above dies at the bound under `thread`.
+
+  `signal` remains the shipped default because every hang this bound was
+  built for was a Python-level asyncio wedge, and a real failure report
+  beats a crashed worker for those. If a C-level wedge holds the gate, flip
+  `timeout_method` in
+  `apps/prototype-description-service/pyproject.toml` — do not raise the
+  ceiling, and do not reach for `gate-reap` as the routine answer.
+- The bound is armed inside `pytest_runtest_protocol`, so a module that
+  hangs at *import* is outside it entirely — no abort and no stack dump,
+  because neither `timeout` nor `dump_traceback_later` is active during
+  collection (AR-07). A collection-phase wedge looks like a gate that
+  produced no output at all and holds the mutex indefinitely.
+- The lock is taken before the test phase and spans more than it. Inside
+  the same critical section the gate runs `git checkout`, `git clean`,
+  `uv sync` (which builds hdbscan from source), and the admission probe.
+  None of those is inside a pytest runtest protocol, so no per-test alarm
+  is ever armed for them.
+
+The real control for both belongs in the gate script — wrapping the remote
+body in `timeout -k 30 "${GATE_MAX_SECONDS}"` with a distinct exit code, so
+`flock` releases when the holder dies. That is filed upstream; until it
+lands, a wedge in those surfaces still needs `make gate-reap CONFIRM=REAP`.
+
+To tell a hung run from a merely slow one while it is still running, sample
+consumed CPU twice on the VM and read each thread's kernel wait channel:
+
+```bash
+ssh gate@<your-gate-host> \
+  'for i in 1 2; do ps -o pid,cputimes,etimes --no-headers -p <ctl>,<w1>,<w2>; sleep 10; done
+   for t in /proc/<worker-pid>/task/*; do echo "$t $(cat $t/wchan)"; done'
+```
+
+Use `ps -o cputimes`, **not** `awk '{print $14+$15}' /proc/<pid>/stat`. The
+`/proc` form returned a frozen value across three samples spanning three
+minutes on a run that `ps` showed advancing by 4 CPU-seconds per 10 seconds
+of wall clock — i.e. it reported a deadlock that was not happening. A
+diagnostic that fails toward "hung" is worse than none: it argues for
+killing a healthy run and losing the lock-holder's work.
+
+Zero CPU delta alone does **not** mean deadlock. Read the wait channel — but
+treat it as corroboration, never as the verdict:
+
+| main-thread `wchan` | meaning |
+| --- | --- |
+| `0` | on CPU right now — running |
+| `hrtimer_nanosleep` / `do_nanosleep` | `time.sleep()` — benign, and the most common quiet case |
+| `poll_schedule_timeout*` | `select`/`poll` — **bounded and unbounded are indistinguishable by name** |
+| `ep_poll` / `futex_do_wait` on **every** process, with no CPU duty anywhere | the actual deadlock signature |
+
+The `poll_schedule_timeout` row is the trap. Measured on this gate host
+(Linux 6.17.0-1011-oracle aarch64, CPython 3.12.3), `select.select([r],[],[])`
+with no timeout and `select.select([r],[],[],600)` both report
+`poll_schedule_timeout.constprop.0` — the kernel parks an *infinite* wait on the
+same channel as a bounded one. So the name cannot tell you whether a bound
+exists, and reading it as "timed, therefore fine" classifies a permanent block
+as healthy while it holds the gate mutex. **CPU duty is the discriminator** —
+the `ps -o cputimes` delta above is what the original field call actually rested
+on (~4 CPU-seconds per 10s wall = periodic wakeups = alive).
+
+A single idle worker is normal: xdist balances by test count, not by
+duration, so one worker can draw a cluster of sleep-bound tests and sit at
+near-zero CPU for minutes while its sibling saturates a core.
+
+Calibrate against the right baseline before calling a run slow. `make test`
+collects 6792 items and takes ~15 minutes on this host; that is the yardstick.
+It is not the whole suite — `make test` runs
+`-m "not integration and not pg and not timing"`, deselecting 30 of 6822. The
+other 30 run serially under `make test-integration` against a real Postgres,
+and their durations have never been profiled on this host, so the 300s
+per-test bound is calibrated on the fast lane only (AR-03). `make check` runs
+both lanes.
+
+`ACX_STRICT_GATE=1` does **not** change what gets collected — `conftest.py`
+only raises `pytest.UsageError` when the scope is already narrowed, and
+`make test` passes no path arguments, so pytest always falls through to the
+declared `testpaths`. The flag is a tripwire, not a workload multiplier; a
+strict run and a non-strict run of the same target do identical work.
+
+Do not size a run against the collection-scope receipt. Its default path
+(`/tmp/prototype-description-service-pytest-collection-scope.json`) is
+machine-global, so *any* concurrent pytest on the host overwrites it — this has
+been observed mid-run reporting 3071 items and then 1, while the gate run it was
+supposed to describe had collected 6792 across three roots. Pass an explicit
+`--collection-scope-receipt=<path>` if you need a receipt you can trust.
+
 ## Host prerequisite: C toolchain (operator, one-time)
 
 `uv sync` for the description service **builds `hdbscan` from source** on the

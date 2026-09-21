@@ -23,13 +23,26 @@ _STARTUP_TESTS = [
 ]
 
 
-def test_startup_tests_pass_without_any_ambient_credentials() -> None:
+def test_startup_tests_pass_without_any_ambient_credentials(tmp_path: Path) -> None:
     env = {key: value for key, value in os.environ.items() if not key.startswith(("RECOGNITION_", "PG", "ACX_"))}
     env["PATH"] = os.environ.get("PATH", "")
     env["ACX_GPU_SHELL_SUITE_SKIP"] = "1"
 
+    # The collection-scope receipt defaults to a fixed global path, so this
+    # child would overwrite the outer run's receipt with its own 4-test scope
+    # mid-run -- leaving any operator who reads it afterwards with a receipt
+    # that understates what actually ran.
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *_STARTUP_TESTS],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            f"--collection-scope-receipt={tmp_path / 'collection-scope.json'}",
+            *_STARTUP_TESTS,
+        ],
         cwd=SERVICE_ROOT,
         env=env,
         capture_output=True,

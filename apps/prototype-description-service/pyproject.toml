@@ -247,16 +247,19 @@ ignore_errors = true
 collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection-scope.json"
 # GATELIVE-1: the suite must have a liveness property, not just a safety one.
 # A deadlocked test previously froze a remote-gate run at 11% and held the
-# gate mutex for 57 minutes against a ~220s whole-suite baseline; the gate
-# cannot tell a hung run from a slow one, so nothing ever aborted it and the
-# partial results were destroyed on recovery. Two bounds, in order:
+# gate mutex for 57 minutes; the gate cannot tell a hung run from a slow one,
+# so nothing ever aborted it and the partial results were destroyed on
+# recovery. Two bounds, in order:
 #
 #   faulthandler_timeout  dumps every thread's stack and keeps running. Pure
 #                         observability (OBS-08) -- it is what turns "worker
 #                         is quiet" into a named deadlock without a py-spy
 #                         attach on the VM.
-#   timeout               actually aborts the test. 300s is ~1.4x the entire
-#                         suite's wall clock, so any single test reaching it
+#   timeout               actually aborts the test. Calibrate it against the
+#                         slowest HEALTHY test, not the suite: the duration
+#                         profile cliffs from 20.7s to the hangs at 299.9s
+#                         with nothing in between, so 300s is ~14x the
+#                         slowest legitimate test and anything reaching it
 #                         is pathological by construction, not merely slow.
 #
 # timeout_method is pinned to "signal" rather than left implicit: it raises

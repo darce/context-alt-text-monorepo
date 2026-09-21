@@ -447,7 +447,7 @@ def _run_do_restart(
     return proc.returncode, log.read_text() if log.exists() else ""
 
 
-def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path) -> None:
+def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path, _reachable_deploy_host: None) -> None:
     """W8-VER-01 / S1-A-02: do_restart executes repair before systemctl restart.
 
     Behavioural: fake ssh log records pull → repair profile → systemctl order.
@@ -468,7 +468,7 @@ def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path) -> None:
     assert "--profile repair" in log or "profile repair" in log, log
 
 
-def test_deploy_restart_fails_when_repair_fails(tmp_path: Path) -> None:
+def test_deploy_restart_fails_when_repair_fails(tmp_path: Path, _reachable_deploy_host: None) -> None:
     """W8-VER-01: repair failure must non-zero exit and must not restart the unit."""
     rc, log = _run_do_restart(tmp_path, repair_exit=1)
     assert rc != 0, f"expected non-zero when repair fails; log:\n{log}"
@@ -611,6 +611,38 @@ def _source_and_run(
         text=True,
         timeout=timeout,
     )
+
+
+@pytest.fixture
+def _reachable_deploy_host() -> None:
+    """Skip remote deploy gates when the configured SSH host is not provisioned."""
+    host = os.environ.get("OCI_HOST", "acx-backend.tail1a44b8.ts.net")
+    user = os.environ.get("OCI_USER", "ubuntu")
+    try:
+        probe = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "ConnectionAttempts=1",
+                "-l",
+                user,
+                "--",
+                host,
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip(f"SSH host {host} is unreachable; provisioning is required")
+    if probe.returncode != 0:
+        pytest.skip(f"SSH host {host} is unreachable; provisioning is required")
 
 
 def test_ssh_identity_refuses_leading_dash() -> None:
@@ -871,7 +903,7 @@ def test_read_remote_invalid_repo_sentinel() -> None:
     assert "__INVALID_REPO__" in (proc.stdout or ""), proc.stdout + proc.stderr
 
 
-def test_converge_runtime_zero_refuses_drift() -> None:
+def test_converge_runtime_zero_refuses_drift(_reachable_deploy_host: None) -> None:
     """HARM-A-06: ACX_CONVERGE_RUNTIME=0 must refuse when runtime_in_sync fails."""
     proc = subprocess.run(
         [
@@ -898,7 +930,7 @@ def test_converge_runtime_zero_refuses_drift() -> None:
     assert "ACX_CONVERGE_RUNTIME=0 refused" in combined, combined
 
 
-def test_repair_probe_skips_when_uid_matches(tmp_path: Path) -> None:
+def test_repair_probe_skips_when_uid_matches(tmp_path: Path, _reachable_deploy_host: None) -> None:
     """W8-VER-03: ownership probe path is executed (stat + skip message)."""
     log = tmp_path / "ssh.log"
     log.write_text("")
@@ -1174,7 +1206,7 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
     assert "UNEXPECTED_PASS" not in combined
 
 
-def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
+def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path, _reachable_deploy_host: None) -> None:
     """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
 
     Behavioural: fake ssh executes the remote snippet against a local file that
@@ -1357,7 +1389,7 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
     assert (proc3.stdout or "").strip() == "99"
 
 
-def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
+def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path, _reachable_deploy_host: None) -> None:
     """S2-A-06: restore_prior_image_repo_env re-ships prior value after failure."""
     log = tmp_path / "ship.log"
     log.write_text("")

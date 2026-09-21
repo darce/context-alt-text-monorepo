@@ -147,7 +147,10 @@ def _expected_skip(rows: list[MediaIdentityModel], *, active_model: str | None) 
 
 
 def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClusteringRunner:
-    writer = MagicMock()
+    writer = AsyncMock()
+    writer._session = None
+    writer._settings = SimpleNamespace(recovery_merge_enabled=False)
+    writer.bind_run_context = MagicMock()
     writer.cluster_repository.cleanup_orphaned_provisional_reps = AsyncMock(return_value=0)
     writer.cluster_repository.confirm_all_provisional_reps = AsyncMock(return_value=0)
     writer.cluster_repository.get_by_tenant = AsyncMock(return_value=[])
@@ -158,9 +161,9 @@ def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClus
     graph.algorithm_name = "test-graph"
     graph.discover = AsyncMock(return_value=SimpleNamespace(candidates=[], new_clusters=[]))
 
-    representative = MagicMock()
+    representative = AsyncMock()
     representative.discover = AsyncMock(return_value=[])
-    centroid = MagicMock()
+    centroid = AsyncMock()
     centroid.discover = AsyncMock(return_value=[])
 
     gate = MagicMock()

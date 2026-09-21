@@ -196,8 +196,12 @@ async def _media_persist_lock(
     hold_until_commit = False
 
     def _capture_owner(_sess: object = None, transaction: object = None) -> None:
+        # _remove_listener is deferred to the next loop tick, so this listener
+        # outlives its own critical section. Re-arming after release would hand
+        # a stale owner a reentrant pass into a lock a waiter now holds.
         if (
-            sync_session is None
+            released
+            or sync_session is None
             or getattr(transaction, "parent", None) is not None
             or entry.owner_sync_session is not None
         ):

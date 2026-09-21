@@ -103,6 +103,7 @@ async def _raw_request(
 
 
 def _install_capture_filter(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
     caplog.handler.addFilter(CorrelationIdFilter())
 
 
@@ -146,9 +147,10 @@ async def test_invalid_request_id_is_replaced_and_never_observable(
     assert status == 200
     assert UUID4_RE.fullmatch(replacement)
     assert json.loads(body)["correlation_id"] == replacement
-    assert all(raw.decode("latin-1") not in body.decode("utf-8") for raw in raw_values)
-    assert all(raw.decode("latin-1") not in caplog.text for raw in raw_values)
-    assert all(raw.decode("latin-1") not in value for value in headers.values())
+    raw_texts = [raw.decode("latin-1") for raw in raw_values if raw]
+    assert all(raw not in body.decode("utf-8") for raw in raw_texts)
+    assert all(raw not in caplog.text for raw in raw_texts)
+    assert all(raw not in value for raw in raw_texts for value in headers.values())
 
 
 @pytest.mark.asyncio
@@ -199,4 +201,3 @@ def test_log_outside_request_has_no_fabricated_request_id(caplog: pytest.LogCapt
 
     record = next(record for record in caplog.records if record.getMessage() == "background record")
     assert getattr(record, CORRELATION_ID_LOG_FIELD) == "-"
-

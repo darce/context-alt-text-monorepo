@@ -24,7 +24,7 @@ from recognition.interface_adapters.http.middleware.correlation import (
     get_correlation_id,
 )
 
-UUID_RE = re.compile(r"^req-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 
 def _build_app(logger_name: str = "recognition.application.test_correlation") -> tuple[FastAPI, logging.Logger]:
@@ -67,7 +67,7 @@ def test_correlation_id_generated_when_header_absent() -> None:
 def test_correlation_id_echoes_incoming_header() -> None:
     app, _ = _build_app()
     client = TestClient(app)
-    incoming = "req-00000000-0000-7000-8000-000000000001"
+    incoming = "00000000-0000-4000-8000-000000000001"
 
     resp = client.get("/echo", headers={CORRELATION_ID_HEADER: incoming})
 
@@ -171,7 +171,7 @@ def test_exception_handler_uses_contextvar_correlation_id() -> None:
     register_exception_handlers(app)
     client = TestClient(app)
 
-    incoming = "req-00000000-0000-7000-8000-0000000000ff"
+    incoming = "00000000-0000-4000-8000-0000000000ff"
     resp = client.get("/boom", headers={CORRELATION_ID_HEADER: incoming})
 
     assert resp.status_code == 400

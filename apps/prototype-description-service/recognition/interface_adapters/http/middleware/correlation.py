@@ -1,10 +1,11 @@
-"""Correlation ID middleware and logging filter.
+"""Validated API request-id middleware and logging filter.
 
-Middleware extracts the ``X-Request-ID`` header from the incoming request (or
-generates a new ``req-<uuid7>`` when absent), publishes it via a
-:mod:`contextvars` variable so downstream code and log filters can read it, and
-echoes the same value back on the response so clients can correlate logs with
-observed requests.
+The HTTP request id is deliberately separate from authentication.  The
+middleware accepts only a canonical lowercase UUIDv4 from
+``X-ACX-Request-Id``; malformed or repeated values are replaced before the id
+can reach a response or a log record.  It binds the validated value through a
+:mod:`contextvars` variable and emits the one request-scoped access record that
+replaces uvicorn's post-response access logger.
 """
 
 from __future__ import annotations
@@ -12,8 +13,7 @@ from __future__ import annotations
 import logging
 from contextvars import ContextVar
 from enum import StrEnum
-
-from uuid_extensions import uuid7
+from uuid import UUID, uuid4
 
 
 class CorrelationSource(StrEnum):
@@ -34,9 +34,10 @@ except ImportError:  # pragma: no cover - starlette is a FastAPI dep
     ASGIApp = Receive = Scope = Send = Message = object  # type: ignore[assignment,misc]
 
 
-CORRELATION_ID_HEADER = "X-Request-ID"
+CORRELATION_ID_HEADER = "X-ACX-Request-Id"
 CORRELATION_ID_LOG_FIELD = "correlation_id"
 CORRELATION_ID_PLACEHOLDER = "-"
+ACCESS_LOGGER_NAME = "recognition.access"
 
 _correlation_id_var: ContextVar[str | None] = ContextVar("recognition_correlation_id", default=None)
 
@@ -46,9 +47,43 @@ def get_correlation_id() -> str | None:
     return _correlation_id_var.get()
 
 
+def validate_correlation_id(value: bytes | str) -> str | None:
+    """Return a canonical UUIDv4, or ``None`` for any untrusted value.
+
+    The length check happens before decoding/parsing so oversized values are
+    rejected at the transport boundary.  Canonical spelling is required on
+    input as well as output: lowercase hex, hyphens, and exactly 36 ASCII
+    bytes.  In particular, no invalid header value is ever logged or echoed.
+    """
+
+    if isinstance(value, bytes):
+        if len(value) != 36:
+            return None
+        try:
+            candidate = value.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    else:
+        try:
+            encoded = value.encode("ascii")
+        except UnicodeEncodeError:
+            return None
+        if len(encoded) != 36:
+            return None
+        candidate = value
+
+    try:
+        parsed = UUID(candidate)
+    except (ValueError, AttributeError):
+        return None
+    if parsed.version != 4 or str(parsed) != candidate:
+        return None
+    return candidate
+
+
 def generate_correlation_id() -> str:
-    """Generate a fresh ``req-<uuid7>`` identifier."""
-    return f"req-{uuid7()}"
+    """Generate a canonical lowercase UUIDv4 request id."""
+    return str(uuid4())
 
 
 class CorrelationIdMiddleware:
@@ -72,10 +107,13 @@ class CorrelationIdMiddleware:
         # runs in its own asyncio task/context, so the binding is naturally
         # scoped to the request lifetime.
         _correlation_id_var.set(correlation_id)
+        response_status: int | None = None
         encoded_header = (self._header_key, correlation_id.encode("latin-1"))
 
         async def send_wrapper(message: Message) -> None:
+            nonlocal response_status
             if message["type"] == "http.response.start":
+                response_status = int(message.get("status", 500))
                 existing = [
                     (key, value) for key, value in message.get("headers", []) if key.lower() != self._header_key
                 ]
@@ -83,16 +121,41 @@ class CorrelationIdMiddleware:
                 message["headers"] = existing
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except BaseException:
+            self._log_access(scope, correlation_id, response_status or 500)
+            raise
+        else:
+            self._log_access(scope, correlation_id, response_status or 500)
 
     def _read_header(self, scope: Scope) -> str | None:
-        for key, value in scope.get("headers", []):
-            if key.lower() == self._header_key:
-                try:
-                    return value.decode("latin-1").strip() or None
-                except UnicodeDecodeError:
-                    return None
-        return None
+        values = [value for key, value in scope.get("headers", []) if key.lower() == self._header_key]
+        if len(values) != 1:
+            return None
+        return validate_correlation_id(values[0])
+
+    @staticmethod
+    def _log_access(scope: Scope, correlation_id: str, status_code: int) -> None:
+        """Emit one access record while the request context is still active.
+
+        Uvicorn's default access record is emitted after the application call,
+        outside this request context, so ``api.logging_config`` disables that
+        logger and this middleware owns the single correlated access record.
+        """
+
+        logging.getLogger(ACCESS_LOGGER_NAME).info(
+            "%s %s %s",
+            scope.get("method", "-"),
+            scope.get("path", "-"),
+            status_code,
+            extra={
+                CORRELATION_ID_LOG_FIELD: correlation_id,
+                "method": scope.get("method", "-"),
+                "path": scope.get("path", "-"),
+                "status_code": status_code,
+            },
+        )
 
 
 class CorrelationIdFilter(logging.Filter):
@@ -112,9 +175,11 @@ __all__ = [
     "CORRELATION_ID_HEADER",
     "CORRELATION_ID_LOG_FIELD",
     "CORRELATION_ID_PLACEHOLDER",
+    "ACCESS_LOGGER_NAME",
     "CorrelationIdFilter",
     "CorrelationIdMiddleware",
     "CorrelationSource",
     "generate_correlation_id",
     "get_correlation_id",
+    "validate_correlation_id",
 ]

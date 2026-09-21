@@ -182,6 +182,7 @@ class MediaIdentity(Base):
 class IdentityCluster(Base):
     __tablename__ = "identity_clusters"
     __allow_unmapped__ = True
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

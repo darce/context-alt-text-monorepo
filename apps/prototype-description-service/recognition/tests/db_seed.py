@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MediaIdentity
 from db.settings import get_database_settings
+from recognition.application.embedding.manifest import active_embedding_model_id
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 _DB_SETTINGS = get_database_settings()
@@ -44,7 +45,7 @@ async def ensure_media_identity(
         bbox_height=1,
         confidence=1.0,
         embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
-        embedding_model="buffalo_l@insightface",
+        embedding_model=active_embedding_model_id(),
     )
     session.add(media)
     await session.flush()

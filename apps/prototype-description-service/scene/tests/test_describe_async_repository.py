@@ -17,6 +17,7 @@ from typing import cast
 import pytest
 from sqlalchemy import CheckConstraint, Column, Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.types import TypeDecorator
 
 import scene.application.describe_run_repository as repo_mod
 from db.models.base_imports import Base
@@ -466,12 +467,17 @@ class _MigrationRecorder:
 
 
 def _column_signature(col: Column) -> tuple[str, int | None, bool]:
-    """(type-class, length, nullable) — catches type/width/nullability drift, not just names.
+    """(storage-type, length, nullable) — catches type/width/nullability drift.
 
     VLM5-F2B-BR-02: name-only parity passed a migration-only String(32)->String(64)
-    widening; the signature comparison fails it.
+    widening; the signature comparison fails it.  The ORM's ``_TimingFloat`` is
+    an intentional ``Float`` TypeDecorator that rejects non-finite binds, so
+    compare its storage implementation to the migration's ``Float`` column.
     """
-    return (type(col.type).__name__, getattr(col.type, "length", None), col.nullable)
+    column_type = col.type
+    if isinstance(column_type, TypeDecorator):
+        column_type = column_type.impl
+    return (type(column_type).__name__, getattr(column_type, "length", None), col.nullable)
 
 
 def _migration_columns_and_checks(
@@ -507,7 +513,9 @@ def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPat
     for col in ("visual_facts", "tier", "result_generation"):
         assert col in item_orm_cols and col in item_mig_cols
 
-    # Full signature parity: names AND (type-class, length, nullable) per column.
+    # Full storage signature parity: names AND (storage type, length, nullable)
+    # per column.  ORM-only bind validation wrappers are normalized by
+    # _column_signature rather than misreported as database schema drift.
     assert run_orm_cols == run_mig_cols
     assert item_orm_cols == item_mig_cols
     assert run_orm_checks == run_mig_checks

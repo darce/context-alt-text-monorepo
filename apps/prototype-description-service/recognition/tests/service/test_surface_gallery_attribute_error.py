@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import create_autospec
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -22,7 +23,8 @@ from recognition.application.similarity import SimilaritySearch
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.repositories import SuggestionCreateData
+from recognition.domain.repositories import ClusterRepository, SuggestionCreateData
+from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
@@ -249,39 +251,6 @@ async def test_internal_gallery_attribute_error_does_not_authorize_cached_search
     )
 
 
-class _MissingMethodClusterRepository:
-    """Batch-surfacing double: Protocol method is absent, not faulting."""
-
-    def __init__(
-        self,
-        *,
-        identities_by_cluster: dict[str, list[MediaIdentity]],
-        labeled_cluster: IdentityCluster,
-    ) -> None:
-        self._identities_by_cluster = identities_by_cluster
-        self._labeled_cluster = labeled_cluster
-
-    async def get_member_identities_for_clusters(self, cluster_ids: list[str]) -> dict[str, list[MediaIdentity]]:
-        return {cid: list(self._identities_by_cluster.get(cid, [])) for cid in cluster_ids}
-
-    async def get_by_id(self, cluster_id: str) -> IdentityCluster:
-        return self._labeled_cluster
-
-
-class _AwaitableFaultClusterRepository(_MissingMethodClusterRepository):
-    async def get_all_representatives(self, cluster_id: str) -> list[Any]:
-        raise AttributeError("await-time gallery fault")
-
-
-class _IterationFaultClusterRepository(_MissingMethodClusterRepository):
-    async def get_all_representatives(self, cluster_id: str) -> Any:
-        def _rows() -> Any:
-            raise AttributeError("iteration gallery fault")
-            yield None  # pragma: no cover
-
-        return _rows()
-
-
 def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
     return IdentityCluster(
         tenant_id=tenant_id,
@@ -292,6 +261,17 @@ def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
         user_confirmed=True,
         representatives=None,
     )
+
+
+def _cluster_repository_double(
+    *,
+    identities_by_cluster: dict[str, list[MediaIdentity]],
+    labeled_cluster: IdentityCluster,
+) -> Any:
+    repository = create_autospec(ClusterRepository, instance=True)
+    repository.get_member_identities_for_clusters.return_value = identities_by_cluster
+    repository.get_by_id.return_value = labeled_cluster
+    return repository
 
 
 def _surface_service(
@@ -344,10 +324,11 @@ async def test_present_method_await_attribute_error_does_not_authorize_cached_se
     labeled_id = str(uuid4())
     unlabeled_id = str(uuid4())
     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
-    repo = _AwaitableFaultClusterRepository(
+    repo = _cluster_repository_double(
         identities_by_cluster={unlabeled_id: [unstamped]},
         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
     )
+    repo.get_all_representatives.side_effect = AttributeError("await-time gallery fault")
     service, suggestion_repo, search = _surface_service(repo, tenant_id)
 
     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
@@ -364,10 +345,16 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
     labeled_id = str(uuid4())
     unlabeled_id = str(uuid4())
     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
-    repo = _IterationFaultClusterRepository(
+    repo = _cluster_repository_double(
         identities_by_cluster={unlabeled_id: [unstamped]},
         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
     )
+
+    def _rows() -> Any:
+        raise AttributeError("iteration gallery fault")
+        yield None  # pragma: no cover
+
+    repo.get_all_representatives.return_value = _rows()
     service, suggestion_repo, search = _surface_service(repo, tenant_id)
 
     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
@@ -379,16 +366,20 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
 
 @pytest.mark.asyncio
 async def test_absent_method_unstamped_identities_may_use_precomputed_cache() -> None:
-    """Lookup AttributeError on an incomplete double keeps unstamped cache compatibility."""
+    """An autospecced repository exposes the live gallery required by surfacing."""
     tenant_id = str(uuid4())
     labeled_id = str(uuid4())
     unlabeled_id = str(uuid4())
     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
-    repo = _MissingMethodClusterRepository(
+    repo = _cluster_repository_double(
         identities_by_cluster={unlabeled_id: [unstamped]},
         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
     )
-    assert not hasattr(repo, "get_all_representatives")
+    representative = create_autospec(ClusterRepresentative, instance=True)
+    representative.embedding = unstamped.embedding
+    representative.embedding_model = unstamped.embedding_model
+    repo.get_all_representatives.return_value = [representative]
+    assert hasattr(repo, "get_all_representatives")
     service, suggestion_repo, search = _surface_service(repo, tenant_id)
 
     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
@@ -401,7 +392,7 @@ async def test_absent_method_unstamped_identities_may_use_precomputed_cache() ->
 
 @pytest.mark.asyncio
 async def test_absent_method_stamped_identities_still_reject() -> None:
-    """Lookup AttributeError must still raise when any probe is stamped."""
+    """A gallery lookup AttributeError must still raise when any probe is stamped."""
     tenant_id = str(uuid4())
     labeled_id = str(uuid4())
     unlabeled_id = str(uuid4())
@@ -415,10 +406,11 @@ async def test_absent_method_stamped_identities_still_reject() -> None:
         bbox_height=10,
         embedding_model="space-a",
     )
-    repo = _MissingMethodClusterRepository(
+    repo = _cluster_repository_double(
         identities_by_cluster={unlabeled_id: [stamped]},
         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
     )
+    repo.get_all_representatives.side_effect = AttributeError("gallery lookup fault")
     service, suggestion_repo, search = _surface_service(repo, tenant_id)
 
     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=stamped)

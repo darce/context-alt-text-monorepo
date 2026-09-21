@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import uuid
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from db.models import IdentityMember as IdentityMemberModel
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.representative import ClusterRepresentative
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession, seed_cluster
@@ -345,14 +347,14 @@ def test_cluster_delta_returns_only_changed_clusters(
         identity_id=str(uuid.uuid4()),
         media_id="202",
     )
-    fake_cluster_repository.clusters[changed.id].representatives = [
-        SimpleNamespace(
-            id=str(uuid.uuid4()),
-            identity_id=changed_identity_id,
-            media_id="101",
-            is_user_selected=True,
-        )
-    ]
+    representative = create_autospec(ClusterRepresentative, instance=True)
+    representative.id = str(uuid.uuid4())
+    representative.identity_id = changed_identity_id
+    representative.media_id = "101"
+    representative.is_user_selected = True
+    representative.quality_score = 1.0
+    representative.quality_components = None
+    fake_cluster_repository.clusters[changed.id].representatives = [representative]
     snapshot_version = fake_cluster_repository._snapshot_version
 
     async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
@@ -924,21 +926,19 @@ def test_list_cluster_members_includes_face_thumb_url_for_blob_backed_members(
     )
     fake_cluster_service.cluster_repository = fake_cluster_repository
 
-    fake_cluster_repository.members_by_cluster[cluster.id] = [
-        (
-            SimpleNamespace(similarity=0.9),
-            SimpleNamespace(
-                id=str(uuid.uuid4()),
-                media_id="909",
-                confidence=0.97,
-                bbox_x=5,
-                bbox_y=6,
-                bbox_width=20,
-                bbox_height=24,
-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
-            ),
-        )
-    ]
+    member = create_autospec(IdentityMemberModel, instance=True)
+    member.cluster_id = cluster.id
+    member.similarity = 0.9
+    identity = create_autospec(MediaIdentityModel, instance=True)
+    identity.id = str(uuid.uuid4())
+    identity.media_id = "909"
+    identity.confidence = 0.97
+    identity.bbox_x = 5
+    identity.bbox_y = 6
+    identity.bbox_width = 20
+    identity.bbox_height = 24
+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
 
     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
 
@@ -959,21 +959,19 @@ def test_list_cluster_members_does_not_synthesize_missing_crop_coordinates(
     )
     fake_cluster_service.cluster_repository = fake_cluster_repository
 
-    fake_cluster_repository.members_by_cluster[cluster.id] = [
-        (
-            SimpleNamespace(similarity=0.9),
-            SimpleNamespace(
-                id=str(uuid.uuid4()),
-                media_id="909",
-                confidence=0.97,
-                bbox_x=None,
-                bbox_y=6,
-                bbox_width=20,
-                bbox_height=24,
-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
-            ),
-        )
-    ]
+    member = create_autospec(IdentityMemberModel, instance=True)
+    member.cluster_id = cluster.id
+    member.similarity = 0.9
+    identity = create_autospec(MediaIdentityModel, instance=True)
+    identity.id = str(uuid.uuid4())
+    identity.media_id = "909"
+    identity.confidence = 0.97
+    identity.bbox_x = None
+    identity.bbox_y = 6
+    identity.bbox_width = 20
+    identity.bbox_height = 24
+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
 
     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
 
@@ -995,21 +993,19 @@ def test_list_cluster_members_omits_face_thumb_url_when_crop_exceeds_max_geometr
     )
     fake_cluster_service.cluster_repository = fake_cluster_repository
 
-    fake_cluster_repository.members_by_cluster[cluster.id] = [
-        (
-            SimpleNamespace(similarity=0.9),
-            SimpleNamespace(
-                id=str(uuid.uuid4()),
-                media_id="909",
-                confidence=0.97,
-                bbox_x=5,
-                bbox_y=6,
-                bbox_width=40_000,
-                bbox_height=24,
-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
-            ),
-        )
-    ]
+    member = create_autospec(IdentityMemberModel, instance=True)
+    member.cluster_id = cluster.id
+    member.similarity = 0.9
+    identity = create_autospec(MediaIdentityModel, instance=True)
+    identity.id = str(uuid.uuid4())
+    identity.media_id = "909"
+    identity.confidence = 0.97
+    identity.bbox_x = 5
+    identity.bbox_y = 6
+    identity.bbox_width = 40_000
+    identity.bbox_height = 24
+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
 
     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
 
@@ -1029,18 +1025,16 @@ def test_top_unlabeled_omits_invalid_representative_bbox_and_thumb_url(
         identity_count=2,
     )
     fake_cluster_repository.clusters[cluster.id].user_confirmed = False
-    fake_cluster_repository.clusters[cluster.id].representatives = [
-        SimpleNamespace(
-            id=str(uuid.uuid4()),
-            media_id="909",
-            media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
-            bbox_x=5,
-            bbox_y=6,
-            bbox_width=0,
-            bbox_height=24,
-            is_user_selected=True,
-        )
-    ]
+    representative = create_autospec(ClusterRepresentative, instance=True)
+    representative.id = str(uuid.uuid4())
+    representative.media_id = "909"
+    representative.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
+    representative.bbox_x = 5
+    representative.bbox_y = 6
+    representative.bbox_width = 0
+    representative.bbox_height = 24
+    representative.is_user_selected = True
+    fake_cluster_repository.clusters[cluster.id].representatives = [representative]
 
     resp = api_client.get(
         "/recognition/clusters/top-unlabeled",
@@ -1122,14 +1116,14 @@ def test_get_tenant_snapshot_returns_correct_shape(
         fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
     )
     representative_id = str(uuid.uuid4())
-    fake_cluster_repository.clusters[cluster1.id].representatives = [
-        SimpleNamespace(
-            id=str(uuid.uuid4()),
-            identity_id=representative_id,
-            media_id="101",
-            is_user_selected=True,
-        )
-    ]
+    representative = create_autospec(ClusterRepresentative, instance=True)
+    representative.id = str(uuid.uuid4())
+    representative.identity_id = representative_id
+    representative.media_id = "101"
+    representative.is_user_selected = True
+    representative.quality_score = 1.0
+    representative.quality_components = None
+    fake_cluster_repository.clusters[cluster1.id].representatives = [representative]
     latest_job = Job(
         id=str(uuid.uuid4()),
         type=JobType.CLUSTERING,
@@ -1190,19 +1184,23 @@ def test_get_tenant_snapshot_prefers_pinned_representative_when_order_is_unsorte
     )
     unpinned_representative_id = str(uuid.uuid4())
     pinned_representative_id = str(uuid.uuid4())
+    unpinned_representative = create_autospec(ClusterRepresentative, instance=True)
+    unpinned_representative.id = str(uuid.uuid4())
+    unpinned_representative.identity_id = unpinned_representative_id
+    unpinned_representative.media_id = "101"
+    unpinned_representative.is_user_selected = False
+    unpinned_representative.quality_score = 1.0
+    unpinned_representative.quality_components = None
+    pinned_representative = create_autospec(ClusterRepresentative, instance=True)
+    pinned_representative.id = str(uuid.uuid4())
+    pinned_representative.identity_id = pinned_representative_id
+    pinned_representative.media_id = "202"
+    pinned_representative.is_user_selected = True
+    pinned_representative.quality_score = 1.0
+    pinned_representative.quality_components = None
     fake_cluster_repository.clusters[cluster.id].representatives = [
-        SimpleNamespace(
-            id=str(uuid.uuid4()),
-            identity_id=unpinned_representative_id,
-            media_id="101",
-            is_user_selected=False,
-        ),
-        SimpleNamespace(
-            id=str(uuid.uuid4()),
-            identity_id=pinned_representative_id,
-            media_id="202",
-            is_user_selected=True,
-        ),
+        unpinned_representative,
+        pinned_representative,
     ]
 
     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")

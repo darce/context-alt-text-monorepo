@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -51,6 +51,9 @@ class _InProcessPersistLockEntry:
 
     lock: asyncio.Lock
     waiters: int = 0
+    owner_sync_session: object | None = None
+    owner_root_transaction: object | None = None
+    reentry_depth: int = 0
 
 
 _IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
@@ -85,15 +88,47 @@ def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
     return (str(tenant_uuid), int(media_id))
 
 
-async def _in_process_persist_lock(tenant_uuid: uuid.UUID, media_id: int) -> asyncio.Lock:
+def _persist_lock_owner_matches(
+    entry: _InProcessPersistLockEntry,
+    sync_session: object | None,
+    root_transaction: object | None,
+) -> bool:
+    return (
+        sync_session is not None
+        and root_transaction is not None
+        and entry.reentry_depth > 0
+        and entry.owner_sync_session is sync_session
+        and entry.owner_root_transaction is root_transaction
+    )
+
+
+def _sync_session_root_transaction(sync_session: object | None) -> object | None:
+    if sync_session is None:
+        return None
+    get_transaction = getattr(sync_session, "get_transaction", None)
+    if not callable(get_transaction):
+        return None
+    return get_transaction()
+
+
+async def _in_process_persist_lock(
+    tenant_uuid: uuid.UUID,
+    media_id: int,
+    *,
+    sync_session: object | None,
+    root_transaction: object | None,
+) -> tuple[_InProcessPersistLockEntry, bool]:
     key = _persist_lock_key(tenant_uuid, media_id)
     async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
         entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
         if entry is None:
             entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
             _IN_PROCESS_PERSIST_LOCKS[key] = entry
+        if _persist_lock_owner_matches(entry, sync_session, root_transaction):
+            entry.reentry_depth += 1
+            return entry, True
         entry.waiters += 1
-        return entry.lock
+        return entry, False
 
 
 def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
@@ -129,23 +164,57 @@ async def _media_persist_lock(
         )
         yield
         return
-    lock = await _in_process_persist_lock(tenant_uuid, media_id)
+    sync_session = getattr(session, "sync_session", None)
+    root_transaction = _sync_session_root_transaction(sync_session)
+    entry, reentrant = await _in_process_persist_lock(
+        tenant_uuid,
+        media_id,
+        sync_session=sync_session,
+        root_transaction=root_transaction,
+    )
+    if reentrant:
+        try:
+            yield
+        finally:
+            if _persist_lock_owner_matches(entry, sync_session, root_transaction):
+                entry.reentry_depth -= 1
+        return
+
+    lock = entry.lock
     try:
         await lock.acquire()
     except BaseException:
         _release_in_process_persist_waiter(tenant_uuid, media_id)
         raise
+
+    if sync_session is not None and root_transaction is not None:
+        entry.owner_sync_session = sync_session
+        entry.owner_root_transaction = root_transaction
+        entry.reentry_depth = 1
+
     released = False
-    sync_session = getattr(session, "sync_session", None)
     hold_until_commit = False
+
+    def _capture_owner(_sess: object = None, transaction: object = None) -> None:
+        if (
+            sync_session is None
+            or getattr(transaction, "parent", None) is not None
+            or entry.owner_sync_session is not None
+        ):
+            return
+        entry.owner_sync_session = sync_session
+        entry.owner_root_transaction = transaction
+        entry.reentry_depth = 1
 
     def _remove_listener() -> None:
         if sync_session is None:
             return
-        try:
-            event.remove(sync_session, "after_transaction_end", _release)
-        except Exception:
-            pass
+        for event_name, listener in (
+            ("after_transaction_end", _release),
+            ("after_transaction_create", _capture_owner),
+        ):
+            with suppress(Exception):
+                event.remove(sync_session, event_name, listener)
 
     def _release(_sess: object = None, transaction: object = None) -> None:
         nonlocal released
@@ -154,6 +223,9 @@ async def _media_persist_lock(
         if released:
             return
         released = True
+        entry.owner_sync_session = None
+        entry.owner_root_transaction = None
+        entry.reentry_depth = 0
         if lock.locked():
             lock.release()
         _release_in_process_persist_waiter(tenant_uuid, media_id)
@@ -171,6 +243,8 @@ async def _media_persist_lock(
 
     try:
         if sync_session is not None:
+            if root_transaction is None:
+                event.listen(sync_session, "after_transaction_create", _capture_owner)
             event.listen(sync_session, "after_transaction_end", _release)
             hold_until_commit = True
         yield

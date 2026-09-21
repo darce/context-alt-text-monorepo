@@ -67,20 +67,44 @@ it. That run's receipt read `scope: "narrowed"`, `collected_roots:
 fail instead:
 
 ```bash
-WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1" make check-remote TARGETS=test
+make check-remote TARGETS=test
 ```
 
-Pin it to `test`. The flag demands a *full* collection, and any target that
-selects by marker is narrowed by construction — `test-integration` is
-`pytest -m "integration or pg or timing"`, and `scene/tests` and
-`scripts/eval_harness/tests` contain none of those markers, so the run
-aborts at collection with zero tests executed and the message `full
-collection required; collection was narrowed`. That is the same phrase this
-section just taught you to read as the greenwash symptom, which makes it a
-particularly bad way to fail. Do not set the flag for the integration lane,
-and note that `WORKBAY_REMOTE_GATE_ENV` *overrides* rather than appends to
-`REMOTE_GATE_ENV`, so setting it inline also drops any DSNs from
-`.workbay/remote-gate.env`.
+**Do not set `WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1"` by hand.** A
+previous revision of this page told you to, and that command is now strictly
+worse than the bare one (AR-04). `Makefile` resolves
+`${WORKBAY_REMOTE_GATE_ENV:-$(GATE_ENV)}`, and `GATE_ENV` already defaults to
+
+```
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ACX_STRICT_GATE=1
+```
+
+so the flag is already on, and setting the variable inline *replaces* that
+default — silently dropping the three BLAS caps. Those caps are not
+cosmetic: without them BLAS oversubscription exhausts the gate user's
+`pids.max=512` slice, which surfaces as `EAGAIN` → `no tests ran` → `EXIT=2`.
+You would be paying a harder-to-read failure for a flag you already had.
+
+Pin the target to `test`. The flag demands a *full* collection, and any
+target that selects by marker is narrowed by construction —
+`test-integration` is `pytest -m "integration or pg or timing"`, and
+`scene/tests` and `scripts/eval_harness/tests` contain none of those markers,
+so the run aborts at collection with zero tests executed and the message
+`full collection required; collection was narrowed`. That is the same phrase
+this section just taught you to read as the greenwash symptom, which makes it
+a particularly bad way to fail. So: strict gate on the `test` lane, which is
+the default; never on the integration lane.
+
+If you do need to add environment for one run, remember that
+`WORKBAY_REMOTE_GATE_ENV` *overrides* rather than appends — restate the four
+defaults above alongside whatever you are adding.
+
+Note also that a `REMOTE_GATE_ENV=` line in `.workbay/remote-gate.env` never
+reaches a `make check-remote` run at all (AR-09). The Makefile always exports
+a non-empty `WORKBAY_REMOTE_GATE_ENV`, and `remote_gate.sh` resolves
+`GATE_EXTRA_ENV="${_env_extra:-${REMOTE_GATE_ENV:-}}"`, so the file's value is
+unconditionally shadowed. Put DSNs on the `make` invocation, not in the file,
+or invoke `scripts/remote_gate.sh` directly.
 
 Read the receipt afterwards either way; it is written even on a green run:
 
@@ -101,18 +125,47 @@ site: `apps/prototype-description-service/pyproject.toml` declares
 A test that legitimately needs longer overrides it with
 `@pytest.mark.timeout(n)` — do not raise the global ceiling.
 
-**That bound covers the test phase only, and only Python-level hangs.**
-Two gaps remain, both of which still hold the mutex:
+Set your expectations for the stack dump low (AR-05). It tells you a worker
+is wedged rather than slow, and little else: the dumps from the real incident
+are entirely library frames (`selectors.select` → `asyncio` →
+`pytest_asyncio` → `_pytest` → `xdist` → `execnet`), because a suspended
+coroutine has no live frame to show, and they carry no `[gw0]`/`[gw1]` label,
+so with two workers you are matching raw thread-id prefixes by hand. The
+*abort* is what names the test — which means in the C-wedge case below,
+where the abort never fires, the unlabelled dump is the only artifact you get.
 
-- `timeout_method = "signal"` raises inside the test, which is what
-  preserves sibling workers' results — but a Python signal handler cannot
-  run while the interpreter is inside a C call. A wedge in `onnxruntime`
-  `session.run`, an hdbscan/BLAS/OpenCV kernel, or an asyncpg C path is
-  *dumped* by `faulthandler` and never *aborted*. (Measured: a
-  `hashlib.pbkdf2_hmac` call outlived a 5s bound by 35s and died only to an
-  external `SIGKILL`.) Do not "fix" this with `timeout_method = "thread"` —
-  it `os._exit`s the worker, which is the evidence loss this bound exists
-  to prevent.
+**That bound covers the test phase only, and only Python-level hangs.**
+Three gaps remain, all of which still hold the mutex:
+
+- `timeout_method = "signal"` raises inside the test, so the abort arrives
+  as an ordinary failure report naming the test — but a Python signal
+  handler cannot run while the interpreter is inside a C call. A wedge in
+  `onnxruntime` `session.run`, an hdbscan/BLAS/OpenCV kernel, or an asyncpg
+  C path is *dumped* by `faulthandler` and never *aborted*. (Measured:
+  `hashlib.pbkdf2_hmac(sha512, 200M)` under a 3s bound was not aborted until
+  the call returned at 112.53s.)
+
+  **`timeout_method = "thread"` is the fix for this, not a trap.** An
+  earlier revision of this page said not to use it because it `os._exit`s
+  the worker and loses its results. That is wrong, and it steered you away
+  from the only control for the gap the bullet above describes (AR-02).
+  xdist streams each test's report to the controller as it completes, so a
+  thread-method abort loses only the *in-flight* test — and xdist still
+  names it: `worker 'gw1' crashed while running 'test_x.py::test_hang'`
+  (measured: `1 failed, 3 passed in 5.99s` under `-n 2`). The same pbkdf2
+  wedge above dies at the bound under `thread`.
+
+  `signal` remains the shipped default because every hang this bound was
+  built for was a Python-level asyncio wedge, and a real failure report
+  beats a crashed worker for those. If a C-level wedge holds the gate, flip
+  `timeout_method` in
+  `apps/prototype-description-service/pyproject.toml` — do not raise the
+  ceiling, and do not reach for `gate-reap` as the routine answer.
+- The bound is armed inside `pytest_runtest_protocol`, so a module that
+  hangs at *import* is outside it entirely — no abort and no stack dump,
+  because neither `timeout` nor `dump_traceback_later` is active during
+  collection (AR-07). A collection-phase wedge looks like a gate that
+  produced no output at all and holds the mutex indefinitely.
 - The lock is taken before the test phase and spans more than it. Inside
   the same critical section the gate runs `git checkout`, `git clean`,
   `uv sync` (which builds hdbscan from source), and the admission probe.
@@ -164,8 +217,14 @@ A single idle worker is normal: xdist balances by test count, not by
 duration, so one worker can draw a cluster of sleep-bound tests and sit at
 near-zero CPU for minutes while its sibling saturates a core.
 
-Calibrate against the right baseline before calling a run slow. A full `make test`
-collects 6791 items and takes ~15 minutes on this host; that is the yardstick.
+Calibrate against the right baseline before calling a run slow. `make test`
+collects 6792 items and takes ~15 minutes on this host; that is the yardstick.
+It is not the whole suite — `make test` runs
+`-m "not integration and not pg and not timing"`, deselecting 30 of 6822. The
+other 30 run serially under `make test-integration` against a real Postgres,
+and their durations have never been profiled on this host, so the 300s
+per-test bound is calibrated on the fast lane only (AR-03). `make check` runs
+both lanes.
 
 `ACX_STRICT_GATE=1` does **not** change what gets collected — `conftest.py`
 only raises `pytest.UsageError` when the scope is already narrowed, and
@@ -177,7 +236,7 @@ Do not size a run against the collection-scope receipt. Its default path
 (`/tmp/prototype-description-service-pytest-collection-scope.json`) is
 machine-global, so *any* concurrent pytest on the host overwrites it — this has
 been observed mid-run reporting 3071 items and then 1, while the gate run it was
-supposed to describe had collected 6791 across three roots. Pass an explicit
+supposed to describe had collected 6792 across three roots. Pass an explicit
 `--collection-scope-receipt=<path>` if you need a receipt you can trust.
 
 ## Host prerequisite: C toolchain (operator, one-time)

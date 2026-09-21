@@ -252,9 +252,15 @@ collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection
 # recovery. Two bounds, in order:
 #
 #   faulthandler_timeout  dumps every thread's stack and keeps running. Pure
-#                         observability (OBS-08) -- it is what turns "worker
-#                         is quiet" into a named deadlock without a py-spy
-#                         attach on the VM.
+#                         observability (OBS-08) -- a py-spy-free signal that
+#                         the worker is wedged rather than slow. Set
+#                         expectations low (AR-05): the real dumps are all
+#                         library frames (selectors.select -> asyncio ->
+#                         pytest_asyncio -> xdist -> execnet), because a
+#                         suspended coroutine has no live frame, and they
+#                         carry no [gw0]/[gw1] label. It tells you a worker
+#                         is stuck and roughly where in the machinery; it
+#                         does NOT name the test.
 #   timeout               aborts the test -- but only a Python-level hang;
 #                         a wedge inside a C call (onnxruntime, BLAS, hdbscan,
 #                         asyncpg) is dumped but not aborted, because the
@@ -265,11 +271,28 @@ collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection
 #                         slowest legitimate test and anything reaching it
 #                         is pathological by construction, not merely slow.
 #
-# timeout_method is pinned to "signal" rather than left implicit: it raises
-# inside the hung test, so the run reports WHICH test wedged and the other
-# xdist workers finish. The "thread" method would os._exit the worker and
-# take its results with it -- the same evidence loss this bound exists to
-# stop. A test that legitimately needs longer overrides per-test with
+# timeout_method is pinned to "signal" rather than left implicit, and the
+# tradeoff against "thread" is genuinely two-sided -- an earlier version of
+# this comment claimed thread "takes the worker's results with it", which is
+# measurably false (AR-02):
+#
+#   signal  raises inside the hung test, so the abort is an ordinary failure
+#           report naming the test, and the worker survives to run the rest.
+#           Cannot fire inside a C call: pbkdf2_hmac(sha512, 200M) under a 3s
+#           bound was not aborted until the call returned at 112.53s.
+#   thread  os._exit()s the worker at the bound, so it DOES cut a C wedge at
+#           3s. Evidence loss is much smaller than it sounds: xdist streams
+#           each report to the controller as it completes, so only the
+#           in-flight test is lost, and xdist still names it --
+#           "worker 'gw1' crashed while running 'test_x.py::test_hang'"
+#           (measured: 1 failed, 3 passed in 5.99s under -n 2).
+#
+# signal stays the default because every hang this bound was built for was a
+# Python-level asyncio wedge, and a real failure report beats a crashed
+# worker for those. If a C-level wedge ever holds the gate, thread is the fix
+# -- flip it, do not add a longer bound.
+#
+# A test that legitimately needs longer overrides per-test with
 # @pytest.mark.timeout(n).
 faulthandler_timeout = 240
 timeout = 300

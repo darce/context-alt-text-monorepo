@@ -151,6 +151,11 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(log_level)
     root.handlers.clear()
+    # Uvicorn emits its default access record after the ASGI application has
+    # returned, when the request contextvar may no longer be available.  The
+    # correlation middleware emits the single request-scoped access record;
+    # suppressing this logger prevents duplicate access lines.
+    logging.getLogger("uvicorn.access").disabled = True
     # Drop previously attached correlation filters so repeat calls don't stack.
     for existing in list(root.filters):
         if isinstance(existing, CorrelationIdFilter):

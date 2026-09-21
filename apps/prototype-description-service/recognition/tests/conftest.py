@@ -12,7 +12,7 @@ from typing import NoReturn
 import numpy as np
 import pytest
 import pytest_asyncio
-from sqlalchemy import Table, event, text
+from sqlalchemy import Table, event, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.compiler import compiles
@@ -42,6 +42,31 @@ from recognition.tests.db_seed import ensure_media_identity as _ensure_media_ide
 os.environ["RECOGNITION_AUTH_ENABLED"] = "0"
 os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
 os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
+
+
+SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
+    {
+        # Scene-description tables are registered by db.models but provisioned by scene fixtures.
+        "describe_demand_leases",
+        "describe_operations",
+        "describe_startups",
+        "image_description_run_items",
+        "image_description_runs",
+        "image_descriptions",
+        # Portal and billing tables are outside this recognition fixture's schema.
+        "api_key_rotation_history",
+        "billing_subscription_projection",
+        "billing_webhook_inbox",
+        "export_jobs",
+        "portal_identity",
+        "portal_tenant_invitation",
+        "tenant_entitlement",
+        "tenant_key_idempotency",
+        "usage_reservation",
+        # This identity table is provisioned by the migration but not needed here.
+        "identity_name_suppressions",
+    }
+)
 
 
 @compiles(UUID, "sqlite")
@@ -85,6 +110,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         tables: list[Table] = [
             Table("identity_clusters", Base.metadata),
             Table("curation_replay_records", Base.metadata),
+            Table("cluster_merge_receipts", Base.metadata),
             Table("identity_cluster_representatives", Base.metadata),
             Table("identity_members", Base.metadata),
             Table("cluster_merge_suggestions", Base.metadata),
@@ -127,6 +153,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 """
             )
         )
+        created_table_names = await conn.run_sync(
+            lambda sync_conn: set(inspect(sync_conn).get_table_names())
+        )
+        missing_table_names = sorted(
+            set(Base.metadata.tables) - created_table_names - SQLITE_TEST_TABLE_EXCLUSIONS
+        )
+        if missing_table_names:
+            raise RuntimeError(
+                "db_session did not create all mapped SQLite tables; missing: "
+                + ", ".join(missing_table_names)
+            )
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:

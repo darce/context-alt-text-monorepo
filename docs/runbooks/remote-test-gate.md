@@ -35,9 +35,9 @@ cat > .workbay/remote-gate.env <<'EOF'
 REMOTE_GATE_HOST="gate@<your-gate-host>"          # tailnet FQDN, gate user only
 REMOTE_GATE_WORKDIR="apps/prototype-description-service"
 REMOTE_GATE_TARGETS="test"
-# Opt into the integration lane ONLY after the VM Postgres prerequisite below:
+# Integration lane (VM Postgres prerequisite below is met as of 2026-09-21):
 # REMOTE_GATE_TARGETS="test test-integration"
-# REMOTE_GATE_ENV="IDENTITY_PG_TEST_URL=postgresql+psycopg://context:<pw>@localhost:55432/acx_identity_test"
+# REMOTE_GATE_ENV="IDENTITY_PG_ADMIN_URL=postgresql+psycopg://gate@localhost:5432/postgres IDENTITY_PG_TEST_URL=postgresql+psycopg://context@localhost:5432/acx_identity_test"
 EOF
 scripts/remote_gate.sh bootstrap   # one-time clone provisioning on the host
 scripts/remote_gate.sh doctor      # readiness probe (uv, make, hostgov, clone, DSN ports)
@@ -68,20 +68,41 @@ Without `build-essential` the run fails fast at `remote-gate: uv sync failed`
 `libglib2.0-0` the suite collects with ~45 ImportErrors (`libGL.so.1: cannot
 open shared object file` — opencv on a headless host).
 
-## Postgres prerequisite for `test-integration` (open)
+## Postgres prerequisite for `test-integration`
 
-The pg-marked suite **skips (never fails)** when Postgres is unreachable or the
-role lacks privileges (`recognition/tests/conftest.py` scratch-DB fixtures), so
-routing `test-integration` through the gate without a usable DB **greenwashes**
-— `make` exits 0 with the whole pg suite silently dropped (assessment
-"Consumer HIGH"). As of 2026-07-13 the VM does **not** listen on
-`localhost:55432`; before opting in:
+Without a usable DB the pg-marked suite used to **skip (never fail)**, so routing
+`test-integration` through the gate **greenwashed** — `make` exited 0 with the
+whole pg suite silently dropped (assessment "Consumer HIGH"). Two things close
+that:
 
-1. Publish the co-resident dev Postgres on VM-localhost:55432 (never a tailnet
-   peer grant — assessment B-6), or run a small dedicated PG owned by `gate`.
-2. Provision `pgvector` and a role able to `CREATE DATABASE` on `*_test` names.
-3. Set `REMOTE_GATE_ENV` with the DSN (above) so `doctor` probes the port —
-   remembering the probe checks reachability only, not auth/extension usability.
+- `make test-integration` now exports `IDENTITY_PG_REQUIRED=1`, which turns the
+  scratch-DB skip in `recognition/tests/conftest.py` into `pytest.fail`. Set
+  `IDENTITY_PG_REQUIRED=0` only for a deliberate local opt-out.
+- The gate host runs its own Postgres, owned by `gate` (not the Docker
+  `acx-*-postgres-1` containers, which publish no port): PG 17.11 on
+  `127.0.0.1:5432` (socket `/tmp/.s.PGSQL.5432`, trust auth), `psql` and
+  `pg_config` under `/home/gate/.local/share/pg-prefix/bin`, pgvector 0.8.1
+  built from source into that prefix, and a `context` role that is `LOGIN
+  NOSUPERUSER NOBYPASSRLS` (the suite `pytest.fail`s on a privileged test role
+  because RLS is not enforced for it). `55432` is the **laptop** Docker mapping
+  (`docker-compose.db.yml`) and never applied on the VM.
+
+Re-provisioning pgvector (as `gate`, no sudo — runs as written):
+
+```bash
+P=/home/gate/.local/share/pg-prefix
+git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git
+cd pgvector
+make         CC=gcc PG_CONFIG="$P/bin/pg_config"
+make install CC=gcc PG_CONFIG="$P/bin/pg_config"
+"$P/bin/psql" -d postgres -c \
+  "CREATE ROLE context LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB"
+```
+
+The `CC=gcc` override is required because the conda `pg_config` reports an
+`aarch64-conda-linux-gnu-cc` that is not installed on the host; without it both
+`make` lines die at `cc: not found`. `doctor` probes port reachability only,
+not auth or extension usability.
 
 ## Memory admission
 

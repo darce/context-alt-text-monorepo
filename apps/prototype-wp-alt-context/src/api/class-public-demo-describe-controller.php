@@ -982,6 +982,9 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	/**
+	 * A null description_tier records that the item did not report a recognized
+	 * result tier; the public client must present that result as degraded.
+	 *
 	 * @return array{description: string, description_tier: string|null}|WP_Error
 	 */
 	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): array|WP_Error {
@@ -1034,6 +1037,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		return $tier;
 	}
 
+	/**
+	 * A completed response always carries description_tier when it carries a
+	 * description. Null means the upstream tier was absent or unrecognized; it
+	 * is not a final_gpu fallback.
+	 */
 	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '', ?string $description_tier = null ): WP_REST_Response|WP_Error {
 		$data = $upstream->get_data();
 		if ( ! is_array( $data ) ) {

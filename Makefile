@@ -404,15 +404,57 @@ pre-merge:
 	@$(MAKE) check-all
 
 # Offload gate suites to the remote test host (unprivileged, resource-capped
-# gate user over Tailscale SSH). Host/dir/targets come from the operator-local
-# .workbay/remote-gate.env (gitignored) or WORKBAY_REMOTE_GATE_* env vars —
-# there is deliberately no baked-in host (fail-closed, exit 78 when unset).
-# Only committed HEAD is gated. See docs/runbooks/remote-test-gate.md.
-#   make check-remote                          # configured/default targets
+# gate user over Tailscale SSH). Host/dir come from the operator-local
+# .workbay/remote-gate.env (gitignored) — there is deliberately no baked-in
+# host (fail-closed, exit 78 when unset). Only committed HEAD is gated.
+# See docs/runbooks/remote-test-gate.md.
+#
+# The GATE_* defaults below are not preferences; they are the only invocation
+# that yields a trustworthy verdict here. remote-gate.env is capped at
+# HOST/DIR by the orchestrator 0.3.4 attestation, and every fallback inside
+# scripts/remote_gate.sh is silent, so a bare `make check-remote` resolved to
+# workdir `.` + target `test` — a root target that does not exist — and
+# reported `No rule to make target 'test'` as a red gate. Two further silent
+# greenwashes rode along: 3 xdist workers x 4 BLAS threads exhaust the gate
+# user's shared pids.max=512 slice (EAGAIN -> "no tests ran" -> EXIT=2), and a
+# narrowed collection only fails under ACX_STRICT_GATE=1. Each value still
+# yields to its WORKBAY_REMOTE_GATE_* env var, so the documented
+# `WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="..."` call sites
+# below keep working unchanged.
+#
+#   make check-remote                          # desc-service `test`, strict
 #   make check-remote TARGETS="test lint"      # explicit target list
+GATE_WORKDIR ?= apps/prototype-description-service
+GATE_TARGETS ?= test
+GATE_ENV ?= OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ACX_STRICT_GATE=1
+GATE_WORKERS ?= 2
 .PHONY: check-remote
 check-remote:
-	@bash scripts/remote_gate.sh run $(TARGETS)
+	@w="$${WORKBAY_REMOTE_GATE_WORKDIR:-$(GATE_WORKDIR)}"; \
+	 t="$${WORKBAY_REMOTE_GATE_TARGETS:-$(GATE_TARGETS)}"; \
+	 e="$${WORKBAY_REMOTE_GATE_ENV:-$(GATE_ENV)}"; \
+	 p="$${PYTEST_WORKERS:-$(GATE_WORKERS)}"; \
+	 echo "remote-gate: workdir=$$w targets=[$(if $(TARGETS),$(TARGETS),$$t)] workers=$$p env=[$$e]"; \
+	 WORKBAY_REMOTE_GATE_WORKDIR="$$w" \
+	 WORKBAY_REMOTE_GATE_TARGETS="$$t" \
+	 WORKBAY_REMOTE_GATE_ENV="$$e" \
+	 PYTEST_WORKERS="$$p" \
+	 bash scripts/remote_gate.sh run $(TARGETS)
+
+# Remote-gate operations that scripts/remote_gate.sh does not cover: who holds
+# the clone lock, is that holder working or wedged, and how to clear it.
+#   make gate-status                 # read-only: holders, hung-vs-slow verdict, disk
+#   make gate-reap CONFIRM=REAP      # SIGTERM the holders (see scripts/gate_ops.sh)
+#   make gate-gc-tmp DAYS=7 CONFIRM=GC
+.PHONY: gate-status gate-reap gate-gc-tmp
+gate-status:
+	@SAMPLE_GAP="$(SAMPLE_GAP)" bash scripts/gate_ops.sh status
+
+gate-reap:
+	@CONFIRM="$(CONFIRM)" bash scripts/gate_ops.sh reap
+
+gate-gc-tmp:
+	@DAYS="$(DAYS)" CONFIRM="$(CONFIRM)" bash scripts/gate_ops.sh gc-tmp
 
 # Guard: every editable current-pin reference to the workbay MCP packages must
 # match the Makefile MCP_*_PACKAGE canonical. Frozen records (docs/adrs|specs|tasks)

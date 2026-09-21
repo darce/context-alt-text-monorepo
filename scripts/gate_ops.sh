@@ -103,6 +103,9 @@ status)
     ;;
 reap)
     confirm="${CONFIRM:-}"
+    # Interpolated into a single-quoted remote shell string, so it is validated
+    # here the way remote_gate.sh validates every other interpolated input.
+    case "$confirm" in *[!A-Za-z0-9_-]*) die "refusing CONFIRM with unsafe characters" ;; esac
     "${SSH[@]}" "set -u
         cd \"\$HOME/${REMOTE_DIR}\" 2>/dev/null || { echo 'gate_ops: clone dir missing'; exit 1; }
         holders=\"\$(fuser .gate.lock 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+\$' || true)\"
@@ -129,6 +132,7 @@ gc-tmp)
     case "$days" in ""|*[!0-9]*) die "DAYS must be a positive integer" ;; esac
     [ "$days" -ge 1 ] || die "DAYS must be >= 1"
     confirm="${CONFIRM:-}"
+    case "$confirm" in *[!A-Za-z0-9_-]*) die "refusing CONFIRM with unsafe characters" ;; esac
     "${SSH[@]}" "set -u
         me=\$(id -un)
         # Top-level, gate-owned, older than DAYS, never a dotfile:

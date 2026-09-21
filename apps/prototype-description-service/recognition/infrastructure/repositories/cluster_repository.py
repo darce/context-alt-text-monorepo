@@ -1591,7 +1591,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         # Extract centroid from materialized view relationship if available
         centroid = None
         centroid_refreshed_at = None
-        if hasattr(model, "centroid_data") and model.centroid_data is not None:
+        if "centroid_data" in state.dict and model.centroid_data is not None:
             centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
             if isinstance(model.centroid_data.refreshed_at, datetime):
                 centroid_refreshed_at = model.centroid_data.refreshed_at
@@ -1639,6 +1639,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(ClusterModel.disposed_at.is_(None))
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
+                selectinload(ClusterModel.centroid_data),
                 selectinload(ClusterModel.merge_receipts),
             )
             .order_by(ClusterModel.created_at)

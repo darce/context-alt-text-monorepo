@@ -11,6 +11,10 @@
 > - **Target Branch**: `feature/firdv-1`
 > - **Review Coverage Target**: 2
 
+## Current delivery choice (2026-09-21)
+
+The operator selected AuraFace512 for the development instance; the SFace128 acceptance tables below remain the explicit **optional baseline** contract, not an instruction to provision it before the candidate. Reuse S2 image/collector isolation and S3–S5 operational drills through the [next-wave DAG](../../scopes/next-wave-gpu-ui-fir512-dag.md). Candidate delivery uses F1d's explicit candidate512 validator, F1e's real-artifact inference proof, and all three settings together: `PGVECTOR_DIM=512`, `RECOGNITION_EMBEDDING_DIMENSION=512`, `RECOGNITION_FACE_PIPELINE_PROFILE=auraface`. Do not loosen the baseline validator or share/migrate its vectors. The next-wave addendum supersedes baseline-first ordering only; isolation, authorization, RED/review and rollback requirements remain.
+
 ## Objective and intake
 
 A fresh LocalWP site must use an isolated remote FIR-only backend and its own 128D identity database, then save a real remote self-hosted description. User confirmed this topology and self-hosted-only model scope; [scope](../../scopes/fir-development-and-measurement-wave.md) records proposed failure policy and the separate quality gate. This task implements the initial 128D integration baseline. The requested final 512D development route is delivered by FIRDV-3 S6 using these same isolation/readiness contracts; completing this task alone does not complete the wave. See the [start-here guide](../../roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md). This is not a production switch or an occlusion accuracy claim.

@@ -8,8 +8,8 @@
 #   scripts/gate_ops.sh gc-tmp              # dry run; DAYS=<n> CONFIRM=GC to delete
 #
 # reap exit codes: 0 lock free and tree gone | 1 lock still held | 2 usage or
-# config error | 3 lock released but orphans survived. 3 is distinct from 2 so a
-# wrapper can tell "you invoked it wrong" from "the kill worked but left RSS".
+# config error | 3 lock released but orphans survived | 4 clone dir missing
+# (status uses 2 and 4 too). Only 1 is worth re-running; 4 needs a new clone.
 #
 # Why this exists: remote_gate.sh does `exec 9>.gate.lock`, so every descendant
 # of the remote run inherits that open file description. flock is held by the
@@ -43,7 +43,7 @@ REMOTE_HOST="${_env_host:-${REMOTE_GATE_HOST:-}}"
 # Validated all the same, because the host is now also spliced into the
 # single-quoted arg list the remote shell parses, not just passed to ssh as an
 # argv element -- a quote in it would break out of those quotes.
-case "$REMOTE_HOST" in *[!A-Za-z0-9._@:-]*) die "refusing REMOTE_HOST with unsafe value" ;; esac
+case "$REMOTE_HOST" in -*|*[!A-Za-z0-9._@:-]*) die "refusing REMOTE_HOST with unsafe value" ;; esac
 REMOTE_DIR="${_env_dir:-${REMOTE_GATE_DIR:-src/${repo_slug}}}"
 case "$REMOTE_DIR" in ""|.|/*|*..*) die "invalid REMOTE_DIR '${REMOTE_DIR}'" ;; esac
 safe REMOTE_DIR "$REMOTE_DIR"
@@ -65,7 +65,7 @@ case "$days" in *[!0-9]*) die "DAYS must be a positive integer" ;; esac
 
 case "$mode" in
   status|reap|gc-tmp) ;;
-  *) sed -n '2,16p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,19p' "$0" >&2; exit 2 ;;
 esac
 
 ssh -o BatchMode=yes -o ConnectTimeout=10 \
@@ -78,7 +78,7 @@ holders_of() { fuser .gate.lock 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$
 cpu_ns() { cut -d' ' -f1 "/proc/$1/schedstat" 2>/dev/null || echo 0; }
 # `wc -w` is allowed to pad its count on BSD/macOS. Keep these interpolated
 # counts portable without depending on an external word-count implementation.
-count_words() { set -- $1; printf '%s\n' "$#"; }
+count_words() { set -f; set -- $1; set +f; printf '%s\n' "$#"; }
 # Field 22 of /proc/<pid>/stat, read by stripping through the last ')' first --
 # comm is parenthesised and may itself contain spaces or parens, which shifts
 # every positional field. After the strip the remainder begins at field 3, so
@@ -112,7 +112,7 @@ descendants_of() {
 
 case "$mode" in
 status)
-    cd "$HOME/$dir" 2>/dev/null || { echo 'gate_ops: clone dir missing'; exit 1; }
+    cd "$HOME/$dir" 2>/dev/null || { echo 'gate_ops: clone dir missing'; exit 4; }
     echo "host: $(hostname)  $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "head: $(git rev-parse HEAD 2>/dev/null || echo unknown)"
     echo
@@ -170,7 +170,7 @@ status)
     echo "  stale >7d: $(find /tmp -maxdepth 1 -user $(id -un) -mtime +7 2>/dev/null | wc -l) entries"
     ;;
 reap)
-    cd "$HOME/$dir" 2>/dev/null || { echo 'gate_ops: clone dir missing'; exit 1; }
+    cd "$HOME/$dir" 2>/dev/null || { echo 'gate_ops: clone dir missing'; exit 4; }
     holders="$(holders_of)"
     if [ -z "$holders" ]; then echo 'lock: already FREE - nothing to reap'; exit 0; fi
     tree="$(descendants_of "$holders" | sort -n)"
@@ -201,10 +201,19 @@ reap)
     # This deliberately keeps STILL HELD/exit 1 ahead of orphan reporting: a
     # surviving fd-9 holder is still a lock failure, while workers that lost
     # their master need the full execnet teardown ladder before we classify
-    # them as orphans.
+    # them as orphans. That ladder, in execnet's _terminate_execution, is
+    # waitall(5.0) -> SIGINT to self -> waitall(10.0) -> os._exit: 15s worst
+    # case on the worker side, inside xdist NodeManager.EXIT_TIMEOUT = 10 on
+    # the master side (execnet 2.1.2 / pytest-xdist 3.8.0). 20 is that 15s
+    # plus a 5s scheduling margin -- re-derive it if either upstream constant
+    # moves, do not tune it by feel.
     reap_ceiling=20
     elapsed=0
-    orphans=''
+    orphans='' # $elapsed bounds this poll in ITERATIONS, not seconds: every pass also
+    # costs a subshell and two execs per surviving tree member, and under the
+    # memory pressure this code diagnoses those forks are not free. Measure the
+    # wait rather than inferring it from the counter.
+    t0="$(date +%s)"
     while [ "$elapsed" -le "$reap_ceiling" ]; do
         orphans=''
         for sig in $tree_sig; do
@@ -219,12 +228,33 @@ reap)
         elapsed=$((elapsed + 1))
     done
 
-    left="$(holders_of)"
+    # Intersected with the pre-kill tree on purpose. The convergence poll above
+    # can spin for the full reap_ceiling after every fd-9 holder is already dead
+    # -- one worker orphan is enough -- and the lock is FREE for that whole
+    # window. remote_gate.sh takes it with `flock -n`, so a concurrent
+    # `make check-remote` started in there succeeds, and a bare
+    # re-read would name that live run as STILL HELD and point the operator's
+    # SIGKILL at it:
+    # the one direction this script must fail away from. The start time rules
+    # out a recycled pid wearing a dead holder's number.
+    now="$(holders_of)"
+    left=''
+    for p in $now; do
+        for sig in $tree_sig; do
+            [ "$p" = "${sig%%:*}" ] || continue
+            [ "$(starttime_of "$p")" = "${sig#*:}" ] && left="$left $p"
+            break
+        done
+    done
     if [ -n "$left" ]; then
-        echo "lock: STILL HELD by $(echo $left | tr '\n' ' ') (re-run; SIGKILL only if SIGTERM fails twice)"
+        echo "lock: STILL HELD by$left (re-run; SIGKILL only if SIGTERM fails twice)"
         exit 1
     fi
-    echo 'lock: RELEASED'
+    if [ -n "$now" ]; then
+        echo "lock: RELEASED by this reap - the lock is now held by a run that started after the SIGTERM. Leave it alone: $(echo $now | tr '\n' ' ')"
+    else
+        echo 'lock: RELEASED'
+    fi
 
     # $tree_sig was captured before the kill, so survivors are checked by pid
     # rather than by re-walking from roots that no longer exist. The start-time
@@ -234,7 +264,7 @@ reap)
     # line telling the operator to kill it. Requiring the start time to be
     # unchanged rules that out -- a recycled pid always has a later one.
     if [ -n "$orphans" ]; then
-        echo "orphans: $(count_words "$orphans") process(es) still alive ${elapsed}s after SIGTERM"
+        echo "orphans: $(count_words "$orphans") process(es) still alive $(( $(date +%s) - t0 ))s after SIGTERM"
         ps -o pid,ppid,stat,etimes,cputimes,rss,args -p $(echo $orphans | tr ' ' ',') 2>/dev/null | cut -c1-150
         echo 'These no longer hold the lock, so the next run will start -- but their'
         echo 'RSS counts against its admission probe. Reap them explicitly:'

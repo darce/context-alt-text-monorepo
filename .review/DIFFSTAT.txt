@@ -1,5 +1,19 @@
- .../interface_adapters/http/routers/describe.py    | 104 +++++++++++++-----
- .../scene/tests/test_describe_route.py             |  50 +++++++++
- .../scene/tests/test_shared_schema_multipart.py    | 116 ++++++++++++++++++++-
- .../GPUFLOW-2-svc-unavailable-reason-review.md     |  57 ++++++++++
- 4 files changed, 299 insertions(+), 28 deletions(-)
+ apps/prototype-description-service/conftest.py     |  77 +++++--
+ .../recognition/application/scan/service.py        |  92 +++++++-
+ .../repositories/cluster_repository.py             |   3 +-
+ .../recognition/tests/api/test_api_clusters.py     | 172 +++++++-------
+ .../recognition/tests/conftest.py                  |  39 +++-
+ .../recognition/tests/db_seed.py                   |   3 +-
+ .../deploy/test_cross_slice_contract_gates.py      |  55 ++++-
+ .../tests/integration/test_cluster_repository.py   |  11 +
+ .../tests/integration/test_pipeline_integration.py |   9 +-
+ .../test_rls_tenant_context_after_chunk_commit.py  |   3 +-
+ .../test_scan_service_persist_lock_reentry.py      |  62 ++++++
+ .../test_surface_gallery_attribute_error.py        |  74 +++---
+ .../tests/unit/test_collection_scope_receipt.py    | 108 +++++++++
+ .../tests/unit/test_probe_skip_result_contract.py  |   9 +-
+ .../scene/tests/test_describe_async_repository.py  |  16 +-
+ .../scene/tests/test_schemas.py                    |  28 ++-
+ docs/runbooks/prod-identity-rls-remediation.md     |   5 +-
+ .../SUITERED-1-f02-aiosqlite-race-analysis.md      | 248 +++++++++++++++++++++
+ 18 files changed, 833 insertions(+), 181 deletions(-)

@@ -82,6 +82,25 @@ def _receipt_path(config: pytest.Config, root: Path) -> Path:
     return receipt_path.resolve()
 
 
+def _refresh_canonical_receipt(payload: str) -> None:
+    """Point the runbook's documented receipt path at this run.
+
+    Without this the documented `cat` returns whichever run last wrote the old
+    fixed path, so an operator reads a stale scope as if it were current.
+    Replaced atomically so a concurrent xdist worker never observes a partial
+    file; a read-only /tmp is non-fatal because the per-process receipt stays
+    authoritative.
+    """
+    try:
+        tmp = _LEGACY_RECEIPT_PATH.with_name(
+            f"{_LEGACY_RECEIPT_PATH.name}.{os.getpid()}.{time_ns()}.tmp"
+        )
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, _LEGACY_RECEIPT_PATH)
+    except OSError:
+        pass
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     config = session.config
     root = config.rootpath.resolve()
@@ -113,7 +132,9 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     }
     receipt_path = _receipt_path(config, root)
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(receipt, indent=2) + "\n"
+    receipt_path.write_text(payload, encoding="utf-8")
+    _refresh_canonical_receipt(payload)
 
     config._collection_scope_receipt = receipt  # type: ignore[attr-defined]
     config._collection_scope_receipt_path = receipt_path  # type: ignore[attr-defined]
@@ -133,6 +154,14 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     config = terminalreporter.config
     receipt = getattr(config, "_collection_scope_receipt", None)
     if receipt is None:
+        # Under xdist collection runs in the workers, so the controller holds
+        # no receipt and would otherwise print nothing at all.
+        terminalreporter.write_sep(
+            "=",
+            "collection scope: recorded per worker; "
+            f"latest={_LEGACY_RECEIPT_PATH}; "
+            f"all={_RECEIPT_DIRECTORY / (_RECEIPT_PREFIX + '-*.json')}",
+        )
         return
     path = config._collection_scope_receipt_path  # type: ignore[attr-defined]
     terminalreporter.write_sep(

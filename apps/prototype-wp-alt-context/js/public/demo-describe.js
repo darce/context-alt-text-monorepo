@@ -101,6 +101,8 @@ export const parsePublicDemoEnvelope = (body) => {
   const hasCompletedDescription = body.status === 'completed' && description !== '';
   let descriptionTier;
   if (hasCompletedDescription) {
+    // A missing/null tier is an explicit degraded result. Never infer GPU
+    // provenance from the advisory gpu_state or from a non-empty description.
     if (Object.prototype.hasOwnProperty.call(body, 'description_tier')) {
       descriptionTier = body.description_tier;
       if (
@@ -289,13 +291,13 @@ export const statusPresentation = (body) => {
     return { state: 'describing', message: progress === null ? 'Describing the image…' : `Describing the image… ${progress}%` };
   }
   if (body.phase === 'complete' && body.status === 'completed') {
-    let message = 'Description complete, processing tier unavailable.';
     if (body.description_tier === 'final_gpu') {
-      message = 'GPU description complete.';
-    } else if (body.description_tier === 'provisional_cpu') {
-      message = 'CPU fallback draft (not GPU final).';
+      return { state: 'completed', message: 'GPU description complete.' };
     }
-    return { state: 'completed', message };
+    if (body.description_tier === 'provisional_cpu') {
+      return { state: 'degraded', message: 'CPU fallback draft (not GPU final).' };
+    }
+    return { state: 'degraded', message: 'Description available, processing tier unavailable.' };
   }
   return { state: 'failed', message: body.error?.message ?? 'The image could not be described. Please try again later.' };
 };
@@ -314,7 +316,7 @@ export const initializeDemo = (root) => {
     root.dataset.state = state;
     statusMessage.textContent = message;
     if (statusIcon instanceof HTMLElement) {
-      statusIcon.textContent = { idle: '●', queued: '◌', warming: '◌', describing: '◌', completed: '✓', limited: '!', failed: '×', error: '×' }[state] ?? '●';
+      statusIcon.textContent = { idle: '●', queued: '◌', warming: '◌', describing: '◌', completed: '✓', degraded: '!', limited: '!', failed: '×', error: '×' }[state] ?? '●';
     }
   };
 

@@ -513,7 +513,7 @@ describe('public demo visible description_tier labels', () => {
   const LABEL = {
     final_gpu: 'GPU description complete.',
     provisional_cpu: 'CPU fallback draft (not GPU final).',
-    unknown: 'Description complete, processing tier unavailable.',
+    unknown: 'Description available, processing tier unavailable.',
   } as const;
 
   const completedDescription = (overrides: Record<string, unknown> = {}): Record<string, unknown> =>
@@ -534,6 +534,14 @@ describe('public demo visible description_tier labels', () => {
     throw new Error('timed out waiting for the demo client to settle');
   };
 
+  it('styles degraded status with the warning token and no literal colour fallback', () => {
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../demo-describe.css'), 'utf8');
+
+    expect(css).toContain(".acx-demo[data-state='degraded'] .acx-demo__status");
+    expect(css).toContain('color: var(--acx-color-warning-border)');
+    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+
   it.each([
     ['final_gpu', 'stopped', LABEL.final_gpu],
     ['provisional_cpu', 'ready', LABEL.provisional_cpu],
@@ -547,9 +555,10 @@ describe('public demo visible description_tier labels', () => {
       const presentation = statusPresentation(parsed);
 
       expect(parsed.description).toBe(DESCRIPTION);
-      expect(presentation.state).toBe('completed');
+      expect(presentation.state).toBe(tier === 'final_gpu' ? 'completed' : 'degraded');
       expect(presentation.message).toBe(expected);
       expect(presentation.message).not.toBe(DESCRIPTION);
+      if (tier !== 'final_gpu') expect(presentation.message).not.toMatch(/description complete/i);
     },
   );
 
@@ -558,8 +567,9 @@ describe('public demo visible description_tier labels', () => {
     expect(Object.prototype.hasOwnProperty.call(payload, 'description_tier')).toBe(false);
     const presentation = statusPresentation(parsePublicDemoEnvelope(payload));
 
-    expect(presentation.state).toBe('completed');
+    expect(presentation.state).toBe('degraded');
     expect(presentation.message).toBe(LABEL.unknown);
+    expect(presentation.message).not.toMatch(/description complete/i);
   });
 
   it('statusPresentation does not apply a GPU-final success label to a failed envelope', () => {
@@ -591,6 +601,7 @@ describe('public demo visible description_tier labels', () => {
       const lake = document.querySelector<HTMLInputElement>('#acx-demo-media-1-41');
       const result = root.querySelector<HTMLElement>('[data-acx-demo-result]');
       const message = root.querySelector<HTMLElement>('[data-acx-demo-message]');
+      const icon = root.querySelector<HTMLElement>('[data-acx-demo-icon]');
       expect(root).toBeInstanceOf(HTMLElement);
       expect(form).toBeInstanceOf(HTMLFormElement);
       expect(lake).toBeInstanceOf(HTMLInputElement);
@@ -623,9 +634,10 @@ describe('public demo visible description_tier labels', () => {
         form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
 
-        expect(root.dataset.state).toBe('completed');
+        expect(root.dataset.state).toBe(tier === 'final_gpu' ? 'completed' : 'degraded');
         expect(message?.textContent).toBe(expected);
         expect(message?.textContent).not.toBe(DESCRIPTION);
+        expect(icon?.textContent).toBe(tier === 'final_gpu' ? '✓' : '!');
         expect(result?.hidden).toBe(false);
         expect(result?.textContent).toBe(DESCRIPTION);
         expect(document.activeElement).toBe(result);
@@ -661,8 +673,9 @@ describe('public demo visible description_tier labels', () => {
       form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
       await settle(() => form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled === false);
 
-      expect(root.dataset.state).toBe('completed');
+      expect(root.dataset.state).toBe('degraded');
       expect(message?.textContent).toBe(LABEL.unknown);
+      expect(root.querySelector('[data-acx-demo-icon]')?.textContent).toBe('!');
       expect(result?.hidden).toBe(false);
       expect(result?.textContent).toBe(DESCRIPTION);
       expect(document.activeElement).toBe(result);

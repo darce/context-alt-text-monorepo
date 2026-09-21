@@ -67,8 +67,20 @@ it. That run's receipt read `scope: "narrowed"`, `collected_roots:
 fail instead:
 
 ```bash
-WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1" make check-remote
+WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1" make check-remote TARGETS=test
 ```
+
+Pin it to `test`. The flag demands a *full* collection, and any target that
+selects by marker is narrowed by construction — `test-integration` is
+`pytest -m "integration or pg or timing"`, and `scene/tests` and
+`scripts/eval_harness/tests` contain none of those markers, so the run
+aborts at collection with zero tests executed and the message `full
+collection required; collection was narrowed`. That is the same phrase this
+section just taught you to read as the greenwash symptom, which makes it a
+particularly bad way to fail. Do not set the flag for the integration lane,
+and note that `WORKBAY_REMOTE_GATE_ENV` *overrides* rather than appends to
+`REMOTE_GATE_ENV`, so setting it inline also drops any DSNs from
+`.workbay/remote-gate.env`.
 
 Read the receipt afterwards either way; it is written even on a green run:
 
@@ -81,13 +93,36 @@ ssh gate@<your-gate-host> \
 no liveness bound of its own — it cannot tell a frozen output stream from a
 slow test, so a deadlocked test holds the lock until someone intervenes,
 and the run's partial results are unrecoverable (stdout goes to a deleted
-`/tmp/#<inode>` whose `/proc/<pid>/fd/1` reopens write-only). The bound now
-lives in the suite instead, so it needs no flag and cannot be forgotten at
-the call site: `apps/prototype-description-service/pyproject.toml` declares
+`/tmp/#<inode>` whose `/proc/<pid>/fd/1` reopens write-only). A bound now
+lives in the suite, so it needs no flag and cannot be forgotten at the call
+site: `apps/prototype-description-service/pyproject.toml` declares
 `faulthandler_timeout` (dump every thread's stack, keep running) and
 `timeout` (abort the test, name it, let the other xdist workers finish).
 A test that legitimately needs longer overrides it with
 `@pytest.mark.timeout(n)` — do not raise the global ceiling.
+
+**That bound covers the test phase only, and only Python-level hangs.**
+Two gaps remain, both of which still hold the mutex:
+
+- `timeout_method = "signal"` raises inside the test, which is what
+  preserves sibling workers' results — but a Python signal handler cannot
+  run while the interpreter is inside a C call. A wedge in `onnxruntime`
+  `session.run`, an hdbscan/BLAS/OpenCV kernel, or an asyncpg C path is
+  *dumped* by `faulthandler` and never *aborted*. (Measured: a
+  `hashlib.pbkdf2_hmac` call outlived a 5s bound by 35s and died only to an
+  external `SIGKILL`.) Do not "fix" this with `timeout_method = "thread"` —
+  it `os._exit`s the worker, which is the evidence loss this bound exists
+  to prevent.
+- The lock is taken before the test phase and spans more than it. Inside
+  the same critical section the gate runs `git checkout`, `git clean`,
+  `uv sync` (which builds hdbscan from source), and the admission probe.
+  None of those is inside a pytest runtest protocol, so no per-test alarm
+  is ever armed for them.
+
+The real control for both belongs in the gate script — wrapping the remote
+body in `timeout -k 30 "${GATE_MAX_SECONDS}"` with a distinct exit code, so
+`flock` releases when the holder dies. That is filed upstream; until it
+lands, a wedge in those surfaces still needs `make gate-reap CONFIRM=REAP`.
 
 To tell a hung run from a merely slow one while it is still running, sample
 consumed CPU twice on the VM and read each thread's kernel wait channel:

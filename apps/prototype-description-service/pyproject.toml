@@ -255,7 +255,10 @@ collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection
 #                         observability (OBS-08) -- it is what turns "worker
 #                         is quiet" into a named deadlock without a py-spy
 #                         attach on the VM.
-#   timeout               actually aborts the test. Calibrate it against the
+#   timeout               aborts the test -- but only a Python-level hang;
+#                         a wedge inside a C call (onnxruntime, BLAS, hdbscan,
+#                         asyncpg) is dumped but not aborted, because the
+#                         signal handler cannot run there. Calibrate against the
 #                         slowest HEALTHY test, not the suite: the duration
 #                         profile cliffs from 20.7s to the hangs at 299.9s
 #                         with nothing in between, so 300s is ~14x the

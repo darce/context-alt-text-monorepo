@@ -90,12 +90,36 @@ A test that legitimately needs longer overrides it with
 `@pytest.mark.timeout(n)` — do not raise the global ceiling.
 
 To tell a hung run from a merely slow one while it is still running, sample
-CPU ticks twice on the VM; **zero delta is a deadlock**, not slow work:
+consumed CPU twice on the VM and read each thread's kernel wait channel:
 
 ```bash
 ssh gate@<your-gate-host> \
-  'for i in 1 2; do awk "{print \$14+\$15}" /proc/<worker-pid>/stat; sleep 5; done'
+  'for i in 1 2; do ps -o pid,cputimes,etimes --no-headers -p <ctl>,<w1>,<w2>; sleep 10; done
+   for t in /proc/<worker-pid>/task/*; do echo "$t $(cat $t/wchan)"; done'
 ```
+
+Use `ps -o cputimes`, **not** `awk '{print $14+$15}' /proc/<pid>/stat`. The
+`/proc` form returned a frozen value across three samples spanning three
+minutes on a run that `ps` showed advancing by 4 CPU-seconds per 10 seconds
+of wall clock — i.e. it reported a deadlock that was not happening. A
+diagnostic that fails toward "hung" is worse than none: it argues for
+killing a healthy run and losing the lock-holder's work.
+
+Zero CPU delta alone does **not** mean deadlock. Read the wait channel:
+
+| main-thread `wchan` | meaning |
+| --- | --- |
+| `0` | on CPU right now — running |
+| `poll_schedule_timeout*` | a *timed* wait (`sleep`, `select(timeout)`) — a sleep-heavy test burns no CPU and is fine |
+| `ep_poll` / `futex_do_wait` on **every** process, no timed wait anywhere | the actual deadlock signature |
+
+A single idle worker is normal: xdist balances by test count, not by
+duration, so one worker can draw a cluster of sleep-bound tests and sit at
+near-zero CPU for minutes while its sibling saturates a core.
+
+Calibrate against the right baseline before calling a run slow. `ACX_STRICT_GATE=1`
+roughly doubles the work — the narrowed run collected 3041 items, the full
+one 6791 — so the pre-strict wall clock is not the yardstick for a strict run.
 
 ## Host prerequisite: C toolchain (operator, one-time)
 

@@ -87,13 +87,22 @@ that:
   because RLS is not enforced for it). `55432` is the **laptop** Docker mapping
   (`docker-compose.db.yml`) and never applied on the VM.
 
-Re-provisioning (as `gate`, no sudo): `git clone --depth 1 --branch v0.8.1
-https://github.com/pgvector/pgvector.git && make CC=gcc PG_CONFIG=$P/bin/pg_config
-&& make install CC=gcc PG_CONFIG=$P/bin/pg_config` with
-`P=/home/gate/.local/share/pg-prefix` — the conda `pg_config` names an
-`aarch64-conda-linux-gnu-cc` that is not installed, hence the `CC=gcc`
-override. Then `CREATE ROLE context LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB`.
-`doctor` probes port reachability only, not auth or extension usability.
+Re-provisioning pgvector (as `gate`, no sudo — runs as written):
+
+```bash
+P=/home/gate/.local/share/pg-prefix
+git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git
+cd pgvector
+make         CC=gcc PG_CONFIG="$P/bin/pg_config"
+make install CC=gcc PG_CONFIG="$P/bin/pg_config"
+"$P/bin/psql" -d postgres -c \
+  "CREATE ROLE context LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB"
+```
+
+The `CC=gcc` override is required because the conda `pg_config` reports an
+`aarch64-conda-linux-gnu-cc` that is not installed on the host; without it both
+`make` lines die at `cc: not found`. `doctor` probes port reachability only,
+not auth or extension usability.
 
 ## Memory admission
 

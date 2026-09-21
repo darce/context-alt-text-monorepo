@@ -8,7 +8,8 @@ syntax error in there ships and first appears as a broken run on the gate VM.
 So the body is extracted and checked on its own here.
 
 Everything in this file is hermetic -- the validator cases must refuse before
-any ssh, and the parsing case shadows `cat` rather than reading a real /proc.
+any ssh, and the parsing and reap cases shadow commands rather than reading a
+real /proc or contacting a gate host.
 """
 
 from __future__ import annotations
@@ -106,6 +107,19 @@ def _starttime_of_definition() -> str:
     return match.group(0)
 
 
+def _count_words_definition() -> str:
+    match = re.search(r"(?m)^count_words\(\).*$", _remote_body())
+    assert match, "count_words() not found in the remote body"
+    return match.group(0)
+
+
+def _reap_tail() -> str:
+    body = _remote_body()
+    start = body.index("    tree_sig=''")
+    end = body.index("\n    ;;", start)
+    return body[start:end]
+
+
 # A real /proc/<pid>/stat line whose comm contains both spaces and parens.
 # Field 22 (starttime) is the distinctive value; a naive `awk '{print $22}'`
 # returns "2" here, because the 3-token comm shifts every later field by two.
@@ -157,26 +171,107 @@ def test_the_naive_field_index_would_have_been_wrong() -> None:
     assert naive.stdout.strip() != EXPECTED_STARTTIME
 
 
-def test_orphan_exit_code_is_distinct_from_usage_and_config_errors() -> None:
-    # die() and the usage path both exit 2. If orphans also exited 2, a wrapper
-    # could not tell "the kill worked but left RSS behind" from "you invoked it
-    # wrong" -- and only the first warrants re-running with the printed pids.
-    body = _remote_body()
-    orphan_block = body[body.index("orphans: $(echo $orphans | wc -w)") :]
-    exit_stmt = re.search(r"(?m)^\s+exit (\d+)$", orphan_block)
-    assert exit_stmt, "orphan branch has no exit statement"
-    assert exit_stmt.group(1) == "3"
-    assert "exit 2" in _script_text()  # die()/usage still own 2
+def _run_reap_case(scenario: str):
+    program = "\n".join(
+        [
+            "set -u",
+            "tree='101 202'",
+            "holders='101'",
+            "host='gate@gate-ops-guard-test.invalid'",
+            "fake_time=0",
+            "term_sent=0",
+            "",
+            _count_words_definition(),
+            "holders_of() {",
+            "    case \"$GATE_OPS_GUARD_SCENARIO\" in",
+            "        lock_held) printf '%s\\n' 101 ;;",
+            "        *) return 0 ;;",
+            "    esac",
+            "}",
+            "starttime_of() {",
+            "    case \"$GATE_OPS_GUARD_SCENARIO:$1\" in",
+            "        recycled:202)",
+            "            if [ \"$term_sent\" -eq 0 ]; then printf '%s\\n' old; else printf '%s\\n' new; fi",
+            "            ;;",
+            "        capture_order:202)",
+            "            if [ \"$term_sent\" -eq 0 ]; then printf '%s\\n' before; else printf '%s\\n' after; fi",
+            "            ;;",
+            "        *) printf '%s\\n' fixed ;;",
+            "    esac",
+            "}",
+            "kill() {",
+            "    case \"$1\" in",
+            "        -TERM) term_sent=1; return 0 ;;",
+            "        -0)",
+            "            case \"$GATE_OPS_GUARD_SCENARIO:$2\" in",
+            "                true_orphan:202|recycled:202|capture_order:202) return 0 ;;",
+            "                worker_grace:202) [ \"$fake_time\" -lt 12 ] ;;",
+            "                *) return 1 ;;",
+            "            esac",
+            "            ;;",
+            "        *) return 1 ;;",
+            "    esac",
+            "}",
+            "ps() { return 0; }",
+            "sleep() { fake_time=$((fake_time + $1)); }",
+            _reap_tail(),
+        ]
+    )
+    return subprocess.run(
+        ["bash", "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=str(REPO_ROOT),
+        env={**os.environ, "GATE_OPS_GUARD_SCENARIO": scenario},
+    )
 
 
-def test_orphan_remediation_line_names_a_real_host() -> None:
-    # rg-006: a documented command must run as written. This line printed a
-    # `gate@<your-gate-host>` placeholder while the real target was already in
-    # scope, so an operator had to go find it before acting on an alert.
-    body = _remote_body()
-    remediation = next(line for line in body.splitlines() if "kill -TERM$orphans" in line)
-    assert "$host" in remediation
-    assert "<your-gate-host>" not in remediation
+def test_true_orphan_surviving_the_ceiling_exits_three_and_is_actionable() -> None:
+    proc = _run_reap_case("true_orphan")
+    assert proc.returncode == 3, (proc.returncode, proc.stdout, proc.stderr)
+    elapsed = re.search(r"orphans: 1 process\(es\) still alive (\d+)s after SIGTERM", proc.stdout)
+    assert elapsed, proc.stdout
+    assert int(elapsed.group(1)) >= 20
+    assert "ssh gate@gate-ops-guard-test.invalid kill -TERM 202" in proc.stdout
+
+
+def test_recycled_pid_is_not_reported_or_remediated() -> None:
+    proc = _run_reap_case("recycled")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "orphans: none - whole run tree is gone" in proc.stdout
+    assert "kill -TERM 202" not in proc.stdout
+
+
+def test_no_survivors_exits_zero() -> None:
+    proc = _run_reap_case("no_survivors")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "orphans: none - whole run tree is gone" in proc.stdout
+
+
+def test_lock_still_held_wins_over_orphan_reporting() -> None:
+    proc = _run_reap_case("lock_held")
+    assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
+    assert "lock: STILL HELD by 101" in proc.stdout
+    assert "lock: RELEASED" not in proc.stdout
+    assert "kill -TERM 202" not in proc.stdout
+
+
+def test_worker_exiting_during_execnet_grace_window_is_not_an_orphan() -> None:
+    # The worker is alive at fake T+5 but gone at fake T+12. The old one-shot
+    # sleep reported it as an orphan; the convergence poll must wait it out.
+    proc = _run_reap_case("worker_grace")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "orphans: none - whole run tree is gone" in proc.stdout
+
+
+def test_tree_signature_is_captured_before_kill() -> None:
+    # starttime_of changes when SIGTERM is sent. Capturing after the kill would
+    # make the later value match and incorrectly report pid 202 as an orphan.
+    proc = _run_reap_case("capture_order")
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "orphans: none - whole run tree is gone" in proc.stdout
+    assert "kill -TERM 202" not in proc.stdout
 
 
 def test_host_is_passed_through_to_the_remote_shell() -> None:

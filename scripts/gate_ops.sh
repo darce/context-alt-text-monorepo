@@ -76,6 +76,9 @@ mode="$1"; dir="$2"; gap="$3"; confirm="$4"; days="$5"; host="$6"
 
 holders_of() { fuser .gate.lock 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' || true; }
 cpu_ns() { cut -d' ' -f1 "/proc/$1/schedstat" 2>/dev/null || echo 0; }
+# `wc -w` is allowed to pad its count on BSD/macOS. Keep these interpolated
+# counts portable without depending on an external word-count implementation.
+count_words() { set -- $1; printf '%s\n' "$#"; }
 # Field 22 of /proc/<pid>/stat, read by stripping through the last ')' first --
 # comm is parenthesised and may itself contain spaces or parens, which shifts
 # every positional field. After the strip the remainder begins at field 3, so
@@ -118,7 +121,7 @@ status)
         echo 'lock: FREE - no process holds .gate.lock'
     else
         tree="$(descendants_of "$holders" | sort -n)"
-        echo "lock: HELD - $(echo $holders | wc -w) holder(s) of fd 9, $(echo $tree | wc -w) process(es) in the run tree"
+        echo "lock: HELD - $(count_words "$holders") holder(s) of fd 9, $(count_words "$tree") process(es) in the run tree"
         ps -o pid,ppid,stat,etimes,cputimes,args -p $(echo $tree | tr ' ' ',') 2>/dev/null | cut -c1-150
         echo
         for p in $tree; do echo "$p $(cpu_ns $p)"; done > "/tmp/.gate-ops-s1.$$"
@@ -193,7 +196,29 @@ reap)
     for p in $tree; do tree_sig="$tree_sig $p:$(starttime_of "$p")"; done
     echo "sending SIGTERM to: $(echo $holders | tr '\n' ' ')"
     for p in $holders; do kill -TERM "$p" 2>/dev/null || echo "  pid $p already gone"; done
-    sleep 5
+
+    # Give the whole captured tree time to converge before checking the lock.
+    # This deliberately keeps STILL HELD/exit 1 ahead of orphan reporting: a
+    # surviving fd-9 holder is still a lock failure, while workers that lost
+    # their master need the full execnet teardown ladder before we classify
+    # them as orphans.
+    reap_ceiling=20
+    elapsed=0
+    orphans=''
+    while [ "$elapsed" -le "$reap_ceiling" ]; do
+        orphans=''
+        for sig in $tree_sig; do
+            p="${sig%%:*}"; was="${sig#*:}"
+            kill -0 "$p" 2>/dev/null || continue
+            [ "$(starttime_of "$p")" = "$was" ] || continue
+            orphans="$orphans $p"
+        done
+        [ -z "$orphans" ] && break
+        [ "$elapsed" -ge "$reap_ceiling" ] && break
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
     left="$(holders_of)"
     if [ -n "$left" ]; then
         echo "lock: STILL HELD by $(echo $left | tr '\n' ' ') (re-run; SIGKILL only if SIGTERM fails twice)"
@@ -208,15 +233,8 @@ reap)
     # a bare `kill -0` would then report it as an orphan and print a remediation
     # line telling the operator to kill it. Requiring the start time to be
     # unchanged rules that out -- a recycled pid always has a later one.
-    orphans=''
-    for sig in $tree_sig; do
-        p="${sig%%:*}"; was="${sig#*:}"
-        kill -0 "$p" 2>/dev/null || continue
-        [ "$(starttime_of "$p")" = "$was" ] || continue
-        orphans="$orphans $p"
-    done
     if [ -n "$orphans" ]; then
-        echo "orphans: $(echo $orphans | wc -w) process(es) outlived the fd-9 holders"
+        echo "orphans: $(count_words "$orphans") process(es) still alive ${elapsed}s after SIGTERM"
         ps -o pid,ppid,stat,etimes,cputimes,rss,args -p $(echo $orphans | tr ' ' ',') 2>/dev/null | cut -c1-150
         echo 'These no longer hold the lock, so the next run will start -- but their'
         echo 'RSS counts against its admission probe. Reap them explicitly:'

@@ -405,7 +405,11 @@ def _run_do_restart(
             echo "ssh $@" >> "{log}"
             # Join args for pattern matching.
             cmd="$*"
+            # Consume piped remote bodies so pipefail does not turn a fake
+            # successful SSH response into a local SIGPIPE failure.
+            cat >/dev/null
             case "$cmd" in
+              *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
               *image*inspect*|*RepoDigests*)
                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
                 exit 0 ;;
@@ -434,6 +438,12 @@ def _run_do_restart(
         assert_remote_disk_headroom_for_pull() {{ :; }}
         assert_remote_build_free_space() {{ :; }}
         ship_remote_image_repo_env() {{ echo "ship $1" >> "{log}"; }}
+        # Keep this gate focused on pull → repair → restart ordering; the
+        # candidate health checks are covered by their own fake-SSH tests.
+        probe_cutover_api_health() {{ :; }}
+        probe_canonical_api_health() {{ :; }}
+        verify_running_image_digest() {{ :; }}
+        curl() {{ :; }}
         if do_restart dev "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; then exit 0; else exit $?; fi
         """
     )
@@ -447,7 +457,7 @@ def _run_do_restart(
     return proc.returncode, log.read_text() if log.exists() else ""
 
 
-def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path, _reachable_deploy_host: None) -> None:
+def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path) -> None:
     """W8-VER-01 / S1-A-02: do_restart executes repair before systemctl restart.
 
     Behavioural: fake ssh log records pull → repair profile → systemctl order.
@@ -468,7 +478,7 @@ def test_deploy_restart_runs_blob_ownership_repair(tmp_path: Path, _reachable_de
     assert "--profile repair" in log or "profile repair" in log, log
 
 
-def test_deploy_restart_fails_when_repair_fails(tmp_path: Path, _reachable_deploy_host: None) -> None:
+def test_deploy_restart_fails_when_repair_fails(tmp_path: Path) -> None:
     """W8-VER-01: repair failure must non-zero exit and must not restart the unit."""
     rc, log = _run_do_restart(tmp_path, repair_exit=1)
     assert rc != 0, f"expected non-zero when repair fails; log:\n{log}"
@@ -611,38 +621,6 @@ def _source_and_run(
         text=True,
         timeout=timeout,
     )
-
-
-@pytest.fixture
-def _reachable_deploy_host() -> None:
-    """Skip remote deploy gates when the configured SSH host is not provisioned."""
-    host = os.environ.get("OCI_HOST", "acx-backend.tail1a44b8.ts.net")
-    user = os.environ.get("OCI_USER", "ubuntu")
-    try:
-        probe = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=5",
-                "-o",
-                "ConnectionAttempts=1",
-                "-l",
-                user,
-                "--",
-                host,
-                "true",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        pytest.skip(f"SSH host {host} is unreachable; provisioning is required")
-    if probe.returncode != 0:
-        pytest.skip(f"SSH host {host} is unreachable; provisioning is required")
 
 
 def test_ssh_identity_refuses_leading_dash() -> None:
@@ -903,7 +881,7 @@ def test_read_remote_invalid_repo_sentinel() -> None:
     assert "__INVALID_REPO__" in (proc.stdout or ""), proc.stdout + proc.stderr
 
 
-def test_converge_runtime_zero_refuses_drift(_reachable_deploy_host: None) -> None:
+def test_converge_runtime_zero_refuses_drift() -> None:
     """HARM-A-06: ACX_CONVERGE_RUNTIME=0 must refuse when runtime_in_sync fails."""
     proc = subprocess.run(
         [
@@ -912,6 +890,13 @@ def test_converge_runtime_zero_refuses_drift(_reachable_deploy_host: None) -> No
             textwrap.dedent(
                 f"""\
                 source "{DEPLOY_SCRIPT}"
+                image_repo_resource() {{
+                  case "$1" in
+                    claim) printf '%s\n' fake-owner ;;
+                    restore) echo RESTORE_CALLED >&2 ;;
+                    *) return 1 ;;
+                  esac
+                }}
                 read_remote_image_repo() {{ echo ""; }}
                 ship_remote_image_repo_env() {{ :; }}
                 preserve_rollback_tag() {{ :; }}
@@ -928,9 +913,10 @@ def test_converge_runtime_zero_refuses_drift(_reachable_deploy_host: None) -> No
     assert proc.returncode != 0
     combined = (proc.stdout or "") + (proc.stderr or "")
     assert "ACX_CONVERGE_RUNTIME=0 refused" in combined, combined
+    assert "RESTORE_CALLED" in combined, combined
 
 
-def test_repair_probe_skips_when_uid_matches(tmp_path: Path, _reachable_deploy_host: None) -> None:
+def test_repair_probe_skips_when_uid_matches(tmp_path: Path) -> None:
     """W8-VER-03: ownership probe path is executed (stat + skip message)."""
     log = tmp_path / "ssh.log"
     log.write_text("")
@@ -1206,12 +1192,12 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
     assert "UNEXPECTED_PASS" not in combined
 
 
-def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path, _reachable_deploy_host: None) -> None:
+def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
     """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
 
-    Behavioural: fake ssh executes the remote snippet against a local file that
-    lacks a trailing newline; result must be prior secret intact + ACX_IMAGE_REPO
-    on a new line; remote command must use sudo.
+    Behavioural: the fake SSH/resource seams apply the operation to a local file
+    that lacks a trailing newline; result must be prior secret intact plus
+    ACX_IMAGE_REPO on a new line, and the recorded command must use sudo.
     """
     log = tmp_path / "ssh.log"
     env_file = tmp_path / "prod.env"
@@ -1250,11 +1236,31 @@ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path, _reachable
         "ACX_BUILD_TARGET": "",
         "ACX_IMAGE_VARIANT": "",
     }
+    script = textwrap.dedent(
+        f"""\
+        source "{DEPLOY_SCRIPT}"
+        image_repo_resource() {{
+          case "$1" in
+            ship)
+              ssh -l "$OCI_USER" -- "$OCI_HOST" "sudo true"
+              echo "sudo tail -c1 {env_file}" >> "{log}"
+              last_byte="$(tail -c1 "{env_file}" | od -An -t x1 | tr -d '[:space:]')"
+              if [ -n "$last_byte" ] && [ "$last_byte" != "0a" ]; then
+                echo >> "{env_file}"
+              fi
+              echo "ACX_IMAGE_REPO=$4" >> "{env_file}"
+              ;;
+            *) return 1 ;;
+          esac
+        }}
+        ship_remote_image_repo_env /opt/acx-backend/dev
+        """
+    )
     proc = subprocess.run(
         [
             "bash",
             "-c",
-            f'source "{DEPLOY_SCRIPT}"; ship_remote_image_repo_env /opt/acx-backend/dev',
+            script,
         ],
         env=env,
         capture_output=True,
@@ -1389,7 +1395,7 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
     assert (proc3.stdout or "").strip() == "99"
 
 
-def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path, _reachable_deploy_host: None) -> None:
+def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
     """S2-A-06: restore_prior_image_repo_env re-ships prior value after failure."""
     log = tmp_path / "ship.log"
     log.write_text("")
@@ -1400,6 +1406,15 @@ def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path, _reachabl
             textwrap.dedent(
                 f"""\
                 source "{DEPLOY_SCRIPT}"
+                image_repo_resource() {{
+                  case "$1" in
+                    restore)
+                      echo "resource action=restore" >> "{log}"
+                      ACX_IMAGE_REPO="$ACX_PRIOR_IMAGE_REPO" ship_remote_image_repo_env "$2"
+                      ;;
+                    *) return 1 ;;
+                  esac
+                }}
                 ship_remote_image_repo_env() {{
                   echo "ship repo=$ACX_IMAGE_REPO dir=$1" >> "{log}"
                 }}

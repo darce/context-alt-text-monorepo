@@ -173,7 +173,7 @@
     },
     {
       "path": ".claude/settings.local.json",
-      "action": "unchanged"
+      "action": "merged"
     },
     {
       "path": ".gitignore",

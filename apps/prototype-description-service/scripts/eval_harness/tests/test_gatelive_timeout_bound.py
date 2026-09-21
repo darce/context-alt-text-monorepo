@@ -15,9 +15,15 @@ import importlib.util
 import tomllib
 from pathlib import Path
 
-# The whole suite runs in ~220s across 3 xdist workers. A single test
-# allowed to outlive that is a deadlock, not a slow test.
-WHOLE_SUITE_BASELINE_SECONDS = 220
+import pytest
+
+# Measured on the full 6791-item collection: durations cliff from 20.74s (the
+# slowest healthy test, scene suite hermeticity) straight to the hangs, which
+# do not terminate on their own. Nothing occupies the band between. A per-test
+# bound anywhere in that band separates the two populations, so the ceiling is
+# derived from the slowest healthy test -- not from a whole-suite total, which
+# was never the right unit for a per-test bound.
+SLOWEST_HEALTHY_TEST_SECONDS = 21
 
 
 def _pytest_ini() -> dict:
@@ -32,7 +38,10 @@ def test_per_test_timeout_is_declared_and_bounded() -> None:
     ini = _pytest_ini()
     timeout = ini["timeout"]
     assert isinstance(timeout, int)
-    assert 0 < timeout <= 2 * WHOLE_SUITE_BASELINE_SECONDS
+    # Clear of the slowest healthy test even on a host several times slower
+    # than the gate, but still finite: an unbounded-in-practice ceiling on a
+    # mutex-serialised gate is the failure mode this file exists to prevent.
+    assert 4 * SLOWEST_HEALTHY_TEST_SECONDS <= timeout <= 600
 
 
 def test_timeout_method_preserves_sibling_worker_results() -> None:
@@ -53,3 +62,19 @@ def test_timeout_plugin_is_installed() -> None:
     the exact greenwash the bound exists to prevent.
     """
     assert importlib.util.find_spec("pytest_timeout") is not None
+
+
+def test_timeout_is_live_in_the_running_config(pytestconfig: pytest.Config) -> None:
+    """The distribution being importable does not mean pytest registered the option.
+
+    ``find_spec`` above proves the wheel is on disk. It still passes under
+    ``PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`` or ``-p no:timeout``, where pytest
+    drops ``timeout``/``timeout_method`` with only a non-fatal
+    ``PytestConfigWarning`` -- the bound is gone and every guard here is green.
+    Assert the resolved config, which is the thing that actually bounds a test.
+    """
+    ini = _pytest_ini()
+    assert pytestconfig.pluginmanager.hasplugin("timeout")
+    # getini returns the ini value as a string for these keys.
+    assert int(pytestconfig.getini("timeout")) == ini["timeout"]
+    assert pytestconfig.getini("timeout_method") == ini["timeout_method"]

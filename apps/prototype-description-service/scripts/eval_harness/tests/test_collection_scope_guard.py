@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -79,24 +80,52 @@ def test_narrowed_collection_is_rejected_and_receipted(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "full collection required; collection was narrowed" in result.stderr
-    assert receipt == {
-        "declared_roots": ["tests_a", "tests_b"],
-        "collected_roots": ["tests_a"],
-        "collected_count": 1,
-        "scope": "narrowed",
+    assert set(receipt) == {
+        "pid",
+        "rootdir",
+        "started_at",
+        "declared_roots",
+        "collected_roots",
+        "collected_count",
+        "scope",
     }
+    assert receipt["declared_roots"] == ["tests_a", "tests_b"]
+    assert receipt["collected_roots"] == ["tests_a"]
+    assert receipt["collected_count"] == 1
+    assert receipt["scope"] == "narrowed"
+    assert isinstance(receipt["pid"], int)
+    assert receipt["pid"] > 0
+    assert receipt["rootdir"] == str(tmp_path.resolve())
+    assert isinstance(receipt["started_at"], str)
+    started_at = datetime.fromisoformat(receipt["started_at"])
+    assert started_at.tzinfo is not None
+    assert started_at.utcoffset() is not None
 
 
 def test_full_collection_is_accepted_and_receipted(tmp_path: Path) -> None:
     result, receipt = _run(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert receipt == {
-        "declared_roots": ["tests_a", "tests_b"],
-        "collected_roots": ["tests_a", "tests_b"],
-        "collected_count": 2,
-        "scope": "full",
+    assert set(receipt) == {
+        "pid",
+        "rootdir",
+        "started_at",
+        "declared_roots",
+        "collected_roots",
+        "collected_count",
+        "scope",
     }
+    assert receipt["declared_roots"] == ["tests_a", "tests_b"]
+    assert receipt["collected_roots"] == ["tests_a", "tests_b"]
+    assert receipt["collected_count"] == 2
+    assert receipt["scope"] == "full"
+    assert isinstance(receipt["pid"], int)
+    assert receipt["pid"] > 0
+    assert receipt["rootdir"] == str(tmp_path.resolve())
+    assert isinstance(receipt["started_at"], str)
+    started_at = datetime.fromisoformat(receipt["started_at"])
+    assert started_at.tzinfo is not None
+    assert started_at.utcoffset() is not None
 
 
 def test_strict_gate_rejects_narrowed_collection_without_cli_flag(tmp_path: Path) -> None:

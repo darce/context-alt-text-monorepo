@@ -11,6 +11,7 @@ from typing import Protocol
 import numpy as np
 import pytest
 
+from db.models import ClusterCentroid as ClusterCentroidModel
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
 from db.models import MediaIdentity as MediaIdentityModel
@@ -408,6 +409,14 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
         disposed_at=datetime.now(tz=UTC),
     )
     db_session.add_all([active_rep, disposed_rep])
+    db_session.add(
+        ClusterCentroidModel(
+            cluster_id=uuid.UUID(active_cluster.id),
+            tenant_id=tenant.id,
+            centroid=[0.3] * 512,
+            refreshed_at=datetime.now(tz=UTC),
+        )
+    )
     await db_session.flush()
 
     disposed_cluster_model = await db_session.get(IdentityClusterModel, uuid.UUID(disposed_cluster.id))
@@ -423,6 +432,8 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
     assert snapshot_generation_id is not None
     assert uuid.UUID(snapshot_generation_id)
     assert [cluster.id for cluster in clusters] == [active_cluster.id]
+    assert clusters[0].centroid is not None
+    np.testing.assert_allclose(clusters[0].centroid, np.array([0.3] * 512, dtype=np.float32))
     assert [member.identity_id for member, _identity in members] == [active_identity_id]
 
     refreshed_active_cluster = await db_session.get(IdentityClusterModel, uuid.UUID(active_cluster.id))

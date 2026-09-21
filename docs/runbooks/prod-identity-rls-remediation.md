@@ -42,7 +42,10 @@ FROM unnest(ARRAY[
     'clustering_feedback','audit_events','curation_replay_records','export_jobs',
     'image_descriptions','image_description_runs','image_description_run_items',
     'clustering_job_reports','assignment_decisions',
-    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions']) AS t(relname)
+    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions',
+    'api_key_rotation_history','billing_subscription_projection','portal_identity',
+    'portal_tenant_invitation','tenant_entitlement','tenant_key_idempotency',
+    'usage_reservation']) AS t(relname)
 LEFT JOIN pg_class c
   ON c.relname = t.relname
  AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')

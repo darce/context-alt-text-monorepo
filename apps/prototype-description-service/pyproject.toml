@@ -294,6 +294,15 @@ collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection
 #
 # A test that legitimately needs longer overrides per-test with
 # @pytest.mark.timeout(n).
+# GATELIVE-2-VENV-01: timeout and timeout_method are plugin-provided ini keys.
+# With pytest-timeout absent pytest does NOT error -- it emits
+# `PytestConfigWarning: Unknown config option: timeout` and runs the suite
+# completely unbounded, which is the exact failure the two bounds above exist
+# to prevent. The warning is not a usable detector in either direction: an
+# invocation that loads the plugin emits nothing, and an invocation that
+# suppresses warnings also emits nothing. required_plugins converts a missing
+# plugin into a loud collection-time failure, which is the only sound guard.
+required_plugins = ["pytest-timeout"]
 faulthandler_timeout = 240
 timeout = 300
 timeout_method = "signal"

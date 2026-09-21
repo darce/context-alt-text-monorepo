@@ -43,6 +43,7 @@ from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.discovery.centroid import CentroidDiscovery
 from recognition.application.discovery.graph.discovery import GraphDiscovery
 from recognition.application.discovery.representative import RepresentativeDiscovery
+from recognition.application.embedding.manifest import active_embedding_model_id
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings import ClusteringSettings
@@ -80,7 +81,7 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
                 bbox_height=10,
                 confidence=0.99,
                 embedding=embedding.tolist(),
-                embedding_model="buffalo_l@insightface",
+                embedding_model=active_embedding_model_id(),
             )
         )
     return rows

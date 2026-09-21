@@ -406,8 +406,10 @@ def _run_do_restart(
             # Join args for pattern matching.
             cmd="$*"
             # Consume piped remote bodies so pipefail does not turn a fake
-            # successful SSH response into a local SIGPIPE failure.
-            cat >/dev/null
+            # successful SSH response into a local SIGPIPE failure. Guard on a
+            # tty: with pytest capture off (-s) stdin is the terminal, and an
+            # unconditional cat blocks there until the gate's own timeout.
+            if [ ! -t 0 ]; then cat >/dev/null; fi
             case "$cmd" in
               *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
               *image*inspect*|*RepoDigests*)

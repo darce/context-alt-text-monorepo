@@ -15,7 +15,7 @@
 
 Deliver a permitted 512D recognizer through the in-house FIR runtime and new LocalWP development route, measure whether it improves the required FIR behavior, and assess a small own-weight experiment only if a recoverable deficit remains. This answers the user's capacity/training follow-up; it does not assert that more dimensions improve accuracy or authorize a broad training campaign. Grounding: [capacity assessment](../../assessments/current/fir-model-capacity-and-training-2026-09-19.md), [corpus allocation](../../assessments/current/fir-corpus-population-allocation-2026-09-19.md).
 
-FIRDV-1 still delivers the existing 128D SFace installation first. FIRDV-2 owns common corpus/run/scoring/visualization contracts. This task adds the named checkpoint adapter/comparison, actual 512D LocalWP route and an explicit train-or-stop decision; no second harness. The [consolidated implementation guide](../../roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md) makes 512D development delivery mandatory while keeping quality adoption evidence-gated. Existing FIR-7/15/17 ownership and training evidence gates remain in force.
+The 2026-09-21 operator choice makes AuraFace512 the development delivery path. A separately reproducible 128D SFace installation remains the comparison baseline, not a mandatory predecessor to provisioning the candidate. FIRDV-2 owns common corpus/run/scoring/visualization contracts. This task adds the named checkpoint adapter/comparison, actual 512D LocalWP route and an explicit train-or-stop decision; no second harness. The [consolidated implementation guide](../../roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md) makes 512D development delivery mandatory while keeping quality adoption evidence-gated. Existing FIR-7/15/17 ownership and training evidence gates remain in force.
 
 ## S1 — artifact and adapter feasibility, no model execution
 
@@ -51,6 +51,10 @@ Measure examples/s after warmup, peak allocated/reserved VRAM, host memory, I/O 
 ## S5 — decision and handoff
 
 Choose the quality recommendation: retain SFace for the better-quality use case; qualify the pretrained challenger; draft a bounded fine-tune/adapter task; or park training and collect better data. A retain-SFace recommendation does not cancel the requested functional 512D development route in S6; it marks that route experimental/unqualified for production until evidence changes. Training produces a new model space and requires re-enrollment/recalibration and clean-cell regression tests. No production switch, training success or occlusion gain can be inferred from the feasibility packet.
+
+## Current implementation decomposition (2026-09-21)
+
+Use the reviewed [next-wave DAG](../../scopes/next-wave-gpu-ui-fir512-dag.md): F1a pins and F1b evidence run independently; their frozen identity/preprocessing packet unblocks F1c embedder, F1d validator and F1r production routing/active-ID in parallel; F1e real-artifact inference joins them before provisioning. FT detector env resolvers precede quality tuning/A-B. Gating `/ready` alone does not demonstrate inference. All remote implementation and grunt lanes are explicitly `codex-remote / gpt-5.6-luna / max`, with no fallback. Unknown mean/scale/alignment remains a blocker to dependent implementation, not permission to guess.
 
 ## S6 — isolated 512D service and LocalWP delivery
 

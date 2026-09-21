@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "planning_only": true,
+  "baseline": "11fe4dea7",
+  "routing": {
+    "backend": "codex-remote",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "max",
+    "fallback": false
+  },
+  "nodes": [
+    "F1a",
+    "F1b",
+    "F1c",
+    "F1d",
+    "F1e",
+    "F1r",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "FT",
+    "G0",
+    "G1",
+    "G2",
+    "GATE",
+    "I",
+    "Q",
+    "S1A",
+    "S1B",
+    "S2A",
+    "S2B",
+    "S3A",
+    "S3B",
+    "S3C",
+    "S4",
+    "S5"
+  ],
+  "edges": [
+    {
+      "from": "G0",
+      "to": "G1",
+      "consumes": "Observed demand/reaper failure and shared storage inventory"
+    },
+    {
+      "from": "G1",
+      "to": "G2",
+      "consumes": "Fresh run-scoped observation contract"
+    },
+    {
+      "from": "S1A",
+      "to": "S1B",
+      "consumes": "Route fixture"
+    },
+    {
+      "from": "S1B",
+      "to": "S2A",
+      "consumes": "Route classification"
+    },
+    {
+      "from": "S2A",
+      "to": "S2B",
+      "consumes": "Unavailable fixture"
+    },
+    {
+      "from": "S2A",
+      "to": "S3A",
+      "consumes": "Envelope vocabulary"
+    },
+    {
+      "from": "S2B",
+      "to": "S3C",
+      "consumes": "Shared notice"
+    },
+    {
+      "from": "S3A",
+      "to": "S3C",
+      "consumes": "Diagnostics contract"
+    },
+    {
+      "from": "S2B",
+      "to": "G2",
+      "consumes": "Shared notice"
+    },
+    {
+      "from": "S3B",
+      "to": "I",
+      "consumes": "Correlation proof"
+    },
+    {
+      "from": "S4",
+      "to": "I",
+      "consumes": "Finite UI waiting proof"
+    },
+    {
+      "from": "S5",
+      "to": "I",
+      "consumes": "Purge liveness proof"
+    },
+    {
+      "from": "G2",
+      "to": "I",
+      "consumes": "GPU card evidence"
+    },
+    {
+      "from": "S3C",
+      "to": "I",
+      "consumes": "Settings UI"
+    },
+    {
+      "from": "I",
+      "to": "GATE",
+      "consumes": "Integrated behavior and receipts"
+    },
+    {
+      "from": "F1a",
+      "to": "F1c",
+      "consumes": "Pinned identity"
+    },
+    {
+      "from": "F1b",
+      "to": "F1c",
+      "consumes": "Verified affine/alignment contract"
+    },
+    {
+      "from": "F1a",
+      "to": "F1d",
+      "consumes": "Pinned expected identity"
+    },
+    {
+      "from": "F1b",
+      "to": "F1d",
+      "consumes": "Verified expected preprocessing"
+    },
+    {
+      "from": "F1c",
+      "to": "F1e",
+      "consumes": "Runtime implementation"
+    },
+    {
+      "from": "F1d",
+      "to": "F1e",
+      "consumes": "Candidate validator"
+    },
+    {
+      "from": "F1e",
+      "to": "F3",
+      "consumes": "Real-artifact inference proof"
+    },
+    {
+      "from": "F2",
+      "to": "F3",
+      "consumes": "Isolated image and rollback bundle"
+    },
+    {
+      "from": "F3",
+      "to": "F5",
+      "consumes": "Endpoint and environment"
+    },
+    {
+      "from": "F4",
+      "to": "F5",
+      "consumes": "LocalWP site"
+    },
+    {
+      "from": "F5",
+      "to": "F6",
+      "consumes": "Working integrated candidate"
+    },
+    {
+      "from": "FT",
+      "to": "Q",
+      "consumes": "Detector env configuration"
+    },
+    {
+      "from": "F1e",
+      "to": "Q",
+      "consumes": "Verified candidate runtime"
+    },
+    {
+      "from": "F1a",
+      "to": "F1r",
+      "consumes": "Pinned model identity"
+    },
+    {
+      "from": "F1b",
+      "to": "F1r",
+      "consumes": "Frozen preprocessing identity"
+    },
+    {
+      "from": "F1r",
+      "to": "F1e",
+      "consumes": "Production factory and active-ID routing"
+    }
+  ],
+  "operator_nodes": [
+    "G0",
+    "F3",
+    "F4"
+  ],
+  "satisfied_inputs": {
+    "F0": "decision 13072"
+  },
+  "conflicts": [
+    {
+      "owners": [
+        "F1a",
+        "F1c"
+      ],
+      "path": "face_pipeline/provenance.py",
+      "ordered_by": "F1a -> F1c"
+    },
+    {
+      "owners": [
+        "S4",
+        "G2"
+      ],
+      "resolution": "helper/hooks versus card rendering; integrator owns shared registration"
+    }
+  ],
+  "adjudication": {
+    "groups": {
+      "A": [
+        "G0",
+        "G1",
+        "G2",
+        "S4"
+      ],
+      "B": [
+        "F1a",
+        "F1b",
+        "F1c",
+        "F1r",
+        "F1e"
+      ],
+      "C": [
+        "F1d",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6"
+      ],
+      "D": [
+        "FT",
+        "Q"
+      ]
+    },
+    "edges": [
+      [
+        "A",
+        "ADJUDICATE"
+      ],
+      [
+        "B",
+        "ADJUDICATE"
+      ],
+      [
+        "C",
+        "ADJUDICATE"
+      ],
+      [
+        "D",
+        "ADJUDICATE"
+      ]
+    ],
+    "writes": "Independent reports, coordinator-only plan edits"
+  },
+  "layers": [
+    [
+      "F1a",
+      "F1b",
+      "F2",
+      "F4",
+      "FT",
+      "G0",
+      "S1A",
+      "S3B",
+      "S4",
+      "S5"
+    ],
+    [
+      "F1c",
+      "F1d",
+      "F1r",
+      "G1",
+      "S1B"
+    ],
+    [
+      "F1e",
+      "S2A"
+    ],
+    [
+      "F3",
+      "Q",
+      "S2B",
+      "S3A"
+    ],
+    [
+      "F5",
+      "G2",
+      "S3C"
+    ],
+    [
+      "F6",
+      "I"
+    ],
+    [
+      "GATE"
+    ]
+  ],
+  "workbay_analysis": {
+    "task_ref": "DEMOHEAL-NEXTWAVE-PLAN",
+    "node_count": 27,
+    "layer_widths": [
+      10,
+      5,
+      2,
+      4,
+      3,
+      2,
+      1
+    ],
+    "critical_path": [
+      "S1A",
+      "S1B",
+      "S2A",
+      "S2B",
+      "G2",
+      "I",
+      "GATE"
+    ],
+    "unit_weight_floor": 7,
+    "admitted_width": 10,
+    "meaning": "Analysis only, not workers provisioned or resource-admitted."
+  }
+}

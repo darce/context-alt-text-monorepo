@@ -79,6 +79,8 @@ dev = [
     "pytest>=8.3.0,<10.0.0",
     "pytest-xdist>=3.6.0,<4.0.0",
     "pytest-asyncio>=0.21.0,<2.0.0",
+    # Liveness bound for the suite: see [tool.pytest.ini_options] timeout.
+    "pytest-timeout>=2.3.0,<3.0.0",
     "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     "fastmcp>=3.1.1,<4.0.0",  # MCP server for agent tooling (v3 decorator semantics)
     # Revision-pin verification for the bake-off candidate registry: makes the
@@ -243,6 +245,29 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection-scope.json"
+# GATELIVE-1: the suite must have a liveness property, not just a safety one.
+# A deadlocked test previously froze a remote-gate run at 11% and held the
+# gate mutex for 57 minutes against a ~220s whole-suite baseline; the gate
+# cannot tell a hung run from a slow one, so nothing ever aborted it and the
+# partial results were destroyed on recovery. Two bounds, in order:
+#
+#   faulthandler_timeout  dumps every thread's stack and keeps running. Pure
+#                         observability (OBS-08) -- it is what turns "worker
+#                         is quiet" into a named deadlock without a py-spy
+#                         attach on the VM.
+#   timeout               actually aborts the test. 300s is ~1.4x the entire
+#                         suite's wall clock, so any single test reaching it
+#                         is pathological by construction, not merely slow.
+#
+# timeout_method is pinned to "signal" rather than left implicit: it raises
+# inside the hung test, so the run reports WHICH test wedged and the other
+# xdist workers finish. The "thread" method would os._exit the worker and
+# take its results with it -- the same evidence loss this bound exists to
+# stop. A test that legitimately needs longer overrides per-test with
+# @pytest.mark.timeout(n).
+faulthandler_timeout = 240
+timeout = 300
+timeout_method = "signal"
 markers = [
     "integration: marks tests as integration tests (require database)",
     "pg: marks tests requiring a local PostgreSQL (schema/RLS/matview behavior; skip when unreachable)",

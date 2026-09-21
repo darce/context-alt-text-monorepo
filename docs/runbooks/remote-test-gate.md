@@ -53,6 +53,50 @@ make check-remote                       # configured targets (default: desc-serv
 make check-remote TARGETS="test lint"   # explicit targets, run in REMOTE_GATE_WORKDIR
 ```
 
+## Two ways a gate run lies, and the flags that stop them
+
+Both were observed on the same run (2026-09-21). Neither surfaces as a
+failure, which is the point: a gate that reports nothing is not reporting
+success ([OBS-08]).
+
+**It ran only part of the suite.** `conftest.py` writes a collection-scope
+receipt on every run and compares the collected roots against the five
+declared in `testpaths`. The comparison is *advisory* unless you ask for
+it. That run's receipt read `scope: "narrowed"`, `collected_roots:
+["recognition/tests"]` — one of five — and the run said nothing. Make it
+fail instead:
+
+```bash
+WORKBAY_REMOTE_GATE_ENV="ACX_STRICT_GATE=1" make check-remote
+```
+
+Read the receipt afterwards either way; it is written even on a green run:
+
+```bash
+ssh gate@<your-gate-host> \
+  cat /tmp/prototype-description-service-pytest-collection-scope.json
+```
+
+**It hung and held the mutex.** The gate serialises on `.gate.lock` and has
+no liveness bound of its own — it cannot tell a frozen output stream from a
+slow test, so a deadlocked test holds the lock until someone intervenes,
+and the run's partial results are unrecoverable (stdout goes to a deleted
+`/tmp/#<inode>` whose `/proc/<pid>/fd/1` reopens write-only). The bound now
+lives in the suite instead, so it needs no flag and cannot be forgotten at
+the call site: `apps/prototype-description-service/pyproject.toml` declares
+`faulthandler_timeout` (dump every thread's stack, keep running) and
+`timeout` (abort the test, name it, let the other xdist workers finish).
+A test that legitimately needs longer overrides it with
+`@pytest.mark.timeout(n)` — do not raise the global ceiling.
+
+To tell a hung run from a merely slow one while it is still running, sample
+CPU ticks twice on the VM; **zero delta is a deadlock**, not slow work:
+
+```bash
+ssh gate@<your-gate-host> \
+  'for i in 1 2; do awk "{print \$14+\$15}" /proc/<worker-pid>/stat; sleep 5; done'
+```
+
 ## Host prerequisite: C toolchain (operator, one-time)
 
 `uv sync` for the description service **builds `hdbscan` from source** on the

@@ -12,17 +12,22 @@ dropping it would restore the old failure mode with nothing to notice.
 from __future__ import annotations
 
 import importlib.util
+import os
 import tomllib
 from pathlib import Path
 
 import pytest
 
-# Measured on the full 6791-item collection: durations cliff from 20.74s (the
-# slowest healthy test, scene suite hermeticity) straight to the hangs, which
-# do not terminate on their own. Nothing occupies the band between. A per-test
-# bound anywhere in that band separates the two populations, so the ceiling is
-# derived from the slowest healthy test -- not from a whole-suite total, which
-# was never the right unit for a per-test bound.
+# Measured on the 6792-item `make test` collection: durations cliff from 20.74s
+# straight to the hangs, which do not terminate on their own. Nothing occupies
+# the band between. A per-test bound anywhere in that band separates the two
+# populations, so the ceiling is derived from the slowest healthy test -- not
+# from a whole-suite total, which was never the right unit for a per-test
+# bound. The 20.74s test is
+# scene/tests/test_eval_harness_cli.py::test_score_rounding_cannot_hide_one_wrong_name_scaled
+# -- named because an earlier comment credited it to the scene hermeticity
+# test, which runs in 10.27s, and re-deriving the constant from that one would
+# halve the intended headroom (AR-06).
 SLOWEST_HEALTHY_TEST_SECONDS = 21
 
 
@@ -44,8 +49,17 @@ def test_per_test_timeout_is_declared_and_bounded() -> None:
     assert 4 * SLOWEST_HEALTHY_TEST_SECONDS <= timeout <= 600
 
 
-def test_timeout_method_preserves_sibling_worker_results() -> None:
-    """``thread`` os._exits the worker; that is the evidence loss we are fixing."""
+def test_timeout_method_is_pinned() -> None:
+    """Pinned so the choice is deliberate, not so ``thread`` is forbidden.
+
+    The original docstring here asserted ``thread`` "os._exits the worker and
+    takes its results with it". That is false (AR-02): xdist streams each
+    report as it completes, so a thread-method abort loses only the in-flight
+    test and still names it. ``signal`` is preferred because it aborts as an
+    ordinary failure report, but it cannot fire inside a C call -- so if a
+    C-level wedge ever holds the gate, flipping this to ``thread`` is the fix
+    and this test is the thing to update, not a reason to widen the bound.
+    """
     assert _pytest_ini()["timeout_method"] == "signal"
 
 
@@ -71,10 +85,45 @@ def test_timeout_is_live_in_the_running_config(pytestconfig: pytest.Config) -> N
     ``PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`` or ``-p no:timeout``, where pytest
     drops ``timeout``/``timeout_method`` with only a non-fatal
     ``PytestConfigWarning`` -- the bound is gone and every guard here is green.
-    Assert the resolved config, which is the thing that actually bounds a test.
+
+    This covers the plugin-registration channel only. The override channels
+    are covered by the next test; ``getini`` alone does not see them.
     """
     ini = _pytest_ini()
     assert pytestconfig.pluginmanager.hasplugin("timeout")
     # getini returns the ini value as a string for these keys.
     assert int(pytestconfig.getini("timeout")) == ini["timeout"]
     assert pytestconfig.getini("timeout_method") == ini["timeout_method"]
+
+
+def test_no_override_channel_disarms_the_bound(pytestconfig: pytest.Config) -> None:
+    """``getini`` reports the file, not the bound that will actually fire.
+
+    pytest-timeout resolves ``--timeout`` > ``$PYTEST_TIMEOUT`` > ini, and the
+    guards above read only the last of those. Measured (AR-01): both
+    ``--timeout=0`` and ``PYTEST_TIMEOUT=0`` leave every other test in this
+    file green with the bound fully disabled.
+
+    ``PYTEST_TIMEOUT`` is the realistic vector rather than a contrived one:
+    the remote gate injects environment wholesale via
+    ``WORKBAY_REMOTE_GATE_ENV``, so a single future env line would restore the
+    57-minute wedge with five green guards above it. Re-derive the effective
+    value along the documented precedence and assert *that*.
+    """
+    ini_timeout = _pytest_ini()["timeout"]
+    cli = pytestconfig.getoption("timeout", default=None)
+    env = os.environ.get("PYTEST_TIMEOUT")
+
+    if cli is not None:
+        effective, source = float(cli), "--timeout"
+    elif env not in (None, ""):
+        effective, source = float(env), "$PYTEST_TIMEOUT"
+    else:
+        effective, source = float(ini_timeout), "ini"
+
+    # 0 means "disabled" to pytest-timeout, so this rejects it as out of range
+    # rather than needing a special case.
+    assert 4 * SLOWEST_HEALTHY_TEST_SECONDS <= effective <= 600, (
+        f"effective per-test timeout is {effective}s (from {source}); "
+        f"the ini declares {ini_timeout}s"
+    )

@@ -105,21 +105,45 @@ of wall clock — i.e. it reported a deadlock that was not happening. A
 diagnostic that fails toward "hung" is worse than none: it argues for
 killing a healthy run and losing the lock-holder's work.
 
-Zero CPU delta alone does **not** mean deadlock. Read the wait channel:
+Zero CPU delta alone does **not** mean deadlock. Read the wait channel — but
+treat it as corroboration, never as the verdict:
 
 | main-thread `wchan` | meaning |
 | --- | --- |
 | `0` | on CPU right now — running |
-| `poll_schedule_timeout*` | a *timed* wait (`sleep`, `select(timeout)`) — a sleep-heavy test burns no CPU and is fine |
-| `ep_poll` / `futex_do_wait` on **every** process, no timed wait anywhere | the actual deadlock signature |
+| `hrtimer_nanosleep` / `do_nanosleep` | `time.sleep()` — benign, and the most common quiet case |
+| `poll_schedule_timeout*` | `select`/`poll` — **bounded and unbounded are indistinguishable by name** |
+| `ep_poll` / `futex_do_wait` on **every** process, with no CPU duty anywhere | the actual deadlock signature |
+
+The `poll_schedule_timeout` row is the trap. Measured on this gate host
+(Linux 6.17.0-1011-oracle aarch64, CPython 3.12.3), `select.select([r],[],[])`
+with no timeout and `select.select([r],[],[],600)` both report
+`poll_schedule_timeout.constprop.0` — the kernel parks an *infinite* wait on the
+same channel as a bounded one. So the name cannot tell you whether a bound
+exists, and reading it as "timed, therefore fine" classifies a permanent block
+as healthy while it holds the gate mutex. **CPU duty is the discriminator** —
+the `ps -o cputimes` delta above is what the original field call actually rested
+on (~4 CPU-seconds per 10s wall = periodic wakeups = alive).
 
 A single idle worker is normal: xdist balances by test count, not by
 duration, so one worker can draw a cluster of sleep-bound tests and sit at
 near-zero CPU for minutes while its sibling saturates a core.
 
-Calibrate against the right baseline before calling a run slow. `ACX_STRICT_GATE=1`
-roughly doubles the work — the narrowed run collected 3041 items, the full
-one 6791 — so the pre-strict wall clock is not the yardstick for a strict run.
+Calibrate against the right baseline before calling a run slow. A full `make test`
+collects 6791 items and takes ~15 minutes on this host; that is the yardstick.
+
+`ACX_STRICT_GATE=1` does **not** change what gets collected — `conftest.py`
+only raises `pytest.UsageError` when the scope is already narrowed, and
+`make test` passes no path arguments, so pytest always falls through to the
+declared `testpaths`. The flag is a tripwire, not a workload multiplier; a
+strict run and a non-strict run of the same target do identical work.
+
+Do not size a run against the collection-scope receipt. Its default path
+(`/tmp/prototype-description-service-pytest-collection-scope.json`) is
+machine-global, so *any* concurrent pytest on the host overwrites it — this has
+been observed mid-run reporting 3071 items and then 1, while the gate run it was
+supposed to describe had collected 6791 across three roots. Pass an explicit
+`--collection-scope-receipt=<path>` if you need a receipt you can trust.
 
 ## Host prerequisite: C toolchain (operator, one-time)
 

@@ -1,433 +1,1581 @@
-diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
---- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-+++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
-@@ -350,8 +350,7 @@ _MULTIPART_TYPED_ERROR_REQUIRED_KEYS = frozenset(
- _MULTIPART_TYPED_ERROR_ALLOWED_KEYS = {
-     "description_service_starting": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
-     | frozenset({"warmup_eta_seconds", "startup_budget_seconds"}),
--    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS
--    | frozenset({"reason", "lifecycle_reason"}),
-+    "description_service_unavailable": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS | frozenset({"reason", "lifecycle_reason"}),
-     "description_service_error": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
-     "operation_mismatch": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
-     "operation_expired": _MULTIPART_TYPED_ERROR_REQUIRED_KEYS,
-@@ -477,17 +476,13 @@ def _typed_error_detail_needs_rebuild(exc: HTTPException) -> bool:
-     except ValidationError:
-         return True
-     if code == "description_service_starting":
-+        if detail.get("operation_id") is None:
-+            return True
-         budget = detail.get("startup_budget_seconds")
-         return not (
--            isinstance(budget, (int, float))
--            and not isinstance(budget, bool)
--            and math.isfinite(budget)
--            and budget > 0
-+            isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0
-         )
--    if code == "description_service_unavailable":
--        if _coerce_unavailable_reason(detail.get("reason")) is None:
--            return True
--    return False
-+    return code == "description_service_unavailable" and _coerce_unavailable_reason(detail.get("reason")) is None
- 
- 
- def _rebuild_post_accept_typed_error(
-@@ -501,14 +496,21 @@ def _rebuild_post_accept_typed_error(
-     code = _http_exception_code(detail)
-     if code not in _MULTIPART_TYPED_ERROR_CODES:
-         return exc
-+    operation_id = getattr(op, "operation_id", None)
-+    if not isinstance(operation_id, str) or not operation_id:
-+        operation_id = None
-+    startup_id = getattr(op, "startup_id", None)
-+    if not isinstance(startup_id, str):
-+        startup_id = None
-     warmup_eta_seconds = None
-     startup_budget_seconds = None
-     reason = None
-     lifecycle_reason = None
-     retry_after = None
-+    rebuilt_code = code
-     if isinstance(detail, dict) and code == "description_service_starting":
-         eta = detail.get("warmup_eta_seconds")
--        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta):
-+        if isinstance(eta, (int, float)) and not isinstance(eta, bool) and math.isfinite(eta) and eta >= 0:
-             warmup_eta_seconds = float(eta)
-         budget = detail.get("startup_budget_seconds")
-         if isinstance(budget, (int, float)) and not isinstance(budget, bool) and math.isfinite(budget) and budget > 0:
-@@ -519,25 +521,58 @@ def _rebuild_post_accept_typed_error(
-             # invent a client-facing ceiling during normalization.
-             startup_budget_seconds = settings.gpu_warmup_timeout_seconds
-         retry_after = _retry_after_header(exc)
-+        if operation_id is None:
-+            rebuilt_code = "description_service_unavailable"
-+            warmup_eta_seconds = None
-+            startup_budget_seconds = None
-+            reason = _DEFAULT_UNAVAILABLE_REASON
-     elif isinstance(detail, dict) and code == "description_service_unavailable":
-         reason = _coerce_unavailable_reason(detail.get("reason"))
-+        if reason is None:
-+            reason = _DEFAULT_UNAVAILABLE_REASON
-         raw_lifecycle = detail.get("lifecycle_reason")
-         if isinstance(raw_lifecycle, str) and raw_lifecycle.strip():
-             lifecycle_reason = raw_lifecycle
--    return _typed_describe_error(
--        status_code=exc.status_code,
--        code=code,
--        message=_http_exception_message(detail, fallback="Description service error"),
--        operation_id=op.operation_id,
--        startup_id=op.startup_id,
--        timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
--        warmup_eta_seconds=warmup_eta_seconds,
--        startup_budget_seconds=startup_budget_seconds,
--        reason=reason,
--        lifecycle_reason=lifecycle_reason,
--        retry_after=retry_after,
--        preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
--    )
-+
-+    message = _http_exception_message(detail, fallback="Description service error")
-+    timing = _untimed_with_elapsed(_elapsed_ms(server_start))
-+
-+    def _build(code_to_emit: str, *, reason_to_emit: UnavailableReason | None = reason) -> HTTPException:
-+        rebuilt = _typed_describe_error(
-+            status_code=exc.status_code,
-+            code=code_to_emit,
-+            message=message,
-+            operation_id=operation_id,
-+            startup_id=startup_id,
-+            timing=timing,
-+            warmup_eta_seconds=warmup_eta_seconds,
-+            startup_budget_seconds=startup_budget_seconds,
-+            reason=reason_to_emit,
-+            lifecycle_reason=lifecycle_reason,
-+            retry_after=retry_after,
-+            preserve_lease=isinstance(exc, _LifecycleHoldHTTPException),
-+        )
-+        if isinstance(rebuilt.detail, dict):
-+            for optional_key in (
-+                "warmup_eta_seconds",
-+                "startup_budget_seconds",
-+                "reason",
-+                "lifecycle_reason",
-+            ):
-+                if rebuilt.detail.get(optional_key) is None:
-+                    rebuilt.detail.pop(optional_key, None)
-+        return rebuilt
-+
-+    try:
-+        return _build(rebuilt_code)
-+    except ValidationError:
-+        warmup_eta_seconds = None
-+        startup_budget_seconds = None
-+        lifecycle_reason = None
-+        return _build(
-+            "description_service_unavailable",
-+            reason_to_emit=_DEFAULT_UNAVAILABLE_REASON,
-+        )
- 
- 
- def _load_gpu_snapshot_payload() -> dict[str, Any] | None:
-@@ -1220,9 +1255,11 @@ async def describe_image_multipart(
-     else:
-         effective_adapter = adapter
-     gpu_compute = effective_adapter.kind is DescriptionAdapterKind.GPU
-+    unavailable_fast_path = False
-+    adapter_reason = None
-     if gpu_compute and isinstance(effective_adapter, UnavailableDescriptionAdapter):
-         adapter_reason = _unavailable_reason_from_adapter(effective_adapter, settings=settings)
--        if adapter_reason is not None:
-+        if adapter_reason is not None and submission.operation_id is None:
-             raise _typed_describe_error(
-                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                 code="description_service_unavailable",
-@@ -1232,10 +1269,11 @@ async def describe_image_multipart(
-                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-                 reason=adapter_reason,
-             )
-+        unavailable_fast_path = adapter_reason is not None
-     digest = _multipart_request_digest(media_id=envelope.media_id, image_bytes=image_bytes, context=submission.context)
-     cached_row = None
-     op = None
--    if gpu_compute:
-+    if gpu_compute and not unavailable_fast_path:
-         cached_row = await _cached_gpu_description_row(
-             repository=repository,
-             tenant_uuid=tenant_uuid,
-@@ -1315,6 +1353,18 @@ async def describe_image_multipart(
-         terminalized = True
- 
-     try:
-+        if unavailable_fast_path:
-+            await _cleanup_accepted()
-+            await dump_load_snapshot(session_factory)
-+            raise _typed_describe_error(
-+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-+                code="description_service_unavailable",
-+                message="Description service is unavailable",
-+                operation_id=operation_id,
-+                startup_id=None if op is None else op.startup_id,
-+                timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-+                reason=adapter_reason,
-+            )
-         if cached_row is not None:
-             response = await _response_from_cached_row(
-                 service=service,
-diff --git a/apps/prototype-description-service/scene/tests/test_describe_route.py b/apps/prototype-description-service/scene/tests/test_describe_route.py
---- a/apps/prototype-description-service/scene/tests/test_describe_route.py
-+++ b/apps/prototype-description-service/scene/tests/test_describe_route.py
-@@ -1157,6 +1157,56 @@ def test_gpu_stopped_auto_returns_starting_503(monkeypatch, tmp_path):
-         assert _lease_state(client, detail["operation_id"]) == "active"
- 
- 
-+def test_gpu_unavailable_retry_terminalizes_existing_operation(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="stopped")
-+    adapter = _UnavailableGpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        first = _post(client, TENANT_ID)
-+        assert first.status_code == 503, first.text
-+        operation_id = first.json()["detail"]["operation_id"]
-+        assert first.json()["detail"]["code"] == "description_service_starting"
-+        assert _lease_state(client, operation_id) == "active"
-+        assert _active_lease_count(client) == 1
-+
-+        # The original request was admitted while the GPU was starting. On the
-+        # retry the resolver now fails closed, so the known operation must be
-+        # correlated and terminalized rather than bypassing operation lookup.
-+        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
-+        retry = _post(
-+            client,
-+            TENANT_ID,
-+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
-+            extra_data={"operation_id": operation_id},
-+        )
-+        assert retry.status_code == 503, retry.text
-+        detail = retry.json()["detail"]
-+        assert detail["code"] == "description_service_unavailable"
-+        assert detail["reason"] == "endpoint_not_private"
-+        assert detail["operation_id"] == operation_id
-+        assert _lease_state(client, operation_id) == "completed"
-+        assert _active_lease_count(client) == 0
-+        assert adapter.calls == 0
-+
-+
-+def test_gpu_unavailable_retry_unknown_operation_is_mismatch(monkeypatch, tmp_path):
-+    _gpu_env(monkeypatch, tmp_path, state="stopped")
-+    adapter = _UnavailableGpuAdapter()
-+    with _client(adapter=adapter) as client:
-+        monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://8.8.8.8:8000")
-+        response = _post(
-+            client,
-+            TENANT_ID,
-+            request_body={"tenant_id": TENANT_ID, "media_id": 42, "tier": "gpu"},
-+            extra_data={"operation_id": "unknown-operation-id"},
-+        )
-+        assert response.status_code == 409, response.text
-+        detail = response.json()["detail"]
-+        assert detail["code"] == "operation_mismatch"
-+        assert detail["operation_id"] is None
-+        assert _lease_rows(client) == []
-+        assert adapter.calls == 0
-+
-+
- def test_gpu_stop_intent_returns_unavailable_without_retry_after(monkeypatch, tmp_path):
-     _, _, intent_path, now = _gpu_env(monkeypatch, tmp_path, state="stopped")
-     from datetime import UTC, datetime
-diff --git a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
---- a/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
-+++ b/apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py
-@@ -4,9 +4,10 @@ from __future__ import annotations
+diff --git a/apps/prototype-description-service/conftest.py b/apps/prototype-description-service/conftest.py
+--- a/apps/prototype-description-service/conftest.py
++++ b/apps/prototype-description-service/conftest.py
+@@ -4,10 +4,19 @@ from __future__ import annotations
  
  import json
+ import os
++from datetime import UTC, datetime
  from pathlib import Path
-+from types import SimpleNamespace
++from time import time_ns
  
--from jsonschema import Draft7Validator
  import pytest
-+from jsonschema import Draft7Validator
- from referencing import Registry, Resource
  
- from scene.tests.test_describe_route import TENANT_ID, _client, _gpu_env, _GpuAdapter, _post
-@@ -110,6 +111,119 @@ def test_typed_error_envelopes_validate():
-     assert not validator.is_valid({"detail": {k: value for k, value in unavailable["detail"].items() if k != "reason"}})
++_RECEIPT_DIRECTORY = Path("/tmp")
++_RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
++_LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / (
++    "prototype-description-service-pytest-collection-scope.json"
++)
++_SERVICE_PYPROJECT = Path(__file__).with_name("pyproject.toml").resolve()
++
+ 
+ def pytest_addoption(parser: pytest.Parser) -> None:
+     group = parser.getgroup("collection scope")
+@@ -24,15 +33,53 @@ def pytest_addoption(parser: pytest.Parser) -> None:
+     parser.addini(
+         "collection_scope_receipt",
+         "path for the machine-readable collection-scope receipt",
+-        default="/tmp/prototype-description-service-pytest-collection-scope.json",
++        default="",
+     )
  
  
-+def _rebuild_test_exception_detail(**overrides):
-+    detail = {
-+        "code": "description_service_starting",
-+        "message": "dependency starting",
-+        "operation_id": "upstream-operation",
-+        "startup_id": "upstream-startup",
-+        "warmup_eta_seconds": 45,
-+        "startup_budget_seconds": 510,
-+        "timing": {
-+            "queue_ms": 1,
-+            "ramp_up_ms": 2,
-+            "processing_ms": None,
-+            "startup_ms": None,
-+            "server_elapsed_ms": 4,
-+        },
+-def _relative_label(path: Path, root: Path) -> str:
+-    try:
+-        return path.relative_to(root).as_posix() or "."
+-    except ValueError:
+-        return path.as_posix()
++def _session_receipt_identity() -> tuple[str, Path]:
++    """Return the session timestamp and a path partitioned by this process."""
++    started_at = datetime.now(UTC).isoformat()
++    return started_at, _RECEIPT_DIRECTORY / (
++        f"{_RECEIPT_PREFIX}-{os.getpid()}-{time_ns()}.json"
++    )
++
++
++def pytest_sessionstart(session: pytest.Session) -> None:
++    started_at, default_path = _session_receipt_identity()
++    config = session.config
++    config._collection_scope_receipt_started_at = started_at  # type: ignore[attr-defined]
++    config._collection_scope_receipt_default_path = default_path  # type: ignore[attr-defined]
++
++
++def _receipt_path(config: pytest.Config, root: Path) -> Path:
++    configured = config.getoption("--collection-scope-receipt")
++    if not configured:
++        ini_value = config.getini("collection_scope_receipt")
++        ini_path = Path(ini_value) if ini_value else None
++        project_default = getattr(config, "inifile", None)
++        ini_config = getattr(config, "_inicfg", {}).get("collection_scope_receipt")
++        ini_is_cli_override = getattr(ini_config, "origin", None) == "override"
++        # The checked-in pyproject carries the pre-fix fixed path. Treat only
++        # that value as the old default; other ini values remain overrides.
++        is_legacy_project_default = (
++            ini_path is not None
++            and ini_path.resolve() == _LEGACY_RECEIPT_PATH.resolve()
++            and project_default is not None
++            and Path(project_default).resolve() == _SERVICE_PYPROJECT
++            and not ini_is_cli_override
++        )
++        if not is_legacy_project_default:
++            configured = ini_value
++    if configured:
++        receipt_path = Path(configured)
++    else:
++        receipt_path = getattr(config, "_collection_scope_receipt_default_path", None)
++        if receipt_path is None:
++            _, receipt_path = _session_receipt_identity()
++    if not receipt_path.is_absolute():
++        receipt_path = root / receipt_path
++    return receipt_path.resolve()
+ 
+ 
+ def pytest_collection_finish(session: pytest.Session) -> None:
+@@ -52,17 +99,19 @@ def pytest_collection_finish(session: pytest.Session) -> None:
+     expected = {label for label, _ in existing}
+     scope = "full" if expected and collected == expected else "narrowed"
+     receipt = {
++        "pid": os.getpid(),
++        "rootdir": str(root),
++        "started_at": getattr(
++            config,
++            "_collection_scope_receipt_started_at",
++            datetime.now(UTC).isoformat(),
++        ),
+         "declared_roots": declared,
+         "collected_roots": sorted(collected),
+         "collected_count": len(session.items),
+         "scope": scope,
+     }
+-    receipt_path = Path(
+-        config.getoption("--collection-scope-receipt")
+-        or config.getini("collection_scope_receipt")
+-    )
+-    if not receipt_path.is_absolute():
+-        receipt_path = root / receipt_path
++    receipt_path = _receipt_path(config, root)
+     receipt_path.parent.mkdir(parents=True, exist_ok=True)
+     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+ 
+@@ -85,11 +134,11 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+     receipt = getattr(config, "_collection_scope_receipt", None)
+     if receipt is None:
+         return
+-    path = getattr(config, "_collection_scope_receipt_path")
++    path = config._collection_scope_receipt_path  # type: ignore[attr-defined]
+     terminalreporter.write_sep(
+         "=",
+         "collection scope: "
+         f"{receipt['scope']}; declared={receipt['declared_roots']}; "
+         f"collected={receipt['collected_roots']}; count={receipt['collected_count']}; "
+-        f"receipt={_relative_label(path, config.rootpath.resolve())}",
++        f"receipt={path}",
+     )
+diff --git a/apps/prototype-description-service/recognition/application/scan/service.py b/apps/prototype-description-service/recognition/application/scan/service.py
+--- a/apps/prototype-description-service/recognition/application/scan/service.py
++++ b/apps/prototype-description-service/recognition/application/scan/service.py
+@@ -8,7 +8,7 @@ import logging
+ import time
+ import uuid
+ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+-from contextlib import asynccontextmanager
++from contextlib import asynccontextmanager, suppress
+ from dataclasses import dataclass
+ from datetime import UTC, datetime
+ 
+@@ -51,6 +51,9 @@ class _InProcessPersistLockEntry:
+ 
+     lock: asyncio.Lock
+     waiters: int = 0
++    owner_sync_session: object | None = None
++    owner_root_transaction: object | None = None
++    reentry_depth: int = 0
+ 
+ 
+ _IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
+@@ -85,15 +88,47 @@ def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
+     return (str(tenant_uuid), int(media_id))
+ 
+ 
+-async def _in_process_persist_lock(tenant_uuid: uuid.UUID, media_id: int) -> asyncio.Lock:
++def _persist_lock_owner_matches(
++    entry: _InProcessPersistLockEntry,
++    sync_session: object | None,
++    root_transaction: object | None,
++) -> bool:
++    return (
++        sync_session is not None
++        and root_transaction is not None
++        and entry.reentry_depth > 0
++        and entry.owner_sync_session is sync_session
++        and entry.owner_root_transaction is root_transaction
++    )
++
++
++def _sync_session_root_transaction(sync_session: object | None) -> object | None:
++    if sync_session is None:
++        return None
++    get_transaction = getattr(sync_session, "get_transaction", None)
++    if not callable(get_transaction):
++        return None
++    return get_transaction()
++
++
++async def _in_process_persist_lock(
++    tenant_uuid: uuid.UUID,
++    media_id: int,
++    *,
++    sync_session: object | None,
++    root_transaction: object | None,
++) -> tuple[_InProcessPersistLockEntry, bool]:
+     key = _persist_lock_key(tenant_uuid, media_id)
+     async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+         entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+         if entry is None:
+             entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
+             _IN_PROCESS_PERSIST_LOCKS[key] = entry
++        if _persist_lock_owner_matches(entry, sync_session, root_transaction):
++            entry.reentry_depth += 1
++            return entry, True
+         entry.waiters += 1
+-        return entry.lock
++        return entry, False
+ 
+ 
+ def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
+@@ -129,23 +164,57 @@ async def _media_persist_lock(
+         )
+         yield
+         return
+-    lock = await _in_process_persist_lock(tenant_uuid, media_id)
++    sync_session = getattr(session, "sync_session", None)
++    root_transaction = _sync_session_root_transaction(sync_session)
++    entry, reentrant = await _in_process_persist_lock(
++        tenant_uuid,
++        media_id,
++        sync_session=sync_session,
++        root_transaction=root_transaction,
++    )
++    if reentrant:
++        try:
++            yield
++        finally:
++            if _persist_lock_owner_matches(entry, sync_session, root_transaction):
++                entry.reentry_depth -= 1
++        return
++
++    lock = entry.lock
+     try:
+         await lock.acquire()
+     except BaseException:
+         _release_in_process_persist_waiter(tenant_uuid, media_id)
+         raise
++
++    if sync_session is not None and root_transaction is not None:
++        entry.owner_sync_session = sync_session
++        entry.owner_root_transaction = root_transaction
++        entry.reentry_depth = 1
++
+     released = False
+-    sync_session = getattr(session, "sync_session", None)
+     hold_until_commit = False
+ 
++    def _capture_owner(_sess: object = None, transaction: object = None) -> None:
++        if (
++            sync_session is None
++            or getattr(transaction, "parent", None) is not None
++            or entry.owner_sync_session is not None
++        ):
++            return
++        entry.owner_sync_session = sync_session
++        entry.owner_root_transaction = transaction
++        entry.reentry_depth = 1
++
+     def _remove_listener() -> None:
+         if sync_session is None:
+             return
+-        try:
+-            event.remove(sync_session, "after_transaction_end", _release)
+-        except Exception:
+-            pass
++        for event_name, listener in (
++            ("after_transaction_end", _release),
++            ("after_transaction_create", _capture_owner),
++        ):
++            with suppress(Exception):
++                event.remove(sync_session, event_name, listener)
+ 
+     def _release(_sess: object = None, transaction: object = None) -> None:
+         nonlocal released
+@@ -154,6 +223,9 @@ async def _media_persist_lock(
+         if released:
+             return
+         released = True
++        entry.owner_sync_session = None
++        entry.owner_root_transaction = None
++        entry.reentry_depth = 0
+         if lock.locked():
+             lock.release()
+         _release_in_process_persist_waiter(tenant_uuid, media_id)
+@@ -171,6 +243,8 @@ async def _media_persist_lock(
+ 
+     try:
+         if sync_session is not None:
++            if root_transaction is None:
++                event.listen(sync_session, "after_transaction_create", _capture_owner)
+             event.listen(sync_session, "after_transaction_end", _release)
+             hold_until_commit = True
+         yield
+diff --git a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
+--- a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
++++ b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
+@@ -1591,7 +1591,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+         # Extract centroid from materialized view relationship if available
+         centroid = None
+         centroid_refreshed_at = None
+-        if hasattr(model, "centroid_data") and model.centroid_data is not None:
++        if "centroid_data" in state.dict and model.centroid_data is not None:
+             centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
+             if isinstance(model.centroid_data.refreshed_at, datetime):
+                 centroid_refreshed_at = model.centroid_data.refreshed_at
+@@ -1639,6 +1639,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
+             .where(ClusterModel.disposed_at.is_(None))
+             .options(
+                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
++                selectinload(ClusterModel.centroid_data),
+                 selectinload(ClusterModel.merge_receipts),
+             )
+             .order_by(ClusterModel.created_at)
+diff --git a/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py b/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
+--- a/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
++++ b/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
+@@ -3,14 +3,16 @@
+ from __future__ import annotations
+ 
+ import uuid
+-from types import SimpleNamespace
+-from unittest.mock import AsyncMock
++from unittest.mock import AsyncMock, create_autospec
+ 
+ import pytest
+ from fastapi import FastAPI
+ from fastapi.testclient import TestClient
+ 
++from db.models import IdentityMember as IdentityMemberModel
++from db.models import MediaIdentity as MediaIdentityModel
+ from recognition.domain.job import Job, JobStatus, JobType
++from recognition.domain.representative import ClusterRepresentative
+ from recognition.interface_adapters.http import deps as dependencies
+ from recognition.interface_adapters.http import router as recognition_router
+ from recognition.tests.api.conftest import FakeSession, seed_cluster
+@@ -345,14 +347,14 @@ def test_cluster_delta_returns_only_changed_clusters(
+         identity_id=str(uuid.uuid4()),
+         media_id="202",
+     )
+-    fake_cluster_repository.clusters[changed.id].representatives = [
+-        SimpleNamespace(
+-            id=str(uuid.uuid4()),
+-            identity_id=changed_identity_id,
+-            media_id="101",
+-            is_user_selected=True,
+-        )
+-    ]
++    representative = create_autospec(ClusterRepresentative, instance=True)
++    representative.id = str(uuid.uuid4())
++    representative.identity_id = changed_identity_id
++    representative.media_id = "101"
++    representative.is_user_selected = True
++    representative.quality_score = 1.0
++    representative.quality_components = None
++    fake_cluster_repository.clusters[changed.id].representatives = [representative]
+     snapshot_version = fake_cluster_repository._snapshot_version
+ 
+     async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
+@@ -924,21 +926,19 @@ def test_list_cluster_members_includes_face_thumb_url_for_blob_backed_members(
+     )
+     fake_cluster_service.cluster_repository = fake_cluster_repository
+ 
+-    fake_cluster_repository.members_by_cluster[cluster.id] = [
+-        (
+-            SimpleNamespace(similarity=0.9),
+-            SimpleNamespace(
+-                id=str(uuid.uuid4()),
+-                media_id="909",
+-                confidence=0.97,
+-                bbox_x=5,
+-                bbox_y=6,
+-                bbox_width=20,
+-                bbox_height=24,
+-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+-            ),
+-        )
+-    ]
++    member = create_autospec(IdentityMemberModel, instance=True)
++    member.cluster_id = cluster.id
++    member.similarity = 0.9
++    identity = create_autospec(MediaIdentityModel, instance=True)
++    identity.id = str(uuid.uuid4())
++    identity.media_id = "909"
++    identity.confidence = 0.97
++    identity.bbox_x = 5
++    identity.bbox_y = 6
++    identity.bbox_width = 20
++    identity.bbox_height = 24
++    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
++    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
+ 
+     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+ 
+@@ -959,21 +959,19 @@ def test_list_cluster_members_does_not_synthesize_missing_crop_coordinates(
+     )
+     fake_cluster_service.cluster_repository = fake_cluster_repository
+ 
+-    fake_cluster_repository.members_by_cluster[cluster.id] = [
+-        (
+-            SimpleNamespace(similarity=0.9),
+-            SimpleNamespace(
+-                id=str(uuid.uuid4()),
+-                media_id="909",
+-                confidence=0.97,
+-                bbox_x=None,
+-                bbox_y=6,
+-                bbox_width=20,
+-                bbox_height=24,
+-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+-            ),
+-        )
+-    ]
++    member = create_autospec(IdentityMemberModel, instance=True)
++    member.cluster_id = cluster.id
++    member.similarity = 0.9
++    identity = create_autospec(MediaIdentityModel, instance=True)
++    identity.id = str(uuid.uuid4())
++    identity.media_id = "909"
++    identity.confidence = 0.97
++    identity.bbox_x = None
++    identity.bbox_y = 6
++    identity.bbox_width = 20
++    identity.bbox_height = 24
++    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
++    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
+ 
+     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+ 
+@@ -995,21 +993,19 @@ def test_list_cluster_members_omits_face_thumb_url_when_crop_exceeds_max_geometr
+     )
+     fake_cluster_service.cluster_repository = fake_cluster_repository
+ 
+-    fake_cluster_repository.members_by_cluster[cluster.id] = [
+-        (
+-            SimpleNamespace(similarity=0.9),
+-            SimpleNamespace(
+-                id=str(uuid.uuid4()),
+-                media_id="909",
+-                confidence=0.97,
+-                bbox_x=5,
+-                bbox_y=6,
+-                bbox_width=40_000,
+-                bbox_height=24,
+-                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+-            ),
+-        )
+-    ]
++    member = create_autospec(IdentityMemberModel, instance=True)
++    member.cluster_id = cluster.id
++    member.similarity = 0.9
++    identity = create_autospec(MediaIdentityModel, instance=True)
++    identity.id = str(uuid.uuid4())
++    identity.media_id = "909"
++    identity.confidence = 0.97
++    identity.bbox_x = 5
++    identity.bbox_y = 6
++    identity.bbox_width = 40_000
++    identity.bbox_height = 24
++    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
++    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
+ 
+     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
+ 
+@@ -1029,18 +1025,16 @@ def test_top_unlabeled_omits_invalid_representative_bbox_and_thumb_url(
+         identity_count=2,
+     )
+     fake_cluster_repository.clusters[cluster.id].user_confirmed = False
+-    fake_cluster_repository.clusters[cluster.id].representatives = [
+-        SimpleNamespace(
+-            id=str(uuid.uuid4()),
+-            media_id="909",
+-            media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
+-            bbox_x=5,
+-            bbox_y=6,
+-            bbox_width=0,
+-            bbox_height=24,
+-            is_user_selected=True,
+-        )
+-    ]
++    representative = create_autospec(ClusterRepresentative, instance=True)
++    representative.id = str(uuid.uuid4())
++    representative.media_id = "909"
++    representative.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
++    representative.bbox_x = 5
++    representative.bbox_y = 6
++    representative.bbox_width = 0
++    representative.bbox_height = 24
++    representative.is_user_selected = True
++    fake_cluster_repository.clusters[cluster.id].representatives = [representative]
+ 
+     resp = api_client.get(
+         "/recognition/clusters/top-unlabeled",
+@@ -1122,14 +1116,14 @@ def test_get_tenant_snapshot_returns_correct_shape(
+         fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
+     )
+     representative_id = str(uuid.uuid4())
+-    fake_cluster_repository.clusters[cluster1.id].representatives = [
+-        SimpleNamespace(
+-            id=str(uuid.uuid4()),
+-            identity_id=representative_id,
+-            media_id="101",
+-            is_user_selected=True,
+-        )
+-    ]
++    representative = create_autospec(ClusterRepresentative, instance=True)
++    representative.id = str(uuid.uuid4())
++    representative.identity_id = representative_id
++    representative.media_id = "101"
++    representative.is_user_selected = True
++    representative.quality_score = 1.0
++    representative.quality_components = None
++    fake_cluster_repository.clusters[cluster1.id].representatives = [representative]
+     latest_job = Job(
+         id=str(uuid.uuid4()),
+         type=JobType.CLUSTERING,
+@@ -1190,19 +1184,23 @@ def test_get_tenant_snapshot_prefers_pinned_representative_when_order_is_unsorte
+     )
+     unpinned_representative_id = str(uuid.uuid4())
+     pinned_representative_id = str(uuid.uuid4())
++    unpinned_representative = create_autospec(ClusterRepresentative, instance=True)
++    unpinned_representative.id = str(uuid.uuid4())
++    unpinned_representative.identity_id = unpinned_representative_id
++    unpinned_representative.media_id = "101"
++    unpinned_representative.is_user_selected = False
++    unpinned_representative.quality_score = 1.0
++    unpinned_representative.quality_components = None
++    pinned_representative = create_autospec(ClusterRepresentative, instance=True)
++    pinned_representative.id = str(uuid.uuid4())
++    pinned_representative.identity_id = pinned_representative_id
++    pinned_representative.media_id = "202"
++    pinned_representative.is_user_selected = True
++    pinned_representative.quality_score = 1.0
++    pinned_representative.quality_components = None
+     fake_cluster_repository.clusters[cluster.id].representatives = [
+-        SimpleNamespace(
+-            id=str(uuid.uuid4()),
+-            identity_id=unpinned_representative_id,
+-            media_id="101",
+-            is_user_selected=False,
+-        ),
+-        SimpleNamespace(
+-            id=str(uuid.uuid4()),
+-            identity_id=pinned_representative_id,
+-            media_id="202",
+-            is_user_selected=True,
+-        ),
++        unpinned_representative,
++        pinned_representative,
+     ]
+ 
+     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+diff --git a/apps/prototype-description-service/recognition/tests/conftest.py b/apps/prototype-description-service/recognition/tests/conftest.py
+--- a/apps/prototype-description-service/recognition/tests/conftest.py
++++ b/apps/prototype-description-service/recognition/tests/conftest.py
+@@ -12,7 +12,7 @@ from typing import NoReturn
+ import numpy as np
+ import pytest
+ import pytest_asyncio
+-from sqlalchemy import Table, event, text
++from sqlalchemy import Table, event, inspect, text
+ from sqlalchemy.dialects.postgresql import UUID
+ from sqlalchemy.exc import OperationalError
+ from sqlalchemy.ext.compiler import compiles
+@@ -44,6 +44,31 @@ os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
+ os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
+ 
+ 
++SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
++    {
++        # Scene-description tables are registered by db.models but provisioned by scene fixtures.
++        "describe_demand_leases",
++        "describe_operations",
++        "describe_startups",
++        "image_description_run_items",
++        "image_description_runs",
++        "image_descriptions",
++        # Portal and billing tables are outside this recognition fixture's schema.
++        "api_key_rotation_history",
++        "billing_subscription_projection",
++        "billing_webhook_inbox",
++        "export_jobs",
++        "portal_identity",
++        "portal_tenant_invitation",
++        "tenant_entitlement",
++        "tenant_key_idempotency",
++        "usage_reservation",
++        # This identity table is provisioned by the migration but not needed here.
++        "identity_name_suppressions",
 +    }
-+    detail.update(overrides)
-+    return detail
++)
 +
 +
-+@pytest.mark.parametrize("eta", [-1, float("nan"), float("inf"), "30", None])
-+def test_post_accept_rebuild_drops_invalid_warmup_eta(eta):
-+    from fastapi import HTTPException, status
-+
-+    from scene.config.settings import DescriptionSettings
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    rebuilt = describe_module._rebuild_post_accept_typed_error(
-+        HTTPException(
-+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-+            detail=_rebuild_test_exception_detail(warmup_eta_seconds=eta),
-+        ),
-+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
-+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
-+        server_start=0,
+ @compiles(UUID, "sqlite")
+ def _sqlite_uuid_storage(type_, compiler, **kwargs) -> str:
+     # SQLite gives a literal UUID declaration NUMERIC affinity. Valid UUIDs
+@@ -85,6 +110,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
+         tables: list[Table] = [
+             Table("identity_clusters", Base.metadata),
+             Table("curation_replay_records", Base.metadata),
++            Table("cluster_merge_receipts", Base.metadata),
+             Table("identity_cluster_representatives", Base.metadata),
+             Table("identity_members", Base.metadata),
+             Table("cluster_merge_suggestions", Base.metadata),
+@@ -127,6 +153,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
+                 """
+             )
+         )
++        created_table_names = await conn.run_sync(
++            lambda sync_conn: set(inspect(sync_conn).get_table_names())
++        )
++        missing_table_names = sorted(
++            set(Base.metadata.tables) - created_table_names - SQLITE_TEST_TABLE_EXCLUSIONS
++        )
++        if missing_table_names:
++            raise RuntimeError(
++                "db_session did not create all mapped SQLite tables; missing: "
++                + ", ".join(missing_table_names)
++            )
+ 
+     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+     async with session_factory() as session:
+diff --git a/apps/prototype-description-service/recognition/tests/db_seed.py b/apps/prototype-description-service/recognition/tests/db_seed.py
+--- a/apps/prototype-description-service/recognition/tests/db_seed.py
++++ b/apps/prototype-description-service/recognition/tests/db_seed.py
+@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from db.models import MediaIdentity
+ from db.settings import get_database_settings
++from recognition.application.embedding.manifest import active_embedding_model_id
+ from recognition.infrastructure.repositories._helpers import coerce_uuid
+ 
+ _DB_SETTINGS = get_database_settings()
+@@ -44,7 +45,7 @@ async def ensure_media_identity(
+         bbox_height=1,
+         confidence=1.0,
+         embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
+-        embedding_model="buffalo_l@insightface",
++        embedding_model=active_embedding_model_id(),
+     )
+     session.add(media)
+     await session.flush()
+diff --git a/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py b/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
+--- a/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
++++ b/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
+@@ -405,7 +405,11 @@ def _run_do_restart(
+             echo "ssh $@" >> "{log}"
+             # Join args for pattern matching.
+             cmd="$*"
++            # Consume piped remote bodies so pipefail does not turn a fake
++            # successful SSH response into a local SIGPIPE failure.
++            cat >/dev/null
+             case "$cmd" in
++              *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
+               *image*inspect*|*RepoDigests*)
+                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
+                 exit 0 ;;
+@@ -434,6 +438,12 @@ def _run_do_restart(
+         assert_remote_disk_headroom_for_pull() {{ :; }}
+         assert_remote_build_free_space() {{ :; }}
+         ship_remote_image_repo_env() {{ echo "ship $1" >> "{log}"; }}
++        # Keep this gate focused on pull → repair → restart ordering; the
++        # candidate health checks are covered by their own fake-SSH tests.
++        probe_cutover_api_health() {{ :; }}
++        probe_canonical_api_health() {{ :; }}
++        verify_running_image_digest() {{ :; }}
++        curl() {{ :; }}
+         if do_restart dev "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; then exit 0; else exit $?; fi
+         """
+     )
+@@ -880,6 +890,13 @@ def test_converge_runtime_zero_refuses_drift() -> None:
+             textwrap.dedent(
+                 f"""\
+                 source "{DEPLOY_SCRIPT}"
++                image_repo_resource() {{
++                  case "$1" in
++                    claim) printf '%s\n' fake-owner ;;
++                    restore) echo RESTORE_CALLED >&2 ;;
++                    *) return 1 ;;
++                  esac
++                }}
+                 read_remote_image_repo() {{ echo ""; }}
+                 ship_remote_image_repo_env() {{ :; }}
+                 preserve_rollback_tag() {{ :; }}
+@@ -896,6 +913,7 @@ def test_converge_runtime_zero_refuses_drift() -> None:
+     assert proc.returncode != 0
+     combined = (proc.stdout or "") + (proc.stderr or "")
+     assert "ACX_CONVERGE_RUNTIME=0 refused" in combined, combined
++    assert "RESTORE_CALLED" in combined, combined
+ 
+ 
+ def test_repair_probe_skips_when_uid_matches(tmp_path: Path) -> None:
+@@ -1177,9 +1195,9 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
+ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
+     """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
+ 
+-    Behavioural: fake ssh executes the remote snippet against a local file that
+-    lacks a trailing newline; result must be prior secret intact + ACX_IMAGE_REPO
+-    on a new line; remote command must use sudo.
++    Behavioural: the fake SSH/resource seams apply the operation to a local file
++    that lacks a trailing newline; result must be prior secret intact plus
++    ACX_IMAGE_REPO on a new line, and the recorded command must use sudo.
+     """
+     log = tmp_path / "ssh.log"
+     env_file = tmp_path / "prod.env"
+@@ -1218,11 +1236,31 @@ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
+         "ACX_BUILD_TARGET": "",
+         "ACX_IMAGE_VARIANT": "",
+     }
++    script = textwrap.dedent(
++        f"""\
++        source "{DEPLOY_SCRIPT}"
++        image_repo_resource() {{
++          case "$1" in
++            ship)
++              ssh -l "$OCI_USER" -- "$OCI_HOST" "sudo true"
++              echo "sudo tail -c1 {env_file}" >> "{log}"
++              last_byte="$(tail -c1 "{env_file}" | od -An -t x1 | tr -d '[:space:]')"
++              if [ -n "$last_byte" ] && [ "$last_byte" != "0a" ]; then
++                echo >> "{env_file}"
++              fi
++              echo "ACX_IMAGE_REPO=$4" >> "{env_file}"
++              ;;
++            *) return 1 ;;
++          esac
++        }}
++        ship_remote_image_repo_env /opt/acx-backend/dev
++        """
 +    )
-+
-+    _multipart_validator().validate({"detail": rebuilt.detail})
-+    assert rebuilt.detail["code"] == "description_service_starting"
-+    assert "warmup_eta_seconds" not in rebuilt.detail
-+    assert rebuilt.detail["operation_id"] == "accepted-operation"
-+
-+
-+def test_post_accept_starting_rebuild_falls_back_when_operation_id_unavailable():
-+    from fastapi import HTTPException, status
-+
-+    from scene.config.settings import DescriptionSettings
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    detail = _rebuild_test_exception_detail(operation_id=None)
-+    rebuilt = describe_module._rebuild_post_accept_typed_error(
-+        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
-+        op=SimpleNamespace(operation_id=None, startup_id="accepted-startup"),
-+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
-+        server_start=0,
+     proc = subprocess.run(
+         [
+             "bash",
+             "-c",
+-            f'source "{DEPLOY_SCRIPT}"; ship_remote_image_repo_env /opt/acx-backend/dev',
++            script,
+         ],
+         env=env,
+         capture_output=True,
+@@ -1368,6 +1406,15 @@ def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
+             textwrap.dedent(
+                 f"""\
+                 source "{DEPLOY_SCRIPT}"
++                image_repo_resource() {{
++                  case "$1" in
++                    restore)
++                      echo "resource action=restore" >> "{log}"
++                      ACX_IMAGE_REPO="$ACX_PRIOR_IMAGE_REPO" ship_remote_image_repo_env "$2"
++                      ;;
++                    *) return 1 ;;
++                  esac
++                }}
+                 ship_remote_image_repo_env() {{
+                   echo "ship repo=$ACX_IMAGE_REPO dir=$1" >> "{log}"
+                 }}
+diff --git a/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py b/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
+--- a/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
++++ b/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
+@@ -11,6 +11,7 @@ from typing import Protocol
+ import numpy as np
+ import pytest
+ 
++from db.models import ClusterCentroid as ClusterCentroidModel
+ from db.models import IdentityCluster as IdentityClusterModel
+ from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
+ from db.models import MediaIdentity as MediaIdentityModel
+@@ -408,6 +409,14 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
+         disposed_at=datetime.now(tz=UTC),
+     )
+     db_session.add_all([active_rep, disposed_rep])
++    db_session.add(
++        ClusterCentroidModel(
++            cluster_id=uuid.UUID(active_cluster.id),
++            tenant_id=tenant.id,
++            centroid=[0.3] * 512,
++            refreshed_at=datetime.now(tz=UTC),
++        )
 +    )
-+
-+    _multipart_validator().validate({"detail": rebuilt.detail})
-+    assert rebuilt.detail["code"] == "description_service_unavailable"
-+    assert rebuilt.detail["reason"] == "state_missing"
-+    assert "warmup_eta_seconds" not in rebuilt.detail
-+    assert "startup_budget_seconds" not in rebuilt.detail
-+
-+
-+def test_post_accept_starting_rebuild_uses_accepted_operation_id_when_upstream_id_null():
-+    from fastapi import HTTPException, status
-+
-+    from scene.config.settings import DescriptionSettings
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    rebuilt = describe_module._rebuild_post_accept_typed_error(
-+        HTTPException(
-+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-+            detail=_rebuild_test_exception_detail(operation_id=None),
-+        ),
-+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
-+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
-+        server_start=0,
-+    )
-+
-+    _multipart_validator().validate({"detail": rebuilt.detail})
-+    assert rebuilt.detail["code"] == "description_service_starting"
-+    assert rebuilt.detail["operation_id"] == "accepted-operation"
-+
-+
-+def test_post_accept_unavailable_rebuild_uses_contract_reason_for_null_reason():
-+    from fastapi import HTTPException, status
-+
-+    from scene.config.settings import DescriptionSettings
-+    from scene.interface_adapters.http.routers import describe as describe_module
-+
-+    detail = _rebuild_test_exception_detail(
-+        code="description_service_unavailable",
-+        operation_id="upstream-operation",
-+        startup_id="upstream-startup",
-+        warmup_eta_seconds=None,
-+        startup_budget_seconds=None,
-+        reason=None,
-+    )
-+    rebuilt = describe_module._rebuild_post_accept_typed_error(
-+        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail),
-+        op=SimpleNamespace(operation_id="accepted-operation", startup_id="accepted-startup"),
-+        settings=DescriptionSettings(gpu_warmup_timeout_seconds=17.5),
-+        server_start=0,
-+    )
-+
-+    _multipart_validator().validate({"detail": rebuilt.detail})
-+    assert rebuilt.detail["code"] == "description_service_unavailable"
-+    assert rebuilt.detail["reason"] == "state_missing"
-+    assert "warmup_eta_seconds" not in rebuilt.detail
-+    assert "startup_budget_seconds" not in rebuilt.detail
-+
-+
- def test_gpuflow2_unavailable_fixture_round_trips():
-     payload = json.loads(_UNAVAILABLE_FIXTURE.read_text())
-     validator = _multipart_validator()
-diff --git a/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md b/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md
+     await db_session.flush()
+ 
+     disposed_cluster_model = await db_session.get(IdentityClusterModel, uuid.UUID(disposed_cluster.id))
+@@ -423,6 +432,8 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
+     assert snapshot_generation_id is not None
+     assert uuid.UUID(snapshot_generation_id)
+     assert [cluster.id for cluster in clusters] == [active_cluster.id]
++    assert clusters[0].centroid is not None
++    np.testing.assert_allclose(clusters[0].centroid, np.array([0.3] * 512, dtype=np.float32))
+     assert [member.identity_id for member, _identity in members] == [active_identity_id]
+ 
+     refreshed_active_cluster = await db_session.get(IdentityClusterModel, uuid.UUID(active_cluster.id))
+diff --git a/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py b/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
+--- a/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
++++ b/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
+@@ -24,6 +24,7 @@ from db.models import (
+ from recognition.application.discovery.graph.algorithm import GraphAlgorithm
+ from recognition.application.embedding.detector import StubFaceDetector
+ from recognition.application.embedding.generator import StubEmbeddingGenerator
++from recognition.application.embedding.manifest import active_embedding_model_id
+ from recognition.application.scan.scan_queue_service import ScanQueueService
+ from recognition.application.scan.service import ScanService
+ from recognition.domain.identity import MediaIdentity as DomainMediaIdentity
+@@ -105,7 +106,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
+             bbox_height=1,
+             confidence=0.99,
+             embedding=embedding,
+-            embedding_model="buffalo_l@insightface",
++            embedding_model=active_embedding_model_id(),
+         ),
+         MediaIdentity(
+             tenant_id=tenant.id,
+@@ -117,7 +118,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
+             bbox_height=1,
+             confidence=0.98,
+             embedding=embedding,
+-            embedding_model="buffalo_l@insightface",
++            embedding_model=active_embedding_model_id(),
+         ),
+     ]
+     db_session.add_all(identities)
+@@ -186,7 +187,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
+             bbox_height=1,
+             confidence=0.97,
+             embedding=[0.2] * 512,
+-            embedding_model="buffalo_l@insightface",
++            embedding_model=active_embedding_model_id(),
+         ),
+         MediaIdentity(
+             tenant_id=tenant.id,
+@@ -198,7 +199,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
+             bbox_height=1,
+             confidence=0.96,
+             embedding=[0.3] * 512,
+-            embedding_model="buffalo_l@insightface",
++            embedding_model=active_embedding_model_id(),
+         ),
+     ]
+     db_session.add_all(identities)
+diff --git a/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py b/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
+--- a/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
++++ b/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
+@@ -43,6 +43,7 @@ from recognition.application.assignment.gate import AssignmentGate
+ from recognition.application.discovery.centroid import CentroidDiscovery
+ from recognition.application.discovery.graph.discovery import GraphDiscovery
+ from recognition.application.discovery.representative import RepresentativeDiscovery
++from recognition.application.embedding.manifest import active_embedding_model_id
+ from recognition.application.orchestration.cluster_service import ClusterService
+ from recognition.application.persistence.assignment_writer import AssignmentWriter
+ from recognition.application.settings import ClusteringSettings
+@@ -80,7 +81,7 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
+                 bbox_height=10,
+                 confidence=0.99,
+                 embedding=embedding.tolist(),
+-                embedding_model="buffalo_l@insightface",
++                embedding_model=active_embedding_model_id(),
+             )
+         )
+     return rows
+diff --git a/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py b/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py
 new file mode 100644
 --- /dev/null
-+++ b/docs/workbay/reports/GPUFLOW-2-svc-unavailable-reason-review.md
-@@ -0,0 +1,57 @@
-+# GPUFLOW-2 svc-unavailable-reason review
++++ b/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py
+@@ -0,0 +1,62 @@
++"""Regression tests for the SQLite persist-lock transaction ownership."""
 +
-+Verdict: fail
++import asyncio
 +
-+| Base | Tip | Files |
-+| --- | --- | --- |
-+| `284616c05` | `720af8ab8` | `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py`; `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py`; `apps/prototype-description-service/scene/tests/fixtures/gpuflow2-unavailable.json`; `apps/prototype-description-service/scene/tests/test_describe_route.py` (outside declared owned list); `apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py` (outside declared owned list) |
++import pytest
++from sqlalchemy import select
 +
-+## FINDINGS
++from db.models import MediaIdentity
++from recognition.application.scan.service import (
++    _InProcessPersistLockEntry,
++    _persist_lock_owner_matches,
++)
 +
-+### GPUFLOW-2-SVCUNAVAILABLEREASON-R-01 — high
 +
-+- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:523-546,1133-1139,907-925`; adapter resolver `apps/prototype-description-service/scene/interface_adapters/http/deps.py:91-119`.
-+- Evidence: The new `_unavailable_from_gpu_gate()` treats an endpoint as configured whenever `settings.gpu_endpoint_url` is truthy; it never checks endpoint privacy or whether the selected GPU adapter is `UnavailableDescriptionAdapter`. `get_gpu_description_adapter()` returns that unavailable GPU-kind adapter for a non-private endpoint. Therefore an explicit GPU request with a stopped snapshot and `ACX_GPU_ENDPOINT_URL=http://8.8.8.8:8000` has `gpu_compute=True`, `blocked=False`, and enters the `description_service_starting` branch. The later `DescriptionAdapterUnavailableError` mapping to `endpoint_not_private` at `:1327-1343` is reached only after the service has waited/retried and invoked the unusable adapter.
-+- Impact: A known-invalid endpoint is advertised as starting and its demand can cause the lifecycle controller to start/wait for a GPU that cannot serve requests. The SPA receives a warmup promise instead of the actionable `endpoint_not_private` failure, so the fail-closed endpoint boundary is bypassed.
-+- Fix: Carry the effective adapter’s availability/endpoint-readiness decision into `_ensure_gpu_ready()` (or reject the unavailable GPU adapter before accepting lifecycle demand), returning `endpoint_not_private`/`endpoint_resolution_pending` before any starting response. Add a stopped-snapshot regression with a non-private or invalid-scheme endpoint.
++@pytest.mark.asyncio
++async def test_same_sqlite_transaction_can_rescan_one_media_item(
++    db_session,
++    tenant,
++    scan_service,
++) -> None:
++    """A same-session replay must re-enter the lock held until commit."""
++    await scan_service.process_media_item(
++        tenant_id=str(tenant.id),
++        media_id=123,
++        media_url="http://example.test/image.jpg",
++    )
 +
-+### GPUFLOW-2-SVCUNAVAILABLEREASON-R-02 — high
++    stmt = select(MediaIdentity).where(
++        MediaIdentity.tenant_id == tenant.id,
++        MediaIdentity.media_id == 123,
++    )
++    first_row = (await db_session.execute(stmt)).scalar_one()
 +
-+- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:405-415,1315-1320`; contract `packages/shared-contracts/schemas/scene-describe-multipart.schema.json:125-150`.
-+- Evidence: `_plain_typed_error_missing_operation_fields()` triggers `_rebuild_post_accept_typed_error()` only when one of `operation_id`, `startup_id`, or `timing` is absent. A downstream/upstream `HTTPException` with a complete operation envelope but a `description_service_unavailable` detail lacking `reason` (or a `description_service_starting` detail lacking `startup_budget_seconds`) returns `False` from this predicate, and the outer handler re-raises the original detail unchanged. The schema requires `reason` for unavailable and `startup_budget_seconds` for starting. The new tests cover an upstream unavailable detail with missing operation fields plus `reason`, not the full-envelope case.
-+- Impact: A typed post-accept failure can cross the service boundary with a schema-invalid detail and no machine-readable unavailable reason (or no service-owned warmup budget). PHP/SPA consumers cannot safely classify or resume it, violating the release response contract.
-+- Fix: Normalize every recognized typed code after acceptance, not only details missing operation metadata; validate code-specific required fields and closed-key/value shape before preserving an upstream exception. Add regressions for full envelopes with missing, null, and invalid reason/budget fields, while preserving only contract-valid source metadata.
++    await asyncio.wait_for(
++        scan_service.process_media_item(
++            tenant_id=str(tenant.id),
++            media_id=123,
++            media_url="http://example.test/image.jpg",
++        ),
++        timeout=1.0,
++    )
 +
-+### GPUFLOW-2-SVCUNAVAILABLEREASON-R-03 — low
++    rows = (await db_session.execute(stmt)).scalars().all()
++    assert len(rows) == 1
++    assert rows[0].id == first_row.id
 +
-+- File: `apps/prototype-description-service/scene/tests/test_describe_route.py:1073-1118,1145-1246`; `apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py:1-16,103-128`.
-+- Evidence: The supplied delta changes both test files, while the declared `svc-unavailable-reason` owned list contains only `describe.py`, `responses.py`, and the new `scene/tests/fixtures/gpuflow2-unavailable.json`. The two test paths are not in that list.
-+- Impact: The delta crosses the lane boundary and can be merged with sibling-owned test changes, obscuring ownership and creating avoidable merge conflicts even though the assertions are relevant.
-+- Fix: Move these test edits to their owning lane or update the orchestration ownership before landing; enforce the changed-path allow-list mechanically.
 +
-+## VERIFICATION
++def test_persist_lock_owner_does_not_match_distinct_sessions() -> None:
++    """A different sync session cannot reuse another session's ownership."""
++    owner_session = object()
++    other_session = object()
++    root_transaction = object()
++    entry = _InProcessPersistLockEntry(
++        lock=asyncio.Lock(),
++        owner_sync_session=owner_session,
++        owner_root_transaction=root_transaction,
++        reentry_depth=1,
++    )
 +
-+- The required lock verification passed with the lane interpreter: `.venv/bin/python -m pytest scripts/tests/test_composer_lock_tracked.py -q -p no:cacheprovider` — `1 passed`.
-+- Focused fixture/schema coverage passed: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python -m pytest apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py -k 'fixture or typed_error_envelopes' -q -p no:cacheprovider` — `3 passed, 5 deselected`.
-+- Direct probes confirmed the full-envelope normalizer predicate is false for a typed unavailable detail without `reason`, and the readiness gate returns `(None, None)` for a configured non-private endpoint with a stopped snapshot.
-+- The complete lane-row route-suite invocation was attempted with the resolved lane interpreter. Collection/initial execution hit the documented DB-backed sandbox hang (the unconstrained attempt also hit OpenBLAS thread creation limits), so it was interrupted; no pass is claimed for that suite.
++    assert _persist_lock_owner_matches(entry, owner_session, root_transaction)
++    assert not _persist_lock_owner_matches(entry, other_session, root_transaction)
++    assert not _persist_lock_owner_matches(entry, owner_session, object())
+diff --git a/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py b/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
+--- a/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
++++ b/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
+@@ -11,6 +11,7 @@ from __future__ import annotations
+ import inspect
+ from datetime import UTC, datetime
+ from typing import Any
++from unittest.mock import create_autospec
+ from uuid import UUID, uuid4
+ 
+ import numpy as np
+@@ -22,7 +23,8 @@ from recognition.application.similarity import SimilaritySearch
+ from recognition.application.suggestions.refresh_service import SuggestionRefreshService
+ from recognition.domain.cluster import IdentityCluster
+ from recognition.domain.identity import MediaIdentity
+-from recognition.domain.repositories import SuggestionCreateData
++from recognition.domain.repositories import ClusterRepository, SuggestionCreateData
++from recognition.domain.representative import ClusterRepresentative
+ from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+ from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+ 
+@@ -249,39 +251,6 @@ async def test_internal_gallery_attribute_error_does_not_authorize_cached_search
+     )
+ 
+ 
+-class _MissingMethodClusterRepository:
+-    """Batch-surfacing double: Protocol method is absent, not faulting."""
+-
+-    def __init__(
+-        self,
+-        *,
+-        identities_by_cluster: dict[str, list[MediaIdentity]],
+-        labeled_cluster: IdentityCluster,
+-    ) -> None:
+-        self._identities_by_cluster = identities_by_cluster
+-        self._labeled_cluster = labeled_cluster
+-
+-    async def get_member_identities_for_clusters(self, cluster_ids: list[str]) -> dict[str, list[MediaIdentity]]:
+-        return {cid: list(self._identities_by_cluster.get(cid, [])) for cid in cluster_ids}
+-
+-    async def get_by_id(self, cluster_id: str) -> IdentityCluster:
+-        return self._labeled_cluster
+-
+-
+-class _AwaitableFaultClusterRepository(_MissingMethodClusterRepository):
+-    async def get_all_representatives(self, cluster_id: str) -> list[Any]:
+-        raise AttributeError("await-time gallery fault")
+-
+-
+-class _IterationFaultClusterRepository(_MissingMethodClusterRepository):
+-    async def get_all_representatives(self, cluster_id: str) -> Any:
+-        def _rows() -> Any:
+-            raise AttributeError("iteration gallery fault")
+-            yield None  # pragma: no cover
+-
+-        return _rows()
+-
+-
+ def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
+     return IdentityCluster(
+         tenant_id=tenant_id,
+@@ -294,6 +263,17 @@ def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
+     )
+ 
+ 
++def _cluster_repository_double(
++    *,
++    identities_by_cluster: dict[str, list[MediaIdentity]],
++    labeled_cluster: IdentityCluster,
++) -> Any:
++    repository = create_autospec(ClusterRepository, instance=True)
++    repository.get_member_identities_for_clusters.return_value = identities_by_cluster
++    repository.get_by_id.return_value = labeled_cluster
++    return repository
 +
-+## Re-review r3 (720af8ab8..bbd4013fa)
 +
-+| finding | verdict | evidence |
-+| --- | --- | --- |
-+| GPUFLOW-2-SVCUNAVAILABLEREASON-R-01 | fixed | `describe.py:1216-1234` rejects a GPU-kind `UnavailableDescriptionAdapter` before digest lookup or operation acceptance; `describe.py:439-461` maps its resolver reason or endpoint fallback, and `describe.py:603-608,963-967` also carries the adapter into the lifecycle gate. |
-+| GPUFLOW-2-SVCUNAVAILABLEREASON-R-02 | fixed | `describe.py:464-490` validates recognized typed envelopes and code-specific required fields; `describe.py:1411-1424` rebuilds any invalid post-accept detail, while `describe.py:509-520,522-526` supplies the service settings budget or a contract reason. |
+ def _surface_service(
+     repo: Any,
+     tenant_id: str,
+@@ -344,10 +324,11 @@ async def test_present_method_await_attribute_error_does_not_authorize_cached_se
+     labeled_id = str(uuid4())
+     unlabeled_id = str(uuid4())
+     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+-    repo = _AwaitableFaultClusterRepository(
++    repo = _cluster_repository_double(
+         identities_by_cluster={unlabeled_id: [unstamped]},
+         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+     )
++    repo.get_all_representatives.side_effect = AttributeError("await-time gallery fault")
+     service, suggestion_repo, search = _surface_service(repo, tenant_id)
+ 
+     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+@@ -364,10 +345,16 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
+     labeled_id = str(uuid4())
+     unlabeled_id = str(uuid4())
+     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+-    repo = _IterationFaultClusterRepository(
++    repo = _cluster_repository_double(
+         identities_by_cluster={unlabeled_id: [unstamped]},
+         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+     )
 +
-+### FINDINGS
++    def _rows() -> Any:
++        raise AttributeError("iteration gallery fault")
++        yield None  # pragma: no cover
 +
-+#### GPUFLOW-2-SVCUNAVAILABLEREASON-R-04 — high
++    repo.get_all_representatives.return_value = _rows()
+     service, suggestion_repo, search = _surface_service(repo, tenant_id)
+ 
+     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+@@ -379,16 +366,20 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
+ 
+ @pytest.mark.asyncio
+ async def test_absent_method_unstamped_identities_may_use_precomputed_cache() -> None:
+-    """Lookup AttributeError on an incomplete double keeps unstamped cache compatibility."""
++    """An autospecced repository exposes the live gallery required by surfacing."""
+     tenant_id = str(uuid4())
+     labeled_id = str(uuid4())
+     unlabeled_id = str(uuid4())
+     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
+-    repo = _MissingMethodClusterRepository(
++    repo = _cluster_repository_double(
+         identities_by_cluster={unlabeled_id: [unstamped]},
+         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+     )
+-    assert not hasattr(repo, "get_all_representatives")
++    representative = create_autospec(ClusterRepresentative, instance=True)
++    representative.embedding = unstamped.embedding
++    representative.embedding_model = unstamped.embedding_model
++    repo.get_all_representatives.return_value = [representative]
++    assert hasattr(repo, "get_all_representatives")
+     service, suggestion_repo, search = _surface_service(repo, tenant_id)
+ 
+     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
+@@ -401,7 +392,7 @@ async def test_absent_method_unstamped_identities_may_use_precomputed_cache() ->
+ 
+ @pytest.mark.asyncio
+ async def test_absent_method_stamped_identities_still_reject() -> None:
+-    """Lookup AttributeError must still raise when any probe is stamped."""
++    """A gallery lookup AttributeError must still raise when any probe is stamped."""
+     tenant_id = str(uuid4())
+     labeled_id = str(uuid4())
+     unlabeled_id = str(uuid4())
+@@ -415,10 +406,11 @@ async def test_absent_method_stamped_identities_still_reject() -> None:
+         bbox_height=10,
+         embedding_model="space-a",
+     )
+-    repo = _MissingMethodClusterRepository(
++    repo = _cluster_repository_double(
+         identities_by_cluster={unlabeled_id: [stamped]},
+         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
+     )
++    repo.get_all_representatives.side_effect = AttributeError("gallery lookup fault")
+     service, suggestion_repo, search = _surface_service(repo, tenant_id)
+ 
+     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=stamped)
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py b/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py
+@@ -0,0 +1,108 @@
++"""Tests for the collection-scope receipt's identity and path resolution."""
 +
-+- File: `apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py:475-512`; model constraint `apps/prototype-description-service/scene/interface_adapters/http/schemas/responses.py:155-156`.
-+- Evidence: A full-envelope `description_service_starting` exception with `warmup_eta_seconds=-1` makes `DescribeOperationErrorDetail.model_validate()` fail at `describe.py:475-478`, so the new normalizer runs. Its `describe.py:510-512` guard accepts every finite numeric ETA, including the negative value, and passes it to `_typed_describe_error()`. The response model rejects that value because `warmup_eta_seconds` has `Field(ge=0)`, turning malformed upstream detail into an unhandled validation error instead of a schema-valid starting envelope.
-+- Impact: The new full-envelope normalization path can return a 500 for an invalid but recognized upstream typed error, violating the fail-closed multipart error contract precisely on the path added to repair R-02.
-+- Fix: Preserve `warmup_eta_seconds` only when it is finite and non-negative; otherwise omit it (or clamp only if the contract explicitly permits that behavior) before rebuilding the envelope. Add a full-envelope negative-ETA regression.
++from __future__ import annotations
 +
-+VERIFIED: {"GPUFLOW-2-SVCUNAVAILABLEREASON-R-01": "fixed", "GPUFLOW-2-SVCUNAVAILABLEREASON-R-02": "fixed"}
-+FINDINGS: [{"id":"GPUFLOW-2-SVCUNAVAILABLEREASON-R-04","severity":"high","file_path":"apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py","line":511,"summary":"Full-envelope starting-error normalization preserves negative warmup ETA and then fails response validation","evidence":"_typed_error_detail_needs_rebuild() rebuilds invalid typed details, but _rebuild_post_accept_typed_error() accepts any finite warmup_eta_seconds, including -1; DescribeOperationErrorDetail requires warmup_eta_seconds >= 0, so the rebuild can raise instead of returning a typed error."}]
-+Verdict: fail
++import json
++import os
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++SERVICE_ROOT = Path(__file__).resolve().parents[3]
++RECEIPT_PATTERN = re.compile(r"receipt=(\S+)")
++
++
++def _run_pytest_child(
++    tmp_path: Path,
++    *selection: str,
++    ini_receipt: str | None = None,
++    cli_receipt: Path | None = None,
++) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, object]]:
++    project = tmp_path / "project"
++    tests = project / "tests"
++    tests.mkdir(parents=True)
++    (tests / "test_child.py").write_text(
++        "def test_child() -> None:\n    assert True\n",
++        encoding="utf-8",
++    )
++    config = project / "pytest.ini"
++    ini_lines = ["[pytest]", "testpaths = tests"]
++    if ini_receipt is not None:
++        ini_lines.append(f"collection_scope_receipt = {ini_receipt}")
++    config.write_text("\n".join(ini_lines) + "\n", encoding="utf-8")
++
++    env = os.environ.copy()
++    env["PYTHONPATH"] = os.pathsep.join(
++        part for part in (str(SERVICE_ROOT), env.get("PYTHONPATH")) if part
++    )
++    args = [
++        sys.executable,
++        "-m",
++        "pytest",
++        "-p",
++        "conftest",
++        "-c",
++        str(config),
++        *selection,
++    ]
++    if cli_receipt is not None:
++        args.append(f"--collection-scope-receipt={cli_receipt}")
++    args.extend(["-q", "-p", "no:cacheprovider"])
++    result = subprocess.run(
++        args,
++        cwd=project,
++        env=env,
++        text=True,
++        capture_output=True,
++        check=False,
++    )
++    output = result.stdout + result.stderr
++    match = RECEIPT_PATTERN.search(output)
++    assert match is not None, output
++    receipt_path = Path(match.group(1))
++    return result, receipt_path, json.loads(receipt_path.read_text(encoding="utf-8"))
++
++
++def test_default_receipt_is_run_unique_and_self_identifying(tmp_path: Path) -> None:
++    first, first_path, first_receipt = _run_pytest_child(tmp_path / "first")
++    second, second_path, second_receipt = _run_pytest_child(tmp_path / "second")
++
++    assert first.returncode == 0, first.stdout + first.stderr
++    assert second.returncode == 0, second.stdout + second.stderr
++    assert first_path.is_absolute()
++    assert second_path.is_absolute()
++    assert first_path != second_path
++    assert first_receipt["pid"] > 0
++    assert str(first_receipt["pid"]) in first_path.name
++    assert str(second_receipt["pid"]) in second_path.name
++    assert first_receipt["rootdir"] == str((tmp_path / "first" / "project").resolve())
++    assert first_receipt["declared_roots"] == ["tests"]
++    assert first_receipt["collected_roots"] == ["tests"]
++    assert first_receipt["collected_count"] == 1
++    assert first_receipt["scope"] == "full"
++    assert isinstance(first_receipt["started_at"], str)
++    assert first_receipt["started_at"]
++    assert str(first_path) in first.stdout
++
++
++@pytest.mark.parametrize("override_kind", ["cli", "ini"])
++def test_receipt_overrides_remain_supported(
++    tmp_path: Path, override_kind: str
++) -> None:
++    expected = tmp_path / "custom" / f"{override_kind}.json"
++    if override_kind == "cli":
++        result, receipt_path, _ = _run_pytest_child(
++            tmp_path / "cli", cli_receipt=expected
++        )
++    else:
++        result, receipt_path, _ = _run_pytest_child(
++            tmp_path / "ini",
++            ini_receipt=str(expected),
++        )
++
++    assert result.returncode == 0, result.stdout + result.stderr
++    assert receipt_path == expected.resolve()
++    assert receipt_path.exists()
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+--- a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
++++ b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
+@@ -147,7 +147,10 @@ def _expected_skip(rows: list[MediaIdentityModel], *, active_model: str | None)
+ 
+ 
+ def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClusteringRunner:
+-    writer = MagicMock()
++    writer = AsyncMock()
++    writer._session = None
++    writer._settings = SimpleNamespace(recovery_merge_enabled=False)
++    writer.bind_run_context = MagicMock()
+     writer.cluster_repository.cleanup_orphaned_provisional_reps = AsyncMock(return_value=0)
+     writer.cluster_repository.confirm_all_provisional_reps = AsyncMock(return_value=0)
+     writer.cluster_repository.get_by_tenant = AsyncMock(return_value=[])
+@@ -158,9 +161,9 @@ def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClus
+     graph.algorithm_name = "test-graph"
+     graph.discover = AsyncMock(return_value=SimpleNamespace(candidates=[], new_clusters=[]))
+ 
+-    representative = MagicMock()
++    representative = AsyncMock()
+     representative.discover = AsyncMock(return_value=[])
+-    centroid = MagicMock()
++    centroid = AsyncMock()
+     centroid.discover = AsyncMock(return_value=[])
+ 
+     gate = MagicMock()
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
+@@ -17,6 +17,7 @@ from typing import cast
+ import pytest
+ from sqlalchemy import CheckConstraint, Column, Table
+ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
++from sqlalchemy.types import TypeDecorator
+ 
+ import scene.application.describe_run_repository as repo_mod
+ from db.models.base_imports import Base
+@@ -466,12 +467,17 @@ class _MigrationRecorder:
+ 
+ 
+ def _column_signature(col: Column) -> tuple[str, int | None, bool]:
+-    """(type-class, length, nullable) — catches type/width/nullability drift, not just names.
++    """(storage-type, length, nullable) — catches type/width/nullability drift.
+ 
+     VLM5-F2B-BR-02: name-only parity passed a migration-only String(32)->String(64)
+-    widening; the signature comparison fails it.
++    widening; the signature comparison fails it.  The ORM's ``_TimingFloat`` is
++    an intentional ``Float`` TypeDecorator that rejects non-finite binds, so
++    compare its storage implementation to the migration's ``Float`` column.
+     """
+-    return (type(col.type).__name__, getattr(col.type, "length", None), col.nullable)
++    column_type = col.type
++    if isinstance(column_type, TypeDecorator):
++        column_type = column_type.impl
++    return (type(column_type).__name__, getattr(column_type, "length", None), col.nullable)
+ 
+ 
+ def _migration_columns_and_checks(
+@@ -507,7 +513,9 @@ def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPat
+     for col in ("visual_facts", "tier", "result_generation"):
+         assert col in item_orm_cols and col in item_mig_cols
+ 
+-    # Full signature parity: names AND (type-class, length, nullable) per column.
++    # Full storage signature parity: names AND (storage type, length, nullable)
++    # per column.  ORM-only bind validation wrappers are normalized by
++    # _column_signature rather than misreported as database schema drift.
+     assert run_orm_cols == run_mig_cols
+     assert item_orm_cols == item_mig_cols
+     assert run_orm_checks == run_mig_checks
+diff --git a/apps/prototype-description-service/scene/tests/test_schemas.py b/apps/prototype-description-service/scene/tests/test_schemas.py
+--- a/apps/prototype-description-service/scene/tests/test_schemas.py
++++ b/apps/prototype-description-service/scene/tests/test_schemas.py
+@@ -13,7 +13,8 @@ from scene.interface_adapters.http.schemas.responses import (
+     VisualFactsResponse,
+ )
+ 
+-# 15 contract-locked core fields + additive optional preview/fusion fields.
++# The 15 required contract fields stay locked by name; additive fields may be
++# optional/defaulted so older payloads remain readable.
+ PREVIEW_FIELDS = {
+     "generic_draft",
+     "named_draft",
+@@ -28,7 +29,7 @@ OPERATION_FIELDS = {
+     "startup_id",
+     "timing",
+ }
+-EXPECTED_FIELDS = {
++REQUIRED_FIELDS = {
+     "tenant_id",
+     "media_id",
+     "image_hash",
+@@ -44,9 +45,10 @@ EXPECTED_FIELDS = {
+     "cached",
+     "duration_ms",
+     "retention_class",
+-    "tier",
+-    "result_generation",
+ }
++# GPUFLOW-1 and VLM-5 fields are additive/defaulted, not part of the required
++# 15-field compatibility contract.
++ADDITIVE_CORE_FIELDS = {"tier", "result_generation"}
+ # GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
+ OPERATION_FIELDS = {
+     "operation_id",
+@@ -78,11 +80,17 @@ def _sample_response() -> dict:
+ 
+ 
+ def test_response_has_exactly_15_contract_fields():
+-    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
+-    assert len(EXPECTED_FIELDS) == 17
+-    for name in OPERATION_FIELDS:
+-        assert not VisualFactsResponse.model_fields[name].is_required()
+-        assert MultipartDescribeResponse.model_fields[name].is_required()
++    required_fields = {name for name, field in VisualFactsResponse.model_fields.items() if field.is_required()}
++    assert set(VisualFactsResponse.model_fields) >= REQUIRED_FIELDS
++    assert required_fields == REQUIRED_FIELDS
++
++    multipart_required_fields = {
++        name for name, field in MultipartDescribeResponse.model_fields.items() if field.is_required()
++    }
++    assert multipart_required_fields == REQUIRED_FIELDS | {"startup_id", "timing"}
++    # No durable operation is a valid multipart result; the serializer omits
++    # operation_id in that case rather than fabricating a poll target.
++    assert not MultipartDescribeResponse.model_fields["operation_id"].is_required()
+ 
+ 
+ def test_response_round_trip_typed_provenance():
+@@ -91,7 +99,7 @@ def test_response_round_trip_typed_provenance():
+     assert r.retention_class is RetentionClass.RETAIN_ALL
+     assert r.provider_disclosure.provider is ProviderMode.NONE
+     dumped = r.model_dump()
+-    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
++    assert set(dumped.keys()) == REQUIRED_FIELDS | ADDITIVE_CORE_FIELDS | PREVIEW_FIELDS
+     assert OPERATION_FIELDS.isdisjoint(dumped)
+     assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
+     # Preview fields default to None when the merge layer is not run.
+diff --git a/docs/runbooks/prod-identity-rls-remediation.md b/docs/runbooks/prod-identity-rls-remediation.md
+--- a/docs/runbooks/prod-identity-rls-remediation.md
++++ b/docs/runbooks/prod-identity-rls-remediation.md
+@@ -42,7 +42,10 @@ FROM unnest(ARRAY[
+     'clustering_feedback','audit_events','curation_replay_records','export_jobs',
+     'image_descriptions','image_description_runs','image_description_run_items',
+     'clustering_job_reports','assignment_decisions',
+-    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions']) AS t(relname)
++    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions',
++    'api_key_rotation_history','billing_subscription_projection','portal_identity',
++    'portal_tenant_invitation','tenant_entitlement','tenant_key_idempotency',
++    'usage_reservation']) AS t(relname)
+ LEFT JOIN pg_class c
+   ON c.relname = t.relname
+  AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+diff --git a/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md b/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md
+new file mode 100644
+--- /dev/null
++++ b/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md
+@@ -0,0 +1,248 @@
++# SUITERED-1-F-02: aiosqlite worker-thread hang root cause
++
++## Executive conclusion
++
++The primary defect is a same-session self-deadlock in the SQLite fallback of
++`ScanService`'s per-media persistence lock.  It is not a SQLite query that is
++stuck in the aiosqlite worker.  The first `process_media_item()` call flushes
++work but deliberately keeps the non-PostgreSQL `asyncio.Lock` until the root
++transaction ends.  Each affected test calls `process_media_item()` a second
++time for the same `(tenant_id, media_id)` before committing.  The second call
++waits forever on the same non-reentrant lock.
++
++The aiosqlite worker thread seen in the dump is an important symptom but not
++the owner of the deadlock: after the first flush, no second SQL operation has
++been queued.  The worker is idle in `SimpleQueue.get()` while the event loop
++is idle in `select()` waiting for the coroutine whose `asyncio.Lock.acquire()`
++can never complete.  This is a Python-level await, not a C-level SQLite call;
++the configured signal timeout can therefore bound it, but the timeout only
++reports the symptom.
++
++## 1. Mechanism
++
++The relevant interleaving is:
++
++1. The `db_session` fixture creates `sqlite+aiosqlite:///:memory:` with
++   `poolclass=StaticPool` (`recognition/tests/conftest.py:70-77`).  StaticPool
++   means one SQLAlchemy connection is shared, and that connection has one
++   aiosqlite worker thread.  The fixture starts a nested transaction at
++   `conftest.py:131-133` and installs a restart listener at `conftest.py:135-138`.
++2. `ScanService.process_media_item()` reaches `_persist_identities()` at
++   `recognition/application/scan/service.py:469-519` and enters
++   `_media_persist_lock()` at `service.py:554-573`.
++3. SQLite is not PostgreSQL, so `_media_persist_lock()` takes the process-local
++   path (`service.py:73-81`, `service.py:124-134`).  The registry is keyed only
++   by `(tenant UUID, media ID)` (`service.py:84-96`), and the first call owns
++   the resulting `asyncio.Lock`.
++4. The first call performs its SELECT and flush (`service.py:583-589` and
++   `service.py:697-702`).  `process_media_item()` is explicitly flush-only;
++   its docstring says the handler owns the durable commit
++   (`service.py:489-492`).  On leaving `_media_persist_lock()`, the fallback
++   registers a root-transaction release listener (`service.py:172-175`) and
++   observes that the session transaction is still open
++   (`service.py:177-184`).  Consequently it does not release the lock.
++5. The second call with the same key enters the same registry entry and awaits
++   `lock.acquire()` at `service.py:132-136`.  `asyncio.Lock` is not reentrant,
++   so the same coroutine/task waits for a release that can only happen when
++   the root transaction ends.  That transaction cannot end because the test
++   is waiting inside the second call.
++
++The savepoint listener is a participant in the transaction shape, not the
++primary waiter.  Its `begin_nested()` restart at `conftest.py:135-138` keeps a
++nested savepoint available after nested transaction end; it does not release
++the root transaction.  The lock's own `_release()` also ignores child
++transactions (`service.py:150-159`) and releases only at the root boundary.
++Thus the savepoint loop makes the intended "hold until commit" lifetime
++visible, but the deadlock is the non-reentrant process-local lock.  Removing
++the listener alone would not be a sound fix while the service remains
++flush-only and the root transaction remains open.
++
++StaticPool is also not the direct waiter for this trace.  It selects the
++SQLite fallback and gives all operations one aiosqlite worker, which makes the
++thread dump look like a connection hang.  The worker is actually waiting for
++another queue item (`aiosqlite/core.py:59`); the blocked coroutine is waiting
++on the process-local lock before it can enqueue one.  This distinction matters
++because changing `:memory:` to a file URL while retaining SQLite and the same
++lock code still takes `_media_persist_lock()`'s non-PostgreSQL branch.
++
++The stack classification is therefore Python-level:
++
++* worker: `aiosqlite._connection_worker_thread` waiting on its queue;
++* event loop: `selectors.select()` / `asyncio._run_once()`;
++* suspended test coroutine: `asyncio.Lock.acquire()` in the fallback lock.
++
++It is not a blocked `sqlite3` C call.  The existing `timeout_method=signal`
++bound should be able to interrupt this class of wait; the 240-second
++faulthandler dump is observation, and the 300-second pytest timeout is only a
++bound on the symptom.
++
++## 2. Why the reported test varies
++
++The vulnerable interleaving is deterministic once one of these tests reaches
++its second same-key call.  The apparent variation is at the suite/xdist level:
++the three tests are independently vulnerable, and worker scheduling determines
++which worker reaches a second call first and is the one whose nodeid appears
++to wedge.  A run stopped at the first blocked worker may never reach the other
++two.  A transaction boundary introduced by a caller, fixture teardown, or an
++exception/rollback can release the lock and let a particular run pass, which
++also makes the symptom load-sensitive.
++
++This mechanism does **not** predict that a fixed, serial invocation of one
++isolated test will randomly alternate between different outcomes: that would
++be evidence against the lock diagnosis.  The cross-run variation described in
++the gate evidence is explained by scheduling and which vulnerable test is
++observed first, not by nondeterministic execution inside SQLite.
++
++## 3. Why these three tests
++
++All three tests make two persistence calls on the same `db_session` and the
++same media key without a commit between them:
++
++* `test_factor_update_branch_round_trip` calls media `4444` first at
++  `recognition/tests/integration/test_factor_round_trip.py:162-166`, then
++  creates a second `ScanService` and calls media `4444` again at
++  `:176-185`.  The detector's same bbox is intended to exercise the update
++  branch, but the second call blocks before matching code runs.
++* `test_scan_service_same_bbox_replay_reuses_existing_media_identity_row`
++  calls media `123` at
++  `recognition/tests/integration/test_scan_service_pose_quality.py:93-97`
++  and again at `:105-109`.  The intervening SELECT at `:99-103` is read-only
++  and does not commit the transaction.
++* `test_scan_service_low_iou_replay_replaces_media_identity_row` calls media
++  `123` at `:126-130` and again at `:138-142`, also without a commit.  The
++  changed bbox affects the intended reconcile branch only after the lock is
++  acquired.
++
++The other tests in these files make one persistence call: the pose test uses
++`:66-70`, `test_factor_round_trip_via_scan_and_repository` uses
++`test_factor_round_trip.py:83-87`, and the InsightFace-null test uses
++`:124-128`.  They therefore leave the lock held until fixture teardown but do
++not attempt the second acquisition during the test.  The detector choice,
++factor columns, and IoU branch are not the cause; the repeated same-key call
++is the distinguishing operation.
++
++## 4. Minimal reproducer
++
++The smallest in-repository reproducer is the existing same-bbox test reduced
++to the two calls and a bounded wait:
++
++```python
++@pytest.mark.asyncio
++async def test_same_sqlite_transaction_can_rescan_one_media_item(db_session, tenant):
++    service = ScanService(
++        session=db_session,
++        detector=PoseDetector(),
++        generator=StubEmbeddingGenerator(embedding_dim=512),
++    )
++    await service.process_media_item(
++        tenant_id=str(tenant.id),
++        media_id=123,
++        media_url="http://example.test/image.jpg",
++    )
++    await asyncio.wait_for(
++        service.process_media_item(
++            tenant_id=str(tenant.id),
++            media_id=123,
++            media_url="http://example.test/image.jpg",
++        ),
++        timeout=1.0,
++    )
++```
++
++No reproducer file was added because this lane owns only the report.  The
++source-level interleaving above is sufficient to predict the timeout.  A
++bounded attempt to run the existing target test in this sandbox did not reach
++the test body: the fixture setup stalled while opening aiosqlite, and a
++separate inline `aiosqlite.connect(":memory:")` probe stalled immediately
++after printing its pre-connect marker.  The target attempt did produce the
++reported shape at the observation layer (worker at `aiosqlite/core.py:59`,
++event loop in `select()`), but because this sandbox cannot establish an
++aiosqlite connection, it is not claimed as a clean end-to-end reproduction.
++The gate/macOS executions and the source interleaving are the evidence for the
++defect; this sandbox limitation is recorded rather than conflated with a
++passing or failing test result.
++
++## 5. Remediation, ranked
++
++### 1. Make the SQLite fallback transaction-owner aware and reentrant
++
++Keep the cross-session serialization guarantee, but record the owning
++SQLAlchemy sync session/root transaction and a re-entry depth in the registry
++entry.  A second call from that same session and root transaction should reuse
++the ownership instead of awaiting its own `asyncio.Lock`; only the root
++transaction-end callback should release the underlying lock and clear the
++ownership/depth.  A different session must still wait.  Cancellation before
++ownership, cancellation while waiting, rollback, and listener removal need
++balanced bookkeeping.
++
++This is the minimal production-safe code change because it preserves the
++flush-only transaction contract and the reason the lock is held until commit.
++Cost: moderate application-lock bookkeeping and focused cancellation/rollback
++tests.  Residual risk: an `AsyncSession` is not generally safe for concurrent
++tasks, so owner identity must not accidentally let an unrelated task sharing
++one session bypass the lock; this also does not address the separate
++`:memory:` connection-invalidation failure.
++
++**Proof test:** add one bounded test that performs two sequential
++`process_media_item()` calls for the same `(tenant, media)` on one SQLite
++`db_session`, asserts the second call completes, and checks the intended UUID
++reuse/update result.
++
++### 2. Put a transaction boundary between the two test/worker operations
++
++For tests that model separate worker-handler invocations, commit (or close and
++open a new session) after the first `process_media_item()` call.  That matches
++the service's documented handler-owned commit boundary and releases the lock
++before the second invocation.  Cost: low fixture/test churn.  Residual risk:
++this is a test/workflow workaround, not a general application fix; any caller
++that legitimately performs two same-key flush-only calls in one transaction
++can still deadlock.
++
++**Proof test:** run the two-call replay scenario with an explicit
++`await db_session.commit()` between calls and a one-second wait around the
++second call; it should complete and retain the expected row semantics.
++
++### 3. Apply the prior task's file-backed + StaticPool fixture hardening, but
++only as a companion change
++
++The prior MAINT-GATE-FLAKES evidence remains valid for a different failure:
++`:memory:` plus StaticPool lets cancellation/invalidation destroy the only
++database and its schema; file backing preserves the schema, while StaticPool
++avoids introducing a second SQLite writer and the observed `database is
++locked` race.  The savepoint loop does not change that conclusion for
++connection invalidation.
++
++It is **not sufficient for SUITERED-1-F-02 by itself**.  File-backed
++`StaticPool` is still a non-PostgreSQL engine, so the second same-key call still
++enters the same fallback lock and waits until root commit.  Pair this fixture
++hardening with remediation 1 if the suite must also be resilient to cancelled
++aiosqlite operations.  Cost: temporary-file lifecycle and cleanup, plus
++additional cancellation coverage.  Residual risk: the previously recorded
++unknown remains whether an invalidated cancelled connection releases the file
++lock before replacement writes; that must be measured rather than assumed.
++
++**Proof test:** use the file-backed `StaticPool` fixture to cancel an in-flight
++SQLite operation, then assert that a subsequent schema query and write
++complete.  A two-call, no-commit replay test is deliberately not the proof for
++this option: it should still expose the fallback-lock deadlock unless option 1
++is also present.
++
++Replacing StaticPool with a pooled multi-connection SQLite engine alone is
++also not a fix for this report: it leaves the same non-PostgreSQL process lock
++in place and reintroduces the prior `database is locked` risk under writes.
++Removing only the savepoint-restart listener is likewise insufficient unless
++the transaction model is changed so the root transaction actually ends between
++same-key operations.
++
++## 6. What would falsify this answer
++
++Instrument the second `_media_persist_lock()` entry and show that it passes
++`service.py:134` (the lock is acquired), while the coroutine then blocks in an
++`AsyncSession.execute()`/`flush()` with a pending aiosqlite future or a
++`sqlite3` C stack; that would falsify the self-deadlock diagnosis and point to
++the StaticPool/savepoint or cancellation path instead.  Likewise, if an
++isolated single-call test hangs reproducibly, or if an explicit commit between
++the two same-key calls still hangs at the same location, this report is wrong.
++Conversely, observing that a file-backed StaticPool fixture still blocks on
++the no-commit two-call reproducer would confirm that file backing is an
++orthogonal cancellation/schema fix, not a remediation for this lock.

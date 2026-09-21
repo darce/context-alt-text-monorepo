@@ -1,4 +1,11 @@
-3130923735fa offload: R3 review appended and committed; original findings are fixed,
-adc7cab8a957 offload: Committed review 32838f8; A2 fails on invalid-endpoint warmup
-7522d04e9cfc offload: Committed the unavailable-operation retry fix as 077e736.
-ad9366530e35 offload: Committed the scoped GPUFLOW-2 typed-error rebuild fix.
+16c6e5262950 fix(suitered-1): seed test identities with the active embedding model id
+f1796036f47e test(suitered-1): make the cross-slice deploy gates hermetic
+74825f59fb19 Merge branch 'main' into feature/suitered-1
+ee4865804418 fix(suitered-1): stop _to_domain force-loading centroid_data on an unloaded relationship
+5e155887fe0a fix(suitered-1): make the in-process persist lock reentrant for one session
+6898e8a1ed5a fix(suitered-1): partition the pytest collection-scope receipt per run
+20b7e7286c77 test(suitered-1): replace SimpleNamespace stubs with create_autospec doubles
+5e6789fe0646 offload: Implemented and committed all three SUITERED-1 fixes in commit
+729a8340779f offload: Committed the SQLite fixture table fix and fail-fast schema
+9db431bc0efe offload: Committed root-cause report c22cbc3; required collection
+59565edba66f offload: Committed both schema-drift adjudications; direct checks pass,

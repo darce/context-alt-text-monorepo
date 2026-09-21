@@ -43,6 +43,7 @@ from scene.interface_adapters.http.schemas.responses import (
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-00000000f701")
 GENERIC_DRAFT = "Two people stand by the window."
+GROUNDED_DRAFT = "A person waves next to a person."
 
 
 def _png_bytes() -> bytes:
@@ -132,7 +133,46 @@ class FakeGpuAdapter:
         )
 
 
-async def _run_fake_gpu(*, naming_enabled: bool, seed_faces: bool = True, recognition_enabled: bool = True):
+class GroundedGpuAdapter:
+    """A final-GPU adapter result with real-shaped phrase grounding boxes."""
+
+    def __init__(self, *, phrase_boxes: tuple[PhraseBox, ...]):
+        self._phrase_boxes = phrase_boxes
+
+    async def __call__(self, media_id, image_bytes, content_type, *, naming_inputs=None):
+        return DescribeItemOutcome(
+            alt_text_draft=GROUNDED_DRAFT,
+            caption=GROUNDED_DRAFT,
+            phrase_boxes=self._phrase_boxes,
+            tier=DescriptionResultTier.FINAL_GPU,
+        )
+
+
+def _grounded_phrase_boxes(*, second_box_x: float = 0.55) -> tuple[PhraseBox, ...]:
+    second_start = GROUNDED_DRAFT.index("a person")
+    return (
+        PhraseBox(
+            phrase="A person",
+            span_start=0,
+            span_end=len("A person"),
+            box=NormalizedBox(x=0.05, y=0.1, width=0.3, height=0.7),
+        ),
+        PhraseBox(
+            phrase="a person",
+            span_start=second_start,
+            span_end=second_start + len("a person"),
+            box=NormalizedBox(x=second_box_x, y=0.1, width=0.3, height=0.7),
+        ),
+    )
+
+
+async def _run_fake_gpu(
+    *,
+    naming_enabled: bool,
+    seed_faces: bool = True,
+    recognition_enabled: bool = True,
+    adapter=None,
+):
     path, engine, session_factory = await _make_db(naming_enabled=naming_enabled, with_identities=seed_faces)
     if seed_faces:
         async with session_factory() as session:
@@ -144,7 +184,7 @@ async def _run_fake_gpu(*, naming_enabled: bool, seed_faces: bool = True, recogn
         tenant_id=TENANT_ID,
         run_id=run_id,
         session_factory=session_factory,
-        describe_one=FakeGpuAdapter(),
+        describe_one=adapter if adapter is not None else FakeGpuAdapter(),
         timeout_seconds=1.0,
     )
     async with session_factory() as session:
@@ -152,6 +192,42 @@ async def _run_fake_gpu(*, naming_enabled: bool, seed_faces: bool = True, recogn
     await engine.dispose()
     os.unlink(path)
     return item
+
+
+def test_grounded_final_gpu_adapter_applies_names_end_to_end():
+    item = asyncio.run(
+        _run_fake_gpu(
+            naming_enabled=True,
+            adapter=GroundedGpuAdapter(phrase_boxes=_grounded_phrase_boxes()),
+        )
+    )
+
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.tier == DescriptionResultTier.FINAL_GPU
+    naming = (item.provenance or {})["naming"]
+    assert naming["status"] == "applied"
+    assert naming["realizer"] == "grounded"
+    assert sorted(naming["names_applied"]) == ["Ada", "Bob"]
+    assert "Ada" in item.alt_text_draft
+    assert "Bob" in item.alt_text_draft
+    assert item.alt_text_draft != GROUNDED_DRAFT
+
+
+def test_grounded_adapter_with_ambiguous_boxes_abstains_end_to_end():
+    item = asyncio.run(
+        _run_fake_gpu(
+            naming_enabled=True,
+            adapter=GroundedGpuAdapter(phrase_boxes=_grounded_phrase_boxes(second_box_x=0.05)),
+        )
+    )
+
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.tier == DescriptionResultTier.FINAL_GPU
+    assert item.alt_text_draft == GROUNDED_DRAFT
+    naming = (item.provenance or {})["naming"]
+    assert naming["status"] == "ambiguous_grounding"
+    assert naming["realizer"] is None
+    assert naming["names_applied"] == []
 
 
 def test_fake_final_gpu_adapter_abstains_for_ungrounded_faces_and_disabled_run_does_not():

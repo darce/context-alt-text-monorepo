@@ -27,6 +27,7 @@ use function current_time;
 use function do_action;
 use function floor;
 use function function_exists;
+use function get_option;
 use function gmdate;
 use function is_array;
 use function is_finite;
@@ -40,9 +41,10 @@ use function method_exists;
 use function min;
 use function time;
 use function trim;
-use function wp_rand;
+use function update_option;
 use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
+use function wp_rand;
 use function wp_schedule_single_event;
 use function wp_unschedule_event;
 
@@ -50,6 +52,7 @@ class OutboxDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
 	private const PURGE_HOOK = 'acx_sync_purge_terminal_rows';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
+	private const DEFAULT_PURGE_TENANT_PAGE_SIZE = 25;
 	// Public so OutboxMaintenanceService can pace bulk requeue in drain-batch-sized
 	// chunks against the same 'acx_outbox_drain_batch_size' filter (E15-35 Slice 2).
 	public const DEFAULT_BATCH_SIZE = 25;
@@ -367,8 +370,16 @@ class OutboxDrain {
 
 	public function purge_terminal_rows(): void {
 		try {
-			$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids();
+			$cursor_value = get_option( 'acx_sync_purge_tenant_cursor', '' );
+			$after_tenant_id = is_string( $cursor_value ) ? trim( $cursor_value ) : '';
+			$page_size = $this->resolve_positive_int_tunable( 'acx_sync_purge_tenant_page_size', self::DEFAULT_PURGE_TENANT_PAGE_SIZE );
+			$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids( $page_size, $after_tenant_id );
 			if ( empty( $tenant_ids ) ) {
+				if ( '' !== $after_tenant_id ) {
+					update_option( 'acx_sync_purge_tenant_cursor', '', false );
+					return;
+				}
+
 				$tenant = TenantIdentity::resolve();
 				$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
 				if ( '' === $tenant_id ) {
@@ -379,6 +390,12 @@ class OutboxDrain {
 			}
 
 			$this->purge_terminal_rows_for_tenants( $tenant_ids );
+			$last_tenant_id = trim( (string) end( $tenant_ids ) );
+			if ( count( $tenant_ids ) < $page_size ) {
+				update_option( 'acx_sync_purge_tenant_cursor', '', false );
+			} elseif ( '' !== $last_tenant_id ) {
+				update_option( 'acx_sync_purge_tenant_cursor', $last_tenant_id, false );
+			}
 		} catch ( Throwable $exception ) {
 			do_action( 'acx_sync_purge_terminal_rows_failed', '', $exception );
 		} finally {

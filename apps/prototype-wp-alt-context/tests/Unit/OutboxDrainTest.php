@@ -1148,7 +1148,7 @@ class OutboxDrainTest extends TestCase
 				$this->purgeCalls = &$purgeCalls;
 			}
 
-			public function list_terminal_purge_tenant_ids(): array {
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
 				return array( 'tenant-bad', 'tenant-good' );
 			}
 
@@ -1169,6 +1169,166 @@ class OutboxDrainTest extends TestCase
 		$drain->purge_terminal_rows();
 
 		$this->assertSame( array( 'tenant-bad', 'tenant-good' ), $purgeCalls );
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_purge_terminal_rows' ) );
+	}
+
+	public function testPurgeTerminalRowsPersistsAndReusesTenantCursor(): void
+	{
+		$requests = array();
+		$purgeCalls = array();
+		$maintenance = new class( $requests, $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{0:?int,1:string}> */
+			private array $requests;
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/**
+			 * @param array<int,array{0:?int,1:string}> $requests
+			 * @param array<int,string> $purgeCalls
+			 */
+			public function __construct( array &$requests, array &$purgeCalls ) {
+				$this->requests  =& $requests;
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				$this->requests[] = array( $limit, $after_tenant_id );
+				$first = '' === $after_tenant_id ? 1 : 26;
+
+				return array_map(
+					static fn( int $index ): string => sprintf( 'tenant-%02d', $index ),
+					range( $first, $first + 24 )
+				);
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+		$drain->purge_terminal_rows();
+
+		$this->assertSame(
+			array(
+				array( 25, '' ),
+				array( 25, 'tenant-25' ),
+			),
+			$requests
+		);
+		$this->assertSame( 'tenant-50', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( false, $GLOBALS['__ac_option_autoload']['acx_sync_purge_tenant_cursor'] );
+		$this->assertCount( 50, $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsResetsCursorAfterShortPage(): void
+	{
+		$this->setOption( 'acx_sync_purge_tenant_cursor', 'tenant-25' );
+		$requests = array();
+		$purgeCalls = array();
+		$maintenance = new class( $requests, $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{0:?int,1:string}> */
+			private array $requests;
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,array{0:?int,1:string}> $requests @param array<int,string> $purgeCalls */
+			public function __construct( array &$requests, array &$purgeCalls ) {
+				$this->requests  =& $requests;
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				$this->requests[] = array( $limit, $after_tenant_id );
+				return array( 'tenant-26' );
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( array( array( 25, 'tenant-25' ) ), $requests );
+		$this->assertSame( '', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( false, $GLOBALS['__ac_option_autoload']['acx_sync_purge_tenant_cursor'] );
+		$this->assertSame( array( 'tenant-26' ), $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsResetsCursorAfterEmptyMidCycleWithoutFallback(): void
+	{
+		$this->setOption( 'acx_sync_purge_tenant_cursor', 'tenant-25' );
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+
+			/** @param array<int,string> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				return array();
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( '', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertSame( array(), $purgeCalls );
+	}
+
+	public function testPurgeTerminalRowsAdvancesCursorAfterTenantFailureAndStillReschedules(): void
+	{
+		$purgeCalls = array();
+		$tenantIds = array_merge(
+			array( 'tenant-bad' ),
+			array_map( static fn( int $index ): string => sprintf( 'tenant-good-%02d', $index ), range( 1, 24 ) )
+		);
+		$maintenance = new class( $purgeCalls, $tenantIds ) extends OutboxMaintenanceService {
+			/** @var array<int,string> */
+			private array $purgeCalls;
+			/** @var array<int,string> */
+			private array $tenantIds;
+
+			/** @param array<int,string> $purgeCalls @param array<int,string> $tenantIds */
+			public function __construct( array &$purgeCalls, array $tenantIds ) {
+				$this->purgeCalls =& $purgeCalls;
+				$this->tenantIds = $tenantIds;
+			}
+
+			public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
+				return $this->tenantIds;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = $tenant_id;
+				if ( 'tenant-bad' === $tenant_id ) {
+					throw new RuntimeException( 'purge failed' );
+				}
+
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows();
+
+		$this->assertSame( $tenantIds, $purgeCalls );
+		$this->assertSame( 'tenant-good-24', get_option( 'acx_sync_purge_tenant_cursor' ) );
+		$this->assertTrue( $this->isHookScheduled( 'acx_sync_purge_terminal_rows' ) );
 	}
 
 	public function testDrainReschedulesWhenPurgeThrowsForProcessedTenant(): void
@@ -1228,6 +1388,7 @@ class OutboxDrainTest extends TestCase
 			'',
 			$this->findFirstQueryContaining($wpdb->queries, 'DELETE FROM `wp_acx_sync_outbox`')
 		);
+		$this->assertArrayNotHasKey( 'acx_sync_purge_tenant_cursor', $GLOBALS['__ac_options'] );
 	}
 
 	public function testDrainReschedulesWhenBatchLeavesMorePendingOperations(): void

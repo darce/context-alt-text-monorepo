@@ -50,13 +50,13 @@ async function readJson(response: Response): Promise<unknown> {
 
 function interpretSuccess(body: unknown): PortalMeResult {
   if (!body || typeof body !== 'object') {
-    return { outcome: PortalMeOutcome.Empty };
+    return { outcome: PortalMeOutcome.Outage };
   }
   const tenantId = (body as { tenant_id?: unknown }).tenant_id;
   if (typeof tenantId === 'string' && UUID_RE.test(tenantId)) {
     return { outcome: PortalMeOutcome.Ok, tenantId };
   }
-  return { outcome: PortalMeOutcome.Empty };
+  return { outcome: PortalMeOutcome.Outage };
 }
 
 function interpretError(status: number, body: unknown): PortalMeResult {
@@ -82,12 +82,8 @@ export async function fetchPortalMe({
   signal,
   timeoutMs = PORTAL_ME_TIMEOUT_MS,
 }: FetchPortalMeOptions): Promise<PortalMeResult> {
-  const token = await getToken();
   if (signal?.aborted) {
     return { outcome: PortalMeOutcome.Aborted };
-  }
-  if (!token) {
-    return { outcome: PortalMeOutcome.Unauthorized };
   }
 
   const controller = new AbortController();
@@ -119,22 +115,37 @@ export async function fetchPortalMe({
     controller.signal.addEventListener('abort', fail, { once: true });
   });
 
+  const finish = (result: PortalMeResult): PortalMeResult => {
+    settled = true;
+    return result;
+  };
+
   try {
+    const token = await Promise.race([Promise.resolve().then(() => getToken()), aborted]);
+    if (controller.signal.aborted) {
+      return finish(
+        signal?.aborted && !timedOut ? { outcome: PortalMeOutcome.Aborted } : { outcome: PortalMeOutcome.Outage },
+      );
+    }
+    if (!token) {
+      return finish({ outcome: PortalMeOutcome.Unauthorized });
+    }
+
     const response = await Promise.race([
       fetchImpl(PORTAL_ME_PATH, {
         method: 'GET',
+        cache: 'no-store',
         credentials: 'omit',
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       }),
       aborted,
     ]);
-    settled = true;
     const body = await readJson(response);
     if (response.ok) {
-      return interpretSuccess(body);
+      return finish(interpretSuccess(body));
     }
-    return interpretError(response.status, body);
+    return finish(interpretError(response.status, body));
   } catch {
     settled = true;
     if (signal?.aborted && !timedOut) {

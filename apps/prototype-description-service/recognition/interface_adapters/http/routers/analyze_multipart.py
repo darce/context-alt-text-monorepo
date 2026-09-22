@@ -29,7 +29,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import parse_options_header
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -55,11 +55,18 @@ from recognition.interface_adapters.http.deps.object_store import (
 )
 from recognition.interface_adapters.http.deps.usage_admission import (
     admit_usage,
-    build_usage_idempotency_key,
     get_usage_admission_service,
 )
 from recognition.interface_adapters.http.middleware.correlation import (
     get_correlation_id,
+)
+from recognition.interface_adapters.http.routers.analyze import (
+    bound_job_uuid,
+    build_analyze_request_fingerprint,
+    fingerprint_options_from_envelope,
+    is_usage_replay,
+    queued_analyze_job_response,
+    resolve_analyze_operation_id,
 )
 from recognition.interface_adapters.http.schemas.requests import MediaItem
 from recognition.interface_adapters.http.schemas.responses import (
@@ -284,10 +291,11 @@ def _extract_request_envelope(form_data: FormData) -> dict:
     return envelope
 
 
-def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
+def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str], int]:
     """Read stable upload digests without consuming the streams used by persistence."""
     media_ids: list[str] = []
     media_sources: list[str] = []
+    queue_bytes = 0
     for key, value in form_data.multi_items():
         if not key.startswith(_IMAGE_KEY_PREFIX) or not isinstance(value, UploadFile):
             continue
@@ -299,7 +307,8 @@ def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
             media_id = str(int(media_id))
         media_ids.append(media_id)
         media_sources.append(hashlib.sha256(data).hexdigest())
-    return media_ids, media_sources
+        queue_bytes += len(data)
+    return media_ids, media_sources, queue_bytes
 
 
 @router.post(
@@ -310,6 +319,7 @@ def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
 async def analyze_media_multipart(
     request: Request,
     background_tasks: BackgroundTasks,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
@@ -357,6 +367,7 @@ async def analyze_media_multipart(
             scan_queue=scan_queue,
             object_store_factory=object_store_factory,
             usage_admission_service=usage_admission_service,
+            idempotency_key=idempotency_key,
         )
     finally:
         await form_data.close()
@@ -371,6 +382,7 @@ async def _analyze_media_multipart_form(
     scan_queue,
     object_store_factory: ObjectStoreFactory,
     usage_admission_service=None,
+    idempotency_key: str | None = None,
 ) -> JobStatusResponse:
     """Validate, persist, and dispatch an already-parsed multipart request."""
     pre_generated_job_id = uuid.uuid4()
@@ -412,20 +424,33 @@ async def _analyze_media_multipart_form(
         await require_tenant_record(session, tenant_uuid)
         await require_scan_dispatch_ready(session, inline_processing=inline_processing)
 
-    usage_media_ids, usage_media_sources = _multipart_usage_inputs(form_data)
+    usage_media_ids, usage_media_sources, queue_bytes = _multipart_usage_inputs(form_data)
     if not usage_media_ids:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=("multipart submission must include at least one image_<media_id> part"),
         )
-    idempotency_key = build_usage_idempotency_key(tenant_uuid, usage_media_ids, usage_media_sources)
+    operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
+    fingerprint = build_analyze_request_fingerprint(
+        tenant_id=tenant_uuid,
+        route="analyze_multipart",
+        media_ids=usage_media_ids,
+        media_sources=usage_media_sources,
+        options=fingerprint_options_from_envelope(envelope),
+    )
     async with admit_usage(
         usage_admission_service,
         tenant_id=tenant_uuid,
-        idempotency_key=idempotency_key,
+        idempotency_key=operation_id,
         job_id=str(pre_generated_job_id),
         cost_units=len(usage_media_ids),
-    ):
+        operation_id=operation_id,
+        request_fingerprint=fingerprint,
+        queue_bytes=queue_bytes,
+    ) as ticket:
+        bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
+        if is_usage_replay(ticket, pre_generated_job_id):
+            return queued_analyze_job_response(bound_job_id, len(usage_media_ids))
         return await _persist_and_dispatch_multipart(
             form_data=form_data,
             background_tasks=background_tasks,
@@ -435,7 +460,7 @@ async def _analyze_media_multipart_form(
             object_store_factory=object_store_factory,
             tenant_uuid=tenant_uuid,
             canonical_tenant_id=canonical_tenant_id,
-            pre_generated_job_id=pre_generated_job_id,
+            pre_generated_job_id=bound_job_id,
             inline_processing=inline_processing,
         )
 
@@ -513,19 +538,25 @@ async def _persist_and_dispatch_multipart(
     # attribute access leaks here. Slice B (OCI) swaps the factory via
     # app.dependency_overrides[get_object_store_factory_for_request] without
     # touching this route.
-    background_tasks.add_task(
-        chain_populate_and_process,
-        tenant_id=str(tenant_uuid),
-        job_id=str(persisted_job_id),
-        media_items=media_items_tuples,
-        media_ids=media_ids,
-        media_sources=media_sources,
-        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-        session_factory=session_factory,
-        inline_processing=inline_processing,
-        correlation_id=get_correlation_id(),
-        object_store_factory=object_store_factory,
-    )
+    try:
+        background_tasks.add_task(
+            chain_populate_and_process,
+            tenant_id=str(tenant_uuid),
+            job_id=str(persisted_job_id),
+            media_items=media_items_tuples,
+            media_ids=media_ids,
+            media_sources=media_sources,
+            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+            session_factory=session_factory,
+            inline_processing=inline_processing,
+            correlation_id=get_correlation_id(),
+            object_store_factory=object_store_factory,
+        )
+    except Exception:
+        logger.exception(
+            "Multipart scan dispatch failed after job commit",
+            extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
+        )
 
     # E15-11 S3.1: structured single-line telemetry for the multipart route so
     # transport failures can be triaged without parsing FastAPI access logs.

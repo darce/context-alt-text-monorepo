@@ -4,15 +4,18 @@ Analyze routes: scan media and poll job status.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import time as _time
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
@@ -25,6 +28,7 @@ from recognition.application.tasks.scan import (
     extract_media_id,
 )
 from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.deps import (
     RetentionPolicyServiceProtocol,
@@ -43,7 +47,6 @@ from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quo
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.usage_admission import (
     admit_usage,
-    build_usage_idempotency_key,
     get_usage_admission_service,
 )
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
@@ -66,8 +69,123 @@ logger = logging.getLogger(__name__)
 # stays server-side in the log record; 501 would tell the caller the endpoint does
 # not exist and change its retry/caching decision (API-08).
 INTERNAL_ERROR_DETAIL = "internal server error"
+_OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_IDENTITY_ENVELOPE_KEYS = frozenset({"tenant_id", "media_ids", "media_items", "operation_id", "idempotency_key"})
 
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
+
+
+def _validate_operation_id(raw: str) -> str:
+    stripped = raw.strip()
+    if not _OPERATION_ID_RE.fullmatch(stripped):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="operation_id must be 1-128 characters in [A-Za-z0-9._:-]",
+        )
+    return stripped
+
+
+def resolve_analyze_operation_id(
+    *,
+    header_value: str | None,
+    envelope: Mapping[str, object] | None = None,
+) -> str:
+    """Prefer Idempotency-Key, then envelope operation_id; never hash media sources."""
+    candidates: list[str] = []
+    if isinstance(header_value, str) and header_value.strip():
+        candidates.append(_validate_operation_id(header_value))
+    if envelope is not None:
+        for key in ("operation_id", "idempotency_key"):
+            value = envelope.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(_validate_operation_id(value))
+                break
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    if len(unique) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key and envelope operation_id must match",
+        )
+    if unique:
+        return unique[0]
+    return str(uuid.uuid4())
+
+
+def fingerprint_options_from_envelope(envelope: Mapping[str, object] | None) -> dict[str, object]:
+    if not envelope:
+        return {}
+    return {key: value for key, value in envelope.items() if key not in _IDENTITY_ENVELOPE_KEYS}
+
+
+def build_analyze_request_fingerprint(
+    *,
+    tenant_id: object,
+    route: str,
+    media_ids: Sequence[object],
+    media_sources: Sequence[object],
+    options: Mapping[str, object] | None = None,
+) -> str:
+    """Canonical content/options digest. Distinct from the logical operation id."""
+    if len(media_ids) != len(media_sources):
+        raise ValueError("media_ids and media_sources must have the same length")
+    canonical_items = sorted(
+        (str(media_id), str(media_source)) for media_id, media_source in zip(media_ids, media_sources, strict=True)
+    )
+    payload = {
+        "media_ids": [media_id for media_id, _source in canonical_items],
+        "media_sources": [source for _media_id, source in canonical_items],
+        "options": dict(options or {}),
+        "route": route,
+        "tenant_id": str(tenant_id),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def is_usage_replay(ticket: UsageTicket | None, generated_job_id: uuid.UUID) -> bool:
+    if ticket is None or not ticket.job_id:
+        return False
+    return str(ticket.job_id) != str(generated_job_id)
+
+
+def bound_job_uuid(ticket: UsageTicket | None, generated_job_id: uuid.UUID) -> uuid.UUID:
+    if ticket is None or not ticket.job_id:
+        return generated_job_id
+    try:
+        return uuid.UUID(str(ticket.job_id))
+    except ValueError:
+        return generated_job_id
+
+
+def queued_analyze_job_response(job_id: object, total: int) -> JobStatusResponse:
+    progress = JobProgressResponse(
+        completed=0,
+        total=total,
+        phase=JobPhase.QUEUED,
+        images_processed=0,
+        faces_found=0,
+    )
+    return JobStatusResponse(
+        id=str(job_id),
+        type=JobType.ANALYZE.value,
+        status=JobStatus.PENDING,
+        progress=progress,
+        started_at=datetime.now(tz=UTC),
+        finished_at=None,
+        message=f"Queueing 0/{total} items",
+    )
+
+
+async def json_request_envelope(http_request: Request) -> dict[str, object]:
+    try:
+        payload = await http_request.json()
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 async def _resolve_pipeline_job(
@@ -226,6 +344,7 @@ async def _schedule_analysis(
     media_sources: list[str],
     inline_processing: bool,
     auth,
+    job_id: uuid.UUID | None = None,
 ) -> JobStatusResponse:
     """Create the scan job, schedule background work, and build the initial response."""
     if scan_queue is None:
@@ -236,11 +355,14 @@ async def _schedule_analysis(
             )
         scan_queue = get_scan_queue_service_factory(session)
 
-    job_id = await scan_queue.create_scan_job_record(
-        tenant_id=tenant_uuid,
-        total=len(media_items),
-        created_by_user_id=getattr(auth, "user_id", None),
-    )
+    create_kwargs: dict[str, object] = {
+        "tenant_id": tenant_uuid,
+        "total": len(media_items),
+        "created_by_user_id": getattr(auth, "user_id", None),
+    }
+    if job_id is not None:
+        create_kwargs["job_id"] = job_id
+    persisted_job_id = await scan_queue.create_scan_job_record(**create_kwargs)
 
     if session is not None:
         await session.commit()
@@ -249,45 +371,35 @@ async def _schedule_analysis(
     if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
-    correlation_id = get_correlation_id()
-
-    background_tasks.add_task(
-        chain_populate_and_process,
-        tenant_id=str(tenant_uuid),
-        job_id=str(job_id),
-        media_items=media_items,
-        media_ids=media_ids,
-        media_sources=media_sources,
-        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-        session_factory=session_factory,
-        inline_processing=inline_processing,
-        adapter_provider=get_shared_insightface_adapter if inline_processing else None,
-        correlation_id=correlation_id,
-    )
-
-    total = len(media_items)
-    progress = JobProgressResponse(
-        completed=0,
-        total=total,
-        phase=JobPhase.QUEUED,
-        images_processed=0,
-        faces_found=0,
-    )
-    return JobStatusResponse(
-        id=str(job_id),
-        type=JobType.ANALYZE.value,
-        status=JobStatus.PENDING,
-        progress=progress,
-        started_at=datetime.now(tz=UTC),
-        finished_at=None,
-        message=f"Queueing 0/{total} items",
-    )
+    try:
+        correlation_id = get_correlation_id()
+        background_tasks.add_task(
+            chain_populate_and_process,
+            tenant_id=str(tenant_uuid),
+            job_id=str(persisted_job_id),
+            media_items=media_items,
+            media_ids=media_ids,
+            media_sources=media_sources,
+            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+            session_factory=session_factory,
+            inline_processing=inline_processing,
+            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+            correlation_id=correlation_id,
+        )
+    except Exception:
+        logger.exception(
+            "Scan dispatch failed after job commit",
+            extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
+        )
+    return queued_analyze_job_response(persisted_job_id, len(media_items))
 
 
 @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_media(
     request: AnalyzeRequest,
     background_tasks: BackgroundTasks,
+    http_request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
@@ -310,26 +422,42 @@ async def analyze_media(
             inline_processing=inline_processing,
         )
 
-        idempotency_key = build_usage_idempotency_key(tenant_uuid, media_ids, media_sources)
+        envelope = await json_request_envelope(http_request)
+        operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
+        fingerprint = build_analyze_request_fingerprint(
+            tenant_id=tenant_uuid,
+            route="analyze",
+            media_ids=media_ids,
+            media_sources=media_sources,
+            options=fingerprint_options_from_envelope(envelope),
+        )
+        generated_job_id = uuid.uuid4()
         # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
         async with admit_usage(
             usage_admission_service,
             tenant_id=tenant_uuid,
-            idempotency_key=idempotency_key,
-            job_id=None,
+            idempotency_key=operation_id,
+            job_id=str(generated_job_id),
             cost_units=total_media_items,
-        ):
-            response = await _schedule_analysis(
-                background_tasks=background_tasks,
-                session=session,
-                scan_queue=scan_queue,
-                tenant_uuid=tenant_uuid,
-                media_items=media_items,
-                media_ids=media_ids,
-                media_sources=media_sources,
-                inline_processing=inline_processing,
-                auth=auth,
-            )
+            operation_id=operation_id,
+            request_fingerprint=fingerprint,
+        ) as ticket:
+            bound_job_id = bound_job_uuid(ticket, generated_job_id)
+            if is_usage_replay(ticket, generated_job_id):
+                response = queued_analyze_job_response(bound_job_id, total_media_items)
+            else:
+                response = await _schedule_analysis(
+                    background_tasks=background_tasks,
+                    session=session,
+                    scan_queue=scan_queue,
+                    tenant_uuid=tenant_uuid,
+                    media_items=media_items,
+                    media_ids=media_ids,
+                    media_sources=media_sources,
+                    inline_processing=inline_processing,
+                    auth=auth,
+                    job_id=bound_job_id,
+                )
         outcome = "queued"
         return response
     except ProgrammingError as exc:

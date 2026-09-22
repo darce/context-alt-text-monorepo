@@ -15,7 +15,13 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.params import Depends as DependsMarker
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recognition.application.services.usage_admission_service import AllowanceExceededError
+from recognition.application.services.usage_admission_service import (
+    AllowanceExceededError,
+    GlobalUsageLimitExceededError,
+    UsageAdmissionStoppedError,
+    UsageAdmissionUnavailableError,
+    UsageFingerprintConflictError,
+)
 from recognition.domain.portal_contracts import UsageAdmissionService, UsageTicket
 from recognition.interface_adapters.http.deps.session import get_optional_session
 
@@ -107,6 +113,13 @@ def _allowance_exhausted(exc: AllowanceExceededError) -> HTTPException:
     )
 
 
+def _admission_unavailable(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"error": detail},
+    )
+
+
 @asynccontextmanager
 async def admit_usage(
     service: UsageAdmissionService | None,
@@ -115,8 +128,15 @@ async def admit_usage(
     idempotency_key: str,
     job_id: str | None,
     cost_units: int,
+    operation_id: str | None = None,
+    request_fingerprint: str | None = None,
+    queue_bytes: int = 0,
 ) -> AsyncIterator[UsageTicket | None]:
-    """Reserve before dispatch, settle on success, and release failed dispatches."""
+    """Reserve before dispatch and leave HTTP 202 as RESERVED.
+
+    Handler success is not terminal settlement. Queue refusal and dispatch
+    exceptions release once. G2/G3 call ``commit_fenced`` / ``release_fenced``.
+    """
     # Direct unit callers may invoke a FastAPI route without resolving its
     # Depends default.  The real dependency has already validated the service
     # shape before this helper runs, so an unresolved default is the disabled
@@ -131,9 +151,23 @@ async def admit_usage(
             idempotency_key=idempotency_key,
             job_id=job_id,
             cost_units=cost_units,
+            operation_id=operation_id,
+            request_fingerprint=request_fingerprint,
+            queue_bytes=queue_bytes,
         )
     except AllowanceExceededError as exc:
         raise _allowance_exhausted(exc) from exc
+    except UsageFingerprintConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "usage_fingerprint_conflict"},
+        ) from exc
+    except UsageAdmissionStoppedError as exc:
+        raise _admission_unavailable("usage_admission_stopped") from exc
+    except GlobalUsageLimitExceededError as exc:
+        raise _admission_unavailable("usage_admission_limited") from exc
+    except UsageAdmissionUnavailableError as exc:
+        raise _admission_unavailable("usage_admission_unavailable") from exc
 
     try:
         yield ticket
@@ -143,15 +177,7 @@ async def admit_usage(
         except BaseException:
             logger.exception("Usage reservation release failed", extra={"tenant_id": str(tenant_id)})
         raise
-    else:
-        try:
-            await service.commit(ticket)
-        except BaseException:
-            try:
-                await service.release(ticket)
-            except BaseException:
-                logger.exception("Usage reservation release after commit failure failed")
-            raise
+    # HTTP 202 / handler return stays RESERVED. Workers own terminal settlement.
 
 
 __all__ = [

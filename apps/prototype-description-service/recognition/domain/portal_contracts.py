@@ -49,6 +49,15 @@ class WebhookInboxStatus(StrEnum):
 DEFAULT_ALLOWANCE_JOBS: Final[int] = 0
 DEFAULT_ENTITLEMENT_STATUS: Final[EntitlementStatus] = EntitlementStatus.EXPIRED
 
+# Singleton global admission row. Missing/invalid config is fail-closed 503, never unlimited.
+GLOBAL_USAGE_ADMISSION_STATE_ID: Final[str] = "global"
+DEFAULT_GLOBAL_DAILY_COST_LIMIT: Final[int] = 10_000
+DEFAULT_GLOBAL_INFLIGHT_LIMIT: Final[int] = 1_000
+DEFAULT_GLOBAL_QUEUE_LIMIT: Final[int] = 1_000
+DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT: Final[int] = 256 * 1024 * 1024
+DEFAULT_GLOBAL_CONFIG_VERSION: Final[str] = "v1"
+DEFAULT_GLOBAL_FENCE_EPOCH: Final[int] = 1
+
 
 @dataclass(frozen=True, slots=True)
 class PortalPrincipal:
@@ -71,10 +80,22 @@ class EntitlementSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class UsageTicket:
+    """Retry-stable admission ticket.
+
+    Published positional fields stay ``reservation_id``, ``tenant_id``,
+    ``idempotency_key``, and ``cost_units``. G1 adds operation identity, the
+    pre-bound job id, and the settlement fence; defaults keep existing
+    constructors valid until G2/G3 pass the new fields.
+    """
+
     reservation_id: UUID
     tenant_id: UUID
     idempotency_key: str
     cost_units: int
+    operation_id: str = ""
+    request_fingerprint: str = ""
+    job_id: str | None = None
+    fence_token: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +174,12 @@ class UsageAdmissionService(Protocol):
         job_id: str | None,
         cost_units: int,
     ) -> UsageTicket:
-        """Atomically reserve tenant allowance once and reject overspend under contention."""
+        """Atomically reserve tenant allowance once and reject overspend under contention.
+
+        Compatible published signature. The G1 implementation also accepts
+        ``operation_id``, ``request_fingerprint``, and ``queue_bytes`` and
+        exposes ``commit_fenced`` / ``release_fenced`` for worker settlement.
+        """
         ...
 
     async def commit(self, ticket: UsageTicket) -> None:
@@ -248,6 +274,13 @@ class BillingProvider(Protocol):
 __all__ = [
     "DEFAULT_ALLOWANCE_JOBS",
     "DEFAULT_ENTITLEMENT_STATUS",
+    "DEFAULT_GLOBAL_CONFIG_VERSION",
+    "DEFAULT_GLOBAL_DAILY_COST_LIMIT",
+    "DEFAULT_GLOBAL_FENCE_EPOCH",
+    "DEFAULT_GLOBAL_INFLIGHT_LIMIT",
+    "DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT",
+    "DEFAULT_GLOBAL_QUEUE_LIMIT",
+    "GLOBAL_USAGE_ADMISSION_STATE_ID",
     "BillingProvider",
     "BillingState",
     "BillingSubscriptionStatus",

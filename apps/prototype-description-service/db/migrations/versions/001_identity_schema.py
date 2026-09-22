@@ -89,6 +89,11 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_billing_checkout_attempt_provider_key",
         ("tenant_id", "provider", "environment", "seller_account", "idempotency_key"),
     ),
+    (
+        "usage_reservation",
+        "uq_usage_reservation_tenant_operation_id",
+        ("tenant_id", "operation_id"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -109,6 +114,7 @@ EXPECTED_SCHEMA_TABLES = [
     "portal_identity",
     "tenant_entitlement",
     "usage_reservation",
+    "usage_admission_global_state",
     "billing_subscription_projection",
     "billing_webhook_inbox",
     "billing_checkout_attempt",
@@ -159,6 +165,7 @@ DOWNGRADE_TABLE_ORDER = [
     "billing_checkout_attempt",
     "billing_webhook_inbox",
     "billing_subscription_projection",
+    "usage_admission_global_state",
     "usage_reservation",
     "tenant_entitlement",
     "portal_identity",
@@ -342,6 +349,95 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
             "python -m scripts.sync_identity_schema."
         ) from exc
     return True
+
+
+def _bind_dialect_name(op) -> str:
+    bind = op.get_bind()
+    dialect = getattr(bind, "dialect", None)
+    return str(getattr(dialect, "name", "") or "")
+
+
+def _backfill_usage_reservation_identity(op) -> None:
+    """Expand-then-backfill operation/fingerprint/fence on existing reservation rows."""
+    if _bind_dialect_name(op) != "postgresql":
+        return
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return
+    op.execute(
+        sa.text(
+            """
+            UPDATE usage_reservation
+            SET
+                operation_id = COALESCE(NULLIF(BTRIM(operation_id), ''), idempotency_key),
+                request_fingerprint = COALESCE(NULLIF(BTRIM(request_fingerprint), ''), idempotency_key),
+                fence_token = COALESCE(NULLIF(BTRIM(fence_token), ''), id::text),
+                queue_bytes = COALESCE(queue_bytes, 0)
+            WHERE operation_id IS NULL
+               OR BTRIM(COALESCE(operation_id, '')) = ''
+               OR request_fingerprint IS NULL
+               OR BTRIM(COALESCE(request_fingerprint, '')) = ''
+               OR fence_token IS NULL
+               OR BTRIM(COALESCE(fence_token, '')) = ''
+               OR queue_bytes IS NULL
+            """
+        )
+    )
+    leftover = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+                SELECT 1 FROM usage_reservation
+                WHERE operation_id IS NULL
+                   OR request_fingerprint IS NULL
+                   OR fence_token IS NULL
+                LIMIT 1
+                """
+            )
+        )
+        .scalar()
+    )
+    if leftover is not None:
+        raise RuntimeError("usage_reservation identity backfill left nulls; operator remediation required")
+    for column_name in ("operation_id", "request_fingerprint", "fence_token"):
+        op.execute(sa.text(f'ALTER TABLE "usage_reservation" ALTER COLUMN "{column_name}" SET NOT NULL'))
+
+
+def _seed_usage_admission_global_state(op) -> None:
+    """Insert the fail-closed singleton when the global table exists and is empty."""
+    if _bind_dialect_name(op) != "postgresql":
+        return
+    if _relkind(op, "usage_admission_global_state") not in {"r", "p"}:
+        return
+    op.execute(
+        sa.text(
+            """
+            INSERT INTO usage_admission_global_state (
+                id, period_start, period_end,
+                daily_cost_limit, daily_cost_units,
+                inflight_limit, inflight_units,
+                queue_limit, queue_depth,
+                queue_byte_limit, queue_bytes,
+                stop_requested, fence_epoch,
+                config_version, updated_at
+            )
+            SELECT
+                'global',
+                date_trunc('day', timezone('utc', now())),
+                date_trunc('day', timezone('utc', now())) + interval '1 day',
+                10000, 0,
+                1000, 0,
+                1000, 0,
+                268435456, 0,
+                false, 1,
+                'v1',
+                timezone('utc', now())
+            WHERE NOT EXISTS (
+                SELECT 1 FROM usage_admission_global_state WHERE id = 'global'
+            )
+            """
+        )
+    )
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
@@ -580,6 +676,7 @@ def ensure_tables(op) -> None:
     _ensure_index(op, "idx_tenant_entitlement_reclaim", "tenant_entitlement", ["updated_at"])
 
     # Reclaim key: settled_at; the usage-retention job purges settled reservations after the retention window.
+    # Identity columns expand nullable, then backfill, then SET NOT NULL.
     _ensure_table(
         op,
         "usage_reservation",
@@ -592,21 +689,41 @@ def ensure_tables(op) -> None:
         ),
         sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("operation_id", sa.Text(), nullable=True),
+        sa.Column("request_fingerprint", sa.Text(), nullable=True),
         sa.Column("job_id", sa.Text(), nullable=True),
+        sa.Column("fence_token", sa.Text(), nullable=True),
+        sa.Column("queue_bytes", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'reserved'")),
         sa.Column("reserved_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("settled_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("cost_units", sa.Integer(), nullable=False),
         sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
+        sa.UniqueConstraint("tenant_id", "operation_id", name="uq_usage_reservation_tenant_operation_id"),
         # A zero or negative charge would mint allowance back to the tenant.
         sa.CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        sa.CheckConstraint("queue_bytes >= 0", name="ck_usage_reservation_queue_bytes_nonnegative"),
         # Usage accounting sums only 'reserved' and 'committed'; an unknown
         # status silently drops the row out of every allowance calculation.
         sa.CheckConstraint(
             "status IN ('reserved', 'committed', 'released', 'expired')",
             name="ck_usage_reservation_status",
         ),
+        sa.CheckConstraint("length(operation_id) > 0", name="ck_usage_reservation_operation_id_present"),
+        sa.CheckConstraint(
+            "length(request_fingerprint) > 0",
+            name="ck_usage_reservation_request_fingerprint_present",
+        ),
+        sa.CheckConstraint("length(fence_token) > 0", name="ck_usage_reservation_fence_token_present"),
+        heal_constraints=(
+            "uq_usage_reservation_tenant_operation_id",
+            "ck_usage_reservation_queue_bytes_nonnegative",
+            "ck_usage_reservation_operation_id_present",
+            "ck_usage_reservation_request_fingerprint_present",
+            "ck_usage_reservation_fence_token_present",
+        ),
     )
+    _backfill_usage_reservation_identity(op)
     _ensure_index(
         op,
         "idx_usage_reservation_tenant_period_status",
@@ -614,6 +731,52 @@ def ensure_tables(op) -> None:
         ["tenant_id", "period_start", "status"],
     )
     _ensure_index(op, "idx_usage_reservation_reclaim", "usage_reservation", ["status", "settled_at"])
+
+    # Non-tenant singleton: do not add this table to TENANT_TABLES.
+    _ensure_table(
+        op,
+        "usage_admission_global_state",
+        sa.Column("id", sa.Text(), primary_key=True),
+        sa.Column("period_start", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("period_end", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.Column("daily_cost_limit", sa.Integer(), nullable=False),
+        sa.Column("daily_cost_units", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("inflight_limit", sa.Integer(), nullable=False),
+        sa.Column("inflight_units", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("queue_limit", sa.Integer(), nullable=False),
+        sa.Column("queue_depth", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("queue_byte_limit", sa.BigInteger(), nullable=False),
+        sa.Column("queue_bytes", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("stop_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("fence_epoch", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("config_version", sa.Text(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("daily_cost_limit >= 0", name="ck_usage_admission_global_daily_cost_limit"),
+        sa.CheckConstraint("daily_cost_units >= 0", name="ck_usage_admission_global_daily_cost_units"),
+        sa.CheckConstraint("inflight_limit >= 0", name="ck_usage_admission_global_inflight_limit"),
+        sa.CheckConstraint("inflight_units >= 0", name="ck_usage_admission_global_inflight_units"),
+        sa.CheckConstraint("queue_limit >= 0", name="ck_usage_admission_global_queue_limit"),
+        sa.CheckConstraint("queue_depth >= 0", name="ck_usage_admission_global_queue_depth"),
+        sa.CheckConstraint("queue_byte_limit >= 0", name="ck_usage_admission_global_queue_byte_limit"),
+        sa.CheckConstraint("queue_bytes >= 0", name="ck_usage_admission_global_queue_bytes"),
+        sa.CheckConstraint("fence_epoch >= 1", name="ck_usage_admission_global_fence_epoch"),
+        sa.CheckConstraint("length(config_version) > 0", name="ck_usage_admission_global_config_version"),
+        sa.CheckConstraint("period_end > period_start", name="ck_usage_admission_global_period"),
+        heal_constraints=(
+            "ck_usage_admission_global_daily_cost_limit",
+            "ck_usage_admission_global_daily_cost_units",
+            "ck_usage_admission_global_inflight_limit",
+            "ck_usage_admission_global_inflight_units",
+            "ck_usage_admission_global_queue_limit",
+            "ck_usage_admission_global_queue_depth",
+            "ck_usage_admission_global_queue_byte_limit",
+            "ck_usage_admission_global_queue_bytes",
+            "ck_usage_admission_global_fence_epoch",
+            "ck_usage_admission_global_config_version",
+            "ck_usage_admission_global_period",
+        ),
+    )
+    _seed_usage_admission_global_state(op)
 
     # Reclaim key: updated_at; the billing projection retention job purges obsolete inactive projections.
     _ensure_table(

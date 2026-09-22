@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
+from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.interface_adapters.http.routers import billing_webhooks
 
 SECRET = b"router-test-secret"
@@ -53,15 +54,32 @@ class _SessionStub:
             raise RuntimeError("commit failed")
 
 
+def _header(headers: Mapping[str, str], names: tuple[str, ...]) -> str | None:
+    lowered = {key.lower(): value for key, value in headers.items()}
+    for name in names:
+        value = lowered.get(name)
+        if value:
+            return value
+    return None
+
+
 class _ProviderStub:
     def __init__(self, *, replay_window_valid: bool = True) -> None:
         self.verify_calls: list[bytes] = []
+        self.verify_headers: list[Mapping[str, str]] = []
         self.parse_calls: list[bytes] = []
         self._verified: set[bytes] = set()
         self.replay_window_valid = replay_window_valid
 
-    async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
         self.verify_calls.append(raw_body)
+        self.verify_headers.append(headers)
+        signature = _header(
+            headers,
+            ("webhook-signature", "x-polar-signature", "polar-signature", "x-webhook-signature"),
+        )
+        if not isinstance(signature, str) or not signature:
+            return False
         expected = base64.b64encode(hmac.new(SECRET, raw_body, hashlib.sha256).digest()).decode()
         verified = self.replay_window_valid and hmac.compare_digest(signature, expected)
         if verified:
@@ -205,6 +223,50 @@ def _event_body(
 def _signature(raw_body: bytes) -> str:
     digest = hmac.new(SECRET, raw_body, hashlib.sha256).digest()
     return base64.b64encode(digest).decode()
+
+
+_POLAR_HMAC_SECRET = "whsec_legacy-secret!"
+
+
+class _UnusedHttpClient:
+    async def post(self, url: str, **kwargs: object) -> object:
+        raise AssertionError("webhook verification must not call Polar HTTP")
+
+    async def get(self, url: str, **kwargs: object) -> object:
+        raise AssertionError("webhook verification must not call Polar HTTP")
+
+
+def _polar_headers(raw_body: bytes, *, webhook_id: str = "msg-1", timestamp: datetime = WEBHOOK_NOW) -> dict[str, str]:
+    ts = str(int(timestamp.timestamp()))
+    signed_content = f"{webhook_id}.{ts}.{raw_body.decode('utf-8')}".encode()
+    signature = "v1," + base64.b64encode(
+        hmac.new(_POLAR_HMAC_SECRET.encode("utf-8"), signed_content, hashlib.sha256).digest()
+    ).decode("ascii")
+    return {
+        "webhook-id": webhook_id,
+        "webhook-timestamp": ts,
+        "webhook-signature": signature,
+    }
+
+
+def _polar_app(repository: _RepositoryStub) -> FastAPI:
+    app = FastAPI()
+    app.state.webhook_clock = lambda: WEBHOOK_NOW
+    app.include_router(billing_webhooks.router)
+    provider = PolarBillingProvider(
+        client=_UnusedHttpClient(),
+        webhook_secret=_POLAR_HMAC_SECRET,
+        product_ids={"pro": "product-pro"},
+        base_url="https://sandbox.example.test",
+        payments_enabled=False,
+        environment="sandbox",
+        seller_account="org-altcontext-test",
+        allowed_return_origins={"https://app.example.test"},
+        clock=lambda: WEBHOOK_NOW,
+    )
+    app.dependency_overrides[billing_webhooks.get_billing_provider] = lambda: provider
+    app.dependency_overrides[billing_webhooks.get_billing_repository] = lambda: repository
+    return app
 
 
 def test_valid_signature_is_checked_over_exact_raw_body() -> None:
@@ -680,3 +742,44 @@ def test_commit_failure_is_not_acknowledged_as_accepted() -> None:
     assert response.status_code >= 500
     assert response.status_code != 202
     assert repository.session.commit_calls == 1
+
+
+def test_polar_shaped_signature_is_accepted_before_inbox_write() -> None:
+    repository = _RepositoryStub()
+    raw_body = _event_body()
+
+    with TestClient(_polar_app(repository)) as client:
+        response = client.post(
+            "/billing/webhooks/polar",
+            content=raw_body,
+            headers=_polar_headers(raw_body),
+        )
+
+    assert response.status_code == 202
+    assert list(repository.rows) == ["sandbox:evt-1"]
+
+
+def test_polar_shaped_missing_headers_tamper_and_replay_never_reach_inbox() -> None:
+    repository = _RepositoryStub()
+    raw_body = _event_body()
+    valid = _polar_headers(raw_body)
+    tampered = {**valid, "webhook-signature": valid["webhook-signature"][:-2] + "aa"}
+    missing_id = {k: v for k, v in valid.items() if k != "webhook-id"}
+    stale = _polar_headers(raw_body, timestamp=WEBHOOK_NOW - timedelta(minutes=6))
+
+    with TestClient(_polar_app(repository)) as client:
+        missing = client.post("/billing/webhooks/polar", content=raw_body, headers=missing_id)
+        forged = client.post("/billing/webhooks/polar", content=raw_body, headers=tampered)
+        replay = client.post("/billing/webhooks/polar", content=raw_body, headers=stale)
+        body_changed = client.post(
+            "/billing/webhooks/polar",
+            content=raw_body + b" ",
+            headers=valid,
+        )
+
+    assert missing.status_code == 401
+    assert forged.status_code == 401
+    assert replay.status_code == 401
+    assert body_changed.status_code == 401
+    assert repository.rows == {}
+    assert repository.transitions == []

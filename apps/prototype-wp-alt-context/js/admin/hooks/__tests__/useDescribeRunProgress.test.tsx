@@ -23,6 +23,11 @@ import {
 import * as gpuApi from '../../api/gpuApi';
 import { GpuTierStatus } from '../../pages/workbench/GpuTierStatus';
 import gpuflowBulkTiming from '../../pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json';
+import {
+  WARMING_OBSERVATION_GRACE_MS,
+  WARMING_OBSERVATION_LIMIT_MS,
+  WARMING_OBSERVATION_STATUS,
+} from '../../utils/warmingDeadline';
 
 const fetchGpuStatusMock = vi.hoisted(() => vi.fn());
 
@@ -214,6 +219,7 @@ describe('getDescribeRunRefetchInterval (UXP-2-BR-07 pure policy)', () => {
 describe('useDescribeRunProgress', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     fetchGpuStatusMock.mockResolvedValue({
       gpu_state: { state: GPU_STATE.STOPPED },
       snapshot_fresh: true,
@@ -547,6 +553,74 @@ describe('useDescribeRunProgress', () => {
       expect(result.current.status).toBe('running');
       expect(result.current.etaSeconds).toBe(30);
       expect(result.current.isPolling).toBe(true);
+    });
+
+    it('bounds warming without renewing on polls and clears overdue after resumed progress', async () => {
+      const warmingRun = gpuflowWarmingRun({
+        run_id: 'run-warming-bound',
+        startup_id: 'startup-warming-bound',
+        completed: 0,
+      });
+      const progressedRun = gpuflowWarmingRun({
+        run_id: 'run-warming-bound',
+        startup_id: 'startup-warming-bound',
+        completed: 1,
+      });
+      fetchBulkDescribeRunMock.mockResolvedValue(warmingRun);
+
+      const { result } = renderHook(() => useDescribeRunProgress('run-warming-bound'), { wrapper });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const firstObservedAt = result.current.warmingObservation?.firstObservedAt;
+      expect(result.current.warmingObservation?.status).toBe(WARMING_OBSERVATION_STATUS.UNKNOWN);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          WARMING_OBSERVATION_LIMIT_MS + WARMING_OBSERVATION_GRACE_MS,
+        );
+      });
+      expect(result.current.warmingObservation?.firstObservedAt).toBe(firstObservedAt);
+      expect(result.current.warmingObservation?.status).toBe(WARMING_OBSERVATION_STATUS.OVERDUE);
+
+      fetchBulkDescribeRunMock.mockResolvedValue(progressedRun);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DESCRIBE_RUN_POLL_INTERVAL_MS);
+      });
+      expect(result.current.warmingObservation?.status).toBe(WARMING_OBSERVATION_STATUS.WAITING);
+      expect(result.current.warmingObservation?.evidence).toBe('progress');
+    });
+
+    it('does not renew the warming observation on Retry or remount', async () => {
+      fetchBulkDescribeRunMock.mockResolvedValue(
+        gpuflowWarmingRun({
+          run_id: 'run-warming-remount',
+          startup_id: 'startup-warming-remount',
+          completed: 0,
+        }),
+      );
+
+      const firstHook = renderHook(() => useDescribeRunProgress('run-warming-remount'), { wrapper });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      const firstObservedAt = firstHook.result.current.warmingObservation?.firstObservedAt;
+
+      act(() => {
+        firstHook.result.current.retry();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(firstHook.result.current.warmingObservation?.firstObservedAt).toBe(firstObservedAt);
+
+      firstHook.unmount();
+      const remountedHook = renderHook(() => useDescribeRunProgress('run-warming-remount'), { wrapper });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(remountedHook.result.current.warmingObservation?.firstObservedAt).toBe(firstObservedAt);
     });
   });
 });

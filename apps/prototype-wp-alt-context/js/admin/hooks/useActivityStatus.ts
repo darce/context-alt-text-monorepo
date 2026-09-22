@@ -15,6 +15,7 @@ import {
   type DescribeRunStatus,
   type GpuState,
 } from '../api/describeApi';
+import type { GpuIntentAction, GpuIntentStatus, GpuStatusResponse } from '../api/gpuApi';
 import { toDescriptionHistoryRun, toWorkbench } from '../navigation/appLinks';
 import { useActiveDescribeRun } from './activeDescribeRun';
 import {
@@ -27,6 +28,12 @@ import {
 import { persistRunContext } from './useBulkDescribe';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 import { useGpuServiceStatus } from './useGpuServiceStatus';
+import {
+  deriveWarmingObservation,
+  WARMING_OBSERVATION_EVIDENCE,
+  WARMING_OBSERVATION_STATUS,
+  type WarmingObservation,
+} from '../utils/warmingDeadline';
 
 export { STALL_PHASE, stallThresholdMs } from './jobMachine';
 
@@ -82,6 +89,8 @@ export interface ActivityStatus {
   gpuState: GpuState | null;
   retryable: boolean;
   draftCount: number;
+  /** Finite live-warming observation for copy/state integration. */
+  warmingObservation?: WarmingObservation;
 }
 
 export interface ActivityStatusActions {
@@ -131,6 +140,10 @@ export interface GpuActivityInput {
   reason: string | null;
   isError: boolean;
   isRunPending: boolean;
+  data?: GpuStatusResponse | null;
+  snapshotFresh?: boolean;
+  intent?: GpuIntentAction | null;
+  intentStatus?: GpuIntentStatus | null;
 }
 
 export interface ResolveActivityStatusInput {
@@ -224,6 +237,28 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
   const describeLive =
     describe.runId !== null && !describe.progress.isTerminal && !describe.progress.isError;
 
+  const warmupTimeout = parseWarmupTimeout(run);
+  const describeWarming =
+    describeLive &&
+    (describe.progress.isWarming === true ||
+      run?.phase === DESCRIBE_RUN_PHASE.WARMING ||
+      gpuIsWarming(runGpu ?? GPU_STATE.UNKNOWN));
+  const warmingObservation = deriveWarmingObservation({
+    runId: describe.runId ?? run?.run_id ?? null,
+    startupId: describe.progress.startupId ?? run?.startup_id ?? null,
+    isWarming: describeWarming,
+    isTerminal: describe.progress.isTerminal,
+    gpuStatus: gpu.data,
+    gpuState: gpu.gpuState,
+    snapshotFresh: gpu.snapshotFresh,
+    intent: gpu.intent,
+    intentStatus: gpu.intentStatus,
+    reason: gpu.reason,
+    gpuStatusError: gpu.isError,
+    resumedProgress:
+      describe.progress.warmingObservation?.evidence === WARMING_OBSERVATION_EVIDENCE.PROGRESS,
+  });
+
   if (scan.isScanning) {
     return snapshot(ACTIVITY_KIND.SCANNING, {
       progress: scan.progressFraction,
@@ -250,13 +285,6 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
     });
   }
 
-  const warmupTimeout = parseWarmupTimeout(run);
-  const describeWarming =
-    describeLive &&
-    (describe.progress.isWarming === true ||
-      run?.phase === DESCRIBE_RUN_PHASE.WARMING ||
-      gpuIsWarming(runGpu ?? GPU_STATE.UNKNOWN));
-
   if (describeWarming) {
     return snapshot(ACTIVITY_KIND.WARMING, {
       progress: describe.progress.progressFraction,
@@ -265,8 +293,9 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
       canCancel: describeCanCancel(describe.progress),
       runId: describe.runId,
       gpuState,
-      retryable: false,
+      retryable: warmingObservation.status !== WARMING_OBSERVATION_STATUS.WAITING,
       draftCount: describeDraftCount(run),
+      warmingObservation,
     });
   }
 
@@ -425,6 +454,10 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
       reason: gpu.reason,
       isError: gpu.isError,
       isRunPending: describeLive,
+      data: gpu.data,
+      snapshotFresh: gpu.snapshotFresh,
+      intent: gpu.intent,
+      intentStatus: gpu.data?.gpu_state.intent_status ?? null,
     },
   });
 
@@ -462,6 +495,15 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         }
       : null;
     const onRetry = ((): (() => void) | null => {
+      if (
+        status.kind === ACTIVITY_KIND.WARMING &&
+        status.warmingObservation !== undefined &&
+        status.warmingObservation.status !== WARMING_OBSERVATION_STATUS.WAITING
+      ) {
+        return () => {
+          describeProgress.retry();
+        };
+      }
       if (status.kind !== ACTIVITY_KIND.FAILED || !status.retryable) {
         return null;
       }

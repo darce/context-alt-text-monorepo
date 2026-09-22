@@ -295,6 +295,58 @@ describe('resolveActivityStatus', () => {
     expect(status.etaSeconds).toBe(180);
     expect(status.canCancel).toBe(true);
     expect(status.gpuState).toBe(GPU_STATE.STARTING);
+    expect(status.warmingObservation?.status).toBe('unknown');
+  });
+
+  it('keeps fresh stopped evidence provisional and preserves unknown stale evidence', () => {
+    const freshStoppedStatus = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-fresh-stopped',
+        progress: describeProgress(
+          { isWarming: true },
+          {
+            run_id: 'run-fresh-stopped',
+            startup_id: 'startup-fresh-stopped',
+            phase: DESCRIBE_RUN_PHASE.WARMING,
+            gpu_state: GPU_STATE.STARTING,
+          },
+        ),
+      },
+      gpu: gpuInput({
+        gpuState: GPU_STATE.STOPPED,
+        isRunPending: true,
+        snapshotFresh: true,
+        data: statusResponse(GPU_STATE.STOPPED),
+      }),
+    });
+    expect(freshStoppedStatus.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(freshStoppedStatus.warmingObservation?.status).toBe('waiting');
+    expect(freshStoppedStatus.warmingObservation?.evidence).toBe('stopped');
+
+    const staleStatus = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-stale-status',
+        progress: describeProgress(
+          { isWarming: true },
+          {
+            run_id: 'run-stale-status',
+            startup_id: 'startup-stale-status',
+            phase: DESCRIBE_RUN_PHASE.WARMING,
+            gpu_state: GPU_STATE.WARMING,
+          },
+        ),
+      },
+      gpu: gpuInput({
+        gpuState: GPU_STATE.WARMING,
+        isRunPending: true,
+        snapshotFresh: false,
+        data: { ...statusResponse(GPU_STATE.WARMING), snapshot_fresh: false },
+      }),
+    });
+    expect(staleStatus.kind).toBe(ACTIVITY_KIND.WARMING);
+    expect(staleStatus.warmingObservation?.status).toBe('unknown');
   });
 
   it('maps describing progress to describing', () => {
@@ -479,6 +531,7 @@ describe('useActivityStatus', () => {
     expect(fetchBulkDescribeRunMock).toHaveBeenCalled();
     expect(result.current.status.canCancel).toBe(true);
     expect(result.current.status.etaSeconds).toBe(90);
+    expect(result.current.actions.onRetry).not.toBeNull();
   });
 
   it('composes an injected scan source as scanning', () => {

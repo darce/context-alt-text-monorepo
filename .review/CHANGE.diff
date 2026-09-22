@@ -1,874 +1,1142 @@
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py b/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
---- a/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
-@@ -3,7 +3,10 @@
- from __future__ import annotations
- 
- import json
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py b/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py
+@@ -0,0 +1,425 @@
++"""Unit tests for scripts/configure_clerk_production.py."""
++
++from __future__ import annotations
++
++import base64
++import importlib.util
 +import os
- import subprocess
-+import time
-+from collections.abc import Sequence
- from pathlib import Path
- from types import SimpleNamespace
- from typing import Any
-@@ -54,6 +57,10 @@ def _write_manifest(tmp_path: Path, payload: dict[str, Any]) -> Path:
-     return path
- 
- 
-+def _pytest_nodes(command: Sequence[str]) -> list[str]:
-+    return [argument for argument in command if argument.startswith("recognition/")]
++import stat
++import sys
++from io import StringIO
++from pathlib import Path
++from types import ModuleType
++
++import pytest
++
++_SERVICE_ROOT = Path(__file__).resolve().parents[3]
++_SCRIPT = _SERVICE_ROOT / "scripts" / "configure_clerk_production.py"
++LIVE_HOST = "clerk.altcontext.com"
++AUDIENCE = "altcontext-portal"
 +
 +
- def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
-     testcase_xml: list[str] = []
-     for index in range(cases):
-@@ -67,6 +74,62 @@ def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
-     return f"<testsuite tests='{cases}' failures='{failures}' skipped='{skipped}'>{''.join(testcase_xml)}</testsuite>"
- 
- 
-+def _junit_for_nodes(
-+    nodes: Sequence[str],
++def _load_script() -> ModuleType:
++    spec = importlib.util.spec_from_file_location("configure_clerk_production", _SCRIPT)
++    assert spec is not None and spec.loader is not None
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[spec.name] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++def _pk_live(host: str = LIVE_HOST) -> str:
++    payload = base64.b64encode(f"{host}$".encode("ascii")).decode("ascii").rstrip("=")
++    return f"pk_live_{payload}"
++
++
++def _pk_test(host: str = "example.accounts.dev") -> str:
++    payload = base64.b64encode(f"{host}$".encode("ascii")).decode("ascii").rstrip("=")
++    return f"pk_test_{payload}"
++
++
++def _write_key(path: Path, value: str, *, mode: int = 0o600) -> Path:
++    path.write_text(value + "\n", encoding="utf-8")
++    path.chmod(mode)
++    return path
++
++
++def _run(
++    module: ModuleType,
++    argv: list[str],
 +    *,
-+    skipped: Sequence[str] = (),
-+    failed: Sequence[str] = (),
-+    errored: Sequence[str] = (),
-+) -> str:
-+    """Pytest --junitxml shape: file + classname + name, optional skipped/failure/error."""
-+
-+    skipped_nodes = set(skipped)
-+    failed_nodes = set(failed)
-+    errored_nodes = set(errored)
-+    testcase_xml: list[str] = []
-+    for node in nodes:
-+        file_part, name = node.split("::", 1)
-+        classname = file_part.replace("/", ".").removesuffix(".py")
-+        if node in skipped_nodes:
-+            child = "<skipped type='pytest.skip' message='skipped required case' />"
-+        elif node in failed_nodes:
-+            child = "<failure message='failed'>traceback</failure>"
-+        elif node in errored_nodes:
-+            child = "<error message='error'>traceback</error>"
-+        else:
-+            child = ""
-+        testcase_xml.append(f"<testcase classname='{classname}' name='{name}' file='{file_part}'>{child}</testcase>")
-+    return f"<testsuites><testsuite name='pytest' tests='{len(nodes)}'>{''.join(testcase_xml)}</testsuite></testsuites>"
++    environ: dict[str, str] | None = None,
++    jwks_get=None,
++) -> tuple[int, str, str]:
++    parser = module.build_parser()
++    args = parser.parse_args(argv)
++    stdout = StringIO()
++    stderr = StringIO()
++    code = module.execute(
++        args,
++        environ=environ or {},
++        stdin=StringIO(),
++        stdout=stdout,
++        stderr=stderr,
++        jwks_get=jwks_get,
++        prompt=False,
++    )
++    return code, stdout.getvalue(), stderr.getvalue()
 +
 +
-+def _write_command_junit(
-+    command: Sequence[str],
-+    xml_path: Path,
-+    *,
-+    case_count: int | None = None,
-+    skipped: Sequence[str] = (),
-+    failed: Sequence[str] = (),
-+    errored: Sequence[str] = (),
-+    xml_text: str | None = None,
-+    mtime: float | None = None,
-+) -> None:
-+    if xml_text is not None:
-+        xml_path.write_text(xml_text, encoding="utf-8")
++@pytest.fixture
++def cli() -> ModuleType:
++    return _load_script()
++
++
++def test_rejects_development_publishable_key(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_test())
++    backend = tmp_path / "backend.env"
++    code, _out, err = _run(
++        cli,
++        [
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++            "--apply",
++        ],
++    )
++    assert code == 1
++    assert "pk_test_" in err
++    assert not backend.exists()
++
++
++def test_rejects_development_secret_key(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    secret_file = _write_key(tmp_path / "sk", "sk_test_not-for-production-use")
++    backend = tmp_path / "backend.env"
++    code, _out, err = _run(
++        cli,
++        [
++            "--publishable-key-file",
++            str(key_file),
++            "--secret-key-file",
++            str(secret_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++            "--apply",
++        ],
++    )
++    assert code == 1
++    assert "sk_test_" in err
++    assert not backend.exists()
++
++
++@pytest.mark.parametrize(
++    "host",
++    [
++        "not a host",
++        "clerk.example.com/path",
++        "localhost",
++        "clean-mayfly.clerk.accounts.dev",
++        "clerk.altcontext.com:443",
++        "",
++    ],
++)
++def test_rejects_malformed_or_dev_host(cli: ModuleType, host: str) -> None:
++    if host == "":
++        payload = base64.b64encode(b"$").decode("ascii")
++        key = f"pk_live_{payload}"
++    elif host == "not a host":
++        payload = base64.b64encode(b"not a host$").decode("ascii")
++        key = f"pk_live_{payload}"
 +    else:
-+        nodes = _pytest_nodes(command)
-+        if case_count == 0:
-+            xml_path.write_text(_junit(cases=0), encoding="utf-8")
-+        elif case_count is not None and case_count != len(nodes):
-+            xml_path.write_text(_junit(cases=case_count), encoding="utf-8")
-+        else:
-+            xml_path.write_text(
-+                _junit_for_nodes(nodes, skipped=skipped, failed=failed, errored=errored),
-+                encoding="utf-8",
-+            )
-+    if mtime is not None:
-+        os.utime(xml_path, (mtime, mtime))
++        key = _pk_live(host)
++    with pytest.raises(cli.ClerkConfigError):
++        cli.decode_publishable_key(key)
 +
 +
- def _fake_runner(
-     *,
-     statuses: dict[str, int] | None = None,
-@@ -81,16 +144,16 @@ def _fake_runner(
-         if command[:3] == ["git", "rev-parse", "HEAD"]:
-             return SimpleNamespace(returncode=0, stdout="a" * 40, stderr="")
-         assert command[:3] == [runner.sys.executable, "-m", "pytest"]
--        group = next(
--            argument.split("--", 1)[1]
--            for argument in command
--            if argument.startswith("recognition/tests/")
--        ).split("/", 3)[2].split("_", 2)[2].split(".", 1)[0]
-+        group = (
-+            next(argument.split("--", 1)[1] for argument in command if argument.startswith("recognition/tests/"))
-+            .split("/", 3)[2]
-+            .split("_", 2)[2]
-+            .split(".", 1)[0]
-+        )
-         # The command's node id is only a convenient fixture discriminator;
-         # the runner itself never infers groups from test names.
-         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
--        cases = junit_cases.get(group, 1)
--        xml_path.write_text(_junit(cases=cases), encoding="utf-8")
-+        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
-         kwargs["stdout"].write(f"child output for {group}\n")
-         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
- 
-@@ -115,7 +178,7 @@ def _fake_runner_by_test(
-         test_node = next(argument for argument in command if argument.startswith("recognition/tests/"))
-         group = test_node.rsplit("test_case_", 1)[1]
-         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
--        xml_path.write_text(_junit(cases=junit_cases.get(group, 1)), encoding="utf-8")
-+        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
-         kwargs["stdout"].write(f"child output for {group}\n")
-         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
- 
-@@ -190,7 +253,10 @@ def test_group_without_executable_tests_fails_without_running_unscoped_pytest(tm
-     pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
-     assert pytest_calls == []
-     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
--    assert "group has no executable test cases" in evidence["groups"][0]["failure_reasons"]
-+    assert any(
-+        "missing required artifact" in reason and "SC-1" in reason
-+        for reason in evidence["groups"][0]["failure_reasons"]
++def test_decode_derives_https_issuer_and_jwks(cli: ModuleType) -> None:
++    config = cli.derived_config(
++        publishable_key=_pk_live(),
++        audience=AUDIENCE,
++        authorized_parties=["https://app.altcontext.com"],
 +    )
- 
- 
- def test_selected_group_outputs_are_cleaned_without_touching_other_groups(tmp_path: Path) -> None:
-@@ -239,7 +305,7 @@ def test_evidence_has_real_head_sha_and_absolute_artifact_paths(tmp_path: Path)
-         if command[:3] == ["git", "rev-parse", "HEAD"]:
-             return SimpleNamespace(returncode=0, stdout=actual_sha, stderr="")
-         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
--        xml_path.write_text(_junit(cases=1), encoding="utf-8")
-+        _write_command_junit(command, xml_path)
-         kwargs["stdout"].write("bounded child output\n")
-         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
- 
-@@ -285,7 +351,7 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
-         if command[:3] == ["git", "rev-parse", "HEAD"]:
-             return SimpleNamespace(returncode=0, stdout="c" * 40, stderr="")
-         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
--        xml_path.write_text(_junit(cases=1), encoding="utf-8")
-+        _write_command_junit(command, xml_path)
-         kwargs["stdout"].write("x" * (runner.CAPTURED_TAIL_BYTES + 100))
-         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
- 
-@@ -297,3 +363,265 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
-     assert capture["tail_limit_bytes"] == runner.CAPTURED_TAIL_BYTES
-     assert capture["tail_truncated"] is True
-     assert len(capture["tail"].encode("utf-8")) == runner.CAPTURED_TAIL_BYTES
++    assert config.issuer == "https://clerk.altcontext.com"
++    assert config.jwks_url == "https://clerk.altcontext.com/.well-known/jwks.json"
++    assert config.audience == AUDIENCE
++    assert config.authorized_parties == ("https://app.altcontext.com",)
++    assert "VITE_CLERK_PUBLISHABLE_KEY" not in config.backend_updates()
++    assert "CLERK_SECRET_KEY" not in config.backend_updates()
++    assert config.frontend_updates()["VITE_CLERK_FAPI"] == config.issuer
 +
 +
-+def _last_evidence(tmp_path: Path) -> dict[str, Any]:
-+    return json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
-+
-+
-+def _git_ok_then(handler):
-+    def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        if command[:3] == ["git", "rev-parse", "HEAD"]:
-+            return SimpleNamespace(returncode=0, stdout="d" * 40, stderr="")
-+        return handler(command, **kwargs)
-+
-+    return fake
-+
-+
-+def test_required_case_wrong_junit_identity_fails_even_when_counts_are_green(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    declared = payload["cases"][0]["test"]
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-+        _write_command_junit(
-+            command,
-+            xml_path,
-+            xml_text=_junit_for_nodes(["recognition/tests/api/test_other.py::test_unrelated"]),
-+        )
-+        kwargs["stdout"].write("unrelated passing case\n")
-+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status == 1
-+    evidence = _last_evidence(tmp_path)
-+    group = evidence["groups"][0]
-+    assert group["case_count"] == 1
-+    assert group["pass_count"] == 1
-+    ledger = group["case_ledger"]
-+    assert ledger[0]["id"] == "SC-1"
-+    assert ledger[0]["test"] == declared
-+    assert ledger[0]["status"] == "not_run"
-+    assert any("required case" in reason and "SC-1" in reason for reason in group["failure_reasons"])
-+
-+
-+def test_required_case_skipped_in_junit_cannot_exit_clean(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    declared = payload["cases"][0]["test"]
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-+        _write_command_junit(command, xml_path, skipped=[declared])
-+        kwargs["stdout"].write("skipped\n")
-+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status == 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["case_ledger"][0]["status"] == "skipped"
-+    assert any("skipped" in reason and "SC-1" in reason for reason in group["failure_reasons"])
-+
-+
-+def test_malformed_junit_fails_and_keeps_truthful_partial_evidence(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-+        xml_path.write_text("<not-junit", encoding="utf-8")
-+        kwargs["stdout"].write("parser noise\n")
-+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status == 1
-+    evidence = _last_evidence(tmp_path)
-+    group = evidence["groups"][0]
-+    assert evidence["runner_exit_status"] == 1
-+    assert group["junit_report_found"] is True
-+    assert group["case_ledger"][0]["status"] == "not_run"
-+    assert any("cannot parse JUnit" in reason for reason in group["failure_reasons"])
-+    assert "parser noise" in group["output_capture"]["tail"]
-+
-+
-+def test_missing_junit_fails_and_keeps_partial_evidence(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        kwargs["stdout"].write("pytest collected nothing\n")
-+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status == 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["junit_report_found"] is False
-+    assert group["case_ledger"][0]["status"] == "not_run"
-+    assert any("JUnit report is missing" in reason for reason in group["failure_reasons"])
-+
-+
-+def test_stale_junit_mtime_before_run_start_fails(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    manifest_path = _write_manifest(tmp_path, payload)
-+    past = time.time() - 3600
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-+        _write_command_junit(command, xml_path, mtime=past)
-+        kwargs["stdout"].write("stale report reused\n")
-+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status == 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert any("stale JUnit" in reason for reason in group["failure_reasons"])
-+    assert group["case_ledger"][0]["status"] == "not_run"
-+
-+
-+def test_selected_group_does_not_demand_unselected_required_cases(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path, groups=("selected", "other"))
-+    manifest_path = _write_manifest(tmp_path, payload)
-+    calls: list[tuple[list[str], dict[str, Any]]] = []
-+
-+    status = runner.run_evals(
-+        manifest_path,
-+        groups=["selected"],
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=calls),
++def test_authorized_parties_default_exact_app_origin(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    code, out, err = _run(
++        cli,
++        [
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++        ],
 +    )
++    assert code == 0, err
++    assert "ACX_CLERK_AUTHORIZED_PARTIES=https://app.altcontext.com" in out
++    assert not backend.exists()
 +
-+    assert status == 0
-+    evidence = _last_evidence(tmp_path)
-+    assert evidence["full_suite"] is False
-+    assert evidence["selected_groups"] == ["selected"]
-+    assert [group["group"] for group in evidence["groups"]] == ["selected"]
-+    assert evidence["groups"][0]["case_ledger"][0]["id"] == "SC-1"
-+    assert evidence["groups"][0]["case_ledger"][0]["status"] == "passed"
-+    assert all("SC-2" not in reason for group in evidence["groups"] for reason in group["failure_reasons"])
-+    pytest_nodes = [
-+        argument
-+        for command, _kwargs in calls
-+        if command[:3] == [runner.sys.executable, "-m", "pytest"]
-+        for argument in command
-+        if argument.startswith("recognition/")
++
++def test_dry_run_does_not_write(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    backend.write_text("COMPOSE_PROJECT_NAME=acx-prod\n", encoding="utf-8")
++    original = backend.read_bytes()
++    code, out, err = _run(
++        cli,
++        [
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++        ],
++    )
++    assert code == 0, err
++    assert "mode=dry-run" in out
++    assert backend.read_bytes() == original
++
++
++def test_apply_preserves_unrelated_and_omits_browser_secret_from_backend(cli: ModuleType, tmp_path: Path) -> None:
++    key = _pk_live()
++    key_file = _write_key(tmp_path / "pk", key)
++    secret_file = _write_key(tmp_path / "sk", "sk_live_backend-only-secret-value")
++    backend = tmp_path / ".env"
++    backend.write_text("COMPOSE_PROJECT_NAME=acx-prod\nACX_ENV=prod\n", encoding="utf-8")
++    frontend = tmp_path / "app-portal.env"
++    code, out, err = _run(
++        cli,
++        [
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--secret-key-file",
++            str(secret_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++            "--frontend-env",
++            str(frontend),
++        ],
++    )
++    assert code == 0, err
++    backend_text = backend.read_text(encoding="utf-8")
++    frontend_text = frontend.read_text(encoding="utf-8")
++    assert "COMPOSE_PROJECT_NAME=acx-prod" in backend_text
++    assert "ACX_ENV=prod" in backend_text
++    assert "ACX_CLERK_ISSUER=https://clerk.altcontext.com" in backend_text
++    assert "ACX_CLERK_JWKS_URL=https://clerk.altcontext.com/.well-known/jwks.json" in backend_text
++    assert f"ACX_CLERK_AUDIENCE={AUDIENCE}" in backend_text
++    assert "ACX_CLERK_AUTHORIZED_PARTIES=https://app.altcontext.com" in backend_text
++    assert "CLERK_SECRET_KEY=sk_live_backend-only-secret-value" in backend_text
++    assert "VITE_CLERK_PUBLISHABLE_KEY" not in backend_text
++    assert key not in backend_text
++    assert f"VITE_CLERK_PUBLISHABLE_KEY={key}" in frontend_text
++    assert "VITE_CLERK_FAPI=https://clerk.altcontext.com" in frontend_text
++    assert "CLERK_SECRET_KEY" not in frontend_text
++    assert "sk_live_backend-only-secret-value" not in frontend_text
++    assert stat.S_IMODE(backend.stat().st_mode) == 0o600
++    assert stat.S_IMODE(frontend.stat().st_mode) == 0o600
++    assert key not in out
++    assert "sk_live_backend-only-secret-value" not in out
++    assert key not in err
++    assert "sk_live_backend-only-secret-value" not in err
++    assert "pk_live_<redacted>" in out
++
++
++def test_does_not_leak_key_from_environment(cli: ModuleType, tmp_path: Path) -> None:
++    key = _pk_live()
++    backend = tmp_path / ".env"
++    code, out, err = _run(
++        cli,
++        ["--audience", AUDIENCE, "--backend-env", str(backend)],
++        environ={"CLERK_PUBLISHABLE_KEY": key},
++    )
++    assert code == 0, err
++    assert key not in out
++    assert key not in err
++
++
++def test_refuses_symlink_destination(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    real = tmp_path / "real.env"
++    real.write_text("ACX_ENV=prod\n", encoding="utf-8")
++    link = tmp_path / "link.env"
++    link.symlink_to(real)
++    code, _out, err = _run(
++        cli,
++        [
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(link),
++        ],
++    )
++    assert code == 1
++    assert "symlink" in err
++    assert real.read_text(encoding="utf-8") == "ACX_ENV=prod\n"
++
++
++def test_rejects_contradictory_duplicate_vars(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    backend.write_text("ACX_CLERK_AUDIENCE=one\nACX_CLERK_AUDIENCE=two\n", encoding="utf-8")
++    code, _out, err = _run(
++        cli,
++        [
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++        ],
++    )
++    assert code == 1
++    assert "contradictory duplicate" in err
++    assert backend.read_text(encoding="utf-8") == "ACX_CLERK_AUDIENCE=one\nACX_CLERK_AUDIENCE=two\n"
++
++
++def test_rejects_newline_injection_in_audience(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    code, _out, err = _run(
++        cli,
++        [
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            "portal\nINJECTED=1",
++            "--backend-env",
++            str(backend),
++        ],
++    )
++    assert code == 1
++    assert "newline" in err or "audience" in err
++    assert not backend.exists()
++
++
++def test_failure_atomicity_leaves_destination_unchanged(
++    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    original = "COMPOSE_PROJECT_NAME=acx-prod\nKEEP=yes\n"
++    backend.write_text(original, encoding="utf-8")
++    os.chmod(backend, 0o600)
++
++    def boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
++        raise OSError("injected replace failure")
++
++    monkeypatch.setattr(cli.os, "replace", boom)
++    code, _out, err = _run(
++        cli,
++        [
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++        ],
++    )
++    assert code == 1
++    assert "atomic write failed" in err
++    assert backend.read_text(encoding="utf-8") == original
++    leftovers = list(tmp_path.glob(".env.*.tmp"))
++    assert leftovers == []
++
++
++def test_apply_is_idempotent(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
++    backend.write_text("COMPOSE_PROJECT_NAME=acx-prod\n", encoding="utf-8")
++    argv = [
++        "--apply",
++        "--publishable-key-file",
++        str(key_file),
++        "--audience",
++        AUDIENCE,
++        "--backend-env",
++        str(backend),
 +    ]
-+    assert pytest_nodes == ["recognition/tests/api/test_portal_1.py::test_case_1"]
++    first, _, err1 = _run(cli, argv)
++    assert first == 0, err1
++    once = backend.read_text(encoding="utf-8")
++    second, _, err2 = _run(cli, argv)
++    assert second == 0, err2
++    assert backend.read_text(encoding="utf-8") == once
 +
 +
-+def test_full_suite_run_is_labeled_full_suite(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path, groups=("first", "second"))
-+    manifest_path = _write_manifest(tmp_path, payload)
++def test_check_does_not_write_and_fails_closed(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    backend = tmp_path / ".env"
 +
-+    status = runner.run_evals(
-+        manifest_path,
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=[]),
++    def fail(_url: str) -> dict[str, object]:
++        raise cli.ClerkConfigError("JWKS check failed")
++
++    code, _out, err = _run(
++        cli,
++        [
++            "--check",
++            "--apply",
++            "--publishable-key-file",
++            str(key_file),
++            "--audience",
++            AUDIENCE,
++            "--backend-env",
++            str(backend),
++        ],
++        jwks_get=fail,
 +    )
-+
-+    assert status == 0
-+    evidence = _last_evidence(tmp_path)
-+    assert evidence["full_suite"] is True
-+    assert evidence["selected_groups"] == ["first", "second"]
++    assert code == 1
++    assert "JWKS check failed" in err
++    assert not backend.exists()
 +
 +
-+def test_missing_required_artifact_fails_without_greening(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    payload["cases"][0]["additional_evidence_required"] = True
-+    payload["cases"][0]["artifact"] = "docs/missing-app1-evidence.md"
-+    manifest_path = _write_manifest(tmp_path, payload)
++def test_check_success_is_not_fabricated(cli: ModuleType, tmp_path: Path) -> None:
++    key_file = _write_key(tmp_path / "pk", _pk_live())
++    seen: list[str] = []
 +
-+    status = runner.run_evals(
-+        manifest_path,
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=[]),
++    def ok(url: str) -> dict[str, object]:
++        seen.append(url)
++        return {"keys": [{"kty": "RSA", "kid": "x"}]}
++
++    code, out, err = _run(
++        cli,
++        ["--check", "--publishable-key-file", str(key_file), "--audience", AUDIENCE],
++        jwks_get=ok,
 +    )
-+
-+    assert status == 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["case_ledger"][0]["additional_evidence_present"] is False
-+    assert any("missing required artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
-+
-+
-+def test_additional_evidence_without_artifact_path_cannot_exit_clean(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    payload["cases"][0]["additional_evidence_required"] = True
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    status = runner.run_evals(
-+        manifest_path,
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=[]),
-+    )
-+
-+    assert status == 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert any("no artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
++    assert code == 0, err
++    assert seen == ["https://clerk.altcontext.com/.well-known/jwks.json"]
++    assert "jwks_check=ok" in out
++    assert "wrote=" not in out
 +
 +
-+def test_required_artifact_present_and_matching_junit_can_pass(tmp_path: Path) -> None:
-+    artifact = tmp_path / "browser-secret-once.md"
-+    artifact.write_text("one-time secret display evidence\n", encoding="utf-8")
-+    payload = _manifest_payload(tmp_path)
-+    payload["cases"][0]["additional_evidence_required"] = True
-+    payload["cases"][0]["artifact"] = str(artifact)
-+    manifest_path = _write_manifest(tmp_path, payload)
++def test_parser_has_no_secret_value_flags(cli: ModuleType) -> None:
++    help_text = cli.build_parser().format_help()
++    assert "--publishable-key " not in f" {help_text} "
++    assert "--secret-key " not in f" {help_text} "
++    assert "--publishable-key-file" in help_text
++    assert "--secret-key-file" in help_text
+diff --git a/apps/prototype-description-service/scripts/configure_clerk_production.py b/apps/prototype-description-service/scripts/configure_clerk_production.py
+new file mode 100644
+--- /dev/null
++++ b/apps/prototype-description-service/scripts/configure_clerk_production.py
+@@ -0,0 +1,547 @@
++#!/usr/bin/env python3
++"""Bootstrap production Clerk environment files for app.altcontext.com.
 +
-+    status = runner.run_evals(
-+        manifest_path,
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=[]),
-+    )
++Stdlib CLI. Dry-run by default; writes only with ``--apply``. Secrets are
++accepted from the environment, a protected file, or a prompt — never argv.
++Each destination file is replaced atomically at mode 0600.
++"""
 +
-+    assert status == 0
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["case_ledger"][0]["status"] == "passed"
-+    assert group["case_ledger"][0]["additional_evidence_present"] is True
++from __future__ import annotations
 +
++import argparse
++import base64
++import binascii
++import json
++import os
++import re
++import stat
++import sys
++import tempfile
++from collections.abc import Callable, Mapping, Sequence
++from dataclasses import dataclass
++from pathlib import Path
++from typing import TextIO
++from urllib.error import HTTPError, URLError
++from urllib.parse import urlparse
++from urllib.request import Request, urlopen
 +
-+def test_evidence_only_group_passes_when_required_artifact_exists(tmp_path: Path) -> None:
-+    artifact = tmp_path / "observation.md"
-+    artifact.write_text("cohort study\n", encoding="utf-8")
-+    payload = _manifest_payload(tmp_path)
-+    payload["cases"][0].pop("test")
-+    payload["cases"][0]["artifact"] = str(artifact)
-+    payload["cases"][0]["additional_evidence_required"] = True
-+    manifest_path = _write_manifest(tmp_path, payload)
-+    calls: list[tuple[list[str], dict[str, Any]]] = []
-+
-+    status = runner.run_evals(
-+        manifest_path,
-+        out_dir=tmp_path / "out",
-+        command_runner=_fake_runner_by_test(calls=calls),
-+    )
-+
-+    assert status == 0
-+    pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
-+    assert pytest_calls == []
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["case_ledger"][0]["status"] == "passed"
-+    assert group["exit_status"] == 0
-+
-+
-+def test_required_case_failure_element_is_not_green(tmp_path: Path) -> None:
-+    payload = _manifest_payload(tmp_path)
-+    declared = payload["cases"][0]["test"]
-+    manifest_path = _write_manifest(tmp_path, payload)
-+
-+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
-+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-+        _write_command_junit(command, xml_path, failed=[declared])
-+        kwargs["stdout"].write("failed assertion\n")
-+        return SimpleNamespace(returncode=1, stdout=None, stderr=None)
-+
-+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
-+
-+    assert status >= 1
-+    group = _last_evidence(tmp_path)["groups"][0]
-+    assert group["case_ledger"][0]["status"] == "failed"
-+    assert "failed assertion" in group["output_capture"]["tail"]
-diff --git a/apps/prototype-description-service/scripts/run_app_portal_evals.py b/apps/prototype-description-service/scripts/run_app_portal_evals.py
---- a/apps/prototype-description-service/scripts/run_app_portal_evals.py
-+++ b/apps/prototype-description-service/scripts/run_app_portal_evals.py
-@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
- from collections.abc import Callable, Mapping, Sequence
- from dataclasses import dataclass
- from datetime import UTC, datetime
-+from enum import StrEnum
- from pathlib import Path
- from typing import Any
- 
-@@ -69,6 +70,16 @@ class EvalRunnerError(RuntimeError):
-     """The runner could not prepare or record an evaluation run."""
- 
- 
-+class CaseLedgerStatus(StrEnum):
-+    """Per-declared-case outcome recorded in the run ledger."""
-+
-+    PASSED = "passed"
-+    FAILED = "failed"
-+    SKIPPED = "skipped"
-+    ERROR = "error"
-+    NOT_RUN = "not_run"
++DEFAULT_AUTHORIZED_PARTY = "https://app.altcontext.com"
++PUBLISHABLE_ENV = "CLERK_PUBLISHABLE_KEY"
++SECRET_ENV = "CLERK_SECRET_KEY"
++BACKEND_MANAGED_KEYS = (
++    "ACX_CLERK_ISSUER",
++    "ACX_CLERK_JWKS_URL",
++    "ACX_CLERK_AUDIENCE",
++    "ACX_CLERK_AUTHORIZED_PARTIES",
++)
++FRONTEND_MANAGED_KEYS = (
++    "VITE_CLERK_PUBLISHABLE_KEY",
++    "VITE_CLERK_FAPI",
++)
++SECRET_BACKEND_KEY = "CLERK_SECRET_KEY"
++MANAGED_COMMENT = "# Clerk production portal auth (managed by configure_clerk_production.py)"
++JWKS_PATH = "/.well-known/jwks.json"
++CHECK_TIMEOUT_S = 2.0
++CHECK_MAX_BYTES = 256 * 1024
++_HOSTNAME_RE = re.compile(
++    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
++    r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
++)
++_ASSIGNMENT_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
++_DEV_HOST_SUFFIXES = (".accounts.dev", ".lcl.dev", ".lclclerk.com")
++_REDACT_PREFIXES = ("pk_live_", "pk_test_", "sk_live_", "sk_test_")
 +
 +
- @dataclass(frozen=True, slots=True)
- class ManifestCase:
-     """One executable or evidence-only case declared by the manifest."""
-@@ -78,6 +89,8 @@ class ManifestCase:
-     criterion: str
-     status: str
-     test: str | None
-+    artifact: str | None = None
-+    additional_evidence_required: bool = False
- 
- 
- @dataclass(frozen=True, slots=True)
-@@ -104,6 +117,18 @@ class EvalManifest:
-         return {name: tuple(cases) for name, cases in grouped.items()}
- 
- 
++class ClerkConfigError(Exception):
++    """Operator-visible configuration or I/O failure without secret values."""
++
++
 +@dataclass(frozen=True, slots=True)
-+class JunitCase:
-+    """One JUnit testcase with pytest node-id candidates."""
++class DerivedClerkConfig:
++    publishable_key: str
++    secret_key: str | None
++    frontend_api_host: str
++    issuer: str
++    jwks_url: str
++    audience: str
++    authorized_parties: tuple[str, ...]
 +
-+    node_id: str
-+    candidates: frozenset[str]
-+    outcome: CaseLedgerStatus
-+    classname: str
-+    name: str
-+    file: str
++    def backend_updates(self) -> dict[str, str]:
++        updates = {
++            "ACX_CLERK_ISSUER": self.issuer,
++            "ACX_CLERK_JWKS_URL": self.jwks_url,
++            "ACX_CLERK_AUDIENCE": self.audience,
++            "ACX_CLERK_AUTHORIZED_PARTIES": ",".join(self.authorized_parties),
++        }
++        if self.secret_key is not None:
++            updates[SECRET_BACKEND_KEY] = self.secret_key
++        return updates
 +
-+
- @dataclass(frozen=True, slots=True)
- class JunitCounts:
-     """Counts derived from testcase elements in one JUnit report."""
-@@ -116,6 +141,8 @@ class JunitCounts:
-     error_count: int
-     failure_element_count: int
-     report_error: str | None = None
-+    cases: tuple[JunitCase, ...] = ()
-+    mtime: float | None = None
- 
- 
- CommandRunner = Callable[..., Any]
-@@ -241,8 +268,7 @@ def load_manifest(path: str | Path) -> EvalManifest:
-     if not isinstance(tags_value, list) or not tags_value:
-         raise _manifest_error(f"{manifest_path}.tags", "must be a non-empty array")
-     tags = tuple(
--        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]")
--        for index, tag in enumerate(tags_value)
-+        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]") for index, tag in enumerate(tags_value)
-     )
- 
-     cases_value = raw["cases"]
-@@ -273,18 +299,18 @@ def load_manifest(path: str | Path) -> EvalManifest:
-             )
-         criterion = _require_nonempty_string(case["criterion"], path=f"{case_path}.criterion")
-         status = _require_nonempty_string(case["status"], path=f"{case_path}.status")
--        test = (
--            _require_nonempty_string(case["test"], path=f"{case_path}.test")
--            if "test" in case
--            else None
-+        test = _require_nonempty_string(case["test"], path=f"{case_path}.test") if "test" in case else None
-+        additional_evidence_required = False
-+        if "additional_evidence_required" in case:
-+            if type(case["additional_evidence_required"]) is not bool:
-+                raise _manifest_error(
-+                    f"{case_path}.additional_evidence_required",
-+                    "must be a boolean",
-+                )
-+            additional_evidence_required = case["additional_evidence_required"]
-+        artifact = (
-+            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact") if "artifact" in case else None
-         )
--        if "additional_evidence_required" in case and type(case["additional_evidence_required"]) is not bool:
--            raise _manifest_error(
--                f"{case_path}.additional_evidence_required",
--                "must be a boolean",
--            )
--        if "artifact" in case:
--            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
-         cases.append(
-             ManifestCase(
-                 case_id=case_id,
-@@ -292,6 +318,8 @@ def load_manifest(path: str | Path) -> EvalManifest:
-                 criterion=criterion,
-                 status=status,
-                 test=test,
-+                artifact=artifact,
-+                additional_evidence_required=additional_evidence_required,
-             )
-         )
- 
-@@ -323,8 +351,7 @@ def _selected_groups(manifest: EvalManifest, requested: Sequence[str] | None) ->
-     for group in requested:
-         if group not in available:
-             raise ManifestValidationError(
--                f"manifest {manifest.path}: unknown group {group!r}; "
--                f"known groups: {sorted(available)}"
-+                f"manifest {manifest.path}: unknown group {group!r}; known groups: {sorted(available)}"
-             )
-         if group not in selected:
-             selected.append(group)
-@@ -371,6 +398,34 @@ def _local_tag(tag: object) -> str:
-     return tag.rsplit("}", 1)[-1]
- 
- 
-+def _junit_case_candidates(*, file_attr: str, classname: str, name: str) -> frozenset[str]:
-+    candidates: set[str] = set()
-+    if file_attr and name:
-+        candidates.add(f"{file_attr}::{name}")
-+    if classname and name:
-+        candidates.add(f"{classname}::{name}")
-+        parts = classname.split(".")
-+        last = parts[-1] if parts else ""
-+        if last[:1].isupper() and len(parts) > 1:
-+            module_file = "/".join(parts[:-1]) + ".py"
-+            candidates.add(f"{module_file}::{last}::{name}")
-+            candidates.add(f"{module_file}::{name}")
-+        elif parts:
-+            candidates.add(f"{'/'.join(parts)}.py::{name}")
-+    return frozenset(candidates)
++    def frontend_updates(self) -> dict[str, str]:
++        return {
++            "VITE_CLERK_PUBLISHABLE_KEY": self.publishable_key,
++            "VITE_CLERK_FAPI": self.issuer,
++        }
 +
 +
-+def _junit_case_outcome(testcase: ET.Element) -> CaseLedgerStatus:
-+    child_tags = {_local_tag(child.tag) for child in testcase}
-+    if "skipped" in child_tags:
-+        return CaseLedgerStatus.SKIPPED
-+    if "error" in child_tags:
-+        return CaseLedgerStatus.ERROR
-+    if "failure" in child_tags:
-+        return CaseLedgerStatus.FAILED
-+    return CaseLedgerStatus.PASSED
++def redact(value: str) -> str:
++    stripped = value.strip()
++    for prefix in _REDACT_PREFIXES:
++        if stripped.startswith(prefix):
++            return f"{prefix}<redacted>"
++    return stripped
 +
 +
- def _read_junit(path: Path) -> JunitCounts:
-     if not path.is_file():
-         return JunitCounts(
-@@ -384,8 +439,13 @@ def _read_junit(path: Path) -> JunitCounts:
-             report_error=f"missing JUnit report: {path}",
-         )
-     try:
-+        mtime = path.stat().st_mtime
-         root = ET.parse(path).getroot()
-     except (ET.ParseError, OSError, UnicodeError) as exc:
-+        try:
-+            parse_mtime = path.stat().st_mtime
-+        except OSError:
-+            parse_mtime = None
-         return JunitCounts(
-             report_found=True,
-             case_count=0,
-@@ -395,14 +455,17 @@ def _read_junit(path: Path) -> JunitCounts:
-             error_count=0,
-             failure_element_count=0,
-             report_error=f"cannot parse JUnit report {path}: {exc}",
-+            mtime=parse_mtime,
-         )
- 
--    testcases = [element for element in root.iter() if _local_tag(element.tag) == "testcase"]
-+    parsed_cases: list[JunitCase] = []
-     skip_count = 0
-     error_count = 0
-     failure_element_count = 0
-     fail_count = 0
--    for testcase in testcases:
-+    for testcase in root.iter():
-+        if _local_tag(testcase.tag) != "testcase":
-+            continue
-         child_tags = {_local_tag(child.tag) for child in testcase}
-         if "skipped" in child_tags:
-             skip_count += 1
-@@ -414,15 +477,34 @@ def _read_junit(path: Path) -> JunitCounts:
-             error_count += 1
-         if has_failure or has_error:
-             fail_count += 1
--    pass_count = max(0, len(testcases) - skip_count - fail_count)
-+        file_attr = (testcase.get("file") or "").replace("\\", "/")
-+        classname = testcase.get("classname") or ""
-+        name = testcase.get("name") or ""
-+        candidates = _junit_case_candidates(file_attr=file_attr, classname=classname, name=name)
-+        node_id = next(iter(candidates), f"{classname}::{name}" if classname or name else "")
-+        if file_attr and name:
-+            node_id = f"{file_attr}::{name}"
-+        parsed_cases.append(
-+            JunitCase(
-+                node_id=node_id,
-+                candidates=candidates,
-+                outcome=_junit_case_outcome(testcase),
-+                classname=classname,
-+                name=name,
-+                file=file_attr,
-+            )
-+        )
-+    pass_count = max(0, len(parsed_cases) - skip_count - fail_count)
-     return JunitCounts(
-         report_found=True,
--        case_count=len(testcases),
-+        case_count=len(parsed_cases),
-         pass_count=pass_count,
-         fail_count=fail_count,
-         skip_count=skip_count,
-         error_count=error_count,
-         failure_element_count=failure_element_count,
-+        cases=tuple(parsed_cases),
-+        mtime=mtime,
-     )
- 
- 
-@@ -463,6 +545,56 @@ def _normalise_status(value: object, *, fallback: int = 1) -> int:
-     return 128 + abs(status) if status < 0 else status
- 
- 
-+def _required_case_ids_for_selection(manifest: EvalManifest, selected: Sequence[str]) -> set[str]:
-+    selected_ids = {case.case_id for group in selected for case in manifest.groups[group]}
-+    required: set[str] = set()
-+    for gate in manifest.release_gates.values():
-+        for case_id in gate.get("required_cases", []):
-+            if case_id in selected_ids:
-+                required.add(str(case_id))
-+    return required
-+
-+
-+def _junit_is_stale(junit: JunitCounts, *, started_at: datetime) -> bool:
-+    if not junit.report_found or junit.mtime is None:
-+        return False
-+    return junit.mtime < started_at.timestamp() - 1
-+
-+
-+def _match_junit_case(declared: str, available: list[JunitCase]) -> JunitCase | None:
-+    for index, case in enumerate(available):
-+        if declared == case.node_id or declared in case.candidates:
-+            return available.pop(index)
-+    return None
-+
-+
-+def _artifact_evidence(
-+    case: ManifestCase,
-+    *,
-+    repository_root: Path,
-+) -> tuple[bool, str | None]:
-+    needs_artifact = case.additional_evidence_required or case.artifact is not None
-+    if not needs_artifact:
-+        return True, None
-+    if case.artifact is None:
-+        return (
-+            False,
-+            f"required case {case.case_id} requires additional evidence but declares no artifact",
-+        )
-+    path = Path(case.artifact).expanduser()
-+    if not path.is_absolute():
-+        path = repository_root / path
++def decode_publishable_key(raw: str) -> str:
++    """Return the Clerk FAPI hostname encoded in a ``pk_live_`` key."""
++    key = _single_line_secret(raw, name="publishable key")
++    if key.startswith("pk_test_"):
++        raise ClerkConfigError("refusing development publishable key (pk_test_); production requires pk_live_")
++    if not key.startswith("pk_live_"):
++        raise ClerkConfigError("publishable key must start with pk_live_")
++    payload = key.removeprefix("pk_live_")
++    if not payload:
++        raise ClerkConfigError("publishable key is missing the encoded frontend API host")
++    padded = payload + "=" * (-len(payload) % 4)
 +    try:
-+        resolved = path.resolve()
-+        if not resolved.is_file():
-+            return False, f"required case {case.case_id} missing required artifact {resolved}"
-+        if resolved.stat().st_size == 0:
-+            return False, f"required case {case.case_id} required artifact is empty: {resolved}"
++        decoded = base64.b64decode(padded, validate=False)
++    except (ValueError, binascii.Error):
++        try:
++            decoded = base64.urlsafe_b64decode(padded)
++        except (ValueError, binascii.Error) as exc:
++            raise ClerkConfigError("publishable key is not valid base64") from exc
++    try:
++        text = decoded.decode("ascii")
++    except UnicodeDecodeError as exc:
++        raise ClerkConfigError("publishable key decoded host is not ASCII") from exc
++    if not text.endswith("$"):
++        raise ClerkConfigError("publishable key decoded host must end with '$'")
++    host = text[:-1]
++    if not host or "/" in host or ":" in host or "@" in host or " " in host:
++        raise ClerkConfigError("malformed Clerk frontend API host in publishable key")
++    lowered = host.lower()
++    if lowered == "localhost" or any(lowered.endswith(suffix) for suffix in _DEV_HOST_SUFFIXES):
++        raise ClerkConfigError("refusing development frontend API host; production requires a live custom domain")
++    if not _HOSTNAME_RE.fullmatch(host):
++        raise ClerkConfigError("malformed Clerk frontend API host in publishable key")
++    return host
++
++
++def validate_secret_key(raw: str) -> str:
++    key = _single_line_secret(raw, name="secret key")
++    if key.startswith("sk_test_"):
++        raise ClerkConfigError("refusing development secret key (sk_test_); production requires sk_live_")
++    if not key.startswith("sk_live_"):
++        raise ClerkConfigError("secret key must start with sk_live_")
++    if len(key) < 16:
++        raise ClerkConfigError("secret key is truncated")
++    return key
++
++
++def validate_audience(raw: str) -> str:
++    value = raw.strip()
++    if not value:
++        raise ClerkConfigError("audience is required (session token template must set aud)")
++    if any(ch in value for ch in "\n\r\0,"):
++        raise ClerkConfigError("audience must be a single value without commas or newlines")
++    return value
++
++
++def validate_authorized_party(raw: str) -> str:
++    value = raw.strip()
++    if any(ch in value for ch in "\n\r\0"):
++        raise ClerkConfigError("authorized party contains a newline")
++    parsed = urlparse(value)
++    if (
++        parsed.scheme != "https"
++        or not parsed.netloc
++        or parsed.path not in {"", "/"}
++        or parsed.params
++        or parsed.query
++        or parsed.fragment
++        or parsed.username is not None
++        or parsed.password is not None
++    ):
++        raise ClerkConfigError("authorized party must be an exact https origin (default https://app.altcontext.com)")
++    return f"https://{parsed.netloc}"
++
++
++def derived_config(
++    *,
++    publishable_key: str,
++    audience: str,
++    authorized_parties: Sequence[str],
++    secret_key: str | None = None,
++) -> DerivedClerkConfig:
++    host = decode_publishable_key(publishable_key)
++    parties = tuple(validate_authorized_party(item) for item in authorized_parties)
++    if not parties:
++        raise ClerkConfigError("at least one authorized party is required")
++    secret = validate_secret_key(secret_key) if secret_key is not None else None
++    issuer = f"https://{host}"
++    return DerivedClerkConfig(
++        publishable_key=_single_line_secret(publishable_key, name="publishable key"),
++        secret_key=secret,
++        frontend_api_host=host,
++        issuer=issuer,
++        jwks_url=f"{issuer}{JWKS_PATH}",
++        audience=validate_audience(audience),
++        authorized_parties=parties,
++    )
++
++
++def load_protected_value(path: Path, *, kind: str, require_owner_only: bool) -> str:
++    _assert_safe_file(path, must_exist=True, require_owner_only=require_owner_only)
++    try:
++        text = path.read_text(encoding="utf-8")
 +    except OSError as exc:
-+        return False, f"required case {case.case_id} missing required artifact {path}: {exc}"
-+    return True, None
++        raise ClerkConfigError(f"cannot read {kind} file") from exc
++    return _single_line_secret(text, name=kind)
 +
 +
- def _run_group(
-     manifest: EvalManifest,
-     *,
-@@ -472,6 +604,9 @@ def _run_group(
-     log_path: Path,
-     environment: Mapping[str, str],
-     command_runner: CommandRunner,
-+    started_at: datetime,
-+    repository_root: Path,
-+    required_case_ids: set[str],
- ) -> dict[str, Any]:
-     test_nodes = [case.test for case in cases if case.test is not None]
-     command = [
-@@ -482,14 +617,12 @@ def _run_group(
-         *test_nodes,
-         f"--junitxml={xml_path}",
-     ]
--    raw_exit_status = 1
-+    raw_exit_status = 0
-     timed_out = False
-     execution_error: str | None = None
-+    ran_pytest = bool(test_nodes)
-     with log_path.open("w", encoding="utf-8") as log_file:
--        if not test_nodes:
--            raw_exit_status = 1
--            execution_error = "group has no executable test cases"
--        else:
-+        if ran_pytest:
-             try:
-                 completed = command_runner(
-                     command,
-@@ -514,29 +647,72 @@ def _run_group(
-                 execution_error = f"cannot run pytest subprocess: {exc}"
- 
-     junit = _read_junit(xml_path)
-+    stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
-+    usable_junit = ran_pytest and junit.report_found and junit.report_error is None and not stale_junit
-+    unmatched = list(junit.cases) if usable_junit else []
-     output_tail, output_tail_bytes, output_tail_truncated, tail_error = _read_capped_tail(log_path)
-     threshold_failures = int(manifest.threshold["max_failures"])
-     threshold_skipped = int(manifest.threshold["max_skipped"])
-     reasons: list[str] = []
--    status = _normalise_status(raw_exit_status)
--    if raw_exit_status != 0:
-+    status = _normalise_status(raw_exit_status) if ran_pytest else 0
-+    if ran_pytest and raw_exit_status != 0:
-         reasons.append(f"pytest exited with status {raw_exit_status}")
--    if not junit.report_found:
-+    if ran_pytest and not junit.report_found:
-         reasons.append("JUnit report is missing")
--    if junit.case_count == 0:
-+    if ran_pytest and junit.case_count == 0:
-         reasons.append("group produced zero test cases")
--    if junit.fail_count > threshold_failures:
--        reasons.append(
--            f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}"
--        )
--    if junit.skip_count > threshold_skipped:
-+    if ran_pytest and junit.fail_count > threshold_failures:
-+        reasons.append(f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}")
-+    if ran_pytest and junit.skip_count > threshold_skipped:
-         reasons.append(f"skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}")
--    if junit.report_error:
-+    if stale_junit:
-+        reasons.append(f"stale JUnit report: {xml_path} is older than the run start")
-+    if ran_pytest and junit.report_error:
-         reasons.append(junit.report_error)
-     if execution_error:
-         reasons.append(execution_error)
-     if tail_error:
-         reasons.append(tail_error)
++def parse_env_lines(text: str) -> list[str]:
++    return text.splitlines()
 +
-+    case_ledger: list[dict[str, Any]] = []
-+    for case in cases:
-+        required = case.case_id in required_case_ids
-+        label = "required case" if required else "declared case"
-+        matched = _match_junit_case(case.test, unmatched) if case.test and usable_junit else None
-+        if case.test is None:
-+            ledger_status = CaseLedgerStatus.NOT_RUN
-+        elif matched is None:
-+            ledger_status = CaseLedgerStatus.NOT_RUN
-+            reasons.append(f"{label} {case.case_id} was not executed (declared test {case.test} missing from JUnit)")
-+        else:
-+            ledger_status = matched.outcome
-+            if ledger_status == CaseLedgerStatus.SKIPPED:
-+                reasons.append(f"{label} {case.case_id} was skipped")
-+            elif ledger_status == CaseLedgerStatus.FAILED:
-+                reasons.append(f"{label} {case.case_id} failed")
-+            elif ledger_status == CaseLedgerStatus.ERROR:
-+                reasons.append(f"{label} {case.case_id} errored")
-+        artifact_ok, artifact_reason = _artifact_evidence(case, repository_root=repository_root)
-+        if artifact_reason:
-+            reasons.append(artifact_reason)
-+        if case.test is None and artifact_ok:
-+            ledger_status = CaseLedgerStatus.PASSED
-+        case_ledger.append(
-+            {
-+                "id": case.case_id,
-+                "group": group,
-+                "test": case.test,
-+                "artifact": case.artifact,
-+                "required": required,
-+                "status": str(ledger_status),
-+                "junit_identity": None if matched is None else matched.node_id,
-+                "additional_evidence_required": case.additional_evidence_required,
-+                "additional_evidence_present": artifact_ok
-+                if (case.additional_evidence_required or case.artifact is not None)
-+                else True,
-+            }
++
++def assignment_index(lines: Sequence[str]) -> dict[str, list[tuple[int, str]]]:
++    found: dict[str, list[tuple[int, str]]] = {}
++    for index, line in enumerate(lines):
++        stripped = line.strip()
++        if not stripped or stripped.startswith("#"):
++            continue
++        match = _ASSIGNMENT_RE.match(stripped)
++        if match is None:
++            continue
++        key, raw_value = match.group(1), match.group(2)
++        value = _unquote_env_value(raw_value)
++        found.setdefault(key, []).append((index, value))
++    return found
++
++
++def reject_duplicate_assignments(found: Mapping[str, list[tuple[int, str]]]) -> None:
++    for key, occurrences in found.items():
++        if len(occurrences) < 2:
++            continue
++        values = {item[1] for item in occurrences}
++        if len(values) > 1:
++            raise ClerkConfigError(f"contradictory duplicate env var {key}")
++        raise ClerkConfigError(f"duplicate env var {key}")
++
++
++def merge_env_updates(existing: str, updates: Mapping[str, str]) -> str:
++    for key, value in updates.items():
++        _reject_unsafe_env_value(key, value)
++    lines = parse_env_lines(existing)
++    found = assignment_index(lines)
++    reject_duplicate_assignments(found)
++    pending = dict(updates)
++    for key, occurrences in found.items():
++        if key not in pending:
++            continue
++        index, _current = occurrences[0]
++        lines[index] = f"{key}={_format_env_value(pending.pop(key))}"
++    if pending:
++        if lines and lines[-1].strip():
++            lines.append("")
++        if MANAGED_COMMENT not in (line.strip() for line in lines):
++            lines.append(MANAGED_COMMENT)
++        for key in _ordered_keys(pending):
++            lines.append(f"{key}={_format_env_value(pending[key])}")
++    body = "\n".join(lines)
++    return body + "\n" if body else ""
++
++
++def atomic_write_text(path: Path, content: str) -> None:
++    _assert_safe_destination(path)
++    directory = path.parent
++    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(directory))
++    tmp_path = Path(tmp_name)
++    try:
++        os.fchmod(fd, 0o600)
++        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
++            handle.write(content)
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(tmp_path, path)
++        dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
++        try:
++            os.fsync(dir_fd)
++        finally:
++            os.close(dir_fd)
++    except OSError as exc:
++        tmp_path.unlink(missing_ok=True)
++        raise ClerkConfigError(f"atomic write failed for {path}") from exc
++    finally:
++        tmp_path.unlink(missing_ok=True)
++
++
++def fetch_jwks(url: str, *, timeout_s: float = CHECK_TIMEOUT_S) -> dict[str, object]:
++    parsed = urlparse(url)
++    if parsed.scheme != "https" or not parsed.netloc:
++        raise ClerkConfigError("JWKS URL must be https")
++    request = Request(
++        url, method="GET", headers={"Accept": "application/json", "User-Agent": "acx-configure-clerk-production"}
++    )
++    try:
++        with urlopen(request, timeout=timeout_s) as response:  # noqa: S310 — scheme pinned to https above
++            raw = response.read(CHECK_MAX_BYTES + 1)
++    except HTTPError as exc:
++        raise ClerkConfigError(f"JWKS check HTTP {exc.code}") from exc
++    except (URLError, TimeoutError, OSError) as exc:
++        raise ClerkConfigError("JWKS check failed") from exc
++    if len(raw) > CHECK_MAX_BYTES:
++        raise ClerkConfigError("JWKS response exceeded bounded size")
++    try:
++        payload = json.loads(raw.decode("utf-8"))
++    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
++        raise ClerkConfigError("JWKS response is not JSON") from exc
++    if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list) or not payload["keys"]:
++        raise ClerkConfigError("JWKS response is missing keys")
++    return payload
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        prog="configure_clerk_production",
++        description="Write production Clerk env vars for app.altcontext.com. Dry-run unless --apply.",
++    )
++    parser.add_argument("--apply", action="store_true", help="write destination files (default is dry-run)")
++    parser.add_argument("--dry-run", action="store_true", help="print the plan without writing (default)")
++    parser.add_argument("--check", action="store_true", help="GET the derived JWKS URL with a bounded timeout")
++    parser.add_argument("--backend-env", type=Path, help="backend env file (production: /opt/acx-backend/prod/.env)")
++    parser.add_argument(
++        "--frontend-env",
++        type=Path,
++        help="explicit frontend env artifact for a later Vite build (no deployed app-portal in this tree)",
++    )
++    parser.add_argument("--publishable-key-file", type=Path, help="0600 file containing pk_live_... (not argv)")
++    parser.add_argument("--secret-key-file", type=Path, help="owner-only file containing optional sk_live_...")
++    parser.add_argument("--audience", help="required aud claim the Clerk session token template must set")
++    parser.add_argument(
++        "--authorized-parties",
++        action="append",
++        dest="authorized_parties",
++        help=f"exact azp origin (default {DEFAULT_AUTHORIZED_PARTY}); repeatable",
++    )
++    return parser
++
++
++def resolve_secrets(
++    args: argparse.Namespace,
++    *,
++    environ: Mapping[str, str],
++    stdin: TextIO,
++    prompt: bool,
++) -> tuple[str, str | None]:
++    publishable = _optional_env(environ, PUBLISHABLE_ENV)
++    if args.publishable_key_file is not None:
++        publishable = load_protected_value(args.publishable_key_file, kind="publishable key", require_owner_only=False)
++    if not publishable and prompt and stdin.isatty():
++        publishable = input("Clerk publishable key (pk_live_...): ")
++    if not publishable:
++        raise ClerkConfigError(
++            f"publishable key required via {PUBLISHABLE_ENV}, --publishable-key-file, or an interactive prompt"
 +        )
++    secret = _optional_env(environ, SECRET_ENV)
++    if args.secret_key_file is not None:
++        secret = load_protected_value(args.secret_key_file, kind="secret key", require_owner_only=True)
++    return publishable, secret
 +
-     if reasons:
-         status = max(status, 1)
- 
-@@ -553,6 +729,7 @@ def _run_group(
-         "exit_status": status,
-         "timed_out": timed_out,
-         "junit_report_found": junit.report_found,
-+        "case_ledger": case_ledger,
-         "artifact_paths": [str(xml_path.resolve()), str(log_path.resolve())],
-         "output_capture": {
-             "path": str(log_path.resolve()),
-@@ -597,9 +774,7 @@ def run_evals(
-     effective_environment = dict(os.environ if environment is None else environment)
-     runner = subprocess.run if command_runner is None else command_runner
-     artifact_dir = (
--        REPOSITORY_ROOT / ".task-state" / "evals"
--        if out_dir is None
--        else Path(out_dir).expanduser()
-+        REPOSITORY_ROOT / ".task-state" / "evals" if out_dir is None else Path(out_dir).expanduser()
-     ).resolve()
-     try:
-         artifact_dir.mkdir(parents=True, exist_ok=True)
-@@ -619,6 +794,8 @@ def run_evals(
-     group_results: list[dict[str, Any]] = []
-     worst_status = 0
-     available_groups = manifest.groups
-+    full_suite = list(selected) == list(available_groups)
-+    required_case_ids = _required_case_ids_for_selection(manifest, selected)
-     for group in selected:
-         xml_path, log_path = group_artifacts[group]
-         result = _run_group(
-@@ -629,16 +806,15 @@ def run_evals(
-             log_path=log_path,
-             environment=effective_environment,
-             command_runner=runner,
-+            started_at=started_at,
-+            repository_root=REPOSITORY_ROOT,
-+            required_case_ids=required_case_ids,
-         )
-         group_results.append(result)
-         worst_status = max(worst_status, int(result["exit_status"]))
- 
-     finished_at = datetime.now(UTC)
--    artifact_paths = [
--        artifact_path
--        for result in group_results
--        for artifact_path in result["artifact_paths"]
--    ]
-+    artifact_paths = [artifact_path for result in group_results for artifact_path in result["artifact_paths"]]
-     evidence = {
-         "schema_version": 1,
-         "suite_id": manifest.suite_id,
-@@ -649,6 +825,9 @@ def run_evals(
-         "gate_environment": _gate_environment(effective_environment),
-         "started_at": started_at.isoformat(),
-         "finished_at": finished_at.isoformat(),
-+        "selected_groups": list(selected),
-+        "full_suite": full_suite,
-+        "required_case_ids": sorted(required_case_ids),
-         "groups": group_results,
-         "artifact_paths": artifact_paths,
-         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,
++
++def print_plan(
++    config: DerivedClerkConfig, *, stdout: TextIO, apply: bool, backend: Path | None, frontend: Path | None
++) -> None:
++    mode = "apply" if apply else "dry-run"
++    stdout.write(f"mode={mode}\n")
++    stdout.write(f"frontend_api_host={config.frontend_api_host}\n")
++    stdout.write(f"ACX_CLERK_ISSUER={config.issuer}\n")
++    stdout.write(f"ACX_CLERK_JWKS_URL={config.jwks_url}\n")
++    stdout.write(f"ACX_CLERK_AUDIENCE={config.audience}\n")
++    stdout.write(f"ACX_CLERK_AUTHORIZED_PARTIES={','.join(config.authorized_parties)}\n")
++    stdout.write(f"VITE_CLERK_PUBLISHABLE_KEY={redact(config.publishable_key)}\n")
++    stdout.write(f"VITE_CLERK_FAPI={config.issuer}\n")
++    if config.secret_key is not None:
++        stdout.write(
++            f"CLERK_SECRET_KEY={redact(config.secret_key)} (backend only; JWT verification does not require it)\n"
++        )
++    else:
++        stdout.write("CLERK_SECRET_KEY=<omitted> (JWT verification does not require the Clerk secret)\n")
++    if backend is not None:
++        stdout.write(f"backend_env={backend}\n")
++    if frontend is not None:
++        stdout.write(f"frontend_env={frontend}\n")
++        stdout.write("frontend_note=no committed app-portal; bake VITE_* at a later frontend build\n")
++
++
++def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None) -> None:
++    planned: list[tuple[Path, str]] = []
++    if backend is not None:
++        _assert_safe_destination(backend)
++        existing = _read_existing_env(backend)
++        planned.append((backend, merge_env_updates(existing, config.backend_updates())))
++    if frontend is not None:
++        _assert_safe_destination(frontend)
++        existing = _read_existing_env(frontend)
++        planned.append((frontend, merge_env_updates(existing, config.frontend_updates())))
++    for path, content in planned:
++        atomic_write_text(path, content)
++
++
++def execute(
++    args: argparse.Namespace,
++    *,
++    environ: Mapping[str, str] | None = None,
++    stdin: TextIO | None = None,
++    stdout: TextIO | None = None,
++    stderr: TextIO | None = None,
++    jwks_get: Callable[[str], dict[str, object]] | None = None,
++    prompt: bool | None = None,
++) -> int:
++    environ = os.environ if environ is None else environ
++    stdin = sys.stdin if stdin is None else stdin
++    stdout = sys.stdout if stdout is None else stdout
++    stderr = sys.stderr if stderr is None else stderr
++    try:
++        if args.apply and args.dry_run:
++            raise ClerkConfigError("use either --apply or --dry-run, not both")
++        if args.audience is None:
++            raise ClerkConfigError("audience is required (session token template must set aud)")
++        if args.backend_env is None and args.frontend_env is None and not args.check:
++            raise ClerkConfigError("provide --backend-env and/or --frontend-env (or --check)")
++        parties = args.authorized_parties or [DEFAULT_AUTHORIZED_PARTY]
++        publishable, secret = resolve_secrets(
++            args,
++            environ=environ,
++            stdin=stdin,
++            prompt=sys.stdin.isatty() if prompt is None else prompt,
++        )
++        config = derived_config(
++            publishable_key=publishable,
++            audience=args.audience,
++            authorized_parties=parties,
++            secret_key=secret,
++        )
++        if args.check:
++            getter = fetch_jwks if jwks_get is None else jwks_get
++            getter(config.jwks_url)
++            stdout.write(f"jwks_check=ok url={config.jwks_url}\n")
++        print_plan(
++            config,
++            stdout=stdout,
++            apply=bool(args.apply),
++            backend=args.backend_env,
++            frontend=args.frontend_env,
++        )
++        if args.apply:
++            if args.backend_env is None and args.frontend_env is None:
++                raise ClerkConfigError("--apply requires --backend-env and/or --frontend-env")
++            apply_files(config, backend=args.backend_env, frontend=args.frontend_env)
++            stdout.write("wrote=ok\n")
++        return 0
++    except ClerkConfigError as exc:
++        stderr.write(f"error: {exc}\n")
++        return 1
++
++
++def main(argv: Sequence[str] | None = None) -> int:
++    args = build_parser().parse_args(list(argv) if argv is not None else None)
++    return execute(args)
++
++
++def _optional_env(environ: Mapping[str, str], name: str) -> str | None:
++    value = environ.get(name)
++    if value is None:
++        return None
++    stripped = value.strip()
++    return stripped or None
++
++
++def _single_line_secret(raw: str, *, name: str) -> str:
++    if any(ch in raw for ch in "\0"):
++        raise ClerkConfigError(f"{name} contains a NUL")
++    lines = [line.strip() for line in raw.splitlines() if line.strip()]
++    if len(lines) != 1:
++        raise ClerkConfigError(f"{name} must be a single line")
++    value = lines[0]
++    if any(ch in value for ch in " \t"):
++        raise ClerkConfigError(f"{name} must not contain whitespace")
++    return value
++
++
++def _reject_unsafe_env_value(key: str, value: str) -> None:
++    if any(ch in key for ch in "\n\r\0="):
++        raise ClerkConfigError("env key contains an illegal character")
++    if any(ch in value for ch in "\n\r\0"):
++        raise ClerkConfigError(f"refusing newline injection in {key}")
++
++
++def _format_env_value(value: str) -> str:
++    _reject_unsafe_env_value("value", value)
++    if re.fullmatch(r"[A-Za-z0-9_.:/=+-]+", value):
++        return value
++    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
++    return f'"{escaped}"'
++
++
++def _unquote_env_value(raw: str) -> str:
++    value = raw.strip()
++    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
++        inner = value[1:-1]
++        if value[0] == '"':
++            inner = inner.replace('\\"', '"').replace("\\\\", "\\")
++        return inner
++    if " #" in value:
++        value = value.split(" #", 1)[0].rstrip()
++    return value
++
++
++def _ordered_keys(updates: Mapping[str, str]) -> list[str]:
++    order = list(BACKEND_MANAGED_KEYS) + [SECRET_BACKEND_KEY] + list(FRONTEND_MANAGED_KEYS)
++    known = [key for key in order if key in updates]
++    extra = sorted(key for key in updates if key not in known)
++    return known + extra
++
++
++def _assert_safe_file(path: Path, *, must_exist: bool, require_owner_only: bool) -> None:
++    try:
++        st = path.lstat()
++    except FileNotFoundError as exc:
++        if must_exist:
++            raise ClerkConfigError(f"missing file: {path}") from exc
++        return
++    if stat.S_ISLNK(st.st_mode):
++        raise ClerkConfigError(f"refusing symlink: {path}")
++    if not stat.S_ISREG(st.st_mode):
++        raise ClerkConfigError(f"refusing non-regular file: {path}")
++    if require_owner_only and st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
++        raise ClerkConfigError(f"refusing group/world-accessible secret file: {path}")
++
++
++def _assert_safe_destination(path: Path) -> None:
++    if path.is_symlink():
++        raise ClerkConfigError(f"refusing symlink destination: {path}")
++    try:
++        st = path.lstat()
++    except FileNotFoundError:
++        parent = path.parent
++        if not parent.exists() or not parent.is_dir():
++            raise ClerkConfigError(f"destination directory does not exist: {parent}") from None
++        return
++    if stat.S_ISLNK(st.st_mode):
++        raise ClerkConfigError(f"refusing symlink destination: {path}")
++    if not stat.S_ISREG(st.st_mode):
++        raise ClerkConfigError(f"refusing non-regular destination: {path}")
++
++
++def _read_existing_env(path: Path) -> str:
++    if not path.exists():
++        return ""
++    _assert_safe_destination(path)
++    try:
++        return path.read_text(encoding="utf-8")
++    except OSError as exc:
++        raise ClerkConfigError(f"cannot read {path}") from exc
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/docs/runbooks/clerk-production-auth.md b/docs/runbooks/clerk-production-auth.md
+new file mode 100644
+--- /dev/null
++++ b/docs/runbooks/clerk-production-auth.md
+@@ -0,0 +1,155 @@
++# Production Clerk authentication (app.altcontext.com)
++
++Bootstrap the first production Clerk instance and write env files consumed by
++the description-service portal verifier. There is **no** committed
++`apps/app-portal` in this tree; the frontend env artifact is prepared for a
++later Vite build. This script does **not** mint Clerk secrets.
++
++Official references:
++
++- [Clerk environment variables](https://clerk.com/docs/guides/development/clerk-environment-variables)
++- [How Clerk works](https://clerk.com/docs/guides/how-clerk-works/overview)
++- [Rotate API keys](https://clerk.com/docs/guides/secure/rotate-api-keys)
++- [Change domain](https://clerk.com/docs/guides/development/deployment/changing-domains)
++- [Allowed Subdomains](https://clerk.com/docs/guides/dashboard/dns-domains/subdomain-allowlist)
++- [Customize session tokens](https://clerk.com/docs/guides/sessions/customize-session-tokens)
++
++## 1. Create the production instance (Dashboard)
++
++Credentials do not exist until this step. In the [Clerk Dashboard](https://dashboard.clerk.com/):
++
++1. Create a **production** instance (Development keys `pk_test_` / `sk_test_`
++   are refused by the bootstrap CLI).
++2. Set the application home URL to `https://app.altcontext.com`.
++3. When Clerk asks Primary vs Secondary for the `app.` subdomain, choose
++   **Primary application**: users hit `app.altcontext.com`; Clerk FAPI stays
++   on the root domain as `clerk.altcontext.com`.
++4. Configure DNS as the Dashboard shows (CNAME for FAPI, plus email DNS for
++   `@altcontext.com`). Wait until Clerk reports DNS/SSL ready.
++5. Enable **Allowed Subdomains** and allowlist `app.altcontext.com`. The
++   primary domain remains allowed; other subdomains are rejected.
++6. Copy the **publishable** key (`pk_live_…`) from **API keys**. Optionally
++   copy a **secret** key (`sk_live_…`). JWT verification in this service does
++   **not** need the secret; if you store it, it belongs only on the backend.
++
++Do **not** invent a local API that mints `sk_live_` without Clerk auth. The
++verified official CLI is `npx clerk@latest` (for example
++`npx clerk@latest env pull --instance prod` writes Clerk's own variable
++names into a local env file). That pull does **not** write `ACX_CLERK_*` and
++is not a substitute for the bootstrap below.
++
++## 2. Session token claims (required)
++
++`PortalAuthSettings.from_env` requires **all four** of `ACX_CLERK_ISSUER`,
++`ACX_CLERK_JWKS_URL`, `ACX_CLERK_AUDIENCE`, and `ACX_CLERK_AUTHORIZED_PARTIES`.
++`aud` and `azp` are distinct: do not copy one into the other.
++
++Clerk session tokens include `azp` by default. They do **not** include `aud`,
++`email`, or boolean `email_verified` unless you add them.
++
++In **Sessions → Customize session token**, set:
++
++```json
++{
++  "aud": "<the same string you will pass as --audience>",
++  "email": "{{user.primary_email_address}}",
++  "email_verified": "{{user.email_verified}}"
++}
++```
++
++`email_verified` must remain a JSON boolean (use the shortcode alone; do not
++interpolate it inside a string). First-claim in the portal rejects unverified
++email. Authorized party for this product is the exact origin
++`https://app.altcontext.com` (no path, no trailing slash).
++
++The issuer is **derived from the live publishable key** (base64 FAPI hostname
++ending in `$` → `https://<host>`), not typed by hand. JWKS is
++`https://<host>/.well-known/jwks.json`.
++
++## 3. Where files live
++
++Production compose (`docker-compose.env.yml`) uses `env_file: .env` in the
++environment directory. `env_to_remote_dir(prod)` is `/opt/acx-backend/prod`.
++The live backend file is `/opt/acx-backend/prod/.env` (ubuntu, mode 0600).
++Compose does **not** automatically read `.env.prod`.
++
++The CLI refuses symlinks. If `.env` is a symlink, pass the real file path.
++
++Frontend remains undeployed. Pass an explicit `--frontend-env` artifact (for
++example `/opt/acx-backend/prod/app-portal.env`) and bake `VITE_*` into a
++future frontend build. Do not claim a deployed portal.
++
++## 4. Bootstrap command
++
++Never put keys on argv. Write them to owner-only files (or export them in the
++shell) and point the CLI at those files.
++
++```bash
++# On the VM, from a checkout of this repo. Dry-run is the default.
++umask 077
++install -m 600 /dev/null /tmp/clerk-pk
++# paste pk_live_… via an editor; do not echo the key
++python3 apps/prototype-description-service/scripts/configure_clerk_production.py \
++  --publishable-key-file /tmp/clerk-pk \
++  --audience altcontext-portal \
++  --backend-env /opt/acx-backend/prod/.env \
++  --frontend-env /opt/acx-backend/prod/app-portal.env \
++  --check
++
++# Review the plan (keys are redacted). Then write:
++python3 apps/prototype-description-service/scripts/configure_clerk_production.py \
++  --apply \
++  --publishable-key-file /tmp/clerk-pk \
++  --audience altcontext-portal \
++  --backend-env /opt/acx-backend/prod/.env \
++  --frontend-env /opt/acx-backend/prod/app-portal.env
++shred -u /tmp/clerk-pk
++```
++
++Optional secret (backend only): `--secret-key-file` or `CLERK_SECRET_KEY` in
++the environment. Publishable key may also come from `CLERK_PUBLISHABLE_KEY`.
++
++`--check` GETs the derived JWKS URL with a 2s timeout and bounded body. It
++does not rotate, delete, or otherwise mutate Clerk. A failed check never
++writes.
++
++The CLI is idempotent: a second `--apply` with the same inputs rewrites the
++managed keys in place and leaves unrelated env content alone. Contradictory
++duplicate keys and newline injection are refused. Destinations are replaced
++atomically at mode 0600.
++
++## 5. Runtime / rebuild
++
++Backend: `api` and `worker` read `.env` through Compose. After `--apply`,
++restart the prod unit so the process environment refreshes:
++
++```bash
++sudo systemctl restart acx-prod
++```
++
++Frontend: `VITE_CLERK_PUBLISHABLE_KEY` (and `VITE_CLERK_FAPI`) are public
++build-time values. They take effect only when a future app-portal image is
++built with that env file. Restarting the backend does not publish them.
++
++## 6. What the CLI writes
++
++Backend (no browser publishable key):
++
++- `ACX_CLERK_ISSUER`
++- `ACX_CLERK_JWKS_URL`
++- `ACX_CLERK_AUDIENCE`
++- `ACX_CLERK_AUTHORIZED_PARTIES` (default `https://app.altcontext.com`)
++- `CLERK_SECRET_KEY` only when an `sk_live_` value was supplied
++
++Frontend artifact:
++
++- `VITE_CLERK_PUBLISHABLE_KEY`
++- `VITE_CLERK_FAPI` (`https://` + decoded FAPI host)
++
++## 7. Rotation
++
++This script never rotates or deletes keys. Use the Clerk Dashboard **API keys**
++page or `npx clerk@latest` as documented in
++[Rotate API keys](https://clerk.com/docs/guides/secure/rotate-api-keys), then
++re-run `--apply` with the new protected input so the env files converge.
++Publishable keys are public; rotate the secret if it leaked.

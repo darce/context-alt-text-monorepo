@@ -1,10 +1,11 @@
 # APP-1 browser journey slices — source-backed planning contract
 
-Date: 2026-09-22. Status: document/map inventory only. B0 account chrome is
-landed and remains the observed Clerk integration. The journeys below are
-PLANNED-UI contracts for later browser work. Clerk production and the Polar
-sandbox are not provisioned, and no provider login, secret, or environment
-value was read for this packet.
+Date: 2026-09-22. Status: COMPLETED journey-slices contract and map handoff.
+B0 account chrome and the N1 backend contract fix are landed and remain the
+observed/source-backed foundation. The journeys below are PLANNED-UI contracts
+for later browser work. Clerk production and the Polar sandbox are not
+provisioned, and no provider login, secret, or environment value was read for
+this packet.
 
 The single source of UX truth is
 [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json).
@@ -47,6 +48,17 @@ no blank/half-cleared states, `NAV-11` for return/focus continuity, `HAI-01`
 for honest system authority and non-invented data, `DOM-03` for person versus
 tenant vocabulary, `CARD-15` for key/billing consequences, and `REF-15` for
 keeping Clerk behind the existing browser adapter.
+
+## Coordinator status and completion decision
+
+The coordinator recorded B0 repair checkpoint `bbe099978` as landed with its
+30 UI tests plus `tsc`/build, and N1 checkpoint `afa532e2` as landed with its
+97 backend tests. There is no remaining F0 repair prerequisite for this
+documentation contract. The coordinator's actual WorkBay critique of map WIP
+SHA `85416ba8` reported a schema-valid map with 16 screens and UI-06 flags on
+`submit-claim`, `confirm-revoke-key`, and `start-checkout`; the JSON map in this
+handoff corrects those action semantics while retaining claim/revoke
+preview-confirmation.
 
 ## Vocabulary and expiry rules
 
@@ -289,8 +301,15 @@ interaction rules are:
 
 ## Frozen browser interfaces
 
-These are proposed exported boundaries for implementation. They are written here
-so feature groups can be disjoint; they are not source edits in this lane.
+These are the exact per-file exports for parallel feature work. They are a
+documentation contract, not source edits in this lane. Each API file declares
+its own structural transport alias and its own error type; none imports a
+runtime or type from a hypothetical shared module. UUIDs and datetimes are
+transport strings in browser DTOs. The DTO fields below are the current
+backend response models (`PortalClaimResponse`, `PortalKey*Response`,
+`PortalUsageResponse`, `PortalCheckout*`, and `PortalManage*`), not new routes.
+
+The published error shape is a compatibility shape only:
 
 ```ts
 type PortalApiError = {
@@ -300,36 +319,116 @@ type PortalApiError = {
   attemptId: string | null;
   retryAfterSeconds: number | null;
 };
+```
 
-type PortalSessionContext = {
-  userId: string | null;
-  tenantId: string | null;
-  accountState: 'signed_out' | 'loading' | 'ready' | 'invalid' | 'unadmitted' | 'outage';
-  getToken: () => Promise<string | null>;
-  signOut: () => Promise<void>;
-  retryAccount: () => void;
+### K/U API files and component props
+
+`src/api/portalKeys.ts` owns all names in this block; the `PortalRequest` line
+is local to that file and is not exported or shared:
+
+```ts
+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+
+export type PortalKeyMetadataResponse = {
+  id: string;
+  tenant_id: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  rate_limit_tier: string | null;
+  lifetime_seconds: number | null;
 };
-
+export type PortalKeyIssueResponse = PortalKeyMetadataResponse & {
+  raw_key: string | null;
+  replayed: boolean;
+};
+export type PortalKeyPageResponse = {
+  data: PortalKeyMetadataResponse[];
+  next_cursor: string | null;
+  cursor: string | null;
+  limit: number;
+  total: number;
+};
+export type CreateKeyRequest = {
+  lifetime_seconds?: number | null;
+  rate_limit_tier?: string | null;
+};
+export type RotateKeyRequest = { reason?: string };
+export type RevokeKeyRequest = {
+  reason?: string;
+  confirm_last_usable?: boolean;
+  emergency?: boolean;
+};
+export type RevokeKeyResponse = {
+  id: string;
+  tenant_id: string;
+  revoked: boolean;
+};
+export type PortalKeyApiError = {
+  status: number;
+  code: string | null;
+  detail: string | null;
+  attemptId: string | null;
+  retryAfterSeconds: number | null;
+};
 export type PortalKeyClient = {
-  list(input?: { cursor?: string; limit?: number }): Promise<PortalKeyPage>;
-  create(input: CreateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssue>;
-  rotate(id: string, input: RotateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssue>;
+  list(input?: { cursor?: string; limit?: number }): Promise<PortalKeyPageResponse>;
+  create(input: CreateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssueResponse>;
+  rotate(id: string, input: RotateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssueResponse>;
   revoke(id: string, input: RevokeKeyRequest): Promise<RevokeKeyResponse>;
 };
+export function createPortalKeyClient(request: PortalRequest): PortalKeyClient;
+```
 
-export type PortalUsageClient = {
-  read(): Promise<PortalUsageResponse>;
+`src/api/portalUsage.ts` owns these names and repeats the same structural
+alias locally:
+
+```ts
+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+
+export type PortalUsagePeriodResponse = { start: string; end: string };
+export type PortalUsageResponse = {
+  tenant_id: string;
+  used: number | null;
+  reserved: number | null;
+  remaining: number | null;
+  allowance: number | null;
+  period_start: string;
+  period_end: string;
+  period: PortalUsagePeriodResponse;
+  as_of: string | null;
+  status: 'beta_active' | 'paid_active' | 'past_due' | 'expired' | 'revoked' | null;
+  data_source: string;
 };
-
-export type PortalClaimClient = {
-  claim(invitationToken: string): Promise<PortalClaimResponse>;
+export type PortalUsageApiError = {
+  status: number;
+  code: string | null;
+  detail: string | null;
+  attemptId: string | null;
+  retryAfterSeconds: number | null;
 };
+export type PortalUsageClient = { read(): Promise<PortalUsageResponse> };
+export function createPortalUsageClient(request: PortalRequest): PortalUsageClient;
+```
 
-export type PortalBillingClient = {
-  checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse>;
-  manage(input?: PortalManageRequest): Promise<PortalManageResponse>;
+K/U components own and export these props locally. `sessionKey` is stable for
+one Clerk session/user and is used for scope/reset; callbacks are navigation
+only and carry no auth or tenant authority:
+
+```ts
+export type KeysScreenProps = {
+  client: PortalKeyClient;
+  sessionKey: string;
+  onNavigateToUsage: () => void;
+  onNavigateToBilling: () => void;
+  onOpenWordPressGuidance: (keyId: string) => void;
 };
-
+export type UsageScreenProps = {
+  client: PortalUsageClient;
+  sessionKey: string;
+  onNavigateToKeys: () => void;
+  onNavigateToBilling: () => void;
+};
 export type OneTimeSecretDialogProps = {
   rawKey: string | null;
   replayed: boolean;
@@ -339,12 +438,105 @@ export type OneTimeSecretDialogProps = {
 };
 ```
 
+### C/B API files and component props
+
+`src/api/portalClaim.ts` owns the claim DTO, client, and local error shape:
+
+```ts
+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+
+export type PortalClaimResponse = {
+  tenant_id: string;
+  issuer: string;
+  subject: string;
+  email: string | null;
+  replayed: boolean;
+};
+export type PortalClaimApiError = {
+  status: number;
+  code: string | null;
+  detail: string | null;
+  attemptId: string | null;
+  retryAfterSeconds: number | null;
+};
+export type PortalClaimClient = {
+  claim(invitationToken: string): Promise<PortalClaimResponse>;
+};
+export function createPortalClaimClient(request: PortalRequest): PortalClaimClient;
+```
+
+`src/api/portalBilling.ts` owns the billing DTOs, client, and local error
+shape. `status` remains the backend's current string because no checkout-status
+route or new enum is being introduced:
+
+```ts
+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
+
+export type PortalCheckoutRequest = {
+  plan_code: string;
+  return_path?: string | null;
+};
+export type PortalCheckoutResponse = {
+  attempt_id: string;
+  checkout_url: string | null;
+  status: string;
+  replayed: boolean;
+};
+export type PortalManageRequest = { return_path?: string | null };
+export type PortalManageResponse = { portal_url: string };
+export type PortalBillingApiError = {
+  status: number;
+  code: string | null;
+  detail: string | null;
+  attemptId: string | null;
+  retryAfterSeconds: number | null;
+};
+export type PortalBillingClient = {
+  checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse>;
+  manage(input?: PortalManageRequest): Promise<PortalManageResponse>;
+};
+export function createPortalBillingClient(request: PortalRequest): PortalBillingClient;
+```
+
+C/B components own and export these props locally. The public plan and payment
+flag are configuration inputs, never client-selected prices or entitlements:
+
+```ts
+export type ClaimScreenProps = {
+  client: PortalClaimClient;
+  onClaimed: (response: PortalClaimResponse) => void;
+};
+export type BillingScreenProps = {
+  client: PortalBillingClient;
+  publicPlanCode: string | null;
+  paymentsEnabled: boolean;
+  onNavigateToReturn: (attemptId: string) => void;
+  onNavigateToUsage: () => void;
+};
+export type BillingReturnScreenProps = {
+  client: PortalBillingClient;
+  publicPlanCode: string | null;
+  paymentsEnabled: boolean;
+  attemptId: string | null;
+  onNavigateToBilling: () => void;
+  onNavigateToUsage: () => void;
+};
+```
+
+Every local `*ApiError` above is structurally compatible with `PortalApiError`;
+feature code must not use `instanceof` against a cross-lane error class. The
+factories parse only the current public DTOs and return typed clients. Feature
+unit tests inject typed clients or request stubs at these boundaries; no
+production auth mock or bypass is part of the contract.
+
 `PortalMeOutcome`, `PortalMeResult`, and `fetchPortalMe` remain the existing
-client contract from `src/api/portalMe.ts`; the B0 repair may refine invalid
-200/outage behavior but must not make Clerk account state a tenant selector.
-Feature clients parse backend response shapes, expose `PortalApiError`, and do
-not expose raw response bodies, tokens, or provider credentials to analytics or
-storage.
+client contract from `src/api/portalMe.ts` for I1 integration. I1 alone creates
+the real session-scoped authenticated `PortalRequest`: it adds the current
+bearer token, `Origin`, `Cache-Control: no-store`, bounded timeout, and bounded
+token refresh/retry, then passes that request to
+`createPortalKeyClient`, `createPortalUsageClient`, `createPortalClaimClient`,
+and `createPortalBillingClient`. It must not make Clerk account state a tenant
+selector.
 
 ## Disjoint implementation DAG and ownership
 
@@ -357,29 +549,27 @@ the offline gate.
 
 ```text
 I0  this contract + map/schema validation
- ├──► F0  B0 browser-fix + shell boundary (red shared paths, one owner)
  ├──► K/U keys + usage modules (green feature paths)
  └──► C/B claim + billing modules (green feature paths)
 
 K/U ───────────────┐
-C/B ───────────────┼──► I1  one app-integration owner (F0 owner or explicit handoff)
-F0 ────────────────┘       App.tsx/routes/styles/client composition only
-                             │
-                             └──► V0  offline browser tests + scoped protocol smoke
+C/B ───────────────┼──► I1  one app-integration owner after both groups land
+                    │       App.tsx/routes/styles/config/client composition only
+                    │
+                    └──► V0  offline browser tests + scoped protocol smoke
 ```
 
 The critical path is `I0 → feature interface freeze → K/U and C/B → I1 → V0`.
-K/U and C/B do not wait on each other; they consume the same frozen client
-interfaces. If a separate integration owner is needed, ownership of the red
-paths transfers once, after both green branches land. Never open two trees that
-edit `App.tsx`, `styles.css`, or shared client composition concurrently.
+K/U and C/B do not wait on each other: each uses its local frozen clients,
+DTOs, errors, and props. I1 is the only owner of the red shell paths after
+both green branches land. Never open two trees that edit `App.tsx`,
+`styles.css`, or client composition concurrently.
 
 | Group | Exact owned paths | Frozen boundary / disjointness |
 | --- | --- | --- |
-| F0 — foundation, B0 repair, and eventual shell integration owner | `apps/app-portal/src/App.tsx`; `apps/app-portal/src/main.tsx`; `apps/app-portal/src/styles.css`; `apps/app-portal/src/api/portalMe.ts`; `apps/app-portal/src/screens/AccountScreen.tsx`; `apps/app-portal/src/screens/NotAdmittedScreen.tsx`; `apps/app-portal/src/screens/OutageScreen.tsx`; existing B0 tests `src/__tests__/clerkDouble.tsx`, `renderPortal.tsx`, `session-routes.test.tsx`, `backend-authority.test.tsx`, `signout-stale.test.tsx`, `config-missing.test.tsx`, `csp-and-contracts.test.ts` | Sole owner of shared app mount, styles, account state, Clerk adapter, and browser-fix invariants. It consumes feature exports only during I1. No feature group edits these paths. |
-| K/U — keys, secret, WordPress guidance, usage | `apps/app-portal/src/api/portalKeys.ts`; `apps/app-portal/src/api/portalUsage.ts`; `apps/app-portal/src/screens/KeysScreen.tsx`; `apps/app-portal/src/screens/UsageScreen.tsx`; `apps/app-portal/src/components/OneTimeSecretDialog.tsx`; `apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx`; `apps/app-portal/src/__tests__/keys-journey.test.tsx`; `apps/app-portal/src/__tests__/usage-journey.test.tsx` | Owns only green key/usage paths. Uses `PortalSessionContext`, `PortalApiError`, and the frozen response types; no App/styles edits, no claim/billing client, no raw secret persistence. |
-| C/B — claim, checkout, manage, return | `apps/app-portal/src/api/portalClaim.ts`; `apps/app-portal/src/api/portalBilling.ts`; `apps/app-portal/src/screens/ClaimScreen.tsx`; `apps/app-portal/src/screens/BillingScreen.tsx`; `apps/app-portal/src/screens/BillingReturnScreen.tsx`; `apps/app-portal/src/__tests__/claim-journey.test.tsx`; `apps/app-portal/src/__tests__/billing-journey.test.tsx` | Owns only green claim/billing paths. Uses verified session context and typed errors; no Clerk widget rewrite, no price/catalog guess, no provider SDK, no App/styles edits. |
-| I1 — integration handoff | The same red F0 paths: `apps/app-portal/src/App.tsx`, `src/main.tsx`, `src/styles.css`, and any shared route/client registry that actually exists at dispatch time | One owner only, activated after K/U and C/B. Wire exports, preserve focus return, keep route gating and sign-out. This is composition, not a second feature implementation. |
+| K/U — keys, secret, WordPress guidance, usage | `apps/app-portal/src/api/portalKeys.ts`; `apps/app-portal/src/api/portalUsage.ts`; `apps/app-portal/src/screens/KeysScreen.tsx`; `apps/app-portal/src/screens/UsageScreen.tsx`; `apps/app-portal/src/components/OneTimeSecretDialog.tsx`; `apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx`; `apps/app-portal/src/__tests__/keys-journey.test.tsx`; `apps/app-portal/src/__tests__/usage-journey.test.tsx` | Owns the local key/usage DTOs, injected factories, local error shapes, and component props frozen above. `sessionKey` scopes/reset state and navigation callbacks are props; no shared-module import, App/styles edit, claim/billing client, or raw-secret persistence. |
+| C/B — claim, checkout, manage, return | `apps/app-portal/src/api/portalClaim.ts`; `apps/app-portal/src/api/portalBilling.ts`; `apps/app-portal/src/screens/ClaimScreen.tsx`; `apps/app-portal/src/screens/BillingScreen.tsx`; `apps/app-portal/src/screens/BillingReturnScreen.tsx`; `apps/app-portal/src/__tests__/claim-journey.test.tsx`; `apps/app-portal/src/__tests__/billing-journey.test.tsx` | Owns the local claim/billing DTOs, injected factories, local error shapes, and component props frozen above. No shared-module import, Clerk widget rewrite, price/catalog guess, provider SDK, App/styles edit, or production auth bypass. |
+| I1 — integration handoff after both groups | `apps/app-portal/src/App.tsx`; `apps/app-portal/src/main.tsx`; `apps/app-portal/src/styles.css`; `apps/app-portal/src/api/portalMe.ts`; `apps/app-portal/src/screens/AccountScreen.tsx`; `apps/app-portal/src/screens/NotAdmittedScreen.tsx`; `apps/app-portal/src/screens/OutageScreen.tsx`; config and the actual route/client registry | Single owner activated only after K/U and C/B land. Create the real authenticated no-store bounded `PortalRequest`, pass it to the four factories, key the keys subtree to session/user, wire routes/config/styles, preserve focus/sign-out, and compose feature exports. This is composition, not a feature implementation or F0 repair prerequisite. |
 
 Backend `portal.py`, models, provider adapters, WordPress plugin source, and
 production configuration are not owned by this docs lane. Backend contract
@@ -395,7 +585,7 @@ contract decision before browser work.
 | Keys/secret | Fake fetch tests can assert metadata-only reads, raw-key one-time rendering, copy/close/error focus, idempotency replay, expiry, rotation grace, revoke warning, and no storage/log/analytics. | Real WordPress plugin Test Connection with a short-lived key, expiry/revocation/rotation, plugin/network failure copy, and evidence that the secret is not echoed or retained. |
 | Usage | Fake JSON can cover null/authoritative/pending/expired/cap/503 shapes; backend protocol smoke can cover response contracts. | PostgreSQL/admission/worker evidence for actual usage freshness, reservations, period/grace transitions, and outage/recovery. |
 | Billing | Payments-off fake provider can cover disabled copy, configured `plan_code`, idempotency, return-path validation, pending/ambiguous/recovery, manage mapping errors, and redirect-no-grant. | Polar sandbox provisioning, configured public catalog, real hosted checkout/manage, webhook/reconciliation, expired/canceled/new-attempt, and return-before-webhook evidence. No live charge/canary is claimed. |
-| UX map | JSON parse, ID/reference checks, diff review, and coordinator-run local renderer/critique. | Actual WorkBay canvas render/critique before UI code; no CLI result is claimed in this lane. |
+| UX map | JSON parse, ID/reference checks, diff review, and the coordinator's recorded WorkBay critique. | Coordinator reruns the final map validation/critique after this commit; no live UX or vendor acceptance is claimed. |
 
 No live acceptance claim is made. The required scoped command is a protocol
 smoke only, not UX proof:
@@ -406,11 +596,12 @@ uv run --directory apps/prototype-description-service --extra dev \
   -q -p no:randomly --timeout=60
 ```
 
-The WorkBay UX map CLI is unavailable in this lane's PATH (no
-`workbay-uxmap`, `workbay`, or `uxmap` command was found, and no local CLI
-package was installed). Therefore no actual critique/render was run; the
-coordinator should run the existing local canvas CLI on the returned map before
-any B1 UI source work.
+The WorkBay UX map CLI is unavailable in this lane's PATH and no CLI package
+was installed. The coordinator already ran the actual critique on map WIP SHA
+`85416ba8` and recorded schema-valid 16-screen output plus the UI-06 findings
+addressed in the JSON map. The coordinator should rerun the final map
+validation/critique after this commit; this lane reports no live UX or vendor
+acceptance evidence.
 
 ## Not doing in this lane
 

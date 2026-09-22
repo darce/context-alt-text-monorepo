@@ -263,7 +263,7 @@
       "id": "portal-claim",
       "kind": "screen",
       "title": "Onboarding › Claim invitation",
-      "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may submit one invitation_token to POST /portal/onboarding/claim before a tenant exists. The browser never selects tenant_id, stores the raw token, or calls Polar. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
+      "purpose": "PLANNED-UI verified-identity claim. A signed-in Clerk person with a verified, non-empty email may enter one invitation_token to POST /portal/onboarding/claim before a tenant exists. The final single-use mutation stays behind a preview/confirmation; the browser never selects tenant_id, stores the raw token, or calls Polar. First success is 201 with replayed false; the same bound identity may receive 200 replayed true. Backend keeps unknown, expired, or email-mismatched invitations non-enumerating as 403 not_admitted. Serves claim-tenant-access (DOM-03, HAI-01).",
       "route": "/onboarding/claim",
       "job_entry": true,
       "deep_link": true,
@@ -280,7 +280,7 @@
         },
         {
           "id": "z-claim-token",
-          "label": "PLANNED-UI form: invitation_token is entered or pasted into memory for one request only. Never place it in a URL, localStorage, sessionStorage, logs, analytics, or copied status text. Loading disables submit and preserves focus.",
+          "label": "PLANNED-UI form: invitation_token is entered or pasted into memory for one request only. Never place it in a URL, localStorage, sessionStorage, logs, analytics, or copied status text. Show a readable preview/confirmation before the single-use mutation; loading disables submit and preserves focus.",
           "role": "form",
           "states": ["default", "loading", "error"]
         },
@@ -416,7 +416,7 @@
       "id": "portal-billing",
       "kind": "screen",
       "title": "Account › Billing",
-      "purpose": "PLANNED-UI billing entry. Checkout and manage are tenant-bound POST routes requiring Origin and server-selected relative return paths. payments_enabled defaults false, so disabled is an honest first state. The UI may submit only a configured public plan_code; there is no current catalog route for prices or product IDs, so it must not fabricate price, currency, or plan entitlements. Serves manage-billing (NAV-11, HAI-01).",
+      "purpose": "PLANNED-UI billing entry. Checkout and manage are tenant-bound POST routes requiring Origin and server-selected relative return paths. Continue to checkout creates or replays a hosted checkout attempt and opens provider navigation; it does not charge by itself, so the action is reversible until authoritative billing state changes. payments_enabled defaults false, so disabled is an honest first state. The UI may submit only a configured public plan_code; there is no current catalog route for prices or product IDs, so it must not fabricate price, currency, or plan entitlements. Serves manage-billing (NAV-11, HAI-01).",
       "route": "/billing",
       "job_entry": true,
       "deep_link": true,
@@ -433,7 +433,7 @@
         },
         {
           "id": "z-billing-checkout",
-          "label": "PLANNED-UI checkout: POST /portal/billing/checkout with Origin, Authorization, Idempotency-Key, plan_code, and optional relative return_path. 200 may be pending/provider_requested/succeeded; checkout_url null on succeeded replay. External redirect is only navigation, never proof of paid access.",
+          "label": "PLANNED-UI checkout: POST /portal/billing/checkout with Origin, Authorization, Idempotency-Key, plan_code, and optional relative return_path. 200 may be pending/provider_requested/succeeded; checkout_url null on succeeded replay. This creates or replays hosted navigation and does not charge by itself; the external redirect is never proof of paid access.",
           "role": "form",
           "states": ["default", "loading", "error", "degraded"]
         },
@@ -599,15 +599,15 @@
       "target": "/onboarding/claim",
       "hierarchy": "secondary",
       "costly": false,
-      "irreversible": true,
-      "preview_required": true,
+      "irreversible": false,
+      "preview_required": false,
       "screen_id": "portal-not-admitted"
     },
     {
       "id": "submit-claim",
-      "verb": "Claim access",
-      "target": "POST /portal/onboarding/claim",
-      "hierarchy": "primary",
+      "verb": "Confirm claim access",
+      "target": "preview/confirmation then POST /portal/onboarding/claim",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": true,
       "preview_required": true,
@@ -656,18 +656,18 @@
     {
       "id": "revoke-key",
       "verb": "Revoke key",
-      "target": "POST /portal/keys/{api_key_id}/revoke",
+      "target": "open revoke preview before POST /portal/keys/{api_key_id}/revoke",
       "hierarchy": "secondary",
       "costly": false,
-      "irreversible": true,
+      "irreversible": false,
       "preview_required": true,
       "screen_id": "portal-keys"
     },
     {
       "id": "confirm-revoke-key",
-      "verb": "Confirm revoke",
+      "verb": "Confirm revoke (destructive)",
       "target": "confirmation_field confirm_last_usable when last usable key warning appears",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": true,
       "preview_required": true,
@@ -755,11 +755,11 @@
     },
     {
       "id": "start-checkout",
-      "verb": "Continue to checkout",
+      "verb": "Open hosted checkout",
       "target": "POST /portal/billing/checkout then server-provided checkout_url",
       "hierarchy": "primary",
       "costly": true,
-      "irreversible": true,
+      "irreversible": false,
       "preview_required": true,
       "screen_id": "portal-billing"
     },
@@ -967,7 +967,7 @@
         },
         {
           "screen_id": "portal-claim",
-          "branch_label": "Verified identity; token held in memory; submit confirmation before single-use mutation"
+          "branch_label": "Verified identity; token held in memory; preview then secondary/destructive confirmation before single-use mutation"
         },
         {
           "screen_id": "portal-claim",
@@ -1086,7 +1086,7 @@
         },
         {
           "screen_id": "portal-billing",
-          "branch_label": "Continue to checkout: Origin + Bearer + 64–128 character Idempotency-Key; POST returns attempt_id/status/checkout_url"
+          "branch_label": "Open hosted checkout: Origin + Bearer + 64–128 character Idempotency-Key; POST creates/replays an attempt and returns attempt_id/status/checkout_url without charging"
         },
         {
           "screen_id": "portal-billing-return",

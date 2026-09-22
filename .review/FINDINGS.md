@@ -1,45 +1,94 @@
-# APP-1 browser keys/usage postlanding review
+# APP-1 browser-claim-billing initial postlanding review
 
-Scope: initial review of the integrated `ea146c3f971a13d0a6fa3962c36cfbe019e3e536..c951de548924ef34df731c09c0271168b2b00ef5` delta only. The feature modules remain intentionally unmounted; this report does not treat mounting or the shared transport as defects.
+Range: `c951de548924ef34df731c09c0271168b2b00ef5..b378a4c78ab8dee475dd1b1f10dd48f61fd01e13`
 
-Verdict: findings remain; the delta is not clean for orchestration without the follow-ups below.
+Verdict: **3 medium findings; follow-up is required before calling this UI slice clean.**
+
+This is the initial postlanding review of the supplied inline delta only. The
+feature remains intentionally unmounted and uses injected transport; those
+boundaries are not findings. The supplied scoped VM verification is accepted
+as provided and was not rerun here.
 
 ## Findings
 
-### APP1-KEYS-RV01 — high — one-time secret can be replaced before the user closes it
+### APP1-CLAIMUI-RV01 — medium — terminal claim failures retain the raw invitation token
 
-- Location: `apps/app-portal/src/screens/KeysScreen.tsx:319-327,418-425`; `apps/app-portal/src/components/OneTimeSecretDialog.tsx:48-65`
-- Scenario: After a create succeeds and the refresh finishes, `creating` becomes false while `secret` is still set. The underlying Create API key control is therefore enabled while the `aria-modal` secret dialog is open. The dialog has no focus trap or inert background. A keyboard user can leave the dialog and start a second create; when it succeeds, `setSecret` replaces the first raw secret, so an un-copied one-time secret is lost with no recovery path.
-- Minimal fix: Make the secret dialog an exclusive modal (trap focus, handle Escape/close, and make the background inert or disable all underlying actions while it is present). Do not allow a second create/rotate until the current secret dialog is closed.
+Path: `apps/app-portal/src/screens/ClaimScreen.tsx:164-187`
 
-### APP1-KEYS-RV02 — medium — initial revoke preview does not move focus into the modal
+When a claim request returns a terminal response such as `not_admitted`,
+`invitation_consumed`, or `invalid_claim_request`, `submitClaim` clears
+`token` only in the success branch at line 176. The catch branch leaves the raw
+single-use invitation in both React state and the input while rendering the
+error/retry UI. A user can leave a failed claim mounted with the secret still
+available, contrary to the contract's request-scoped one-time-secret lifetime
+and privacy default.
 
-- Location: `apps/app-portal/src/screens/KeysScreen.tsx:187-191,395-417`
-- Scenario: Clicking Revoke mounts the `phase: 'preview'` dialog, but the focus effect only runs for `phase: 'last_usable'`. Focus remains on the row's Revoke button behind an `aria-modal="true"` dialog, and normal Tab/Shift-Tab navigation can leave the dialog. A keyboard user can miss the irreversible confirmation or activate controls behind it; only the later last-usable warning gets Cancel-first focus.
-- Minimal fix: On every revoke-dialog mount/phase change, focus Keep key (or another explicit cancel-first control), trap focus within the dialog, support Escape, and restore focus to the initiating row button after either close path.
+Minimal fix: clear the token for terminal claim outcomes before presenting
+recovery (and require re-entry for those retries); preserve it only where a
+bounded transport-ambiguity retry is explicitly required, while retaining the
+422 field-focus behavior.
 
-### APP1-KEYS-RV03 — high — revoke accepts a 200 response that says no revocation occurred
+### APP1-CLAIMUI-RV02 — medium — attempt handoff occurs after external navigation starts
 
-- Location: `apps/app-portal/src/api/portalKeys.ts:237-247`; success handling in `apps/app-portal/src/screens/KeysScreen.tsx:249-251`
-- Scenario: `parseRevoke` treats any boolean `revoked` as a valid success envelope. If a 200 response contains valid UUIDs but `revoked: false` (a malformed/proxy response or contract drift), `client.revoke` resolves; the screen closes the destructive confirmation and refreshes as though the action succeeded. The UI has no failure state for an operation that did not revoke the key.
-- Minimal fix: Require `revoked === true` and the returned `id` to equal the requested UUID before resolving; otherwise return `invalid_portal_key_response` and retain the row/confirmation for recovery.
+Path: `apps/app-portal/src/screens/BillingScreen.tsx:234-240`
 
-### APP1-KEYS-RV04 — medium — tenant key-limit errors leave Create enabled
+For a normal pending/provider-requested checkout, the component calls
+`hostedNavigation.open`, whose production implementation is
+`window.location.assign`, and only then calls `onNavigateToReturn(attempt_id)`.
+On a real external navigation the document can unload before the parent's
+attempt snapshot/state handoff commits. The `/billing/return` landing state can
+therefore lose the only `attempt_id` needed to explain or recover an ambiguous
+checkout, even though the mutation itself was accepted.
 
-- Location: `apps/app-portal/src/screens/KeysScreen.tsx:56-81,203-214,319-327`
-- Scenario: The route contract says `409 tenant key limit reached` keeps Create unavailable until the usable key changes. The catch path only updates status; `finally` clears `creating`, `busy` then becomes false, and the Create button is disabled only by `busy`. The user can repeatedly submit the same create action while the existing usable key is unchanged.
-- Minimal fix: Add a create-blocked state for the exact tenant-limit error, disable Create while it is set, and clear it only after a successful list confirms the usable-key state changed (or after an explicit successful refresh).
+Minimal fix: durably hand off the attempt before initiating external
+navigation (or put the attempt reference in the server-selected return
+context); do not rely on a state update scheduled after `location.assign`.
 
-### APP1-KEYS-RV05 — medium — malformed key timestamps fail open as usable
+### APP1-CLAIMUI-RV03 — medium — manage recovery remains active inside checkout confirmation
 
-- Location: `apps/app-portal/src/api/portalKeys.ts:63-74,169-199`; `apps/app-portal/src/screens/KeysScreen.tsx:95-105`
-- Scenario: The backend contract fields are datetimes, but the client accepts any non-empty string. A 200 metadata row with `expires_at: "not-a-date"` passes parsing; `isUsable` excludes it because `Date.parse` is not finite, while `rowStatus` falls through to `usable`. The row publishes `status: usable` even though expiry was not established, and the status disagrees with the rotation-selection logic.
-- Minimal fix: Validate all key datetime fields as finite ISO/datetime values in the API parser and reject the envelope (or render an explicit unknown/degraded state) instead of labeling invalid expiry usable.
+Path: `apps/app-portal/src/screens/BillingScreen.tsx:297-337,383-397`
 
-### APP1-KEYS-RV06 — medium — usage parser publishes invalid counts and timestamps
+If manage returns `billing_portal_unavailable`, the component sets
+`retryKind` to `manage`. If the user then chooses `Continue to checkout`,
+`onContinue` enters hosted-checkout preview but does not clear `retry` or
+`retryKind`. The rendered `Try billing again` action remains beside
+`Confirm hosted checkout`; activating it still calls `startManage` and can open
+the hosted billing portal instead of the checkout the user just selected.
 
-- Location: `apps/app-portal/src/api/portalUsage.ts:37-59,116-155`; rendering in `apps/app-portal/src/screens/UsageScreen.tsx:107-117`
-- Scenario: `parseNullableInt` accepts negative integers and the string parsers accept arbitrary non-empty timestamps. A malformed 200 such as `{used:-1, remaining:-5, period_start:"not-a-date", ...}` is accepted and displayed as authoritative usage/period evidence; the screen does not turn a negative remaining value into an error or unknown state. This bypasses the fail-closed shape validation expected for the backend's non-negative count and datetime contract.
-- Minimal fix: Require non-negative count fields and validate `period_start`, `period_end`, nested period bounds, and non-null `as_of` as datetimes; reject invalid 200 envelopes so the screen uses its bounded error/recovery state.
+Minimal fix: clear `retry` and `retryKind` whenever a new checkout preview is
+entered (and whenever the active recovery intent changes), or bind the recovery
+button to the currently displayed intent.
 
-The provided scoped VM self-verification reported 21/21 tests passing; it was not rerun in this lane per the review brief's instruction to use the supplied verification and not run the app or whole suites. No provider, live request, or feature-code change was made.
+GROK_REVIEW_FINDINGS_JSON
+[
+  {
+    "finding_id": "APP1-CLAIMUI-RV01",
+    "severity": "medium",
+    "category": "privacy-secret-lifetime",
+    "file_path": "apps/app-portal/src/screens/ClaimScreen.tsx",
+    "line_start": 164,
+    "line_end": 187,
+    "description": "Terminal claim errors leave the raw single-use invitation token in React state and the input because token clearing occurs only on success.",
+    "fix": "Clear the token for terminal claim outcomes before rendering recovery; require re-entry for those retries and preserve it only for explicitly bounded transport-ambiguity recovery."
+  },
+  {
+    "finding_id": "APP1-CLAIMUI-RV02",
+    "severity": "medium",
+    "category": "billing-recovery",
+    "file_path": "apps/app-portal/src/screens/BillingScreen.tsx",
+    "line_start": 234,
+    "line_end": 240,
+    "description": "The component starts window.location.assign through hostedNavigation.open before handing the checkout attempt_id to the parent, so a real external unload can lose the return/recovery snapshot.",
+    "fix": "Persist or hand off attempt_id before external navigation, or include it in the server-selected return context."
+  },
+  {
+    "finding_id": "APP1-CLAIMUI-RV03",
+    "severity": "medium",
+    "category": "recovery-ux",
+    "file_path": "apps/app-portal/src/screens/BillingScreen.tsx",
+    "line_start": 297,
+    "line_end": 397,
+    "description": "After a manage outage, entering checkout preview leaves retryKind=manage and a Try billing again button that still invokes startManage next to Confirm hosted checkout.",
+    "fix": "Clear retry/retryKind when entering checkout preview or bind the recovery action to the active intent."
+  }
+]

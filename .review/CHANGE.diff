@@ -1,36 +1,39 @@
-diff --git a/apps/app-portal/src/__tests__/keys-journey.test.tsx b/apps/app-portal/src/__tests__/keys-journey.test.tsx
+diff --git a/apps/app-portal/src/__tests__/billing-journey.test.tsx b/apps/app-portal/src/__tests__/billing-journey.test.tsx
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/keys-journey.test.tsx
-@@ -0,0 +1,562 @@
-+import { render, screen, waitFor, within } from '@testing-library/react';
++++ b/apps/app-portal/src/__tests__/billing-journey.test.tsx
+@@ -0,0 +1,361 @@
++import { render, screen, waitFor } from '@testing-library/react';
 +import userEvent from '@testing-library/user-event';
-+import { useState } from 'react';
 +import { afterEach, describe, expect, it, vi } from 'vitest';
 +import {
-+  createPortalKeyClient,
-+  type PortalKeyClient,
-+  type PortalKeyIssueResponse,
-+  type PortalKeyMetadataResponse,
-+  type PortalKeyPageResponse,
-+  type RevokeKeyResponse,
-+} from '../api/portalKeys';
-+import { OneTimeSecretDialog } from '../components/OneTimeSecretDialog';
-+import { WordPressTestConnectionGuidance } from '../components/WordPressTestConnectionGuidance';
-+import { KeysScreen } from '../screens/KeysScreen';
++  createPortalBillingClient,
++  type PortalBillingApiError,
++  type PortalBillingClient,
++  type PortalCheckoutResponse,
++  type PortalManageResponse,
++} from '../api/portalBilling';
++import { BillingScreen, hostedNavigation } from '../screens/BillingScreen';
++import { BillingReturnScreen } from '../screens/BillingReturnScreen';
 +
-+const TENANT_A = '11111111-1111-4111-8111-111111111111';
-+const TENANT_B = '22222222-2222-4222-8222-222222222222';
-+const KEY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-+const KEY_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-+const SECRET_A = 'acx_live_secret_session_a_once';
-+const SECRET_B = 'acx_live_secret_session_b_once';
++const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
++const PLAN = 'starter_monthly';
++const CHECKOUT_URL = 'https://pay.example.test/checkout/abc';
++const PORTAL_URL = 'https://pay.example.test/portal/abc';
 +
-+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
++const PENDING_CHECKOUT: PortalCheckoutResponse = {
++  attempt_id: ATTEMPT_ID,
++  checkout_url: CHECKOUT_URL,
++  status: 'pending',
++  replayed: false,
++};
 +
-+function mockRequest(impl: PortalRequest) {
-+  return vi.fn<PortalRequest>(impl);
-+}
++const SUCCEEDED_CHECKOUT: PortalCheckoutResponse = {
++  attempt_id: ATTEMPT_ID,
++  checkout_url: null,
++  status: 'succeeded',
++  replayed: true,
++};
 +
 +function jsonResponse(status: number, body: unknown, headers?: HeadersInit): Response {
 +  return new Response(JSON.stringify(body), {
@@ -39,1221 +42,673 @@ new file mode 100644
 +  });
 +}
 +
-+function metadata(overrides: Partial<PortalKeyMetadataResponse> = {}): PortalKeyMetadataResponse {
++function apiError(
++  partial: Partial<PortalBillingApiError> & Pick<PortalBillingApiError, 'status' | 'code'>,
++): PortalBillingApiError {
 +  return {
-+    id: KEY_A,
-+    tenant_id: TENANT_A,
-+    created_at: '2026-09-01T00:00:00Z',
-+    expires_at: '2026-12-01T00:00:00Z',
-+    revoked_at: null,
-+    rate_limit_tier: 'standard',
-+    lifetime_seconds: 3600,
-+    ...overrides,
-+  };
-+}
-+
-+function page(
-+  rows: PortalKeyMetadataResponse[],
-+  overrides: Partial<PortalKeyPageResponse> = {},
-+): PortalKeyPageResponse {
-+  return {
-+    data: rows,
-+    next_cursor: null,
-+    cursor: null,
-+    limit: 25,
-+    total: rows.length,
-+    ...overrides,
-+  };
-+}
-+
-+function issue(overrides: Partial<PortalKeyIssueResponse> = {}): PortalKeyIssueResponse {
-+  return {
-+    ...metadata(),
-+    raw_key: SECRET_A,
-+    replayed: false,
-+    ...overrides,
-+  };
-+}
-+
-+function keyError(
-+  status: number,
-+  body: unknown,
-+): Error & {
-+  status: number;
-+  code: string | null;
-+  detail: string | null;
-+  attemptId: string | null;
-+  retryAfterSeconds: number | null;
-+} {
-+  const error = new Error('portal_key_request_failed') as Error & {
-+    status: number;
-+    code: string | null;
-+    detail: string | null;
-+    attemptId: string | null;
-+    retryAfterSeconds: number | null;
-+  };
-+  const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
-+  const detail = record?.detail;
-+  if (typeof detail === 'string') {
-+    error.code = detail;
-+    error.detail = detail;
-+  } else if (detail && typeof detail === 'object') {
-+    const nested = detail as Record<string, unknown>;
-+    error.code = typeof nested.code === 'string' ? nested.code : null;
-+    error.detail = typeof nested.detail === 'string' ? nested.detail : null;
-+  } else {
-+    error.code = null;
-+    error.detail = null;
-+  }
-+  error.status = status;
-+  error.attemptId = null;
-+  error.retryAfterSeconds = null;
-+  return error;
-+}
-+
-+function mockClient(overrides: Partial<PortalKeyClient> = {}): PortalKeyClient {
-+  return {
-+    list: vi.fn(async () => page([])),
-+    create: vi.fn(async () => issue()),
-+    rotate: vi.fn(async () => issue({ id: KEY_B, raw_key: SECRET_B })),
-+    revoke: vi.fn(async () => ({ id: KEY_A, tenant_id: TENANT_A, revoked: true })),
-+    ...overrides,
-+  };
-+}
-+
-+function renderKeys(
-+  client: PortalKeyClient,
-+  options: {
-+    sessionKey?: string;
-+    onNavigateToUsage?: () => void;
-+    onNavigateToBilling?: () => void;
-+    onOpenWordPressGuidance?: (keyId: string) => void;
-+  } = {},
-+) {
-+  return render(
-+    <KeysScreen
-+      client={client}
-+      sessionKey={options.sessionKey ?? 'sess-a'}
-+      onNavigateToUsage={options.onNavigateToUsage ?? vi.fn()}
-+      onNavigateToBilling={options.onNavigateToBilling ?? vi.fn()}
-+      onOpenWordPressGuidance={options.onOpenWordPressGuidance ?? vi.fn()}
-+    />,
-+  );
-+}
-+
-+afterEach(() => {
-+  vi.restoreAllMocks();
-+});
-+
-+describe('createPortalKeyClient [DATA-03][RES-01]', () => {
-+  it('encodes list cursor and limit and never selects a tenant', async () => {
-+    const request = mockRequest(async () =>
-+      jsonResponse(200, page([metadata()], { cursor: 'a/b+c', limit: 10, total: 1 })),
-+    );
-+    const client = createPortalKeyClient(request);
-+    const result = await client.list({ cursor: 'a/b+c', limit: 10 });
-+
-+    expect(request).toHaveBeenCalledTimes(1);
-+    const [path, init] = request.mock.calls[0] ?? (['', undefined] as const);
-+    expect(String(path)).toBe('/portal/keys?cursor=a%2Fb%2Bc&limit=10');
-+    expect(init?.method ?? 'GET').toBe('GET');
-+    expect(JSON.stringify(init?.headers ?? {})).not.toMatch(/tenant/i);
-+    expect(String(path)).not.toMatch(/tenant/i);
-+    expect(result.data[0]?.id).toBe(KEY_A);
-+  });
-+
-+  it('sends create body and Idempotency-Key, and treats replayed raw_key null as honest', async () => {
-+    const request = mockRequest(async () => jsonResponse(200, issue({ raw_key: null, replayed: true })));
-+    const client = createPortalKeyClient(request);
-+    const result = await client.create({ lifetime_seconds: 3600, rate_limit_tier: 'standard' }, 'idem-create-1');
-+    const [, init] = request.mock.calls[0] ?? (['', undefined] as const);
-+    expect(String(request.mock.calls[0]?.[0])).toBe('/portal/keys');
-+    expect(init?.method).toBe('POST');
-+    const headers = new Headers(init?.headers);
-+    expect(headers.get('Idempotency-Key')).toBe('idem-create-1');
-+    expect(headers.get('Content-Type')).toBe('application/json');
-+    expect(JSON.parse(String(init?.body))).toEqual({ lifetime_seconds: 3600, rate_limit_tier: 'standard' });
-+    expect(result.raw_key).toBeNull();
-+    expect(result.replayed).toBe(true);
-+  });
-+
-+  it('posts rotate and revoke paths with UUID ids and omits emergency unless requested', async () => {
-+    const request = mockRequest(async (path: string) => {
-+      if (String(path).includes('/rotate')) {
-+        return jsonResponse(200, issue({ id: KEY_B, raw_key: SECRET_B, replayed: false }));
-+      }
-+      return jsonResponse(200, { id: KEY_A, tenant_id: TENANT_A, revoked: true } satisfies RevokeKeyResponse);
-+    });
-+    const client = createPortalKeyClient(request);
-+    await client.rotate(KEY_A, { reason: 'routine' }, 'idem-rotate-1');
-+    await client.revoke(KEY_A, { confirm_last_usable: true });
-+    expect(String(request.mock.calls[0]?.[0])).toBe(`/portal/keys/${KEY_A}/rotate`);
-+    expect(new Headers(request.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe('idem-rotate-1');
-+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ reason: 'routine' });
-+    expect(String(request.mock.calls[1]?.[0])).toBe(`/portal/keys/${KEY_A}/revoke`);
-+    expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({ confirm_last_usable: true });
-+    expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body)).emergency).toBeUndefined();
-+  });
-+
-+  it('fails closed on malformed list/issue/revoke envelopes [DATA-03]', async () => {
-+    const client = createPortalKeyClient(async () => jsonResponse(200, { data: [{ id: 'not-a-uuid' }] }));
-+    await expect(client.list()).rejects.toMatchObject({ code: 'invalid_portal_key_response' });
-+
-+    const issueClient = createPortalKeyClient(async () => jsonResponse(200, { ...metadata(), raw_key: SECRET_A }));
-+    await expect(issueClient.create({}, 'idem')).rejects.toMatchObject({ code: 'invalid_portal_key_response' });
-+
-+    const revokeClient = createPortalKeyClient(async () => jsonResponse(200, { id: KEY_A, tenant_id: TENANT_A }));
-+    await expect(revokeClient.revoke(KEY_A, {})).rejects.toMatchObject({ code: 'invalid_portal_key_response' });
-+  });
-+
-+  it('maps status and error codes without exposing raw bodies', async () => {
-+    const request = mockRequest(async () =>
-+      jsonResponse(409, {
-+        detail: {
-+          code: 'last_usable_key_confirmation_required',
-+          detail: 'Revoking the last usable key would break API access until a new key is created.',
-+          confirmation_field: 'confirm_last_usable',
-+        },
-+      }),
-+    );
-+    const client = createPortalKeyClient(request);
-+    await expect(client.revoke(KEY_A, {})).rejects.toMatchObject({
-+      status: 409,
-+      code: 'last_usable_key_confirmation_required',
-+    });
-+
-+    const notFound = createPortalKeyClient(async () => jsonResponse(404, { detail: 'portal key not found' }));
-+    await expect(notFound.rotate(KEY_A, {}, 'idem')).rejects.toMatchObject({
-+      status: 404,
-+      code: 'portal key not found',
-+    });
-+
-+    const unavailable = createPortalKeyClient(async () =>
-+      jsonResponse(503, { detail: 'portal key service unavailable' }),
-+    );
-+    await expect(unavailable.list()).rejects.toMatchObject({ status: 503 });
-+  });
-+});
-+
-+describe('KeysScreen list, create, rotate, and secret [NAV-11][CARD-15][RLSE-04]', () => {
-+  it('shows loading, empty, list, and error recovery without rendering raw exceptions', async () => {
-+    const user = userEvent.setup();
-+    const list = vi
-+      .fn()
-+      .mockRejectedValueOnce(keyError(503, { detail: 'portal key service unavailable' }))
-+      .mockResolvedValueOnce(page([]));
-+    renderKeys(mockClient({ list }));
-+    expect(screen.getByRole('status')).toHaveTextContent(/loading|checking/i);
-+    expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true');
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
-+    });
-+    expect(screen.queryByText(/portal key service unavailable/i)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /create api key/i })).toBeEnabled();
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/create/i);
-+  });
-+
-+  it('creates with a finite lifetime, preserves idempotency on retry, and mints a new key when the request changes', async () => {
-+    const user = userEvent.setup();
-+    const create = vi
-+      .fn<PortalKeyClient['create']>()
-+      .mockRejectedValueOnce(keyError(503, { detail: 'portal key service unavailable' }))
-+      .mockResolvedValueOnce(issue())
-+      .mockResolvedValueOnce(issue({ id: KEY_B, raw_key: SECRET_B, lifetime_seconds: 86400 }));
-+    const client = mockClient({ list: vi.fn(async () => page([])), create });
-+    renderKeys(client);
-+
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /create api key/i })).toBeEnabled();
-+    });
-+    await user.selectOptions(screen.getByLabelText(/lifetime/i), '86400');
-+    await user.click(screen.getByRole('button', { name: /create api key/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
-+    });
-+    await user.click(screen.getByRole('button', { name: /create api key/i }));
-+    await waitFor(() => {
-+      expect(screen.getByText(SECRET_A)).toBeInTheDocument();
-+    });
-+    expect(create).toHaveBeenCalledTimes(2);
-+    const firstKey = create.mock.calls[0]?.[1];
-+    const secondKey = create.mock.calls[1]?.[1];
-+    expect(firstKey).toEqual(secondKey);
-+    expect(String(firstKey).length).toBeGreaterThanOrEqual(64);
-+    expect(create.mock.calls[0]?.[0]).toMatchObject({ lifetime_seconds: 86400 });
-+
-+    await user.click(screen.getByRole('button', { name: /close secret/i }));
-+    await user.selectOptions(screen.getByLabelText(/lifetime/i), '3600');
-+    await user.click(screen.getByRole('button', { name: /create api key/i }));
-+    await waitFor(() => {
-+      expect(create).toHaveBeenCalledTimes(3);
-+    });
-+    expect(create.mock.calls[2]?.[1]).not.toEqual(firstKey);
-+    expect(create.mock.calls[2]?.[0]).toMatchObject({ lifetime_seconds: 3600 });
-+  });
-+
-+  it('does not start a duplicate in-flight create', async () => {
-+    const user = userEvent.setup();
-+    let resolveCreate: ((value: PortalKeyIssueResponse) => void) | undefined;
-+    const create = vi.fn<PortalKeyClient['create']>(
-+      () =>
-+        new Promise<PortalKeyIssueResponse>((resolve) => {
-+          resolveCreate = resolve;
-+        }),
-+    );
-+    renderKeys(mockClient({ list: vi.fn(async () => page([])), create }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /create api key/i })).toBeEnabled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /create api key/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /create api key/i })).toBeDisabled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /create api key/i }));
-+    expect(create).toHaveBeenCalledTimes(1);
-+    resolveCreate?.(issue());
-+    await waitFor(() => {
-+      expect(screen.getByText(SECRET_A)).toBeInTheDocument();
-+    });
-+  });
-+
-+  it('rotates only the current usable key and treats replayed raw_key null as unrecoverable', async () => {
-+    const user = userEvent.setup();
-+    const expired = metadata({
-+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-+      expires_at: '2020-01-01T00:00:00Z',
-+      revoked_at: null,
-+      created_at: '2020-01-01T00:00:00Z',
-+    });
-+    const revoked = metadata({
-+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-+      revoked_at: '2026-09-02T00:00:00Z',
-+      created_at: '2026-08-01T00:00:00Z',
-+    });
-+    const current = metadata({ id: KEY_B, created_at: '2026-09-20T00:00:00Z' });
-+    const rotate = vi.fn<PortalKeyClient['rotate']>(async () =>
-+      issue({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', raw_key: null, replayed: true }),
-+    );
-+    renderKeys(mockClient({ list: vi.fn(async () => page([expired, revoked, current])), rotate }));
-+    await waitFor(() => {
-+      expect(screen.getByText(/status: expired/i)).toBeInTheDocument();
-+    });
-+    expect(screen.getByText(/status: revoked/i)).toBeInTheDocument();
-+    expect(screen.queryByText(/rotation history/i)).not.toBeInTheDocument();
-+    expect(screen.queryByRole('button', { name: /rotate key/i })).toBeEnabled();
-+    expect(screen.getAllByRole('button', { name: /rotate key/i })).toHaveLength(1);
-+    await user.click(screen.getByRole('button', { name: /rotate key/i }));
-+    await waitFor(() => {
-+      expect(rotate).toHaveBeenCalledWith(KEY_B, expect.anything(), expect.any(String));
-+    });
-+    expect(screen.queryByText(/acx_live_secret/i)).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/no longer available|cannot be recovered|not shown again/i);
-+    expect(screen.queryByRole('button', { name: /show secret/i })).not.toBeInTheDocument();
-+  });
-+
-+  it('copies the one-time secret, announces copy failure with retry, and restores focus on close', async () => {
-+    const user = userEvent.setup();
-+    const writeText = vi.fn().mockRejectedValueOnce(new Error('clipboard blocked')).mockResolvedValueOnce(undefined);
-+    Object.defineProperty(navigator, 'clipboard', {
-+      configurable: true,
-+      value: { writeText },
-+    });
-+    renderKeys(mockClient({ list: vi.fn(async () => page([])), create: vi.fn(async () => issue()) }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /create api key/i })).toBeEnabled();
-+    });
-+    const createButton = screen.getByRole('button', { name: /create api key/i });
-+    await user.click(createButton);
-+    const dialog = await screen.findByRole('dialog', { name: /copy this api secret once/i });
-+    expect(within(dialog).getByText(SECRET_A)).toBeInTheDocument();
-+    await user.click(within(dialog).getByRole('button', { name: /copy secret/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/copy failed/i);
-+    });
-+    await user.click(within(dialog).getByRole('button', { name: /copy secret/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/copied/i);
-+    });
-+    expect(writeText).toHaveBeenCalledWith(SECRET_A);
-+    await user.click(within(dialog).getByRole('button', { name: /close secret/i }));
-+    await waitFor(() => {
-+      expect(screen.queryByText(SECRET_A)).not.toBeInTheDocument();
-+    });
-+    expect(screen.getByRole('button', { name: /create api key/i })).toHaveFocus();
-+  });
-+});
-+
-+describe('KeysScreen revoke warning and session isolation [CARD-15][HAI-01][DATA-03]', () => {
-+  it('warns on last usable key, never sends emergency, and cancel does not mutate', async () => {
-+    const user = userEvent.setup();
-+    const revoke = vi.fn<PortalKeyClient['revoke']>(async () => {
-+      throw keyError(409, {
-+        detail: {
-+          code: 'last_usable_key_confirmation_required',
-+          detail: 'Revoking the last usable key would break API access until a new key is created.',
-+          confirmation_field: 'confirm_last_usable',
-+        },
-+      });
-+    });
-+    renderKeys(mockClient({ list: vi.fn(async () => page([metadata({ id: KEY_A })])), revoke }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /revoke key/i })).toBeEnabled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /revoke key/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm revoke/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/last usable key/i);
-+    });
-+    expect(revoke).toHaveBeenCalledTimes(1);
-+    expect(revoke.mock.calls[0]?.[1]).toEqual({});
-+    expect(screen.getByRole('button', { name: /keep key/i })).toHaveFocus();
-+    await user.click(screen.getByRole('button', { name: /keep key/i }));
-+    expect(revoke).toHaveBeenCalledTimes(1);
-+    expect(screen.queryByRole('button', { name: /confirm revoke/i })).not.toBeInTheDocument();
-+  });
-+
-+  it('sends confirm_last_usable only after the last-key warning and refreshes after uncertain revoke', async () => {
-+    const user = userEvent.setup();
-+    const list = vi
-+      .fn()
-+      .mockResolvedValueOnce(page([metadata({ id: KEY_A })]))
-+      .mockResolvedValueOnce(page([metadata({ id: KEY_A })]))
-+      .mockResolvedValueOnce(page([metadata({ id: KEY_A, revoked_at: '2026-09-22T00:00:00Z' })]));
-+    const revoke = vi
-+      .fn<PortalKeyClient['revoke']>()
-+      .mockRejectedValueOnce(keyError(409, { detail: { code: 'last_usable_key_confirmation_required' } }))
-+      .mockRejectedValueOnce(keyError(503, { detail: 'portal key service unavailable' }))
-+      .mockResolvedValueOnce({ id: KEY_A, tenant_id: TENANT_A, revoked: true });
-+    renderKeys(mockClient({ list, revoke }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /revoke key/i })).toBeEnabled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /revoke key/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm revoke/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /confirm revoke/i })).toBeInTheDocument();
-+    });
-+    await user.click(screen.getByRole('button', { name: /confirm revoke/i }));
-+    await waitFor(() => {
-+      expect(list).toHaveBeenCalledTimes(2);
-+    });
-+    expect(revoke.mock.calls[1]?.[1]).toEqual({ confirm_last_usable: true });
-+    await user.click(screen.getByRole('button', { name: /revoke key/i }));
-+    await user.click(screen.getByRole('button', { name: /confirm revoke/i }));
-+    await waitFor(() => {
-+      expect(revoke).toHaveBeenCalledTimes(3);
-+    });
-+    expect(list.mock.calls.length).toBeGreaterThanOrEqual(2);
-+  });
-+
-+  it('never paints session A secret or metadata after a synchronous sessionKey change and ignores late A promises', async () => {
-+    let finishA: ((value: PortalKeyPageResponse) => void) | undefined;
-+    let finishSecret: ((value: PortalKeyIssueResponse) => void) | undefined;
-+    const clientA = mockClient({
-+      list: vi.fn(
-+        () =>
-+          new Promise<PortalKeyPageResponse>((resolve) => {
-+            finishA = resolve;
-+          }),
-+      ),
-+      rotate: vi.fn(
-+        () =>
-+          new Promise<PortalKeyIssueResponse>((resolve) => {
-+            finishSecret = resolve;
-+          }),
-+      ),
-+    });
-+    const clientB = mockClient({
-+      list: vi.fn(async () => page([metadata({ id: KEY_B, tenant_id: TENANT_B })])),
-+    });
-+
-+    function Harness() {
-+      const [sessionKey, setSessionKey] = useState('sess-a');
-+      return (
-+        <div>
-+          <button type="button" onClick={() => setSessionKey('sess-b')}>
-+            switch-session
-+          </button>
-+          <KeysScreen
-+            client={sessionKey === 'sess-a' ? clientA : clientB}
-+            sessionKey={sessionKey}
-+            onNavigateToUsage={() => undefined}
-+            onNavigateToBilling={() => undefined}
-+            onOpenWordPressGuidance={() => undefined}
-+          />
-+        </div>
-+      );
-+    }
-+
-+    const user = userEvent.setup();
-+    render(<Harness />);
-+    finishA?.(page([metadata({ id: KEY_A, tenant_id: TENANT_A })]));
-+    await waitFor(() => {
-+      expect(screen.getByText(new RegExp(KEY_A))).toBeInTheDocument();
-+    });
-+    await user.click(screen.getByRole('button', { name: /rotate key/i }));
-+    await waitFor(() => {
-+      expect(clientA.rotate).toHaveBeenCalled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /switch-session/i }));
-+    expect(screen.queryByText(new RegExp(KEY_A))).not.toBeInTheDocument();
-+    expect(screen.queryByText(SECRET_A)).not.toBeInTheDocument();
-+    finishSecret?.(issue({ raw_key: SECRET_A }));
-+    await waitFor(() => {
-+      expect(screen.getByText(new RegExp(KEY_B))).toBeInTheDocument();
-+    });
-+    expect(screen.queryByText(SECRET_A)).not.toBeInTheDocument();
-+    expect(screen.queryByText(new RegExp(KEY_A))).not.toBeInTheDocument();
-+  });
-+
-+  it('opens WordPress guidance without passing a secret', async () => {
-+    const user = userEvent.setup();
-+    const onOpenWordPressGuidance = vi.fn();
-+    renderKeys(mockClient({ list: vi.fn(async () => page([metadata()])) }), { onOpenWordPressGuidance });
-+    await waitFor(() => {
-+      expect(screen.getByRole('button', { name: /wordpress test connection guidance/i })).toBeEnabled();
-+    });
-+    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
-+    expect(onOpenWordPressGuidance).toHaveBeenCalledWith(KEY_A);
-+  });
-+});
-+
-+describe('OneTimeSecretDialog and WordPress guidance [NAV-11][HAI-01]', () => {
-+  it('does not render a replayed or missing secret as recoverable', async () => {
-+    const onClose = vi.fn();
-+    render(
-+      <OneTimeSecretDialog
-+        rawKey={null}
-+        replayed={true}
-+        onCopy={async () => undefined}
-+        onClose={onClose}
-+        returnFocusId="create-key"
-+      />,
-+    );
-+    expect(screen.queryByText(/acx_/i)).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/no longer available|cannot be recovered/i);
-+  });
-+
-+  it('returns focus to the initiating control and keeps generic WordPress copy unverified', async () => {
-+    const user = userEvent.setup();
-+    const onReturnToKeys = vi.fn();
-+    const onClose = vi.fn();
-+    render(
-+      <div>
-+        <button id="create-key" type="button">
-+          Create API key
-+        </button>
-+        <OneTimeSecretDialog
-+          rawKey={SECRET_A}
-+          replayed={false}
-+          onCopy={async () => undefined}
-+          onClose={() => undefined}
-+          returnFocusId="create-key"
-+        />
-+        <WordPressTestConnectionGuidance onClose={onClose} onReturnToKeys={onReturnToKeys} />
-+      </div>,
-+    );
-+    await user.click(screen.getByRole('button', { name: /close secret/i }));
-+    expect(screen.getByRole('button', { name: /create api key/i })).toHaveFocus();
-+    expect(screen.getByRole('dialog', { name: /wordpress test connection/i })).toHaveTextContent(/api-key field/i);
-+    expect(screen.getByRole('dialog', { name: /wordpress test connection/i })).toHaveTextContent(/test connection/i);
-+    expect(screen.queryByText(/worked|connected successfully|verified plugin/i)).not.toBeInTheDocument();
-+    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
-+    expect(onReturnToKeys).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/usage-journey.test.tsx b/apps/app-portal/src/__tests__/usage-journey.test.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/usage-journey.test.tsx
-@@ -0,0 +1,251 @@
-+import { render, screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { useState } from 'react';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import { createPortalUsageClient, type PortalUsageClient, type PortalUsageResponse } from '../api/portalUsage';
-+import { UsageScreen } from '../screens/UsageScreen';
-+
-+const TENANT_A = '11111111-1111-4111-8111-111111111111';
-+const TENANT_B = '22222222-2222-4222-8222-222222222222';
-+
-+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+function mockRequest(impl: PortalRequest) {
-+  return vi.fn<PortalRequest>(impl);
-+}
-+
-+function jsonResponse(status: number, body: unknown): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json' },
-+  });
-+}
-+
-+function usage(overrides: Partial<PortalUsageResponse> = {}): PortalUsageResponse {
-+  return {
-+    tenant_id: TENANT_A,
-+    used: 3,
-+    reserved: 1,
-+    remaining: 6,
-+    allowance: 10,
-+    period_start: '2026-09-01T00:00:00Z',
-+    period_end: '2026-10-01T00:00:00Z',
-+    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
-+    as_of: '2026-09-22T12:00:00Z',
-+    status: 'beta_active',
-+    data_source: 'authoritative',
-+    ...overrides,
-+  };
-+}
-+
-+function usageError(status: number, body: unknown) {
-+  const error = new Error('portal_usage_request_failed') as Error & {
-+    status: number;
-+    code: string | null;
-+    detail: string | null;
-+    attemptId: string | null;
-+    retryAfterSeconds: number | null;
-+  };
-+  const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : null;
-+  const detail = record?.detail;
-+  error.status = status;
-+  error.code = typeof detail === 'string' ? detail : null;
-+  error.detail = typeof detail === 'string' ? detail : null;
-+  error.attemptId = null;
-+  error.retryAfterSeconds = null;
-+  return error;
-+}
-+
-+function renderUsage(client: PortalUsageClient, sessionKey = 'sess-a') {
-+  return render(
-+    <UsageScreen client={client} sessionKey={sessionKey} onNavigateToKeys={vi.fn()} onNavigateToBilling={vi.fn()} />,
-+  );
-+}
-+
-+afterEach(() => {
-+  vi.restoreAllMocks();
-+});
-+
-+describe('createPortalUsageClient [DATA-03][HAI-01]', () => {
-+  it('reads GET /portal/usage without tenant selection headers or client arithmetic', async () => {
-+    const request = mockRequest(async () =>
-+      jsonResponse(200, usage({ remaining: null, used: 4, allowance: 10, reserved: 2 })),
-+    );
-+    const client = createPortalUsageClient(request);
-+    const result = await client.read();
-+    expect(request).toHaveBeenCalledTimes(1);
-+    const [path, init] = request.mock.calls[0] ?? (['', undefined] as const);
-+    expect(String(path)).toBe('/portal/usage');
-+    expect(init?.method ?? 'GET').toBe('GET');
-+    expect(JSON.stringify(init ?? {})).not.toMatch(/tenant/i);
-+    expect(String(path)).not.toMatch(/tenant_id/);
-+    expect(result.remaining).toBeNull();
-+    expect(result.used).toBe(4);
-+    expect(result.allowance).toBe(10);
-+    expect(result.reserved).toBe(2);
-+  });
-+
-+  it('fails closed on wrong shapes and maps 503 to a typed error', async () => {
-+    const missingPeriod = createPortalUsageClient(async () =>
-+      jsonResponse(200, {
-+        tenant_id: TENANT_A,
-+        used: 1,
-+        reserved: 0,
-+        remaining: 1,
-+        allowance: 2,
-+        data_source: 'authoritative',
-+      }),
-+    );
-+    await expect(missingPeriod.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
-+
-+    const badStatus = createPortalUsageClient(async () =>
-+      jsonResponse(200, usage({ status: 'unlimited' as PortalUsageResponse['status'] })),
-+    );
-+    await expect(badStatus.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
-+
-+    const zeroAsUnknown = createPortalUsageClient(async () =>
-+      jsonResponse(200, usage({ used: '0' as unknown as number })),
-+    );
-+    await expect(zeroAsUnknown.read()).rejects.toMatchObject({ code: 'invalid_portal_usage_response' });
-+
-+    const outage = createPortalUsageClient(async () => jsonResponse(503, { detail: 'portal usage unavailable' }));
-+    await expect(outage.read()).rejects.toMatchObject({ status: 503, code: 'portal usage unavailable' });
-+  });
-+});
-+
-+describe('UsageScreen honest fields and states [HAI-01][RLSE-04][NAV-11]', () => {
-+  it('renders used, reserved, remaining, and allowance independently, treating null as unknown not zero', async () => {
-+    const client: PortalUsageClient = {
-+      read: vi.fn(async () => usage({ used: null, reserved: 0, remaining: null, allowance: 10 })),
-+    };
-+    renderUsage(client);
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking usage/i);
-+    expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'true');
-+    await waitFor(() => {
-+      expect(screen.getByText(/used:/i)).toHaveTextContent(/unknown/i);
-+    });
-+    expect(screen.getByText(/reserved:/i)).toHaveTextContent(/0/);
-+    expect(screen.getByText(/remaining:/i)).toHaveTextContent(/unknown/i);
-+    expect(screen.getByText(/allowance:/i)).toHaveTextContent(/10/);
-+    expect(screen.queryByText(/used:\s*0/i)).not.toBeInTheDocument();
-+    expect(screen.getByText(/2026-09-01T00:00:00Z/)).toBeInTheDocument();
-+    expect(screen.getByText(/authoritative/i)).toBeInTheDocument();
-+    expect(screen.getByText(/2026-09-22T12:00:00Z/)).toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/not available yet|unknown/i);
-+  });
-+
-+  it('explains expired, revoked, past due grace, at-cap, pending, and outage without inventing remaining', async () => {
-+    const user = userEvent.setup();
-+    const read = vi
-+      .fn()
-+      .mockResolvedValueOnce(usage({ status: 'expired', remaining: 4, used: 6, reserved: 0, allowance: 10 }))
-+      .mockResolvedValueOnce(usage({ status: 'revoked', remaining: null, used: null, reserved: null, allowance: null }))
-+      .mockResolvedValueOnce(usage({ status: 'past_due', remaining: 2 }))
-+      .mockResolvedValueOnce(usage({ status: 'paid_active', remaining: 0, used: 10, reserved: 0, allowance: 10 }))
-+      .mockResolvedValueOnce(
-+        usage({
-+          status: 'beta_active',
-+          data_source: 'pending',
-+          used: null,
-+          reserved: null,
-+          remaining: null,
-+          allowance: null,
-+          as_of: null,
-+        }),
-+      )
-+      .mockRejectedValueOnce(usageError(503, { detail: 'portal usage unavailable' }))
-+      .mockResolvedValueOnce(usage());
-+    renderUsage({ read });
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/expired/i);
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/closed/i);
-+
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/revoked/i);
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/closed/i);
-+
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/past due/i);
-+    });
-+    expect(screen.getByRole('status')).toHaveTextContent(/grace/i);
-+
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/cap/i);
-+    });
-+    expect(screen.getByText(/remaining:/i)).toHaveTextContent(/0/);
-+
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/pending|not available yet/i);
-+    });
-+    expect(screen.getByText(/as of:/i)).toHaveTextContent(/unavailable/i);
-+
-+    await user.click(screen.getByRole('button', { name: /try again/i }));
-+    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
-+    });
-+    expect(screen.queryByText(/portal usage unavailable/i)).not.toBeInTheDocument();
-+    expect(screen.queryByText(/used:/i)).not.toBeInTheDocument();
-+    const retry = screen.getByRole('button', { name: /try again/i });
-+    expect(retry).toHaveFocus();
-+    await user.click(retry);
-+    await waitFor(() => {
-+      expect(screen.getByText(/used:/i)).toHaveTextContent(/3/);
-+    });
-+  });
-+
-+  it('clears old numbers on identity change and loading, and ignores a late previous-session response', async () => {
-+    let finishA: ((value: PortalUsageResponse) => void) | undefined;
-+    const readA = vi.fn(
-+      () =>
-+        new Promise<PortalUsageResponse>((resolve) => {
-+          finishA = resolve;
-+        }),
-+    );
-+    let finishB: ((value: PortalUsageResponse) => void) | undefined;
-+    const readB = vi.fn(
-+      () =>
-+        new Promise<PortalUsageResponse>((resolve) => {
-+          finishB = resolve;
-+        }),
-+    );
-+
-+    function Harness() {
-+      const [sessionKey, setSessionKey] = useState('sess-a');
-+      return (
-+        <div>
-+          <button type="button" onClick={() => setSessionKey('sess-b')}>
-+            switch-session
-+          </button>
-+          <UsageScreen
-+            client={sessionKey === 'sess-a' ? { read: readA } : { read: readB }}
-+            sessionKey={sessionKey}
-+            onNavigateToKeys={() => undefined}
-+            onNavigateToBilling={() => undefined}
-+          />
-+        </div>
-+      );
-+    }
-+
-+    const user = userEvent.setup();
-+    render(<Harness />);
-+    finishA?.(usage({ used: 42, remaining: 58, reserved: 0, allowance: 100 }));
-+    await waitFor(() => {
-+      expect(screen.getByText(/used:/i)).toHaveTextContent(/42/);
-+    });
-+    await user.click(screen.getByRole('button', { name: /switch-session/i }));
-+    expect(screen.queryByText(/42/)).not.toBeInTheDocument();
-+    expect(screen.queryByText(/58/)).not.toBeInTheDocument();
-+    expect(screen.getByRole('status')).toHaveTextContent(/checking usage/i);
-+    finishB?.(usage({ tenant_id: TENANT_B, used: 9, remaining: 1, reserved: 0, allowance: 10 }));
-+    await waitFor(() => {
-+      expect(screen.getByText(/used:/i)).toHaveTextContent(/9/);
-+    });
-+    expect(screen.queryByText(/42/)).not.toBeInTheDocument();
-+  });
-+});
-diff --git a/apps/app-portal/src/api/portalKeys.ts b/apps/app-portal/src/api/portalKeys.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalKeys.ts
-@@ -0,0 +1,328 @@
-+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalKeyMetadataResponse = {
-+  id: string;
-+  tenant_id: string;
-+  created_at: string;
-+  expires_at: string | null;
-+  revoked_at: string | null;
-+  rate_limit_tier: string | null;
-+  lifetime_seconds: number | null;
-+};
-+export type PortalKeyIssueResponse = PortalKeyMetadataResponse & {
-+  raw_key: string | null;
-+  replayed: boolean;
-+};
-+export type PortalKeyPageResponse = {
-+  data: PortalKeyMetadataResponse[];
-+  next_cursor: string | null;
-+  cursor: string | null;
-+  limit: number;
-+  total: number;
-+};
-+export type CreateKeyRequest = {
-+  lifetime_seconds?: number | null;
-+  rate_limit_tier?: string | null;
-+};
-+export type RotateKeyRequest = { reason?: string };
-+export type RevokeKeyRequest = {
-+  reason?: string;
-+  confirm_last_usable?: boolean;
-+  emergency?: boolean;
-+};
-+export type RevokeKeyResponse = {
-+  id: string;
-+  tenant_id: string;
-+  revoked: boolean;
-+};
-+export type PortalKeyApiError = {
-+  status: number;
-+  code: string | null;
-+  detail: string | null;
-+  attemptId: string | null;
-+  retryAfterSeconds: number | null;
-+};
-+export type PortalKeyClient = {
-+  list(input?: { cursor?: string; limit?: number }): Promise<PortalKeyPageResponse>;
-+  create(input: CreateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssueResponse>;
-+  rotate(id: string, input: RotateKeyRequest, idempotencyKey: string): Promise<PortalKeyIssueResponse>;
-+  revoke(id: string, input: RevokeKeyRequest): Promise<RevokeKeyResponse>;
-+};
-+
-+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-+const DEFAULT_LIST_LIMIT = 25;
-+
-+function isRecord(value: unknown): value is Record<string, unknown> {
-+  return typeof value === 'object' && value !== null && !Array.isArray(value);
-+}
-+
-+function parseUuid(value: unknown): string | null {
-+  return typeof value === 'string' && UUID_RE.test(value) ? value : null;
-+}
-+
-+function parseRequiredString(value: unknown): string | null {
-+  return typeof value === 'string' && value.length > 0 ? value : null;
-+}
-+
-+function parseNullableString(value: unknown): string | null | undefined {
-+  if (value === null) {
-+    return null;
-+  }
-+  if (typeof value === 'string') {
-+    return value;
-+  }
-+  return undefined;
-+}
-+
-+function parseNullableInt(value: unknown): number | null | undefined {
-+  if (value === null) {
-+    return null;
-+  }
-+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value)) {
-+    return undefined;
-+  }
-+  return value;
-+}
-+
-+function parseRequiredInt(value: unknown): number | null {
-+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value)) {
-+    return null;
-+  }
-+  return value;
-+}
-+
-+function parseBoolean(value: unknown): boolean | null {
-+  return typeof value === 'boolean' ? value : null;
-+}
-+
-+function parseRetryAfter(value: string | null): number | null {
-+  if (!value) {
-+    return null;
-+  }
-+  const seconds = Number(value);
-+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : null;
-+}
-+
-+function makeError(fields: PortalKeyApiError): Error & PortalKeyApiError {
-+  const error = new Error('portal_key_request_failed') as Error & PortalKeyApiError;
-+  error.status = fields.status;
-+  error.code = fields.code;
-+  error.detail = fields.detail;
-+  error.attemptId = fields.attemptId;
-+  error.retryAfterSeconds = fields.retryAfterSeconds;
-+  return error;
-+}
-+
-+function invalidResponseError(status: number): Error & PortalKeyApiError {
-+  return makeError({
-+    status,
-+    code: 'invalid_portal_key_response',
 +    detail: null,
 +    attemptId: null,
 +    retryAfterSeconds: null,
++    ...partial,
++  };
++}
++
++async function confirmCheckout(user: ReturnType<typeof userEvent.setup>) {
++  await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
++  expect(screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i })).toBeInTheDocument();
++  await user.click(screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i }));
++}
++
++afterEach(() => {
++  hostedNavigation.open = (url: string) => {
++    window.location.assign(url);
++  };
++  window.localStorage.clear();
++  window.sessionStorage.clear();
++});
++
++describe('createPortalBillingClient [RES-01][DATA-03][HAI-01]', () => {
++  it('sends a 64-128 character Idempotency-Key and parses checkout/manage JSON', async () => {
++    const key = 'a'.repeat(64);
++    const request = vi.fn(async (path: string, init?: RequestInit) => {
++      if (path === '/portal/billing/checkout') {
++        expect(init?.method).toBe('POST');
++        const headers = new Headers(init?.headers);
++        expect(headers.get('Idempotency-Key')).toBe(key);
++        expect(headers.has('Origin')).toBe(false);
++        expect(JSON.parse(String(init?.body))).toEqual({ plan_code: PLAN });
++        return jsonResponse(200, PENDING_CHECKOUT);
++      }
++      expect(path).toBe('/portal/billing/manage');
++      return jsonResponse(200, { portal_url: PORTAL_URL });
++    });
++    const client = createPortalBillingClient(request);
++    await expect(client.checkout({ plan_code: PLAN }, key)).resolves.toEqual(PENDING_CHECKOUT);
++    await expect(client.manage()).resolves.toEqual({ portal_url: PORTAL_URL });
 +  });
-+}
 +
-+function parseErrorBody(body: unknown): Pick<PortalKeyApiError, 'code' | 'detail' | 'attemptId'> {
-+  if (!isRecord(body)) {
-+    return { code: null, detail: null, attemptId: null };
-+  }
-+  const attemptFromBody = typeof body.attempt_id === 'string' ? body.attempt_id : null;
-+  const detail = body.detail;
-+  if (typeof detail === 'string') {
-+    return { code: detail, detail, attemptId: attemptFromBody };
-+  }
-+  if (isRecord(detail)) {
-+    return {
-+      code: typeof detail.code === 'string' ? detail.code : null,
-+      detail: typeof detail.detail === 'string' ? detail.detail : null,
-+      attemptId: typeof detail.attempt_id === 'string' ? detail.attempt_id : attemptFromBody,
-+    };
-+  }
-+  return {
-+    code: typeof body.code === 'string' ? body.code : null,
-+    detail: null,
-+    attemptId: attemptFromBody,
-+  };
-+}
++  it('rejects UUID-length keys, unsafe URLs, and malformed payloads fail-closed', async () => {
++    const request = vi.fn(async () => jsonResponse(200, PENDING_CHECKOUT));
++    const client = createPortalBillingClient(request);
++    await expect(client.checkout({ plan_code: PLAN }, '123e4567-e89b-12d3-a456-426614174000')).rejects.toMatchObject({
++      status: 422,
++      code: 'invalid_idempotency_key',
++    });
++    expect(request).not.toHaveBeenCalled();
 +
-+async function readJson(response: Response): Promise<unknown> {
-+  try {
-+    return await response.json();
-+  } catch {
-+    return null;
-+  }
-+}
++    const unsafe = createPortalBillingClient(async () =>
++      jsonResponse(200, { ...PENDING_CHECKOUT, checkout_url: 'javascript:alert(1)' }),
++    );
++    await expect(unsafe.checkout({ plan_code: PLAN }, 'b'.repeat(64))).rejects.toMatchObject({
++      code: 'malformed_response',
++    });
 +
-+async function throwHttpError(response: Response): Promise<never> {
-+  const body = await readJson(response);
-+  const parsed = parseErrorBody(body);
-+  throw makeError({
-+    status: response.status,
-+    code: parsed.code,
-+    detail: parsed.detail,
-+    attemptId: parsed.attemptId,
-+    retryAfterSeconds: parseRetryAfter(response.headers.get('Retry-After')),
++    const httpUrl = createPortalBillingClient(async () =>
++      jsonResponse(200, { ...PENDING_CHECKOUT, checkout_url: 'http://pay.example.test/c' }),
++    );
++    await expect(httpUrl.checkout({ plan_code: PLAN }, 'c'.repeat(64))).rejects.toMatchObject({
++      code: 'malformed_response',
++    });
++
++    const dataUrl = createPortalBillingClient(async () => jsonResponse(200, { portal_url: 'data:text/html,hi' }));
++    await expect(dataUrl.manage()).rejects.toMatchObject({ code: 'malformed_response' });
 +  });
-+}
 +
-+function parseMetadata(value: unknown): PortalKeyMetadataResponse | null {
-+  if (!isRecord(value)) {
-+    return null;
-+  }
-+  const id = parseUuid(value.id);
-+  const tenantId = parseUuid(value.tenant_id);
-+  const createdAt = parseRequiredString(value.created_at);
-+  const expiresAt = parseNullableString(value.expires_at);
-+  const revokedAt = parseNullableString(value.revoked_at);
-+  const rateLimitTier = parseNullableString(value.rate_limit_tier);
-+  const lifetimeSeconds = parseNullableInt(value.lifetime_seconds);
-+  if (
-+    !id ||
-+    !tenantId ||
-+    !createdAt ||
-+    expiresAt === undefined ||
-+    revokedAt === undefined ||
-+    rateLimitTier === undefined ||
-+    lifetimeSeconds === undefined
-+  ) {
-+    return null;
-+  }
-+  return {
-+    id,
-+    tenant_id: tenantId,
-+    created_at: createdAt,
-+    expires_at: expiresAt,
-+    revoked_at: revokedAt,
-+    rate_limit_tier: rateLimitTier,
-+    lifetime_seconds: lifetimeSeconds,
-+  };
-+}
++  it('preserves checkout_ambiguous attempt_id and Retry-After without inventing a poll route', async () => {
++    const client = createPortalBillingClient(async () =>
++      jsonResponse(503, { detail: { code: 'checkout_ambiguous', attempt_id: ATTEMPT_ID } }, { 'Retry-After': '1' }),
++    );
++    await expect(client.checkout({ plan_code: PLAN }, 'd'.repeat(64))).rejects.toMatchObject({
++      status: 503,
++      code: 'checkout_ambiguous',
++      attemptId: ATTEMPT_ID,
++      retryAfterSeconds: 1,
++    });
++  });
++});
 +
-+function parseIssue(value: unknown): PortalKeyIssueResponse | null {
-+  const metadata = parseMetadata(value);
-+  if (!metadata || !isRecord(value)) {
-+    return null;
-+  }
-+  const rawKey = parseNullableString(value.raw_key);
-+  const replayed = parseBoolean(value.replayed);
-+  if (rawKey === undefined || replayed === null) {
-+    return null;
-+  }
-+  return { ...metadata, raw_key: rawKey, replayed };
-+}
++describe('BillingScreen checkout and manage [RLSE-04][NAV-11][CARD-15]', () => {
++  it('does not request checkout or manage when payments are off or plan is absent', async () => {
++    const user = userEvent.setup();
++    const checkout = vi.fn();
++    const manage = vi.fn();
++    const client = { checkout, manage };
 +
-+function parsePage(value: unknown): PortalKeyPageResponse | null {
-+  if (!isRecord(value) || !Array.isArray(value.data)) {
-+    return null;
-+  }
-+  const data: PortalKeyMetadataResponse[] = [];
-+  for (const row of value.data) {
-+    const metadata = parseMetadata(row);
-+    if (!metadata) {
-+      return null;
-+    }
-+    data.push(metadata);
-+  }
-+  const nextCursor = parseNullableString(value.next_cursor);
-+  const cursor = parseNullableString(value.cursor);
-+  const limit = parseRequiredInt(value.limit);
-+  const total = parseRequiredInt(value.total);
-+  if (nextCursor === undefined || cursor === undefined || limit === null || limit <= 0 || total === null || total < 0) {
-+    return null;
-+  }
-+  return { data, next_cursor: nextCursor, cursor, limit, total };
-+}
++    const { rerender } = render(
++      <BillingScreen
++        client={client}
++        publicPlanCode={PLAN}
++        paymentsEnabled={false}
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
++    expect(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i })).toBeDisabled();
++    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
++    await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
++    await user.click(screen.getByRole('button', { name: /manage billing/i }));
++    expect(checkout).not.toHaveBeenCalled();
++    expect(manage).not.toHaveBeenCalled();
 +
-+function parseRevoke(value: unknown): RevokeKeyResponse | null {
-+  if (!isRecord(value)) {
-+    return null;
-+  }
-+  const id = parseUuid(value.id);
-+  const tenantId = parseUuid(value.tenant_id);
-+  const revoked = parseBoolean(value.revoked);
-+  if (!id || !tenantId || revoked === null) {
-+    return null;
-+  }
-+  return { id, tenant_id: tenantId, revoked };
-+}
++    rerender(
++      <BillingScreen
++        client={client}
++        publicPlanCode={null}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    expect(screen.getByRole('status')).toHaveTextContent(/no billing plan/i);
++    expect(checkout).not.toHaveBeenCalled();
++    expect(manage).not.toHaveBeenCalled();
++    expect(screen.queryByText(/\$|usd|price|allowance/i)).not.toBeInTheDocument();
++  });
 +
-+function compactBody(input: object): string {
-+  return JSON.stringify(input, (_key, inner) => (inner === undefined ? undefined : inner));
-+}
++  it('reuses a 64-hex idempotency key on retry and mints a new key when the plan changes', async () => {
++    const user = userEvent.setup();
++    const keys: string[] = [];
++    const checkout = vi.fn(async (_input: { plan_code: string }, key: string) => {
++      keys.push(key);
++      throw apiError({ status: 503, code: 'checkout_unavailable' });
++    });
++    const client = { checkout, manage: vi.fn() };
++    const { rerender } = render(
++      <BillingScreen
++        client={client}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
 +
-+function listPath(input?: { cursor?: string; limit?: number }): string {
-+  const params = new URLSearchParams();
-+  if (input?.cursor) {
-+    params.set('cursor', input.cursor);
-+  }
-+  params.set('limit', String(input?.limit ?? DEFAULT_LIST_LIMIT));
-+  return `/portal/keys?${params.toString()}`;
-+}
++    await confirmCheckout(user);
++    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
++    await user.click(screen.getByRole('button', { name: /try billing again|try again/i }));
++    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
 +
-+export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
-+  return {
-+    async list(input) {
-+      const response = await request(listPath(input), { method: 'GET' });
-+      if (!response.ok) {
-+        await throwHttpError(response);
-+      }
-+      const parsed = parsePage(await readJson(response));
-+      if (!parsed) {
-+        throw invalidResponseError(response.status);
-+      }
-+      return parsed;
-+    },
-+    async create(input, idempotencyKey) {
-+      const response = await request('/portal/keys', {
-+        method: 'POST',
-+        headers: {
-+          'Content-Type': 'application/json',
-+          'Idempotency-Key': idempotencyKey,
-+        },
-+        body: compactBody(input),
++    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
++    expect(keys[0]?.length).toBe(64);
++    expect(keys[0]).toBe(keys[1]);
++    expect(keys[0]).not.toHaveLength(36);
++
++    rerender(
++      <BillingScreen
++        client={client}
++        publicPlanCode="pro_monthly"
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await confirmCheckout(user);
++    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(3));
++    expect(keys[2]).toMatch(/^[0-9a-f]{64}$/);
++    expect(keys[2]).not.toBe(keys[0]);
++    expect(checkout.mock.calls[0]?.[0]).toEqual({ plan_code: PLAN });
++    expect(checkout.mock.calls[2]?.[0]).toEqual({ plan_code: 'pro_monthly' });
++  });
++
++  it('does not duplicate create, preserves ambiguous attempts, and never grants paid from a URL', async () => {
++    const user = userEvent.setup();
++    hostedNavigation.open = vi.fn();
++    const checkout = vi.fn(async () => PENDING_CHECKOUT);
++    const onNavigateToReturn = vi.fn();
++    render(
++      <BillingScreen
++        client={{ checkout, manage: vi.fn() }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={onNavigateToReturn}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++
++    await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
++    const confirm = screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i });
++    await user.click(confirm);
++    await user.click(confirm);
++    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
++    expect(hostedNavigation.open).toHaveBeenCalledWith(CHECKOUT_URL);
++    expect(onNavigateToReturn).toHaveBeenCalledWith(ATTEMPT_ID);
++    expect(screen.queryByText(/paid_active|payment granted|you are paid/i)).not.toBeInTheDocument();
++  });
++
++  it('shows typed ambiguity and does not start a second checkout automatically', async () => {
++    const user = userEvent.setup();
++    const checkout = vi.fn(async () => {
++      throw apiError({
++        status: 409,
++        code: 'checkout_ambiguous',
++        attemptId: ATTEMPT_ID,
 +      });
-+      if (!response.ok) {
-+        await throwHttpError(response);
-+      }
-+      const parsed = parseIssue(await readJson(response));
-+      if (!parsed) {
-+        throw invalidResponseError(response.status);
-+      }
-+      return parsed;
-+    },
-+    async rotate(id, input, idempotencyKey) {
-+      const response = await request(`/portal/keys/${id}/rotate`, {
-+        method: 'POST',
-+        headers: {
-+          'Content-Type': 'application/json',
-+          'Idempotency-Key': idempotencyKey,
-+        },
-+        body: compactBody(input),
-+      });
-+      if (!response.ok) {
-+        await throwHttpError(response);
-+      }
-+      const parsed = parseIssue(await readJson(response));
-+      if (!parsed) {
-+        throw invalidResponseError(response.status);
-+      }
-+      return parsed;
-+    },
-+    async revoke(id, input) {
-+      const response = await request(`/portal/keys/${id}/revoke`, {
-+        method: 'POST',
-+        headers: { 'Content-Type': 'application/json' },
-+        body: compactBody(input),
-+      });
-+      if (!response.ok) {
-+        await throwHttpError(response);
-+      }
-+      const parsed = parseRevoke(await readJson(response));
-+      if (!parsed) {
-+        throw invalidResponseError(response.status);
-+      }
-+      return parsed;
-+    },
-+  };
-+}
-diff --git a/apps/app-portal/src/api/portalUsage.ts b/apps/app-portal/src/api/portalUsage.ts
++    });
++    render(
++      <BillingScreen
++        client={{ checkout, manage: vi.fn() }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await confirmCheckout(user);
++    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/still being confirmed/i));
++    expect(screen.getByRole('status')).toHaveTextContent(ATTEMPT_ID);
++    expect(checkout).toHaveBeenCalledTimes(1);
++  });
++
++  it('does not treat succeeded null checkout_url as a payment grant', async () => {
++    const user = userEvent.setup();
++    hostedNavigation.open = vi.fn();
++    const onNavigateToReturn = vi.fn();
++    render(
++      <BillingScreen
++        client={{ checkout: vi.fn(async () => SUCCEEDED_CHECKOUT), manage: vi.fn() }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={onNavigateToReturn}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await confirmCheckout(user);
++    await waitFor(() => expect(onNavigateToReturn).toHaveBeenCalledWith(ATTEMPT_ID));
++    expect(hostedNavigation.open).not.toHaveBeenCalled();
++    expect(screen.getByRole('status')).toHaveTextContent(/backend confirmation/i);
++    expect(screen.queryByText(/paid access granted/i)).not.toBeInTheDocument();
++  });
++
++  it('recovers missing customer and provider outage on manage without constructing a vendor URL', async () => {
++    const user = userEvent.setup();
++    hostedNavigation.open = vi.fn();
++    const manage = vi.fn<PortalBillingClient['manage']>(async () => {
++      throw apiError({ status: 409, code: 'billing_customer_missing' });
++    });
++    const { rerender } = render(
++      <BillingScreen
++        client={{ checkout: vi.fn(), manage }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await user.click(screen.getByRole('button', { name: /manage billing/i }));
++    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/customer .*not ready|not ready yet/i));
++    expect(hostedNavigation.open).not.toHaveBeenCalled();
++
++    manage.mockImplementationOnce(async () => {
++      throw apiError({ status: 503, code: 'billing_portal_unavailable' });
++    });
++    rerender(
++      <BillingScreen
++        client={{ checkout: vi.fn(), manage }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await user.click(screen.getByRole('button', { name: /manage billing/i }));
++    await waitFor(() =>
++      expect(screen.getByRole('status')).toHaveTextContent(/billing portal is temporarily unavailable/i),
++    );
++
++    manage.mockImplementationOnce(async (): Promise<PortalManageResponse> => ({ portal_url: PORTAL_URL }));
++    rerender(
++      <BillingScreen
++        client={{ checkout: vi.fn(), manage }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        onNavigateToReturn={vi.fn()}
++        onNavigateToUsage={vi.fn()}
++      />,
++    );
++    await user.click(screen.getByRole('button', { name: /manage billing/i }));
++    await waitFor(() => expect(hostedNavigation.open).toHaveBeenCalledWith(PORTAL_URL));
++  });
++});
++
++describe('BillingReturnScreen untrusted return [HAI-01][NAV-11]', () => {
++  it('never grants paid from a return signal and does not POST checkout on load', async () => {
++    const user = userEvent.setup();
++    const checkout = vi.fn();
++    const manage = vi.fn();
++    const onNavigateToBilling = vi.fn();
++    const onNavigateToUsage = vi.fn();
++    window.history.replaceState({}, '', '/billing/return?checkout=success');
++
++    render(
++      <BillingReturnScreen
++        client={{ checkout, manage }}
++        publicPlanCode={PLAN}
++        paymentsEnabled
++        attemptId={ATTEMPT_ID}
++        onNavigateToBilling={onNavigateToBilling}
++        onNavigateToUsage={onNavigateToUsage}
++      />,
++    );
++
++    expect(checkout).not.toHaveBeenCalled();
++    expect(manage).not.toHaveBeenCalled();
++    expect(screen.getByRole('status')).toHaveTextContent(/backend confirmation/i);
++    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation/i);
++    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
++    expect(screen.getByText(ATTEMPT_ID)).toBeInTheDocument();
++
++    await user.click(screen.getByRole('button', { name: /return to billing/i }));
++    expect(onNavigateToBilling).toHaveBeenCalledTimes(1);
++    await user.click(screen.getByRole('button', { name: /view usage|open usage/i }));
++    expect(onNavigateToUsage).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/apps/app-portal/src/__tests__/claim-journey.test.tsx b/apps/app-portal/src/__tests__/claim-journey.test.tsx
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/api/portalUsage.ts
-@@ -0,0 +1,201 @@
++++ b/apps/app-portal/src/__tests__/claim-journey.test.tsx
+@@ -0,0 +1,262 @@
++import { act, render, screen, waitFor } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
++import { afterEach, describe, expect, it, vi } from 'vitest';
++import {
++  createPortalClaimClient,
++  type PortalClaimApiError,
++  type PortalClaimClient,
++  type PortalClaimResponse,
++} from '../api/portalClaim';
++import { ClaimScreen } from '../screens/ClaimScreen';
++
++const TENANT_ID = '11111111-1111-4111-8111-111111111111';
++const INVITATION = 'raw-invitation-token-once';
++
++const FIRST_CLAIM: PortalClaimResponse = {
++  tenant_id: TENANT_ID,
++  issuer: 'https://clerk.altcontext.com',
++  subject: 'user_1',
++  email: 'ada@example.test',
++  replayed: false,
++};
++
++const REPLAY_CLAIM: PortalClaimResponse = {
++  ...FIRST_CLAIM,
++  replayed: true,
++};
++
++function jsonResponse(status: number, body: unknown, headers?: HeadersInit): Response {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { 'Content-Type': 'application/json', ...headers },
++  });
++}
++
++function apiError(
++  partial: Partial<PortalClaimApiError> & Pick<PortalClaimApiError, 'status' | 'code'>,
++): PortalClaimApiError {
++  return {
++    detail: null,
++    attemptId: null,
++    retryAfterSeconds: null,
++    ...partial,
++  };
++}
++
++async function confirmClaim(user: ReturnType<typeof userEvent.setup>, token = INVITATION) {
++  await user.type(screen.getByLabelText(/invitation token/i), token);
++  await user.click(screen.getByRole('button', { name: /^claim access$/i }));
++  expect(screen.getByRole('button', { name: /confirm claim access/i })).toBeInTheDocument();
++}
++
++afterEach(() => {
++  window.localStorage.clear();
++  window.sessionStorage.clear();
++});
++
++describe('createPortalClaimClient [HAI-01][DATA-03]', () => {
++  it('POSTs invitation_token only and accepts 201 then 200 replay', async () => {
++    const request = vi.fn(async (path: string, init?: RequestInit) => {
++      expect(path).toBe('/portal/onboarding/claim');
++      expect(init?.method).toBe('POST');
++      const headers = new Headers(init?.headers);
++      expect(headers.get('content-type')).toMatch(/application\/json/i);
++      expect(headers.has('Origin')).toBe(false);
++      expect(headers.has('X-Tenant-ID')).toBe(false);
++      expect(headers.has('X-Tenant-Id')).toBe(false);
++      expect(JSON.parse(String(init?.body))).toEqual({ invitation_token: INVITATION });
++      return jsonResponse(201, FIRST_CLAIM);
++    });
++
++    const client = createPortalClaimClient(request);
++    await expect(client.claim(INVITATION)).resolves.toEqual(FIRST_CLAIM);
++    expect(request).toHaveBeenCalledTimes(1);
++
++    request.mockImplementationOnce(async () => jsonResponse(200, REPLAY_CLAIM));
++    await expect(client.claim(INVITATION)).resolves.toEqual(REPLAY_CLAIM);
++  });
++
++  it('maps typed claim errors and rejects malformed success JSON fail-closed', async () => {
++    const client = createPortalClaimClient(async () => jsonResponse(403, { detail: { code: 'not_admitted' } }));
++    await expect(client.claim(INVITATION)).rejects.toMatchObject({
++      status: 403,
++      code: 'not_admitted',
++      detail: null,
++    });
++
++    const malformed = createPortalClaimClient(async () =>
++      jsonResponse(201, {
++        issuer: 'https://clerk.altcontext.com',
++        subject: 'user_1',
++        email: 'ada@example.test',
++        replayed: false,
++      }),
++    );
++    await expect(malformed.claim(INVITATION)).rejects.toMatchObject({
++      status: 201,
++      code: 'malformed_response',
++    });
++  });
++
++  it('does not forge Origin and does not send a tenant selector', async () => {
++    const request = vi.fn(async (_path: string, init?: RequestInit) => {
++      const headers = new Headers(init?.headers);
++      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
++      expect(String(init?.body)).not.toMatch(/tenant/i);
++      return jsonResponse(201, FIRST_CLAIM);
++    });
++    await createPortalClaimClient(request).claim(INVITATION);
++    expect(request).toHaveBeenCalledTimes(1);
++  });
++});
++
++describe('ClaimScreen invitation claim [NAV-11][RLSE-04][HAI-01]', () => {
++  it('requires preview confirmation before POST and calls onClaimed once on 201', async () => {
++    const user = userEvent.setup();
++    const claim = vi.fn(async (token: string) => {
++      expect(token).toBe(INVITATION);
++      return FIRST_CLAIM;
++    });
++    const onClaimed = vi.fn();
++    render(<ClaimScreen client={{ claim }} onClaimed={onClaimed} />);
++
++    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
++    expect(screen.queryByLabelText(/tenant/i)).not.toBeInTheDocument();
++    expect(screen.queryByLabelText(/email_verified/i)).not.toBeInTheDocument();
++
++    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
++    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
++    expect(claim).not.toHaveBeenCalled();
++    expect(screen.getByRole('status')).toHaveTextContent(/once/i);
++
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++    await waitFor(() => expect(onClaimed).toHaveBeenCalledTimes(1));
++    expect(onClaimed).toHaveBeenCalledWith(FIRST_CLAIM);
++    expect(claim).toHaveBeenCalledTimes(1);
++    expect(window.localStorage.length).toBe(0);
++    expect(window.sessionStorage.length).toBe(0);
++    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
++  });
++
++  it('treats 200 replayed as a valid claim and still calls onClaimed once', async () => {
++    const user = userEvent.setup();
++    const onClaimed = vi.fn();
++    render(<ClaimScreen client={{ claim: vi.fn(async () => REPLAY_CLAIM) }} onClaimed={onClaimed} />);
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++    await waitFor(() => expect(onClaimed).toHaveBeenCalledTimes(1));
++    expect(onClaimed).toHaveBeenCalledWith(REPLAY_CLAIM);
++  });
++
++  it('keeps expired or unknown invitations non-enumerating', async () => {
++    const user = userEvent.setup();
++    const claim = vi.fn(async () => {
++      throw apiError({ status: 403, code: 'not_admitted' });
++    });
++    render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++
++    await waitFor(() => {
++      expect(screen.getByRole('status')).toHaveTextContent(/not ready/i);
++    });
++    expect(screen.getByRole('status')).not.toHaveTextContent(/expired/i);
++    expect(screen.getByRole('status')).not.toHaveTextContent(/unknown/i);
++    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
++  });
++
++  it('maps email_unverified, consumed, bound, invalid, and 503 recovery copy', async () => {
++    const user = userEvent.setup();
++    const claim = vi.fn<PortalClaimClient['claim']>();
++    const { rerender } = render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
++
++    const cases: Array<{ code: string; status: number; copy: RegExp; retry: boolean }> = [
++      { code: 'email_unverified', status: 403, copy: /verify your email/i, retry: false },
++      { code: 'invitation_consumed', status: 409, copy: /no longer available/i, retry: false },
++      { code: 'identity_already_bound', status: 409, copy: /already linked/i, retry: false },
++      { code: 'invalid_claim_request', status: 422, copy: /valid invitation/i, retry: true },
++      { code: 'portal_identity_unavailable', status: 503, copy: /temporarily unavailable/i, retry: true },
++    ];
++
++    for (const example of cases) {
++      claim.mockImplementationOnce(async () => {
++        throw apiError({ status: example.status, code: example.code });
++      });
++      rerender(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
++      await user.clear(screen.getByLabelText(/invitation token/i));
++      await confirmClaim(user);
++      await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(example.copy));
++      if (example.retry && example.status === 503) {
++        expect(screen.getByRole('button', { name: /try claim again|try again/i })).toBeEnabled();
++      }
++      if (!example.retry && example.status === 409) {
++        expect(screen.queryByRole('button', { name: /try claim again/i })).not.toBeInTheDocument();
++      }
++    }
++  });
++
++  it('clears the in-memory token on cancel and does not call onClaimed after unmount', async () => {
++    const user = userEvent.setup();
++    let finish!: (value: PortalClaimResponse) => void;
++    const claim = vi.fn(
++      () =>
++        new Promise<PortalClaimResponse>((resolve) => {
++          finish = resolve;
++        }),
++    );
++    const onClaimed = vi.fn();
++    const { unmount } = render(<ClaimScreen client={{ claim }} onClaimed={onClaimed} />);
++
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
++    expect(screen.getByLabelText(/invitation token/i)).toHaveValue('');
++    expect(claim).not.toHaveBeenCalled();
++
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++    expect(screen.getByRole('form', { name: /claim invitation/i })).toHaveAttribute('aria-busy', 'true');
++
++    unmount();
++    await act(async () => {
++      finish(FIRST_CLAIM);
++    });
++    expect(onClaimed).not.toHaveBeenCalled();
++
++    let finishReplacement!: (value: PortalClaimResponse) => void;
++    const firstClient = {
++      claim: vi.fn(
++        () =>
++          new Promise<PortalClaimResponse>((resolve) => {
++            finishReplacement = resolve;
++          }),
++      ),
++    };
++    const secondClient = { claim: vi.fn(async () => REPLAY_CLAIM) };
++    const { rerender: rerenderClaim } = render(<ClaimScreen client={firstClient} onClaimed={onClaimed} />);
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++    rerenderClaim(<ClaimScreen client={secondClient} onClaimed={onClaimed} />);
++    await act(async () => {
++      finishReplacement(FIRST_CLAIM);
++    });
++    expect(onClaimed).not.toHaveBeenCalled();
++  });
++
++  it('keeps token field focus after 422 and does not render raw exception bodies', async () => {
++    const user = userEvent.setup();
++    const claim = vi.fn(async () => {
++      throw apiError({
++        status: 422,
++        code: 'invalid_claim_request',
++        detail: 'super-secret-stack-trace',
++      });
++    });
++    render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
++    await confirmClaim(user);
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/valid invitation/i));
++    expect(screen.getByLabelText(/invitation token/i)).toHaveFocus();
++    expect(screen.queryByText(/super-secret-stack-trace/i)).not.toBeInTheDocument();
++  });
++});
+diff --git a/apps/app-portal/src/api/portalBilling.ts b/apps/app-portal/src/api/portalBilling.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/app-portal/src/api/portalBilling.ts
+@@ -0,0 +1,229 @@
 +type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
 +
-+export type PortalUsagePeriodResponse = { start: string; end: string };
-+export type PortalUsageResponse = {
-+  tenant_id: string;
-+  used: number | null;
-+  reserved: number | null;
-+  remaining: number | null;
-+  allowance: number | null;
-+  period_start: string;
-+  period_end: string;
-+  period: PortalUsagePeriodResponse;
-+  as_of: string | null;
-+  status: 'beta_active' | 'paid_active' | 'past_due' | 'expired' | 'revoked' | null;
-+  data_source: string;
++export type PortalCheckoutRequest = {
++  plan_code: string;
++  return_path?: string | null;
 +};
-+export type PortalUsageApiError = {
++
++export type PortalCheckoutResponse = {
++  attempt_id: string;
++  checkout_url: string | null;
++  status: string;
++  replayed: boolean;
++};
++
++export type PortalManageRequest = { return_path?: string | null };
++
++export type PortalManageResponse = { portal_url: string };
++
++export type PortalBillingApiError = {
 +  status: number;
 +  code: string | null;
 +  detail: string | null;
 +  attemptId: string | null;
 +  retryAfterSeconds: number | null;
 +};
-+export type PortalUsageClient = { read(): Promise<PortalUsageResponse> };
++
++export type PortalBillingClient = {
++  checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse>;
++  manage(input?: PortalManageRequest): Promise<PortalManageResponse>;
++};
 +
 +const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-+const USAGE_STATUSES = new Set(['beta_active', 'paid_active', 'past_due', 'expired', 'revoked']);
++const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{64,128}$/;
++const CHECKOUT_PATH = '/portal/billing/checkout';
++const MANAGE_PATH = '/portal/billing/manage';
 +
-+function isRecord(value: unknown): value is Record<string, unknown> {
-+  return typeof value === 'object' && value !== null && !Array.isArray(value);
++function raiseBillingError(error: PortalBillingApiError): never {
++  throw Object.assign(new Error(error.code ?? 'portal_billing_error'), error);
 +}
 +
-+function parseUuid(value: unknown): string | null {
-+  return typeof value === 'string' && UUID_RE.test(value) ? value : null;
-+}
-+
-+function parseRequiredString(value: unknown): string | null {
-+  return typeof value === 'string' && value.length > 0 ? value : null;
-+}
-+
-+function parseNullableString(value: unknown): string | null | undefined {
-+  if (value === null) {
++function retryAfterSeconds(response: Response): number | null {
++  const raw = response.headers.get('Retry-After');
++  if (raw == null || raw === '') {
 +    return null;
 +  }
-+  if (typeof value === 'string') {
-+    return value;
-+  }
-+  return undefined;
++  const parsed = Number.parseInt(raw, 10);
++  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 +}
 +
-+function parseNullableInt(value: unknown): number | null | undefined {
-+  if (value === null) {
-+    return null;
++function parseError(status: number, body: unknown, response: Response): PortalBillingApiError {
++  let code: string | null = null;
++  let attemptId: string | null = null;
++  if (body && typeof body === 'object' && 'detail' in body) {
++    const detail = (body as { detail: unknown }).detail;
++    if (typeof detail === 'string') {
++      code = detail;
++    } else if (detail && typeof detail === 'object') {
++      const rec = detail as { code?: unknown; attempt_id?: unknown };
++      if (typeof rec.code === 'string') {
++        code = rec.code;
++      }
++      if (typeof rec.attempt_id === 'string' && UUID_RE.test(rec.attempt_id)) {
++        attemptId = rec.attempt_id;
++      }
++    }
 +  }
-+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value)) {
-+    return undefined;
-+  }
-+  return value;
-+}
-+
-+function parseRetryAfter(value: string | null): number | null {
-+  if (!value) {
-+    return null;
-+  }
-+  const seconds = Number(value);
-+  return Number.isInteger(seconds) && seconds >= 0 ? seconds : null;
-+}
-+
-+function makeError(fields: PortalUsageApiError): Error & PortalUsageApiError {
-+  const error = new Error('portal_usage_request_failed') as Error & PortalUsageApiError;
-+  error.status = fields.status;
-+  error.code = fields.code;
-+  error.detail = fields.detail;
-+  error.attemptId = fields.attemptId;
-+  error.retryAfterSeconds = fields.retryAfterSeconds;
-+  return error;
-+}
-+
-+function parseErrorBody(body: unknown): Pick<PortalUsageApiError, 'code' | 'detail' | 'attemptId'> {
-+  if (!isRecord(body)) {
-+    return { code: null, detail: null, attemptId: null };
-+  }
-+  const attemptFromBody = typeof body.attempt_id === 'string' ? body.attempt_id : null;
-+  const detail = body.detail;
-+  if (typeof detail === 'string') {
-+    return { code: detail, detail, attemptId: attemptFromBody };
-+  }
-+  if (isRecord(detail)) {
-+    return {
-+      code: typeof detail.code === 'string' ? detail.code : null,
-+      detail: typeof detail.detail === 'string' ? detail.detail : null,
-+      attemptId: typeof detail.attempt_id === 'string' ? detail.attempt_id : attemptFromBody,
-+    };
-+  }
-+  return { code: typeof body.code === 'string' ? body.code : null, detail: null, attemptId: attemptFromBody };
++  return {
++    status,
++    code,
++    detail: null,
++    attemptId,
++    retryAfterSeconds: retryAfterSeconds(response),
++  };
 +}
 +
 +async function readJson(response: Response): Promise<unknown> {
@@ -1264,786 +719,1048 @@ new file mode 100644
 +  }
 +}
 +
-+function parseStatus(value: unknown): PortalUsageResponse['status'] | undefined {
-+  if (value === null) {
-+    return null;
++export function isSafeHttpsUrl(value: string): boolean {
++  try {
++    const url = new URL(value);
++    if (url.protocol !== 'https:') {
++      return false;
++    }
++    if (!url.hostname) {
++      return false;
++    }
++    if (url.username || url.password) {
++      return false;
++    }
++    return true;
++  } catch {
++    return false;
 +  }
-+  if (typeof value === 'string' && USAGE_STATUSES.has(value)) {
-+    return value as PortalUsageResponse['status'];
-+  }
-+  return undefined;
 +}
 +
-+function parsePeriod(value: unknown): PortalUsagePeriodResponse | null {
-+  if (!isRecord(value)) {
++function parseCheckoutResponse(body: unknown): PortalCheckoutResponse | null {
++  if (!body || typeof body !== 'object') {
 +    return null;
 +  }
-+  const start = parseRequiredString(value.start);
-+  const end = parseRequiredString(value.end);
-+  if (!start || !end) {
++  const rec = body as Record<string, unknown>;
++  if (typeof rec.attempt_id !== 'string' || !UUID_RE.test(rec.attempt_id)) {
 +    return null;
 +  }
-+  return { start, end };
-+}
-+
-+function parseUsage(value: unknown): PortalUsageResponse | null {
-+  if (!isRecord(value)) {
++  if (typeof rec.status !== 'string' || rec.status.length === 0) {
 +    return null;
 +  }
-+  const tenantId = parseUuid(value.tenant_id);
-+  const used = parseNullableInt(value.used);
-+  const reserved = parseNullableInt(value.reserved);
-+  const remaining = parseNullableInt(value.remaining);
-+  const allowance = parseNullableInt(value.allowance);
-+  const periodStart = parseRequiredString(value.period_start);
-+  const periodEnd = parseRequiredString(value.period_end);
-+  const period = parsePeriod(value.period);
-+  const asOf = parseNullableString(value.as_of);
-+  const status = parseStatus(value.status);
-+  const dataSource = parseRequiredString(value.data_source);
-+  if (
-+    !tenantId ||
-+    used === undefined ||
-+    reserved === undefined ||
-+    remaining === undefined ||
-+    allowance === undefined ||
-+    !periodStart ||
-+    !periodEnd ||
-+    !period ||
-+    asOf === undefined ||
-+    status === undefined ||
-+    !dataSource
-+  ) {
++  if (typeof rec.replayed !== 'boolean') {
++    return null;
++  }
++  if (rec.checkout_url !== null && typeof rec.checkout_url !== 'string') {
++    return null;
++  }
++  if (typeof rec.checkout_url === 'string' && !isSafeHttpsUrl(rec.checkout_url)) {
 +    return null;
 +  }
 +  return {
-+    tenant_id: tenantId,
-+    used,
-+    reserved,
-+    remaining,
-+    allowance,
-+    period_start: periodStart,
-+    period_end: periodEnd,
-+    period,
-+    as_of: asOf,
-+    status,
-+    data_source: dataSource,
++    attempt_id: rec.attempt_id,
++    checkout_url: rec.checkout_url,
++    status: rec.status,
++    replayed: rec.replayed,
 +  };
 +}
 +
-+export function createPortalUsageClient(request: PortalRequest): PortalUsageClient {
++function parseManageResponse(body: unknown): PortalManageResponse | null {
++  if (!body || typeof body !== 'object') {
++    return null;
++  }
++  const rec = body as Record<string, unknown>;
++  if (typeof rec.portal_url !== 'string' || !isSafeHttpsUrl(rec.portal_url)) {
++    return null;
++  }
++  return { portal_url: rec.portal_url };
++}
++
++function unavailable(code: string): PortalBillingApiError {
 +  return {
-+    async read() {
-+      const response = await request('/portal/usage', { method: 'GET' });
-+      const body = await readJson(response);
-+      if (!response.ok) {
-+        const parsed = parseErrorBody(body);
-+        throw makeError({
-+          status: response.status,
-+          code: parsed.code,
-+          detail: parsed.detail,
-+          attemptId: parsed.attemptId,
-+          retryAfterSeconds: parseRetryAfter(response.headers.get('Retry-After')),
-+        });
-+      }
-+      const parsed = parseUsage(body);
-+      if (!parsed) {
-+        throw makeError({
-+          status: response.status,
-+          code: 'invalid_portal_usage_response',
++    status: 503,
++    code,
++    detail: null,
++    attemptId: null,
++    retryAfterSeconds: null,
++  };
++}
++
++export function createPortalBillingClient(request: PortalRequest): PortalBillingClient {
++  return {
++    async checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse> {
++      if (!IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
++        raiseBillingError({
++          status: 422,
++          code: 'invalid_idempotency_key',
 +          detail: null,
 +          attemptId: null,
 +          retryAfterSeconds: null,
 +        });
 +      }
-+      return parsed;
++      const bodyPayload: PortalCheckoutRequest = { plan_code: input.plan_code };
++      if (input.return_path != null) {
++        bodyPayload.return_path = input.return_path;
++      }
++      let response: Response;
++      try {
++        response = await request(CHECKOUT_PATH, {
++          method: 'POST',
++          headers: {
++            'Content-Type': 'application/json',
++            'Idempotency-Key': idempotencyKey,
++          },
++          body: JSON.stringify(bodyPayload),
++        });
++      } catch {
++        raiseBillingError(unavailable('checkout_unavailable'));
++      }
++      const body = await readJson(response);
++      if (response.status === 200) {
++        const parsed = parseCheckoutResponse(body);
++        if (parsed) {
++          return parsed;
++        }
++        raiseBillingError({
++          status: response.status,
++          code: 'malformed_response',
++          detail: null,
++          attemptId: null,
++          retryAfterSeconds: retryAfterSeconds(response),
++        });
++      }
++      raiseBillingError(parseError(response.status, body, response));
++    },
++
++    async manage(input?: PortalManageRequest): Promise<PortalManageResponse> {
++      const payload: PortalManageRequest = {};
++      if (input?.return_path != null) {
++        payload.return_path = input.return_path;
++      }
++      let response: Response;
++      try {
++        response = await request(MANAGE_PATH, {
++          method: 'POST',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify(payload),
++        });
++      } catch {
++        raiseBillingError(unavailable('billing_portal_unavailable'));
++      }
++      const body = await readJson(response);
++      if (response.status === 200) {
++        const parsed = parseManageResponse(body);
++        if (parsed) {
++          return parsed;
++        }
++        raiseBillingError({
++          status: response.status,
++          code: 'malformed_response',
++          detail: null,
++          attemptId: null,
++          retryAfterSeconds: retryAfterSeconds(response),
++        });
++      }
++      raiseBillingError(parseError(response.status, body, response));
 +    },
 +  };
 +}
-diff --git a/apps/app-portal/src/components/OneTimeSecretDialog.tsx b/apps/app-portal/src/components/OneTimeSecretDialog.tsx
+diff --git a/apps/app-portal/src/api/portalClaim.ts b/apps/app-portal/src/api/portalClaim.ts
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/components/OneTimeSecretDialog.tsx
-@@ -0,0 +1,68 @@
-+import { useEffect, useRef, useState } from 'react';
-+import { StatusMessage } from './StatusMessage';
++++ b/apps/app-portal/src/api/portalClaim.ts
+@@ -0,0 +1,138 @@
++type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
 +
-+export type OneTimeSecretDialogProps = {
-+  rawKey: string | null;
++export type PortalClaimResponse = {
++  tenant_id: string;
++  issuer: string;
++  subject: string;
++  email: string | null;
 +  replayed: boolean;
-+  onCopy: () => Promise<void>;
-+  onClose: () => void;
-+  returnFocusId: string;
 +};
 +
-+export function OneTimeSecretDialog({ rawKey, replayed, onCopy, onClose, returnFocusId }: OneTimeSecretDialogProps) {
-+  const copyRef = useRef<HTMLButtonElement>(null);
-+  const closeRef = useRef<HTMLButtonElement>(null);
-+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-+  const recoverable = Boolean(rawKey) && !replayed;
-+
-+  useEffect(() => {
-+    if (recoverable) {
-+      copyRef.current?.focus();
-+    } else {
-+      closeRef.current?.focus();
-+    }
-+  }, [recoverable]);
-+
-+  async function handleCopy() {
-+    try {
-+      await onCopy();
-+      setCopyState('copied');
-+    } catch {
-+      setCopyState('failed');
-+    }
-+  }
-+
-+  function handleClose() {
-+    onClose();
-+    document.getElementById(returnFocusId)?.focus();
-+  }
-+
-+  const status = !recoverable
-+    ? 'This secret is no longer available. It cannot be recovered from this page.'
-+    : copyState === 'copied'
-+      ? 'Copied'
-+      : copyState === 'failed'
-+        ? 'Copy failed. You can try copying again. The secret will not be requested from the server.'
-+        : 'Not copied';
-+
-+  return (
-+    <div role="dialog" aria-modal="true" aria-labelledby="one-time-secret-title" className="acx-portal">
-+      <h2 id="one-time-secret-title">Copy this API secret once</h2>
-+      <p>This secret will not be shown again.</p>
-+      {recoverable ? <p>{rawKey}</p> : null}
-+      <StatusMessage tone={copyState === 'failed' || !recoverable ? 'error' : copyState === 'copied' ? 'ok' : 'info'}>
-+        {status}
-+      </StatusMessage>
-+      <div className="acx-portal-actions">
-+        {recoverable ? (
-+          <button ref={copyRef} type="button" className="acx-btn acx-btn-primary" onClick={() => void handleCopy()}>
-+            Copy secret
-+          </button>
-+        ) : null}
-+        <button ref={closeRef} type="button" className="acx-btn" onClick={handleClose}>
-+          Close secret
-+        </button>
-+      </div>
-+    </div>
-+  );
-+}
-diff --git a/apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx b/apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/components/WordPressTestConnectionGuidance.tsx
-@@ -0,0 +1,30 @@
-+export type WordPressTestConnectionGuidanceProps = {
-+  onClose: () => void;
-+  onReturnToKeys: () => void;
++export type PortalClaimApiError = {
++  status: number;
++  code: string | null;
++  detail: string | null;
++  attemptId: string | null;
++  retryAfterSeconds: number | null;
 +};
 +
-+export function WordPressTestConnectionGuidance({ onClose, onReturnToKeys }: WordPressTestConnectionGuidanceProps) {
-+  return (
-+    <div role="dialog" aria-modal="true" aria-labelledby="wordpress-guidance-title" className="acx-portal">
-+      <h2 id="wordpress-guidance-title">WordPress Test Connection guidance</h2>
-+      <ol>
-+        <li>Copy the secret once.</li>
-+        <li>Paste it into the WordPress plugin&apos;s API-key field.</li>
-+        <li>Run the plugin&apos;s Test Connection control.</li>
-+        <li>Return here to inspect, rotate, or revoke the key.</li>
-+      </ol>
-+      <p>
-+        Never send the secret in a URL, screenshot, log, or support ticket. Exact plugin menu labels are unverified in
-+        this portal and are not claimed here.
-+      </p>
-+      <div className="acx-portal-actions">
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onReturnToKeys}>
-+          Back to API keys
-+        </button>
-+        <button type="button" className="acx-btn" onClick={onClose}>
-+          Close
-+        </button>
-+      </div>
-+    </div>
-+  );
-+}
-diff --git a/apps/app-portal/src/screens/KeysScreen.tsx b/apps/app-portal/src/screens/KeysScreen.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/screens/KeysScreen.tsx
-@@ -0,0 +1,433 @@
-+import { useEffect, useRef, useState } from 'react';
-+import type {
-+  PortalKeyApiError,
-+  PortalKeyClient,
-+  PortalKeyIssueResponse,
-+  PortalKeyMetadataResponse,
-+  PortalKeyPageResponse,
-+} from '../api/portalKeys';
-+import { OneTimeSecretDialog } from '../components/OneTimeSecretDialog';
-+import { StatusMessage } from '../components/StatusMessage';
-+
-+export type KeysScreenProps = {
-+  client: PortalKeyClient;
-+  sessionKey: string;
-+  onNavigateToUsage: () => void;
-+  onNavigateToBilling: () => void;
-+  onOpenWordPressGuidance: (keyId: string) => void;
++export type PortalClaimClient = {
++  claim(invitationToken: string): Promise<PortalClaimResponse>;
 +};
 +
-+type KeysMode = 'loading' | 'default' | 'empty' | 'error';
-+type SecretState = { rawKey: string | null; replayed: boolean; returnFocusId: string } | null;
-+type RevokeDialog = { phase: 'preview' | 'last_usable'; keyId: string } | null;
-+type IdempotencySlot = { fingerprint: string; key: string };
++const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++const CLAIM_PATH = '/portal/onboarding/claim';
 +
-+const LIFETIME_OPTIONS = [
-+  { value: 3600, label: '1 hour' },
-+  { value: 86400, label: '1 day' },
-+  { value: 2592000, label: '30 days' },
-+  { value: 7776000, label: '90 days' },
-+] as const;
-+
-+function newIdempotencyKey(): string {
-+  return `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll('-', '');
++function raiseClaimError(error: PortalClaimApiError): never {
++  throw Object.assign(new Error(error.code ?? 'portal_claim_error'), error);
 +}
 +
-+function readError(error: unknown): PortalKeyApiError {
-+  if (error && typeof error === 'object') {
-+    const candidate = error as Partial<PortalKeyApiError>;
-+    if (typeof candidate.status === 'number') {
-+      return {
-+        status: candidate.status,
-+        code: typeof candidate.code === 'string' ? candidate.code : null,
-+        detail: typeof candidate.detail === 'string' ? candidate.detail : null,
-+        attemptId: typeof candidate.attemptId === 'string' ? candidate.attemptId : null,
-+        retryAfterSeconds: typeof candidate.retryAfterSeconds === 'number' ? candidate.retryAfterSeconds : null,
-+      };
-+    }
-+  }
-+  return { status: 0, code: null, detail: null, attemptId: null, retryAfterSeconds: null };
-+}
-+
-+function isUncertain(error: PortalKeyApiError): boolean {
-+  return error.status === 0 || error.status >= 500 || error.code === 'invalid_portal_key_response';
-+}
-+
-+function keyErrorCopy(error: PortalKeyApiError): string {
-+  if (error.status === 404 || error.code === 'portal key not found') {
-+    return 'That API key is no longer available.';
-+  }
-+  if (error.code === 'idempotency key was reused with a different request') {
-+    return 'This retry does not match the original request. Start a new action.';
-+  }
-+  if (error.status === 422) {
-+    return 'This request is not valid. Check the details and try again.';
-+  }
-+  if (error.code === 'last_usable_key_confirmation_required') {
-+    return 'This is the last usable key. Revoking it would stop API access until a new key is created.';
-+  }
-+  if (error.code === 'tenant key limit reached') {
-+    return 'A usable API key already exists. Rotate or revoke it before creating another.';
-+  }
-+  if (error.code === 'portal key is already revoked') {
-+    return 'This API key is already revoked.';
-+  }
-+  if (error.code === 'portal key was already rotated') {
-+    return 'This API key was already rotated.';
-+  }
-+  if (error.status === 409) {
-+    return 'This API key cannot be changed in its current state.';
-+  }
-+  return 'API key management is temporarily unavailable. Try again.';
-+}
-+
-+function isUsable(row: PortalKeyMetadataResponse, now: number): boolean {
-+  if (row.revoked_at) {
-+    return false;
-+  }
-+  if (!row.expires_at) {
-+    return true;
-+  }
-+  const expiresAt = Date.parse(row.expires_at);
-+  return Number.isFinite(expiresAt) && expiresAt > now;
-+}
-+
-+function rowStatus(row: PortalKeyMetadataResponse, now: number): 'revoked' | 'expired' | 'usable' {
-+  if (row.revoked_at) {
-+    return 'revoked';
-+  }
-+  if (row.expires_at) {
-+    const expiresAt = Date.parse(row.expires_at);
-+    if (Number.isFinite(expiresAt) && expiresAt <= now) {
-+      return 'expired';
-+    }
-+  }
-+  return 'usable';
-+}
-+
-+function currentUsableKey(rows: PortalKeyMetadataResponse[], now: number): PortalKeyMetadataResponse | null {
-+  const usable = rows.filter((row) => isUsable(row, now));
-+  if (usable.length === 0) {
++function retryAfterSeconds(response: Response): number | null {
++  const raw = response.headers.get('Retry-After');
++  if (raw == null || raw === '') {
 +    return null;
 +  }
-+  return usable.reduce((latest, row) => (row.created_at > latest.created_at ? row : latest));
++  const parsed = Number.parseInt(raw, 10);
++  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 +}
 +
-+function KeysScreenSession({
-+  client,
-+  onNavigateToUsage,
-+  onNavigateToBilling,
-+  onOpenWordPressGuidance,
-+}: KeysScreenProps) {
-+  const [mode, setMode] = useState<KeysMode>('loading');
-+  const [page, setPage] = useState<PortalKeyPageResponse | null>(null);
-+  const [status, setStatus] = useState('Checking API keys…');
-+  const [statusTone, setStatusTone] = useState<'info' | 'ok' | 'error'>('info');
-+  const [lifetimeSeconds, setLifetimeSeconds] = useState(2592000);
-+  const [secret, setSecret] = useState<SecretState>(null);
-+  const [revokeDialog, setRevokeDialog] = useState<RevokeDialog>(null);
-+  const [creating, setCreating] = useState(false);
-+  const [rotating, setRotating] = useState(false);
-+  const [revoking, setRevoking] = useState(false);
-+  const createInFlightRef = useRef(false);
-+  const rotateInFlightRef = useRef(false);
-+  const createIdempotencyRef = useRef<IdempotencySlot | null>(null);
-+  const rotateIdempotencyRef = useRef<IdempotencySlot | null>(null);
-+  const now = Date.now();
-+  const rows = page?.data ?? [];
-+  const primary = currentUsableKey(rows, now);
-+  const busy = mode === 'loading' || creating || rotating || revoking;
-+
-+  function idempotencyFor(slot: { current: IdempotencySlot | null }, fingerprint: string): string {
-+    if (slot.current && slot.current.fingerprint === fingerprint) {
-+      return slot.current.key;
++function parseError(status: number, body: unknown, response: Response): PortalClaimApiError {
++  let code: string | null = null;
++  let attemptId: string | null = null;
++  if (body && typeof body === 'object' && 'detail' in body) {
++    const detail = (body as { detail: unknown }).detail;
++    if (typeof detail === 'string') {
++      code = detail;
++    } else if (detail && typeof detail === 'object') {
++      const rec = detail as { code?: unknown; attempt_id?: unknown };
++      if (typeof rec.code === 'string') {
++        code = rec.code;
++      }
++      if (typeof rec.attempt_id === 'string' && UUID_RE.test(rec.attempt_id)) {
++        attemptId = rec.attempt_id;
++      }
 +    }
-+    const key = newIdempotencyKey();
-+    slot.current = { fingerprint, key };
-+    return key;
 +  }
++  return {
++    status,
++    code,
++    detail: null,
++    attemptId,
++    retryAfterSeconds: retryAfterSeconds(response),
++  };
++}
 +
-+  async function loadKeys(cursor?: string, append = false) {
-+    if (!append) {
-+      setMode('loading');
-+      setPage(null);
-+      setStatus('Checking API keys…');
-+      setStatusTone('info');
-+    }
-+    try {
-+      const result = await client.list(cursor ? { cursor } : undefined);
-+      setPage((current) => {
-+        if (!append || !current) {
-+          return result;
++async function readJson(response: Response): Promise<unknown> {
++  try {
++    return await response.json();
++  } catch {
++    return null;
++  }
++}
++
++function parseClaimResponse(body: unknown): PortalClaimResponse | null {
++  if (!body || typeof body !== 'object') {
++    return null;
++  }
++  const rec = body as Record<string, unknown>;
++  if (typeof rec.tenant_id !== 'string' || !UUID_RE.test(rec.tenant_id)) {
++    return null;
++  }
++  if (typeof rec.issuer !== 'string' || rec.issuer.length === 0) {
++    return null;
++  }
++  if (typeof rec.subject !== 'string' || rec.subject.length === 0) {
++    return null;
++  }
++  if (!('email' in rec) || (rec.email !== null && typeof rec.email !== 'string')) {
++    return null;
++  }
++  if (typeof rec.replayed !== 'boolean') {
++    return null;
++  }
++  return {
++    tenant_id: rec.tenant_id,
++    issuer: rec.issuer,
++    subject: rec.subject,
++    email: rec.email,
++    replayed: rec.replayed,
++  };
++}
++
++export function createPortalClaimClient(request: PortalRequest): PortalClaimClient {
++  return {
++    async claim(invitationToken: string): Promise<PortalClaimResponse> {
++      let response: Response;
++      try {
++        response = await request(CLAIM_PATH, {
++          method: 'POST',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify({ invitation_token: invitationToken }),
++        });
++      } catch {
++        raiseClaimError({
++          status: 503,
++          code: 'portal_identity_unavailable',
++          detail: null,
++          attemptId: null,
++          retryAfterSeconds: null,
++        });
++      }
++      const body = await readJson(response);
++      if (response.status === 200 || response.status === 201) {
++        const parsed = parseClaimResponse(body);
++        if (parsed) {
++          return parsed;
 +        }
-+        const seen = new Set(current.data.map((row) => row.id));
-+        return {
-+          ...result,
-+          data: [...current.data, ...result.data.filter((row) => !seen.has(row.id))],
-+        };
-+      });
-+      setMode(result.data.length === 0 && !append ? 'empty' : 'default');
-+      setStatus(
-+        result.data.length === 0 && !append
-+          ? 'Create an API key to get started. Metadata only; raw secrets appear once after issue.'
-+          : 'Metadata only; raw secrets appear once after issue.',
-+      );
-+      setStatusTone('info');
-+    } catch (error) {
-+      setMode('error');
-+      setStatus(keyErrorCopy(readError(error)));
-+      setStatusTone('error');
-+    }
-+  }
-+
-+  useEffect(() => {
-+    void loadKeys();
-+  }, [client]);
-+
-+  useEffect(() => {
-+    if (revokeDialog?.phase === 'last_usable') {
-+      document.getElementById('keep-key')?.focus();
-+    }
-+  }, [revokeDialog]);
-+
-+  async function handleCreate() {
-+    if (createInFlightRef.current) {
-+      return;
-+    }
-+    const fingerprint = JSON.stringify({ lifetime_seconds: lifetimeSeconds });
-+    const idempotencyKey = idempotencyFor(createIdempotencyRef, fingerprint);
-+    createInFlightRef.current = true;
-+    setCreating(true);
-+    setStatus('Creating API key…');
-+    setStatusTone('info');
-+    try {
-+      const issued = await client.create({ lifetime_seconds: lifetimeSeconds }, idempotencyKey);
-+      createIdempotencyRef.current = null;
-+      setSecret({ rawKey: issued.raw_key, replayed: issued.replayed, returnFocusId: 'create-key' });
-+      await loadKeys();
-+    } catch (error) {
-+      setStatus(keyErrorCopy(readError(error)));
-+      setStatusTone('error');
-+    } finally {
-+      createInFlightRef.current = false;
-+      setCreating(false);
-+    }
-+  }
-+
-+  async function handleRotate(row: PortalKeyMetadataResponse) {
-+    if (rotateInFlightRef.current) {
-+      return;
-+    }
-+    const fingerprint = JSON.stringify({ id: row.id });
-+    const idempotencyKey = idempotencyFor(rotateIdempotencyRef, fingerprint);
-+    rotateInFlightRef.current = true;
-+    setRotating(true);
-+    setStatus('Rotating API key…');
-+    setStatusTone('info');
-+    try {
-+      const issued: PortalKeyIssueResponse = await client.rotate(row.id, {}, idempotencyKey);
-+      rotateIdempotencyRef.current = null;
-+      setSecret({ rawKey: issued.raw_key, replayed: issued.replayed, returnFocusId: `rotate-key-${row.id}` });
-+      await loadKeys();
-+    } catch (error) {
-+      setStatus(keyErrorCopy(readError(error)));
-+      setStatusTone('error');
-+    } finally {
-+      rotateInFlightRef.current = false;
-+      setRotating(false);
-+    }
-+  }
-+
-+  async function confirmRevoke() {
-+    if (!revokeDialog) {
-+      return;
-+    }
-+    const keyId = revokeDialog.keyId;
-+    const payload = revokeDialog.phase === 'last_usable' ? { confirm_last_usable: true } : {};
-+    setRevoking(true);
-+    try {
-+      await client.revoke(keyId, payload);
-+      setRevokeDialog(null);
-+      await loadKeys();
-+    } catch (error) {
-+      const parsed = readError(error);
-+      if (parsed.code === 'last_usable_key_confirmation_required') {
-+        setRevokeDialog({ phase: 'last_usable', keyId });
-+        setStatus(keyErrorCopy(parsed));
-+        setStatusTone('error');
-+        return;
++        raiseClaimError({
++          status: response.status,
++          code: 'malformed_response',
++          detail: null,
++          attemptId: null,
++          retryAfterSeconds: retryAfterSeconds(response),
++        });
 +      }
-+      setStatus(keyErrorCopy(parsed));
-+      setStatusTone('error');
-+      setRevokeDialog(null);
-+      if (isUncertain(parsed)) {
-+        await loadKeys();
-+      }
-+    } finally {
-+      setRevoking(false);
-+    }
-+  }
-+
-+  function cancelRevoke() {
-+    const keyId = revokeDialog?.keyId;
-+    setRevokeDialog(null);
-+    if (keyId) {
-+      document.getElementById(`revoke-key-${keyId}`)?.focus();
-+    }
-+  }
-+
-+  async function copyIssuedSecret(value: string) {
-+    const clipboard = navigator.clipboard;
-+    if (!clipboard?.writeText) {
-+      throw new Error('clipboard unavailable');
-+    }
-+    await clipboard.writeText(value);
-+  }
-+
-+  const guidanceKeyId = primary?.id ?? rows[0]?.id;
-+
-+  return (
-+    <main className="acx-portal" aria-busy={busy}>
-+      <header className="acx-portal-header">
-+        <div>
-+          <p className="acx-lede">AltContext</p>
-+          <h1>API keys</h1>
-+        </div>
-+        <div className="acx-portal-actions">
-+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+            Usage
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </div>
-+      </header>
-+      <div className="acx-portal-actions">
-+        <label htmlFor="key-lifetime">Lifetime</label>
-+        <select
-+          id="key-lifetime"
-+          value={String(lifetimeSeconds)}
-+          disabled={busy}
-+          onChange={(event) => setLifetimeSeconds(Number(event.target.value))}
-+        >
-+          {LIFETIME_OPTIONS.map((option) => (
-+            <option key={option.value} value={option.value}>
-+              {option.label}
-+            </option>
-+          ))}
-+        </select>
-+        <button
-+          id="create-key"
-+          type="button"
-+          className="acx-btn acx-btn-primary"
-+          onClick={() => void handleCreate()}
-+          disabled={busy}
-+        >
-+          Create API key
-+        </button>
-+      </div>
-+      {mode === 'loading' && !page ? <p>Loading API key metadata…</p> : null}
-+      {rows.length > 0 ? (
-+        <ul>
-+          {rows.map((row) => {
-+            const state = rowStatus(row, now);
-+            const canRotate = primary?.id === row.id;
-+            return (
-+              <li key={row.id}>
-+                <p>
-+                  {row.id} created {row.created_at}
-+                  {row.expires_at ? ` expires ${row.expires_at}` : ''}
-+                  {row.revoked_at ? ` revoked ${row.revoked_at}` : ''} status: {state}
-+                </p>
-+                {canRotate ? (
-+                  <button
-+                    id={`rotate-key-${row.id}`}
-+                    type="button"
-+                    className="acx-btn"
-+                    onClick={() => void handleRotate(row)}
-+                    disabled={busy}
-+                  >
-+                    Rotate key
-+                  </button>
-+                ) : null}
-+                {state !== 'revoked' ? (
-+                  <button
-+                    id={`revoke-key-${row.id}`}
-+                    type="button"
-+                    className="acx-btn"
-+                    onClick={() => setRevokeDialog({ phase: 'preview', keyId: row.id })}
-+                    disabled={busy}
-+                  >
-+                    Revoke key
-+                  </button>
-+                ) : null}
-+              </li>
-+            );
-+          })}
-+        </ul>
-+      ) : null}
-+      {page?.next_cursor ? (
-+        <button
-+          type="button"
-+          className="acx-btn"
-+          onClick={() => void loadKeys(page.next_cursor ?? undefined, true)}
-+          disabled={busy}
-+        >
-+          Load more keys
-+        </button>
-+      ) : null}
-+      {guidanceKeyId ? (
-+        <button
-+          type="button"
-+          className="acx-btn"
-+          onClick={() => onOpenWordPressGuidance(guidanceKeyId)}
-+          disabled={busy}
-+        >
-+          WordPress Test Connection guidance
-+        </button>
-+      ) : null}
-+      {secret ? null : <StatusMessage tone={statusTone}>{status}</StatusMessage>}
-+      {mode === 'error' ? (
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={() => void loadKeys()} disabled={busy}>
-+          Try again
-+        </button>
-+      ) : null}
-+      {revokeDialog ? (
-+        <div role="dialog" aria-modal="true" aria-labelledby="revoke-key-title" className="acx-portal">
-+          <h2 id="revoke-key-title">{revokeDialog.phase === 'last_usable' ? 'Last usable key' : 'Revoke API key'}</h2>
-+          <p>
-+            {revokeDialog.phase === 'last_usable'
-+              ? 'Revoking the last usable key would stop API access until a new key is created. This cannot be undone.'
-+              : 'Revoke this API key? This cannot be undone.'}
-+          </p>
-+          <div className="acx-portal-actions">
-+            <button id="keep-key" type="button" className="acx-btn" onClick={cancelRevoke}>
-+              Keep key
-+            </button>
-+            <button
-+              type="button"
-+              className="acx-btn acx-btn-primary"
-+              onClick={() => void confirmRevoke()}
-+              disabled={revoking}
-+            >
-+              Confirm revoke
-+            </button>
-+          </div>
-+        </div>
-+      ) : null}
-+      {secret ? (
-+        <OneTimeSecretDialog
-+          rawKey={secret.rawKey}
-+          replayed={secret.replayed}
-+          onCopy={() => copyIssuedSecret(secret.rawKey ?? '')}
-+          onClose={() => setSecret(null)}
-+          returnFocusId={secret.returnFocusId}
-+        />
-+      ) : null}
-+    </main>
-+  );
++      raiseClaimError(parseError(response.status, body, response));
++    },
++  };
 +}
-+
-+export function KeysScreen(props: KeysScreenProps) {
-+  return <KeysScreenSession key={props.sessionKey} {...props} />;
-+}
-diff --git a/apps/app-portal/src/screens/UsageScreen.tsx b/apps/app-portal/src/screens/UsageScreen.tsx
+diff --git a/apps/app-portal/src/screens/BillingReturnScreen.tsx b/apps/app-portal/src/screens/BillingReturnScreen.tsx
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/screens/UsageScreen.tsx
-@@ -0,0 +1,136 @@
-+import { useEffect, useState } from 'react';
-+import type { PortalUsageClient, PortalUsageResponse } from '../api/portalUsage';
++++ b/apps/app-portal/src/screens/BillingReturnScreen.tsx
+@@ -0,0 +1,52 @@
++import { useEffect } from 'react';
++import type { PortalBillingClient } from '../api/portalBilling';
 +import { StatusMessage } from '../components/StatusMessage';
 +
-+export type UsageScreenProps = {
-+  client: PortalUsageClient;
-+  sessionKey: string;
-+  onNavigateToKeys: () => void;
++export type BillingReturnScreenProps = {
++  client: PortalBillingClient;
++  publicPlanCode: string | null;
++  paymentsEnabled: boolean;
++  attemptId: string | null;
 +  onNavigateToBilling: () => void;
++  onNavigateToUsage: () => void;
 +};
 +
-+type UsageMode = 'loading' | 'default' | 'empty' | 'error' | 'degraded';
-+
-+function formatCount(value: number | null): string {
-+  return value === null ? 'unknown' : String(value);
-+}
-+
-+function statusCopy(snapshot: PortalUsageResponse | null, mode: UsageMode): string {
-+  if (mode === 'loading') {
-+    return 'Checking usage…';
-+  }
-+  if (mode === 'error') {
-+    return 'Usage is temporarily unavailable. Try again.';
-+  }
-+  if (!snapshot) {
-+    return 'Checking usage…';
-+  }
-+  if (snapshot.status === 'expired') {
-+    return 'This entitlement is expired. Access is closed.';
-+  }
-+  if (snapshot.status === 'revoked') {
-+    return 'This entitlement is revoked. Access is closed.';
-+  }
-+  if (snapshot.status === 'past_due') {
-+    return 'This entitlement is past due. Remaining access follows backend grace only.';
-+  }
-+  if (snapshot.remaining === 0) {
-+    return 'Usage is at the backend-reported cap.';
-+  }
-+  if (
-+    snapshot.data_source === 'pending' ||
-+    snapshot.used === null ||
-+    snapshot.reserved === null ||
-+    snapshot.remaining === null ||
-+    snapshot.allowance === null
-+  ) {
-+    return 'Usage is not available yet. Some counts are unknown.';
-+  }
-+  return `Usage status: ${snapshot.status ?? 'unknown'}.`;
-+}
-+
-+function UsageScreenSession({ client, onNavigateToKeys, onNavigateToBilling }: UsageScreenProps) {
-+  const [mode, setMode] = useState<UsageMode>('loading');
-+  const [snapshot, setSnapshot] = useState<PortalUsageResponse | null>(null);
-+
-+  async function loadUsage() {
-+    setMode('loading');
-+    setSnapshot(null);
-+    try {
-+      const result = await client.read();
-+      setSnapshot(result);
-+      if (result.status === 'expired' || result.status === 'revoked' || result.remaining === 0) {
-+        setMode('degraded');
-+      } else if (
-+        result.data_source === 'pending' ||
-+        (result.used === null && result.remaining === null && result.allowance === null && result.reserved === null)
-+      ) {
-+        setMode('empty');
-+      } else {
-+        setMode('default');
-+      }
-+    } catch {
-+      setSnapshot(null);
-+      setMode('error');
-+    }
-+  }
-+
++export function BillingReturnScreen({
++  client,
++  publicPlanCode,
++  paymentsEnabled,
++  attemptId,
++  onNavigateToBilling,
++  onNavigateToUsage,
++}: BillingReturnScreenProps) {
 +  useEffect(() => {
-+    void loadUsage();
++    void client;
 +  }, [client]);
 +
-+  useEffect(() => {
-+    if (mode === 'error') {
-+      document.getElementById('retry-usage')?.focus();
-+    }
-+  }, [mode]);
-+
-+  const busy = mode === 'loading';
-+  const tone = mode === 'error' ? 'error' : mode === 'degraded' ? 'error' : mode === 'default' ? 'ok' : 'info';
++  const pendingCopy = 'We received the return. Access changes only after backend confirmation. Pending reconciliation.';
 +
 +  return (
-+    <main className="acx-portal" aria-busy={busy}>
-+      <header className="acx-portal-header">
-+        <div>
-+          <p className="acx-lede">AltContext</p>
-+          <h1>Usage</h1>
-+        </div>
-+        <div className="acx-portal-actions">
-+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
-+            API keys
-+          </button>
-+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-+            Billing
-+          </button>
-+        </div>
++    <main className="acx-portal">
++      <header>
++        <p className="acx-lede">Account</p>
++        <h1>Billing return</h1>
 +      </header>
-+      {snapshot && mode !== 'loading' ? (
-+        <section>
-+          <p>
-+            Usage period: {snapshot.period_start} — {snapshot.period_end}
-+          </p>
-+          <p>Used: {formatCount(snapshot.used)}</p>
-+          <p>Reserved: {formatCount(snapshot.reserved)}</p>
-+          <p>Remaining: {formatCount(snapshot.remaining)}</p>
-+          <p>Allowance: {formatCount(snapshot.allowance)}</p>
-+          <p>Source: {snapshot.data_source}</p>
-+          <p>As of: {snapshot.as_of ?? 'unavailable'}</p>
-+        </section>
++      {publicPlanCode ? <p>Plan: {publicPlanCode}</p> : null}
++      {!paymentsEnabled ? <p>Payments are disabled.</p> : null}
++      <StatusMessage tone="info">{pendingCopy}</StatusMessage>
++      {attemptId ? (
++        <p>
++          Attempt <span>{attemptId}</span>
++        </p>
 +      ) : null}
-+      <StatusMessage tone={tone}>{statusCopy(snapshot, mode)}</StatusMessage>
-+      <button
-+        id="retry-usage"
-+        type="button"
-+        className="acx-btn acx-btn-primary"
-+        onClick={() => void loadUsage()}
-+        disabled={busy}
-+      >
-+        Try again
-+      </button>
++      <div className="acx-portal-actions">
++        <button type="button" className="acx-btn acx-btn-primary" onClick={onNavigateToBilling}>
++          Return to billing
++        </button>
++        <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
++          View usage
++        </button>
++      </div>
 +    </main>
 +  );
 +}
+diff --git a/apps/app-portal/src/screens/BillingScreen.tsx b/apps/app-portal/src/screens/BillingScreen.tsx
+new file mode 100644
+--- /dev/null
++++ b/apps/app-portal/src/screens/BillingScreen.tsx
+@@ -0,0 +1,405 @@
++import { useEffect, useRef, useState } from 'react';
++import type { PortalBillingApiError, PortalBillingClient } from '../api/portalBilling';
++import { StatusMessage, type StatusTone } from '../components/StatusMessage';
 +
-+export function UsageScreen(props: UsageScreenProps) {
-+  return <UsageScreenSession key={props.sessionKey} {...props} />;
++export type BillingScreenProps = {
++  client: PortalBillingClient;
++  publicPlanCode: string | null;
++  paymentsEnabled: boolean;
++  onNavigateToReturn: (attemptId: string) => void;
++  onNavigateToUsage: () => void;
++};
++
++export const hostedNavigation = {
++  open(url: string): void {
++    window.location.assign(url);
++  },
++};
++
++type BillingCopy = {
++  message: string;
++  tone: StatusTone;
++  retry: boolean;
++  attemptId: string | null;
++};
++
++function createCheckoutIdempotencyKey(): string {
++  const bytes = new Uint8Array(32);
++  crypto.getRandomValues(bytes);
++  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
++}
++
++function asBillingError(error: unknown): PortalBillingApiError {
++  if (
++    error &&
++    typeof error === 'object' &&
++    'status' in error &&
++    typeof (error as { status: unknown }).status === 'number'
++  ) {
++    const rec = error as PortalBillingApiError;
++    return {
++      status: rec.status,
++      code: typeof rec.code === 'string' ? rec.code : null,
++      detail: null,
++      attemptId: typeof rec.attemptId === 'string' ? rec.attemptId : null,
++      retryAfterSeconds: typeof rec.retryAfterSeconds === 'number' ? rec.retryAfterSeconds : null,
++    };
++  }
++  return {
++    status: 503,
++    code: 'checkout_unavailable',
++    detail: null,
++    attemptId: null,
++    retryAfterSeconds: null,
++  };
++}
++
++function billingCopy(error: PortalBillingApiError): BillingCopy {
++  const attemptId = error.attemptId;
++  switch (error.code) {
++    case 'payments_disabled':
++      return {
++        message: 'Payments are disabled.',
++        tone: 'error',
++        retry: false,
++        attemptId,
++      };
++    case 'csrf_origin_denied':
++      return {
++        message: 'This request could not be verified. Reload the page and try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'unknown_plan_code':
++      return {
++        message: 'This plan is not available.',
++        tone: 'error',
++        retry: false,
++        attemptId,
++      };
++    case 'invalid_return_path':
++      return {
++        message: 'Billing return could not be prepared. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'invalid_idempotency_key':
++      return {
++        message: 'This billing request could not be sent. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'idempotency_key_reuse':
++      return {
++        message: 'This billing request does not match a previous attempt. Start a new checkout.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'checkout_ambiguous':
++      return {
++        message: attemptId
++          ? `A checkout is still being confirmed. Do not start another payment. Attempt ${attemptId}.`
++          : 'A checkout is still being confirmed. Do not start another payment.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'already_subscribed':
++      return {
++        message: 'This account already has an active subscription. Check usage for current access.',
++        tone: 'info',
++        retry: false,
++        attemptId,
++      };
++    case 'invalid_checkout_request':
++      return {
++        message: 'This checkout request is not valid. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'billing_customer_missing':
++      return {
++        message: 'Billing customer details are not ready yet. Complete checkout first, or try again later.',
++        tone: 'error',
++        retry: false,
++        attemptId,
++      };
++    case 'billing_portal_unavailable':
++      return {
++        message: 'The billing portal is temporarily unavailable. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    case 'checkout_unavailable':
++      return {
++        message: 'Checkout is temporarily unavailable. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++    default:
++      return {
++        message: 'Billing is temporarily unavailable. Try again.',
++        tone: 'error',
++        retry: true,
++        attemptId,
++      };
++  }
++}
++
++export function BillingScreen({
++  client,
++  publicPlanCode,
++  paymentsEnabled,
++  onNavigateToReturn,
++  onNavigateToUsage,
++}: BillingScreenProps) {
++  const checkoutEnabled = paymentsEnabled && Boolean(publicPlanCode);
++  const [preview, setPreview] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [retry, setRetry] = useState(false);
++  const [retryKind, setRetryKind] = useState<'checkout' | 'manage' | null>(null);
++  const [status, setStatus] = useState<{ tone: StatusTone; message: string }>(() =>
++    !paymentsEnabled
++      ? { tone: 'info', message: 'Payments are disabled.' }
++      : !publicPlanCode
++        ? { tone: 'info', message: 'No billing plan is available.' }
++        : { tone: 'ok', message: 'Ready' },
++  );
++  const epochRef = useRef(0);
++  const inFlightRef = useRef(false);
++  const completedRef = useRef(false);
++  const idempotencyRef = useRef<{ planCode: string; key: string } | null>(null);
++  const confirmRef = useRef<HTMLButtonElement>(null);
++  const statusRef = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    epochRef.current += 1;
++    inFlightRef.current = false;
++    completedRef.current = false;
++    setPreview(false);
++    setBusy(false);
++    setRetry(false);
++    setRetryKind(null);
++    setStatus(
++      !paymentsEnabled
++        ? { tone: 'info', message: 'Payments are disabled.' }
++        : !publicPlanCode
++          ? { tone: 'info', message: 'No billing plan is available.' }
++          : { tone: 'ok', message: 'Ready' },
++    );
++  }, [client, publicPlanCode, paymentsEnabled]);
++
++  useEffect(() => {
++    return () => {
++      epochRef.current += 1;
++    };
++  }, []);
++
++  const keyFor = (planCode: string): string => {
++    if (idempotencyRef.current?.planCode === planCode) {
++      return idempotencyRef.current.key;
++    }
++    const key = createCheckoutIdempotencyKey();
++    idempotencyRef.current = { planCode, key };
++    return key;
++  };
++
++  const rotateKey = (planCode: string): void => {
++    idempotencyRef.current = { planCode, key: createCheckoutIdempotencyKey() };
++  };
++
++  const startCheckout = async () => {
++    if (!checkoutEnabled || !publicPlanCode || inFlightRef.current || completedRef.current) {
++      return;
++    }
++    const epoch = epochRef.current;
++    inFlightRef.current = true;
++    setPreview(false);
++    setBusy(true);
++    setRetry(false);
++    setStatus({ tone: 'info', message: 'Starting hosted checkout…' });
++    statusRef.current?.focus();
++    try {
++      const result = await client.checkout({ plan_code: publicPlanCode }, keyFor(publicPlanCode));
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      if (result.status === 'pending' || result.status === 'provider_requested') {
++        completedRef.current = true;
++        if (result.checkout_url) {
++          hostedNavigation.open(result.checkout_url);
++        }
++        onNavigateToReturn(result.attempt_id);
++        setBusy(false);
++        setStatus({
++          tone: 'info',
++          message: `Checkout pending. Access changes only after backend confirmation. Attempt ${result.attempt_id}.`,
++        });
++        return;
++      }
++      if (result.status === 'succeeded') {
++        completedRef.current = true;
++        inFlightRef.current = false;
++        setBusy(false);
++        setStatus({
++          tone: 'info',
++          message: 'Checkout already completed. Access changes only after backend confirmation.',
++        });
++        onNavigateToReturn(result.attempt_id);
++        return;
++      }
++      if (result.status === 'ambiguous') {
++        inFlightRef.current = false;
++        setBusy(false);
++        setRetry(true);
++        setRetryKind('checkout');
++        setStatus({
++          tone: 'error',
++          message: `A checkout is still being confirmed. Do not start another payment. Attempt ${result.attempt_id}.`,
++        });
++        return;
++      }
++      rotateKey(publicPlanCode);
++      inFlightRef.current = false;
++      setBusy(false);
++      setStatus({
++        tone: 'error',
++        message:
++          result.status === 'expired' || result.status === 'canceled'
++            ? 'That checkout ended without a charge. Start a new checkout when you are ready.'
++            : 'Checkout did not complete. Start a new checkout when you are ready.',
++      });
++    } catch (error) {
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      const parsed = asBillingError(error);
++      if (parsed.code === 'idempotency_key_reuse' && publicPlanCode) {
++        rotateKey(publicPlanCode);
++      }
++      const copy = billingCopy(parsed);
++      inFlightRef.current = false;
++      setBusy(false);
++      setRetry(copy.retry);
++      setRetryKind(copy.retry ? 'checkout' : null);
++      setStatus({ tone: copy.tone, message: copy.message });
++      statusRef.current?.focus();
++    }
++  };
++
++  const startManage = async () => {
++    if (!checkoutEnabled || inFlightRef.current) {
++      return;
++    }
++    const epoch = epochRef.current;
++    inFlightRef.current = true;
++    setBusy(true);
++    setRetry(false);
++    setStatus({ tone: 'info', message: 'Opening billing portal…' });
++    try {
++      const result = await client.manage();
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      hostedNavigation.open(result.portal_url);
++      inFlightRef.current = false;
++      setBusy(false);
++    } catch (error) {
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      const copy = billingCopy(asBillingError(error));
++      inFlightRef.current = false;
++      setBusy(false);
++      setRetry(copy.retry);
++      setRetryKind(copy.retry ? 'manage' : null);
++      setStatus({ tone: copy.tone, message: copy.message });
++      statusRef.current?.focus();
++    }
++  };
++
++  const onContinue = () => {
++    if (!checkoutEnabled || busy || completedRef.current) {
++      return;
++    }
++    setPreview(true);
++    setStatus({
++      tone: 'info',
++      message: 'This opens an external payment page. Access changes only after backend confirmation.',
++    });
++    window.setTimeout(() => confirmRef.current?.focus(), 0);
++  };
++
++  return (
++    <main className="acx-portal">
++      <header>
++        <p className="acx-lede">Account</p>
++        <h1>Billing</h1>
++      </header>
++      {publicPlanCode ? <p>Plan: {publicPlanCode}</p> : <p>Plan: not configured</p>}
++      <div ref={statusRef} tabIndex={-1}>
++        <StatusMessage tone={status.tone}>{status.message}</StatusMessage>
++      </div>
++      <div className="acx-portal-actions">
++        {preview ? (
++          <button
++            ref={confirmRef}
++            type="button"
++            className="acx-btn acx-btn-primary"
++            disabled={busy || !checkoutEnabled}
++            onClick={() => {
++              void startCheckout();
++            }}
++          >
++            Confirm hosted checkout
++          </button>
++        ) : (
++          <button
++            type="button"
++            className="acx-btn acx-btn-primary"
++            disabled={busy || !checkoutEnabled}
++            onClick={onContinue}
++          >
++            Continue to checkout
++          </button>
++        )}
++        <button
++          type="button"
++          className="acx-btn"
++          disabled={busy || !checkoutEnabled}
++          onClick={() => {
++            void startManage();
++          }}
++        >
++          Manage billing
++        </button>
++        {retry ? (
++          <button
++            type="button"
++            className="acx-btn"
++            disabled={busy}
++            onClick={() => {
++              if (retryKind === 'manage') {
++                void startManage();
++              } else {
++                void startCheckout();
++              }
++            }}
++          >
++            Try billing again
++          </button>
++        ) : null}
++        <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
++          View usage
++        </button>
++      </div>
++    </main>
++  );
++}
+diff --git a/apps/app-portal/src/screens/ClaimScreen.tsx b/apps/app-portal/src/screens/ClaimScreen.tsx
+new file mode 100644
+--- /dev/null
++++ b/apps/app-portal/src/screens/ClaimScreen.tsx
+@@ -0,0 +1,284 @@
++import { useEffect, useRef, useState, type FormEvent } from 'react';
++import type { PortalClaimApiError, PortalClaimClient, PortalClaimResponse } from '../api/portalClaim';
++import { StatusMessage, type StatusTone } from '../components/StatusMessage';
++
++export type ClaimScreenProps = {
++  client: PortalClaimClient;
++  onClaimed: (response: PortalClaimResponse) => void;
++};
++
++type ClaimCopy = {
++  message: string;
++  tone: StatusTone;
++  retry: boolean;
++  fieldFocus: boolean;
++};
++
++function asClaimError(error: unknown): PortalClaimApiError {
++  if (
++    error &&
++    typeof error === 'object' &&
++    'status' in error &&
++    typeof (error as { status: unknown }).status === 'number'
++  ) {
++    const rec = error as PortalClaimApiError;
++    return {
++      status: rec.status,
++      code: typeof rec.code === 'string' ? rec.code : null,
++      detail: null,
++      attemptId: typeof rec.attemptId === 'string' ? rec.attemptId : null,
++      retryAfterSeconds: typeof rec.retryAfterSeconds === 'number' ? rec.retryAfterSeconds : null,
++    };
++  }
++  return {
++    status: 503,
++    code: 'portal_identity_unavailable',
++    detail: null,
++    attemptId: null,
++    retryAfterSeconds: null,
++  };
++}
++
++function claimCopy(error: PortalClaimApiError): ClaimCopy {
++  switch (error.code) {
++    case 'email_unverified':
++      return {
++        message: 'Verify your email to continue. Account access is not ready yet.',
++        tone: 'error',
++        retry: false,
++        fieldFocus: false,
++      };
++    case 'not_admitted':
++      return {
++        message: 'Your account is not ready for access yet.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: false,
++      };
++    case 'invitation_consumed':
++      return {
++        message: 'This invitation is no longer available. Contact support if you need access.',
++        tone: 'error',
++        retry: false,
++        fieldFocus: false,
++      };
++    case 'identity_already_bound':
++      return {
++        message: 'This account is already linked. Contact support if you need help.',
++        tone: 'error',
++        retry: false,
++        fieldFocus: false,
++      };
++    case 'invalid_claim_request':
++      return {
++        message: 'Enter a valid invitation token.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: true,
++      };
++    case 'csrf_origin_denied':
++    case 'tenant_header_forbidden':
++      return {
++        message: 'This request could not be verified. Reload the page and try again.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: false,
++      };
++    case 'invalid_portal_authorization':
++      return {
++        message: 'Your sign-in session could not be verified.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: false,
++      };
++    case 'portal_identity_unavailable':
++      return {
++        message: 'Account access is temporarily unavailable. Try again.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: false,
++      };
++    default:
++      if (error.status === 401) {
++        return {
++          message: 'Your sign-in session could not be verified.',
++          tone: 'error',
++          retry: true,
++          fieldFocus: false,
++        };
++      }
++      if (error.status === 403) {
++        return {
++          message: 'Your account is not ready for access yet.',
++          tone: 'error',
++          retry: true,
++          fieldFocus: false,
++        };
++      }
++      if (error.status === 422) {
++        return {
++          message: 'Enter a valid invitation token.',
++          tone: 'error',
++          retry: true,
++          fieldFocus: true,
++        };
++      }
++      return {
++        message: 'Account access is temporarily unavailable. Try again.',
++        tone: 'error',
++        retry: true,
++        fieldFocus: false,
++      };
++  }
++}
++
++export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
++  const [token, setToken] = useState('');
++  const [preview, setPreview] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [status, setStatus] = useState<{ tone: StatusTone; message: string }>({
++    tone: 'ok',
++    message: 'Ready to claim',
++  });
++  const [retry, setRetry] = useState(false);
++  const epochRef = useRef(0);
++  const tokenRef = useRef<HTMLInputElement>(null);
++  const confirmRef = useRef<HTMLButtonElement>(null);
++  const statusRef = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    epochRef.current += 1;
++    setToken('');
++    setPreview(false);
++    setBusy(false);
++    setRetry(false);
++    setStatus({ tone: 'ok', message: 'Ready to claim' });
++  }, [client]);
++
++  useEffect(() => {
++    return () => {
++      epochRef.current += 1;
++    };
++  }, []);
++
++  const submitClaim = async () => {
++    const epoch = epochRef.current;
++    setPreview(false);
++    setBusy(true);
++    setRetry(false);
++    setStatus({ tone: 'info', message: 'Claiming access…' });
++    statusRef.current?.focus();
++    try {
++      const response = await client.claim(token);
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      setToken('');
++      setBusy(false);
++      setStatus({ tone: 'ok', message: response.replayed ? 'Invitation already claimed.' : 'Invitation claimed.' });
++      onClaimed(response);
++    } catch (error) {
++      if (epoch !== epochRef.current) {
++        return;
++      }
++      const copy = claimCopy(asClaimError(error));
++      setBusy(false);
++      setRetry(copy.retry);
++      setStatus({ tone: copy.tone, message: copy.message });
++      if (copy.fieldFocus) {
++        tokenRef.current?.focus();
++      } else {
++        statusRef.current?.focus();
++      }
++    }
++  };
++
++  const onPreview = (event: FormEvent) => {
++    event.preventDefault();
++    if (busy || !token.trim()) {
++      return;
++    }
++    setPreview(true);
++    setStatus({
++      tone: 'info',
++      message: 'This invitation can be used only once. Confirm to claim access.',
++    });
++    window.setTimeout(() => confirmRef.current?.focus(), 0);
++  };
++
++  const onCancel = () => {
++    if (busy) {
++      return;
++    }
++    setToken('');
++    setPreview(false);
++    setRetry(false);
++    setStatus({ tone: 'ok', message: 'Ready to claim' });
++    tokenRef.current?.focus();
++  };
++
++  return (
++    <main className="acx-portal">
++      <header>
++        <p className="acx-lede">AltContext onboarding</p>
++        <h1>Claim your invited account</h1>
++      </header>
++      <form
++        aria-label="Claim invitation"
++        aria-busy={busy}
++        onSubmit={preview ? (event) => event.preventDefault() : onPreview}
++      >
++        <div>
++          <label htmlFor="acx-invitation-token">Invitation token</label>
++          <input
++            id="acx-invitation-token"
++            ref={tokenRef}
++            type="text"
++            autoComplete="off"
++            spellCheck={false}
++            value={token}
++            readOnly={busy || preview}
++            onChange={(event) => setToken(event.target.value)}
++          />
++        </div>
++        <div ref={statusRef} tabIndex={-1}>
++          <StatusMessage tone={status.tone}>{status.message}</StatusMessage>
++        </div>
++        <div className="acx-portal-actions">
++          {preview ? (
++            <button
++              ref={confirmRef}
++              type="button"
++              className="acx-btn acx-btn-primary"
++              disabled={busy}
++              onClick={() => {
++                void submitClaim();
++              }}
++            >
++              Confirm claim access
++            </button>
++          ) : (
++            <button type="submit" className="acx-btn acx-btn-primary" disabled={busy || !token.trim()}>
++              Claim access
++            </button>
++          )}
++          <button type="button" className="acx-btn" disabled={busy} onClick={onCancel}>
++            Cancel
++          </button>
++          {retry ? (
++            <button
++              type="button"
++              className="acx-btn"
++              disabled={busy || !token.trim()}
++              onClick={() => {
++                void submitClaim();
++              }}
++            >
++              Try claim again
++            </button>
++          ) : null}
++        </div>
++      </form>
++    </main>
++  );
 +}

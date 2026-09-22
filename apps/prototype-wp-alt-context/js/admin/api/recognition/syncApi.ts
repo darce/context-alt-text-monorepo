@@ -1,4 +1,4 @@
-import { fetchRequiredApi } from '../../utils/http';
+import { fetchRequiredApi, UnknownBoundaryError } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import {
   RECLAIMER_VOCABULARY,
@@ -115,6 +115,11 @@ export const fetchSyncStatus = async (): Promise<SyncStatusResponse> => {
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(10_000),
   });
+  // WHY: fetchRequiredApi only rejects undefined, so null envelopes must be rejected here.
+  if (typeof response !== 'object' || response === null || Array.isArray(response)) {
+    const message = `Request to ${endpoint} succeeded but returned an invalid response envelope.`;
+    throw new UnknownBoundaryError(undefined, message);
+  }
   return { ...response, reclaimer: normalizeReclaimer(response.reclaimer) };
 };
 

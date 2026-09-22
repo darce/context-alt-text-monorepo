@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -87,7 +88,7 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "billing_checkout_attempt",
         "uq_billing_checkout_attempt_provider_key",
-        ("tenant_id", "provider", "environment", "seller_account", "idempotency_key"),
+        ("provider", "environment", "seller_account", "idempotency_key"),
     ),
     (
         "usage_reservation",
@@ -351,18 +352,214 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
     return True
 
 
+USAGE_SCHEMA_WRITERS_DRAINED_GUC = "app.usage_schema_writers_drained"
+USAGE_SCHEMA_WRITERS_DRAINED_ENV = "ACX_USAGE_SCHEMA_WRITERS_DRAINED"
+_USAGE_IDENTITY_CONTRACT_COLUMNS = ("operation_id", "request_fingerprint", "fence_token", "queue_bytes")
+_CHECKOUT_PROVIDER_KEY_COLUMNS = ("provider", "environment", "seller_account", "idempotency_key")
+_USAGE_SCHEMA_DRAIN_REQUIRED = (
+    "existing usage schema upgrade requires drained writers before NOT NULL "
+    "contraction and global-counter enforcement. Old writers omit "
+    "operation_id/request_fingerprint/fence_token and do not update "
+    "usage_admission_global_state, so rolling nullable/default columns would "
+    "bypass global caps. Stop old API/worker writers, then re-run with "
+    f"{USAGE_SCHEMA_WRITERS_DRAINED_ENV}=1 (sets {USAGE_SCHEMA_WRITERS_DRAINED_GUC}). "
+    "See docs/runbooks/app1-usage-schema-upgrade.md"
+)
+
+
 def _bind_dialect_name(op) -> str:
-    bind = op.get_bind()
+    if op is None:
+        return ""
+    get_bind = getattr(op, "get_bind", None)
+    if not callable(get_bind):
+        return ""
+    bind = get_bind()
+    if bind is None:
+        return ""
     dialect = getattr(bind, "dialect", None)
     return str(getattr(dialect, "name", "") or "")
 
 
+def _is_postgres_op(op) -> bool:
+    return op is not None and _bind_dialect_name(op) == "postgresql"
+
+
+def _current_setting(op, name: str) -> str:
+    value = op.get_bind().execute(sa.text("SELECT current_setting(:name, true)"), {"name": name}).scalar()
+    return "" if value is None else str(value)
+
+
+def _set_local_setting(op, name: str, value: str) -> None:
+    op.get_bind().execute(sa.text("SELECT set_config(:name, :value, true)"), {"name": name, "value": value})
+
+
+def _writers_drained(op) -> bool:
+    if not _is_postgres_op(op):
+        return True
+    return _current_setting(op, USAGE_SCHEMA_WRITERS_DRAINED_GUC).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _column_nullable(op, table_name: str, column_name: str) -> bool | None:
+    value = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": table_name, "c": column_name},
+        )
+        .scalar()
+    )
+    if value is None:
+        return None
+    return str(value).upper() == "YES"
+
+
+def _unique_constraint_column_names(op, table_name: str, constraint_name: str) -> list[str]:
+    rows = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+                SELECT a.attname
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+                WHERE n.nspname = current_schema()
+                  AND t.relname = :table
+                  AND c.conname = :name
+                ORDER BY k.ord
+                """
+            ),
+            {"table": table_name, "name": constraint_name},
+        )
+        .fetchall()
+    )
+    return [str(row[0]) for row in rows]
+
+
+def _usage_reservation_needs_identity_contract(op) -> bool:
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return False
+    existing = _existing_columns(op, "usage_reservation")
+    for column_name in _USAGE_IDENTITY_CONTRACT_COLUMNS:
+        if column_name not in existing:
+            return True
+        if _column_nullable(op, "usage_reservation", column_name):
+            return True
+    return False
+
+
+def _refuse_undrained_existing_usage_upgrade(op) -> None:
+    if not _is_postgres_op(op):
+        return
+    usage_existed = _relkind(op, "usage_reservation") in {"r", "p"}
+    if not usage_existed:
+        return
+    needs_contract = _usage_reservation_needs_identity_contract(op)
+    global_missing = _relkind(op, "usage_admission_global_state") not in {"r", "p"}
+    if (needs_contract or global_missing) and not _writers_drained(op):
+        raise RuntimeError(_USAGE_SCHEMA_DRAIN_REQUIRED)
+
+
+def _parse_positive_epoch(value: str) -> int:
+    if not value.isdigit() or (len(value) > 1 and value.startswith("0")):
+        raise RuntimeError(f"malformed usage_reservation fence epoch {value!r}; operator remediation required")
+    epoch = int(value)
+    if epoch < 1:
+        raise RuntimeError(f"malformed usage_reservation fence epoch {value!r}; operator remediation required")
+    return epoch
+
+
+def _parse_uuid_token(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise RuntimeError(f"malformed usage_reservation fence UUID {value!r}; operator remediation required") from exc
+
+
+def _rewrite_usage_reservation_fence_token(token: str | None, *, reservation_id: str, epoch: int) -> str:
+    """Map stored fence_token to the frozen epoch-prefixed contract.
+
+    Legacy provenance is ``{epoch}:legacy:{reservation UUID}`` only when the
+    stored token is missing/blank or equals the reservation UUID. Modern
+    unprefixed UUIDs expand to ``{epoch}:{uuid}``. Already epoch-prefixed
+    valid tokens are preserved exactly. Fail closed on malformed markers.
+    """
+    if epoch < 1:
+        raise RuntimeError("usage_admission_global_state.fence_epoch must be >= 1")
+    reservation_uuid = _parse_uuid_token(reservation_id)
+    raw = "" if token is None else str(token).strip()
+    if not raw or _uuid_text_equal(raw, reservation_uuid):
+        return f"{epoch}:legacy:{reservation_uuid}"
+    if ":" in raw:
+        parts = raw.split(":")
+        if len(parts) == 3 and parts[1] == "legacy":
+            _parse_positive_epoch(parts[0])
+            _parse_uuid_token(parts[2])
+            return raw
+        if len(parts) == 2 and parts[1] != "legacy":
+            _parse_positive_epoch(parts[0])
+            _parse_uuid_token(parts[1])
+            return raw
+        raise RuntimeError(
+            f"malformed usage_reservation.fence_token {raw!r} on {reservation_uuid}; operator remediation required"
+        )
+    modern = _parse_uuid_token(raw)
+    return f"{epoch}:{modern}"
+
+
+def _uuid_text_equal(value: str, expected: uuid.UUID) -> bool:
+    try:
+        return uuid.UUID(str(value)) == expected
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _with_migration_rls_bypass(op, callback):
+    """SET LOCAL app.bypass_rls for migration reads/writes, then restore.
+
+    Never ALTER ROLE ... BYPASSRLS. FORCE RLS stays on; only this transaction
+    sees all tenant rows, and the prior GUC is restored before return.
+    """
+    previous = _current_setting(op, "app.bypass_rls")
+    _set_local_setting(op, "app.bypass_rls", "true")
+    try:
+        return callback()
+    finally:
+        _set_local_setting(op, "app.bypass_rls", previous)
+
+
 def _backfill_usage_reservation_identity(op) -> None:
     """Expand-then-backfill operation/fingerprint/fence on existing reservation rows."""
-    if _bind_dialect_name(op) != "postgresql":
+    if not _is_postgres_op(op):
         return
     if _relkind(op, "usage_reservation") not in {"r", "p"}:
         return
+    _with_migration_rls_bypass(op, lambda: _backfill_usage_reservation_identity_locked(op))
+
+
+def _backfill_usage_reservation_identity_locked(op) -> None:
+    bind = op.get_bind()
+    unknown_reserved = bind.execute(
+        sa.text(
+            """
+            SELECT id FROM usage_reservation
+            WHERE status = 'reserved' AND queue_bytes IS NULL
+            LIMIT 1
+            """
+        )
+    ).scalar()
+    if unknown_reserved is not None:
+        raise RuntimeError(
+            "usage_reservation has RESERVED rows with unknown queue_bytes; "
+            "drain those reservations or set queue_bytes explicitly, then re-run. "
+            "Migration will not invent usage receipts. "
+            "See docs/runbooks/app1-usage-schema-upgrade.md"
+        )
     op.execute(
         sa.text(
             """
@@ -370,48 +567,80 @@ def _backfill_usage_reservation_identity(op) -> None:
             SET
                 operation_id = COALESCE(NULLIF(BTRIM(operation_id), ''), idempotency_key),
                 request_fingerprint = COALESCE(NULLIF(BTRIM(request_fingerprint), ''), idempotency_key),
-                fence_token = COALESCE(NULLIF(BTRIM(fence_token), ''), id::text),
                 queue_bytes = COALESCE(queue_bytes, 0)
             WHERE operation_id IS NULL
                OR BTRIM(COALESCE(operation_id, '')) = ''
                OR request_fingerprint IS NULL
                OR BTRIM(COALESCE(request_fingerprint, '')) = ''
-               OR fence_token IS NULL
-               OR BTRIM(COALESCE(fence_token, '')) = ''
                OR queue_bytes IS NULL
             """
         )
     )
-    leftover = (
-        op.get_bind()
-        .execute(
-            sa.text(
-                """
-                SELECT 1 FROM usage_reservation
-                WHERE operation_id IS NULL
-                   OR request_fingerprint IS NULL
-                   OR fence_token IS NULL
-                LIMIT 1
-                """
+    rewrite_tokens = _writers_drained(op) or _column_nullable(op, "usage_reservation", "fence_token") is True
+    if rewrite_tokens:
+        epoch = bind.execute(
+            sa.text("SELECT fence_epoch FROM usage_admission_global_state WHERE id = 'global'")
+        ).scalar()
+        if epoch is None:
+            raise RuntimeError("usage_admission_global_state singleton missing before fence backfill")
+        epoch_value = int(epoch)
+        if epoch_value < 1:
+            raise RuntimeError("usage_admission_global_state.fence_epoch must be >= 1")
+        rows = bind.execute(sa.text("SELECT id::text, fence_token FROM usage_reservation")).fetchall()
+        for reservation_id, token in rows:
+            rewritten = _rewrite_usage_reservation_fence_token(
+                None if token is None else str(token),
+                reservation_id=str(reservation_id),
+                epoch=epoch_value,
             )
+            if rewritten != ("" if token is None else str(token)):
+                bind.execute(
+                    sa.text("UPDATE usage_reservation SET fence_token = :token WHERE id = CAST(:id AS uuid)"),
+                    {"token": rewritten, "id": str(reservation_id)},
+                )
+    leftover = bind.execute(
+        sa.text(
+            """
+            SELECT 1 FROM usage_reservation
+            WHERE operation_id IS NULL
+               OR request_fingerprint IS NULL
+               OR fence_token IS NULL
+               OR queue_bytes IS NULL
+            LIMIT 1
+            """
         )
-        .scalar()
-    )
+    ).scalar()
     if leftover is not None:
         raise RuntimeError("usage_reservation identity backfill left nulls; operator remediation required")
-    for column_name in ("operation_id", "request_fingerprint", "fence_token"):
+    for column_name in _USAGE_IDENTITY_CONTRACT_COLUMNS:
         op.execute(sa.text(f'ALTER TABLE "usage_reservation" ALTER COLUMN "{column_name}" SET NOT NULL'))
+    op.execute(sa.text('ALTER TABLE "usage_reservation" ALTER COLUMN "queue_bytes" SET DEFAULT 0'))
 
 
 def _seed_usage_admission_global_state(op) -> None:
-    """Insert the fail-closed singleton when the global table exists and is empty."""
-    if _bind_dialect_name(op) != "postgresql":
+    """Insert or reconcile the singleton from current-period reservation rows."""
+    if not _is_postgres_op(op):
         return
     if _relkind(op, "usage_admission_global_state") not in {"r", "p"}:
         return
-    op.execute(
+    _with_migration_rls_bypass(op, lambda: _seed_usage_admission_global_state_locked(op))
+
+
+def _seed_usage_admission_global_state_locked(op) -> None:
+    bind = op.get_bind()
+    bind.execute(sa.text("LOCK TABLE usage_admission_global_state IN EXCLUSIVE MODE"))
+    if _relkind(op, "usage_reservation") in {"r", "p"}:
+        bind.execute(sa.text("LOCK TABLE usage_reservation IN SHARE MODE"))
+    period_start_sql = "date_trunc('day', timezone('utc', now()))"
+    period_end_sql = f"{period_start_sql} + interval '1 day'"
+    reservation_from = (
+        "FROM usage_reservation"
+        if _relkind(op, "usage_reservation") in {"r", "p"}
+        else "FROM (SELECT NULL::integer AS cost_units, NULL::text AS status, NULL::timestamptz AS period_start, NULL::integer AS queue_bytes WHERE false) usage_reservation"
+    )
+    bind.execute(
         sa.text(
-            """
+            f"""
             INSERT INTO usage_admission_global_state (
                 id, period_start, period_end,
                 daily_cost_limit, daily_cost_units,
@@ -423,12 +652,36 @@ def _seed_usage_admission_global_state(op) -> None:
             )
             SELECT
                 'global',
-                date_trunc('day', timezone('utc', now())),
-                date_trunc('day', timezone('utc', now())) + interval '1 day',
-                10000, 0,
-                1000, 0,
-                1000, 0,
-                268435456, 0,
+                {period_start_sql},
+                {period_end_sql},
+                10000,
+                COALESCE((
+                    SELECT SUM(cost_units) {reservation_from}
+                    WHERE status IN ('reserved', 'committed')
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                1000,
+                COALESCE((
+                    SELECT SUM(cost_units) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                1000,
+                COALESCE((
+                    SELECT COUNT(*) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
+                268435456,
+                COALESCE((
+                    SELECT SUM(queue_bytes) {reservation_from}
+                    WHERE status = 'reserved'
+                      AND period_start >= {period_start_sql}
+                      AND period_start < {period_end_sql}
+                ), 0),
                 false, 1,
                 'v1',
                 timezone('utc', now())
@@ -438,6 +691,73 @@ def _seed_usage_admission_global_state(op) -> None:
             """
         )
     )
+    if _relkind(op, "usage_reservation") not in {"r", "p"}:
+        return
+    bind.execute(
+        sa.text(
+            """
+            UPDATE usage_admission_global_state AS g
+            SET
+                daily_cost_units = COALESCE((
+                    SELECT SUM(r.cost_units) FROM usage_reservation r
+                    WHERE r.status IN ('reserved', 'committed')
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                inflight_units = COALESCE((
+                    SELECT SUM(r.cost_units) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                queue_depth = COALESCE((
+                    SELECT COUNT(*) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                queue_bytes = COALESCE((
+                    SELECT SUM(r.queue_bytes) FROM usage_reservation r
+                    WHERE r.status = 'reserved'
+                      AND r.period_start >= g.period_start
+                      AND r.period_start < g.period_end
+                ), 0),
+                updated_at = timezone('utc', now())
+            WHERE g.id = 'global'
+            """
+        )
+    )
+
+
+def _heal_checkout_provider_key_unique(op) -> None:
+    """Replace tenant-scoped provider-key unique with spec 5.1 seller-wide unique."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "billing_checkout_attempt") not in {"r", "p"}:
+        return
+    current = _unique_constraint_column_names(
+        op, "billing_checkout_attempt", "uq_billing_checkout_attempt_provider_key"
+    )
+    expected = list(_CHECKOUT_PROVIDER_KEY_COLUMNS)
+    if current == expected:
+        return
+    if current:
+        op.execute('ALTER TABLE "billing_checkout_attempt" DROP CONSTRAINT "uq_billing_checkout_attempt_provider_key"')
+    _ensure_unique_constraint(
+        op,
+        "billing_checkout_attempt",
+        sa.UniqueConstraint(*expected, name="uq_billing_checkout_attempt_provider_key"),
+    )
+
+
+def _heal_portal_tenant_invitation_tenant_nullable(op) -> None:
+    """Pending invitations may have NULL tenant_id; keep FK for bound rows."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "portal_tenant_invitation") not in {"r", "p"}:
+        return
+    if _column_nullable(op, "portal_tenant_invitation", "tenant_id") is False:
+        op.execute(sa.text('ALTER TABLE "portal_tenant_invitation" ALTER COLUMN "tenant_id" DROP NOT NULL'))
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
@@ -677,6 +997,9 @@ def ensure_tables(op) -> None:
 
     # Reclaim key: settled_at; the usage-retention job purges settled reservations after the retention window.
     # Identity columns expand nullable, then backfill, then SET NOT NULL.
+    # Existing-schema NOT NULL contraction and first global-enforcement insert
+    # require drained writers; fresh DBs skip this gate.
+    _refuse_undrained_existing_usage_upgrade(op)
     _ensure_table(
         op,
         "usage_reservation",
@@ -693,7 +1016,7 @@ def ensure_tables(op) -> None:
         sa.Column("request_fingerprint", sa.Text(), nullable=True),
         sa.Column("job_id", sa.Text(), nullable=True),
         sa.Column("fence_token", sa.Text(), nullable=True),
-        sa.Column("queue_bytes", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("queue_bytes", sa.Integer(), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'reserved'")),
         sa.Column("reserved_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("settled_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -723,7 +1046,6 @@ def ensure_tables(op) -> None:
             "ck_usage_reservation_fence_token_present",
         ),
     )
-    _backfill_usage_reservation_identity(op)
     _ensure_index(
         op,
         "idx_usage_reservation_tenant_period_status",
@@ -777,6 +1099,7 @@ def ensure_tables(op) -> None:
         ),
     )
     _seed_usage_admission_global_state(op)
+    _backfill_usage_reservation_identity(op)
 
     # Reclaim key: updated_at; the billing projection retention job purges obsolete inactive projections.
     _ensure_table(
@@ -861,7 +1184,6 @@ def ensure_tables(op) -> None:
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint(
-            "tenant_id",
             "provider",
             "environment",
             "seller_account",
@@ -910,6 +1232,7 @@ def ensure_tables(op) -> None:
         postgresql_where=sa.text("status IN ('created', 'provider_requested', 'pending', 'ambiguous')"),
     )
     _ensure_index(op, "idx_billing_checkout_attempt_reclaim", "billing_checkout_attempt", ["updated_at"])
+    _heal_checkout_provider_key_unique(op)
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
     _ensure_table(
@@ -987,7 +1310,7 @@ def ensure_tables(op) -> None:
             "tenant_id",
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("invited_email", sa.Text(), nullable=False),
         sa.Column("token_hash", sa.Text(), nullable=False),
@@ -1001,6 +1324,11 @@ def ensure_tables(op) -> None:
         ),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint("token_hash", name="uq_portal_tenant_invitation_token_hash"),
+        sa.CheckConstraint(
+            "accepted_at IS NULL OR tenant_id IS NOT NULL",
+            name="ck_portal_tenant_invitation_accepted_requires_tenant",
+        ),
+        heal_constraints=("ck_portal_tenant_invitation_accepted_requires_tenant",),
     )
     _ensure_index(
         op,
@@ -1008,6 +1336,7 @@ def ensure_tables(op) -> None:
         "portal_tenant_invitation",
         ["expires_at", "accepted_at"],
     )
+    _heal_portal_tenant_invitation_tenant_nullable(op)
 
     # DS-3 / launch-plan §5: per-prospect demo registry. Looked up by opaque
     # slug (not tenant_id); raw API key is never stored — only a hash/ref.

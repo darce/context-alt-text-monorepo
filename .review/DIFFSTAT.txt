@@ -1,12 +1,14 @@
- .../interface_adapters/http/routers/analyze.py     | 238 +++++++---
- .../http/routers/analyze_multipart.py              |  75 ++-
- .../http/routers/cluster_revert.py                 |  41 ++
- .../http/routers/clusters_admission.py             |  45 +-
- .../tests/unit/test_app1_operator_usage_census.py  | 498 ++++++++++++++++++++
- .../tests/unit/test_app1_usage_admission_wiring.py |  94 +++-
- .../unit/test_app1_usage_recognition_lifecycle.py  | 501 +++++++++++++++++++++
- .../tests/unit/test_configure_clerk_production.py  | 153 +++++++
- .../scene/interface_adapters/http/routers/gpu.py   |  53 ++-
- .../scripts/configure_clerk_production.py          | 151 ++++++-
- docs/runbooks/clerk-production-auth.md             |  29 +-
- 11 files changed, 1765 insertions(+), 113 deletions(-)
+ .../services/usage_settlement_service.py           | 583 +++++++++++++++++++++
+ .../integration/test_app1_usage_worker_postgres.py | 291 ++++++++++
+ .../tests/unit/test_app1_usage_sweeper.py          | 334 ++++++++++--
+ .../recognition/worker/scan_worker.py              | 105 +++-
+ .../scene/application/describe_async_worker.py     |  45 +-
+ .../scene/application/describe_run_repository.py   |  10 +
+ .../scene/application/describe_run_worker.py       |  24 +-
+ .../interface_adapters/http/routers/describe.py    |  50 +-
+ .../http/routers/describe_run.py                   |  10 +-
+ .../scene/tests/test_app1_usage_scene_census.py    |  19 +-
+ .../scene/tests/test_describe_async_repository.py  |  54 ++
+ .../scene/tests/test_describe_async_worker.py      | 178 +++++++
+ .../scene/tests/test_describe_run_worker_phases.py | 112 ++++
+ 13 files changed, 1714 insertions(+), 101 deletions(-)

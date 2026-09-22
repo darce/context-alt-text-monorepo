@@ -1,0 +1,52 @@
+{
+  "composed_cosine": 0.9999999403953552,
+  "cosine_min": 0.9999999,
+  "description": "Independent ArcFace align+blob+ORT vs in-house FivePointAligner+OrtSFaceEmbedder on the existing aligner source image/landmarks. Not a quality or deployment claim.",
+  "embedding_dim": 512,
+  "embedding_shape": [
+    1,
+    512
+  ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
+  "inhouse_crop_sha256": "65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae",
+  "inhouse_pre_norm_magnitude": 9.165489196777344,
+  "kind": "auraface_composed_embedding_golden",
+  "l2_norm": 1.0,
+  "model": "glintr100.onnx",
+  "model_sha256": "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+  "models_dir": "/opt/acx-backend/data/dev-models/face_pipeline",
+  "numpy_version": "2.5.2",
+  "onnxruntime_version": "1.29.0",
+  "opencv_version": "5.0.0",
+  "ort_session": {
+    "execution_mode": "ORT_SEQUENTIAL",
+    "graph_optimization_level": "ORT_DISABLE_ALL",
+    "inter_op_num_threads": 1,
+    "intra_op_num_threads": 1,
+    "providers": [
+      "CPUExecutionProvider"
+    ]
+  },
+  "preprocessing": {
+    "alignment_template_id": "arcface-112",
+    "blob_formula": "(rgb_pixel - input_mean) * input_scale",
+    "channel_order": "RGB",
+    "input_mean": 127.5,
+    "input_scale": 0.00784313725490196,
+    "input_size": [
+      112,
+      112
+    ],
+    "output_l2_normalized": false
+  },
+  "reference": {
+    "align_formula": "independent Umeyama onto InsightFace arcface_dst 112",
+    "blob_formula": "RGB (pixel-127.5)/127.5",
+    "insightface_runtime_imported": false,
+    "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6"
+  },
+  "reference_crop_sha256": "65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae",
+  "reference_pre_norm_magnitude": 9.165488243103027,
+  "source_image": "aligner_source_image.npy",
+  "source_landmarks": "aligner_landmarks.npy"
+}

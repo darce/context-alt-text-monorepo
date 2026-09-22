@@ -50,13 +50,19 @@ class ModelMissingError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class InputPreprocessing:
-    """Declared input preprocessing metadata for a candidate model space."""
+    """Declared input preprocessing metadata for a candidate model space.
+
+    ``input_mean`` default 0 preserves the SFace blob (scale=1, no offset).
+    AuraFace uses mean 127.5 with scale 1/127.5 → ``(pixel - 127.5) / 127.5``.
+    ``output_l2_normalized`` describes the raw graph output, not pipeline L2.
+    """
 
     input_size: tuple[int, int]
     channel_order: str
     input_scale: float
     alignment_template_id: str
     output_l2_normalized: bool
+    input_mean: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,9 +141,20 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
         preprocessing=InputPreprocessing(
             input_size=(112, 112),
             channel_order="RGB",
-            input_scale=1.0 / 127.5,  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure input scaling.
-            alignment_template_id="arcface-112-unverified",  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure alignment template.
-            output_l2_normalized=True,  # UNVERIFIED (FIRDV-3 S1b): not measured; ArcFace-family assumption pending full-file inspection; measure output normalization.
+            # Graph has no Sub/Mul/Div on input (FIR512-2 measure). Independent
+            # composed reference reproduces InsightFace ArcFaceONNX blobFromImages
+            # (swapRB, mean=127.5, std=127.5) at commit 1480e705287bc5d59f923b46c260ec6e3e4150f6.
+            # Historical FIRDV-3 S1b marker was UNVERIFIED input_scale=1/127.5.
+            input_scale=1.0 / 127.5,
+            input_mean=127.5,
+            # Coordinates independently match insightface face_align.arcface_dst at
+            # 1480e705287bc5d59f923b46c260ec6e3e4150f6 and SFACE_CANONICAL_LANDMARKS_112.
+            # Historical id: "arcface-112-unverified".
+            alignment_template_id="arcface-112",
+            # Graph last op is BatchNormalization; no ReduceL2/LpNormalization.
+            # Fixture raw L2 >> 1. Pipeline embed_batch still L2-normalizes.
+            # Historical FIRDV-3 S1b marker was output_l2_normalized=True UNVERIFIED.
+            output_l2_normalized=False,
         ),
     ),
 }

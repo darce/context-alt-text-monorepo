@@ -138,6 +138,11 @@ class OpenCVSFaceEmbedder:
         model_name: str = "sface",
         models_dir: Path | None = None,
     ) -> None:
+        if model_name != "sface":
+            raise ValueError(
+                f"OpenCVSFaceEmbedder only supports model_name='sface' before I/O, got {model_name!r}; "
+                "AuraFace uses OrtSFaceEmbedder"
+            )
         model_path = load_verified_model(model_name, models_dir=models_dir)
         self._model_name = model_name
         self._model_path = model_path

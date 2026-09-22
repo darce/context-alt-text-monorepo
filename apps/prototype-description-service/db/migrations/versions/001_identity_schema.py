@@ -70,6 +70,14 @@ TENANT_TABLES = [
     "identity_atlas_queue_dispositions",
 ]
 
+# Seller-wide recovery control plane. Not tenant rows and not a fake tenant.
+# Access is transaction-local app.bypass_rls (FORCE RLS, never role BYPASSRLS).
+OPERATOR_SCOPE_TABLES = [
+    "billing_reconciliation_cursor",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_item_progress",
+]
+
 # UNIQUE constraints heal may additively CREATE on an already-provisioned table.
 # (table, constraint name, columns) is the public column list so
 # _ensure_unique_constraint does not read SQLAlchemy-private
@@ -95,6 +103,11 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_usage_reservation_tenant_operation_id",
         ("tenant_id", "operation_id"),
     ),
+    (
+        "billing_reconciliation_quarantine",
+        "uq_billing_reconciliation_quarantine_remote",
+        ("provider", "environment", "seller_account", "kind", "remote_id"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -119,6 +132,9 @@ EXPECTED_SCHEMA_TABLES = [
     "billing_subscription_projection",
     "billing_webhook_inbox",
     "billing_checkout_attempt",
+    "billing_reconciliation_cursor",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_item_progress",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -163,6 +179,9 @@ DOWNGRADE_TABLE_ORDER = [
     "portal_tenant_invitation",
     "tenant_key_idempotency",
     "api_key_rotation_history",
+    "billing_reconciliation_item_progress",
+    "billing_reconciliation_quarantine",
+    "billing_reconciliation_cursor",
     "billing_checkout_attempt",
     "billing_webhook_inbox",
     "billing_subscription_projection",
@@ -1120,6 +1139,8 @@ def ensure_tables(op) -> None:
         sa.Column("past_due_since", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("last_event_id", sa.Text(), nullable=True),
         sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=True),
+        sa.Column("seller_account", sa.Text(), nullable=True),
         sa.UniqueConstraint("tenant_id", name="uq_billing_subscription_projection_tenant_id"),
         sa.UniqueConstraint(
             "provider",
@@ -1149,6 +1170,8 @@ def ensure_tables(op) -> None:
         sa.Column("next_attempt_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("quarantined_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'received'")),
+        sa.Column("environment", sa.Text(), nullable=True),
+        sa.Column("seller_account", sa.Text(), nullable=True),
         sa.UniqueConstraint(
             "provider",
             "provider_event_id",
@@ -1233,6 +1256,167 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(op, "idx_billing_checkout_attempt_reclaim", "billing_checkout_attempt", ["updated_at"])
     _heal_checkout_provider_key_unique(op)
+
+    # C0 recovery cursor/lease. Seller-wide operator scope; not a tenant table.
+    _ensure_table(
+        op,
+        "billing_reconciliation_cursor",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("cursor", sa.Text(), nullable=True),
+        sa.Column("lease_owner", sa.Text(), nullable=True),
+        sa.Column("lease_until", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("last_progress_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("exhausted", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("failure_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("last_failure_class", sa.Text(), nullable=True),
+        sa.Column("last_failure_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_cursor_kind",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_cursor_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_cursor_provider",
+        ),
+        sa.CheckConstraint("fence >= 0", name="ck_billing_reconciliation_cursor_fence_nonnegative"),
+        sa.CheckConstraint("failure_count >= 0", name="ck_billing_reconciliation_cursor_failure_count"),
+        sa.CheckConstraint(
+            "cursor IS NULL OR (length(cursor) > 0 AND length(cursor) <= 256)",
+            name="ck_billing_reconciliation_cursor_cursor_bound",
+        ),
+        heal_constraints=(
+            "ck_billing_reconciliation_cursor_kind",
+            "ck_billing_reconciliation_cursor_environment",
+            "ck_billing_reconciliation_cursor_provider",
+            "ck_billing_reconciliation_cursor_fence_nonnegative",
+            "ck_billing_reconciliation_cursor_failure_count",
+            "ck_billing_reconciliation_cursor_cursor_bound",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_reconciliation_cursor_lease",
+        "billing_reconciliation_cursor",
+        ["lease_until", "kind"],
+    )
+
+    _ensure_table(
+        op,
+        "billing_reconciliation_quarantine",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=False),
+        sa.Column("seller_account", sa.Text(), nullable=False),
+        sa.Column("kind", sa.Text(), nullable=False),
+        sa.Column("remote_id", sa.Text(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'open'")),
+        sa.Column("attempt_count", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("fence", sa.BigInteger(), nullable=False),
+        sa.Column("next_retry_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("operator_identity", sa.Text(), nullable=True),
+        sa.Column("operator_reason", sa.Text(), nullable=True),
+        sa.Column("details", sa.dialects.postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "provider",
+            "environment",
+            "seller_account",
+            "kind",
+            "remote_id",
+            name="uq_billing_reconciliation_quarantine_remote",
+        ),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_quarantine_kind",
+        ),
+        sa.CheckConstraint(
+            "status IN ('open', 'retry_pending', 'exhausted', 'resolved')",
+            name="ck_billing_reconciliation_quarantine_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_quarantine_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_quarantine_provider",
+        ),
+        sa.CheckConstraint("attempt_count >= 1", name="ck_billing_reconciliation_quarantine_attempt_count"),
+        sa.CheckConstraint("fence >= 1", name="ck_billing_reconciliation_quarantine_fence"),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_quarantine_remote_id",
+        ),
+        heal_constraints=(
+            "uq_billing_reconciliation_quarantine_remote",
+            "ck_billing_reconciliation_quarantine_kind",
+            "ck_billing_reconciliation_quarantine_status",
+            "ck_billing_reconciliation_quarantine_environment",
+            "ck_billing_reconciliation_quarantine_provider",
+            "ck_billing_reconciliation_quarantine_attempt_count",
+            "ck_billing_reconciliation_quarantine_fence",
+            "ck_billing_reconciliation_quarantine_remote_id",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_reconciliation_quarantine_retry",
+        "billing_reconciliation_quarantine",
+        ["status", "next_retry_at"],
+    )
+
+    _ensure_table(
+        op,
+        "billing_reconciliation_item_progress",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("remote_id", sa.Text(), primary_key=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False),
+        sa.Column("processed_at", sa.TIMESTAMP(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "kind IN ('subscriptions', 'ambiguous_checkouts')",
+            name="ck_billing_reconciliation_item_progress_kind",
+        ),
+        sa.CheckConstraint(
+            "status IN ('completed', 'quarantined')",
+            name="ck_billing_reconciliation_item_progress_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_reconciliation_item_progress_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_reconciliation_item_progress_provider",
+        ),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_item_progress_remote_id",
+        ),
+        sa.CheckConstraint("fence >= 1", name="ck_billing_reconciliation_item_progress_fence"),
+        heal_constraints=(
+            "ck_billing_reconciliation_item_progress_kind",
+            "ck_billing_reconciliation_item_progress_status",
+            "ck_billing_reconciliation_item_progress_environment",
+            "ck_billing_reconciliation_item_progress_provider",
+            "ck_billing_reconciliation_item_progress_remote_id",
+            "ck_billing_reconciliation_item_progress_fence",
+        ),
+    )
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
     _ensure_table(
@@ -3043,6 +3227,30 @@ def ensure_rls(op) -> None:
             WITH CHECK (tenant_id = {SAFE_TENANT_EXPR} OR {BYPASS_RLS_EXPR})
             """
         )
+    for table in OPERATOR_SCOPE_TABLES:
+        flags = bind.execute(
+            sa.text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = :name"
+            ),
+            {"name": table},
+        ).first()
+        if flags is None:
+            raise RuntimeError(f"ensure_rls: operator table {table!r} does not exist; run ensure_tables first")
+        if not flags[0]:
+            op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        if not flags[1]:
+            op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(f"DROP POLICY IF EXISTS operator_scope_{table} ON {table}")
+        op.execute(
+            f"""
+            CREATE POLICY operator_scope_{table} ON {table}
+            FOR ALL
+            USING ({BYPASS_RLS_EXPR})
+            WITH CHECK ({BYPASS_RLS_EXPR})
+            """
+        )
 
 
 def ensure_refresh_queue(op) -> None:
@@ -3735,6 +3943,8 @@ def downgrade() -> None:
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_reconciliation_quarantine_retry", table_name="billing_reconciliation_quarantine")
+    op.drop_index("idx_billing_reconciliation_cursor_lease", table_name="billing_reconciliation_cursor")
     op.drop_index("idx_billing_checkout_attempt_reclaim", table_name="billing_checkout_attempt")
     op.drop_index("uq_billing_checkout_attempt_one_active", table_name="billing_checkout_attempt")
     op.drop_index("uq_billing_checkout_attempt_client_key", table_name="billing_checkout_attempt")
@@ -3750,6 +3960,10 @@ def downgrade() -> None:
     op.drop_index("idx_demo_instances_tenant", table_name="demo_instances")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
+        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    for table in OPERATOR_SCOPE_TABLES:
+        op.execute(f"DROP POLICY IF EXISTS operator_scope_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     for table in DOWNGRADE_TABLE_ORDER:

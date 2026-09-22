@@ -217,6 +217,8 @@ class BillingSubscriptionProjection(Base):
     past_due_since: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_event_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    environment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seller_account: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tenant: Mapped[Tenant] = relationship()
 
@@ -329,11 +331,132 @@ class BillingWebhookInbox(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     quarantined_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'received'"))
+    environment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seller_account: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("provider", "provider_event_id", name="uq_billing_webhook_inbox_provider_event"),
         Index("idx_billing_webhook_inbox_reclaim", "status", "processed_at"),
         Index("idx_billing_webhook_inbox_pending", "status", "next_attempt_at"),
+    )
+
+
+_RECOVERY_KIND_SQL = "'subscriptions', 'ambiguous_checkouts'"
+_QUARANTINE_STATUS_SQL = "'open', 'retry_pending', 'exhausted', 'resolved'"
+_ITEM_PROGRESS_STATUS_SQL = "'completed', 'quarantined'"
+
+
+class BillingReconciliationCursor(Base):
+    """Seller-wide durable cursor/lease. Operator-scope; not a tenant row."""
+
+    __tablename__ = "billing_reconciliation_cursor"
+
+    provider: Mapped[str] = mapped_column(Text, primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+    seller_account: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    last_progress_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    exhausted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_failure_class: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(f"kind IN ({_RECOVERY_KIND_SQL})", name="ck_billing_reconciliation_cursor_kind"),
+        CheckConstraint("environment IN ('sandbox', 'live')", name="ck_billing_reconciliation_cursor_environment"),
+        CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_reconciliation_cursor_provider"),
+        CheckConstraint("fence >= 0", name="ck_billing_reconciliation_cursor_fence_nonnegative"),
+        CheckConstraint("failure_count >= 0", name="ck_billing_reconciliation_cursor_failure_count"),
+        CheckConstraint(
+            "cursor IS NULL OR (length(cursor) > 0 AND length(cursor) <= 256)",
+            name="ck_billing_reconciliation_cursor_cursor_bound",
+        ),
+        Index("idx_billing_reconciliation_cursor_lease", "lease_until", "kind"),
+    )
+
+
+class BillingReconciliationQuarantine(Base):
+    """Durable per-item quarantine for untrusted vendor identities."""
+
+    __tablename__ = "billing_reconciliation_quarantine"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    seller_account: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    remote_id: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'open'"))
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    next_retry_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    operator_identity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operator_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details: Mapped[dict[str, object]] = mapped_column(_json_col(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "environment",
+            "seller_account",
+            "kind",
+            "remote_id",
+            name="uq_billing_reconciliation_quarantine_remote",
+        ),
+        CheckConstraint(f"kind IN ({_RECOVERY_KIND_SQL})", name="ck_billing_reconciliation_quarantine_kind"),
+        CheckConstraint(
+            f"status IN ({_QUARANTINE_STATUS_SQL})",
+            name="ck_billing_reconciliation_quarantine_status",
+        ),
+        CheckConstraint("environment IN ('sandbox', 'live')", name="ck_billing_reconciliation_quarantine_environment"),
+        CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_reconciliation_quarantine_provider"),
+        CheckConstraint("attempt_count >= 1", name="ck_billing_reconciliation_quarantine_attempt_count"),
+        CheckConstraint("fence >= 1", name="ck_billing_reconciliation_quarantine_fence"),
+        CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_quarantine_remote_id",
+        ),
+        Index("idx_billing_reconciliation_quarantine_retry", "status", "next_retry_at"),
+    )
+
+
+class BillingReconciliationItemProgress(Base):
+    """Idempotent per-item progress so a repeated page cannot skip unprocessed ids."""
+
+    __tablename__ = "billing_reconciliation_item_progress"
+
+    provider: Mapped[str] = mapped_column(Text, primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+    seller_account: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    remote_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(f"kind IN ({_RECOVERY_KIND_SQL})", name="ck_billing_reconciliation_item_progress_kind"),
+        CheckConstraint(
+            f"status IN ({_ITEM_PROGRESS_STATUS_SQL})",
+            name="ck_billing_reconciliation_item_progress_status",
+        ),
+        CheckConstraint(
+            "environment IN ('sandbox', 'live')", name="ck_billing_reconciliation_item_progress_environment"
+        ),
+        CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_reconciliation_item_progress_provider"),
+        CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_reconciliation_item_progress_remote_id",
+        ),
+        CheckConstraint("fence >= 1", name="ck_billing_reconciliation_item_progress_fence"),
     )
 
 
@@ -422,6 +545,9 @@ class PortalTenantInvitation(Base):
 __all__ = [
     "ApiKeyRotationHistory",
     "BillingCheckoutAttempt",
+    "BillingReconciliationCursor",
+    "BillingReconciliationItemProgress",
+    "BillingReconciliationQuarantine",
     "BillingSubscriptionProjection",
     "BillingWebhookInbox",
     "CHECKOUT_ATTEMPT_ACTIVE_STATUSES",

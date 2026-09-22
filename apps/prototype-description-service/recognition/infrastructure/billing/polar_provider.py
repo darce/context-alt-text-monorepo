@@ -22,9 +22,12 @@ from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID
 
 from recognition.domain.portal_contracts import (
+    RECONCILIATION_MAX_REMOTE_ID_LENGTH,
     BillingState,
     BillingSubscriptionStatus,
     CheckoutSession,
+    EnumerationObservation,
+    EnumerationObservationReason,
     EnumerationPage,
 )
 
@@ -311,7 +314,7 @@ class PolarBillingProvider:
         limit: int,
         request_timeout: float,
     ) -> EnumerationPage:
-        """Read one Polar subscription page and drop untrusted identities."""
+        """Read one Polar subscription page; invalid items become quarantine observations."""
         _require_positive_timeout(request_timeout)
         page = _cursor_page(cursor)
         bound_limit = _enumeration_limit(limit)
@@ -325,6 +328,7 @@ class PolarBillingProvider:
             environment=self._environment,
             seller_account=self._seller_account,
             page=page,
+            limit=bound_limit,
         )
 
     async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
@@ -861,51 +865,77 @@ def _enumeration_page_from_response(
     environment: str,
     seller_account: str | None,
     page: int,
+    limit: int,
 ) -> EnumerationPage:
     items_raw = response.get("items")
     pagination = response.get("pagination")
     if not isinstance(items_raw, list) or not isinstance(pagination, Mapping):
         raise PolarEnumerationError("Polar subscription page is malformed")
+    if len(items_raw) > limit:
+        raise PolarEnumerationError("Polar subscription page exceeds the requested limit")
     max_page = pagination.get("max_page")
     if isinstance(max_page, bool) or not isinstance(max_page, int) or max_page < 1:
         raise PolarEnumerationError("Polar subscription page pagination is invalid")
     items: list[BillingState] = []
+    observations: list[EnumerationObservation] = []
     for item in items_raw:
-        if not isinstance(item, Mapping):
-            continue
-        state = _subscription_item_state(
+        state, observation = _subscription_item_result(
             item,
             environment=environment,
             seller_account=seller_account,
         )
         if state is not None:
             items.append(state)
+        if observation is not None:
+            observations.append(observation)
     exhausted = page >= max_page
     return EnumerationPage(
         items=tuple(items),
         next_cursor=None if exhausted else str(page + 1),
         exhausted=exhausted,
+        observations=tuple(observations),
     )
 
 
-def _subscription_item_state(
-    item: Mapping[str, object],
+def _subscription_item_result(
+    item: object,
     *,
     environment: str,
     seller_account: str | None,
-) -> BillingState | None:
+) -> tuple[BillingState | None, EnumerationObservation | None]:
+    if not isinstance(item, Mapping):
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=_digest_remote_id({"shape": "non_object"}),
+            details={"shape": "non_object"},
+        )
+    remote_id, missing_id = _enumeration_remote_id(item)
     organization_id = _first_text(
         item.get("organization_id"),
         _nested_value(item.get("customer"), "organization_id"),
         _nested_value(item.get("product"), "organization_id"),
     )
     if seller_account is not None and organization_id is not None and organization_id != seller_account:
-        return None
-    tenant_id = _tenant_id_from_enumeration(item, environment)
-    if tenant_id is None:
-        return None
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.SELLER_MISMATCH,
+            remote_id=remote_id,
+            details={"organization_id": _bounded_detail(organization_id)},
+        )
+    tenant, tenant_reason = _tenant_from_enumeration(item, environment)
+    if tenant is None:
+        return None, EnumerationObservation(
+            reason=tenant_reason or EnumerationObservationReason.TENANT_UNPARSEABLE,
+            remote_id=remote_id,
+            details={"identity": tenant_reason.value if tenant_reason is not None else "unparseable"},
+        )
+    if missing_id:
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MISSING_REMOTE_ID,
+            remote_id=remote_id,
+            details={"identity": "missing_id"},
+        )
     try:
-        return _billing_state_from_response(
+        state = _billing_state_from_response(
             item,
             environment=environment,
             requested_customer_id=_first_text(
@@ -916,10 +946,26 @@ def _subscription_item_state(
             requested_subscription_id=_first_text(item.get("id"), item.get("subscription_id")),
         )
     except ValueError:
-        return None
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=remote_id,
+            details={"identity": "unusable_state"},
+        )
+    return state, None
 
 
-def _tenant_id_from_enumeration(payload: Mapping[str, object], environment: str) -> UUID | None:
+def _enumeration_remote_id(item: Mapping[str, object]) -> tuple[str, bool]:
+    remote_id = _first_text(item.get("id"), item.get("subscription_id"))
+    if remote_id is not None:
+        return _bounded_identifier(remote_id), False
+    customer_id = _first_text(item.get("customer_id"), _nested_value(item.get("customer"), "id"))
+    return _digest_remote_id({"customer_id": customer_id or ""}), True
+
+
+def _tenant_from_enumeration(
+    payload: Mapping[str, object],
+    environment: str,
+) -> tuple[UUID | None, EnumerationObservationReason | None]:
     prefix = f"{environment}:"
     candidates: tuple[object, ...] = (
         _nested_value(payload.get("customer"), "external_id"),
@@ -927,19 +973,46 @@ def _tenant_id_from_enumeration(payload: Mapping[str, object], environment: str)
         _nested_value(payload.get("metadata"), "tenant_id"),
         payload.get("tenant_id"),
     )
+    saw_foreign_environment = False
+    saw_unparseable = False
     for value in candidates:
         if isinstance(value, UUID):
-            return value
+            return value, None
         if not isinstance(value, str) or not value:
             continue
         if ":" in value and not value.startswith(prefix):
+            saw_foreign_environment = True
             continue
         candidate = value[len(prefix) :] if value.startswith(prefix) else value
         try:
-            return UUID(candidate)
+            return UUID(candidate), None
         except ValueError:
+            saw_unparseable = True
             continue
-    return None
+    email = _first_text(_nested_value(payload.get("customer"), "email"), payload.get("email"))
+    if email is not None:
+        return None, EnumerationObservationReason.EMAIL_IDENTITY_REJECTED
+    if saw_foreign_environment:
+        return None, EnumerationObservationReason.ENVIRONMENT_MISMATCH
+    if saw_unparseable:
+        return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+    return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+
+
+def _bounded_identifier(value: str) -> str:
+    if len(value) <= RECONCILIATION_MAX_REMOTE_ID_LENGTH:
+        return value
+    return _digest_remote_id({"id": value[:64]})
+
+
+def _bounded_detail(value: str) -> str:
+    return value if len(value) <= 128 else value[:128]
+
+
+def _digest_remote_id(fragments: Mapping[str, str]) -> str:
+    canonical = json.dumps(dict(fragments), sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"digest:{digest}"[:RECONCILIATION_MAX_REMOTE_ID_LENGTH]
 
 
 __all__ = [

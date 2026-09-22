@@ -1,6 +1,6 @@
 # APP-1 account UX map — inventory and ASCII screens
 
-Date: 2026-09-22. Status: PROPOSED inventory for `portal-uxmap`; no browser screen is implemented. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
+Date: 2026-09-22. Status: OBSERVED-UI account chrome in `apps/app-portal` (offline mocked Clerk). Claim/key/billing remain out of map. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
 
 Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/darce/heuristics-canon) `REF-15`, `CARD-06`, `CARD-15`, `DOM-03`. Also `NAV-08`, `NAV-07`, `RLSE-04`, `FORM-09`, `CARD-12`, `CARD-16`.
 
@@ -8,7 +8,7 @@ Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/dar
 
 Author the account screen contract before browser code (`CARD-06`). Visible **Sign in**, **Create account**, **User**, and **Sign out**. Unavailable configuration is a designed screen with those controls disabled or absent. Clerk authenticates a person. Tenant UUID and API keys stay existing backend authority. No fake tenant claims (`DOM-03`). Wrap Clerk so a later identity swap is an adapter change (`REF-15`, `CARD-16`). Sign-out is cheap and reversible at session scope; key revoke is not this surface (`CARD-15`).
 
-All screens and flows below remain **PROPOSED** until browser code exists. Production Clerk and the Polar sandbox are unprovisioned for this offline slice; this document records the contract and does not claim live-provider evidence.
+Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Production Clerk and the Polar sandbox remain unprovisioned; this document does not claim live-provider evidence. Claim, keys, usage, and billing journeys are still not this map.
 
 ## Vocabulary (`DOM-03`)
 
@@ -41,7 +41,7 @@ All screens and flows below remain **PROPOSED** until browser code exists. Produ
 | Sign-in unavailable | screen | `/` | Try again |
 | Sign out | exit | `/` | Sign out |
 
-`code_ref` targets `apps/app-portal/src/App.tsx` when browser code is implemented; no provider CLI setup or application ID is required for this offline inventory.
+`code_ref` is `apps/app-portal/src/App.tsx`. No provider CLI setup or application ID is required for this offline slice.
 
 ## ASCII screens and states
 
@@ -160,12 +160,16 @@ Bounded wait before this state (`INT-08`). WordPress API-key recognition is a di
 
 ### Sign out exit
 
+`default`:
+
 ```text
 +-- Signed out again ------------------------------------------------------+
 | You are signed out.                                                       |
 | → signed-out chrome                                                        |
 +----------------------------------------------------------------------------+
 ```
+
+`loading`: Signing out… Existing API keys are unchanged. Tenant/account fetch data already cleared. `error`: Sign out failed. Your account data on this page is cleared. Try again. Sign in doors are not restored until sign-out succeeds (`RLSE-04`).
 
 Ending the person session does not revoke backend API keys (`CARD-15`); that engineering invariant is not customer-facing copy.
 
@@ -181,7 +185,8 @@ Ending the person session does not revoke backend API keys (`CARD-15`); that eng
 | Sign up success | `portal-account` empty tenant strip | User + Sign out |
 | Backend 403 not admitted | `portal-not-admitted` | User + Sign out |
 | Clerk.js/session fail | `portal-clerk-outage` | Try again |
-| Sign out | `logout-complete` → signed-out | Sign in restored |
+| Sign out | `logout-complete` loading → default → signed-out | Sign in restored only after success |
+| Sign out fails | `logout-complete` error | Try again retries sign-out; data stays cleared; Sign in not restored (`RLSE-04`) |
 | User | account profile surface | account-owned; no tenant editor |
 
 Primary actions stay reachable from zero selection (`rg-003`). Status uses icon plus color (`sr-004` when CSS lands).
@@ -197,6 +202,10 @@ The recovered action conditions are represented in supported screen states rathe
 | `portal-account` | `loading` | Signed-in chrome remains available while `/portal/me` is checked; the account menu and Sign out remain reachable. |
 | `portal-account` | `default` | The signed-in person can open the account menu or sign out. |
 | `portal-account` | `empty` | The session exists but backend account access is not linked; no tenant substitute or key/billing control is enabled. |
+| `portal-account` | `error` | Backend `GET /portal/me` returned 401; retry refetches. Sign out remains. |
+| `portal-not-admitted` | `degraded` | Clerk email is unverified; Sign out remains; no tenant UUID. |
+| `logout-complete` | `loading` | Sign-out in flight; account/tenant data already cleared. |
+| `logout-complete` | `error` | Sign-out failed; Try again retries sign-out; tenant data stays cleared. |
 
 ## Critique (advisory)
 
@@ -205,6 +214,7 @@ The recovered action conditions are represented in supported screen states rathe
 | `NAV-08` | First screen needs obvious doors | Sign in + Create account |
 | `NAV-07` | Overlay/error traps | Back / Sign out always present when a session exists |
 | `RLSE-04` | Empty config must not be a blank crash | `portal-unavailable` |
+| `RLSE-04` | Logout success-only; fail/retry undesigned | `logout-complete` `loading` + `error` with Try again |
 | `FORM-09` | Auth CTAs before provider ready | disabled in `loading` |
 | `DOM-03` | “Account” vs tenant | vocabulary table; empty account-access strip |
 | `CARD-12` | Surface implying a workspace the server does not bind | no org switcher, no guessed name |
@@ -215,14 +225,20 @@ The recovered action conditions are represented in supported screen states rathe
 
 No high finding that blocks planning the account chrome slice. Keys, Polar, and invitation field remain out of this map (`not_doing` in the JSON); B1 later extends this same SSOT.
 
-## Implementation notes (next slice, offline-capable)
+## Implementation notes (this slice, offline)
 
-- Package: `@clerk/react` (not `@clerk/clerk-react`, not `@clerk/nextjs`).
-- Env in browser: `VITE_CLERK_PUBLISHABLE_KEY` only.
-- Official React/Vite path: wrap `ClerkProvider`, then `Show` / `SignInButton` / `SignUpButton` / `UserButton` (or routed `<SignIn />` `<SignUp />`).
-- Manual integration and offline test doubles are supported. Production Clerk and Polar sandbox provisioning are outside this lane; do not run account setup commands or read credential files.
-- No accountless replacement and no hardcoded rescued application ID.
+- Package: `@clerk/react` in `apps/app-portal` (not `@clerk/clerk-react`, not `@clerk/nextjs`).
+- Env in browser: `VITE_CLERK_PUBLISHABLE_KEY`, optional `VITE_CLERK_FAPI`, public `VITE_PORTAL_ENABLED`.
+- Routed `<SignIn />` / `<SignUp />` plus `ClerkProvider` / `UserButton` / `useAuth`.
+- Test doubles live only under `src/__tests__/`. Production has no auth bypass.
+- Production Clerk and Polar sandbox provisioning remain outside this lane.
+
+## Remaining limitations
+
+- No live Clerk or Polar evidence. CSP file is an artifact, not a deployed header.
+- No claim, key, usage, or billing UI.
+- Backend `portal_auth` / `PortalIdentityService` were not edited.
 
 ## Not doing
 
-See JSON `not_doing`. This assessment does not implement screens, does not commit env/login material, and does not edit backend `portal_auth` / `PortalIdentityService`. Claim/invitation, keys, usage, and billing journeys remain explicitly out of map until the later B1 extension.
+See JSON `not_doing`. This assessment does not commit env/login material and does not edit backend `portal_auth` / `PortalIdentityService`. Claim/invitation, keys, usage, and billing journeys remain explicitly out of map until the later B1 extension.

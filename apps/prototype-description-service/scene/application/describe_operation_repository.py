@@ -64,6 +64,48 @@ class DescribeOperationRepository:
             raise ValueError("lease retention exceeds operation retention")
         return lease
 
+    async def _insert_new(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        request_digest: str,
+        operation_id: str,
+        now: datetime,
+    ) -> DescribeOperation:
+        op = DescribeOperation(
+            tenant_id=tenant_id,
+            operation_id=operation_id,
+            request_digest=request_digest,
+            accepted_at=now,
+            retain_until=now + self._retention,
+            expires_at=now + min(self._lease, self._retention),
+        )
+        self._session.add(op)
+        await self._session.flush()
+        self._session.add(
+            DescribeDemandLease(
+                tenant_id=tenant_id,
+                operation_id=op.operation_id,
+                state=State.ACTIVE,
+                expires_at=op.expires_at,
+                retain_until=op.retain_until,
+            )
+        )
+        await self._session.flush()
+        return op
+
+    async def bind_usage_identity(self, *, tenant_id: uuid.UUID, operation_id: str) -> DescribeOperation:
+        """Return the durable operation row used as the G2 usage binding.
+
+        Persisted shape for G3: ``(tenant_id, operation_id, request_digest)``.
+        ``reservation_id``, ``fence_token``, and ``job_id`` are not columns on
+        ``DescribeOperation``; they remain on ``UsageTicket`` until G3 adds them.
+        """
+        op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
+        if op is None:
+            raise OperationMismatchError("unknown operation")
+        return op
+
     async def accept(
         self, *, tenant_id: uuid.UUID, request_digest: str, operation_id: str | None = None, now: datetime | None = None
     ) -> DescribeOperation:
@@ -71,27 +113,12 @@ class DescribeOperationRepository:
         if not isinstance(request_digest, str) or re.fullmatch(r"[0-9a-f]{64}", request_digest) is None:
             raise ValueError("request_digest must be a SHA-256 digest")
         if operation_id is None:
-            op = DescribeOperation(
+            return await self._insert_new(
                 tenant_id=tenant_id,
-                operation_id=uuid.uuid4().hex,
                 request_digest=request_digest,
-                accepted_at=now,
-                retain_until=now + self._retention,
-                expires_at=now + min(self._lease, self._retention),
+                operation_id=uuid.uuid4().hex,
+                now=now,
             )
-            self._session.add(op)
-            await self._session.flush()
-            self._session.add(
-                DescribeDemandLease(
-                    tenant_id=tenant_id,
-                    operation_id=op.operation_id,
-                    state=State.ACTIVE,
-                    expires_at=op.expires_at,
-                    retain_until=op.retain_until,
-                )
-            )
-            await self._session.flush()
-            return op
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128:
             raise OperationMismatchError("invalid operation id")
         op = await self.get(tenant_id=tenant_id, operation_id=operation_id)
@@ -261,11 +288,13 @@ class DescribeOperationRepository:
         await DescribeRunRepository(self._session)._require_rls_bypass()
         now = as_utc(now or datetime.now(UTC))
         # Match renewal lock order: parent operation before demand lease.
-        candidates = (await self._session.execute(
-            select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
-            .where(DescribeOperation.retain_until <= now)
-            .with_for_update(skip_locked=True)
-        )).all()
+        candidates = (
+            await self._session.execute(
+                select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
+                .where(DescribeOperation.retain_until <= now)
+                .with_for_update(skip_locked=True)
+            )
+        ).all()
         identities = [(row.tenant_id, row.operation_id) for row in candidates]
         # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
         await self._session.execute(

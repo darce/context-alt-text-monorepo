@@ -136,9 +136,7 @@ def test_replay_of_same_key_returns_202_same_run_and_enqueues_once(monkeypatch):
         assert first.status_code == 202, first.text
         run_id = first.json()["run_id"]
 
-        # No image parts on the replay: proof the replay path reads no bytes and
-        # never reaches the missing-image-part validation.
-        replay = _submit(client, [70, 71], with_images=False)
+        replay = _submit(client, [70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == run_id
 
@@ -260,7 +258,7 @@ def test_repeated_media_ids_under_one_key_replay(monkeypatch):
         first = _submit(client, [70, 71])
         assert first.status_code == 202, first.text
 
-        replay = _submit(client, [71, 70, 71], with_images=False)
+        replay = _submit(client, [71, 70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == first.json()["run_id"]
         assert len(calls) == 1
@@ -271,7 +269,9 @@ def test_same_key_with_a_different_recognition_switch_still_conflicts(monkeypatc
     """The canonical digest must still catch a genuinely different payload."""
     _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
-        first = _submit(client, [70])
+        data, files = _multipart([70])
+        data["recognition_enabled"] = "true"
+        first = client.post("/scene/describe/run", data=data, files=files)
         assert first.status_code == 202, first.text
 
         data, files = _multipart([70])
@@ -281,16 +281,8 @@ def test_same_key_with_a_different_recognition_switch_still_conflicts(monkeypatc
         assert _run_rows(sf, TENANT_A) == 1
 
 
-def test_same_key_and_media_ids_with_different_bytes_replays_by_contract(monkeypatch):
-    """S04, contract option (b): the key binds (media_ids, recognition_enabled).
-
-    Image bytes are deliberately outside the binding — hashing up to 200 x
-    max_description_image_bytes on every replay is exactly the cost the
-    replay-before-bytes ordering exists to avoid. The caller owns byte stability
-    and must mint a new key when an asset's bytes change; the published schema
-    says so. This test pins that documented behaviour so it cannot drift
-    silently into an undocumented one.
-    """
+def test_same_key_and_media_ids_with_different_bytes_conflicts(monkeypatch):
+    """G2: usage fingerprint includes image bytes. Same key + different bytes is 409."""
     calls = _count_enqueues(monkeypatch)
     with _app() as (app, sf), TestClient(app) as client:
         first = client.post(
@@ -305,8 +297,7 @@ def test_same_key_and_media_ids_with_different_bytes_replays_by_contract(monkeyp
             data={"tenant_id": str(TENANT_A), "media_ids": json.dumps([70]), "idempotency_key": KEY},
             files=[("image_70", ("70.png", b"\x89PNG\r\n\x1a\nSECOND", "image/png"))],
         )
-        assert second.status_code == 202, second.text
-        assert second.json()["run_id"] == first.json()["run_id"]
+        assert second.status_code == 409, second.text
         assert len(calls) == 1
         assert _run_rows(sf, TENANT_A) == 1
 
@@ -459,7 +450,7 @@ def test_a_run_with_output_keeps_its_key_even_when_other_items_failed(monkeypatc
 
         assert asyncio.run(_one_ok_one_failed()) == DescribeRunStatus.COMPLETED_WITH_ERRORS
 
-        replay = _submit(client, [70, 71], with_images=False)
+        replay = _submit(client, [70, 71])
         assert replay.status_code == 202, replay.text
         assert replay.json()["run_id"] == str(run_id)
         assert len(calls) == 1

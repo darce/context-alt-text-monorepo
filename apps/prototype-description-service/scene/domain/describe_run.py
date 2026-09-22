@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -122,38 +122,67 @@ def normalize_idempotency_key(raw: object) -> str | None:
     return key
 
 
-# GUIDEDFIX-2 [S03/S04]: what one idempotency_key binds itself to.
+class DescribeUsageRouteMode(StrEnum):
+    """Canonical scene compute ingress identity for usage fingerprints (sr-007)."""
+
+    MULTIPART = "multipart"
+    ASYNC = "async"
+    BULK = "bulk"
+
+
+# GUIDEDFIX-2 [S03]: order is not payload. WP builds media_ids with no pinned
+# ORDER BY, so [70, 71] and [71, 70] are one submission. Duplicates are not
+# payload either — create_run already dedupes them before any inference.
 #
-# The digest covers the SEMANTIC request only: the *set* of media ids plus the
-# recognition switch. Two things follow, and both are wire contract:
-#
-#   * Order is not payload. The WP client builds media_ids from a query with no
-#     pinned ORDER BY, so [70, 71] and [71, 70] are the same submission and a
-#     blind retry that reshuffles them must replay, not 409. Duplicates are not
-#     payload either — create_run already dedupes them before any inference.
-#   * Image bytes are NOT covered. Binding the bytes would force every replay to
-#     read and hash up to max_description_image_bytes per media id (200 items
-#     max) purely to discover it has nothing to do, which is exactly the cost the
-#     replay-before-bytes ordering exists to avoid. The key therefore binds
-#     (media_ids, recognition_enabled) and the caller owns byte stability: reusing
-#     one key for a different image under the same media id is caller error, and
-#     the caller must mint a new key when an asset's bytes change.
+# G2 usage identity is byte-sensitive. The v1 helper below stays for unowned
+# create_run fallbacks. Charge/replay uses compute_usage_request_fingerprint.
 REQUEST_DIGEST_LENGTH = 64
 _REQUEST_DIGEST_VERSION = "v1"
+_USAGE_FINGERPRINT_VERSION = "usage-v1"
 
 
 def compute_request_digest(*, media_ids: Sequence[int], recognition_enabled: bool) -> str:
-    """Stable digest of the normalized submit payload an idempotency_key binds.
-
-    Canonical form is version-tagged so a future contract change (e.g. folding in
-    an image-bytes hash) is a different digest rather than a silent redefinition
-    of what an already-reserved key promised.
-    """
+    """v1 semantic digest (media ids + recognition). Not the usage fingerprint."""
     canonical = json.dumps(
         {
             "v": _REQUEST_DIGEST_VERSION,
             "media_ids": sorted({int(media_id) for media_id in media_ids}),
             "recognition_enabled": bool(recognition_enabled),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def compute_usage_request_fingerprint(
+    *,
+    route_mode: DescribeUsageRouteMode | str,
+    media_ids: Sequence[int],
+    image_digests: Mapping[int, str],
+    context_hash: str,
+    recognition_enabled: bool,
+    tier: str | None,
+) -> str:
+    """Canonical (tenant-scoped) request fingerprint for usage reservation.
+
+    Covers route mode, media identifiers, per-media image digests, context,
+    recognition, and tier. Media order is not payload; image bytes are.
+    """
+    mode = route_mode.value if isinstance(route_mode, DescribeUsageRouteMode) else str(route_mode)
+    canonical_ids = sorted({int(media_id) for media_id in media_ids})
+    missing = [media_id for media_id in canonical_ids if media_id not in image_digests]
+    if missing:
+        raise ValueError(f"usage fingerprint missing image digests for media_ids: {missing}")
+    canonical = json.dumps(
+        {
+            "v": _USAGE_FINGERPRINT_VERSION,
+            "route_mode": mode,
+            "media_ids": canonical_ids,
+            "image_digests": [image_digests[media_id] for media_id in canonical_ids],
+            "context_hash": context_hash,
+            "recognition_enabled": bool(recognition_enabled),
+            "tier": tier,
         },
         separators=(",", ":"),
         sort_keys=True,

@@ -364,7 +364,6 @@ class ReclaimerLivenessTest extends TestCase
 		string $lease
 	) {
 		$method = new \ReflectionMethod(ReclaimerLiveness::class, 'write_fenced_state');
-		$method->setAccessible(true);
 		return $method->invoke($liveness, $tenant, $state, $lease);
 	}
 }

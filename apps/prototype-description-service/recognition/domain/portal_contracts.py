@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Final, Protocol, runtime_checkable
 from uuid import UUID
@@ -45,6 +45,29 @@ class WebhookInboxStatus(StrEnum):
     DISCARDED = "discarded"
 
 
+class ReconciliationKind(StrEnum):
+    """Durable cursor kinds owned by C0. Known-inbox leases are a separate contract."""
+
+    SUBSCRIPTIONS = "subscriptions"
+    AMBIGUOUS_CHECKOUTS = "ambiguous_checkouts"
+
+
+class EnumerationObservationReason(StrEnum):
+    SELLER_MISMATCH = "seller_mismatch"
+    ENVIRONMENT_MISMATCH = "environment_mismatch"
+    TENANT_UNPARSEABLE = "tenant_unparseable"
+    EMAIL_IDENTITY_REJECTED = "email_identity_rejected"
+    MALFORMED_ITEM = "malformed_item"
+    MISSING_REMOTE_ID = "missing_remote_id"
+
+
+class QuarantineStatus(StrEnum):
+    OPEN = "open"
+    RETRY_PENDING = "retry_pending"
+    EXHAUSTED = "exhausted"
+    RESOLVED = "resolved"
+
+
 # A missing entitlement row is closed by construction rather than interpreted as unlimited.
 DEFAULT_ALLOWANCE_JOBS: Final[int] = 0
 DEFAULT_ENTITLEMENT_STATUS: Final[EntitlementStatus] = EntitlementStatus.EXPIRED
@@ -57,6 +80,19 @@ DEFAULT_GLOBAL_QUEUE_LIMIT: Final[int] = 1_000
 DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT: Final[int] = 256 * 1024 * 1024
 DEFAULT_GLOBAL_CONFIG_VERSION: Final[str] = "v1"
 DEFAULT_GLOBAL_FENCE_EPOCH: Final[int] = 1
+
+# C0 recovery bounds. R1 consumes these; C0 does not run the worker.
+RECONCILIATION_PAGE_LIMIT: Final[int] = 50
+RECONCILIATION_MAX_PAGES_PER_RUN: Final[int] = 20
+RECONCILIATION_DEFAULT_LEASE_SECONDS: Final[int] = 30
+RECONCILIATION_PROVIDER_TIMEOUT_SECONDS: Final[float] = 8.0
+RECONCILIATION_MAX_REMOTE_ID_LENGTH: Final[int] = 128
+RECONCILIATION_MAX_CURSOR_LENGTH: Final[int] = 256
+RECONCILIATION_MAX_OWNER_LENGTH: Final[int] = 128
+RECONCILIATION_MAX_FAILURE_CLASS_LENGTH: Final[int] = 64
+RECONCILIATION_MAX_OPERATOR_REASON_LENGTH: Final[int] = 256
+RECONCILIATION_MAX_OBSERVATION_DETAIL_KEYS: Final[int] = 8
+RECONCILIATION_MAX_OBSERVATION_DETAIL_VALUE_LENGTH: Final[int] = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,12 +242,131 @@ class CheckoutSession:
 
 
 @dataclass(frozen=True, slots=True)
+class EnumerationObservation:
+    """Bounded, non-secret observation for one untrusted vendor item.
+
+    ``remote_id`` is a vendor identifier or a deterministic digest. Details never
+    copy the vendor payload, email, or secrets.
+    """
+
+    reason: EnumerationObservationReason
+    remote_id: str
+    details: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, EnumerationObservationReason):
+            raise ValueError("observation reason must be EnumerationObservationReason")
+        if not isinstance(self.remote_id, str) or not self.remote_id:
+            raise ValueError("observation remote_id is required")
+        if len(self.remote_id) > RECONCILIATION_MAX_REMOTE_ID_LENGTH:
+            raise ValueError("observation remote_id exceeds the bounded identifier length")
+        if not isinstance(self.details, Mapping):
+            raise ValueError("observation details must be a mapping")
+        if len(self.details) > RECONCILIATION_MAX_OBSERVATION_DETAIL_KEYS:
+            raise ValueError("observation details exceed the bounded key count")
+        normalized: dict[str, str] = {}
+        for key, value in self.details.items():
+            if not isinstance(key, str) or not key or not isinstance(value, str):
+                raise ValueError("observation details must be string keys and values")
+            if len(value) > RECONCILIATION_MAX_OBSERVATION_DETAIL_VALUE_LENGTH:
+                raise ValueError("observation detail value exceeds the bounded length")
+            normalized[key] = value
+        object.__setattr__(self, "details", normalized)
+
+
+@dataclass(frozen=True, slots=True)
 class EnumerationPage:
-    """One bounded page of provider subscriptions with an opaque continuation cursor."""
+    """One bounded page of provider subscriptions with an opaque continuation cursor.
+
+    Existing constructors ``EnumerationPage(items, next_cursor, exhausted)`` stay
+    valid. Invalid vendor items are exposed on ``observations`` rather than dropped.
+    """
 
     items: tuple[BillingState, ...]
     next_cursor: str | None
     exhausted: bool
+    observations: tuple[EnumerationObservation, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationCursorKey:
+    """Seller-wide cursor identity. This is not a tenant and must not be used as one."""
+
+    provider: str
+    environment: str
+    seller_account: str
+    kind: ReconciliationKind
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provider, str) or not self.provider.strip():
+            raise ValueError("provider is required")
+        if self.environment not in {"sandbox", "live"}:
+            raise ValueError("environment must be sandbox or live")
+        if not isinstance(self.seller_account, str) or not self.seller_account.strip():
+            raise ValueError("seller_account is required")
+        if not isinstance(self.kind, ReconciliationKind):
+            raise ValueError("kind must be a ReconciliationKind")
+        object.__setattr__(self, "provider", self.provider.strip())
+        object.__setattr__(self, "seller_account", self.seller_account.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationLease:
+    """Fenced cursor ownership returned after a short acquire transaction.
+
+    Caller must commit the acquire transaction before any vendor I/O. ``fence`` is
+    a monotonically increasing generation; lease expiry timestamps are not a fence.
+    """
+
+    key: ReconciliationCursorKey
+    owner: str
+    fence: int
+    lease_until: datetime
+    cursor: str | None
+    last_progress_at: datetime | None
+    exhausted: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, ReconciliationCursorKey):
+            raise ValueError("lease key is required")
+        if not isinstance(self.owner, str) or not self.owner.strip():
+            raise ValueError("lease owner is required")
+        if not isinstance(self.fence, int) or isinstance(self.fence, bool) or self.fence < 1:
+            raise ValueError("lease fence must be a positive integer")
+        if not isinstance(self.lease_until, datetime) or self.lease_until.tzinfo is None:
+            raise ValueError("lease_until must be a timezone-aware datetime")
+        if self.cursor is not None and (not isinstance(self.cursor, str) or not self.cursor):
+            raise ValueError("cursor must be opaque text when present")
+        if self.cursor is not None and len(self.cursor) > RECONCILIATION_MAX_CURSOR_LENGTH:
+            raise ValueError("cursor exceeds the bounded length")
+        object.__setattr__(self, "owner", self.owner.strip())
+
+
+@dataclass(frozen=True, slots=True)
+class QuarantineRecord:
+    """Durable per-item quarantine. Audited retry cannot invent a tenant or paid state."""
+
+    key: ReconciliationCursorKey
+    remote_id: str
+    reason: EnumerationObservationReason
+    status: QuarantineStatus
+    attempt_count: int
+    fence: int
+    next_retry_at: datetime | None = None
+    operator_identity: str | None = None
+    operator_reason: str | None = None
+
+
+class ReconciliationLeaseConflictError(Exception):
+    """The caller no longer owns the cursor: expired, stolen, or stale fence."""
+
+
+class ReconciliationCursorAdvanceError(Exception):
+    """Advancing the cursor would skip an unprocessed page item."""
+
+
+class ReconciliationQuarantineConflictError(Exception):
+    """Quarantine mutation was rejected (missing row, fence, or illegal retry)."""
 
 
 @runtime_checkable
@@ -239,7 +394,7 @@ class BillingProvider(Protocol):
         provider_customer_id: str,
         provider_subscription_id: str | None,
         request_timeout: float,
-    ) -> object:
+    ) -> BillingState:
         """Read authoritative provider state for the reconciliation worker."""
         ...
 
@@ -271,6 +426,94 @@ class BillingProvider(Protocol):
         ...
 
 
+@runtime_checkable
+class BillingReconciliationRepository(Protocol):
+    """C0 persistence boundary. Caller owns the transaction and commits before vendor I/O."""
+
+    async def acquire_lease(
+        self,
+        key: ReconciliationCursorKey,
+        *,
+        owner: str,
+        lease_ttl: timedelta,
+        now: datetime,
+    ) -> ReconciliationLease | None:
+        """Acquire or steal an expired lease in a short transaction. No vendor I/O."""
+        ...
+
+    async def heartbeat(
+        self,
+        lease: ReconciliationLease,
+        *,
+        now: datetime,
+        lease_ttl: timedelta,
+    ) -> ReconciliationLease:
+        """Extend lease expiry under the current fence. Rejects stolen/expired/old-generation leases."""
+        ...
+
+    async def complete_item(
+        self,
+        lease: ReconciliationLease,
+        *,
+        remote_id: str,
+        now: datetime,
+    ) -> None:
+        """Idempotent per-item progress under the current fence."""
+        ...
+
+    async def quarantine_item(
+        self,
+        lease: ReconciliationLease,
+        *,
+        observation: EnumerationObservation,
+        now: datetime,
+    ) -> QuarantineRecord:
+        """Persist a bounded quarantine observation and mark the item progressed."""
+        ...
+
+    async def advance_cursor(
+        self,
+        lease: ReconciliationLease,
+        *,
+        next_cursor: str | None,
+        exhausted: bool,
+        page_remote_ids: tuple[str, ...],
+        now: datetime,
+    ) -> ReconciliationLease:
+        """Advance the opaque cursor only after every page remote id has progressed."""
+        ...
+
+    async def record_page_failure(
+        self,
+        lease: ReconciliationLease,
+        *,
+        failure_class: str,
+        now: datetime,
+    ) -> ReconciliationLease:
+        """Record bounded page failure metadata without treating the run as progress."""
+        ...
+
+    async def audited_retry(
+        self,
+        lease: ReconciliationLease,
+        *,
+        remote_id: str,
+        operator_identity: str,
+        operator_reason: str,
+        now: datetime,
+    ) -> QuarantineRecord:
+        """Requeue one quarantined item. Cannot manufacture a tenant or grant paid state."""
+        ...
+
+    async def get_quarantine(
+        self,
+        key: ReconciliationCursorKey,
+        remote_id: str,
+    ) -> QuarantineRecord | None:
+        """Read one quarantine row in the seller-wide namespace."""
+        ...
+
+
 __all__ = [
     "DEFAULT_ALLOWANCE_JOBS",
     "DEFAULT_ENTITLEMENT_STATUS",
@@ -281,12 +524,26 @@ __all__ = [
     "DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT",
     "DEFAULT_GLOBAL_QUEUE_LIMIT",
     "GLOBAL_USAGE_ADMISSION_STATE_ID",
+    "RECONCILIATION_DEFAULT_LEASE_SECONDS",
+    "RECONCILIATION_MAX_CURSOR_LENGTH",
+    "RECONCILIATION_MAX_FAILURE_CLASS_LENGTH",
+    "RECONCILIATION_MAX_OBSERVATION_DETAIL_KEYS",
+    "RECONCILIATION_MAX_OBSERVATION_DETAIL_VALUE_LENGTH",
+    "RECONCILIATION_MAX_OPERATOR_REASON_LENGTH",
+    "RECONCILIATION_MAX_OWNER_LENGTH",
+    "RECONCILIATION_MAX_PAGES_PER_RUN",
+    "RECONCILIATION_MAX_REMOTE_ID_LENGTH",
+    "RECONCILIATION_PAGE_LIMIT",
+    "RECONCILIATION_PROVIDER_TIMEOUT_SECONDS",
     "BillingProvider",
+    "BillingReconciliationRepository",
     "BillingState",
     "BillingSubscriptionStatus",
     "CheckoutSession",
     "EntitlementSnapshot",
     "EntitlementStatus",
+    "EnumerationObservation",
+    "EnumerationObservationReason",
     "EnumerationPage",
     "PortalIdentityService",
     "PortalIdentityStatus",
@@ -296,4 +553,12 @@ __all__ = [
     "UsageReservationStatus",
     "UsageTicket",
     "WebhookInboxStatus",
+    "QuarantineRecord",
+    "QuarantineStatus",
+    "ReconciliationCursorAdvanceError",
+    "ReconciliationCursorKey",
+    "ReconciliationKind",
+    "ReconciliationLease",
+    "ReconciliationLeaseConflictError",
+    "ReconciliationQuarantineConflictError",
 ]

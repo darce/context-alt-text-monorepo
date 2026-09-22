@@ -226,6 +226,7 @@ def test_enumeration_page_is_frozen_with_opaque_cursor() -> None:
     assert is_dataclass(page)
     assert page.next_cursor == "2"
     assert page.exhausted is False
+    assert page.observations == ()
     with pytest.raises(FrozenInstanceError):
         page.exhausted = True
 

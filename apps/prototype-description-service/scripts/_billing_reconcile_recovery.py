@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from recognition.domain.portal_contracts import (
     RECONCILIATION_DEFAULT_LEASE_SECONDS,
+    RECONCILIATION_MAX_CURSOR_LENGTH,
     RECONCILIATION_MAX_PAGES_PER_RUN,
     RECONCILIATION_PAGE_LIMIT,
     BillingState,
     EnumerationObservation,
-    EnumerationObservationReason,
     EnumerationPage,
     ReconciliationCursorKey,
     ReconciliationKind,
@@ -84,8 +84,7 @@ def require_n1_repository(repository: object) -> None:
     missing = [name for name in _N1_METHODS if not callable(getattr(repository, name, None))]
     if missing:
         raise UnsupportedRepositoryError(
-            "billing repository is missing fenced N1 methods "
-            f"{missing}; refusing unfenced reconciliation"
+            f"billing repository is missing fenced N1 methods {missing}; refusing unfenced reconciliation"
         )
 
 
@@ -144,6 +143,37 @@ def remote_id_from_state(state: BillingState) -> str:
     if isinstance(state.provider_customer_id, str) and state.provider_customer_id:
         return state.provider_customer_id
     raise ValueError("enumerated item is missing a remote id")
+
+
+def missing_remote_id_for_item(item: BillingState) -> str:
+    tenant_id = getattr(item, "tenant_id", None)
+    if isinstance(tenant_id, UUID):
+        return f"missing:{tenant_id}"
+    return "missing-remote-id"
+
+
+_CHECKOUT_CURSOR_SEPARATOR = "|"
+
+
+def encode_checkout_attempt_cursor(updated_at: datetime, attempt_id: object) -> str:
+    if not isinstance(updated_at, datetime) or updated_at.tzinfo is None:
+        raise ValueError("checkout cursor timestamp must be timezone-aware")
+    encoded = f"{updated_at.isoformat()}{_CHECKOUT_CURSOR_SEPARATOR}{attempt_id}"
+    if len(encoded) > RECONCILIATION_MAX_CURSOR_LENGTH:
+        raise ValueError("checkout cursor exceeds the bounded length")
+    return encoded
+
+
+def decode_checkout_attempt_cursor(cursor: str | None) -> tuple[datetime, UUID] | None:
+    if cursor is None:
+        return None
+    if not isinstance(cursor, str) or _CHECKOUT_CURSOR_SEPARATOR not in cursor:
+        raise ValueError("checkout cursor is malformed")
+    raw_ts, raw_id = cursor.split(_CHECKOUT_CURSOR_SEPARATOR, 1)
+    parsed = datetime.fromisoformat(raw_ts)
+    if parsed.tzinfo is None:
+        raise ValueError("checkout cursor timestamp must be timezone-aware")
+    return parsed, UUID(str(raw_id))
 
 
 async def maybe_await(value: Any) -> Any:
@@ -223,8 +253,11 @@ __all__ = [
     "checkout_subscription_id",
     "configured_namespace",
     "cursor_key",
+    "decode_checkout_attempt_cursor",
+    "encode_checkout_attempt_cursor",
     "lease_ttl",
     "maybe_await",
+    "missing_remote_id_for_item",
     "projection_in_namespace",
     "projection_is_legacy_null",
     "provider_code",

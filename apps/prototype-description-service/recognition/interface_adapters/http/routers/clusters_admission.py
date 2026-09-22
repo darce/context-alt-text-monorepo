@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time as _time
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -21,6 +22,7 @@ from db.models import Tenant
 from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
 from recognition.domain.job import JobStatus, JobType
+from recognition.domain.portal_contracts import PortalPrincipal
 from recognition.interface_adapters.http.deps import (
     get_cluster_service_builder,
     get_cluster_service_builder_clustering,
@@ -63,6 +65,8 @@ _logger = logging.getLogger(__name__)
 # clustering-service exception text (DB driver messages, SQL fragments, absolute
 # paths) never crosses.
 INTERNAL_ERROR_DETAIL = "internal server error"
+_OPERATOR_FORBIDDEN_DETAIL = "operator_control_forbidden"
+_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
 
 # E15-3a-BR-21 Slice 2: admission fail-fast queries. Documented on the probe
 # helper below. The defaults used for the default statement_timeout restore
@@ -97,6 +101,42 @@ LIMIT 1
 _QUERY_CANCELED_SQLSTATE = "57014"
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
+
+
+def _normalized_auth_marker(value: Any) -> str | None:
+    raw = getattr(value, "value", value)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower().replace("-", "_")
+    return None
+
+
+def _is_portal_principal(auth: Any) -> bool:
+    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
+    if isinstance(auth, PortalPrincipal):
+        return True
+    issuer = getattr(auth, "issuer", None)
+    subject = getattr(auth, "subject", None)
+    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
+
+
+def _is_beta_or_portal_caller(auth: Any) -> bool:
+    """Fail closed for portal principals; AuthContext has no entitlement field."""
+    if auth is None:
+        return False
+    if _is_portal_principal(auth):
+        return True
+    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
+        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
+            return True
+    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
+
+
+def _deny_beta_operator_caller(auth: Any) -> None:
+    if _is_beta_or_portal_caller(auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_OPERATOR_FORBIDDEN_DETAIL,
+        )
 
 
 def _is_query_canceled(exc: DBAPIError) -> bool:
@@ -221,7 +261,9 @@ async def create_clustering_job(
     _admission_started_at = _time.perf_counter()
     _admission_status: int = status.HTTP_202_ACCEPTED
     try:
-        if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        _deny_beta_operator_caller(auth)
+        tenant_claim = getattr(auth, "tenant_claim", None)
+        if auth and tenant_claim and tenant_claim != request.tenant_id:
             _admission_status = status.HTTP_403_FORBIDDEN
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -353,6 +395,7 @@ async def recover_orphan_identities(
     _demo_quota: object = Depends(enforce_demo_quota),
 ) -> OrphanRecoveryResponse:
     """Re-cluster any orphaned identities for a tenant."""
+    _deny_beta_operator_caller(auth)
     assert_tenant_match(auth, request.tenant_id)
 
     cluster_service = await cluster_service_builder(request.tenant_id)

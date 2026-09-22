@@ -165,6 +165,29 @@ class UsageAdmissionService(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class CheckoutSession:
+    """Hosted checkout identity returned by a provider adapter."""
+
+    url: str
+    provider_checkout_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.url, str) or not self.url:
+            raise ValueError("checkout url is required")
+        if not isinstance(self.provider_checkout_id, str) or not self.provider_checkout_id:
+            raise ValueError("provider_checkout_id is required")
+
+
+@dataclass(frozen=True, slots=True)
+class EnumerationPage:
+    """One bounded page of provider subscriptions with an opaque continuation cursor."""
+
+    items: tuple[BillingState, ...]
+    next_cursor: str | None
+    exhausted: bool
+
+
 @runtime_checkable
 class BillingProvider(Protocol):
     async def create_checkout_session(
@@ -174,7 +197,9 @@ class BillingProvider(Protocol):
         plan_code: str,
         success_url: str,
         cancel_url: str,
-    ) -> str:
+        idempotency_key: str,
+        attempt_id: UUID,
+    ) -> CheckoutSession:
         """Create a server-selected checkout session bound to one tenant and catalog plan."""
         ...
 
@@ -192,8 +217,27 @@ class BillingProvider(Protocol):
         """Read authoritative provider state for the reconciliation worker."""
         ...
 
-    async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
-        """Accept webhook processing only after exact raw-body signature verification."""
+    async def retrieve_checkout(
+        self,
+        *,
+        provider_checkout_id: str,
+        request_timeout: float,
+    ) -> Mapping[str, object]:
+        """Read one checkout session so an ambiguous attempt can be recovered."""
+        ...
+
+    async def enumerate_subscriptions(
+        self,
+        *,
+        cursor: str | None,
+        limit: int,
+        request_timeout: float,
+    ) -> EnumerationPage:
+        """Read one bounded page of provider subscriptions for orphan recovery."""
+        ...
+
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        """Accept webhook processing only after full-header raw-body signature verification."""
         ...
 
     async def parse_event(self, raw_body: bytes) -> Mapping[str, object]:
@@ -207,8 +251,10 @@ __all__ = [
     "BillingProvider",
     "BillingState",
     "BillingSubscriptionStatus",
+    "CheckoutSession",
     "EntitlementSnapshot",
     "EntitlementStatus",
+    "EnumerationPage",
     "PortalIdentityService",
     "PortalIdentityStatus",
     "PortalPrincipal",

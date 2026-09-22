@@ -124,10 +124,11 @@ async def receive_polar_webhook(
     """Verify, durably enqueue, and acknowledge one Polar webhook.
 
     The provider adapter owns constant-time signature comparison.  This
-    boundary passes it the exact bytes read from the request stream and only
-    asks it to parse after verification succeeds.  Projection is deliberately
-    a second operation and is bounded; a timeout leaves the received inbox row
-    available to a later worker instead of making the provider redeliver it.
+    boundary passes it the exact bytes read from the request stream plus the
+    full header map and only asks it to parse after verification succeeds.
+    Projection is deliberately a second operation and is bounded; a timeout
+    leaves the received inbox row available to a later worker instead of
+    making the provider redeliver it.
     """
     signature = _signature_from_request(request)
     if not signature:
@@ -136,7 +137,7 @@ async def receive_polar_webhook(
     raw_body = await _read_bounded_body(request)
 
     try:
-        signature_verified = await provider.verify_webhook(raw_body, signature)
+        signature_verified = await provider.verify_webhook(raw_body, request.headers)
     except Exception:
         logger.warning("Polar webhook rejected: outcome=verification_failed")
         signature_verified = False

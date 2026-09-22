@@ -57,7 +57,7 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
 )
 from recognition.interface_adapters.http.deps.portal_composition import install_portal_composition
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
-from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
+from recognition.interface_adapters.http.middleware.correlation import CORRELATION_ID_HEADER, CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
     MetricsMiddleware,
     get_default_metrics,
@@ -573,7 +573,15 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_origin_regex=None,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", "Idempotency-Key"],
+        allow_headers=[
+            "Authorization",
+            "X-Api-Key",
+            "X-Tenant-ID",
+            "Content-Type",
+            "Idempotency-Key",
+            CORRELATION_ID_HEADER,
+        ],
+        expose_headers=[CORRELATION_ID_HEADER],
         max_age=600,
     )
     app.add_middleware(CorrelationIdMiddleware)

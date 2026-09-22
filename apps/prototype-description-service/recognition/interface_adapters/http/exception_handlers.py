@@ -16,20 +16,29 @@ from recognition.interface_adapters.http.middleware.correlation import (
     CORRELATION_ID_HEADER,
     generate_correlation_id,
     get_correlation_id,
+    validate_correlation_id,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def _correlation_id_for(request: Request) -> str:
-    """Return the active correlation id, falling back to request header or a new id.
+    """Return the active validated request id, or generate one for direct calls.
 
     The CorrelationIdMiddleware is registered app-wide, so ``get_correlation_id``
-    almost always returns the value already echoed in the response header. The
-    remaining fallbacks exist for handlers that run before the middleware has
-    had a chance to bind the contextvar (e.g. routing failures in tests).
+    almost always returns the value already echoed in the response header. A
+    direct handler invocation may still provide one canonical header, but raw
+    or repeated header values are never trusted.
     """
-    return get_correlation_id() or request.headers.get(CORRELATION_ID_HEADER) or generate_correlation_id()
+    active = get_correlation_id()
+    if active:
+        return active
+    values = request.headers.getlist(CORRELATION_ID_HEADER)
+    if len(values) == 1:
+        incoming = validate_correlation_id(values[0])
+        if incoming:
+            return incoming
+    return generate_correlation_id()
 
 
 def _opaque_error_response(
@@ -37,16 +46,20 @@ def _opaque_error_response(
     request: Request,
     status_code: int,
     error: str,
+    correlation_id: str | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    correlation_id = correlation_id or _correlation_id_for(request)
+    response_headers = dict(headers or {})
+    response_headers[CORRELATION_ID_HEADER] = correlation_id
     return JSONResponse(
         status_code=status_code,
         content={
             "error": error,
             "path": str(request.url),
-            "correlation_id": _correlation_id_for(request),
+            "correlation_id": correlation_id,
         },
-        headers=headers,
+        headers=response_headers,
     )
 
 
@@ -80,6 +93,7 @@ async def recognition_exception_handler(request: Request, exc: RecognitionError)
             "path": str(request.url),
             "correlation_id": correlation_id,
         },
+        headers={CORRELATION_ID_HEADER: correlation_id},
     )
 
 
@@ -87,7 +101,12 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
     """Handle unexpected errors with a 500 response."""
     correlation_id = _correlation_id_for(request)
     logger.exception("Unhandled exception", extra={"correlation_id": correlation_id, "path": str(request.url)})
-    return _opaque_error_response(request=request, status_code=500, error="internal_server_error")
+    return _opaque_error_response(
+        request=request,
+        status_code=500,
+        error="internal_server_error",
+        correlation_id=correlation_id,
+    )
 
 
 async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JSONResponse:
@@ -105,6 +124,7 @@ async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JS
         request=request,
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         error="database_unavailable",
+        correlation_id=correlation_id,
         headers={"Retry-After": "5"},
     )
 
@@ -120,19 +140,22 @@ async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotF
             "path": str(request.url),
             "correlation_id": correlation_id,
         },
+        headers={CORRELATION_ID_HEADER: correlation_id},
     )
 
 
 async def reserved_cluster_label_exception_handler(request: Request, exc: ReservedClusterLabelError) -> JSONResponse:
     """Translate reserved operator labels to HTTP 400."""
+    correlation_id = _correlation_id_for(request)
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={
             "error": "ReservedClusterLabelError",
             "message": str(exc),
             "path": str(request.url),
-            "correlation_id": _correlation_id_for(request),
+            "correlation_id": correlation_id,
         },
+        headers={CORRELATION_ID_HEADER: correlation_id},
     )
 
 
@@ -158,11 +181,15 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
                 "path": str(request.url),
                 "correlation_id": correlation_id,
             },
+            headers={CORRELATION_ID_HEADER: correlation_id},
         )
 
     logger.exception("Unhandled integrity error", extra={"correlation_id": correlation_id, "path": str(request.url)})
     return _opaque_error_response(
-        request=request, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, error="integrity_error"
+        request=request,
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        error="integrity_error",
+        correlation_id=correlation_id,
     )
 
 

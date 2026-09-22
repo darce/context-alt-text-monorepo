@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\Services\PersonLabelBackfillService;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
 
@@ -388,6 +389,50 @@ class LifecycleManagerTest extends TestCase
             get_option('acx_installed'),
             'Install timestamp should be removed on uninstall'
         );
+    }
+
+    public function testUninstallRemovesReclaimerOptions(): void
+    {
+        $liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+        $liveness->record_success(
+            'tenant/uninstall',
+            1,
+            0,
+            0,
+            false,
+            ReclaimerLiveness::SCHEDULER_WP_CRON
+        );
+        $this->setOption('acx_reclaimer_lease_tenant_uninstall', 'owner|1|1700000300');
+        $liveness->record_booked_scheduler_mode(ReclaimerLiveness::SCHEDULER_WP_CRON);
+
+        $this->manager->uninstall();
+
+        $this->assertFalse(get_option('acx_reclaimer_liveness_tenant_uninstall'));
+        $this->assertFalse(get_option('acx_reclaimer_lease_tenant_uninstall'));
+        $this->assertFalse(get_option('acx_reclaimer_purge_scheduler'));
+        $this->assertFalse(get_option('acx_reclaimer_tenant_index'));
+    }
+
+    public function testUninstallContinuesWhenReclaimerOptionSweepThrows(): void
+    {
+        $failure = null;
+        add_action(
+            'acx_reclaimer_liveness_options_purge_failed',
+            static function (\Throwable $exception) use (&$failure): void {
+                $failure = $exception;
+            }
+        );
+        $this->setOption('acx_reclaimer_tenant_index', array( 'tenant-throw' ));
+        $this->setOption('acx_reclaimer_liveness_tenant-throw', array( 'state' => 'stale' ));
+        $GLOBALS['__ac_option_before_delete']['acx_reclaimer_liveness_tenant-throw'] = static function (): void {
+            throw new \RuntimeException('reclaimer option sweep failed');
+        };
+
+        $this->manager->uninstall();
+
+        $this->assertInstanceOf(\RuntimeException::class, $failure);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_clusters`', $GLOBALS['wpdb']->queries);
+        $this->assertSame([], $GLOBALS['__ac_persisted_rewrite_rules'] ?? null);
     }
 
     public function testDeactivateClearsSnapshotSyncSchedule(): void

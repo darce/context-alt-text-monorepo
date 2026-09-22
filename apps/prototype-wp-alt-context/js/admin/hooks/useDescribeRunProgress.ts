@@ -15,6 +15,12 @@ import {
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
 import { isAbortOrTimeout } from '../utils/retryPolicy';
+import {
+  deriveWarmingObservation,
+  WARMING_OBSERVATION_EVIDENCE,
+  WARMING_OBSERVATION_STATUS,
+  type WarmingObservation,
+} from '../utils/warmingDeadline';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -103,6 +109,8 @@ export interface DescribeRunProgress {
    * from the process-wide gpu_state snapshot (R-03).
    */
   isWarming?: boolean;
+  /** Persisted finite observation for the live warming phase. */
+  warmingObservation?: WarmingObservation;
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
@@ -159,8 +167,16 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   useEffect(() => {
     if (dataUpdatedAt > lastCountedDataAtRef.current) {
       lastCountedDataAtRef.current = dataUpdatedAt;
+      // Only publish a real transition. An unconditional setState here fires on
+      // EVERY poll; React counts those as nested updates while a test (or a busy
+      // tab) drains many poll cycles in one flush, trips its 50-update guard, and
+      // the thrown error is captured as a hard query error that stops the poller
+      // for good (Release It! 5.5 fail fast -- this failed silently instead).
+      const hadStreak = consecutiveFrozenPollsRef.current !== 0;
       consecutiveFrozenPollsRef.current = 0;
-      setFrozenPollStreak(0);
+      if (hadStreak) {
+        setFrozenPollStreak(0);
+      }
     }
     if (errorUpdatedAt > lastCountedErrorAtRef.current && isFrozenPollFailure(queryError)) {
       lastCountedErrorAtRef.current = errorUpdatedAt;
@@ -191,13 +207,82 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
 
+  const lastCompletedRef = useRef<number | null>(null);
+  const lastProgressAtRef = useRef<number | null>(null);
+  const warmingProgressSnapshotRef = useRef<{
+    key: string;
+    dataUpdatedAt: number;
+    processed: number;
+  } | null>(null);
+  const processed =
+    run === null ? null : run.completed + run.failed + run.skipped;
+  const warmingObservationKey = `${run?.run_id ?? runId}:${startupId ?? 'null'}`;
+  const resumedProgress =
+    processed !== null &&
+    lastCompletedRef.current !== null &&
+    processed > lastCompletedRef.current;
+  const progressInCurrentSnapshot =
+    resumedProgress ||
+    (processed !== null &&
+      warmingProgressSnapshotRef.current?.key === warmingObservationKey &&
+      warmingProgressSnapshotRef.current.dataUpdatedAt === dataUpdatedAt &&
+      warmingProgressSnapshotRef.current.processed === processed);
+  const warmingObservation = deriveWarmingObservation({
+    runId: run?.run_id ?? runId,
+    startupId,
+    isWarming,
+    isTerminal,
+    gpuState: run?.gpu_state,
+    resumedProgress: progressInCurrentSnapshot,
+  });
+
+  // Keep progress evidence stable across the state update that clears a stale
+  // stall banner, but let the next successful poll re-evaluate the deadline.
+  useEffect(() => {
+    if (resumedProgress && processed !== null) {
+      warmingProgressSnapshotRef.current = {
+        key: warmingObservationKey,
+        dataUpdatedAt,
+        processed,
+      };
+      return;
+    }
+    if (
+      warmingProgressSnapshotRef.current !== null &&
+      (warmingProgressSnapshotRef.current.key !== warmingObservationKey ||
+        warmingProgressSnapshotRef.current.dataUpdatedAt !== dataUpdatedAt)
+    ) {
+      warmingProgressSnapshotRef.current = null;
+    }
+  }, [dataUpdatedAt, processed, resumedProgress, warmingObservationKey]);
+
+  const [, setWarmingDeadlineTick] = useState(0);
+  useEffect(() => {
+    if (
+      !isWarming ||
+      warmingObservation.deadlineAt === null ||
+      warmingObservation.status === WARMING_OBSERVATION_STATUS.OVERDUE ||
+      warmingObservation.evidence === WARMING_OBSERVATION_EVIDENCE.PROGRESS
+    ) {
+      return;
+    }
+
+    const deadlineTimer = window.setTimeout(() => {
+      setWarmingDeadlineTick((tick) => tick + 1);
+    }, Math.max(0, warmingObservation.deadlineAt - Date.now()));
+    return () => window.clearTimeout(deadlineTimer);
+  }, [
+    isWarming,
+    warmingObservation.deadlineAt,
+    warmingObservation.evidence,
+    warmingObservation.status,
+  ]);
+
   const { refetch } = query;
   const retry = useCallback(() => {
     void refetch();
   }, [refetch]);
 
-  const lastCompletedRef = useRef<number | null>(null);
-  const lastProgressAtRef = useRef<number | null>(null);
   const [stalledForSeconds, setStalledForSeconds] = useState<number | null>(null);
 
   // Reset per-run stall accounting whenever the tracked run changes.
@@ -215,9 +300,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     if (run === null) {
       return;
     }
-    const processed = run.completed + run.failed + run.skipped;
-    if (lastCompletedRef.current === null || processed > lastCompletedRef.current) {
-      lastCompletedRef.current = processed;
+    const nextProcessed = run.completed + run.failed + run.skipped;
+    if (lastCompletedRef.current === null || nextProcessed > lastCompletedRef.current) {
+      lastCompletedRef.current = nextProcessed;
       lastProgressAtRef.current = Date.now();
       setStalledForSeconds(null);
     }
@@ -226,8 +311,10 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   // Tick the stall indicator once per second while the run is live. A polling
   // error surfaces its own Retry affordance, and a frozen poll already shows
   // the paused notice, so suppress the speculative stall banner in both.
+  const warmingBlocksStall =
+    isWarming && warmingObservation.status !== WARMING_OBSERVATION_STATUS.OVERDUE;
   useEffect(() => {
-    if (runId === null || isTerminal || isError || isFrozen || isWarming) {
+    if (runId === null || isTerminal || isError || isFrozen || warmingBlocksStall) {
       setStalledForSeconds(null);
       return;
     }
@@ -247,7 +334,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal, isError, isFrozen, isWarming]);
+  }, [runId, isTerminal, isError, isFrozen, warmingBlocksStall]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -265,6 +352,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     timing,
     startupId,
     isWarming,
+    warmingObservation,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

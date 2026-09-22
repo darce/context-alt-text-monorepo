@@ -14,6 +14,44 @@ export const LAST_SYNC_RESULT = {
 
 export type LastSyncResult = (typeof LAST_SYNC_RESULT)[keyof typeof LAST_SYNC_RESULT];
 
+/** Frozen wire vocabulary for the per-tenant reclaimer sync status. */
+export const RECLAIMER_VOCABULARY = {
+  state: {
+    NEVER_RUN: 'never_run',
+    HEALTHY: 'healthy',
+    OVERDUE: 'overdue',
+    BREACH: 'breach',
+  },
+  scheduler_mode: {
+    ACTION_SCHEDULER: 'action_scheduler',
+    WP_CRON: 'wp_cron',
+  },
+  last_outcome: {
+    SUCCESS: 'success',
+    FAILED: 'failed',
+    LOCK_CONTENDED: 'lock_contended',
+  },
+} as const;
+
+export type ReclaimerState = (typeof RECLAIMER_VOCABULARY.state)[keyof typeof RECLAIMER_VOCABULARY.state];
+export type ReclaimerSchedulerMode =
+  (typeof RECLAIMER_VOCABULARY.scheduler_mode)[keyof typeof RECLAIMER_VOCABULARY.scheduler_mode];
+export type ReclaimerLastOutcome =
+  (typeof RECLAIMER_VOCABULARY.last_outcome)[keyof typeof RECLAIMER_VOCABULARY.last_outcome];
+
+export interface ReclaimerStatus {
+  state: ReclaimerState;
+  scheduler_mode: ReclaimerSchedulerMode;
+  effective_period_seconds: number;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_outcome: ReclaimerLastOutcome | null;
+  last_purged_count: number | null;
+  backlog_remaining: number | null;
+  backlog_oldest_age_seconds: number | null;
+  batch_cap_reached: boolean;
+}
+
 export interface TopologyCommandStatus {
   pending: number;
   applied: number;
@@ -36,6 +74,7 @@ export interface SyncStatusResponse {
   last_curation_conflict_at?: string | null;
   last_curation_failed_at?: string | null;
   topology_commands?: TopologyCommandStatus;
+  reclaimer?: ReclaimerStatus | null;
 }
 
 export interface SyncTriggerResponse extends SyncStatusResponse {

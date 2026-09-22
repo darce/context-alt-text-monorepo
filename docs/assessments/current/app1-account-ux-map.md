@@ -1,6 +1,6 @@
 # APP-1 account UX map — inventory and ASCII screens
 
-Date: 2026-09-22. Status: OBSERVED-UI B0 account chrome plus PLANNED-UI B1 browser journeys in the same SSOT map. Clerk production, Polar sandbox, and WordPress live evidence remain unavailable; this is an offline inventory and contract, not an acceptance claim. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Detailed B1 contracts and ownership live in [`app1-browser-journey-slices-20260922.md`](app1-browser-journey-slices-20260922.md). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
+Date: 2026-09-22. Status: COMPLETED docs/map contract — OBSERVED-UI B0 account chrome plus PLANNED-UI B1 browser journeys in the same SSOT map. Coordinator decisions record the B0 browser fix and N1 backend fix as landed; no F0 repair prerequisite remains. Clerk production, Polar sandbox, and WordPress live evidence remain unavailable; this is an offline inventory and contract, not an acceptance claim. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Detailed B1 contracts and ownership live in [`app1-browser-journey-slices-20260922.md`](app1-browser-journey-slices-20260922.md). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
 
 Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/darce/heuristics-canon) `REF-15`, `CARD-06`, `CARD-15`, `DOM-03`. Also `NAV-08`, `NAV-07`, `RLSE-04`, `FORM-09`, `CARD-12`, `CARD-16`.
 
@@ -23,6 +23,22 @@ These are accepted integration constraints for the app-owned browser-fix wave, r
 | Signed-in outage | A 503/timeout preserves UserButton and Sign out; retry refreshes the backend identity read and does not turn an outage into signed-out or tenant-ready UI. | `App.tsx:181-209`; `OutageScreen.tsx:3-18`; accepted B0-fix constraint |
 
 The B1 feature modules consume these boundaries. They do not redesign the existing Clerk account integration (`REF-15`, `CARD-16`, `RLSE-04`, `NAV-11`, `HAI-01`).
+
+## B1 completion and parallel implementation boundary
+
+The coordinator's frozen decision is that K/U (keys and usage) and C/B (claim
+and billing) implement in parallel after this contract freeze. Each feature
+group owns its API DTOs, client interface, local error shape, and component
+props. Components receive typed clients and test doubles through props; they
+do not import runtime or type definitions from a hypothetical shared browser
+module. A structural `PortalRequest` alias is repeated in each owned API file.
+
+B0 and N1 are already landed. I1 is a single app owner activated only after
+both feature groups land: it creates the real session-scoped authenticated
+no-store bounded transport, passes it to the four feature factories, keys the
+keys subtree to the Clerk session/user, and wires `App.tsx`, routes, styles,
+and config. No feature group edits those shell paths or waits for an unwritten
+F0 source module.
 
 ## Vocabulary (`DOM-03`)
 
@@ -237,6 +253,7 @@ The recovered action conditions are represented in supported screen states rathe
 | `CARD-16` | Clerk outage must not kill API keys | outage copy is portal-only |
 | `CARD-15` | Sign-out vs key revoke | logout does not revoke keys |
 | `CARD-06` | Screen code before inventory | this document + JSON before `apps/app-portal` |
+| `UI-06` | Irreversible primary actions were mapped on non-overlays | Single-use claim and last-key revoke retain preview/confirmation with secondary/destructive final actions; hosted checkout is marked reversible because it opens navigation without charging |
 
 No high finding blocks this planning extension. The JSON keeps every B0 screen/action/flow id and adds B1 planned journeys. B1 remains offline and source-backed; it does not turn provider-dependent criteria into completed evidence.
 
@@ -246,7 +263,7 @@ No high finding blocks this planning extension. The JSON keeps every B0 screen/a
 - Env in browser: `VITE_CLERK_PUBLISHABLE_KEY`, optional `VITE_CLERK_FAPI`, public `VITE_PORTAL_ENABLED`.
 - Routed `<SignIn />` / `<SignUp />` plus `ClerkProvider` / `UserButton` / `useAuth`.
 - Test doubles live only under `src/__tests__/`. Production has no auth bypass.
-- Production Clerk and Polar sandbox provisioning remain outside this lane.
+- Production Clerk and Polar sandbox provisioning remain outside this lane. K/U and C/B use injected typed clients; I1 owns authenticated transport and shell wiring after both branches land.
 
 ## Remaining limitations
 
@@ -256,4 +273,4 @@ No high finding blocks this planning extension. The JSON keeps every B0 screen/a
 
 ## Not doing
 
-See JSON `not_doing`. This assessment does not commit env/login material, read provider credentials, or edit backend `portal_auth` / `PortalIdentityService`. The B1 extension is in the same map and the companion slice document; it preserves Clerk account integration and does not redesign auth. WorkBay UX critique/render is not run here because the local CLI is unavailable; the coordinator must run the existing local canvas CLI before UI code.
+See JSON `not_doing`. This assessment does not commit env/login material, read provider credentials, or edit backend `portal_auth` / `PortalIdentityService`. The B1 extension is in the same map and the companion slice document; it preserves Clerk account integration and does not redesign auth. The coordinator ran the actual WorkBay critique on preserved map WIP SHA `85416ba8` (schema-valid, 16 screens); the local lane CLI is unavailable, so the coordinator should rerun final map validation/critique after this commit. This is not live UX or vendor acceptance evidence.

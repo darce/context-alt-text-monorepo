@@ -693,7 +693,7 @@ def test_auraface_aligner_embedder_and_quality_share_bgr_crop(
     image[..., 2] = (11 * xx + 13 * yy) % 256
     landmarks = np.array(
         [[50.0, 55.0], [120.0, 55.0], [85.0, 85.0], [60.0, 125.0], [110.0, 125.0]],
-        dtype=np.float64,
+        dtype=np.float32,
     )
     ok, encoded = cv2.imencode(".png", image)
     assert ok
@@ -723,7 +723,7 @@ def test_auraface_aligner_embedder_and_quality_share_bgr_crop(
         [
             RawDetection(
                 bbox=np.array([10.0, 10.0, 160.0, 160.0], dtype=np.float32),
-                landmarks=landmarks.astype(np.float32),
+                landmarks=landmarks,
                 score=0.99,
             )
         ]

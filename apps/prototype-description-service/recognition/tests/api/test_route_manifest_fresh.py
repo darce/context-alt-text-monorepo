@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import socket
@@ -55,9 +56,11 @@ def _export_with_side_effect_guards(monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(api_main, "_lifespan", _unexpected_lifespan)
 
-    from scripts.export_route_manifest import export_route_manifest
+    from scripts.export_route_manifest import _export_route_manifest_in_process
 
-    return export_route_manifest(in_process=True)
+    # The socket and _lifespan monkeypatches only bind in this process, so this helper
+    # deliberately exercises the private in-process path.
+    return _export_route_manifest_in_process()
 
 
 def _route_pairs(manifest_text: str) -> set[tuple[str, str]]:
@@ -134,6 +137,48 @@ def test_default_route_manifest_export_ignores_ambient_description_adapter(
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "ambient-poison")
     assert export_route_manifest() == unpoisoned
+
+
+def test_route_manifest_export_does_not_expose_in_process_mode() -> None:
+    from scripts.export_route_manifest import export_route_manifest
+
+    assert "in_process" not in inspect.signature(export_route_manifest).parameters
+
+
+def test_route_manifest_export_ignores_malformed_ambient_database_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.export_route_manifest import export_route_manifest
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nonsense")
+    monkeypatch.setenv("PGVECTOR_DIM", "not-an-integer")
+
+    assert export_route_manifest().encode("utf-8") == _FIXTURE_PATH.read_bytes()
+
+
+def test_route_manifest_excludes_mount_and_websocket_routes() -> None:
+    from fastapi import FastAPI, WebSocket
+    from scripts.export_route_manifest import _route_pairs
+    from starlette.applications import Starlette
+
+    app = FastAPI()
+
+    @app.get("/normal")
+    async def normal_route() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.mount("/static", Starlette())
+
+    @app.websocket("/ws")
+    async def websocket_route(websocket: WebSocket) -> None:
+        await websocket.accept()
+        await websocket.close()
+
+    route_paths = {entry["path"] for entry in _route_pairs(app)}
+
+    assert "/normal" in route_paths
+    assert "/static" not in route_paths
+    assert "/ws" not in route_paths
 
 
 def test_route_manifest_excludes_non_api_and_documentation_routes(

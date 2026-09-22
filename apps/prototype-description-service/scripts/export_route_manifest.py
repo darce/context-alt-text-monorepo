@@ -155,6 +155,7 @@ def _manifest_payload(app: Any) -> dict[str, object]:
     }
 
 
+# Safe only in the dedicated child process because it mutates os.environ and the global secret provider.
 def _export_route_manifest_in_process() -> str:
     with _EXPORT_LOCK:
         with _forced_export_environment():
@@ -163,11 +164,8 @@ def _export_route_manifest_in_process() -> str:
     return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
 
 
-def export_route_manifest(*, in_process: bool = False) -> str:
+def export_route_manifest() -> str:
     """Return the deterministic route manifest JSON, including its final newline."""
-
-    if in_process:
-        return _export_route_manifest_in_process()
 
     completed = subprocess.run(
         [sys.executable, str(Path(__file__).resolve()), "--stdout"],
@@ -216,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = _parse_args(argv)
     if arguments.stdout:
         with redirect_stdout(io.StringIO()):
-            content = export_route_manifest(in_process=True)
+            content = _export_route_manifest_in_process()
         sys.stdout.write(content)
         return 0
 

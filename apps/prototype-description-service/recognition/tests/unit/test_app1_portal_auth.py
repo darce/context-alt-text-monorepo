@@ -380,3 +380,49 @@ async def test_missing_credential_is_401_and_audited(monkeypatch: pytest.MonkeyP
 
     assert raised.value.status_code == 401
     assert events == ["invalid_key"]
+
+
+def test_from_env_loads_audience_and_authorized_parties_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.setenv("ACX_CLERK_AUDIENCE", "clerk-instance-aud")
+    monkeypatch.setenv(
+        "ACX_CLERK_AUTHORIZED_PARTIES",
+        "https://app.altcontext.io, https://admin.altcontext.io",
+    )
+
+    settings = portal_auth.PortalAuthSettings.from_env()
+
+    assert settings.issuer == "https://issuer.example.test"
+    assert settings.jwks_url == "https://jwks.example.test/keys"
+    assert settings.audience == ("clerk-instance-aud",)
+    assert settings.authorized_parties == (
+        "https://app.altcontext.io",
+        "https://admin.altcontext.io",
+    )
+
+
+def test_from_env_does_not_treat_authorized_parties_as_audience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.delenv("ACX_CLERK_AUDIENCE", raising=False)
+    monkeypatch.setenv("ACX_CLERK_AUTHORIZED_PARTIES", "https://app.altcontext.io")
+
+    with pytest.raises(ValueError, match="incomplete"):
+        portal_auth.PortalAuthSettings.from_env()
+
+
+def test_from_env_requires_authorized_parties_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.setenv("ACX_CLERK_AUDIENCE", "clerk-instance-aud")
+    monkeypatch.delenv("ACX_CLERK_AUTHORIZED_PARTIES", raising=False)
+
+    with pytest.raises(ValueError, match="incomplete"):
+        portal_auth.PortalAuthSettings.from_env()

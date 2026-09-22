@@ -1,14 +1,12 @@
- .../services/usage_settlement_service.py           | 583 +++++++++++++++++++++
- .../integration/test_app1_usage_worker_postgres.py | 291 ++++++++++
- .../tests/unit/test_app1_usage_sweeper.py          | 334 ++++++++++--
- .../recognition/worker/scan_worker.py              | 105 +++-
- .../scene/application/describe_async_worker.py     |  45 +-
- .../scene/application/describe_run_repository.py   |  10 +
- .../scene/application/describe_run_worker.py       |  24 +-
- .../interface_adapters/http/routers/describe.py    |  50 +-
- .../http/routers/describe_run.py                   |  10 +-
- .../scene/tests/test_app1_usage_scene_census.py    |  19 +-
- .../scene/tests/test_describe_async_repository.py  |  54 ++
- .../scene/tests/test_describe_async_worker.py      | 178 +++++++
- .../scene/tests/test_describe_run_worker_phases.py | 112 ++++
- 13 files changed, 1714 insertions(+), 101 deletions(-)
+ .../db/migrations/versions/001_identity_schema.py  | 214 +++++++++
+ .../db/models/portal_billing.py                    | 126 +++++
+ .../recognition/domain/portal_contracts.py         | 273 ++++++++++-
+ .../infrastructure/billing/polar_provider.py       | 107 ++++-
+ .../billing_reconciliation_repository.py           | 534 +++++++++++++++++++++
+ .../test_app1_billing_recovery_postgres.py         | 248 ++++++++++
+ .../tests/unit/test_app1_billing_provider.py       |   5 +
+ .../unit/test_app1_billing_recovery_contracts.py   | 469 ++++++++++++++++++
+ .../unit/test_app1_checkout_attempt_repository.py  |  25 +-
+ .../tests/unit/test_app1_portal_contracts.py       |   1 +
+ .../current/app1-billing-recovery-contract.md      | 114 +++++
+ 11 files changed, 2086 insertions(+), 30 deletions(-)

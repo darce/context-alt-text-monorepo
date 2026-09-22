@@ -45,6 +45,11 @@ MAX_JWKS_RESPONSE_BYTES = JWKS_MAX_RESPONSE_BYTES
 _RSA_SHA256_DIGEST_INFO_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
 _AuthAuditOutcome = Literal["success", "invalid_key", "tenant_mismatch"]
 _Clock = Callable[[], datetime | float | int]
+_HttpDetail = str | Mapping[str, str]
+_INVALID_PORTAL_AUTHORIZATION = {"code": "invalid_portal_authorization"}
+_PORTAL_AUTHENTICATION_UNAVAILABLE = {"code": "portal_authentication_unavailable"}
+_EMAIL_UNVERIFIED = {"code": "email_unverified"}
+_TENANT_HEADER_FORBIDDEN = {"code": "tenant_header_forbidden"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,11 +178,18 @@ class PortalAuthSettings:
         """Load operator-supplied settings without inventing a provider domain."""
         issuer = os.getenv("ACX_CLERK_ISSUER", "").strip()
         jwks_url = os.getenv("ACX_CLERK_JWKS_URL", "").strip()
-        audience_raw = os.getenv("ACX_CLERK_AUTHORIZED_PARTIES", "")
-        audience = tuple(part.strip() for part in audience_raw.split(",") if part.strip())
-        if not issuer or not jwks_url or not audience:
+        audience = tuple(part.strip() for part in os.getenv("ACX_CLERK_AUDIENCE", "").split(",") if part.strip())
+        authorized_parties = tuple(
+            part.strip() for part in os.getenv("ACX_CLERK_AUTHORIZED_PARTIES", "").split(",") if part.strip()
+        )
+        if not issuer or not jwks_url or not audience or not authorized_parties:
             raise ValueError("portal authentication settings are incomplete")
-        return cls(issuer=issuer, jwks_url=jwks_url, audience=audience)
+        return cls(
+            issuer=issuer,
+            jwks_url=jwks_url,
+            audience=audience,
+            authorized_parties=authorized_parties,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -607,21 +619,74 @@ def _emit_portal_auth_event(outcome: _AuthAuditOutcome) -> None:
         logger.error("portal auth audit emission failed", extra={"outcome": outcome})
 
 
-def _extract_bearer_token(authorization: str | None) -> str:
+def _extract_bearer_token(
+    authorization: str | None,
+    *,
+    missing_detail: _HttpDetail = "portal authorization required",
+    invalid_detail: _HttpDetail = "invalid portal authorization",
+) -> str:
     if not authorization or not isinstance(authorization, str):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="portal authorization required",
+            detail=missing_detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
     pieces = authorization.split()
     if len(pieces) != 2 or pieces[0].lower() != "bearer" or not pieces[1]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid portal authorization",
+            detail=invalid_detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
     return pieces[1]
+
+
+def _require_callable_verifier(
+    verifier: object,
+    *,
+    detail: _HttpDetail = "portal authentication unavailable",
+) -> None:
+    if not callable(getattr(verifier, "verify", None)):
+        _emit_portal_auth_event("invalid_key")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        )
+
+
+async def _verify_portal_token(
+    token: str,
+    verifier: PortalTokenVerifier,
+    *,
+    invalid_detail: _HttpDetail = "invalid portal authorization",
+    unavailable_detail: _HttpDetail = "portal authentication temporarily unavailable",
+) -> PortalTokenClaims:
+    try:
+        return await verifier.verify(token)
+    except PortalJwksUnavailable:
+        _emit_portal_auth_event("invalid_key")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=unavailable_detail,
+        ) from None
+    except Exception:
+        _emit_portal_auth_event("invalid_key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=invalid_detail,
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+
+
+def _require_verified_email(
+    claims: PortalTokenClaims,
+    *,
+    detail: _HttpDetail = "portal access denied",
+) -> None:
+    email = claims.email.strip() if isinstance(claims.email, str) else ""
+    if not claims.email_verified or not email:
+        _emit_portal_auth_event("invalid_key")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 async def _require_portal_principal_impl(
@@ -631,25 +696,8 @@ async def _require_portal_principal_impl(
     verifier: PortalTokenVerifier,
     identity_service: PortalIdentityService,
 ) -> PortalPrincipal:
-    try:
-        claims = await verifier.verify(token)
-    except PortalJwksUnavailable:
-        _emit_portal_auth_event("invalid_key")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="portal authentication temporarily unavailable",
-        ) from None
-    except Exception:
-        _emit_portal_auth_event("invalid_key")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid portal authorization",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from None
-
-    if not claims.email_verified or not claims.email:
-        _emit_portal_auth_event("invalid_key")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="portal access denied")
+    claims = await _verify_portal_token(token, verifier)
+    _require_verified_email(claims)
 
     try:
         principal = await identity_service.resolve_principal(claims.issuer, claims.subject)
@@ -677,6 +725,39 @@ async def _require_portal_principal_impl(
     return principal
 
 
+async def require_verified_portal_identity(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    verifier: PortalTokenVerifier = Depends(get_portal_token_verifier),
+) -> PortalTokenClaims:
+    """Authenticate a portal bearer token without resolving a local tenant."""
+    try:
+        token = _extract_bearer_token(
+            authorization,
+            missing_detail=_INVALID_PORTAL_AUTHORIZATION,
+            invalid_detail=_INVALID_PORTAL_AUTHORIZATION,
+        )
+    except HTTPException:
+        _emit_portal_auth_event("invalid_key")
+        raise
+    tenant_header = x_tenant_id if isinstance(x_tenant_id, str) else None
+    if tenant_header is not None:
+        _emit_portal_auth_event("tenant_mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_TENANT_HEADER_FORBIDDEN,
+        )
+    _require_callable_verifier(verifier, detail=_PORTAL_AUTHENTICATION_UNAVAILABLE)
+    claims = await _verify_portal_token(
+        token,
+        verifier,
+        invalid_detail=_INVALID_PORTAL_AUTHORIZATION,
+        unavailable_detail=_PORTAL_AUTHENTICATION_UNAVAILABLE,
+    )
+    _require_verified_email(claims, detail=_EMAIL_UNVERIFIED)
+    return claims
+
+
 async def require_portal_principal(
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
@@ -689,12 +770,7 @@ async def require_portal_principal(
     except HTTPException:
         _emit_portal_auth_event("invalid_key")
         raise
-    if not callable(getattr(verifier, "verify", None)):
-        _emit_portal_auth_event("invalid_key")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="portal authentication unavailable",
-        )
+    _require_callable_verifier(verifier)
     return await _require_portal_principal_impl(
         token=token,
         x_tenant_id=x_tenant_id if isinstance(x_tenant_id, str) else None,
@@ -729,4 +805,5 @@ __all__ = [
     "get_portal_identity_service",
     "get_portal_token_verifier",
     "require_portal_principal",
+    "require_verified_portal_identity",
 ]

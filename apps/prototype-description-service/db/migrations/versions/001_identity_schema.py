@@ -33,6 +33,7 @@ TENANT_TABLES = [
     "tenant_entitlement",
     "usage_reservation",
     "billing_subscription_projection",
+    "billing_checkout_attempt",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -83,6 +84,11 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_cluster_merge_receipts_survivor_seq",
         ("survivor_cluster_id", "sequence_no"),
     ),
+    (
+        "billing_checkout_attempt",
+        "uq_billing_checkout_attempt_provider_key",
+        ("tenant_id", "provider", "environment", "seller_account", "idempotency_key"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -105,6 +111,7 @@ EXPECTED_SCHEMA_TABLES = [
     "usage_reservation",
     "billing_subscription_projection",
     "billing_webhook_inbox",
+    "billing_checkout_attempt",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -149,6 +156,7 @@ DOWNGRADE_TABLE_ORDER = [
     "portal_tenant_invitation",
     "tenant_key_idempotency",
     "api_key_rotation_history",
+    "billing_checkout_attempt",
     "billing_webhook_inbox",
     "billing_subscription_projection",
     "usage_reservation",
@@ -663,6 +671,82 @@ def ensure_tables(op) -> None:
     )
     _ensure_index(op, "idx_billing_webhook_inbox_reclaim", "billing_webhook_inbox", ["status", "processed_at"])
     _ensure_index(op, "idx_billing_webhook_inbox_pending", "billing_webhook_inbox", ["status", "next_attempt_at"])
+
+    # Reclaim key: updated_at. Existing installs gain this table through
+    # _ensure_table (create if missing) rather than a greenfield-only revision.
+    _ensure_table(
+        op,
+        "billing_checkout_attempt",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("provider", sa.Text(), nullable=False),
+        sa.Column("environment", sa.Text(), nullable=False),
+        sa.Column("seller_account", sa.Text(), nullable=False),
+        sa.Column("plan_code", sa.Text(), nullable=False),
+        sa.Column("idempotency_key", sa.Text(), nullable=False),
+        sa.Column("client_idempotency_key", sa.Text(), nullable=True),
+        sa.Column("request_fingerprint", sa.Text(), nullable=False),
+        sa.Column("status", sa.Text(), nullable=False, server_default=sa.text("'created'")),
+        sa.Column("provider_checkout_id", sa.Text(), nullable=True),
+        sa.Column("checkout_url", sa.Text(), nullable=True),
+        sa.Column("last_error_class", sa.Text(), nullable=False, server_default=sa.text("'none'")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "provider",
+            "environment",
+            "seller_account",
+            "idempotency_key",
+            name="uq_billing_checkout_attempt_provider_key",
+        ),
+        sa.CheckConstraint(
+            "status IN ('created', 'provider_requested', 'pending', 'ambiguous', "
+            "'succeeded', 'expired', 'canceled', 'failed')",
+            name="ck_billing_checkout_attempt_status",
+        ),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_checkout_attempt_environment",
+        ),
+        sa.CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_checkout_attempt_provider",
+        ),
+        sa.CheckConstraint(
+            "last_error_class IN ('none', 'ambiguous', 'rejected', 'expired')",
+            name="ck_billing_checkout_attempt_last_error_class",
+        ),
+        heal_constraints=(
+            "uq_billing_checkout_attempt_provider_key",
+            "ck_billing_checkout_attempt_status",
+            "ck_billing_checkout_attempt_environment",
+            "ck_billing_checkout_attempt_provider",
+            "ck_billing_checkout_attempt_last_error_class",
+        ),
+    )
+    _ensure_index(
+        op,
+        "uq_billing_checkout_attempt_client_key",
+        "billing_checkout_attempt",
+        ["tenant_id", "provider", "environment", "seller_account", "client_idempotency_key"],
+        unique=True,
+        postgresql_where=sa.text("client_idempotency_key IS NOT NULL"),
+    )
+    _ensure_index(
+        op,
+        "uq_billing_checkout_attempt_one_active",
+        "billing_checkout_attempt",
+        ["tenant_id", "provider", "environment", "seller_account", "plan_code"],
+        unique=True,
+        postgresql_where=sa.text("status IN ('created', 'provider_requested', 'pending', 'ambiguous')"),
+    )
+    _ensure_index(op, "idx_billing_checkout_attempt_reclaim", "billing_checkout_attempt", ["updated_at"])
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
     _ensure_table(
@@ -3159,6 +3243,9 @@ def downgrade() -> None:
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
+    op.drop_index("idx_billing_checkout_attempt_reclaim", table_name="billing_checkout_attempt")
+    op.drop_index("uq_billing_checkout_attempt_one_active", table_name="billing_checkout_attempt")
+    op.drop_index("uq_billing_checkout_attempt_client_key", table_name="billing_checkout_attempt")
     op.drop_index("idx_billing_subscription_projection_reclaim", table_name="billing_subscription_projection")
     op.drop_index("idx_usage_reservation_reclaim", table_name="usage_reservation")
     op.drop_index("idx_usage_reservation_tenant_period_status", table_name="usage_reservation")

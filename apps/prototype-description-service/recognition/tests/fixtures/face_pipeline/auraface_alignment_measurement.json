@@ -150,7 +150,7 @@
     ],
     "blocked_reason": null,
     "graph_blocked_reason": "An ONNX recognizer graph does not encode external five-point alignment. glintr100.onnx has no landmark, affine, warp, or template tensors.",
-    "support": "FIR512-2 preprocess: independent skimage Umeyama onto float32 InsightFace arcface_dst @ 1480e705287bc5d59f923b46c260ec6e3e4150f6 produced a bit-identical 112 BGR crop vs in-house FivePointAligner (crop SHA a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993). Independent dest is a float32 literal, not a production import."
+    "support": "FIR512-2 preprocess: independent skimage Umeyama onto float32 InsightFace arcface_dst @ 1480e705287bc5d59f923b46c260ec6e3e4150f6 produced a bit-identical 112 BGR crop vs in-house FivePointAligner (crop SHA 65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae). Independent dest is a float32 literal, not a production import."
   },
   "raw_output_normalization": {
     "graph_status": "measured",
@@ -188,9 +188,9 @@
       "aligner": "in-house FivePointAligner(space=auraface) vs independent ArcFace Umeyama",
       "embedder": "ONNX Runtime glintr100.onnx",
       "fixture_dir": "recognition/tests/fixtures/face_pipeline/auraface_composed",
-      "crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
+      "crop_sha256": "65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae",
       "crops_bit_identical": true,
-      "composed_cosine": 0.9999999999990856,
+      "composed_cosine": 0.9999999999990652,
       "cosine_min": 0.99999999,
       "embedding_dim": 512,
       "raw_output_normalized": false,
@@ -203,7 +203,7 @@
         "providers": ["CPUExecutionProvider"]
       },
       "insightface_runtime_imported": false,
-      "reason": "Independent ArcFace align+blob+same default ORT settings matched in-house FivePointAligner+OrtSFaceEmbedder on existing pixels/landmarks. Crop SHA identical; float64 unit cosine 0.9999999999990856. Crops remain BGR. Not a quality or deployment claim."
+      "reason": "Independent ArcFace align+blob+same default ORT settings matched in-house FivePointAligner+OrtSFaceEmbedder on existing pixels/landmarks. Crop SHA identical; float64 unit cosine 0.9999999999990652. Crops remain BGR. Not a quality or deployment claim."
     }
   },
   "upstream_documented_contract": {

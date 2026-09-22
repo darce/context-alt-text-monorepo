@@ -317,9 +317,23 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame($tenantId, $capturedTenantId);
         $this->assertSame(['acx_clusters', 'acx_identity_members', 'acx_sync_outbox'], $capturedTables);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_clusters`', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_identity_members`', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_sync_outbox`', $wpdb->queries);
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_clusters', $tenantId),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+                'wp_acx_identity_members',
+                'wp_acx_clusters',
+                $tenantId
+            ),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_sync_outbox', $tenantId),
+            $wpdb->queries
+        );
         $this->assertContains('COMMIT', $wpdb->queries);
         $this->assertNotContains('ROLLBACK', $wpdb->queries);
     }
@@ -328,6 +342,7 @@ class SyncStatusControllerTest extends TestCase
     {
         global $wpdb;
 
+        $tenantId = self::currentTenantId();
         $syncRepo = new class() extends NullSyncStateRepository {
             /** @var string[] */
             public array $resetProjectionCalls = [];
@@ -337,7 +352,18 @@ class SyncStatusControllerTest extends TestCase
             }
         };
 
-        $wpdb->queryResults['DELETE FROM `wp_acx_identity_members`'] = false;
+        $clustersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE tenant_id = %s',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $wpdb->queryResults[$clustersDelete] = false;
+        $identityMembersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+            'wp_acx_identity_members',
+            'wp_acx_clusters',
+            $tenantId
+        );
 
         $controller = new SyncStatusController($syncRepo);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
@@ -347,10 +373,114 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame(500, $response->get_status());
         $this->assertSame([], $syncRepo->resetProjectionCalls);
         $this->assertContains('START TRANSACTION', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_clusters`', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_identity_members`', $wpdb->queries);
+        $this->assertContains($identityMembersDelete, $wpdb->queries);
+        $this->assertContains($clustersDelete, $wpdb->queries);
         $this->assertContains('ROLLBACK', $wpdb->queries);
         $this->assertNotContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testResetMirrorDeletesOnlyRequestedTenantProjectionRows(): void
+    {
+        $this->installTenantScopedDeleteDouble();
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            ['cluster_uuid' => 'cluster-a', 'tenant_id' => 'tenant-a'],
+            ['cluster_uuid' => 'cluster-b', 'tenant_id' => 'tenant-b'],
+        ];
+        $wpdb->tableRows['wp_acx_identity_members'] = [
+            ['identity_uuid' => 'identity-a', 'cluster_uuid' => 'cluster-a'],
+            ['identity_uuid' => 'identity-b', 'cluster_uuid' => 'cluster-b'],
+        ];
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            ['id' => 1, 'tenant_id' => 'tenant-a'],
+            ['id' => 2, 'tenant_id' => 'tenant-b'],
+        ];
+
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $response = $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [['cluster_uuid' => 'cluster-b', 'tenant_id' => 'tenant-b']],
+            $wpdb->tableRows['wp_acx_clusters']
+        );
+        $this->assertSame(
+            [['identity_uuid' => 'identity-b', 'cluster_uuid' => 'cluster-b']],
+            $wpdb->tableRows['wp_acx_identity_members']
+        );
+        $this->assertSame(
+            [['id' => 2, 'tenant_id' => 'tenant-b']],
+            $wpdb->tableRows['wp_acx_sync_outbox']
+        );
+    }
+
+    public function testResetMirrorDeletesIdentityMembersBeforeClusters(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-a';
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+
+        $identityMembersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+            'wp_acx_identity_members',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $clustersDelete = $wpdb->prepare(
+            'DELETE FROM %i WHERE tenant_id = %s',
+            'wp_acx_clusters',
+            $tenantId
+        );
+        $identityMembersIndex = array_search($identityMembersDelete, $wpdb->queries, true);
+        $clustersIndex = array_search($clustersDelete, $wpdb->queries, true);
+
+        $this->assertIsInt($identityMembersIndex);
+        $this->assertIsInt($clustersIndex);
+        $this->assertLessThan($clustersIndex, $identityMembersIndex);
+    }
+
+    public function testResetMirrorNeverIssuesBareDeleteStatements(): void
+    {
+        global $wpdb;
+
+        $controller = new class(new NullSyncStateRepository(), $this->createSuccessfulSyncPullJob()) extends SyncStatusController {
+            protected function get_tenant_id(): string
+            {
+                return 'tenant-a';
+            }
+        };
+
+        $controller->reset_mirror(new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror'));
+
+        $deleteQueries = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'DELETE FROM ')
+        ));
+        $bareDeleteQueries = array_values(array_filter(
+            $deleteQueries,
+            static fn(string $query): bool => preg_match('/^DELETE FROM \S+$/', $query) === 1
+        ));
+
+        $this->assertCount(3, $deleteQueries);
+        $this->assertSame([], $bareDeleteQueries);
+        foreach ($deleteQueries as $query) {
+            $this->assertStringContainsString('tenant_id', $query);
+        }
     }
 
     public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
@@ -474,9 +604,24 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('no_remote_data', $data['reason']);
         $this->assertSame(0, $data['last_snapshot_version']);
         $this->assertTrue($syncRepo->resetProjectionStateCalled);
-        $this->assertContains('DELETE FROM `wp_acx_clusters`', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_identity_members`', $wpdb->queries);
-        $this->assertContains('DELETE FROM `wp_acx_sync_outbox`', $wpdb->queries);
+        $tenantId = self::currentTenantId();
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_clusters', $tenantId),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+                'wp_acx_identity_members',
+                'wp_acx_clusters',
+                $tenantId
+            ),
+            $wpdb->queries
+        );
+        $this->assertContains(
+            $wpdb->prepare('DELETE FROM %i WHERE tenant_id = %s', 'wp_acx_sync_outbox', $tenantId),
+            $wpdb->queries
+        );
     }
 
     public function testTriggerSyncReturnsUpdatedConflictCountAfterProjection(): void
@@ -817,5 +962,87 @@ class SyncStatusControllerTest extends TestCase
 
         $this->assertSame(500, $response->get_status());
         $this->assertSame('acx_bulk_retry_failed', $response->get_data()['code']);
+    }
+
+    private function createSuccessfulSyncPullJob(): SyncPullJobInterface
+    {
+        return new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+    }
+
+    private function installTenantScopedDeleteDouble(): void
+    {
+        $GLOBALS['wpdb'] = new class() extends \WPDBStub {
+            public function query($sql)
+            {
+                $result = parent::query($sql);
+                if ($result === false || $result === null) {
+                    return $result;
+                }
+
+                $normalizedSql = trim((string) $sql);
+                if (preg_match(
+                    "/^DELETE FROM `?(?P<table>[A-Za-z0-9_]+)`? WHERE tenant_id = '(?P<tenant>[^']*)'$/",
+                    $normalizedSql,
+                    $matches
+                ) === 1) {
+                    return $this->deleteRowsByTenant($matches['table'], $matches['tenant']);
+                }
+
+                if (preg_match(
+                    "/^DELETE FROM `?(?P<table>[A-Za-z0-9_]+)`? WHERE cluster_uuid IN \\( SELECT cluster_uuid FROM `?(?P<clusters>[A-Za-z0-9_]+)`? WHERE tenant_id = '(?P<tenant>[^']*)' \\)$/",
+                    $normalizedSql,
+                    $matches
+                ) !== 1) {
+                    return $result;
+                }
+
+                $clusterIds = [];
+                foreach ($this->tableRows[$matches['clusters']] ?? [] as $row) {
+                    if ((string) ($row['tenant_id'] ?? '') === $matches['tenant']) {
+                        $clusterIds[] = (string) ($row['cluster_uuid'] ?? '');
+                    }
+                }
+
+                $rows = $this->tableRows[$matches['table']] ?? [];
+                $before = count($rows);
+                $this->tableRows[$matches['table']] = array_values(array_filter(
+                    $rows,
+                    static fn(array $row): bool => ! in_array(
+                        (string) ($row['cluster_uuid'] ?? ''),
+                        $clusterIds,
+                        true
+                    )
+                ));
+
+                return $before - count($this->tableRows[$matches['table']]);
+            }
+
+            private function deleteRowsByTenant(string $table, string $tenant): int
+            {
+                $rows = $this->tableRows[$table] ?? [];
+                $before = count($rows);
+                $this->tableRows[$table] = array_values(array_filter(
+                    $rows,
+                    static fn(array $row): bool => (string) ($row['tenant_id'] ?? '') !== $tenant
+                ));
+
+                return $before - count($this->tableRows[$table]);
+            }
+        };
     }
 }

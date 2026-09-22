@@ -8,6 +8,9 @@ export function AccountScreen({
   userMenu,
   onSignOut,
   onRetry,
+  onNavigateToKeys,
+  onNavigateToUsage,
+  onNavigateToBilling,
 }: {
   personName: string | null;
   tenantId: string | null;
@@ -15,6 +18,9 @@ export function AccountScreen({
   userMenu: ReactNode;
   onSignOut: () => void;
   onRetry?: () => void;
+  onNavigateToKeys?: () => void;
+  onNavigateToUsage?: () => void;
+  onNavigateToBilling?: () => void;
 }) {
   const status =
     mode === 'loading'
@@ -46,6 +52,19 @@ export function AccountScreen({
       ) : (
         <p>Account access: Waiting for account</p>
       )}
+      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
+        <nav className="acx-account-nav" aria-label="Account">
+          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
+            API keys
+          </button>
+          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
+            Usage
+          </button>
+          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
+            Billing
+          </button>
+        </nav>
+      ) : null}
       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
       {mode === 'error' && onRetry ? (
         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>

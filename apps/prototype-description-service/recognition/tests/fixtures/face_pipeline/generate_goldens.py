@@ -28,7 +28,6 @@ if str(_SERVICE_ROOT) not in sys.path:
 import cv2  # noqa: E402
 
 from recognition.infrastructure.face_pipeline.aligner import (  # noqa: E402
-    ARCFACE_CANONICAL_LANDMARKS_112,
     YUNET_LANDMARK_NAMES,
     FivePointAligner,
 )
@@ -39,7 +38,10 @@ from recognition.infrastructure.face_pipeline.opencv_ref import (  # noqa: E402
     OpenCVSFaceEmbedder,
     OpenCVYuNetDetector,
 )
-from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder  # noqa: E402
+from recognition.infrastructure.face_pipeline.ort_adapters import (  # noqa: E402
+    OrtSFaceEmbedder,
+    _ort_session,
+)
 from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
@@ -53,9 +55,23 @@ AURAFACE_LIVE_MODELS_DIR = Path("/opt/acx-backend/data/dev-models/face_pipeline"
 SEED = 20260715
 EMBED_SEED = 20260716
 GENERATOR_RELPATH = "recognition/tests/fixtures/face_pipeline/generate_goldens.py"
-# Independent Umeyama vs OpenCV-port Umeyama is float32-tight, not bit-exact.
-# Measured cosine 0.99999994; floor 0.9999999 is ~10× float32 epsilon at 1.0.
-_AURAFACE_COSINE_MIN = 0.9999999
+# Independent skimage Umeyama vs OpenCV-port Umeyama is float32-tight, not bit-exact.
+# Cosine is float64 unit-dot after converting and re-normalizing both vectors.
+# Floor 0.99999999 matches the SFace golden band (do not loosen for float32 dots).
+_AURAFACE_COSINE_MIN = 0.99999999
+
+# Pinned InsightFace face_align.arcface_dst @ 1480e705287bc5d59f923b46c260ec6e3e4150f6.
+# Independent float32 literal — not an import/view of production dest coords.
+REFERENCE_ARCFACE_DST_112 = np.array(
+    [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+        [56.0252, 71.7366],
+        [41.5493, 92.3655],
+        [70.7299, 92.2041],
+    ],
+    dtype=np.float32,
+)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -164,34 +180,64 @@ def _auraface_models_dir(models_dir: Path | None = None) -> Path:
     return DEFAULT_MODELS_DIR
 
 
-def reference_arcface_similarity_matrix(src_landmarks: np.ndarray) -> np.ndarray:
-    """Independent Umeyama similarity for InsightFace estimate_norm (not the OpenCV port)."""
-    src = np.asarray(src_landmarks, dtype=np.float64)
-    if src.shape == (10,):
-        src = src.reshape(5, 2)
-    if src.shape != (5, 2):
-        raise ValueError(f"expected 5 landmarks as (5, 2) or (10,), got {src.shape}")
-    dst = np.asarray(ARCFACE_CANONICAL_LANDMARKS_112, dtype=np.float64)
+def _skimage_umeyama(src: np.ndarray, dst: np.ndarray, *, estimate_scale: bool = True) -> np.ndarray:
+    """Faithful port of scikit-image ``transform._geometric._umeyama``.
+
+    InsightFace ``face_align.estimate_norm`` at 1480e705 calls
+    ``skimage.transform.SimilarityTransform.estimate(lmk, arcface_dst)``.
+    Do not pre-cast src/dst; float32 ``arcface_dst`` must keep float32 means.
+    Scale uses ``S @ d`` so a reflection sign on the last singular value is
+    included (Umeyama 1991 eq. 41–42). Not the OpenCV SFace port.
+    """
+    src = np.asarray(src)
+    dst = np.asarray(dst)
+    if src.shape != dst.shape or src.ndim != 2:
+        raise ValueError(f"src/dst must be (M, N) with matching shape, got {src.shape} vs {dst.shape}")
+    num = src.shape[0]
+    dim = src.shape[1]
     src_mean = src.mean(axis=0)
     dst_mean = dst.mean(axis=0)
     src_demean = src - src_mean
     dst_demean = dst - dst_mean
-    cov = (dst_demean.T @ src_demean) / 5.0
-    u, singular, vt = np.linalg.svd(cov)
-    r = u @ vt
-    if np.linalg.det(r) < 0:
-        vt = vt.copy()
-        vt[-1, :] *= -1.0
-        r = u @ vt
-    var = float(np.sum(src_demean * src_demean) / 5.0)
-    if var <= 0.0:
-        raise ValueError("degenerate landmarks (zero variance); cannot align")
-    scale = float(np.sum(singular) / var)
-    translation = dst_mean - scale * (r @ src_mean)
-    matrix = np.zeros((2, 3), dtype=np.float64)
-    matrix[:, :2] = scale * r
-    matrix[:, 2] = translation
-    return matrix
+    covariance = dst_demean.T @ src_demean / num
+    d = np.ones((dim,), dtype=np.float64)
+    if np.linalg.det(covariance) < 0:
+        d[dim - 1] = -1
+    transform = np.eye(dim + 1, dtype=np.float64)
+    u, singular, vt = np.linalg.svd(covariance)
+    rank = np.linalg.matrix_rank(covariance)
+    if rank == 0:
+        return np.nan * transform
+    if rank == dim - 1:
+        if np.linalg.det(u) * np.linalg.det(vt) > 0:
+            transform[:dim, :dim] = u @ vt
+        else:
+            saved = d[dim - 1]
+            d[dim - 1] = -1
+            transform[:dim, :dim] = u @ np.diag(d) @ vt
+            d[dim - 1] = saved
+    else:
+        transform[:dim, :dim] = u @ np.diag(d) @ vt
+    if estimate_scale:
+        scale = 1.0 / src_demean.var(axis=0).sum() * (singular @ d)
+    else:
+        scale = 1.0
+    transform[:dim, dim] = dst_mean - scale * (transform[:dim, :dim] @ src_mean.T)
+    transform[:dim, :dim] *= scale
+    return transform
+
+
+def reference_arcface_similarity_matrix(src_landmarks: np.ndarray) -> np.ndarray:
+    """Independent Umeyama similarity for InsightFace estimate_norm (not the OpenCV port)."""
+    src = np.asarray(src_landmarks)
+    if src.shape == (10,):
+        src = src.reshape(5, 2)
+    if src.shape != (5, 2):
+        raise ValueError(f"expected 5 landmarks as (5, 2) or (10,), got {src.shape}")
+    homogeneous = _skimage_umeyama(src, REFERENCE_ARCFACE_DST_112, estimate_scale=True)
+    if not np.isfinite(homogeneous).all():
+        raise ValueError("degenerate landmarks; Umeyama is ill-conditioned")
+    return homogeneous[0:2, :]
 
 
 def reference_arcface_align(image_bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
@@ -222,16 +268,34 @@ def _l2_normalize(vector: np.ndarray) -> tuple[np.ndarray, float]:
     return raw / np.float32(norm), norm
 
 
+def _unit_cosine_f64(left: np.ndarray, right: np.ndarray) -> float:
+    """Cosine of two vectors after float64 conversion and L2 re-normalization."""
+    a = np.asarray(left, dtype=np.float64).reshape(-1)
+    b = np.asarray(right, dtype=np.float64).reshape(-1)
+    an = float(np.linalg.norm(a))
+    bn = float(np.linalg.norm(b))
+    if an == 0.0 or bn == 0.0 or not np.isfinite(an) or not np.isfinite(bn):
+        raise RuntimeError(f"cannot compute unit cosine (norms={an}, {bn})")
+    return float(np.dot(a / an, b / bn))
+
+
 def _auraface_ort_session(model_path: Path):
+    """Same session factory as production OrtSFaceEmbedder / OrtYuNetDetector."""
+    return _ort_session(model_path)
+
+
+def _ort_session_fingerprint() -> dict[str, object]:
+    """Record the production ``_ort_session`` pins plus library defaults left unset."""
     import onnxruntime as ort
 
-    opts = ort.SessionOptions()
-    opts.log_severity_level = 3
-    opts.inter_op_num_threads = 1
-    opts.intra_op_num_threads = 1
-    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
-    return ort.InferenceSession(str(model_path), sess_options=opts, providers=["CPUExecutionProvider"])
+    defaults = ort.SessionOptions()
+    return {
+        "intra_op_num_threads": 1,
+        "inter_op_num_threads": 1,
+        "graph_optimization_level": defaults.graph_optimization_level.name,
+        "execution_mode": defaults.execution_mode.name,
+        "providers": ["CPUExecutionProvider"],
+    }
 
 
 def write_auraface_composed_goldens(
@@ -269,7 +333,7 @@ def write_auraface_composed_goldens(
     inhouse_crop = FivePointAligner(space=ModelSpace.AURAFACE).align(img, landmarks).crop
     inhouse = OrtSFaceEmbedder(model_name="auraface", models_dir=models_root).embed([inhouse_crop])
     inhouse_vec = np.asarray(inhouse.vectors[0], dtype=np.float32).reshape(-1)
-    cosine = float(np.dot(reference_vec, inhouse_vec))
+    cosine = _unit_cosine_f64(reference_vec, inhouse_vec)
     if cosine < _AURAFACE_COSINE_MIN:
         raise RuntimeError(
             "AuraFace composed independent reference diverges from in-house aligner+ORT "
@@ -303,13 +367,7 @@ def write_auraface_composed_goldens(
         "model": entry.file_name,
         "model_sha256": entry.sha256,
         "models_dir": str(models_root),
-        "ort_session": {
-            "intra_op_num_threads": 1,
-            "inter_op_num_threads": 1,
-            "graph_optimization_level": "ORT_DISABLE_ALL",
-            "execution_mode": "ORT_SEQUENTIAL",
-            "providers": ["CPUExecutionProvider"],
-        },
+        "ort_session": _ort_session_fingerprint(),
         "preprocessing": {
             "input_size": list(preprocessing.input_size),
             "channel_order": preprocessing.channel_order,
@@ -320,10 +378,16 @@ def write_auraface_composed_goldens(
             "blob_formula": "(rgb_pixel - input_mean) * input_scale",
         },
         "reference": {
-            "align_formula": "independent Umeyama onto InsightFace arcface_dst 112",
+            "align_formula": (
+                "independent skimage Umeyama (reflection singular-sign scale) onto "
+                "float32 InsightFace arcface_dst 112 literal"
+            ),
             "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6",
             "insightface_runtime_imported": False,
+            "dst_dtype": "float32",
+            "dst_imported_from_production": False,
             "blob_formula": "RGB (pixel-127.5)/127.5",
+            "cosine_formula": "float64 convert, L2-normalize, then dot",
         },
         **toolchain_provenance(),
     }

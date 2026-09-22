@@ -530,9 +530,13 @@ def _numeric_list_atol(path: str, detector_tol: dict | None) -> float:
 
 
 def _embedding_cosine(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine after float64 conversion and L2 re-normalization (no float32-dot slack)."""
     a = np.asarray(a, dtype=np.float64).reshape(-1)
     b = np.asarray(b, dtype=np.float64).reshape(-1)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+    an = float(np.linalg.norm(a))
+    bn = float(np.linalg.norm(b))
+    assert an > 0.0 and bn > 0.0 and math.isfinite(an) and math.isfinite(bn)
+    return float(np.dot(a / an, b / bn))
 
 
 def assert_npy_matches_golden(name: str, committed: np.ndarray, generated: np.ndarray) -> None:

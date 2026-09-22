@@ -222,15 +222,27 @@ The service uses `X-ACX-Request-Id` as its request correlation header. The
 middleware source of truth is
 `recognition/interface_adapters/http/middleware/correlation.py`.
 
+This header is diagnostic metadata, not an authentication credential. It does
+not identify a tenant, replace `Authorization` or `X-Api-Key`, or grant any
+access by itself.
+
 Clients may send an inbound value only when it is a canonical lowercase,
-hyphenated UUIDv4 written as exactly 36 ASCII characters. A missing or
-malformed value is silently replaced with a fresh server-generated id; the
-rejected value is never echoed or logged, and the request is not rejected.
+hyphenated UUIDv4 written as exactly 36 ASCII characters, with exactly one
+header occurrence. A missing, malformed, or repeated value is silently
+replaced with a fresh server-generated UUIDv4; the rejected value is never
+echoed or logged, and the request is not rejected.
 
 Every response, including successful and error responses, carries
-`X-ACX-Request-Id`. Logs use the `correlation_id` field, with `-` as the
-placeholder when no request is bound. Exactly one request-scoped access record
-is emitted per request on the `recognition.access` logger.
+`X-ACX-Request-Id`: a valid inbound value is echoed, and a missing or rejected
+value is returned as its replacement. Service log records emitted in the
+request scope carry that same value under the `correlation_id` field, while
+records with no request binding use `-`. Exactly one request-scoped access
+record is emitted per request on the `recognition.access` logger.
+
+The header alone does not create an API record. If the WordPress plugin rejects
+a request locally before sending it to the Recognition Service, no API request
+or `recognition.access` record exists for that id. An operator may therefore
+see the id in local/plugin diagnostics without a matching server-side record.
 
 For browser callers, `X-ACX-Request-Id` is present in both CORS
 `allow_headers` and `expose_headers`, so a browser may send the header and read

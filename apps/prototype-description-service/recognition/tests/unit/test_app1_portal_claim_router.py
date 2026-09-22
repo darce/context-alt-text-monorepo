@@ -334,7 +334,7 @@ def test_unverified_email_and_missing_bearer_use_pretenant_codes() -> None:
     assert _code(missing) == "invalid_portal_authorization"
 
 
-def test_claim_never_calls_polar_and_does_not_add_checkout_routes() -> None:
+def test_onboarding_claim_makes_zero_polar_customer_or_subscription_calls() -> None:
     service = _ClaimService(_outcome(replayed=False))
     application, _session = _app(service)
     polar = application.state.billing_provider
@@ -342,16 +342,13 @@ def test_claim_never_calls_polar_and_does_not_add_checkout_routes() -> None:
 
     with TestClient(application) as client:
         created = _post(client)
-        checkout = client.post("/portal/billing/checkout", json={})
-        manage = client.post("/portal/billing/manage", json={})
 
     assert created.status_code == 201
     assert polar.calls == []
-    assert checkout.status_code == 404
-    assert manage.status_code == 404
     assert "/portal/onboarding/claim" in route_paths
-    assert "/portal/billing/checkout" not in route_paths
     source = inspect.getsource(portal.portal_onboarding_claim)
     assert "polar_provider" not in source
     assert "create_checkout_session" not in source
     assert "create_portal_session" not in source
+    assert "customer" not in source
+    assert "subscription" not in source

@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Final, NoReturn, cast
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictBool
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models.portal_billing import CheckoutAttemptStatus
 from db.session import async_session_factory
 from db.tenant_context import set_tenant_context
+from recognition.application.services.checkout_service import (
+    CheckoutActiveConflictError,
+    CheckoutAmbiguousError,
+    CheckoutFingerprintConflictError,
+    CheckoutPaymentsDisabledError,
+    CheckoutService,
+    InvalidCheckoutRequestError,
+)
 from recognition.application.services.portal_identity_service import (
     PortalClaimOutcome,
     PortalIdentityClaimError,
@@ -35,11 +46,16 @@ from recognition.application.services.tenant_key_service import (
     KeyPage,
     TenantKeyService,
 )
-from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal
+from recognition.domain.portal_contracts import BillingSubscriptionStatus, EntitlementStatus, PortalPrincipal
+from recognition.infrastructure.repositories.billing_repository import BillingRepository
 from recognition.interface_adapters.http.deps.portal_auth import (
     PortalTokenClaims,
     require_portal_principal,
     require_verified_portal_identity,
+)
+from recognition.interface_adapters.http.deps.portal_composition import (
+    BillingRepositoryFactory,
+    CheckoutServiceFactory,
 )
 from recognition.shared.db.dialect import is_postgres
 
@@ -49,6 +65,11 @@ DEFAULT_KEY_PAGE_LIMIT = 25
 MAX_KEY_PAGE_LIMIT = 100
 MAX_KEY_LOOKUP_PAGES: Final[int] = 100
 NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+_SAFE_RETURN_PATH = re.compile(r"^/[A-Za-z0-9/_-]*$")
+_IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{64,128}$")
+_DEFAULT_SUCCESS_PATH = "/billing/return"
+_DEFAULT_CANCEL_PATH = "/billing/cancel"
+_DEFAULT_MANAGE_PATH = "/billing"
 _CLAIM_ERROR_STATUS = {
     "invalid_claim_request": 422,
     "not_admitted": status.HTTP_403_FORBIDDEN,
@@ -186,6 +207,42 @@ class PortalUsageResponse(BaseModel):
     data_source: str
 
 
+class PortalCheckoutRequest(BaseModel):
+    """Client checkout intent; catalog and return URLs are server-selected."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    plan_code: str = Field(min_length=1)
+    return_path: str | None = None
+
+
+class PortalCheckoutResponse(BaseModel):
+    """Durable checkout attempt result; redirects never grant entitlement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: UUID
+    checkout_url: str | None
+    status: str
+    replayed: bool
+
+
+class PortalManageRequest(BaseModel):
+    """Optional relative return path for the hosted customer portal."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    return_path: str | None = None
+
+
+class PortalManageResponse(BaseModel):
+    """Hosted portal URL for an already-mapped billing customer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    portal_url: str
+
+
 async def get_portal_session(
     principal: PortalPrincipal = Depends(require_portal_principal),
 ) -> AsyncIterator[AsyncSession]:
@@ -291,6 +348,122 @@ def _reject_claim_tenant_selection(request: Request, payload: Mapping[str, objec
         raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
 
 
+def _reject_client_tenant_selection(request: Request, payload: Mapping[str, object]) -> None:
+    if "tenant_id" in request.query_params:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
+    if "tenant_id" in payload or "tenantId" in payload:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
+
+
+def _billing_http_error(
+    status_code: int,
+    code: str,
+    *,
+    attempt_id: UUID | None = None,
+    retry_after: int | None = None,
+) -> HTTPException:
+    detail: dict[str, object] = {"code": code}
+    if attempt_id is not None:
+        detail["attempt_id"] = str(attempt_id)
+    headers = dict(NO_STORE_HEADERS)
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return HTTPException(status_code=status_code, detail=detail, headers=headers)
+
+
+def _payments_enabled(request: Request) -> bool:
+    config = getattr(getattr(request, "app", None), "state", None)
+    return bool(
+        getattr(config, "portal_composition_config", None)
+        and getattr(
+            getattr(config, "portal_composition_config", None),
+            "billing_payments_enabled",
+            False,
+        )
+    )
+
+
+def _require_payments_enabled(request: Request) -> None:
+    if not _payments_enabled(request):
+        raise _billing_http_error(status.HTTP_403_FORBIDDEN, "payments_disabled")
+
+
+def _billing_config(request: Request) -> object:
+    config = getattr(getattr(request, "app", None), "state", None)
+    return getattr(config, "portal_composition_config", None)
+
+
+def _validate_return_path(path: str) -> str:
+    if not isinstance(path, str) or not _SAFE_RETURN_PATH.fullmatch(path) or "//" in path:
+        raise _billing_http_error(422, "invalid_return_path")
+    return path
+
+
+def _absolute_return_url(request: Request, path: str) -> str:
+    normalized = _validate_return_path(path)
+    config = _billing_config(request)
+    origin = str(getattr(config, "app_public_origin", "") or os.getenv("APP_PUBLIC_ORIGIN", "")).rstrip("/")
+    if not origin:
+        raise _billing_http_error(422, "invalid_return_path")
+    url = f"{origin}{normalized}"
+    parsed = urlparse(url)
+    result_origin = f"{parsed.scheme}://{parsed.netloc}"
+    allowed = tuple(getattr(config, "billing_allowed_return_origins", ()) or ())
+    if allowed and result_origin not in allowed:
+        raise _billing_http_error(422, "invalid_return_path")
+    return url
+
+
+def _client_idempotency_key(request: Request) -> str:
+    value = request.headers.get("idempotency-key")
+    if not isinstance(value, str) or _IDEMPOTENCY_KEY.fullmatch(value) is None:
+        raise _billing_http_error(422, "invalid_idempotency_key")
+    return value
+
+
+def _validate_checkout_request(payload: Mapping[str, object]) -> PortalCheckoutRequest:
+    try:
+        return PortalCheckoutRequest.model_validate(payload)
+    except ValidationError:
+        raise _billing_http_error(422, "invalid_checkout_request") from None
+
+
+def _validate_manage_request(payload: Mapping[str, object]) -> PortalManageRequest:
+    try:
+        return PortalManageRequest.model_validate(payload)
+    except ValidationError:
+        raise _billing_http_error(422, "invalid_return_path") from None
+
+
+def _plan_catalog(request: Request) -> Mapping[str, str]:
+    catalog = getattr(_billing_config(request), "billing_product_ids", None)
+    if isinstance(catalog, Mapping):
+        return catalog
+    return {}
+
+
+async def get_checkout_service(
+    request: Request,
+    session: AsyncSession = Depends(get_portal_session),
+) -> CheckoutService:
+    """Build a tenant-scoped checkout service from the request session."""
+    factory = getattr(request.app.state, "checkout_service", None)
+    if isinstance(factory, CheckoutService) or not isinstance(factory, CheckoutServiceFactory):
+        raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "checkout_unavailable")
+    return factory(session)
+
+
+async def get_portal_billing_repository(
+    request: Request,
+    session: AsyncSession = Depends(get_portal_session),
+) -> BillingRepository:
+    """Build a tenant-scoped billing repository from the request session."""
+    factory = getattr(request.app.state, "billing_repository", None)
+    if isinstance(factory, BillingRepositoryFactory):
+        return factory(session)
+    return BillingRepository(session)
+
+
 async def _claim_payload(request: Request) -> dict[str, object]:
     try:
         payload = await request.json()
@@ -316,11 +489,11 @@ def _key_error(exc: Exception) -> HTTPException:
         return _no_store_error(status.HTTP_404_NOT_FOUND, "portal key not found")
     if isinstance(exc, IdempotencyKeyReuseError):
         return _no_store_error(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            422,
             "idempotency key was reused with a different request",
         )
     if isinstance(exc, InvalidKeyRequestError):
-        return _no_store_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid portal key request")
+        return _no_store_error(422, "invalid portal key request")
     if isinstance(exc, KeyAlreadyRevokedError):
         return _no_store_error(status.HTTP_409_CONFLICT, "portal key is already revoked")
     if isinstance(exc, KeyAlreadyRotatedError):
@@ -592,6 +765,110 @@ async def portal_onboarding_claim(
     )
 
 
+def _checkout_status(result: object) -> str:
+    value = getattr(result, "status", None)
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value)
+
+
+def _map_checkout_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, CheckoutPaymentsDisabledError):
+        return _billing_http_error(status.HTTP_403_FORBIDDEN, "payments_disabled")
+    if isinstance(exc, CheckoutFingerprintConflictError):
+        return _billing_http_error(422, "idempotency_key_reuse")
+    if isinstance(exc, CheckoutAmbiguousError):
+        if exc.__cause__ is not None:
+            return _billing_http_error(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "checkout_ambiguous",
+                attempt_id=exc.attempt_id,
+                retry_after=1,
+            )
+        return _billing_http_error(status.HTTP_409_CONFLICT, "checkout_ambiguous", attempt_id=exc.attempt_id)
+    if isinstance(exc, CheckoutActiveConflictError):
+        return _billing_http_error(status.HTTP_409_CONFLICT, "checkout_ambiguous")
+    if isinstance(exc, InvalidCheckoutRequestError):
+        return _billing_http_error(422, "invalid_checkout_request")
+    return _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "checkout_unavailable")
+
+
+@router.post("/billing/checkout", response_model=PortalCheckoutResponse)
+async def portal_billing_checkout(
+    request: Request,
+    response: Response,
+    principal: PortalPrincipal = Depends(require_portal_principal),
+    session: AsyncSession = Depends(get_portal_session),
+    billing_repository: BillingRepository = Depends(get_portal_billing_repository),
+) -> PortalCheckoutResponse:
+    """Create or replay a durable hosted checkout without granting entitlement from the redirect."""
+    response.headers.update(NO_STORE_HEADERS)
+    _require_claim_origin(request)
+    payload = await _claim_payload(request)
+    _reject_client_tenant_selection(request, payload)
+    _require_payments_enabled(request)
+    body = _validate_checkout_request(payload)
+    if body.plan_code not in _plan_catalog(request):
+        raise _billing_http_error(422, "unknown_plan_code")
+    success_url = _absolute_return_url(request, body.return_path or _DEFAULT_SUCCESS_PATH)
+    cancel_url = _absolute_return_url(request, _DEFAULT_CANCEL_PATH)
+    projection = await billing_repository.get_projection(principal.tenant_id)
+    if projection is not None and projection.status == BillingSubscriptionStatus.ACTIVE.value:
+        raise _billing_http_error(status.HTTP_409_CONFLICT, "already_subscribed")
+    service = await get_checkout_service(request, session)
+    try:
+        result = await service.create_checkout(
+            tenant_id=principal.tenant_id,
+            plan_code=body.plan_code,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            client_idempotency_key=_client_idempotency_key(request),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _map_checkout_error(exc) from None
+    status_value = _checkout_status(result)
+    checkout_url = None if status_value == CheckoutAttemptStatus.SUCCEEDED.value else result.checkout_url
+    return PortalCheckoutResponse(
+        attempt_id=result.attempt_id,
+        checkout_url=checkout_url,
+        status=status_value,
+        replayed=bool(result.replayed),
+    )
+
+
+@router.post("/billing/manage", response_model=PortalManageResponse)
+async def portal_billing_manage(
+    request: Request,
+    response: Response,
+    principal: PortalPrincipal = Depends(require_portal_principal),
+    billing_repository: BillingRepository = Depends(get_portal_billing_repository),
+) -> PortalManageResponse:
+    """Open the hosted customer portal only after a tenant billing mapping exists."""
+    response.headers.update(NO_STORE_HEADERS)
+    _require_claim_origin(request)
+    payload = await _claim_payload(request)
+    _reject_client_tenant_selection(request, payload)
+    _require_payments_enabled(request)
+    body = _validate_manage_request(payload)
+    return_url = _absolute_return_url(request, body.return_path or _DEFAULT_MANAGE_PATH)
+    projection = await billing_repository.get_projection(principal.tenant_id)
+    if projection is None or not projection.provider_customer_id:
+        raise _billing_http_error(status.HTTP_409_CONFLICT, "billing_customer_missing")
+    provider = getattr(request.app.state, "billing_provider", None)
+    create_portal_session = getattr(provider, "create_portal_session", None)
+    if not callable(create_portal_session):
+        raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "billing_portal_unavailable")
+    try:
+        portal_url = await create_portal_session(tenant_id=principal.tenant_id, return_url=return_url)
+    except Exception:
+        raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "billing_portal_unavailable") from None
+    if not isinstance(portal_url, str) or not portal_url:
+        raise _billing_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "billing_portal_unavailable")
+    return PortalManageResponse(portal_url=portal_url)
+
+
 @router.get("/keys", response_model=PortalKeyPageResponse)
 async def list_portal_keys(
     response: Response,
@@ -851,12 +1128,16 @@ __all__ = [
     "RevokeKeyRequest",
     "RevokeKeyResponse",
     "RotateKeyRequest",
+    "get_checkout_service",
     "get_claim_session",
+    "get_portal_billing_repository",
     "get_portal_claim_service",
     "get_portal_session",
     "get_portal_usage_service",
     "get_tenant_entitlement_service",
     "get_tenant_key_service",
+    "portal_billing_checkout",
+    "portal_billing_manage",
     "portal_onboarding_claim",
     "router",
 ]

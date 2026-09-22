@@ -307,6 +307,61 @@ describe('reclaimer state matrix', () => {
     expect(p.detail).toMatch(/more remains/i);
     expect(p.detail).not.toMatch(/data loss/i);
   });
+
+  it.each([
+    ['unknown', null],
+    ['overdue', reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE)],
+    ['breach', reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH)],
+  ] as const)('keeps resync-required primary for a %s reclaimer', (_label, reclaimer) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncResult: LAST_SYNC_RESULT.RESYNC_REQUIRED,
+      reclaimer,
+    });
+
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+    expect(p.status).not.toBe(SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN);
+    expect(p.action?.kind).toBe('sync_now');
+  });
+
+  it.each([
+    ['unknown', null],
+    ['overdue', reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE)],
+    ['breach', reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH)],
+  ] as const)('keeps the retry action for a %s reclaimer on results error', (_label, reclaimer) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'stale',
+      resultsSyncState: 'error',
+      resultsError: SYNC_VOCABULARY.resultsErrorHeadline,
+      reclaimer,
+    });
+
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.ERROR);
+    expect(p.action?.kind).toBe('retry_results');
+  });
+
+  it.each([
+    ['unknown', null, SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN],
+    [
+      'overdue',
+      reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE),
+      SYNC_PRESENTATION_STATUS.RECLAIMER_OVERDUE,
+    ],
+    [
+      'breach',
+      reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH),
+      SYNC_PRESENTATION_STATUS.RECLAIMER_BREACH,
+    ],
+  ] as const)('surfaces the %s reclaimer warning on idle', (_label, reclaimer, expectedStatus) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-09-22T12:00:00Z',
+      reclaimer,
+    });
+
+    expect(p.status).toBe(expectedStatus);
+    expect(p.headline).toBeTruthy();
+  });
 });
 
 describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {

@@ -387,12 +387,6 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     });
   }
 
-  const earlyReclaimerPresentation =
-    reclaimer === undefined ? null : buildReclaimerPresentation(reclaimer);
-  if (earlyReclaimerPresentation && reclaimerSeverity(reclaimer) > 0) {
-    return earlyReclaimerPresentation;
-  }
-
   // R23-BR-23: durable resync marker must outrank a stale "healthy" sync_health
   // so the operator sees the real state. last_sync_result is the sole trigger —
   // the producer never emits a top-level failed: string[] (HARM-BR-04).

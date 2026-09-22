@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,6 +16,7 @@ from recognition.application.orchestration.cluster_merge import (
     MergeReceiptStaleError,
     revert_merge,
 )
+from recognition.domain.portal_contracts import PortalPrincipal
 from recognition.interface_adapters.http.deps import (
     get_cluster_service_builder,
     get_session,
@@ -28,6 +30,8 @@ router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depen
 
 _PROBLEM_JSON = "application/problem+json"
 _PROBLEM_BASE = "https://context-alt-text.dev/problems"
+_OPERATOR_FORBIDDEN_DETAIL = "operator_control_forbidden"
+_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
 
 
 class RevertMergeRequest(BaseModel):
@@ -36,6 +40,42 @@ class RevertMergeRequest(BaseModel):
 
 class RevertMergeResponse(BaseModel):
     source_cluster_id: UUID = Field(description="Restored source cluster id")
+
+
+def _normalized_auth_marker(value: Any) -> str | None:
+    raw = getattr(value, "value", value)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower().replace("-", "_")
+    return None
+
+
+def _is_portal_principal(auth: Any) -> bool:
+    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
+    if isinstance(auth, PortalPrincipal):
+        return True
+    issuer = getattr(auth, "issuer", None)
+    subject = getattr(auth, "subject", None)
+    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
+
+
+def _is_beta_or_portal_caller(auth: Any) -> bool:
+    """Fail closed for portal principals; AuthContext has no entitlement field."""
+    if auth is None:
+        return False
+    if _is_portal_principal(auth):
+        return True
+    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
+        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
+            return True
+    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
+
+
+def _deny_beta_operator_caller(auth: Any) -> None:
+    if _is_beta_or_portal_caller(auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_OPERATOR_FORBIDDEN_DETAIL,
+        )
 
 
 def _problem(*, code: str, title: str, type_slug: str) -> JSONResponse:
@@ -62,6 +102,7 @@ async def revert_merge_cluster(
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> RevertMergeResponse | JSONResponse:
     """Revert the named receipt on the path survivor cluster (CONTRACTSROSTER-R-03)."""
+    _deny_beta_operator_caller(_auth)
     auth_tenant_id = getattr(_auth, "tenant_claim", None)
     service_tenant_id = tenant_id
     if auth_tenant_id:

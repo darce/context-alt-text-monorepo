@@ -101,12 +101,9 @@ class CorrelationIdMiddleware:
 
         incoming = self._read_header(scope)
         correlation_id = incoming or generate_correlation_id()
-        # Don't reset the contextvar in a finally block: Starlette's
-        # ServerErrorMiddleware sits outside user middleware, so resetting here
-        # clears the id before the registered 500 handler runs. Each request
-        # runs in its own asyncio task/context, so the binding is naturally
-        # scoped to the request lifetime.
-        _correlation_id_var.set(correlation_id)
+        # Reset on success; deliberately leak on exceptions so the outer
+        # ServerErrorMiddleware can still read the id for the registered 500 handler.
+        token = _correlation_id_var.set(correlation_id)
         response_status: int | None = None
         encoded_header = (self._header_key, correlation_id.encode("latin-1"))
 
@@ -124,10 +121,13 @@ class CorrelationIdMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except BaseException:
+            # Deliberately do NOT reset: ServerErrorMiddleware sits outside this
+            # middleware and its 500 handler still needs the bound id.
             self._log_access(scope, correlation_id, response_status or 500)
             raise
         else:
             self._log_access(scope, correlation_id, response_status or 500)
+            _correlation_id_var.reset(token)
 
     def _read_header(self, scope: Scope) -> str | None:
         values = [value for key, value in scope.get("headers", []) if key.lower() == self._header_key]

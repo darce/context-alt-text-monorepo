@@ -429,6 +429,54 @@ class ReclaimerLivenessTest extends TestCase
 		$this->assertFalse(is_array($alloptions) && array_key_exists($option, $alloptions));
 	}
 
+	public function testFirstFencedInsertSurvivesPersistentOptionCacheGhosts(): void
+	{
+		$ghost = array(
+			'last_outcome' => ReclaimerLiveness::OUTCOME_FAILED,
+			'last_purged_count' => 0,
+			'fencing_token' => 99,
+		);
+		$cases = array(
+			'tenant-ghost-alloptions' => static function (string $option) use ($ghost): void {
+				wp_cache_set('alloptions', array( $option => $ghost ), 'options');
+			},
+			'tenant-ghost-per-key' => static function (string $option) use ($ghost): void {
+				wp_cache_set($option, $ghost, 'options');
+			},
+			'tenant-ghost-notoptions' => static function (string $option) use ($ghost): void {
+				wp_cache_set('notoptions', array( $option => true ), 'options');
+				wp_cache_set('alloptions', array( $option => $ghost ), 'options');
+			},
+		);
+
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		foreach ( $cases as $tenant => $plant ) {
+			$option = 'acx_reclaimer_liveness_' . $tenant;
+			$plant($option);
+			$this->assertIsString($liveness->claim($tenant), $tenant);
+			$liveness->record_success(
+				$tenant,
+				5,
+				1,
+				12,
+				false,
+				ReclaimerLiveness::SCHEDULER_WP_CRON
+			);
+
+			$state = $liveness->read($tenant);
+			$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $state['last_outcome'], $tenant);
+			$this->assertSame(5, $state['last_purged_count'], $tenant);
+			$this->assertSame(1, $state['backlog_remaining'], $tenant);
+			$stored = get_option($option);
+			$this->assertIsArray($stored, $tenant);
+			$this->assertSame(5, $stored['last_purged_count'], $tenant);
+			$notoptions = wp_cache_get('notoptions', 'options');
+			$this->assertFalse(is_array($notoptions) && isset($notoptions[$option]), $tenant);
+			$alloptions = wp_cache_get('alloptions', 'options');
+			$this->assertFalse(is_array($alloptions) && array_key_exists($option, $alloptions), $tenant);
+		}
+	}
+
 	public function testFencedWritesKeepSeparateTenantsIsolatedWithStaleCache(): void
 	{
 		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
@@ -444,11 +492,11 @@ class ReclaimerLivenessTest extends TestCase
 			false,
 			ReclaimerLiveness::SCHEDULER_WP_CRON
 		);
-		wp_cache_set(
-			'acx_reclaimer_liveness_tenant-cache-a',
-			array( 'last_purged_count' => 99, 'last_outcome' => ReclaimerLiveness::OUTCOME_FAILED ),
-			'options'
-		);
+		$optionA = 'acx_reclaimer_liveness_tenant-cache-a';
+		$storedA = get_option($optionA);
+		$this->assertIsArray($storedA);
+		wp_cache_set($optionA, $storedA, 'options');
+		wp_cache_set('alloptions', array( $optionA => $storedA ), 'options');
 		$liveness->record_attempt('tenant-cache-b', ReclaimerLiveness::SCHEDULER_WP_CRON);
 		$liveness->record_success(
 			'tenant-cache-b',
@@ -458,7 +506,6 @@ class ReclaimerLivenessTest extends TestCase
 			true,
 			ReclaimerLiveness::SCHEDULER_WP_CRON
 		);
-		wp_cache_delete('acx_reclaimer_liveness_tenant-cache-a', 'options');
 
 		$stateA = $liveness->read('tenant-cache-a');
 		$stateB = $liveness->read('tenant-cache-b');
@@ -468,6 +515,14 @@ class ReclaimerLivenessTest extends TestCase
 		$this->assertSame(7, $stateB['last_purged_count']);
 		$this->assertTrue($stateB['batch_cap_reached']);
 		$this->assertFalse($stateA['batch_cap_reached']);
+		$cachedA = wp_cache_get($optionA, 'options');
+		if ( is_array($cachedA) ) {
+			$this->assertSame(4, $cachedA['last_purged_count']);
+		}
+		$alloptions = wp_cache_get('alloptions', 'options');
+		if ( is_array($alloptions) && array_key_exists($optionA, $alloptions) && is_array($alloptions[$optionA]) ) {
+			$this->assertSame(4, $alloptions[$optionA]['last_purged_count']);
+		}
 	}
 
 	public function testRejectedFencingLeavesOtherTenantStateIntact(): void

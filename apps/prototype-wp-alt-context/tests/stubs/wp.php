@@ -1767,6 +1767,11 @@ if (!function_exists('add_option')) {
      * Insert a missing option. Honors the same opt-in failure map as
      * update_option so RecognitionPolicy::set() can be the single writer.
      *
+     * WordPress 6.2+ refuses the INSERT when get_option() already sees a
+     * value via alloptions or the per-option key. A notoptions hit skips
+     * that existence check. A non-autoload add does not scrub a leftover
+     * alloptions ghost (wp-includes/option.php).
+     *
      * @param string           $key
      * @param mixed            $value
      * @param string           $deprecated
@@ -1788,6 +1793,14 @@ if (!function_exists('add_option')) {
             return false;
         }
 
+        $key = (string) $key;
+        $notoptions = wp_cache_get('notoptions', 'options');
+        if (!is_array($notoptions) || !isset($notoptions[$key])) {
+            if (false !== get_option($key)) {
+                return false;
+            }
+        }
+
         if (isset($GLOBALS['__ac_options']) && array_key_exists($key, $GLOBALS['__ac_options'])) {
             return false;
         }
@@ -1796,12 +1809,37 @@ if (!function_exists('add_option')) {
             $GLOBALS['__ac_options'] = [];
         }
         $GLOBALS['__ac_options'][$key] = $value;
-        __ac_remember_option_cache($key, $value);
+
+        if (is_array($notoptions) && isset($notoptions[$key])) {
+            unset($notoptions[$key]);
+            wp_cache_set('notoptions', $notoptions, 'options');
+        }
+
+        $autoloadFlag = $GLOBALS['__ac_option_autoload'][$key];
+        $isAutoload = true === $autoloadFlag
+            || 1 === $autoloadFlag
+            || '1' === $autoloadFlag
+            || (is_string($autoloadFlag) && in_array(strtolower((string) $autoloadFlag), ['yes', 'on', 'true', 'auto', 'auto-on'], true));
+        if ($isAutoload) {
+            $alloptions = wp_cache_get('alloptions', 'options');
+            if (!is_array($alloptions)) {
+                $alloptions = [];
+            }
+            $alloptions[$key] = $value;
+            wp_cache_set('alloptions', $alloptions, 'options');
+        } else {
+            wp_cache_set($key, $value, 'options');
+        }
+
         return true;
     }
 }
 
 if (!function_exists('get_option')) {
+    /**
+     * Core lookup order from wp-includes/option.php: notoptions, then
+     * alloptions, then the per-option key, then the options store.
+     */
     function get_option($key, $default = false)
     {
         $beforeRead = $GLOBALS['__ac_get_option_before_read'][$key] ?? null;

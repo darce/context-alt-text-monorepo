@@ -1,5 +1,5 @@
 {
-  "composed_cosine": 0.9999999999990856,
+  "composed_cosine": 0.9999999999990652,
   "cosine_min": 0.99999999,
   "description": "Independent ArcFace align+blob+ORT vs in-house FivePointAligner+OrtSFaceEmbedder on the existing aligner source image/landmarks. Not a quality or deployment claim.",
   "embedding_dim": 512,
@@ -8,8 +8,8 @@
     512
   ],
   "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
-  "inhouse_crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
-  "inhouse_pre_norm_magnitude": 9.165495872497559,
+  "inhouse_crop_sha256": "65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae",
+  "inhouse_pre_norm_magnitude": 9.16549015045166,
   "kind": "auraface_composed_embedding_golden",
   "l2_norm": 0.9999999403953552,
   "model": "glintr100.onnx",
@@ -48,8 +48,8 @@
     "insightface_runtime_imported": false,
     "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6"
   },
-  "reference_crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
-  "reference_pre_norm_magnitude": 9.165494918823242,
+  "reference_crop_sha256": "65511013e95e59323cda96761620b3f8a608a5569fb5e5a543a3e59f76cef8ae",
+  "reference_pre_norm_magnitude": 9.165489196777344,
   "source_image": "aligner_source_image.npy",
   "source_landmarks": "aligner_landmarks.npy"
 }

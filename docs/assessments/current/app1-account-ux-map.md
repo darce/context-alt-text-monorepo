@@ -1,6 +1,6 @@
 # APP-1 account UX map — inventory and ASCII screens
 
-Date: 2026-09-22. Status: OBSERVED-UI account chrome in `apps/app-portal` (offline mocked Clerk). Claim/key/billing remain out of map. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
+Date: 2026-09-22. Status: COMPLETED docs/map contract — OBSERVED-UI B0 account chrome plus PLANNED-UI B1 browser journeys in the same SSOT map. Coordinator decisions record the B0 browser fix and N1 backend fix as landed; no F0 repair prerequisite remains. Clerk production, Polar sandbox, and WordPress live evidence remain unavailable; this is an offline inventory and contract, not an acceptance claim. SSOT: [`docs/ux-maps/app-portal.uxmap.json`](../../ux-maps/app-portal.uxmap.json). Detailed B1 contracts and ownership live in [`app1-browser-journey-slices-20260922.md`](app1-browser-journey-slices-20260922.md). Plugin map precedent: `apps/prototype-wp-alt-context/docs/ux-maps/*.uxmap.json`.
 
 Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/darce/heuristics-canon) `REF-15`, `CARD-06`, `CARD-15`, `DOM-03`. Also `NAV-08`, `NAV-07`, `RLSE-04`, `FORM-09`, `CARD-12`, `CARD-16`.
 
@@ -8,7 +8,37 @@ Canon (stable IDs, latest, never pin): [heuristics-canon](https://github.com/dar
 
 Author the account screen contract before browser code (`CARD-06`). Visible **Sign in**, **Create account**, **User**, and **Sign out**. Unavailable configuration is a designed screen with those controls disabled or absent. Clerk authenticates a person. Tenant UUID and API keys stay existing backend authority. No fake tenant claims (`DOM-03`). Wrap Clerk so a later identity swap is an adapter change (`REF-15`, `CARD-16`). Sign-out is cheap and reversible at session scope; key revoke is not this surface (`CARD-15`).
 
-Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Production Clerk and the Polar sandbox remain unprovisioned; this document does not claim live-provider evidence. Claim, keys, usage, and billing journeys are still not this map.
+Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Production Clerk and the Polar sandbox remain unprovisioned; this document does not claim live-provider evidence. The same JSON map now extends into **PLANNED-UI** claim, keys, usage, WordPress guidance, and billing journeys using current backend contracts; no B1 source implementation is included in this docs lane.
+
+## B0 browser-fix invariants before B1
+
+These are accepted integration constraints for the app-owned browser-fix wave, recorded here before any B1 source work. They are not a claim that production Clerk or a live backend has been exercised.
+
+| Invariant | Contract for the shell | Source anchor |
+| --- | --- | --- |
+| Session ownership | Key account state and stale-response guards by Clerk `userId`/session epoch; a late response from a previous person cannot populate the current screen. | `apps/app-portal/src/App.tsx:71-127` |
+| Private fetch | `/portal/me` reads use `Cache-Control: no-store` intent, bounded timeout, and Clerk token refresh/retry within the API client boundary; never use a cached tenant binding. | `apps/app-portal/src/api/portalMe.ts:79-147` plus accepted B0-fix constraint |
+| Invalid 200 | A 200 response missing or carrying an invalid `tenant_id` is invalid account data, not “not linked”; do not substitute email, Clerk org, or a guessed tenant. | `portalMe.ts:51-59`; `App.tsx:46-54`; `backend-authority.test.tsx:77-94` |
+| Unadmitted 403 | `/portal/me` 403 remains a non-enumerating account-not-ready state; claim-specific `email_unverified` is the only typed verified-email exception. | `portalMe.ts:62-76`; `portal_auth.py:681-712, 728-779` |
+| Signed-in outage | A 503/timeout preserves UserButton and Sign out; retry refreshes the backend identity read and does not turn an outage into signed-out or tenant-ready UI. | `App.tsx:181-209`; `OutageScreen.tsx:3-18`; accepted B0-fix constraint |
+
+The B1 feature modules consume these boundaries. They do not redesign the existing Clerk account integration (`REF-15`, `CARD-16`, `RLSE-04`, `NAV-11`, `HAI-01`).
+
+## B1 completion and parallel implementation boundary
+
+The coordinator's frozen decision is that K/U (keys and usage) and C/B (claim
+and billing) implement in parallel after this contract freeze. Each feature
+group owns its API DTOs, client interface, local error shape, and component
+props. Components receive typed clients and test doubles through props; they
+do not import runtime or type definitions from a hypothetical shared browser
+module. A structural `PortalRequest` alias is repeated in each owned API file.
+
+B0 and N1 are already landed. I1 is a single app owner activated only after
+both feature groups land: it creates the real session-scoped authenticated
+no-store bounded transport, passes it to the four feature factories, keys the
+keys subtree to the Clerk session/user, and wires `App.tsx`, routes, styles,
+and config. No feature group edits those shell paths or waits for an unwritten
+F0 source module.
 
 ## Vocabulary (`DOM-03`)
 
@@ -41,7 +71,7 @@ Account screens and flows below are **OBSERVED-UI** in `apps/app-portal`. Produc
 | Sign-in unavailable | screen | `/` | Try again |
 | Sign out | exit | `/` | Sign out |
 
-`code_ref` is `apps/app-portal/src/App.tsx`. No provider CLI setup or application ID is required for this offline slice.
+`code_ref` is `apps/app-portal/src/App.tsx` for B0. The B1 extension anchors its planned screens to current `portal.py` handlers and keeps Clerk integration as the existing adapter; no provider CLI setup or application ID is required for this offline slice.
 
 ## ASCII screens and states
 
@@ -104,7 +134,7 @@ Creating a person session does not grant tenant access; that backend invariant r
 +----------------------------------------------------------------------------+
 ```
 
-`loading`: Account may be present; account access strip “Checking account…”. `empty`: signed in, no tenant UUID — **do not** fill with email local-part or a Clerk organization (`CARD-12`). No `OrganizationSwitcher`. The account menu and Sign out remain reachable while identity is loading or ready.
+`loading`: Account may be present; account access strip “Checking account…”. The B0-fix contract treats a 200 `/portal/me` response without a valid `tenant_id` as invalid backend account data, not as a “not linked” tenant; it must not be filled from the email local-part or a Clerk organization (`CARD-12`). No `OrganizationSwitcher`. The account menu and Sign out remain reachable while identity is loading, ready, or the signed-in backend is unavailable (`RLSE-04`, `NAV-11`, `HAI-01`).
 
 ### Unavailable — missing publishable key (`error`)
 
@@ -143,7 +173,7 @@ Distinct from missing config and from sign-in outage (`NAV-13` / `DOM-03`).
 +----------------------------------------------------------------------------+
 ```
 
-Backend may distinguish `tenant_not_eligible` / `email_unverified` / `claim_missing`; UI uses one non-enumerating “account access not ready” family unless a verified-email retry is explicitly required. Sign out remains (`NAV-07`). No tenant, keys, or billing are shown.
+Backend `/portal/me` uses 403 `portal access denied` for an unadmitted tenant-bound principal; claim uses typed `email_unverified` or `not_admitted` outcomes. UI keeps non-enumerating “account access not ready” copy unless verified-email guidance is explicitly required. Sign out remains (`NAV-07`). No tenant, keys, or billing are shown before backend admission.
 
 ### Sign-in unavailable (provider outage) — `error`
 
@@ -156,7 +186,7 @@ Backend may distinguish `tenant_not_eligible` / `email_unverified` / `claim_miss
 +----------------------------------------------------------------------------+
 ```
 
-Bounded wait before this state (`INT-08`). WordPress API-key recognition is a different failure domain and is not claimed broken here (`REF-15`).
+Bounded wait before this state (`INT-08`). A signed-in backend outage is a separate planned state that retains UserButton and Sign out; WordPress API-key recognition is a different failure domain and is not claimed broken here (`REF-15`).
 
 ### Sign out exit
 
@@ -201,8 +231,9 @@ The recovered action conditions are represented in supported screen states rathe
 | `portal-signed-out` | `default` / `first_time` | The session is ready and signed out; `open-sign-in` is primary and `open-sign-up` is secondary, both enabled. |
 | `portal-account` | `loading` | Signed-in chrome remains available while `/portal/me` is checked; the account menu and Sign out remain reachable. |
 | `portal-account` | `default` | The signed-in person can open the account menu or sign out. |
-| `portal-account` | `empty` | The session exists but backend account access is not linked; no tenant substitute or key/billing control is enabled. |
+| `portal-account` | `empty` | The source B0 state is retained for schema compatibility, but the accepted B0-fix meaning is invalid `/portal/me` binding (for example 200 without a valid tenant_id); no “not linked” label, tenant substitute, or key/billing control is enabled. |
 | `portal-account` | `error` | Backend `GET /portal/me` returned 401; retry refetches. Sign out remains. |
+| `portal-backend-outage` | `error` / `degraded` | Backend 503/timeout; retry is bounded to the account read while UserButton and Sign out remain reachable. |
 | `portal-not-admitted` | `degraded` | Clerk email is unverified; Sign out remains; no tenant UUID. |
 | `logout-complete` | `loading` | Sign-out in flight; account/tenant data already cleared. |
 | `logout-complete` | `error` | Sign-out failed; Try again retries sign-out; tenant data stays cleared. |
@@ -222,8 +253,9 @@ The recovered action conditions are represented in supported screen states rathe
 | `CARD-16` | Clerk outage must not kill API keys | outage copy is portal-only |
 | `CARD-15` | Sign-out vs key revoke | logout does not revoke keys |
 | `CARD-06` | Screen code before inventory | this document + JSON before `apps/app-portal` |
+| `UI-06` | Irreversible primary actions were mapped on non-overlays | Single-use claim and last-key revoke retain preview/confirmation with secondary/destructive final actions; hosted checkout is marked reversible because it opens navigation without charging |
 
-No high finding that blocks planning the account chrome slice. Keys, Polar, and invitation field remain out of this map (`not_doing` in the JSON); B1 later extends this same SSOT.
+No high finding blocks this planning extension. The JSON keeps every B0 screen/action/flow id and adds B1 planned journeys. B1 remains offline and source-backed; it does not turn provider-dependent criteria into completed evidence.
 
 ## Implementation notes (this slice, offline)
 
@@ -231,14 +263,14 @@ No high finding that blocks planning the account chrome slice. Keys, Polar, and 
 - Env in browser: `VITE_CLERK_PUBLISHABLE_KEY`, optional `VITE_CLERK_FAPI`, public `VITE_PORTAL_ENABLED`.
 - Routed `<SignIn />` / `<SignUp />` plus `ClerkProvider` / `UserButton` / `useAuth`.
 - Test doubles live only under `src/__tests__/`. Production has no auth bypass.
-- Production Clerk and Polar sandbox provisioning remain outside this lane.
+- Production Clerk and Polar sandbox provisioning remain outside this lane. K/U and C/B use injected typed clients; I1 owns authenticated transport and shell wiring after both branches land.
 
 ## Remaining limitations
 
-- No live Clerk or Polar evidence. CSP file is an artifact, not a deployed header.
-- No claim, key, usage, or billing UI.
+- No live Clerk, Polar, or WordPress evidence. CSP file is an artifact, not a deployed header.
+- B1 claim, key, usage, WordPress guidance, and billing screens are mapped as PLANNED-UI only; no source implementation is claimed here.
 - Backend `portal_auth` / `PortalIdentityService` were not edited.
 
 ## Not doing
 
-See JSON `not_doing`. This assessment does not commit env/login material and does not edit backend `portal_auth` / `PortalIdentityService`. Claim/invitation, keys, usage, and billing journeys remain explicitly out of map until the later B1 extension.
+See JSON `not_doing`. This assessment does not commit env/login material, read provider credentials, or edit backend `portal_auth` / `PortalIdentityService`. The B1 extension is in the same map and the companion slice document; it preserves Clerk account integration and does not redesign auth. The coordinator ran the actual WorkBay critique on preserved map WIP SHA `85416ba8` (schema-valid, 16 screens); the local lane CLI is unavailable, so the coordinator should rerun final map validation/critique after this commit. This is not live UX or vendor acceptance evidence.

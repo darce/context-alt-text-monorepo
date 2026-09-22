@@ -291,11 +291,20 @@ def _runtime_space_token() -> str:
 
 
 def _runtime_preprocessing_id() -> str:
-    """Read the preprocessing identifier emitted by the runtime aligner."""
+    """Read the preprocessing identifier emitted by the default-space aligner."""
 
     from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
 
     return FivePointAligner().template_id
+
+
+def _auraface_preprocessing_id() -> str:
+    """Read the preprocessing identifier emitted by the AuraFace-space aligner."""
+
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    return FivePointAligner(space=ModelSpace.AURAFACE).template_id
 
 
 def _materialize(value: Any) -> Any:
@@ -349,16 +358,19 @@ def _apply_candidate512_contract(snapshot: dict[str, Any]) -> None:
         "yunet": f"sha256:{MODEL_MANIFEST['yunet'].sha256}",
         "auraface": f"sha256:{MODEL_MANIFEST['auraface'].sha256}",
     }
+    preprocessing_id = _auraface_preprocessing_id()
     for record in snapshot["observations"]:
         role = record["role"]
         _field(snapshot, role, "effective_profile")["value"] = "auraface"
         _field(snapshot, role, "embedding_dimension")["value"] = 512
         _field(snapshot, role, "model_id")["value"] = model_id
+        _field(snapshot, role, "preprocessing_id")["value"] = preprocessing_id
         _field(snapshot, role, "loaded_weight_hashes")["value"] = dict(hashes)
     for item in snapshot["database"]["vector_column_inventory"]["value"]:
         item["dimension"] = 512
     provenance = snapshot["database"]["embedding_provenance"]["value"]
     provenance["model_id"] = model_id
+    provenance["preprocessing_id"] = preprocessing_id
     for sample_name in ("representative_vector", "centroid"):
         sample = provenance.get(sample_name)
         if isinstance(sample, list) and sample:
@@ -1098,6 +1110,7 @@ def test_compose_prefixed_networks_and_blob_namespaces_are_refused(
 
 def test_validator_model_constants_match_manifest() -> None:
     from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
     from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
 
     validator = importlib.import_module(MODULE_NAME)
@@ -1115,10 +1128,10 @@ def test_validator_model_constants_match_manifest() -> None:
     assert validator.EXPECTED_MODEL_CONTRACT["model_suffix"] == manifest_contract, (
         f"{source_files}: EXPECTED_MODEL_CONTRACT model suffix is out of parity with MODEL_MANIFEST"
     )
-    runtime_preprocessing_id = FivePointAligner().template_id
-    assert validator.EXPECTED_MODEL_CONTRACT["preprocessing_id"] == runtime_preprocessing_id, (
+    baseline_preprocessing_id = FivePointAligner().template_id
+    assert validator.EXPECTED_MODEL_CONTRACT["preprocessing_id"] == baseline_preprocessing_id, (
         f"{source_files} and recognition/infrastructure/face_pipeline/aligner.py: "
-        "EXPECTED_MODEL_CONTRACT preprocessing id is out of parity with the runtime aligner"
+        "EXPECTED_MODEL_CONTRACT preprocessing id is out of parity with the default-space aligner"
     )
 
     candidate = validator.EXPECTED_CONTRACTS["candidate512"]
@@ -1136,9 +1149,10 @@ def test_validator_model_constants_match_manifest() -> None:
     assert candidate["asset_hashes"]["yunet"] == f"sha256:{yunet.sha256}", (
         f"{source_files}: candidate512 yunet hash is out of parity with MODEL_MANIFEST['yunet']"
     )
-    assert candidate["preprocessing_id"] == runtime_preprocessing_id, (
+    candidate_preprocessing_id = FivePointAligner(space=ModelSpace.AURAFACE).template_id
+    assert candidate["preprocessing_id"] == candidate_preprocessing_id, (
         f"{source_files} and recognition/infrastructure/face_pipeline/aligner.py: "
-        "candidate512 preprocessing id must share the baseline FivePointAligner().template_id"
+        "candidate512 preprocessing id must match FivePointAligner(space=ModelSpace.AURAFACE).template_id"
     )
     assert {
         key: validator.EXPECTED_CONTRACTS["baseline128"][key]
@@ -1151,6 +1165,30 @@ def test_validator_model_constants_match_manifest() -> None:
         )
     } == validator.EXPECTED_MODEL_CONTRACT
     assert validator.EXPECTED_CONTRACTS["baseline128"]["asset_hashes"] == validator.EXPECTED_MODEL_ASSET_HASHES
+
+
+def test_candidate512_rejects_sface_preprocessing_id() -> None:
+    """TEST-11: an AuraFace snapshot that still reports the SFace warp is invalid."""
+
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    snapshot = _case_snapshot("valid_candidate512_under_candidate512")
+    auraface_preprocessing_id = FivePointAligner(space=ModelSpace.AURAFACE).template_id
+    sface_preprocessing_id = FivePointAligner().template_id
+    assert sface_preprocessing_id == "sface-5pt-112"
+    assert auraface_preprocessing_id != sface_preprocessing_id
+    for record in snapshot["observations"]:
+        observed = _field(snapshot, record["role"], "preprocessing_id")["value"]
+        assert observed == auraface_preprocessing_id
+        _field(snapshot, record["role"], "preprocessing_id")["value"] = sface_preprocessing_id
+    snapshot["database"]["embedding_provenance"]["value"]["preprocessing_id"] = sface_preprocessing_id
+
+    result = _validate_custom_snapshot(snapshot, contract="candidate512")
+
+    assert result["status"] == "invalid"
+    assert result["exit_code"] == 2
+    assert result["reason_code"] == "model_space_contract_mismatch"
 
 
 def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:

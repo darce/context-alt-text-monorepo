@@ -61,8 +61,6 @@ EXPECTED_VECTOR_COLUMNS = frozenset(
 )
 _VECTOR_SAMPLE_NAMES = ("representative_vector", "centroid")
 
-# preprocessing_id is FivePointAligner().template_id (aligner.py:_SFACE_TEMPLATE_ID).
-# AuraFace shares that SFace warp; do not substitute provenance's alignment_template_id.
 EXPECTED_CONTRACTS: dict[str, dict[str, Any]] = {
     "baseline128": {
         "effective_profile": "face_pipeline",
@@ -81,7 +79,7 @@ EXPECTED_CONTRACTS: dict[str, dict[str, Any]] = {
         "embedding_dimension": 512,
         "model_name_prefix": "auraface+",
         "model_suffix": ("512d", "l2", "cosine"),
-        "preprocessing_id": "sface-5pt-112",
+        "preprocessing_id": "arcface-112",
         # Source of truth: provenance.py MODEL_MANIFEST yunet / auraface sha256.
         "asset_hashes": {
             "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",

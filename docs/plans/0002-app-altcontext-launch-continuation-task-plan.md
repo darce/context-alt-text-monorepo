@@ -5,7 +5,7 @@
 - Inspected baseline: `11fe4dea7ae1b065893aca38d215b38e7a18c23f`.
 - Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-polar-task-plan.md).
 - Epic: [E16 SaaS foundation](../epics/v0.3.1/saas-foundation-epic.md).
-- The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and `codex-remote` / `gpt-5.6-luna` / max for grunt work. Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
+- The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and, per the latest override, `grok-remote` / high for research and context collection (earlier Luna/max preference superseded for that work). Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
 
 ## Supporting assessments
 
@@ -27,19 +27,19 @@ APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* 
 
 The old plan still calls implemented surfaces new, and references `docs/specs/app-portal-account-billing-spec.md`, which is absent. Its S0 route inventory and E16-7 disposition matrix exist but retain pre-implementation claims. Refresh them; do not redo the entire original discovery program.
 
-Existing branch `feature/app-1-w4-keys-hooks` contains unmerged checkpoint `29c357fd4` (four files, 221 insertions/13 deletions). Its lane is blocked and the commit message reports focused probes passing but an incomplete full result. Treat it as a review/recovery candidate, never as landed or cleanly verified. Other W4 tips inspected were at the main baseline; that alone does not prove no remote artifacts exist. Inspect existing handles before any later retry.
+## Execution checkpoint — 2026-09-22 03:22 UTC
 
-## Execution checkpoint — 2026-09-22 UTC
+- Usage checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated at `1a3f51fe4` after 28 focused VM tests. Findings 15849–15852 still block main: global budget, scene coverage, premature settlement and operation-id reuse. Feature integration is not launch acceptance.
+- Keys/hooks checkpoint `1f168a2de` integrated at `8f12a1e8` after 35 focused VM tests passed. The remote review expired; no completed review is claimed and no second fix loop is authorized.
+- Vendor assessment `d4bee9e24` integrated at `375a4a7e9`; usage/evidence adjudication `321e8773d` integrated at `23e581153`. Focused protocol smoke checks passed, which does not prove the documents complete. Earlier failed/expired passes are superseded by these preserved artifacts.
+- Checkout/Link portability assessment committed at `581405f99`; operator decisions recorded in handoff decision 13236. Checkout, reconcile and keys/hooks branches were bundled under `.task-state/branch-archive/` and their clean, integrated worktrees retired before new admission.
+- The current manifest admits three disjoint ready nodes, validated by WorkBay `lane_dag`: `billing-contract`, `portal-uxmap`, `eval-evidence`. Width 3, no edges inside this wave, one spare slice slot. Billing contract precedes checkout/provider implementation; UX map precedes UI implementation. Evidence enforcement can proceed independently. Later integration consumes their outputs and the existing C/U/R/H dependencies below.
+- `eval-evidence` targets `apps/prototype-description-service/scripts/run_app_portal_evals.py` and its unit tests. The assessment's generic `scripts/eval_harness` suggestion does not establish the actual APP-1 execution path and is overridden.
+- Operator will provision Clerk development and Polar sandbox credentials through untracked `.env` and notify the coordinator. Blocker 821 gates real rehearsal/release, not offline work. Never print credential values or package `.env` into a lane.
+- Composition currently defaults Polar environment to sandbox while its default API base is live. C/U must reject inconsistent environment/base configuration before vendor calls.
+- Installed Grok adapter emits `--no-subagents`; parallelism is coordinator-owned remote lanes, not nested Grok flocks. Never spoof capability or sandbox receipts. Model discovery warning does not prove the pinned model was served; record actual receipts.
 
-- Plan/epic preservation commit: `727dd66c0`. Usage admission checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated into `feature/app-1` at `1a3f51fe4c45ada621a649a92b77bbfbdc389722`, after 28 focused VM tests passed. This is feature integration, not launch acceptance. Review identified operation-id reuse, premature settlement, scene coverage and global-budget gaps; all block main pending the U amendment/fix.
-- Keys/hooks checkpoint rebased to `35a5288fb`; fresh VM verification produced 30 passes and 5 webhook timestamp failures. One Grok/high fix pass is active: `app1-keys-hooks-fix-20260922-v1`. No green claim yet.
-- Usage/evidence contract adjudication is running remotely with Codex/Luna/max, pass `9b83f1f9-3b7a-484c-9b0e-0272821b331e`. Billing contract adjudication refused before model spawn with `capability_unknown`, including a retry after a fresh receipt. Both adapters independently pass live availability probes; this dispatch error is not proof of unsupported inference providers.
-- Operator will provision Clerk development and Polar sandbox credentials through untracked `.env` and notify the coordinator. Handoff blocker 821 gates real rehearsal/release, not offline work. Never print credential values or package `.env` into a lane.
-- Actual composition currently defaults Polar environment to sandbox while its default API base is live. C/U must validate environment/base consistency and reject incoherent configuration before vendor calls; publishing an environment-variable checklist alone does not fix this defect.
-- Three clean, unstarted baseline-only worktrees (deploy, portal, UI) were bundled and retired. The usage implementation branch was bundled after integration. Remote reaper dry-run found zero eligible sandboxes; locked/young/foreign sandboxes remain protected.
-- Installed Grok adapter emits `--no-subagents`; current parallelism is coordinator-owned disjoint remote lanes. Nested Grok flocks need supported adapter configuration before being claimed available. Never spoof capability or sandbox receipts.
-
-These are point-in-time observations. Consult MCP pass state and process ownership before recovering or retrying; a tool RPC timeout does not prove the remote pass stopped. Decisions 13221, 13223 and 13225 preserve the changed authorization and landing evidence.
+These are point-in-time observations. Consult MCP pass state before recovery; an RPC timeout does not prove a remote pass stopped. Use the recorded pass ID with `await_offload_pass`, never duplicate a live dispatch.
 
 ## Scope selection and deduplication
 
@@ -49,7 +49,7 @@ These are point-in-time observations. Consult MCP pass state and process ownersh
 | E16-1..6, E16-7, GTM AP-3/AP-4/AP-5 | Identity, self-service keys, usage, billing, host, privacy-safe operations | Absorb into APP-1; no second account/key implementation or business database |
 | E20-7 | Existing plugin usage/site-budget behavior and regression constraints | Reuse; server tenant admission remains authoritative; do not rebuild plugin metering wholesale |
 | APP-1 W0–W3 / GX fixes | Landed foundation and regression tests | Do not redispatch |
-| APP-1 W4 keys/hooks | Existing unmerged checkpoint | Review existing work before requesting missing fixes |
+| APP-1 W4 keys/hooks | Integrated green checkpoint at `8f12a1e8` | Preserve completed work; final harmonizing review covers interactions |
 | SUITERED-1 / GATEORPH | Already-landed verification infrastructure | Reuse and verify the actual APP-1 gate, no duplicate infrastructure project |
 | GPU-LAUNCH VGS findings | Only collection/evidence defects that invalidate APP-1 release evidence | Select into verification node V; leave unrelated harness work with its owner |
 | GPUDEMO-1 / GPUFLOW-4 / demo deadline, DNS bench, general reaper work | No app account/billing implementation | Exclude from this backlog; retain shared-service correctness as a launch regression check |
@@ -78,7 +78,7 @@ Paths below are relative to `apps/prototype-description-service/` unless prefixe
 
 ### P — contract and ownership refresh
 
-Own this plan, the epic's active APP-1 section, the missing `docs/specs/app-portal-account-billing-spec.md` (new), S0 route/metering inventory and E16-7 matrix, and a later revision of the W4 manifest. Do not mutate the live manifest during this planning-only session.
+Own this plan, the epic's active APP-1 section, the missing `docs/specs/app-portal-account-billing-spec.md` (new), S0 route/metering inventory and E16-7 matrix, and a later revision of the W4 manifest. The operator has authorized execution; update the manifest only after preserving finished lanes and validating disjoint ownership.
 
 - Record endpoint schemas, error/status vocabulary, verified pre-tenant identity versus tenant-bound principal, invitation claim plus beta grant transaction, and replay behavior.
 - Define durable checkout attempt lifecycle, tenant/catalog/environment binding, customer mapping, ambiguous result recovery and a new attempt after a completed/expired purchase. Pin supported vendor behavior with official documentation and sanitized sandbox fixtures before C implementation.

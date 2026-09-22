@@ -387,7 +387,12 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	private function run_inline_reclaimer_recovery( string $tenant_id ): void {
-		if ( ! $this->reclaimer_liveness->should_run_inline( $tenant_id ) ) {
+		try {
+			if ( ! $this->reclaimer_liveness->should_run_inline( $tenant_id ) ) {
+				return;
+			}
+		} catch ( Throwable $exception ) {
+			$this->record_inline_reclaimer_failure( $tenant_id, $exception );
 			return;
 		}
 
@@ -397,11 +402,32 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				ReclaimerLiveness::INLINE_PURGE_BATCH_SIZE
 			);
 			if ( false === $purged ) {
-				$this->reclaimer_liveness->record_failure( $tenant_id );
+				$this->record_inline_reclaimer_failure( $tenant_id );
 			}
 		} catch ( Throwable $exception ) {
+			$this->record_inline_reclaimer_failure( $tenant_id, $exception );
+		}
+	}
+
+	private function record_inline_reclaimer_failure( string $tenant_id, ?Throwable $exception = null ): void {
+		try {
 			$this->reclaimer_liveness->record_failure( $tenant_id );
+		} catch ( Throwable $record_exception ) {
+			try {
+				do_action( 'acx_sync_inline_reclaimer_failure_record_failed', $tenant_id, $record_exception );
+			} catch ( Throwable $ignored ) {
+				// Liveness persistence is additive and must not block upstream sync.
+			}
+		}
+
+		if ( ! ( $exception instanceof Throwable ) ) {
+			return;
+		}
+
+		try {
 			do_action( 'acx_sync_inline_reclaimer_failed', $tenant_id, $exception );
+		} catch ( Throwable $ignored ) {
+			// Inline purge observation is additive and must not block upstream sync.
 		}
 	}
 

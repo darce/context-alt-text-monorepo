@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ALTQ-1 Slice 3 GPU A/B bench — Tailscale-jump edition (no public IP anywhere).
 #   Usage:  bash a10-onbox-bench.sh [A10_PRIVATE_IP]        (default 10.0.1.68)
-#   Env:    GOLDEN_IMAGES_DIR (default ~/Development/eval-fixtures)
+#   Env:    GOLDEN_IMAGES_DIR (default <primary checkout>/benchmarks/images)
 #
 # Path: laptop --tailnet--> acx-backend (gate) --VCN--> A10 private IP.
 # Requires the intra-VCN :22 ingress rule on acx-security-list (added 2026-07-16).
@@ -16,7 +16,8 @@ EVAL_EXIT_PARTIAL="${EVAL_EXIT_PARTIAL:-1}"
 EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 
 PRIV_IP="${1:-10.0.1.68}"
-export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$HOME/Development/eval-fixtures}"
+# Primary-checkout image root (images live only there; works from linked worktrees).
+export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$(cd "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/benchmarks/images}"
 [ -d "$GOLDEN_IMAGES_DIR/mock_images" ] || { echo "GOLDEN_IMAGES_DIR invalid: $GOLDEN_IMAGES_DIR (no mock_images/)"; exit 1; }
 
 JUMP=$(grep -h "^REMOTE_GATE_HOST=" "$HOME/Development/context-alt-text-monorepo/.workbay/remote-gate.env" | cut -d= -f2- | tr -d '"'"'"' ' | sed 's/#.*//')

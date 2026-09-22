@@ -49,6 +49,7 @@ import copy
 import hashlib
 import importlib
 import importlib.metadata
+import inspect
 import json
 import os
 import subprocess
@@ -101,6 +102,9 @@ VECTOR_COLUMN_IDENTITIES = {
 CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "valid_empty_fir_store": ("ready", 0, "ready"),
     "valid_enrolled_fir_store": ("ready", 0, "ready"),
+    "valid_candidate512_under_candidate512": ("ready", 0, "ready"),
+    "valid_candidate512_under_baseline128": ("invalid", 2, "unexpected_face_pipeline_profile"),
+    "valid_baseline_under_candidate512": ("invalid", 2, "unexpected_face_pipeline_profile"),
     "freshness_boundary_minus_one": ("ready", 0, "ready"),
     "naive_captured_at_timestamp": ("invalid", 2, "malformed_timestamp"),
     "future_dated_snapshot": ("invalid", 2, "future_snapshot"),
@@ -163,6 +167,10 @@ CASE_OUTCOMES: dict[str, tuple[str, int, str]] = {
     "import_purity": ("ready", 0, "import_pure"),
 }
 PINNED_RUNTIME_CASE_EXCLUSIONS = frozenset({"redaction_secret_input", "import_purity"})
+CASE_CONTRACTS: dict[str, str] = {
+    "valid_candidate512_under_candidate512": "candidate512",
+    "valid_baseline_under_candidate512": "candidate512",
+}
 
 
 # Observation-method contract.  A service/env/compose echo is a declaration,
@@ -329,6 +337,32 @@ def _set_all_provenance_declared(value: Any) -> None:
     elif isinstance(value, list):
         for child in value:
             _set_all_provenance_declared(child)
+
+
+def _apply_candidate512_contract(snapshot: dict[str, Any]) -> None:
+    """Rewrite a baseline snapshot into a valid AuraFace 512D observation set."""
+
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+
+    model_id = f"auraface+{_runtime_space_token()}@512d/l2/cosine"
+    hashes = {
+        "yunet": f"sha256:{MODEL_MANIFEST['yunet'].sha256}",
+        "auraface": f"sha256:{MODEL_MANIFEST['auraface'].sha256}",
+    }
+    for record in snapshot["observations"]:
+        role = record["role"]
+        _field(snapshot, role, "effective_profile")["value"] = "auraface"
+        _field(snapshot, role, "embedding_dimension")["value"] = 512
+        _field(snapshot, role, "model_id")["value"] = model_id
+        _field(snapshot, role, "loaded_weight_hashes")["value"] = dict(hashes)
+    for item in snapshot["database"]["vector_column_inventory"]["value"]:
+        item["dimension"] = 512
+    provenance = snapshot["database"]["embedding_provenance"]["value"]
+    provenance["model_id"] = model_id
+    for sample_name in ("representative_vector", "centroid"):
+        sample = provenance.get(sample_name)
+        if isinstance(sample, list) and sample:
+            provenance[sample_name] = [0.0] * 512
 
 
 def _enrich_snapshot_with_database_evidence(snapshot: dict[str, Any], *, enrolled: bool) -> None:
@@ -523,13 +557,19 @@ def _case_snapshot(case_name: str) -> dict[str, Any]:
             f"user=acx_dev_fir password={DSN_PASSWORD} sslmode=disable"
         )
     elif case_name in {
+        "valid_candidate512_under_candidate512",
+        "valid_candidate512_under_baseline128",
+    }:
+        _apply_candidate512_contract(snapshot)
+    elif case_name in {
         "valid_empty_fir_store",
         "valid_enrolled_fir_store",
-            "fourth_vector_column_undiscovered",
-            "redaction_secret_input",
-            "malformed_policy_input",
-            "max_age_seconds_overflow",
-        }:
+        "valid_baseline_under_candidate512",
+        "fourth_vector_column_undiscovered",
+        "redaction_secret_input",
+        "malformed_policy_input",
+        "max_age_seconds_overflow",
+    }:
         pass
     else:
         raise AssertionError(f"unhandled contract case: {case_name}")
@@ -564,13 +604,16 @@ def _validator_result(case_name: str, snapshot: dict[str, Any]) -> Mapping[str, 
     elif case_name == "empty_forbidden_resource_policy":
         isolation_policy["forbidden_resource_ids"] = {}
 
+    call_kwargs: dict[str, Any] = {
+        "freshness_policy": freshness_policy,
+        "isolation_policy": isolation_policy,
+        "now": NOW,
+    }
+    if "contract" in inspect.signature(function).parameters:
+        call_kwargs["contract"] = CASE_CONTRACTS.get(case_name, "baseline128")
+
     try:
-        result = function(
-            snapshot,
-            freshness_policy=freshness_policy,
-            isolation_policy=isolation_policy,
-            now=NOW,
-        )
+        result = function(snapshot, **call_kwargs)
     except Exception as exc:
         pytest.fail(
             f"{case_name}: expected status={expected[0]} exit_code={expected[1]} "
@@ -593,14 +636,17 @@ def _validate_custom_snapshot(
     snapshot: dict[str, Any],
     *,
     isolation_policy: dict[str, Any] | None = None,
+    contract: str = "baseline128",
 ) -> Mapping[str, Any]:
     validator = importlib.import_module(MODULE_NAME)
-    return validator.validate_snapshot(
-        snapshot,
-        freshness_policy=_load_fixture("freshness_policy.json"),
-        isolation_policy=isolation_policy or _load_fixture("isolation_policy.json"),
-        now=NOW,
-    )
+    call_kwargs: dict[str, Any] = {
+        "freshness_policy": _load_fixture("freshness_policy.json"),
+        "isolation_policy": isolation_policy or _load_fixture("isolation_policy.json"),
+        "now": NOW,
+    }
+    if "contract" in inspect.signature(validator.validate_snapshot).parameters:
+        call_kwargs["contract"] = contract
+    return validator.validate_snapshot(snapshot, **call_kwargs)
 
 
 def _assert_pinned_outcome(case_name: str, result: Mapping[str, Any]) -> None:
@@ -724,6 +770,7 @@ def _run_cli(
     *,
     freshness_policy: dict[str, Any] | None = None,
     isolation_policy: dict[str, Any] | None = None,
+    extra_args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     snapshot_path = tmp_path / "snapshot.json"
     freshness_path = tmp_path / "freshness-policy.json"
@@ -754,6 +801,7 @@ def _run_cli(
             str(isolation_path),
             "--now",
             NOW,
+            *(extra_args or ()),
         ],
         cwd=APP_ROOT,
         env=env,
@@ -761,6 +809,26 @@ def _run_cli(
         text=True,
         check=False,
     )
+
+
+def test_cli_expected_contract_selector_is_operator_intent(tmp_path: Path) -> None:
+    snapshot = _case_snapshot("valid_candidate512_under_candidate512")
+
+    default_run = _run_cli(tmp_path, snapshot)
+    assert default_run.returncode == 2
+    default_result = json.loads(default_run.stdout)
+    assert default_result["status"] == "invalid"
+    assert default_result["reason_code"] == "unexpected_face_pipeline_profile"
+
+    selected_run = _run_cli(tmp_path, snapshot, extra_args=["--expected-contract", "candidate512"])
+    assert selected_run.returncode == 0, selected_run.stderr
+    selected_result = json.loads(selected_run.stdout)
+    assert selected_result["status"] == "ready"
+    assert selected_result["reason_code"] == "ready"
+
+    unknown_run = _run_cli(tmp_path, snapshot, extra_args=["--expected-contract", "not-a-contract"])
+    assert unknown_run.returncode != 0
+    assert "expected-contract" in unknown_run.stderr
 
 
 def test_cli_truncated_snapshot_returns_snapshot_unreadable_envelope(tmp_path: Path) -> None:
@@ -1052,6 +1120,37 @@ def test_validator_model_constants_match_manifest() -> None:
         f"{source_files} and recognition/infrastructure/face_pipeline/aligner.py: "
         "EXPECTED_MODEL_CONTRACT preprocessing id is out of parity with the runtime aligner"
     )
+
+    candidate = validator.EXPECTED_CONTRACTS["candidate512"]
+    auraface = MODEL_MANIFEST["auraface"]
+    yunet = MODEL_MANIFEST["yunet"]
+    assert candidate["embedding_dimension"] == auraface.embedding_dim, (
+        f"{source_files}: candidate512 embedding dimension is out of parity with MODEL_MANIFEST['auraface']"
+    )
+    assert candidate["model_suffix"] == (f"{auraface.embedding_dim}d", auraface.normalization, auraface.metric), (
+        f"{source_files}: candidate512 model suffix is out of parity with MODEL_MANIFEST['auraface']"
+    )
+    assert candidate["asset_hashes"]["auraface"] == f"sha256:{auraface.sha256}", (
+        f"{source_files}: candidate512 auraface hash is out of parity with MODEL_MANIFEST['auraface']"
+    )
+    assert candidate["asset_hashes"]["yunet"] == f"sha256:{yunet.sha256}", (
+        f"{source_files}: candidate512 yunet hash is out of parity with MODEL_MANIFEST['yunet']"
+    )
+    assert candidate["preprocessing_id"] == runtime_preprocessing_id, (
+        f"{source_files} and recognition/infrastructure/face_pipeline/aligner.py: "
+        "candidate512 preprocessing id must share the baseline FivePointAligner().template_id"
+    )
+    assert {
+        key: validator.EXPECTED_CONTRACTS["baseline128"][key]
+        for key in (
+            "effective_profile",
+            "embedding_dimension",
+            "model_name_prefix",
+            "model_suffix",
+            "preprocessing_id",
+        )
+    } == validator.EXPECTED_MODEL_CONTRACT
+    assert validator.EXPECTED_CONTRACTS["baseline128"]["asset_hashes"] == validator.EXPECTED_MODEL_ASSET_HASHES
 
 
 def test_row_counts_follow_discovered_inventory_and_drive_empty_state() -> None:

@@ -4,7 +4,7 @@ Tests cover:
 - ScanItemHandler binds the claimed item's correlation_id into the request
   contextvar before executing per-item logic, and resets it after.
 - When an item has no correlation_id, the worker generates a fresh
-  req-<uuid7> and binds it with CorrelationSource.WORKER.
+  canonical UUIDv4 correlation id and binds it with CorrelationSource.WORKER.
 - scan_worker._main calls configure_logging so worker stdout carries JSON
   with a correlation_id field.
 """
@@ -23,6 +23,7 @@ from recognition.interface_adapters.http.middleware.correlation import (
     CorrelationSource,
     _correlation_id_var,
     get_correlation_id,
+    validate_correlation_id,
 )
 
 
@@ -93,7 +94,7 @@ async def test_scan_item_handler_binds_api_correlation_id_during_processing() ->
 @pytest.mark.asyncio
 async def test_scan_item_handler_generates_worker_id_when_missing() -> None:
     """When a claimed item has no correlation_id (legacy or backfilled row),
-    the worker must synthesize a fresh req-<uuid7> id and bind it, so every
+    the worker must synthesize a fresh canonical UUIDv4 id and bind it, so every
     worker-side log line still carries some id."""
     from recognition.worker.handlers import scan as scan_mod
 
@@ -134,7 +135,7 @@ async def test_scan_item_handler_generates_worker_id_when_missing() -> None:
     assert len(captured_ids) == 1
     bound = captured_ids[0]
     assert bound is not None
-    assert bound.startswith("req-"), f"Expected worker fallback id req-<uuid7>; got {bound!r}"
+    assert validate_correlation_id(bound) == bound
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: alt-context
  * Domain Path: /public/languages
- * Requires at least: 6.0
+ * Requires at least: 6.2
  * Tested up to: 6.8
  * Requires PHP: 8.0
  * Network: false

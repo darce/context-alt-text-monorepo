@@ -38,6 +38,7 @@ from recognition.interface_adapters.http.exception_handlers import register_exce
 from recognition.interface_adapters.http.middleware.correlation import (
     CORRELATION_ID_HEADER,
     CorrelationIdMiddleware,
+    generate_correlation_id,
 )
 from recognition.interface_adapters.http.routers.analyze_multipart import (
     _parse_multipart_form,
@@ -652,6 +653,7 @@ async def test_multipart_storage_failure_uses_opaque_production_error_envelope(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    correlation_id = generate_correlation_id()
     secret_path = tmp_path / "private" / "tenant-secret" / "image.png"
     driver_error = f"permission denied writing {secret_path} with password=secret"
 
@@ -696,7 +698,7 @@ async def test_multipart_storage_failure_uses_opaque_production_error_envelope(
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.post(
             "/recognition/analyze/multipart",
-            headers={CORRELATION_ID_HEADER: "req-storage-failure"},
+            headers={CORRELATION_ID_HEADER: correlation_id},
             **_multipart_submission(tenant_id),
         )
 
@@ -705,13 +707,13 @@ async def test_multipart_storage_failure_uses_opaque_production_error_envelope(
     assert body == {
         "error": "internal_server_error",
         "path": "http://testserver/recognition/analyze/multipart",
-        "correlation_id": "req-storage-failure",
+        "correlation_id": correlation_id,
     }
     assert driver_error not in response.text
     assert str(secret_path) not in response.text
     records = [record for record in caplog.records if record.name == exception_handlers.logger.name]
     assert len(records) == 1
-    assert records[0].correlation_id == "req-storage-failure"
+    assert records[0].correlation_id == correlation_id
     assert records[0].exc_info is not None
     assert driver_error in str(records[0].exc_info[1])
 

@@ -88,6 +88,23 @@ class ReclaimerLivenessTest extends TestCase
 		);
 	}
 
+	public function testSchedulerModeUsesTheBookingOutcomeInsteadOfCapabilityProbe(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+
+		$this->assertSame(
+			ReclaimerLiveness::SCHEDULER_WP_CRON,
+			$liveness->current_scheduler_mode(ReclaimerLiveness::SCHEDULER_WP_CRON)
+		);
+		$this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $liveness->current_scheduler_mode());
+		$this->assertSame(
+			ReclaimerLiveness::WP_CRON_PERIOD_SECONDS,
+			$liveness->effective_period_seconds(
+				$liveness->current_scheduler_mode(ReclaimerLiveness::SCHEDULER_WP_CRON)
+			)
+		);
+	}
+
 	public function testClaimUsesOneConditionalOptionsSqlAndReleaseIsOwnerChecked(): void
 	{
 		global $wpdb;
@@ -100,5 +117,60 @@ class ReclaimerLivenessTest extends TestCase
 		$this->assertStringContainsString('ON DUPLICATE KEY UPDATE', $wpdb->queries[0]);
 		$this->assertTrue($liveness->release('tenant-lease', $owner));
 		$this->assertFalse($liveness->release('tenant-lease', $owner));
+	}
+
+	public function testExpiredOwnerCannotOverwriteNewerFencedLivenessState(): void
+	{
+		global $wpdb;
+
+		// The lightweight test adapter does not expose raw option reads. The
+		// implementation must still issue distinct monotonic fallback tokens so
+		// the stale-owner CAS is exercised below.
+		$wpdb->onGetVarResolve = static function (string $query): ?string {
+			return null;
+		};
+		$now = 1_700_000_000;
+		$first = new ReclaimerLiveness(static function () use (&$now): int {
+			return $now;
+		});
+		$second = new ReclaimerLiveness(static function () use (&$now): int {
+			return $now;
+		});
+
+		$this->assertIsString($first->claim('tenant-fenced'));
+		$first->record_success(
+			'tenant-fenced',
+			1,
+			9,
+			90,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$now += 301;
+		$this->assertIsString($second->claim('tenant-fenced'));
+		$second->record_success(
+			'tenant-fenced',
+			2,
+			3,
+			30,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		// The first worker resumes after its lease has been replaced. Its stale
+		// snapshot must not replace the newer worker's committed liveness.
+		$first->record_success(
+			'tenant-fenced',
+			99,
+			0,
+			0,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$state = $second->read('tenant-fenced');
+		$this->assertSame(2, $state['last_purged_count']);
+		$this->assertSame(3, $state['backlog_remaining']);
 	}
 }

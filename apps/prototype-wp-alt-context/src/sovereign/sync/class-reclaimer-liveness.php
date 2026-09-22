@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Sync;
 
 use DateTimeInterface;
 
+use function add_option;
 use function function_exists;
 use function get_option;
 use function gmdate;
@@ -59,6 +60,15 @@ class ReclaimerLiveness {
 
 	/** @var array<string,array<string,string>> */
 	private array $lease_values = array();
+
+	/** @var array<string,array<string,int>> */
+	private array $lease_tokens = array();
+
+	/** @var array<string,string|null> */
+	private array $active_leases = array();
+
+	/** @var int Fallback only for adapters that cannot read back the claimed option. */
+	private static int $fallback_fencing_token = 0;
 
 	/**
 	 * @param callable():int|DateTimeInterface|string|null $clock
@@ -234,17 +244,24 @@ class ReclaimerLiveness {
 		$owner = function_exists( 'wp_generate_uuid4' )
 			? (string) wp_generate_uuid4()
 			: hash( 'sha256', $tenant_id . '|' . microtime( true ) . '|' . random_int( 0, PHP_INT_MAX ) );
+		$fallback_token = ++self::$fallback_fencing_token;
 		$expires_at = $this->now() + self::LEASE_SECONDS;
-		$lease_value = $owner . '|' . $expires_at;
+		$lease_value = $owner . '|' . $fallback_token . '|' . $expires_at;
 		$option_name = $this->lease_option_name( $tenant_id );
 		$query = $wpdb->prepare(
-			'INSERT INTO %i (option_name, option_value, autoload) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE option_value = IF(CAST(SUBSTRING_INDEX(option_value, %s, -1) AS UNSIGNED) <= %d, VALUES(option_value), option_value)',
+			'INSERT INTO %i (option_name, option_value, autoload) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE option_value = IF(CAST(SUBSTRING_INDEX(option_value, %s, -1) AS UNSIGNED) <= %d, CONCAT(%s, %s, CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(option_value, %s, 2), %s, -1) AS UNSIGNED) + 1, %s, %d), option_value)',
 			$wpdb->options,
 			$option_name,
 			$lease_value,
 			'no',
 			'|',
-			$this->now()
+			$this->now(),
+			$owner,
+			'|',
+			'|',
+			'|',
+			'|',
+			$expires_at
 		);
 		$result = $wpdb->query( $query );
 		if ( false === $result || null === $result ) {
@@ -256,7 +273,22 @@ class ReclaimerLiveness {
 			return null;
 		}
 
+		$stored_lease_value = $this->read_lease_value( $wpdb, $option_name );
+		if ( is_string( $stored_lease_value ) ) {
+			$parsed_lease = $this->parse_lease_value( $stored_lease_value );
+			if ( ! is_array( $parsed_lease ) || $owner !== $parsed_lease['owner'] ) {
+				return null;
+			}
+
+			$lease_value = $stored_lease_value;
+			$fencing_token = $parsed_lease['fencing_token'];
+		} else {
+			$fencing_token = $fallback_token;
+		}
+
 		$this->lease_values[ $tenant_id ][ $owner ] = $lease_value;
+		$this->lease_tokens[ $tenant_id ][ $owner ] = $fencing_token;
+		$this->active_leases[ $tenant_id ] = $owner;
 		return $owner;
 	}
 
@@ -283,40 +315,41 @@ class ReclaimerLiveness {
 
 		$option_name = $this->lease_option_name( $tenant_id );
 		$lease_value = $this->lease_values[ $tenant_id ][ $owner ] ?? null;
-		if ( is_string( $lease_value ) && method_exists( $wpdb, 'delete' ) ) {
-			$result = $wpdb->delete(
-				$wpdb->options,
-				array(
-					'option_name' => $option_name,
-					'option_value' => $lease_value,
-				),
-				array( '%s', '%s' )
-			);
-			unset( $this->lease_values[ $tenant_id ][ $owner ] );
-			return is_numeric( $result ) && (int) $result > 0;
-		}
-
-		if ( ! method_exists( $wpdb, 'query' ) ) {
+		$fencing_token = $this->lease_tokens[ $tenant_id ][ $owner ] ?? null;
+		if ( ! is_string( $lease_value ) || ! is_int( $fencing_token ) || ! method_exists( $wpdb, 'query' ) ) {
 			return false;
 		}
 
 		$query = $wpdb->prepare(
-			'DELETE FROM %i WHERE option_name = %s AND SUBSTRING_INDEX(option_value, %s, 1) = %s',
+			'UPDATE %i SET option_value = %s WHERE option_name = %s AND option_value = %s AND BINARY option_value = %s',
 			$wpdb->options,
+			$owner . '|' . $fencing_token . '|0',
 			$option_name,
-			'|',
-			$owner
+			$lease_value,
+			$lease_value
 		);
 		$result = $wpdb->query( $query );
-		unset( $this->lease_values[ $tenant_id ][ $owner ] );
-		return is_numeric( $result ) && (int) $result > 0;
-	}
-
-	public function current_scheduler_mode(): string {
-		if ( function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' ) ) {
-			return self::SCHEDULER_ACTION_SCHEDULER;
+		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
+		if ( $affected <= 0 ) {
+			return false;
 		}
 
+		unset( $this->lease_values[ $tenant_id ][ $owner ] );
+		unset( $this->lease_tokens[ $tenant_id ][ $owner ] );
+		if ( ( $this->active_leases[ $tenant_id ] ?? null ) === $owner ) {
+			$this->active_leases[ $tenant_id ] = null;
+		}
+
+		return $affected > 0;
+	}
+
+	public function current_scheduler_mode( ?string $booked_scheduler_mode = null ): string {
+		if ( self::SCHEDULER_ACTION_SCHEDULER === $booked_scheduler_mode || self::SCHEDULER_WP_CRON === $booked_scheduler_mode ) {
+			return $booked_scheduler_mode;
+		}
+
+		// Capability is not evidence of a successful booking. Callers that have
+		// just scheduled work must pass the mode returned by that booking path.
 		return self::SCHEDULER_WP_CRON;
 	}
 
@@ -357,7 +390,158 @@ class ReclaimerLiveness {
 		$state = array_merge( $defaults, $state, $changes );
 		$state['scheduler_mode'] = $mode;
 		$state['effective_period_seconds'] = $this->effective_period_seconds( $mode );
+
+		if ( array_key_exists( $tenant_id, $this->active_leases ) ) {
+			$owner = $this->active_leases[ $tenant_id ];
+			$fencing_token = is_string( $owner )
+				? ( $this->lease_tokens[ $tenant_id ][ $owner ] ?? null )
+				: null;
+			$lease_value = is_string( $owner )
+				? ( $this->lease_values[ $tenant_id ][ $owner ] ?? null )
+				: null;
+			if ( ! is_string( $owner ) || ! is_int( $fencing_token ) || ! is_string( $lease_value ) ) {
+				return;
+			}
+
+			if ( array_key_exists( 'fencing_token', $state ) && is_numeric( $state['fencing_token'] ) && (int) $state['fencing_token'] > $fencing_token ) {
+				return;
+			}
+
+			$state['fencing_token'] = $fencing_token;
+			$this->write_fenced_state( $tenant_id, $state, $lease_value );
+			return;
+		}
+
+		// Legacy callers that only report an out-of-band failure may not own a
+		// lease. They may write only while no other live owner is present.
+		if ( $this->has_live_lease( $tenant_id ) ) {
+			return;
+		}
+
 		update_option( $this->state_option_name( $tenant_id ), $state, false );
+	}
+
+	/**
+	 * Persist state with a compare-and-swap against the previous option value.
+	 * The fencing token in that value makes a completed write from an expired
+	 * owner fail after a newer owner has committed its state.
+	 *
+	 * @param array<string,mixed> $state
+	 */
+	private function write_fenced_state( string $tenant_id, array $state, string $lease_value ): void {
+		global $wpdb;
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! isset( $wpdb->options )
+			|| ! is_string( $wpdb->options )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'query' )
+		) {
+			return;
+		}
+
+		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value ) ) {
+			return;
+		}
+
+		$option_name = $this->state_option_name( $tenant_id );
+		$previous = $this->load_state( $tenant_id );
+		if ( array() === $previous ) {
+			add_option( $option_name, $state, '', false );
+			return;
+		}
+
+		$query = $wpdb->prepare(
+			'UPDATE %i AS state INNER JOIN %i AS lease ON lease.option_name = %s AND BINARY lease.option_value = %s SET state.option_value = %s WHERE state.option_name = %s AND BINARY state.option_value = %s',
+			$wpdb->options,
+			$wpdb->options,
+			$this->lease_option_name( $tenant_id ),
+			$lease_value,
+			serialize( $state ),
+			$option_name,
+			serialize( $previous )
+		);
+		$result = $wpdb->query( $query );
+		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
+		if ( $affected > 0 ) {
+			return;
+		}
+
+		// Re-check before the adapter-compatible CAS fallback. Production MySQL
+		// uses the joined UPDATE above; the second form is for lightweight
+		// adapters that cannot model a self-join on wp_options.
+		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value ) ) {
+			return;
+		}
+
+		$query = $wpdb->prepare(
+			'UPDATE ' . $wpdb->options . ' SET option_value = %s WHERE option_name = %s AND BINARY option_value = %s',
+			serialize( $state ),
+			$option_name,
+			serialize( $previous )
+		);
+		$result = $wpdb->query( $query );
+		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
+		if ( $affected <= 0 ) {
+			return;
+		}
+	}
+
+	private function lease_is_current( object $wpdb, string $tenant_id, string $lease_value ): bool {
+		$stored_lease_value = $this->read_lease_value( $wpdb, $this->lease_option_name( $tenant_id ) );
+		if ( null === $stored_lease_value ) {
+			// Some test and migration adapters cannot read raw option rows. The
+			// conditional state CAS still fences already-committed newer writers.
+			return true;
+		}
+
+		return $stored_lease_value === $lease_value;
+	}
+
+	private function has_live_lease( string $tenant_id ): bool {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->options ) || ! is_string( $wpdb->options ) ) {
+			return false;
+		}
+
+		$lease_value = $this->read_lease_value( $wpdb, $this->lease_option_name( $tenant_id ) );
+		$parsed_lease = is_string( $lease_value ) ? $this->parse_lease_value( $lease_value ) : null;
+		return is_array( $parsed_lease ) && $parsed_lease['expires_at'] > $this->now();
+	}
+
+	private function read_lease_value( object $wpdb, string $option_name ): ?string {
+		if ( ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return null;
+		}
+
+		$query = $wpdb->prepare(
+			'SELECT option_value FROM %i WHERE option_name = %s',
+			$wpdb->options,
+			$option_name
+		);
+		$value = $wpdb->get_var( $query );
+		return is_string( $value ) ? $value : null;
+	}
+
+	/** @return array{owner:string,fencing_token:int,expires_at:int}|null */
+	private function parse_lease_value( string $lease_value ): ?array {
+		$parts = explode( '|', $lease_value );
+		if ( 3 !== count( $parts ) || '' === $parts[0] || ! is_numeric( $parts[1] ) || ! is_numeric( $parts[2] ) ) {
+			return null;
+		}
+
+		$fencing_token = (int) $parts[1];
+		$expires_at = (int) $parts[2];
+		if ( $fencing_token < 1 || $expires_at < 0 ) {
+			return null;
+		}
+
+		return array(
+			'owner' => $parts[0],
+			'fencing_token' => $fencing_token,
+			'expires_at' => $expires_at,
+		);
 	}
 
 	private function resolve_scheduler_mode( $stored_mode, ?string $requested_mode ): string {

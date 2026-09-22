@@ -337,14 +337,16 @@ def test_auraface_space_verified_artifacts_reach_ok(tmp_path: Path, monkeypatch:
     assert "sface" not in runtime.manifest.model_id.lower()
 
 
-def test_real_auraface_entry_blocks_activation_while_hash_pending(tmp_path: Path) -> None:
+def test_real_auraface_entry_blocks_activation_while_artifact_absent(tmp_path: Path) -> None:
+    """The pins are operator-measured now; absent BYTES are what still blocks activation."""
     from recognition.application.health import ModelSpace, check_model_space
 
     result = check_model_space(ModelSpace.AURAFACE, tmp_path)
 
     assert result.status is HealthStatus.UNHEALTHY
-    assert PENDING_OPERATOR_FETCH in result.detail
-    with pytest.raises(ModelMissingError, match=PENDING_OPERATOR_FETCH):
+    assert "model file missing" in result.detail
+    assert MODEL_MANIFEST["auraface"].file_name in result.detail
+    with pytest.raises(ModelMissingError, match="model file missing"):
         load_verified_model("auraface", models_dir=tmp_path)
 
 

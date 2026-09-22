@@ -8,6 +8,7 @@ import os
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -26,7 +27,12 @@ from recognition.interface_adapters.http.routers.billing_webhooks import get_bil
 from shared.secrets import get_secret_provider
 
 _MISSING = object()
-_DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"
+_POLAR_SANDBOX_BASE_URL = "https://sandbox-api.polar.sh"
+_POLAR_LIVE_BASE_URL = "https://api.polar.sh"
+_POLAR_SANDBOX_HOST = "sandbox-api.polar.sh"
+_POLAR_LIVE_HOST = "api.polar.sh"
+_ALLOWED_POLAR_ENVIRONMENTS = frozenset({"sandbox", "live"})
+_DEFAULT_POLAR_BASE_URL = _POLAR_SANDBOX_BASE_URL
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
 _DEFAULT_USAGE_ADMISSION_TIMEOUT_S = 5.0
 
@@ -194,27 +200,21 @@ def _portal_auth_settings(
         environment_names=("ACX_CLERK_JWKS_URL",),
         missing=missing,
     )
+    audience_setting = _setting_value(settings, sections, ("audience", "portal_audience"))
+    audience_values = _text_values(audience_setting) or _text_values(_environment_value(("ACX_CLERK_AUDIENCE",)))
     parties_setting = _setting_value(settings, sections, ("authorized_parties",))
     party_values = _text_values(parties_setting) or _text_values(_environment_value(("ACX_CLERK_AUTHORIZED_PARTIES",)))
-    audience = _setting_value(settings, sections, ("audience", "portal_audience"))
-    audience_values = _text_values(audience)
-    # When a distinct audience is configured the authorized-parties setting is a genuine
-    # origin pin, so it must reach the azp check instead of silently serving as the audience.
-    # Deployments that configure only ACX_CLERK_AUTHORIZED_PARTIES keep using it as the
-    # audience; pinning azp to the same value there would reject every legitimate token.
-    enforced_parties: tuple[str, ...] | None = party_values or None
     if not audience_values:
-        audience_values = party_values
-        enforced_parties = None
-    if not audience_values:
+        missing.append("ACX_CLERK_AUDIENCE")
+    if not party_values:
         missing.append("ACX_CLERK_AUTHORIZED_PARTIES")
-    if not issuer or not jwks_url or not audience_values:
+    if not issuer or not jwks_url or not audience_values or not party_values:
         return None
     return PortalAuthSettings(
         issuer=issuer,
         jwks_url=jwks_url,
         audience=audience_values,
-        authorized_parties=enforced_parties,
+        authorized_parties=party_values,
     )
 
 
@@ -290,6 +290,44 @@ def _boolean(value: object, *, default: bool) -> bool:
     raise ValueError("billing payments enabled must be boolean")
 
 
+def _polar_environment(settings: RecognitionSettings) -> str:
+    sections = ("billing", "polar")
+    environment = _setting_value(settings, sections, ("environment", "polar_environment"))
+    if not isinstance(environment, str) or not environment.strip():
+        environment = _environment_value(("POLAR_ENVIRONMENT",)) or "sandbox"
+    normalized = environment.strip().lower()
+    if normalized not in _ALLOWED_POLAR_ENVIRONMENTS:
+        raise ValueError("POLAR_ENVIRONMENT must be sandbox or live")
+    return normalized
+
+
+def _polar_host(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username is not None:
+        raise ValueError("POLAR_BASE_URL must be an absolute HTTPS URL")
+    return host
+
+
+def _validated_polar_base_url(base_url: str, *, environment: str) -> str:
+    host = _polar_host(base_url)
+    if host == _POLAR_LIVE_HOST and environment != "live":
+        raise ValueError(f"POLAR_BASE_URL host {_POLAR_LIVE_HOST} does not match environment {environment}")
+    if host == _POLAR_SANDBOX_HOST and environment != "sandbox":
+        raise ValueError(f"POLAR_BASE_URL host {_POLAR_SANDBOX_HOST} does not match environment {environment}")
+    return base_url.rstrip("/")
+
+
+def _polar_base_url(settings: RecognitionSettings, *, environment: str) -> str:
+    sections = ("billing", "polar")
+    base_url = _setting_value(settings, sections, ("base_url", "api_base_url", "polar_base_url"))
+    if not isinstance(base_url, str) or not base_url.strip():
+        base_url = _environment_value(("POLAR_BASE_URL", "POLAR_API_BASE_URL"))
+    if not isinstance(base_url, str) or not base_url.strip():
+        return _POLAR_SANDBOX_BASE_URL if environment == "sandbox" else _POLAR_LIVE_BASE_URL
+    return _validated_polar_base_url(base_url.strip(), environment=environment)
+
+
 def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfig:
     missing: list[str] = []
     portal_auth = _portal_auth_settings(settings, missing)
@@ -305,9 +343,8 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         raise ValueError("portal and billing composition requires portal authentication settings")
 
     sections = ("billing", "polar")
-    base_url = _setting_value(settings, sections, ("base_url", "api_base_url", "polar_base_url"))
-    if not isinstance(base_url, str) or not base_url.strip():
-        base_url = _environment_value(("POLAR_BASE_URL", "POLAR_API_BASE_URL")) or _DEFAULT_POLAR_BASE_URL
+    environment = _polar_environment(settings)
+    base_url = _polar_base_url(settings, environment=environment)
 
     timeout_value = _setting_value(settings, sections, ("timeout_seconds", "request_timeout_seconds"))
     if timeout_value is None:
@@ -317,10 +354,6 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         setting_name="POLAR_REQUEST_TIMEOUT_SECONDS",
         default=_DEFAULT_POLAR_TIMEOUT_SECONDS,
     )
-
-    environment = _setting_value(settings, sections, ("environment", "polar_environment"))
-    if not isinstance(environment, str) or not environment.strip():
-        environment = _environment_value(("POLAR_ENVIRONMENT",)) or "sandbox"
 
     payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
     if payments_enabled is None:
@@ -337,10 +370,10 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         billing_webhook_secret=webhook_secret,
         billing_product_ids=product_ids,
         billing_access_token=access_token,
-        billing_base_url=base_url.strip(),
+        billing_base_url=base_url,
         billing_timeout_seconds=timeout_seconds,
         billing_payments_enabled=_boolean(payments_enabled, default=False),
-        billing_environment=str(environment).strip(),
+        billing_environment=environment,
         billing_allowed_return_origins=allowed_return_origins,
     )
 

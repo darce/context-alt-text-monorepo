@@ -91,7 +91,7 @@ def test_defines_converge_functions() -> None:
 
 def test_dev_fir_env_mappings() -> None:
     """FIR23-STACK Slice 1: acx-dev-fir isolated FIR/SFace stack identity."""
-    assert _source_env_map("env_to_tag", "dev-fir") == "dev"
+    assert _source_env_map("env_to_tag", "dev-fir") == "dev-fir"
     assert _source_env_map("env_to_unit", "dev-fir") == "acx-dev-fir"
     assert _source_env_map("env_to_remote_dir", "dev-fir") == "/opt/acx-backend/dev-fir"
     assert (
@@ -410,11 +410,20 @@ def test_convergence_gated_by_env_flag_default_on() -> None:
 
 
 def test_converge_runs_before_restart_via_gate() -> None:
-    # Convergence now runs inside promote_gate; do_deploy must gate before restart.
-    deploy = SCRIPT_TEXT.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
-    assert deploy.index("promote_gate") < deploy.index("do_restart")
-    gate = SCRIPT_TEXT.split("promote_gate()", 1)[1].split("\n}\n", 1)[0]
-    assert "converge_runtime" in gate
+    # Convergence runs inside promote_gate; do_deploy delegates the ship, and
+    # _ship_selected_env must gate before restart (TEST-11).
+    deploy = _function_body("do_deploy")
+    assert re.search(
+        r'(?m)^[ \t]*_ship_selected_env[ \t]+"\$env"[ \t]+aggregate\b', deploy
+    ), deploy
+    ship = _function_body("_ship_selected_env")
+    assert _call_index(ship, r'(?m)^[ \t]*promote_gate\b') < _call_index(
+        ship, r'(?m)^[ \t]*(?:if[ \t]+![ \t]+)?do_restart\b'
+    )
+    gate = _function_body("promote_gate")
+    assert re.search(
+        r'(?m)^[ \t]*if[ \t]+![ \t]+\(converge_runtime\b', gate
+    ), gate
 
 
 def test_caddy_edge_shipped_and_reloaded_by_converge() -> None:
@@ -490,13 +499,27 @@ def _function_body(name: str) -> str:
     raise AssertionError(f"unclosed function {name}")
 
 
+def _call_index(body: str, call_re: str) -> int:
+    """Index of the first call line matching an anchored regex (TEST-11).
+
+    Anchored at line start so a comment mentioning the function name cannot
+    satisfy order assertions.
+    """
+    match = re.search(call_re, body, flags=re.MULTILINE)
+    assert match is not None, f"no call matching {call_re!r} in:\n{body}"
+    return match.start()
+
+
 def test_deploy_calls_face_pipeline_preflight_before_build() -> None:
     deploy = _function_body("do_deploy")
-    # Read-only --check path returns early; the mutation path must preflight models.
-    assert "preflight_remote_face_pipeline_models" in deploy
-    assert deploy.index("preflight_remote_face_pipeline_models") < deploy.index(
-        "do_build"
-    )
+    # Read-only --check path returns early; the mutation path delegates the ship.
+    assert re.search(
+        r'(?m)^[ \t]*_ship_selected_env[ \t]+"\$env"[ \t]+aggregate\b', deploy
+    ), deploy
+    ship = _function_body("_ship_selected_env")
+    assert _call_index(
+        ship, r'(?m)^[ \t]*preflight_remote_face_pipeline_models\b'
+    ) < _call_index(ship, r'(?m)^[ \t]*do_build(?:_remote)?\b')
 
 
 def test_promote_calls_face_pipeline_preflight() -> None:
@@ -541,10 +564,51 @@ def test_face_pipeline_sha_pins_match_provenance() -> None:
         )
 
 
+def _ssh_stub_with_env_image_tag(script: str, *, tag: str) -> str:
+    """Answer ACX_IMAGE_TAG before the stub's existing branches (TEST-11).
+
+    ``assert_remote_env_image_tag`` is the first remote read in
+    ``preflight_remote_face_pipeline_models``; stubs that only know about
+    models-dir keys must still satisfy that guard so they fail for their
+    original reason.
+    """
+    body = script
+    shebang = "#!/bin/sh\n"
+    if body.startswith("#!"):
+        first, _, rest = body.partition("\n")
+        shebang = first + "\n"
+        body = rest
+        if body.startswith("\n"):
+            # Keep a single newline after the shebang.
+            pass
+    tag_branch = (
+        f'if echo "$*" | grep -q "ACX_IMAGE_TAG"; then\n'
+        f'  echo "{tag}"\n'
+        f"  exit 0\n"
+        f"fi\n"
+    )
+    return shebang + tag_branch + body
+
+
 def _run_face_pipeline_preflight(
-    env_arg: str, tmp_path: Path, ssh_script: str
+    env_arg: str,
+    tmp_path: Path,
+    ssh_script: str,
+    *,
+    prepend_env_image_tag: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Source the deploy script and run the models preflight with a fake ssh."""
+    if prepend_env_image_tag is None:
+        prepend_env_image_tag = {
+            "dev": "dev",
+            "dev-fir": "dev-fir",
+            "staging": "staging",
+            "prod": "latest",
+        }.get(env_arg, env_arg)
+    if prepend_env_image_tag:
+        ssh_script = _ssh_stub_with_env_image_tag(
+            ssh_script, tag=prepend_env_image_tag
+        )
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     (bindir / "ssh").write_text(ssh_script)
@@ -642,13 +706,71 @@ def test_verify_face_pipeline_models_dir_present_passes(tmp_path: Path) -> None:
 
 
 def test_face_pipeline_preflight_skips_non_fir(tmp_path: Path) -> None:
-    # Non-fir envs must not require face_pipeline ONNX on the host.
+    # Non-fir envs do exactly one remote read (ACX_IMAGE_TAG) and no model check.
+    ssh_log = tmp_path / "ssh-calls.log"
+    ssh = f"""#!/bin/sh
+printf '%s\\n' "$*" >> "{ssh_log}"
+if echo "$*" | grep -q "ACX_IMAGE_TAG"; then
+  echo "dev"
+  exit 0
+fi
+exit 99
+"""
     proc = _run_face_pipeline_preflight(
-        "dev",
-        tmp_path,
-        "#!/bin/sh\necho 'ssh should not run for non-fir' >&2\nexit 99\n",
+        "dev", tmp_path, ssh, prepend_env_image_tag=""
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    logged = ssh_log.read_text(encoding="utf-8").splitlines()
+    assert len(logged) == 1, logged
+    assert "ACX_IMAGE_TAG" in logged[0], logged[0]
+
+
+def test_face_pipeline_preflight_refuses_env_image_tag_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Guard fires first: mismatched ACX_IMAGE_TAG never reaches the model check.
+
+    ``scripts/deploy/tests/test_recognition_deploy.py`` covers
+    ``assert_remote_env_image_tag`` in isolation; this falsifies the preflight
+    ordering (CARD-07 / TEST-11): a healthy models-dir stub must not run if
+    the remote file tag is ``dev`` for env ``dev-fir``.
+    """
+    ssh_log = tmp_path / "ssh-calls.log"
+    ssh = f"""#!/bin/sh
+printf '%s\\n' "$*" >> "{ssh_log}"
+if echo "$*" | grep -q "ACX_IMAGE_TAG"; then
+  echo "dev"
+  exit 0
+fi
+if echo "$*" | grep -q "RECOGNITION_FACE_PIPELINE_MODELS_DIR"; then
+  echo "/data/cache/face_pipeline"
+  exit 0
+fi
+if echo "$*" | grep -q "ACX_MODELS_PATH"; then
+  echo "/opt/acx-backend/data/dev-fir-models"
+  exit 0
+fi
+cat >/dev/null
+echo "MODEL_CHECK_RAN"
+exit 0
+"""
+    proc = _run_face_pipeline_preflight(
+        "dev-fir", tmp_path, ssh, prepend_env_image_tag=""
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, combined
+    assert "ACX_IMAGE_TAG=dev-fir" in combined, combined
+    assert "/opt/acx-backend/dev-fir/.env" in combined, combined
+    assert "MODEL_CHECK_RAN" not in combined, combined
+    logged = ssh_log.read_text(encoding="utf-8").splitlines()
+    assert logged, "expected the ACX_IMAGE_TAG remote read"
+    assert all("ACX_IMAGE_TAG" in line for line in logged), logged
+    assert not any(
+        "RECOGNITION_FACE_PIPELINE_MODELS_DIR" in line
+        or "ACX_MODELS_PATH" in line
+        or "bash -s" in line
+        for line in logged
+    ), logged
 
 
 def test_face_pipeline_preflight_fails_when_models_dir_missing(tmp_path: Path) -> None:
@@ -1373,24 +1495,69 @@ exit 0
 # ---- wave-2 gate r08117ab7 findings ------------------------------------
 
 
-def test_promote_refuses_dev_fir_destination(tmp_path: Path) -> None:
-    """RA-01/RB-03/RC-02: do_promote to_env=dev-fir fails closed (exit 2).
+def test_promote_to_dev_fir_never_retags_shared_dev(tmp_path: Path) -> None:
+    """CARD-10: promote dev -> dev-fir reads :dev and retags only :dev-fir.
 
-    env_to_tag(dev-fir)=dev would retag the SHARED :dev image and only restart
-    acx-dev-fir. Refusal must fire before any remote call; message names the
-    real lever (promote <from> dev / make deploy-rollback-dev).
+    ``promote dev dev-fir`` is the documented reset lever
+    (``deploy-reset-dev-fir-to-dev``). :dev is the read source; every retag,
+    push, restart, and verify must target dev-fir / the ``dev-fir`` tag, never
+    the shared ``:dev`` tag and never ``acx-dev``.
     """
-    result = _run(["promote", "staging", "dev-fir"], tmp_path)
-    combined = result.stdout + result.stderr
-    assert result.returncode == 2, combined
-    assert "refused" in combined.lower(), combined
-    assert "dev-fir shares the :dev image tag" in combined, combined
-    assert "promote staging dev" in combined or "deploy-rollback-dev" in combined, (
-        combined
+    records = tmp_path / "promote-records"
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+REMOTE_BUILD=0
+init_deploy_ocir_docker_config() {{ return 0; }}
+preflight_ssh() {{ printf 'preflight_ssh\\n' >>"{records}"; return 0; }}
+preflight_remote_face_pipeline_models() {{ printf 'preflight:%s\\n' "$1" >>"{records}"; return 0; }}
+preflight_remote_ocir_auth() {{ return 0; }}
+preflight_docker() {{ return 0; }}
+preflight_ocir_auth() {{ return 0; }}
+preflight_remote_docker() {{ return 0; }}
+assert_remote_disk_headroom_for_pull() {{ return 0; }}
+preserve_rollback_tag() {{ printf 'preserve:%s\\n' "$1" >>"{records}"; return 0; }}
+capture_prior_runtime_identity() {{ printf 'prior:%s\\n' "$1" >>"{records}"; return 0; }}
+capture_failure_evidence() {{ return 0; }}
+_pull_ref() {{ printf 'pull:%s\\n' "$*" >>"{records}"; return 0; }}
+_pull_ref_remote() {{ printf 'pull-remote:%s\\n' "$*" >>"{records}"; return 0; }}
+image_digest_ref() {{ printf '%s@sha256:%s\\n' "${{1%:*}}" "$(printf 'a%.0s' {{1..64}})"; }}
+promote_gate() {{ printf 'gate:%s\\n' "$1" >>"{records}"; return 0; }}
+do_push_tag() {{ printf 'push:%s\\n' "$1" >>"{records}"; return 0; }}
+do_restart() {{ printf 'restart:%s\\n' "$1" >>"{records}"; return 0; }}
+do_verify() {{ printf 'verify:%s\\n' "$1" >>"{records}"; return 0; }}
+do_promote dev dev-fir
+'''
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env={k: v for k, v in os.environ.items() if k != "CONFIRM"},
     )
-    # No remote work: fake ssh never needed, but ensure we didn't try a pull/tag
-    # path that would mention docker pull of the source image.
-    assert "Pulling source image" not in combined, combined
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    logged = records.read_text(encoding="utf-8").splitlines()
+    pull = [line for line in logged if line.startswith("pull:")]
+    assert pull, logged
+    assert all(line.endswith(":dev") for line in pull), pull
+    assert all(":dev-fir" not in line for line in pull), pull
+    assert [line for line in logged if line == "preflight:dev-fir"]
+    assert [line for line in logged if line == "gate:dev-fir"]
+    assert [line for line in logged if line == "push:dev-fir"]
+    assert [line for line in logged if line == "restart:dev-fir"]
+    assert [line for line in logged if line == "verify:dev-fir"]
+    mutation_targets = [
+        line.split(":", 1)[1]
+        for line in logged
+        if line.startswith(("push:", "restart:", "verify:", "gate:", "preflight:"))
+    ]
+    assert mutation_targets, logged
+    assert all(target == "dev-fir" for target in mutation_targets), mutation_targets
+    assert "dev" not in mutation_targets
+    blob = "\n".join(logged) + "\n" + combined
+    assert "acx-dev" not in blob, blob
 
 
 def test_converge_check_membership_missing_is_drift(tmp_path: Path) -> None:

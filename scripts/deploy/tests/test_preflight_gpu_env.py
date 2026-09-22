@@ -2518,6 +2518,16 @@ def _stand_in_describe_run(**overrides: object) -> SimpleNamespace:
         "request_digest": None,
         "media_ids": [],
         "created_by_user_id": None,
+        "queue_ms": None,
+        "ramp_up_ms": None,
+        "processing_ms_p50": None,
+        "processing_ms_max": None,
+        "startup_ms": None,
+        "server_elapsed_ms": None,
+        "items_timed": None,
+        "operation_id": None,
+        "startup_id": None,
+        "first_ready_at": None,
     }
     unknown = set(overrides) - set(values)
     if unknown:
@@ -2540,6 +2550,7 @@ def _stand_in_describe_item(**overrides: object) -> SimpleNamespace:
         "image_content_type": None,
         "last_error": None,
         "attempts": 0,
+        "processing_ms": None,
     }
     unknown = set(overrides) - set(values)
     if unknown:
@@ -2624,6 +2635,12 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def commit(self):
             pass
 
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+        async def scalar(self, *args, **kwargs):
+            return None
+
     class Repository:
         def __init__(self, session):
             pass
@@ -2652,13 +2669,19 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
         async def mark_run_failed(self, **kwargs):
             run.status = "failed"
 
+        async def record_pickup(self, **kwargs):
+            return True
+
+        async def record_readiness(self, **kwargs):
+            return True
+
     async def publish_load(*args):
         events.append("load")
 
     for module in (worker, route):
         monkeypatch.setattr(module, "DescribeRunRepository", Repository)
         monkeypatch.setattr(module, "set_tenant_context", AsyncMock())
-        monkeypatch.setattr(module, "dump_load_snapshot", publish_load)
+        monkeypatch.setattr(module, "publish_demand_snapshot", publish_load)
     monkeypatch.setattr(
         worker, "get_tenant_record", AsyncMock(return_value=SimpleNamespace(naming_agreement_enabled=False))
     )

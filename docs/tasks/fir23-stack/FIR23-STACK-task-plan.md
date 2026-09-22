@@ -97,9 +97,11 @@ Ordered (gates matter):
    existing weights; neither provisions them.
 3. **Operator adds DNS A/CNAME record `fir.dev.api.altcontext.com → VM`; CONFIRM it resolves** (BR-07)
    BEFORE public health verify.
-4. Edit the live `/opt/acx-backend/dev-fir/secrets/.env` so `ACX_IMAGE_TAG=dev-fir` (independent
+4. Edit the live `/opt/acx-backend/dev-fir/.env` so `ACX_IMAGE_TAG=dev-fir` (independent
    `:dev-fir` tag promoted from `:dev`; compose selects the image via `${ACX_IMAGE_TAG}`). Do this
-   before the first `dev-fir` deploy.
+   before the first `dev-fir` deploy. See
+   `apps/prototype-description-service/docs/secrets-inventory.md` section
+   "Per-environment runtime files".
 5. **First dev-fir deploy:** run `make deploy-dev-fir` with `ACX_EDGE_APPLY=1` so `converge_runtime`
    creates/attaches `acx-dev-fir-net`, ships Caddyfile + `docker-compose.caddy.yml`, and applies edge
    mutation (vhost + network membership). Without the lever the driver fail-closes and prints it.

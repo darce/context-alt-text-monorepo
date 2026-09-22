@@ -26,58 +26,67 @@ final class ProxyRoutes
     public const POST_RETENTION_IMPORT_PATH = '/recognition/retention/import';
 
     /**
-     * @var list<array{method: string, path: string, kind: string}>
+     * @var list<array{method: string, path: string, kind: string, route_level_not_found: bool}>
      */
     private const ROUTES = array(
         array(
             'method' => 'GET',
             'path' => self::GET_RETENTION_POLICY_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'GET',
             'path' => self::GET_RETENTION_AUDIT_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'PATCH',
             'path' => self::PATCH_RETENTION_POLICY_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'POST',
             'path' => self::POST_RETENTION_POLICY_PRESET_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'POST',
             'path' => self::POST_RETENTION_EXPORT_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'GET',
             'path' => self::GET_RETENTION_EXPORT_STATUS_PATH,
             'kind' => self::ROUTE_KIND_PARAMETERIZED,
+            'route_level_not_found' => true,
         ),
         array(
             'method' => 'GET',
             'path' => self::GET_RETENTION_EXPORT_DATA_PATH,
             'kind' => self::ROUTE_KIND_PARAMETERIZED,
+            'route_level_not_found' => true,
         ),
         array(
             'method' => 'POST',
             'path' => self::POST_RETENTION_PURGE_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
         array(
             'method' => 'POST',
             'path' => self::POST_RETENTION_IMPORT_PATH,
             'kind' => self::ROUTE_KIND_STATIC,
+            'route_level_not_found' => false,
         ),
     );
 
     /**
-     * @return list<array{method: string, path: string, kind: string}>
+     * @return list<array{method: string, path: string, kind: string, route_level_not_found: bool}>
      */
     public static function all(): array
     {
@@ -85,7 +94,7 @@ final class ProxyRoutes
     }
 
     /**
-     * @return list<array{method: string, path: string, kind: string}>
+     * @return list<array{method: string, path: string, kind: string, route_level_not_found: bool}>
      */
     public static function routes(): array
     {

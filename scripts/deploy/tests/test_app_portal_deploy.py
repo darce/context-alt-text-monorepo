@@ -61,15 +61,28 @@ def _write_live_caddy(path: Path, body: str | None = None) -> None:
     path.write_text(body if body is not None else LIVE_CADDY_SRC.read_text(encoding="utf-8"), encoding="utf-8")
 
 
-def _caddy_stub(log_path: str, *, fail: bool) -> str:
+def _caddy_stub(log_path: str, *, fail: bool = False, fail_on: str | None = None) -> str:
     exit_code = 1 if fail else 0
+    fail_on_lit = fail_on or ""
     return (
         "#!/usr/bin/env bash\n"
         "set -u\n"
         f"printf 'caddy' >> {log_path}\n"
         f"printf ' %q' \"$@\" >> {log_path}\n"
         f"printf '\\n' >> {log_path}\n"
-        f"exit {exit_code}\n"
+        "cmd=\n"
+        'for a in "$@"; do\n'
+        '  case "$a" in\n'
+        '    validate|reload|adapt) cmd="$a" ;;\n'
+        "  esac\n"
+        "done\n"
+        f"if [ {exit_code} -ne 0 ]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        f'if [ -n "{fail_on_lit}" ] && [ "$cmd" = "{fail_on_lit}" ]; then\n'
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n"
     )
 
 
@@ -94,6 +107,8 @@ def _run(
     upstream: str | None = "prod-api:8000",
     hostname: str | None = "app.altcontext.com",
     caddy_fail: bool = False,
+    caddy_fail_on: str | None = None,
+    fail_mv_dest: Path | None = None,
     include_caddy: bool = True,
     include_docker: bool = True,
     timeout: int = 20,
@@ -108,9 +123,25 @@ def _run(
     backend_root.mkdir(parents=True, exist_ok=True)
 
     if include_caddy:
-        _write_executable(bin_dir / "caddy", _caddy_stub(log_path, fail=caddy_fail))
+        _write_executable(
+            bin_dir / "caddy",
+            _caddy_stub(log_path, fail=caddy_fail, fail_on=caddy_fail_on),
+        )
     if include_docker:
         _write_executable(bin_dir / "docker", _docker_stub(log_path))
+    if fail_mv_dest is not None:
+        dest = shlex.quote(str(fail_mv_dest))
+        _write_executable(
+            bin_dir / "mv",
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            'dest="${@: -1}"\n'
+            f'if [ "$dest" = {dest} ]; then\n'
+            '  echo "ERROR: simulated mv failure" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            'exec /bin/mv "$@"\n',
+        )
 
     if live_caddy is None:
         caddy_path = None
@@ -154,6 +185,7 @@ def _run(
         env["APP_HOSTNAME"] = hostname
     env["APP_SNIPPET"] = str(SNIPPET)
     env["APP_OVERLAY"] = str(OVERLAY)
+    env["APP_APPROVED_ROOTS"] = str(backend_root)
     if extra_env:
         env.update(extra_env)
 
@@ -325,15 +357,23 @@ def test_apply_merges_vhost_preserves_existing_hosts_and_copies_frontend(tmp_pat
     for host in EXISTING_HOSTS:
         assert host in updated, host
     assert "app.altcontext.com {" in updated
-    assert "handle /portal*" in updated or "path /portal" in updated
+    assert "handle /portal*" not in updated
+    assert "@portal path /portal /portal/*" in updated
+    assert "handle @portal" in updated
     assert "reverse_proxy prod-api:8000" in updated
     www = tmp_path / "opt" / "acx-backend" / "app" / "www"
     assert (www / "index.html").is_file()
     assert (www / "index.html").stat().st_size > 0
     assert any((www / "assets").iterdir())
+    overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay_text = overlay_dest.read_text(encoding="utf-8")
+    assert str(www) in overlay_text
+    assert f"{www}:/srv/app-portal" in overlay_text or f"{www}:/srv/app-portal:ro" in overlay_text
+    assert "__APP_WWW__" not in overlay_text
     log = _log(tmp_path)
     assert "caddy" in log
     assert "validate" in log
+    assert "reload" in log
     assert "ssh" not in log
     rollback_dir = tmp_path / "opt" / "acx-backend" / "app" / "rollback"
     assert rollback_dir.is_dir()
@@ -383,6 +423,9 @@ def test_snippet_denies_admin_and_unrelated_api_surfaces() -> None:
     assert "@admin path /admin /admin/*" in text
     assert "respond @admin 404" in text
     assert "/portal" in text
+    assert "handle /portal*" not in text
+    assert "@portal path /portal /portal/*" in text
+    assert "handle @portal" in text
     assert "reverse_proxy" in text
     for surface in ("/recognition", "/roster", "/scene", "/billing/webhooks", "/health"):
         assert surface in text, surface
@@ -423,3 +466,204 @@ def test_runbook_documents_later_integration_and_env_ownership() -> None:
     assert "--apply" in text
     assert "dry-run" in text.lower()
     assert "do not" in text.lower() or "never" in text.lower()
+    assert "symlink" in text.lower()
+    assert "APP_APPROVED_ROOTS" in text
+    assert "`/portal` plus `/portal/*`" in text or "path /portal /portal/*" in text
+    assert "reload" in text.lower()
+    assert "health" in text.lower()
+    assert "atomic" in text.lower() or "rename" in text.lower()
+    assert "trap" in text.lower() or "restor" in text.lower()
+    lowered = text.lower()
+    for marker in SECRET_MARKERS:
+        assert marker.lower() not in lowered, marker
+
+
+def _prior_www(tmp_path: Path) -> Path:
+    www = tmp_path / "opt" / "acx-backend" / "app" / "www"
+    www.mkdir(parents=True, exist_ok=True)
+    (www / "keep.txt").write_text("active\n", encoding="utf-8")
+    return www
+
+
+def test_apply_refuses_filesystem_root_paths(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    for name, value in (
+        ("APP_WWW", "/"),
+        ("APP_ROOT", "/"),
+        ("APP_FRONTEND_ROOT", "/"),
+        ("CADDYFILE", "/"),
+    ):
+        result = _run(tmp_path, args=["--apply"], live_caddy=live, extra_env={name: value})
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "root" in output.lower() or name in output, output
+        assert live.read_text(encoding="utf-8") == before
+        assert _log(tmp_path) == ""
+
+
+def test_apply_refuses_symlink_caddyfile(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    link = tmp_path / "opt" / "acx-backend" / "Caddyfile.link"
+    link.symlink_to(live)
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"CADDYFILE": str(link)},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "symlink" in output.lower(), output
+    assert live.read_text(encoding="utf-8") == before
+    assert link.is_symlink()
+    assert _log(tmp_path) == ""
+
+
+def test_apply_refuses_symlink_component_in_app_root(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    real_app = tmp_path / "opt" / "acx-backend" / "app"
+    link_app = tmp_path / "opt" / "acx-backend" / "linked-app"
+    link_app.symlink_to(real_app)
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={
+            "APP_ROOT": str(link_app),
+            "APP_WWW": str(link_app / "www"),
+        },
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "symlink" in output.lower(), output
+    assert live.read_text(encoding="utf-8") == before
+    assert not (real_app / "www" / "index.html").exists()
+
+
+def test_apply_refuses_path_outside_approved_roots(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    outside = tmp_path / "outside" / "app"
+    outside.mkdir(parents=True)
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"APP_ROOT": str(outside), "APP_WWW": str(outside / "www")},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "approved" in output.lower() or "outside" in output.lower(), output
+    assert live.read_text(encoding="utf-8") == before
+    assert not (outside / "www").exists()
+    assert list(outside.iterdir()) == []
+
+
+def test_apply_refuses_caddyfile_directory(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    live.mkdir(parents=True)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "regular file" in output.lower() or "not a file" in output.lower() or "directory" in output.lower()
+    assert live.is_dir()
+    assert list(live.iterdir()) == []
+
+
+def test_overlay_template_uses_www_placeholder() -> None:
+    text = OVERLAY.read_text(encoding="utf-8")
+    assert "__APP_WWW__:/srv/app-portal" in text
+    assert "/opt/acx-backend/app/www:/srv/app-portal" not in text
+
+
+def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    www = _prior_www(tmp_path)
+    overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay_dest.write_text("services: {}\n", encoding="utf-8")
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, caddy_fail_on="reload")
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "reload" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_text(encoding="utf-8") == before
+    assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
+    assert not (www / "index.html").exists()
+    assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
+    for host in EXISTING_HOSTS:
+        assert host in live.read_text(encoding="utf-8")
+
+
+def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    www = _prior_www(tmp_path)
+    overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    overlay_dest.write_text("services: {}\n", encoding="utf-8")
+    health = tmp_path / "opt" / "acx-backend" / "health-fail"
+    _write_executable(health, "#!/usr/bin/env bash\nexit 1\n")
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        live_caddy=live,
+        extra_env={"APP_HEALTH_CMD": str(health)},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "health" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_text(encoding="utf-8") == before
+    assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
+    assert not (www / "index.html").exists()
+    assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
+
+
+def test_apply_failed_www_move_restores_caddyfile(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    www = _prior_www(tmp_path)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, fail_mv_dest=www)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "mv" in output.lower() or "activation" in output.lower() or "move" in output.lower(), output
+    assert "applied:" not in result.stdout
+    assert live.read_text(encoding="utf-8") == before
+    assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
+
+
+def test_apply_failed_overlay_promote_restores_prior_www_and_caddy(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_text(encoding="utf-8")
+    www = _prior_www(tmp_path)
+    overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, fail_mv_dest=overlay_dest)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "applied:" not in result.stdout
+    assert live.read_text(encoding="utf-8") == before
+    assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
+    assert not overlay_dest.exists() or overlay_dest.read_text(encoding="utf-8") != OVERLAY.read_text(encoding="utf-8")
+
+
+def test_dry_run_refuses_symlink_and_root_without_writes(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before_files = _tree_files(tmp_path / "opt")
+    result = _run(tmp_path, extra_env={"APP_FRONTEND_ROOT": "/"})
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "root" in output.lower() or "APP_FRONTEND_ROOT" in output
+    assert _tree_files(tmp_path / "opt") == before_files
+    assert _log(tmp_path) == ""

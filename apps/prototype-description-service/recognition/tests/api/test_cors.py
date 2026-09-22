@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from recognition.interface_adapters.http.middleware.correlation import CORRELATION_ID_HEADER
+
 
 def _build_app(monkeypatch, *, origins: str | None) -> FastAPI:
     if origins is None:
@@ -39,7 +41,8 @@ def _build_app(monkeypatch, *, origins: str | None) -> FastAPI:
         allow_credentials=False,
         allow_origin_regex=None,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
+        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", CORRELATION_ID_HEADER],
+        expose_headers=[CORRELATION_ID_HEADER],
         max_age=600,
     )
 
@@ -85,6 +88,37 @@ def test_preflight_returns_pinned_methods_headers_and_max_age(monkeypatch) -> No
     for header in ("authorization", "x-api-key", "x-tenant-id", "content-type"):
         assert header in allow_headers, f"missing {header} in {allow_headers!r}"
     assert resp.headers.get("access-control-max-age") == "600"
+
+
+def test_preflight_allows_correlation_header(monkeypatch) -> None:
+    app = _build_app(monkeypatch, origins="https://ok.example.com")
+    client = TestClient(app)
+    resp = client.options(
+        "/probe",
+        headers={
+            "Origin": "https://ok.example.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": CORRELATION_ID_HEADER.lower(),
+        },
+    )
+
+    assert resp.status_code == 200
+    allow_headers = {
+        header.strip().lower() for header in resp.headers.get("access-control-allow-headers", "").split(",")
+    }
+    assert CORRELATION_ID_HEADER.lower() in allow_headers
+
+
+def test_get_exposes_correlation_header(monkeypatch) -> None:
+    app = _build_app(monkeypatch, origins="https://ok.example.com")
+    client = TestClient(app)
+    resp = client.get("/probe", headers={"Origin": "https://ok.example.com"})
+
+    assert resp.status_code == 200
+    exposed_headers = {
+        header.strip().lower() for header in resp.headers.get("access-control-expose-headers", "").split(",")
+    }
+    assert CORRELATION_ID_HEADER.lower() in exposed_headers
 
 
 def test_empty_allowlist_blocks_all_cors(monkeypatch) -> None:

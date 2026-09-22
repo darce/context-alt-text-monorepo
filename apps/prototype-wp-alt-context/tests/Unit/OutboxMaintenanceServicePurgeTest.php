@@ -8,10 +8,109 @@ use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionStatus;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxStatus;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServicePurgeTest extends TestCase
 {
+    public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            if (str_contains($sql, 'wp_acx_sync_outbox')) {
+                return array_map(
+                    static fn(int $index): array => ['tenant_id' => sprintf('tenant-%02d', $index)],
+                    range(1, 30)
+                );
+            }
+
+            return [];
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids();
+
+        $this->assertSame(
+            array_map(static fn(int $index): string => sprintf('tenant-%02d', $index), range(1, 25)),
+            $tenantIds
+        );
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString('ORDER BY tenant_id ASC', $query);
+            $this->assertStringContainsString('LIMIT 25', $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsHonorsPageSizeFilterOverride(): void
+    {
+        global $wpdb;
+
+        add_filter('acx_sync_purge_tenant_page_size', static fn(): int => 3);
+        $wpdb->onGetResults = static function (string $sql): array {
+            return array_map(
+                static fn(int $index): array => ['tenant_id' => sprintf('tenant-%02d', $index)],
+                range(1, 5)
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids();
+
+        $this->assertSame(['tenant-01', 'tenant-02', 'tenant-03'], $tenantIds);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString('LIMIT 3', $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsUsesKeysetCursorForBothQueries(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            if (!str_contains($sql, "tenant_id > 'tenant-02'")) {
+                return [];
+            }
+
+            return array_map(
+                static fn(string $tenantId): array => ['tenant_id' => $tenantId],
+                ['tenant-03', 'tenant-04']
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids(25, 'tenant-02');
+
+        $this->assertSame(['tenant-03', 'tenant-04'], $tenantIds);
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString("tenant_id > 'tenant-02'", $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsMergesInterleavedSourcesBeforeTruncating(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            $tenantIds = str_contains($sql, 'wp_acx_sync_outbox')
+                ? ['tenant-01', 'tenant-03', 'tenant-05', 'tenant-07']
+                : ['tenant-02', 'tenant-04', 'tenant-06', 'tenant-08'];
+
+            return array_map(
+                static fn(string $tenantId): array => ['tenant_id' => $tenantId],
+                $tenantIds
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+
+        $this->assertSame(
+            ['tenant-01', 'tenant-02', 'tenant-03', 'tenant-04', 'tenant-05'],
+            $service->list_terminal_purge_tenant_ids(5)
+        );
+    }
+
     public function testPurgeTerminalRowsDeletesAcknowledgedOutboxOlderThanRetentionWindow(): void
     {
         global $wpdb;
@@ -603,6 +702,37 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertSame([], $this->actionsNamed('acx_sync_outbox_exhausted_purged'));
     }
 
+    public function testPurgeDoesNotStampSuccessWhenAcknowledgedDeleteFails(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-purge-delete-error';
+        $wpdb->defaultQueryResult = 0;
+        $now = (int) current_time('timestamp');
+        $GLOBALS['__ac_current_time'] = $now;
+        $cutoff = gmdate('Y-m-d H:i:s', $now - (14 * 86400));
+        $acknowledgedDelete = $wpdb->prepare(
+            "DELETE FROM %i\n\t\t\t\tWHERE tenant_id = %s\n\t\t\t\t\tAND status = %s\n\t\t\t\t\tAND acknowledged_at IS NOT NULL\n\t\t\t\t\tAND acknowledged_at < %s\n\t\t\t\tORDER BY acknowledged_at ASC\n\t\t\t\tLIMIT %d",
+            'wp_acx_sync_outbox',
+            $tenantId,
+            OutboxStatus::ACKNOWLEDGED,
+            $cutoff,
+            50
+        );
+        $wpdb->queryResults[$acknowledgedDelete] = false;
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertFalse($purged);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::OUTCOME_FAILED, $state['last_outcome']);
+        $this->assertNull($state['last_success_at']);
+    }
+
     public function testPurgeDoesNotRetryClusterNotFoundEvenWhenRetryableFlagIsTrue(): void
     {
         global $wpdb;
@@ -683,6 +813,60 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertTrue($this->isHookScheduled('acx_sync_purge_terminal_rows'));
         $this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
         $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
+    }
+
+    public function testMaybeSchedulePurgeRecordsActionSchedulerBooking(): void
+    {
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 42;
+
+        $mode = OutboxMaintenanceService::maybe_schedule_purge();
+
+        $liveness = new ReclaimerLiveness();
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER, $mode);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER, $liveness->booked_scheduler_mode());
+        $this->assertFalse($GLOBALS['__ac_option_autoload']['acx_reclaimer_purge_scheduler'] ?? true);
+    }
+
+    public function testPurgeTerminalRowsUsesRecordedWpCronBookingWhenActionSchedulerCannotEnqueue(): void
+    {
+        global $wpdb;
+
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+        $mode = OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $mode);
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+
+        $tenantId = 'tenant-purge-wp-cron-booking';
+        $wpdb->defaultQueryResult = 0;
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $service->purge_terminal_rows($tenantId);
+
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $state['scheduler_mode']);
+        $this->assertSame(ReclaimerLiveness::WP_CRON_PERIOD_SECONDS, $state['effective_period_seconds']);
+        $this->assertNotSame(ReclaimerLiveness::ACTION_SCHEDULER_PERIOD_SECONDS, $state['effective_period_seconds']);
+    }
+
+    public function testGarbageBookedSchedulerModeIsIgnoredWhenPurgeResolvesSchedulerMode(): void
+    {
+        global $wpdb;
+
+        update_option('acx_reclaimer_purge_scheduler', 'bogus', false);
+        $liveness = new ReclaimerLiveness();
+        $this->assertNull($liveness->booked_scheduler_mode());
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $liveness->current_scheduler_mode(null));
+
+        $tenantId = 'tenant-purge-invalid-booking';
+        $wpdb->defaultQueryResult = 0;
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $service->purge_terminal_rows($tenantId);
+
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $state['scheduler_mode']);
+        $this->assertSame(ReclaimerLiveness::WP_CRON_PERIOD_SECONDS, $state['effective_period_seconds']);
     }
 
     /**

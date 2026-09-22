@@ -88,14 +88,22 @@ final class ProxyRouteParityTest extends TestCase
     public function testRetentionHandlersProxyToDeclaredRoutes(): void
     {
         $declared_routes = ProxyRoutes::all();
-        $expected_call = static function (string $declared_path, ?string $emitted_path = null) use ($declared_routes): array {
+        // GET and PATCH share /recognition/retention/policy, so the declared route must be
+        // matched on method AND path or the first path hit wins and the assertion is vacuous.
+        $expected_call = static function (
+            string $method,
+            string $declared_path,
+            ?string $emitted_path = null
+        ) use ($declared_routes): array {
             foreach ($declared_routes as $route) {
-                if ($route['path'] === $declared_path) {
+                if ($route['method'] === $method && $route['path'] === $declared_path) {
                     return array($route['method'], $emitted_path ?? $declared_path);
                 }
             }
 
-            throw new \LogicException('Expected route is missing from ProxyRoutes.');
+            throw new \LogicException(
+                sprintf('Expected route %s %s is missing from ProxyRoutes.', $method, $declared_path)
+            );
         };
 
         $job_id = 'job/id with space';
@@ -109,8 +117,8 @@ final class ProxyRouteParityTest extends TestCase
                 'handler' => 'get_status',
                 'request' => new WP_REST_Request('GET', '/acx/v1/retention/status'),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::GET_RETENTION_POLICY_PATH),
-                    $expected_call(ProxyRoutes::GET_RETENTION_AUDIT_PATH),
+                    $expected_call('GET', ProxyRoutes::GET_RETENTION_POLICY_PATH),
+                    $expected_call('GET', ProxyRoutes::GET_RETENTION_AUDIT_PATH),
                 ),
             ),
             array(
@@ -122,7 +130,7 @@ final class ProxyRouteParityTest extends TestCase
                     array('retention_mode' => 'dispose_after_ack')
                 ),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::PATCH_RETENTION_POLICY_PATH),
+                    $expected_call('PATCH', ProxyRoutes::PATCH_RETENTION_POLICY_PATH),
                 ),
             ),
             array(
@@ -134,7 +142,7 @@ final class ProxyRouteParityTest extends TestCase
                     array('preset' => 'dispose_after_ack')
                 ),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::POST_RETENTION_POLICY_PRESET_PATH),
+                    $expected_call('POST', ProxyRoutes::POST_RETENTION_POLICY_PRESET_PATH),
                 ),
             ),
             array(
@@ -142,7 +150,7 @@ final class ProxyRouteParityTest extends TestCase
                 'handler' => 'trigger_export',
                 'request' => new WP_REST_Request('POST', '/acx/v1/retention/export'),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::POST_RETENTION_EXPORT_PATH),
+                    $expected_call('POST', ProxyRoutes::POST_RETENTION_EXPORT_PATH),
                 ),
             ),
             array(
@@ -155,6 +163,7 @@ final class ProxyRouteParityTest extends TestCase
                 ),
                 'expected' => array(
                     $expected_call(
+                        'GET',
                         ProxyRoutes::GET_RETENTION_EXPORT_STATUS_PATH,
                         ProxyRoutes::export_job_status_path($normalized_job_id)
                     ),
@@ -170,6 +179,7 @@ final class ProxyRouteParityTest extends TestCase
                 ),
                 'expected' => array(
                     $expected_call(
+                        'GET',
                         ProxyRoutes::GET_RETENTION_EXPORT_DATA_PATH,
                         ProxyRoutes::export_job_data_path($normalized_job_id)
                     ),
@@ -184,7 +194,7 @@ final class ProxyRouteParityTest extends TestCase
                     array('confirm' => true, 'scope' => 'disposed')
                 ),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::POST_RETENTION_PURGE_PATH),
+                    $expected_call('POST', ProxyRoutes::POST_RETENTION_PURGE_PATH),
                 ),
             ),
             array(
@@ -192,7 +202,7 @@ final class ProxyRouteParityTest extends TestCase
                 'handler' => 'trigger_import',
                 'request' => $import_request,
                 'expected' => array(
-                    $expected_call(ProxyRoutes::POST_RETENTION_IMPORT_PATH),
+                    $expected_call('POST', ProxyRoutes::POST_RETENTION_IMPORT_PATH),
                 ),
             ),
             array(
@@ -204,7 +214,7 @@ final class ProxyRouteParityTest extends TestCase
                     array('limit' => 5, 'offset' => 10, 'event_type' => 'policy_updated')
                 ),
                 'expected' => array(
-                    $expected_call(ProxyRoutes::GET_RETENTION_AUDIT_PATH),
+                    $expected_call('GET', ProxyRoutes::GET_RETENTION_AUDIT_PATH),
                 ),
             ),
         );

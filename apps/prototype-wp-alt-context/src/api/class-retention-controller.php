@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
+require_once __DIR__ . '/class-proxy-routes.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
@@ -185,8 +186,8 @@ class RetentionController extends AbstractRecognitionProxyController {
 			return new WP_REST_Response( $cached, 200 );
 		}
 
-		$policy_response = $this->proxy_request( 'GET', '/retention/policy', array(), array(), 'ui_read' );
-		$audit_response = $this->proxy_request( 'GET', '/retention/audit', array(), array( 'limit' => 5 ), 'ui_read' );
+		$policy_response = $this->proxy_request( 'GET', ProxyRoutes::GET_RETENTION_POLICY_PATH, array(), array(), 'ui_read' );
+		$audit_response = $this->proxy_request( 'GET', ProxyRoutes::GET_RETENTION_AUDIT_PATH, array(), array( 'limit' => 5 ), 'ui_read' );
 
 		if ( ! $this->is_successful_rest_response( $policy_response ) || ! $this->is_successful_rest_response( $audit_response ) ) {
 			$failed = ! $this->is_successful_rest_response( $policy_response )
@@ -227,7 +228,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 		$response = $this->proxy_request(
 			'PATCH',
-			'/retention/policy',
+			ProxyRoutes::PATCH_RETENTION_POLICY_PATH,
 			array( 'retention_mode' => $retention_mode ),
 			array(),
 			'mutation'
@@ -248,7 +249,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 		$response = $this->proxy_request(
 			'POST',
-			'/retention/policy/preset',
+			ProxyRoutes::POST_RETENTION_POLICY_PRESET_PATH,
 			array( 'preset' => $preset ),
 			array(),
 			'mutation'
@@ -262,7 +263,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 	}
 
 	public function trigger_export( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$response = $this->proxy_request( 'POST', '/retention/export', array(), array(), 'mutation' );
+		$response = $this->proxy_request( 'POST', ProxyRoutes::POST_RETENTION_EXPORT_PATH, array(), array(), 'mutation' );
 
 		if ( ! $this->is_proxy_unavailable( $response ) && $response instanceof WP_REST_Response && $response->get_status() < 400 ) {
 			$this->invalidate_status_cache();
@@ -273,12 +274,12 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 	public function get_export_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$job_id = sanitize_key( $request->get_param( 'job_id' ) );
-		return $this->proxy_request( 'GET', "/retention/export/{$job_id}/status", array(), array(), 'ui_read' );
+		return $this->proxy_request( 'GET', ProxyRoutes::export_job_status_path( $job_id ), array(), array(), 'ui_read' );
 	}
 
 	public function get_export_job_data( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$job_id = sanitize_key( $request->get_param( 'job_id' ) );
-		return $this->proxy_request( 'GET', "/retention/export/{$job_id}/data", array(), array(), 'ui_read' );
+		return $this->proxy_request( 'GET', ProxyRoutes::export_job_data_path( $job_id ), array(), array(), 'ui_read' );
 	}
 
 	public function trigger_purge( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -302,7 +303,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 		$response = $this->proxy_request(
 			'POST',
-			'/retention/purge',
+			ProxyRoutes::POST_RETENTION_PURGE_PATH,
 			array(
 				'confirm' => true,
 				'scope' => $scope,
@@ -356,7 +357,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 		$response = $this->proxy_request(
 			'POST',
-			'/retention/import',
+			ProxyRoutes::POST_RETENTION_IMPORT_PATH,
 			array( 'data' => $body['data'] ),
 			array(),
 			'mutation'
@@ -387,7 +388,7 @@ class RetentionController extends AbstractRecognitionProxyController {
 			$query_params['event_type'] = $event_type;
 		}
 
-		return $this->proxy_request( 'GET', '/retention/audit', array(), $query_params, 'ui_read' );
+		return $this->proxy_request( 'GET', ProxyRoutes::GET_RETENTION_AUDIT_PATH, array(), $query_params, 'ui_read' );
 	}
 
 	/**

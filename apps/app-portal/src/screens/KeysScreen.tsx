@@ -113,6 +113,44 @@ function currentUsableKey(rows: PortalKeyMetadataResponse[], now: number): Porta
   return usable.reduce((latest, row) => (row.created_at > latest.created_at ? row : latest));
 }
 
+function dialogFocusables(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  );
+}
+
+function handleDialogKeydown(event: KeyboardEvent, container: HTMLElement, onEscape: () => void): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    onEscape();
+    return;
+  }
+  if (event.key !== 'Tab') {
+    return;
+  }
+  const nodes = dialogFocusables(container);
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+  const active = document.activeElement;
+  if (event.shiftKey) {
+    if (active === first || !container.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (active === last || !container.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function KeysScreenSession({
   client,
   onNavigateToUsage,
@@ -129,14 +167,21 @@ function KeysScreenSession({
   const [creating, setCreating] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [createBlocked, setCreateBlocked] = useState(false);
   const createInFlightRef = useRef(false);
   const rotateInFlightRef = useRef(false);
+  const secretHeldRef = useRef(false);
+  const restoreFocusIdRef = useRef<string | null>(null);
+  const revokeDialogRef = useRef<HTMLDivElement>(null);
   const createIdempotencyRef = useRef<IdempotencySlot | null>(null);
   const rotateIdempotencyRef = useRef<IdempotencySlot | null>(null);
   const now = Date.now();
   const rows = page?.data ?? [];
   const primary = currentUsableKey(rows, now);
+  const modalOpen = Boolean(secret) || Boolean(revokeDialog);
   const busy = mode === 'loading' || creating || rotating || revoking;
+  const actionsLocked = busy || modalOpen;
+  const createLocked = actionsLocked || (createBlocked && Boolean(primary));
 
   function idempotencyFor(slot: { current: IdempotencySlot | null }, fingerprint: string): string {
     if (slot.current && slot.current.fingerprint === fingerprint) {
@@ -173,6 +218,9 @@ function KeysScreenSession({
           : 'Metadata only; raw secrets appear once after issue.',
       );
       setStatusTone('info');
+      if (!append) {
+        setCreateBlocked(false);
+      }
     } catch (error) {
       setMode('error');
       setStatus(keyErrorCopy(readError(error)));
@@ -185,13 +233,39 @@ function KeysScreenSession({
   }, [client]);
 
   useEffect(() => {
-    if (revokeDialog?.phase === 'last_usable') {
-      document.getElementById('keep-key')?.focus();
+    if (secret || revokeDialog) {
+      return;
     }
+    const id = restoreFocusIdRef.current;
+    if (!id) {
+      return;
+    }
+    restoreFocusIdRef.current = null;
+    document.getElementById(id)?.focus();
+  }, [secret, revokeDialog]);
+
+  useEffect(() => {
+    if (!revokeDialog) {
+      return;
+    }
+    const keyId = revokeDialog.keyId;
+    document.getElementById('keep-key')?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      const container = revokeDialogRef.current;
+      if (!container) {
+        return;
+      }
+      handleDialogKeydown(event, container, () => {
+        restoreFocusIdRef.current = `revoke-key-${keyId}`;
+        setRevokeDialog(null);
+      });
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, [revokeDialog]);
 
   async function handleCreate() {
-    if (createInFlightRef.current) {
+    if (createInFlightRef.current || secretHeldRef.current || revokeDialog || (createBlocked && Boolean(primary))) {
       return;
     }
     const fingerprint = JSON.stringify({ lifetime_seconds: lifetimeSeconds });
@@ -203,10 +277,18 @@ function KeysScreenSession({
     try {
       const issued = await client.create({ lifetime_seconds: lifetimeSeconds }, idempotencyKey);
       createIdempotencyRef.current = null;
+      if (secretHeldRef.current) {
+        return;
+      }
+      secretHeldRef.current = true;
       setSecret({ rawKey: issued.raw_key, replayed: issued.replayed, returnFocusId: 'create-key' });
       await loadKeys();
     } catch (error) {
-      setStatus(keyErrorCopy(readError(error)));
+      const parsed = readError(error);
+      if (parsed.code === 'tenant key limit reached') {
+        setCreateBlocked(true);
+      }
+      setStatus(keyErrorCopy(parsed));
       setStatusTone('error');
     } finally {
       createInFlightRef.current = false;
@@ -215,7 +297,7 @@ function KeysScreenSession({
   }
 
   async function handleRotate(row: PortalKeyMetadataResponse) {
-    if (rotateInFlightRef.current) {
+    if (rotateInFlightRef.current || secretHeldRef.current || revokeDialog) {
       return;
     }
     const fingerprint = JSON.stringify({ id: row.id });
@@ -227,6 +309,10 @@ function KeysScreenSession({
     try {
       const issued: PortalKeyIssueResponse = await client.rotate(row.id, {}, idempotencyKey);
       rotateIdempotencyRef.current = null;
+      if (secretHeldRef.current) {
+        return;
+      }
+      secretHeldRef.current = true;
       setSecret({ rawKey: issued.raw_key, replayed: issued.replayed, returnFocusId: `rotate-key-${row.id}` });
       await loadKeys();
     } catch (error) {
@@ -270,10 +356,10 @@ function KeysScreenSession({
 
   function cancelRevoke() {
     const keyId = revokeDialog?.keyId;
-    setRevokeDialog(null);
     if (keyId) {
-      document.getElementById(`revoke-key-${keyId}`)?.focus();
+      restoreFocusIdRef.current = `revoke-key-${keyId}`;
     }
+    setRevokeDialog(null);
   }
 
   async function copyIssuedSecret(value: string) {
@@ -288,112 +374,125 @@ function KeysScreenSession({
 
   return (
     <main className="acx-portal" aria-busy={busy}>
-      <header className="acx-portal-header">
-        <div>
-          <p className="acx-lede">AltContext</p>
-          <h1>API keys</h1>
-        </div>
+      <div inert={modalOpen || undefined}>
+        <header className="acx-portal-header">
+          <div>
+            <p className="acx-lede">AltContext</p>
+            <h1>API keys</h1>
+          </div>
+          <div className="acx-portal-actions">
+            <button type="button" className="acx-btn" onClick={onNavigateToUsage} disabled={actionsLocked}>
+              Usage
+            </button>
+            <button type="button" className="acx-btn" onClick={onNavigateToBilling} disabled={actionsLocked}>
+              Billing
+            </button>
+          </div>
+        </header>
         <div className="acx-portal-actions">
-          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-            Usage
-          </button>
-          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
-            Billing
+          <label htmlFor="key-lifetime">Lifetime</label>
+          <select
+            id="key-lifetime"
+            value={String(lifetimeSeconds)}
+            disabled={actionsLocked}
+            onChange={(event) => setLifetimeSeconds(Number(event.target.value))}
+          >
+            {LIFETIME_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button
+            id="create-key"
+            type="button"
+            className="acx-btn acx-btn-primary"
+            onClick={() => void handleCreate()}
+            disabled={createLocked}
+          >
+            Create API key
           </button>
         </div>
-      </header>
-      <div className="acx-portal-actions">
-        <label htmlFor="key-lifetime">Lifetime</label>
-        <select
-          id="key-lifetime"
-          value={String(lifetimeSeconds)}
-          disabled={busy}
-          onChange={(event) => setLifetimeSeconds(Number(event.target.value))}
-        >
-          {LIFETIME_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <button
-          id="create-key"
-          type="button"
-          className="acx-btn acx-btn-primary"
-          onClick={() => void handleCreate()}
-          disabled={busy}
-        >
-          Create API key
-        </button>
+        {mode === 'loading' && !page ? <p>Loading API key metadata…</p> : null}
+        {rows.length > 0 ? (
+          <ul>
+            {rows.map((row) => {
+              const state = rowStatus(row, now);
+              const canRotate = primary?.id === row.id;
+              return (
+                <li key={row.id}>
+                  <p>
+                    {row.id} created {row.created_at}
+                    {row.expires_at ? ` expires ${row.expires_at}` : ''}
+                    {row.revoked_at ? ` revoked ${row.revoked_at}` : ''} status: {state}
+                  </p>
+                  {canRotate ? (
+                    <button
+                      id={`rotate-key-${row.id}`}
+                      type="button"
+                      className="acx-btn"
+                      onClick={() => void handleRotate(row)}
+                      disabled={actionsLocked}
+                    >
+                      Rotate key
+                    </button>
+                  ) : null}
+                  {state !== 'revoked' ? (
+                    <button
+                      id={`revoke-key-${row.id}`}
+                      type="button"
+                      className="acx-btn"
+                      onClick={() => setRevokeDialog({ phase: 'preview', keyId: row.id })}
+                      disabled={actionsLocked}
+                    >
+                      Revoke key
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {page?.next_cursor ? (
+          <button
+            type="button"
+            className="acx-btn"
+            onClick={() => void loadKeys(page.next_cursor ?? undefined, true)}
+            disabled={actionsLocked}
+          >
+            Load more keys
+          </button>
+        ) : null}
+        {guidanceKeyId ? (
+          <button
+            type="button"
+            className="acx-btn"
+            onClick={() => onOpenWordPressGuidance(guidanceKeyId)}
+            disabled={actionsLocked}
+          >
+            WordPress Test Connection guidance
+          </button>
+        ) : null}
+        {secret ? null : <StatusMessage tone={statusTone}>{status}</StatusMessage>}
+        {mode === 'error' ? (
+          <button
+            type="button"
+            className="acx-btn acx-btn-primary"
+            onClick={() => void loadKeys()}
+            disabled={actionsLocked}
+          >
+            Try again
+          </button>
+        ) : null}
       </div>
-      {mode === 'loading' && !page ? <p>Loading API key metadata…</p> : null}
-      {rows.length > 0 ? (
-        <ul>
-          {rows.map((row) => {
-            const state = rowStatus(row, now);
-            const canRotate = primary?.id === row.id;
-            return (
-              <li key={row.id}>
-                <p>
-                  {row.id} created {row.created_at}
-                  {row.expires_at ? ` expires ${row.expires_at}` : ''}
-                  {row.revoked_at ? ` revoked ${row.revoked_at}` : ''} status: {state}
-                </p>
-                {canRotate ? (
-                  <button
-                    id={`rotate-key-${row.id}`}
-                    type="button"
-                    className="acx-btn"
-                    onClick={() => void handleRotate(row)}
-                    disabled={busy}
-                  >
-                    Rotate key
-                  </button>
-                ) : null}
-                {state !== 'revoked' ? (
-                  <button
-                    id={`revoke-key-${row.id}`}
-                    type="button"
-                    className="acx-btn"
-                    onClick={() => setRevokeDialog({ phase: 'preview', keyId: row.id })}
-                    disabled={busy}
-                  >
-                    Revoke key
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {page?.next_cursor ? (
-        <button
-          type="button"
-          className="acx-btn"
-          onClick={() => void loadKeys(page.next_cursor ?? undefined, true)}
-          disabled={busy}
-        >
-          Load more keys
-        </button>
-      ) : null}
-      {guidanceKeyId ? (
-        <button
-          type="button"
-          className="acx-btn"
-          onClick={() => onOpenWordPressGuidance(guidanceKeyId)}
-          disabled={busy}
-        >
-          WordPress Test Connection guidance
-        </button>
-      ) : null}
-      {secret ? null : <StatusMessage tone={statusTone}>{status}</StatusMessage>}
-      {mode === 'error' ? (
-        <button type="button" className="acx-btn acx-btn-primary" onClick={() => void loadKeys()} disabled={busy}>
-          Try again
-        </button>
-      ) : null}
       {revokeDialog ? (
-        <div role="dialog" aria-modal="true" aria-labelledby="revoke-key-title" className="acx-portal">
+        <div
+          ref={revokeDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="revoke-key-title"
+          className="acx-portal"
+        >
           <h2 id="revoke-key-title">{revokeDialog.phase === 'last_usable' ? 'Last usable key' : 'Revoke API key'}</h2>
           <p>
             {revokeDialog.phase === 'last_usable'
@@ -420,7 +519,11 @@ function KeysScreenSession({
           rawKey={secret.rawKey}
           replayed={secret.replayed}
           onCopy={() => copyIssuedSecret(secret.rawKey ?? '')}
-          onClose={() => setSecret(null)}
+          onClose={() => {
+            restoreFocusIdRef.current = secret.returnFocusId;
+            secretHeldRef.current = false;
+            setSecret(null);
+          }}
           returnFocusId={secret.returnFocusId}
         />
       ) : null}

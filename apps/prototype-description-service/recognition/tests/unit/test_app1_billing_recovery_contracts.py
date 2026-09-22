@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Table, UniqueConstraint, create_engine
+from sqlalchemy import Table, UniqueConstraint, create_engine, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -37,6 +37,7 @@ from recognition.domain.portal_contracts import (
     ReconciliationKind,
     ReconciliationLease,
     ReconciliationLeaseConflictError,
+    ReconciliationQuarantineConflictError,
 )
 from recognition.infrastructure.billing.polar_provider import PolarEnumerationError
 from recognition.infrastructure.repositories.billing_reconciliation_repository import (
@@ -207,8 +208,13 @@ def test_namespace_columns_are_nullable_and_non_authoritative_on_legacy_tables()
         for constraint in BillingWebhookInbox.__table__.constraints
         if isinstance(constraint, UniqueConstraint)
     ]
-    assert ("provider", "provider_event_id") in inbox_uniques
-    assert not any("environment" in columns and "seller_account" in columns for columns in inbox_uniques)
+    projection_uniques = [
+        tuple(column.name for column in constraint.columns)
+        for constraint in BillingSubscriptionProjection.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    ]
+    assert ("provider", "environment", "seller_account", "provider_event_id") in inbox_uniques
+    assert ("provider", "environment", "seller_account", "provider_customer_id") in projection_uniques
 
 
 def test_recovery_tables_use_seller_wide_keys_not_tenant_id() -> None:
@@ -467,3 +473,132 @@ def test_sqlite_schema_creates_recovery_uniques(recovery_session: _AsyncSessionF
     inspector = sa_inspect(recovery_session.bind)
     cursor_pk = inspector.get_pk_constraint("billing_reconciliation_cursor")
     assert cursor_pk["constrained_columns"] == ["provider", "environment", "seller_account", "kind"]
+
+
+async def _progress_row(session: _AsyncSessionFacade, remote_id: str) -> BillingReconciliationItemProgress:
+    result = await session.execute(
+        select(BillingReconciliationItemProgress).where(BillingReconciliationItemProgress.remote_id == remote_id)
+    )
+    row = result.scalar_one_or_none()
+    assert row is not None
+    return row
+
+
+@pytest.mark.asyncio
+async def test_audited_retry_rejects_resolved_and_repeated_retry(
+    recovery_session: _AsyncSessionFacade,
+) -> None:
+    repo = ReconciliationRepositoryImpl(recovery_session)
+    now = datetime(2026, 9, 22, 14, 0, tzinfo=UTC)
+    key = _key(seller_account="org_retry")
+    lease = await repo.acquire_lease(key, owner="worker-a", lease_ttl=timedelta(seconds=30), now=now)
+    await recovery_session.commit()
+    assert lease is not None
+    observation = EnumerationObservation(
+        reason=EnumerationObservationReason.SELLER_MISMATCH,
+        remote_id="sub-retry",
+        details={"organization_id": "org-other"},
+    )
+    await repo.quarantine_item(lease, observation=observation, now=now + timedelta(seconds=1))
+    first = await repo.audited_retry(
+        lease,
+        remote_id="sub-retry",
+        operator_identity="ops-1",
+        operator_reason="retry once",
+        now=now + timedelta(seconds=2),
+    )
+    await recovery_session.commit()
+    assert first.status is QuarantineStatus.RETRY_PENDING
+    assert first.attempt_count == 2
+
+    with pytest.raises(ReconciliationQuarantineConflictError, match="retry"):
+        await repo.audited_retry(
+            lease,
+            remote_id="sub-retry",
+            operator_identity="ops-1",
+            operator_reason="retry again",
+            now=now + timedelta(seconds=3),
+        )
+    loaded = await repo.get_quarantine(key, "sub-retry")
+    assert loaded is not None
+    assert loaded.status is QuarantineStatus.RETRY_PENDING
+    assert loaded.attempt_count == 2
+
+    await repo.complete_item(lease, remote_id="sub-retry", now=now + timedelta(seconds=4))
+    await recovery_session.commit()
+    resolved = await repo.get_quarantine(key, "sub-retry")
+    assert resolved is not None
+    assert resolved.status is QuarantineStatus.RESOLVED
+    assert resolved.attempt_count == 2
+    assert (await _progress_row(recovery_session, "sub-retry")).status == "completed"
+
+    with pytest.raises(ReconciliationQuarantineConflictError, match="retry"):
+        await repo.audited_retry(
+            lease,
+            remote_id="sub-retry",
+            operator_identity="ops-1",
+            operator_reason="reopen resolved",
+            now=now + timedelta(seconds=5),
+        )
+    still = await repo.get_quarantine(key, "sub-retry")
+    assert still is not None
+    assert still.status is QuarantineStatus.RESOLVED
+    assert still.attempt_count == 2
+
+
+@pytest.mark.asyncio
+async def test_complete_item_after_retry_is_fenced_and_atomic(
+    recovery_session: _AsyncSessionFacade,
+) -> None:
+    repo = ReconciliationRepositoryImpl(recovery_session)
+    now = datetime(2026, 9, 22, 14, 30, tzinfo=UTC)
+    key = _key(seller_account="org_complete")
+    first = await repo.acquire_lease(key, owner="worker-a", lease_ttl=timedelta(seconds=30), now=now)
+    await recovery_session.commit()
+    assert first is not None
+    await repo.quarantine_item(
+        first,
+        observation=EnumerationObservation(
+            reason=EnumerationObservationReason.ENVIRONMENT_MISMATCH,
+            remote_id="sub-fenced",
+            details={"environment": "live"},
+        ),
+        now=now + timedelta(seconds=1),
+    )
+    await repo.audited_retry(
+        first,
+        remote_id="sub-fenced",
+        operator_identity="ops-2",
+        operator_reason="operator verified",
+        now=now + timedelta(seconds=2),
+    )
+    await recovery_session.commit()
+    assert (await _progress_row(recovery_session, "sub-fenced")).status == "quarantined"
+
+    stolen = await repo.acquire_lease(
+        key,
+        owner="worker-b",
+        lease_ttl=timedelta(seconds=30),
+        now=now + timedelta(seconds=31),
+    )
+    await recovery_session.commit()
+    assert stolen is not None
+    assert stolen.fence == 2
+
+    with pytest.raises(ReconciliationLeaseConflictError):
+        await repo.complete_item(first, remote_id="sub-fenced", now=now + timedelta(seconds=32))
+    stale = await repo.get_quarantine(key, "sub-fenced")
+    assert stale is not None
+    assert stale.status is QuarantineStatus.RETRY_PENDING
+    assert (await _progress_row(recovery_session, "sub-fenced")).status == "quarantined"
+
+    await repo.complete_item(stolen, remote_id="sub-fenced", now=now + timedelta(seconds=32))
+    await repo.complete_item(stolen, remote_id="sub-fenced", now=now + timedelta(seconds=33))
+    await recovery_session.commit()
+    resolved = await repo.get_quarantine(key, "sub-fenced")
+    assert resolved is not None
+    assert resolved.status is QuarantineStatus.RESOLVED
+    assert resolved.attempt_count == 2
+    progress = await _progress_row(recovery_session, "sub-fenced")
+    assert progress.status == "completed"
+    assert progress.fence == stolen.fence

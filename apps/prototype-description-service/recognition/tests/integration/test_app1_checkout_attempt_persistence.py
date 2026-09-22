@@ -61,15 +61,13 @@ async def test_postgres_heal_and_rls_isolate_checkout_attempts(
         constraint["name"]: list(constraint["column_names"])
         for constraint in inspector.get_unique_constraints("billing_checkout_attempt")
     }
-    # Spec 5.1 seller-wide provider-key unique omits tenant_id. Current G1 unique
-    # includes it; record the live catalog fact rather than conceal the mismatch.
     assert uniques["uq_billing_checkout_attempt_provider_key"] == [
-        "tenant_id",
         "provider",
         "environment",
         "seller_account",
         "idempotency_key",
     ]
+    assert "tenant_id" not in uniques["uq_billing_checkout_attempt_provider_key"]
     with pg_empty_engine.connect() as conn:
         flags = conn.execute(
             text(
@@ -90,7 +88,14 @@ async def test_postgres_heal_and_rls_isolate_checkout_attempts(
             await session.flush()
             repo = CheckoutAttemptRepository(session)
             created = await repo.begin_attempt(**_begin_kwargs(tenant_a.id))
-            isolated = await repo.begin_attempt(**_begin_kwargs(tenant_b.id, request_fingerprint="fp-tenant-b"))
+            isolated = await repo.begin_attempt(
+                **_begin_kwargs(
+                    tenant_b.id,
+                    idempotency_key="provider-key-2",
+                    client_idempotency_key="client-key-2",
+                    request_fingerprint="fp-tenant-b",
+                )
+            )
             await session.commit()
             assert isolated.attempt.id != created.attempt.id
             assert await repo.get_attempt(tenant_b.id, created.attempt.id) is None

@@ -196,6 +196,7 @@ async def test_foreign_tenant_cannot_see_or_collide_on_same_client_key(
     isolated = await repo.begin_attempt(
         **_begin_kwargs(
             tenant_b.id,
+            idempotency_key="provider-key-tenant-b",
             request_fingerprint="fp-tenant-b",
         )
     )
@@ -292,17 +293,23 @@ async def test_begin_attempt_sets_and_clears_tenant_context(monkeypatch: pytest.
     assert events[-1] == ("clear", None)
 
 
-def test_uniques_include_tenant_id() -> None:
-    unique_column_sets: list[tuple[str, ...]] = []
+def test_checkout_uniques_distinguish_tenant_scoped_client_key_from_seller_wide_provider_key() -> None:
+    unique_column_sets: dict[str, tuple[str, ...]] = {}
     for constraint in BillingCheckoutAttempt.__table__.constraints:
-        if isinstance(constraint, UniqueConstraint):
-            unique_column_sets.append(tuple(column.name for column in constraint.columns))
+        if isinstance(constraint, UniqueConstraint) and constraint.name is not None:
+            unique_column_sets[constraint.name] = tuple(column.name for column in constraint.columns)
     for index in BillingCheckoutAttempt.__table__.indexes:
-        if index.unique:
-            unique_column_sets.append(tuple(column.name for column in index.columns))
-    assert unique_column_sets
-    for columns in unique_column_sets:
-        assert "tenant_id" in columns, columns
+        if index.unique and index.name is not None:
+            unique_column_sets[index.name] = tuple(column.name for column in index.columns)
+
+    provider_key = unique_column_sets["uq_billing_checkout_attempt_provider_key"]
+    assert provider_key == ("provider", "environment", "seller_account", "idempotency_key")
+    assert "tenant_id" not in provider_key
+
+    client_key = unique_column_sets["uq_billing_checkout_attempt_client_key"]
+    assert client_key[0] == "tenant_id"
+    assert "client_idempotency_key" in client_key
+    assert "idempotency_key" not in client_key
 
 
 def test_migration_authority_registers_checkout_attempt_upgrade() -> None:

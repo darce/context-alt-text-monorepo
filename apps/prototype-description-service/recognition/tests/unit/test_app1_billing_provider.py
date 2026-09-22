@@ -23,6 +23,7 @@ from recognition.domain.portal_contracts import (
     BillingState,
     BillingSubscriptionStatus,
     CheckoutSession,
+    EnumerationObservationReason,
     EnumerationPage,
     WebhookInboxStatus,
 )
@@ -462,6 +463,10 @@ async def test_enumerate_subscriptions_uses_opaque_cursor_and_skips_untrusted_id
     assert len(page.items) == 1
     assert page.items[0].tenant_id == tenant_id
     assert page.items[0].provider_subscription_id == "sandbox:sub-ok"
+    reasons = {observation.reason for observation in page.observations}
+    assert EnumerationObservationReason.SELLER_MISMATCH in reasons
+    assert EnumerationObservationReason.EMAIL_IDENTITY_REJECTED in reasons
+    assert all("@" not in observation.remote_id for observation in page.observations)
     assert client.get_calls[0]["url"] == (
         f"https://sandbox.example.test/v1/subscriptions/?page=1&limit=50&organization_id={_SELLER_ACCOUNT}"
     )

@@ -40,15 +40,24 @@ wins; a face center in no box resolves to no name — the stranger case).
 Authored in VLM-2C Slice 3 from the operator-located identities; covers scenes
 12, 19, 21, 23, 30, and 38.
 
-Image bytes are **not vendored in git** (59 MB corpus). Bootstrap a local copy
-and point `GOLDEN_IMAGES_DIR` at it:
+Image bytes are **not vendored in git** (59 MB corpus). The canonical local
+(gitignored) image root is `<primary checkout>/benchmarks/images/`, holding
+`mock_images/`, `mock_entities/`, and `corpus646/originals/<bucket>/<file>`
+(source-space originals verified against `corpus-manifest-v3r` `sha256_source`;
+provenance in `benchmarks/images/corpus646/provenance.json`).
+`~/Development/eval-fixtures` is a transitional symlink to that directory.
+
+Re-hydrate mock fixtures from the Butter archive into that directory and point
+`GOLDEN_IMAGES_DIR` at it:
 
 ```bash
+IMAGES="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/benchmarks/images"
+mkdir -p "$IMAGES"
 rsync -av \
   /Volumes/Butter/archives/archived-recognition-service/scripts/mock_images \
   /Volumes/Butter/archives/archived-recognition-service/scripts/mock_entities \
-  ~/Development/eval-fixtures/
-export GOLDEN_IMAGES_DIR=~/Development/eval-fixtures
+  "$IMAGES/"
+export GOLDEN_IMAGES_DIR="$IMAGES"
 ```
 
 The loader (`scripts.eval_harness.manifest.load_manifest`) fail-fasts on

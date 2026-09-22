@@ -21,7 +21,7 @@ FIR512-1 merged dimension and provenance plumbing for a declarable AuraFace-v1 5
 
 AuraFace-v1 is a **separate model space** from unchanged SFace 128D. It is also not InsightFace/buffalo: the in-house path is YuNet + the in-house five-point aligner + ONNX Runtime on a pinned Apache-2.0 `glintr100.onnx` artifact, with L2/cosine vectors written only to an isolated fresh 512D store after re-extraction from pixels.
 
-The live AuraFace `InputPreprocessing` record is still marked **UNVERIFIED** in `provenance.py` (alignment template, input scale, output L2). Hash pins exist; preprocessing measurement does not. Activating on those assumptions would mint a 512D gallery that later measurement cannot replay.
+The live AuraFace `InputPreprocessing` record is still marked **UNVERIFIED** in `provenance.py` (alignment template, input scale, output L2). Hash pins and graph/raw-output measurements exist; external preprocessing and composed parity remain unverified. Activating on those assumptions would mint a 512D gallery that later measurement cannot replay.
 
 This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, sizes, template ids, and scale comments live in source and will move when FIR512-2 measures them. Do not copy those constants into this document as if they were the contract.
 
@@ -39,9 +39,9 @@ This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, siz
 | Surface | What it does today | Enforcement? |
 | --- | --- | --- |
 | `MODEL_MANIFEST["auraface"]` | Declarable 512D pin: artifact name, license id, embedding_dim/normalization/metric, UNVERIFIED preprocessing comments | Pins exist; preprocessing is explicitly unverified |
-| `assert_space_activatable` | Raises while AuraFace preprocessing/provenance is unverified | **Helper only.** Callers in-tree are unit tests, not boot/ready |
+| `assert_space_activatable` | Raises while AuraFace preprocessing/provenance is unverified | Called by AuraFace `check_model_space` and API readiness before model I/O |
 | `check_face_pipeline_models` | Eager YuNet+SFace verify + three-way dim + shared ORT runtime | **SFace 128D base only.** Does not consult AuraFace or `assert_space_activatable` |
-| `check_model_space(AURAFACE)` | File/hash load, dimension guard, runtime construct | Does **not** call `assert_space_activatable`. Hash-present + dim-match can still look healthy |
+| `check_model_space(AURAFACE)` | Refusal, cached file/hash verification, dimension guard, runtime construct | Unverified AuraFace fails closed before I/O; full serving/model-ID and detector-directory support remain pending |
 | `ort_adapters._blob_builder_for_model` | Declared-preprocessing blob path, currently SFace-template gated | AuraFace composed ORT parity is **pending** (FIR512-2) |
 | `FacePipelineSettings.profile` | `RECOGNITION_FACE_PIPELINE_PROFILE` in `{insightface, face_pipeline, auraface}` | Selecting `auraface` is not an activation grant |
 | `RecognitionSettings.auraface_models_dir` | `RECOGNITION_AURAFACE_MODELS_DIR` or package `DEFAULT_MODELS_DIR` | Store path only |
@@ -50,7 +50,7 @@ This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, siz
 
 ### Downstream surfaces that must migrate together
 
-- Ready/serve: wire `assert_space_activatable` (or equivalent) into the profile that would actually load AuraFace, not only into tests.
+- Ready/serve: readiness refusal is integrated and has 20 passing VM tests. Complete active embedding-model resolution and detector-directory routing before claiming that a verified profile can serve.
 - ORT composed path: YuNet + in-house aligner + AuraFace session must match **measured** preprocessing before enrollment.
 - Store: isolated 512D database/centroids; fresh pixel enrollment; no cross-space import.
 - Comparator: keep the 128D `.env.fir.example` stack explicitly selectable; rollback is a stack switch, not a mixed-space fallback.
@@ -105,13 +105,13 @@ Retraining is conditional research. The current 512D candidate is pinned AuraFac
 
 Rejected.
 
-Documentation cannot stop a profile flag. Refusal belongs on the activation path. Today that path is the enforcement gap; closing it is FIR512-2 work, not a docs-only substitute.
+Documentation cannot stop a profile flag. Refusal belongs on the activation path. Readiness now refuses the unverified AuraFace profile before I/O; complete serving support and composed parity are still FIR512-2 work.
 
 ### 4. Copy current sha256 / template / scale values into this ADR as frozen contract
 
 Rejected.
 
-FIR512-2 is about to replace UNVERIFIED declarations with measured ones. Freezing today's numbers here would fork the source of truth from `provenance.py`.
+FIR512-2 may replace UNVERIFIED declarations only when independent measurements and composed parity support the change. Freezing today's numbers here would fork the source of truth from `provenance.py`.
 
 ## Consequences
 
@@ -123,7 +123,7 @@ FIR512-2 is about to replace UNVERIFIED declarations with measured ones. Freezin
 
 ### Negative
 
-- Until FIR512-2 wires the helper into readiness, a mis-set profile can still reach load/runtime code. Policy is ahead of enforcement; that gap must stay visible.
+- Readiness refusal does not establish complete AuraFace serving support. Model-ID routing, detector-store handling, preprocessing, and composed parity still require verification.
 - Operators reading hashes from `provenance.py` may assume pins equal permission. The v12 report and this ADR exist to contradict that.
 
 ### Guardrails for the follow-on implementation task

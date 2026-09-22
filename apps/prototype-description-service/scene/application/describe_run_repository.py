@@ -159,6 +159,8 @@ class DescribeRunRepository:
         idempotency_key: str | None = None,
         request_digest: str | None = None,
         deadline_seconds: float | None = None,
+        run_id: uuid.UUID | None = None,
+        operation_id: str | None = None,
     ) -> uuid.UUID:
         # PHP-04: dedup while preserving first-seen order so a caller cannot
         # trigger redundant VLM inference by repeating a media_id.
@@ -172,6 +174,7 @@ class DescribeRunRepository:
         request.validate()
         images = images or {}
         run = DescribeRun(
+            **({"id": run_id} if run_id is not None else {}),
             tenant_id=tenant_id,
             run_kind=RunKind.BULK,
             status=DescribeRunStatus.PENDING,
@@ -194,6 +197,7 @@ class DescribeRunRepository:
                 else compute_request_digest(media_ids=media_ids, recognition_enabled=request.recognition_enabled)
             ),
             deadline_seconds=deadline_seconds,
+            operation_id=operation_id,
         )
         run.items = [
             DescribeRunItem(
@@ -218,9 +222,13 @@ class DescribeRunRepository:
         image_bytes: bytes,
         image_content_type: str | None = None,
         created_by_user_id: int | None = None,
+        run_id: uuid.UUID | None = None,
+        operation_id: str | None = None,
+        request_digest: str | None = None,
     ) -> uuid.UUID:
         """Create a one-item ``run_kind=single`` job for the async supersede path (VLM-5)."""
         run = DescribeRun(
+            **({"id": run_id} if run_id is not None else {}),
             tenant_id=tenant_id,
             run_kind=RunKind.SINGLE,
             status=DescribeRunStatus.PENDING,
@@ -232,6 +240,8 @@ class DescribeRunRepository:
             skipped_items=0,
             items_timed=0,
             created_by_user_id=created_by_user_id,
+            operation_id=operation_id,
+            request_digest=request_digest,
         )
         run.items = [
             DescribeRunItem(

@@ -962,3 +962,115 @@ def test_later_readiness_repairs_null_startup_id():
         os.unlink(path)
 
     asyncio.run(body())
+
+
+def test_run_worker_commits_usage_on_success_and_keeps_captured_fence():
+    from datetime import UTC, datetime, timedelta
+
+    from db.models import UsageReservation
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.scene import DescribeRun, DescribeRunItem
+    from db.models.tenant import Tenant
+    from recognition.application.services.usage_admission_service import UsageAdmissionService
+    from recognition.domain.portal_contracts import (
+        DEFAULT_GLOBAL_CONFIG_VERSION,
+        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        DEFAULT_GLOBAL_FENCE_EPOCH,
+        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_LIMIT,
+        GLOBAL_USAGE_ADMISSION_STATE_ID,
+        EntitlementStatus,
+        UsageReservationStatus,
+    )
+    from scene.domain.describe_run import DescribeRunStatus
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                Tenant.__table__.create,
+                checkfirst=True,
+            )
+            await conn.run_sync(TenantEntitlement.__table__.create, checkfirst=True)
+            await conn.run_sync(UsageReservation.__table__.create, checkfirst=True)
+            await conn.run_sync(GlobalUsageAdmissionState.__table__.create, checkfirst=True)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(tz=UTC)
+        job_id = uuid.uuid4()
+        async with sf() as s:
+            if await s.get(Tenant, TENANT_ID) is None:
+                s.add(Tenant(id=TENANT_ID, site_url="http://test.local"))
+            s.add(
+                TenantEntitlement(
+                    tenant_id=TENANT_ID,
+                    plan_code="beta",
+                    allowance_version="phase-v1",
+                    allowance_jobs=10,
+                    period_start=now - timedelta(minutes=1),
+                    period_end=now + timedelta(hours=1),
+                    status=EntitlementStatus.BETA_ACTIVE,
+                    source="unit-test",
+                )
+            )
+            s.add(
+                GlobalUsageAdmissionState(
+                    id=GLOBAL_USAGE_ADMISSION_STATE_ID,
+                    period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
+                    period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
+                    daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+                    daily_cost_units=0,
+                    inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+                    inflight_units=0,
+                    queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+                    queue_depth=0,
+                    queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+                    queue_bytes=0,
+                    stop_requested=False,
+                    fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+                    config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+                    updated_at=now,
+                )
+            )
+            await s.commit()
+        async with sf() as s:
+            ticket = await UsageAdmissionService(s).reserve(
+                TENANT_ID,
+                idempotency_key="bulk-op",
+                job_id=str(job_id),
+                cost_units=1,
+                operation_id="bulk-op",
+                request_fingerprint="fp-bulk",
+            )
+            captured = ticket.fence_token
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID,
+                media_ids=[1],
+                images={1: (b"x", "image/png")},
+                run_id=job_id,
+                operation_id="bulk-op",
+                request_digest="fp-bulk",
+            )
+            await s.commit()
+        assert run_id == job_id
+
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+            return DescribeItemOutcome(alt_text_draft="ok", caption="c")
+
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+        )
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+            row = await s.get(UsageReservation, ticket.reservation_id)
+            assert run is not None and run.status == DescribeRunStatus.COMPLETED
+            assert row is not None and row.status == UsageReservationStatus.COMMITTED
+            assert row.fence_token == captured
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())

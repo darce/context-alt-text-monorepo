@@ -17,7 +17,7 @@ import os
 import time
 import uuid
 from collections.abc import Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -400,6 +400,17 @@ async def _run_by_usage_operation(session: AsyncSession, *, tenant_id: uuid.UUID
     )
 
 
+def bound_usage_job_id(ticket, fallback: uuid.UUID) -> uuid.UUID:
+    """Use the admitted ticket job id when present; otherwise the pre-generated UUID."""
+    raw = getattr(ticket, "job_id", None) if ticket is not None else None
+    if not raw:
+        return fallback
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return fallback
+
+
 async def _bind_run_usage(
     session: AsyncSession,
     *,
@@ -408,13 +419,7 @@ async def _bind_run_usage(
     operation_id: str,
     request_fingerprint: str,
 ):
-    """Persist G2 usage identity onto existing DescribeRun payload fields.
-
-    Shape for G3: ``DescribeRun.operation_id`` = usage operation_id,
-    ``DescribeRun.request_digest`` = usage fingerprint. ``create_run`` /
-    ``create_single_run`` do not accept caller ``id``, so ``UsageTicket.job_id``
-    may differ from ``DescribeRun.id`` until G3 adds that parameter.
-    """
+    """Persist usage identity onto DescribeRun (operation_id + fingerprint digest)."""
     run = await session.get(DescribeRun, run_id)
     if run is None or run.tenant_id != tenant_id:
         raise HTTPException(
@@ -1440,7 +1445,7 @@ async def describe_image_multipart(
         operation_id=usage_operation_id,
         request_fingerprint=usage_fingerprint,
         queue_bytes=0,
-    ):
+    ) as ticket:
         session_factory = worker_session_factory(session) if session is not None else None
         effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
         describe_repository = repository
@@ -1488,6 +1493,7 @@ async def describe_image_multipart(
             await _charge_demo_quota()
 
         terminalized = False
+        compute_started = False
 
         async def _cleanup_accepted() -> None:
             nonlocal terminalized
@@ -1502,6 +1508,15 @@ async def describe_image_multipart(
                 caller_ready=observed_ready_here,
             )
             terminalized = True
+
+        async def _commit_usage_if_computed() -> None:
+            if not compute_started or ticket is None or usage_admission_service is None:
+                return
+            fence = getattr(ticket, "fence_token", None)
+            commit_fenced = getattr(usage_admission_service, "commit_fenced", None)
+            if not fence or not callable(commit_fenced):
+                return
+            await commit_fenced(ticket, fence_token=fence)
 
         try:
             if unavailable_fast_path:
@@ -1528,6 +1543,7 @@ async def describe_image_multipart(
                     tenant_uuid=tenant_uuid,
                 )
             else:
+                compute_started = True
                 response = await service.describe(
                     tenant_id=tenant_uuid,
                     media_id=envelope.media_id,
@@ -1615,11 +1631,13 @@ async def describe_image_multipart(
                 # durable DescribeOperation to advertise.
                 if gpu_compute:
                     raise RuntimeError("gpu describe succeeded without an accepted operation")
+                await _commit_usage_if_computed()
                 return MultipartDescribeResponse(
                     **dumped,
                     startup_id=startup_id,
                     timing=timing,
                 )
+            await _commit_usage_if_computed()
             return MultipartDescribeResponse(
                 **dumped,
                 operation_id=accepted.operation_id,
@@ -1641,6 +1659,9 @@ async def describe_image_multipart(
                 ) from exc
             raise
         except TimeoutError as exc:
+            if compute_started:
+                with suppress(Exception):
+                    await _commit_usage_if_computed()
             await _cleanup_accepted()
             raise HTTPException(
                 status.HTTP_504_GATEWAY_TIMEOUT,
@@ -1670,6 +1691,9 @@ async def describe_image_multipart(
             processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
             server_elapsed_ms = _elapsed_ms(server_start)
             safe_message = exc.message if isinstance(exc, GpuRemoteAdapterError) else str(exc)
+            if compute_started:
+                with suppress(Exception):
+                    await _commit_usage_if_computed()
             if gpu_compute:
                 try:
                     completed = await _complete_operation(
@@ -1701,6 +1725,9 @@ async def describe_image_multipart(
                 ) from exc
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, safe_message) from exc
         except Exception as exc:
+            if compute_started:
+                with suppress(Exception):
+                    await _commit_usage_if_computed()
             await _cleanup_accepted()
             raise _typed_describe_error(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1785,7 +1812,7 @@ async def enqueue_describe_image(
         operation_id=operation_id,
         request_fingerprint=usage_fingerprint,
         queue_bytes=image_len,
-    ):
+    ) as ticket:
         repo = DescribeRunRepository(session)
         existing = await _run_by_usage_operation(session, tenant_id=submission.tenant_uuid, operation_id=operation_id)
         if existing is not None:
@@ -1812,6 +1839,9 @@ async def enqueue_describe_image(
                 media_id=envelope.media_id,
                 image_bytes=submission.image_bytes,
                 created_by_user_id=getattr(auth, "user_id", None),
+                run_id=bound_usage_job_id(ticket, job_id),
+                operation_id=operation_id,
+                request_digest=usage_fingerprint,
             )
             await _bind_run_usage(
                 session,

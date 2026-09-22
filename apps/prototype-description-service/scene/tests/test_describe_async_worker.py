@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
+from scene.application.describe_async_worker import run_async_describe_job
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult
 from scene.domain.describe_run import DescribeItemStatus, DescribeJobStatus, describe_job_status
@@ -702,5 +703,182 @@ def test_worker_bails_on_already_terminal_failed_and_completed():
         assert await _count_cache_rows(sf, tenant_id=tenant) == 0
 
         await engine.dispose()
+
+    asyncio.run(body())
+
+
+async def _usage_sessionmaker():
+    from datetime import UTC, datetime, timedelta
+
+    from db.models import UsageReservation
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.tenant import Tenant
+    from recognition.domain.portal_contracts import (
+        DEFAULT_GLOBAL_CONFIG_VERSION,
+        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        DEFAULT_GLOBAL_FENCE_EPOCH,
+        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_LIMIT,
+        GLOBAL_USAGE_ADMISSION_STATE_ID,
+        EntitlementStatus,
+    )
+
+    tmpdir = tempfile.TemporaryDirectory(prefix="acx-usage-async-")
+    path = os.path.join(tmpdir.name, "test.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    event.listen(engine.sync_engine, "engine_disposed", lambda *_: tmpdir.cleanup())
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=cast(
+                list[Table],
+                [
+                    Tenant.__table__,
+                    TenantEntitlement.__table__,
+                    UsageReservation.__table__,
+                    GlobalUsageAdmissionState.__table__,
+                    DescribeRun.__table__,
+                    DescribeRunItem.__table__,
+                    ImageDescription.__table__,
+                ],
+            ),
+        )
+    sf = async_sessionmaker(engine, expire_on_commit=False)
+    tenant_id = uuid.uuid4()
+    now = datetime.now(tz=UTC)
+    async with sf() as session:
+        session.add(Tenant(id=tenant_id, site_url="https://async-usage.example.test"))
+        session.add(
+            TenantEntitlement(
+                tenant_id=tenant_id,
+                plan_code="beta",
+                allowance_version="async-v1",
+                allowance_jobs=10,
+                period_start=now - timedelta(minutes=1),
+                period_end=now + timedelta(hours=1),
+                status=EntitlementStatus.BETA_ACTIVE,
+                source="unit-test",
+            )
+        )
+        session.add(
+            GlobalUsageAdmissionState(
+                id=GLOBAL_USAGE_ADMISSION_STATE_ID,
+                period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
+                period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
+                daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+                daily_cost_units=0,
+                inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+                inflight_units=0,
+                queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+                queue_depth=0,
+                queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+                queue_bytes=0,
+                stop_requested=False,
+                fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+                config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+    return engine, sf, tenant_id
+
+
+def test_async_worker_commits_usage_exactly_once_on_success():
+    from db.models import UsageReservation
+    from recognition.application.services.usage_admission_service import UsageAdmissionService
+    from recognition.domain.portal_contracts import UsageReservationStatus
+    from scene.application.describe_async_worker import run_async_describe_job as worker
+
+    async def body() -> None:
+        engine, sf, tenant_id = await _usage_sessionmaker()
+        try:
+            job_id = uuid.uuid4()
+            async with sf() as session:
+                ticket = await UsageAdmissionService(session).reserve(
+                    tenant_id,
+                    idempotency_key="async-op",
+                    job_id=str(job_id),
+                    cost_units=1,
+                    operation_id="async-op",
+                    request_fingerprint="fp-async",
+                )
+                captured = ticket.fence_token
+                run_id = await DescribeRunRepository(session).create_single_run(
+                    tenant_id=tenant_id,
+                    media_id=7,
+                    image_bytes=b"image",
+                    run_id=job_id,
+                    operation_id="async-op",
+                    request_digest="fp-async",
+                )
+                await session.commit()
+            assert run_id == job_id
+            cpu = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="cpu")
+            gpu = _Adapter(kind=DescriptionAdapterKind.GPU, caption="gpu")
+            await worker(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                session_factory=sf,
+                cpu_adapter=cpu,
+                gpu_adapter=gpu,
+            )
+            async with sf() as session:
+                row = await session.get(UsageReservation, ticket.reservation_id)
+                assert row is not None
+                assert row.status == UsageReservationStatus.COMMITTED
+                assert row.job_id == str(job_id)
+                assert row.fence_token == captured
+                again = await UsageAdmissionService(session).commit_fenced(ticket, fence_token=captured)
+                assert again is None
+                row = await session.get(UsageReservation, ticket.reservation_id)
+                assert row is not None and row.status == UsageReservationStatus.COMMITTED
+        finally:
+            await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_async_worker_charges_after_compute_failure():
+    from db.models import UsageReservation
+    from recognition.application.services.usage_admission_service import UsageAdmissionService
+    from recognition.domain.portal_contracts import UsageReservationStatus
+
+    async def body() -> None:
+        engine, sf, tenant_id = await _usage_sessionmaker()
+        try:
+            job_id = uuid.uuid4()
+            async with sf() as session:
+                ticket = await UsageAdmissionService(session).reserve(
+                    tenant_id,
+                    idempotency_key="async-fail",
+                    job_id=str(job_id),
+                    cost_units=1,
+                    operation_id="async-fail",
+                    request_fingerprint="fp-fail",
+                )
+                await DescribeRunRepository(session).create_single_run(
+                    tenant_id=tenant_id,
+                    media_id=7,
+                    image_bytes=b"image",
+                    run_id=job_id,
+                    operation_id="async-fail",
+                    request_digest="fp-fail",
+                )
+                await session.commit()
+            cpu = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="cpu")
+            gpu = _FailingGpu(kind=DescriptionAdapterKind.GPU, caption="gpu")
+            await run_async_describe_job(
+                tenant_id=tenant_id,
+                run_id=job_id,
+                session_factory=sf,
+                cpu_adapter=cpu,
+                gpu_adapter=gpu,
+            )
+            async with sf() as session:
+                row = await session.get(UsageReservation, ticket.reservation_id)
+                assert row is not None and row.status == UsageReservationStatus.COMMITTED
+        finally:
+            await engine.dispose()
 
     asyncio.run(body())

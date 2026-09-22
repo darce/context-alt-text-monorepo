@@ -65,6 +65,17 @@ def _synthetic_auraface_entry(
     return synthetic, model_payload, license_payload
 
 
+def _pin_auraface_ok_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the 512D AuraFace pair and drop cached settings (HEALTH-RECOVERY-4)."""
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+
 def _install_synthetic_auraface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -284,6 +295,12 @@ async def _get_ready(app: Any) -> httpx.Response:
         return await client.get("/ready")
 
 
+async def _get_detailed(app: Any) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
+        return await client.get("/health/detailed")
+
+
 def test_auraface_space_missing_artifact_names_glintr100(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
@@ -320,6 +337,7 @@ def test_auraface_space_hash_mismatch_reason_differs_from_missing(
 def test_auraface_space_verified_artifacts_reach_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
+    _pin_auraface_ok_dimensions(monkeypatch)
     _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)
     result = check_model_space(ModelSpace.AURAFACE, tmp_path)
@@ -618,9 +636,7 @@ def test_auraface_alignment_crop_is_rgb_relative_to_sface_bgr() -> None:
     assert aura.channel_order == "RGB"
 
 
-def test_unverified_auraface_readiness_refuses_before_model_io(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unverified_auraface_readiness_refuses_before_model_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
     entry = MODEL_MANIFEST["auraface"]
@@ -636,11 +652,10 @@ def test_unverified_auraface_readiness_refuses_before_model_io(
     assert io_calls == {"sha": 0, "load": 0, "verify": 0}
 
 
-def test_auraface_repeated_probes_hash_model_bytes_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auraface_repeated_probes_hash_model_bytes_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
+    _pin_auraface_ok_dimensions(monkeypatch)
     _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)
     hash_calls = _count_onnx_hashes(monkeypatch)
@@ -655,11 +670,10 @@ def test_auraface_repeated_probes_hash_model_bytes_once(
     assert hash_calls["n"] == hashes_after_first
 
 
-def test_auraface_license_only_drift_invalidates_cached_ok(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auraface_license_only_drift_invalidates_cached_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
+    _pin_auraface_ok_dimensions(monkeypatch)
     entry = _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)
     hash_calls = _count_onnx_hashes(monkeypatch)
@@ -685,11 +699,10 @@ def test_auraface_license_only_drift_invalidates_cached_ok(
     assert model_path.read_bytes() == model_before
 
 
-def test_auraface_model_stat_drift_invalidates_cached_ok(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auraface_model_stat_drift_invalidates_cached_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
+    _pin_auraface_ok_dimensions(monkeypatch)
     entry = _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)
 
@@ -704,9 +717,7 @@ def test_auraface_model_stat_drift_invalidates_cached_ok(
     assert "sha256" in detail_l or "integrity" in detail_l or "size mismatch" in detail_l
 
 
-def test_auraface_missing_artifacts_recover_on_later_probe(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auraface_missing_artifacts_recover_on_later_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
     entry = _install_synthetic_auraface(tmp_path, monkeypatch, write_model=False, write_license=False)
@@ -715,6 +726,7 @@ def test_auraface_missing_artifacts_recover_on_later_probe(
     assert "missing" in missing.detail.lower()
     assert entry.file_name in missing.detail
 
+    _pin_auraface_ok_dimensions(monkeypatch)
     _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)
     recovered = check_model_space(ModelSpace.AURAFACE, tmp_path)
@@ -722,9 +734,7 @@ def test_auraface_missing_artifacts_recover_on_later_probe(
 
 
 @pytest.mark.asyncio
-async def test_unverified_auraface_ready_returns_503_not_500(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_unverified_auraface_ready_returns_503_not_500(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace
 
     entry = MODEL_MANIFEST["auraface"]
@@ -796,3 +806,107 @@ async def test_ready_respects_profile_change_after_registration(
     second = await _get_ready(app)
     assert second.status_code == 200, second.text
     assert cache_calls == [(insightface_dir, "buffalo_l")]
+
+
+@pytest.mark.asyncio
+async def test_health_detailed_inventories_auraface_root_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HEALTH-RECOVERY-1: count the store-root ONNX, not cache/auraface/*.onnx."""
+    from recognition.application.health import ModelSpace
+
+    aura_dir = tmp_path / "aura-store"
+    aura_dir.mkdir()
+    nested = aura_dir / "auraface"
+    nested.mkdir()
+    (nested / "decoy-a.onnx").write_bytes(b"nested-decoy-a")
+    (nested / "decoy-b.onnx").write_bytes(b"nested-decoy-b")
+    root_artifact = aura_dir / MODEL_MANIFEST["auraface"].file_name
+    root_artifact.write_bytes(b"root-auraface-artifact")
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
+    monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(aura_dir))
+    app = _standalone_ready_app(
+        monkeypatch,
+        model_cache_dir=tmp_path / "insightface",
+        models_dirs={
+            ModelSpace.FACE_PIPELINE: tmp_path / "face-pipeline",
+            ModelSpace.AURAFACE: aura_dir,
+        },
+    )
+    response = await _get_detailed(app)
+    assert response.status_code == 200, response.text
+    cache = response.json()["model_cache"]
+    assert cache["profile"] == "auraface"
+    assert cache["model_name"] == "auraface"
+    assert Path(cache["cache_dir"]) == aura_dir
+    assert cache["bundle_files"] == 1
+
+
+@pytest.mark.asyncio
+async def test_build_embedding_runtime_auraface_uses_inhouse_not_insightface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HEALTH-RECOVERY-2: AuraFace routes to the 512D in-house runtime."""
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.application.health import ModelSpace
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.embeddings import runtime_factory as rf
+
+    _pin_auraface_ok_dimensions(monkeypatch)
+    face_dir = tmp_path / "face-pipeline"
+    aura_dir = tmp_path / "auraface"
+    face_dir.mkdir()
+    aura_dir.mkdir()
+    _install_synthetic_auraface(aura_dir, monkeypatch)
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(face_dir))
+    monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(aura_dir))
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+
+    captured: dict[str, Any] = {}
+    runtime = fpa.FacePipelineRuntime(
+        detector=MagicMock(),
+        aligner=MagicMock(),
+        embedder=MagicMock(),
+        manifest=fpa.auraface_embedding_model_manifest(),
+        models_dir=face_dir,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+        embedder_models_dir=aura_dir,
+    )
+
+    def capture_runtime(**kwargs: Any) -> fpa.FacePipelineRuntime:
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(fpa, "get_shared_face_pipeline_runtime", capture_runtime)
+    monkeypatch.setattr(
+        rf,
+        "InsightFaceFaceDetector",
+        MagicMock(side_effect=AssertionError("InsightFace detector fallback")),
+    )
+    monkeypatch.setattr(
+        rf,
+        "get_shared_insightface_adapter",
+        MagicMock(side_effect=AssertionError("InsightFace adapter fallback")),
+    )
+
+    settings = get_settings()
+    detector, generator = await rf.build_embedding_runtime(settings=settings)
+    assert not isinstance(detector, UnavailableFaceDetector)
+    assert isinstance(detector, fpa.FacePipelineFaceDetector)
+    assert captured["profile"] in {ModelSpace.AURAFACE, ModelSpace.AURAFACE.value, "auraface"}
+    assert Path(captured["models_dir"]) == face_dir
+    assert Path(captured["embedder_models_dir"]) == aura_dir
+    assert generator.reason == fpa.FACE_PIPELINE_GENERATOR_REASON
+    assert detector._runtime.manifest.dimensions == 512
+    assert "auraface" in detector._runtime.manifest.model_id.lower()
+    assert "buffalo" not in detector._runtime.manifest.model_id.lower()
+    assert "sface" not in detector._runtime.manifest.model_id.lower()

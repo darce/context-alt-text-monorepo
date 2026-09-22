@@ -58,6 +58,7 @@ from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
     ModelIntegrityError,
+    ModelMissingError,
 )
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
@@ -276,7 +277,7 @@ FacePipelineRuntimeUnavailable = FacePipelineRuntimeUnavailableError
 
 @dataclass(frozen=True, slots=True)
 class FacePipelineRuntime:
-    """Verified YuNet + aligner + SFace unit for one process."""
+    """Verified YuNet + aligner + embedder unit for one process."""
 
     detector: OrtYuNetDetector
     aligner: FivePointAligner
@@ -286,6 +287,7 @@ class FacePipelineRuntime:
     score_threshold: float
     nms_threshold: float
     top_k: int
+    embedder_models_dir: Path | None = None
 
 
 def sface_embedding_model_manifest() -> EmbeddingModelManifest:
@@ -402,16 +404,26 @@ def _artifact_stat_identity(path: Path) -> tuple[Any, ...]:
     return (int(st.st_size), int(st.st_mtime_ns), ino, ctime_ns)
 
 
-def _resolved_model_artifact_identity(models_dir: Path) -> tuple[Any, ...]:
-    """YuNet+SFace model+license identity for shared-runtime cache keys.
+def _resolved_model_artifact_identity(
+    models_dir: Path,
+    *,
+    embedder_models_dir: Path | None = None,
+    space: ModelSpace = ModelSpace.FACE_PIPELINE,
+) -> tuple[Any, ...]:
+    """Detector+embedder model+license identity for shared-runtime cache keys.
 
+    YuNet is always resolved from the face_pipeline models dir. The embedder
+    (SFace or AuraFace) is resolved from ``embedder_models_dir`` when supplied.
     Includes each manifest license file so a license-only repair invalidates
     sticky ModelIntegrityError entries (FIR-PM-01 / [DRIFT-02]). Missing
     paths use the portable missing sentinel (non-sticky absence).
     """
-    root = Path(models_dir)
+    detector_root = Path(models_dir)
+    embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else detector_root
+    embedder_name = "auraface" if space is ModelSpace.AURAFACE else "sface"
+    named_roots = (("yunet", detector_root), (embedder_name, embedder_root))
     parts: list[tuple[Any, ...]] = []
-    for name in ("yunet", "sface"):
+    for name, root in named_roots:
         entry = MODEL_MANIFEST[name]
         model_path = root / entry.file_name
         license_path = root / entry.license_file
@@ -437,16 +449,23 @@ def _runtime_cache_key(
     pgvector_dimension: int,
     embedding_dimension: int,
     artifact_identity: tuple[Any, ...] | None = None,
+    embedder_models_dir: Path | None = None,
 ) -> tuple[Any, ...]:
-    root = Path(models_dir)
+    detector_root = Path(models_dir)
+    embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else detector_root
     artifacts = (
         artifact_identity
         if artifact_identity is not None
-        else _resolved_model_artifact_identity(root)
+        else _resolved_model_artifact_identity(
+            detector_root,
+            embedder_models_dir=embedder_root,
+            space=profile,
+        )
     )
     return (
         profile,
-        str(root.resolve()),
+        str(detector_root.resolve()),
+        str(embedder_root.resolve()),
         float(score_threshold),
         float(nms_threshold),
         int(top_k),
@@ -463,34 +482,43 @@ def _load_face_pipeline_runtime(
     nms_threshold: float,
     top_k: int,
     space: ModelSpace = ModelSpace.FACE_PIPELINE,
+    embedder_models_dir: Path | None = None,
 ) -> FacePipelineRuntime:
-    """Load YuNet+SFace as one atomic unit; any failure raises (caller decides cache)."""
+    """Load YuNet + embedder as one atomic unit; any failure raises (caller decides cache)."""
     assert_embedding_pgvector_pair()
     if space is ModelSpace.AURAFACE:
         manifest = auraface_embedding_model_manifest()
     else:
         manifest = sface_embedding_model_manifest()
     assert_three_way_embedding_dimensions(manifest)
-    detector = OrtYuNetDetector(
-        models_dir=models_dir,
-        score_threshold=score_threshold,
-        nms_threshold=nms_threshold,
-        top_k=top_k,
-    )
+    detector_dir = Path(models_dir)
+    embedder_dir = Path(embedder_models_dir) if embedder_models_dir is not None else detector_dir
+    try:
+        detector = OrtYuNetDetector(
+            models_dir=detector_dir,
+            score_threshold=score_threshold,
+            nms_threshold=nms_threshold,
+            top_k=top_k,
+        )
+    except ModelMissingError as exc:
+        raise FacePipelineRuntimeUnavailableError(
+            f"face_pipeline runtime unavailable: detector missing: {exc}"
+        ) from exc
     aligner = FivePointAligner(space=space)
     if space is ModelSpace.AURAFACE:
-        embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=models_dir)
+        embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=embedder_dir)
     else:
-        embedder = OrtSFaceEmbedder(models_dir=models_dir)
+        embedder = OrtSFaceEmbedder(models_dir=embedder_dir)
     return FacePipelineRuntime(
         detector=detector,
         aligner=aligner,
         embedder=embedder,
         manifest=manifest,
-        models_dir=models_dir,
+        models_dir=detector_dir,
         score_threshold=score_threshold,
         nms_threshold=nms_threshold,
         top_k=top_k,
+        embedder_models_dir=embedder_dir,
     )
 
 
@@ -501,23 +529,28 @@ def get_shared_face_pipeline_runtime(
     score_threshold: float = DEFAULT_SCORE_THRESHOLD,
     nms_threshold: float = DEFAULT_NMS_THRESHOLD,
     top_k: int = DEFAULT_TOP_K,
+    embedder_models_dir: Path | None = None,
 ) -> FacePipelineRuntime:
-    """Process-wide face_pipeline runtime singleton (memo on profile+dir+thresholds+dims+artifacts).
+    """Process-wide face_pipeline runtime singleton (memo on profile+dirs+thresholds+dims+artifacts).
 
     Double-checked lock with a single ``_SHARED`` tuple read for the fast path.
     Only ``ModelIntegrityError`` (size/hash mismatch / tamper, model or license)
     is sticky-cached as ``FacePipelineRuntimeUnavailableError`` while the
-    resolved YuNet/SFace model+license artifact identity is unchanged. Operator
-    model or license replacement (stat identity drift) invalidates the sticky
-    entry and re-verifies/rebuilds. ``ModelMissingError`` and other config-class
-    failures (dim-guard ``ValueError``, missing files) fall through the
-    non-sticky ``except Exception`` branch so corrected env/models_dir recovers
-    without process restart.
+    resolved detector/embedder model+license artifact identity is unchanged.
+    Operator model or license replacement (stat identity drift) invalidates the
+    sticky entry and re-verifies/rebuilds. ``ModelMissingError`` and other
+    config-class failures (dim-guard ``ValueError``, missing files) fall through
+    the non-sticky ``except Exception`` branch so corrected env/models_dir
+    recovers without process restart.
+
+    AuraFace keeps YuNet in ``models_dir`` (face_pipeline store) and the
+    embedder in ``embedder_models_dir`` (AuraFace store).
     """
     global _SHARED
 
     space = ModelSpace(profile)
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
+    embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else root
     pg_dim = int(get_database_settings().pgvector_dimension)
     id_dim = int(get_settings().identity_detection.embedding_dimension)
     key = _runtime_cache_key(
@@ -528,6 +561,7 @@ def get_shared_face_pipeline_runtime(
         top_k=top_k,
         pgvector_dimension=pg_dim,
         embedding_dimension=id_dim,
+        embedder_models_dir=embedder_root,
     )
 
     # Atomic single-tuple fast-path read (CR-08).
@@ -554,6 +588,7 @@ def get_shared_face_pipeline_runtime(
                 nms_threshold=nms_threshold,
                 top_k=top_k,
                 space=space,
+                embedder_models_dir=embedder_root,
             )
         except FacePipelineRuntimeUnavailableError:
             raise
@@ -833,8 +868,7 @@ class FacePipelineFaceDetector(FaceDetectorProtocol):
                 # Loop closed: injected asyncio.Semaphore cannot safely release
                 # from a foreign thread. Process-wide path uses FacePipelineAdmissionGate.
                 logger.warning(
-                    "face_pipeline admission release skipped: event loop closed "
-                    "(injected asyncio.Semaphore)"
+                    "face_pipeline admission release skipped: event loop closed (injected asyncio.Semaphore)"
                 )
             return
         gate.release()

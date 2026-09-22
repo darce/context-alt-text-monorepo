@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from starlette.datastructures import UploadFile
 
 from db.models import DemoInstance
 from db.tenant_context import require_tenant_record, set_tenant_context
+from recognition.application.services.usage_settlement_service import settle_usage_job
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import (
@@ -63,6 +65,7 @@ from scene.interface_adapters.http.routers.describe import (
     _run_by_usage_operation,
     _scene_usage_fingerprint,
     _usage_operation_id,
+    bound_usage_job_id,
     worker_session_factory,
 )
 from scene.interface_adapters.http.schemas.responses import (
@@ -575,7 +578,7 @@ async def create_describe_run(
         operation_id=operation_id,
         request_fingerprint=usage_fingerprint,
         queue_bytes=queue_bytes,
-    ):
+    ) as ticket:
         if idempotency_key is not None:
             existing = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
         else:
@@ -593,6 +596,8 @@ async def create_describe_run(
                 idempotency_key=idempotency_key,
                 request_digest=usage_fingerprint,
                 deadline_seconds=run_deadline_seconds,
+                run_id=bound_usage_job_id(ticket, job_id),
+                operation_id=operation_id,
             )
         except IntegrityError as exc:
             if idempotency_key is None or not _is_idempotency_reservation_conflict(exc):
@@ -721,6 +726,9 @@ async def cancel_describe_run(
     if not await repo.request_cancel(tenant_id=tenant_id, run_id=run_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
     await session.commit()
+    await settle_usage_job(session, tenant_id=tenant_id, job_id=str(run_id))
+    with suppress(Exception):
+        await session.commit()
     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
     if run is None:  # pragma: no cover - defensive only
         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")

@@ -1,1581 +1,874 @@
-diff --git a/apps/prototype-description-service/conftest.py b/apps/prototype-description-service/conftest.py
---- a/apps/prototype-description-service/conftest.py
-+++ b/apps/prototype-description-service/conftest.py
-@@ -4,10 +4,19 @@ from __future__ import annotations
- 
- import json
- import os
-+from datetime import UTC, datetime
- from pathlib import Path
-+from time import time_ns
- 
- import pytest
- 
-+_RECEIPT_DIRECTORY = Path("/tmp")
-+_RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
-+_LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / (
-+    "prototype-description-service-pytest-collection-scope.json"
-+)
-+_SERVICE_PYPROJECT = Path(__file__).with_name("pyproject.toml").resolve()
-+
- 
- def pytest_addoption(parser: pytest.Parser) -> None:
-     group = parser.getgroup("collection scope")
-@@ -24,15 +33,53 @@ def pytest_addoption(parser: pytest.Parser) -> None:
-     parser.addini(
-         "collection_scope_receipt",
-         "path for the machine-readable collection-scope receipt",
--        default="/tmp/prototype-description-service-pytest-collection-scope.json",
-+        default="",
-     )
- 
- 
--def _relative_label(path: Path, root: Path) -> str:
--    try:
--        return path.relative_to(root).as_posix() or "."
--    except ValueError:
--        return path.as_posix()
-+def _session_receipt_identity() -> tuple[str, Path]:
-+    """Return the session timestamp and a path partitioned by this process."""
-+    started_at = datetime.now(UTC).isoformat()
-+    return started_at, _RECEIPT_DIRECTORY / (
-+        f"{_RECEIPT_PREFIX}-{os.getpid()}-{time_ns()}.json"
-+    )
-+
-+
-+def pytest_sessionstart(session: pytest.Session) -> None:
-+    started_at, default_path = _session_receipt_identity()
-+    config = session.config
-+    config._collection_scope_receipt_started_at = started_at  # type: ignore[attr-defined]
-+    config._collection_scope_receipt_default_path = default_path  # type: ignore[attr-defined]
-+
-+
-+def _receipt_path(config: pytest.Config, root: Path) -> Path:
-+    configured = config.getoption("--collection-scope-receipt")
-+    if not configured:
-+        ini_value = config.getini("collection_scope_receipt")
-+        ini_path = Path(ini_value) if ini_value else None
-+        project_default = getattr(config, "inifile", None)
-+        ini_config = getattr(config, "_inicfg", {}).get("collection_scope_receipt")
-+        ini_is_cli_override = getattr(ini_config, "origin", None) == "override"
-+        # The checked-in pyproject carries the pre-fix fixed path. Treat only
-+        # that value as the old default; other ini values remain overrides.
-+        is_legacy_project_default = (
-+            ini_path is not None
-+            and ini_path.resolve() == _LEGACY_RECEIPT_PATH.resolve()
-+            and project_default is not None
-+            and Path(project_default).resolve() == _SERVICE_PYPROJECT
-+            and not ini_is_cli_override
-+        )
-+        if not is_legacy_project_default:
-+            configured = ini_value
-+    if configured:
-+        receipt_path = Path(configured)
-+    else:
-+        receipt_path = getattr(config, "_collection_scope_receipt_default_path", None)
-+        if receipt_path is None:
-+            _, receipt_path = _session_receipt_identity()
-+    if not receipt_path.is_absolute():
-+        receipt_path = root / receipt_path
-+    return receipt_path.resolve()
- 
- 
- def pytest_collection_finish(session: pytest.Session) -> None:
-@@ -52,17 +99,19 @@ def pytest_collection_finish(session: pytest.Session) -> None:
-     expected = {label for label, _ in existing}
-     scope = "full" if expected and collected == expected else "narrowed"
-     receipt = {
-+        "pid": os.getpid(),
-+        "rootdir": str(root),
-+        "started_at": getattr(
-+            config,
-+            "_collection_scope_receipt_started_at",
-+            datetime.now(UTC).isoformat(),
-+        ),
-         "declared_roots": declared,
-         "collected_roots": sorted(collected),
-         "collected_count": len(session.items),
-         "scope": scope,
-     }
--    receipt_path = Path(
--        config.getoption("--collection-scope-receipt")
--        or config.getini("collection_scope_receipt")
--    )
--    if not receipt_path.is_absolute():
--        receipt_path = root / receipt_path
-+    receipt_path = _receipt_path(config, root)
-     receipt_path.parent.mkdir(parents=True, exist_ok=True)
-     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
- 
-@@ -85,11 +134,11 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-     receipt = getattr(config, "_collection_scope_receipt", None)
-     if receipt is None:
-         return
--    path = getattr(config, "_collection_scope_receipt_path")
-+    path = config._collection_scope_receipt_path  # type: ignore[attr-defined]
-     terminalreporter.write_sep(
-         "=",
-         "collection scope: "
-         f"{receipt['scope']}; declared={receipt['declared_roots']}; "
-         f"collected={receipt['collected_roots']}; count={receipt['collected_count']}; "
--        f"receipt={_relative_label(path, config.rootpath.resolve())}",
-+        f"receipt={path}",
-     )
-diff --git a/apps/prototype-description-service/recognition/application/scan/service.py b/apps/prototype-description-service/recognition/application/scan/service.py
---- a/apps/prototype-description-service/recognition/application/scan/service.py
-+++ b/apps/prototype-description-service/recognition/application/scan/service.py
-@@ -8,7 +8,7 @@ import logging
- import time
- import uuid
- from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
--from contextlib import asynccontextmanager
-+from contextlib import asynccontextmanager, suppress
- from dataclasses import dataclass
- from datetime import UTC, datetime
- 
-@@ -51,6 +51,9 @@ class _InProcessPersistLockEntry:
- 
-     lock: asyncio.Lock
-     waiters: int = 0
-+    owner_sync_session: object | None = None
-+    owner_root_transaction: object | None = None
-+    reentry_depth: int = 0
- 
- 
- _IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
-@@ -85,15 +88,47 @@ def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
-     return (str(tenant_uuid), int(media_id))
- 
- 
--async def _in_process_persist_lock(tenant_uuid: uuid.UUID, media_id: int) -> asyncio.Lock:
-+def _persist_lock_owner_matches(
-+    entry: _InProcessPersistLockEntry,
-+    sync_session: object | None,
-+    root_transaction: object | None,
-+) -> bool:
-+    return (
-+        sync_session is not None
-+        and root_transaction is not None
-+        and entry.reentry_depth > 0
-+        and entry.owner_sync_session is sync_session
-+        and entry.owner_root_transaction is root_transaction
-+    )
-+
-+
-+def _sync_session_root_transaction(sync_session: object | None) -> object | None:
-+    if sync_session is None:
-+        return None
-+    get_transaction = getattr(sync_session, "get_transaction", None)
-+    if not callable(get_transaction):
-+        return None
-+    return get_transaction()
-+
-+
-+async def _in_process_persist_lock(
-+    tenant_uuid: uuid.UUID,
-+    media_id: int,
-+    *,
-+    sync_session: object | None,
-+    root_transaction: object | None,
-+) -> tuple[_InProcessPersistLockEntry, bool]:
-     key = _persist_lock_key(tenant_uuid, media_id)
-     async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
-         entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
-         if entry is None:
-             entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
-             _IN_PROCESS_PERSIST_LOCKS[key] = entry
-+        if _persist_lock_owner_matches(entry, sync_session, root_transaction):
-+            entry.reentry_depth += 1
-+            return entry, True
-         entry.waiters += 1
--        return entry.lock
-+        return entry, False
- 
- 
- def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
-@@ -129,23 +164,57 @@ async def _media_persist_lock(
-         )
-         yield
-         return
--    lock = await _in_process_persist_lock(tenant_uuid, media_id)
-+    sync_session = getattr(session, "sync_session", None)
-+    root_transaction = _sync_session_root_transaction(sync_session)
-+    entry, reentrant = await _in_process_persist_lock(
-+        tenant_uuid,
-+        media_id,
-+        sync_session=sync_session,
-+        root_transaction=root_transaction,
-+    )
-+    if reentrant:
-+        try:
-+            yield
-+        finally:
-+            if _persist_lock_owner_matches(entry, sync_session, root_transaction):
-+                entry.reentry_depth -= 1
-+        return
-+
-+    lock = entry.lock
-     try:
-         await lock.acquire()
-     except BaseException:
-         _release_in_process_persist_waiter(tenant_uuid, media_id)
-         raise
-+
-+    if sync_session is not None and root_transaction is not None:
-+        entry.owner_sync_session = sync_session
-+        entry.owner_root_transaction = root_transaction
-+        entry.reentry_depth = 1
-+
-     released = False
--    sync_session = getattr(session, "sync_session", None)
-     hold_until_commit = False
- 
-+    def _capture_owner(_sess: object = None, transaction: object = None) -> None:
-+        if (
-+            sync_session is None
-+            or getattr(transaction, "parent", None) is not None
-+            or entry.owner_sync_session is not None
-+        ):
-+            return
-+        entry.owner_sync_session = sync_session
-+        entry.owner_root_transaction = transaction
-+        entry.reentry_depth = 1
-+
-     def _remove_listener() -> None:
-         if sync_session is None:
-             return
--        try:
--            event.remove(sync_session, "after_transaction_end", _release)
--        except Exception:
--            pass
-+        for event_name, listener in (
-+            ("after_transaction_end", _release),
-+            ("after_transaction_create", _capture_owner),
-+        ):
-+            with suppress(Exception):
-+                event.remove(sync_session, event_name, listener)
- 
-     def _release(_sess: object = None, transaction: object = None) -> None:
-         nonlocal released
-@@ -154,6 +223,9 @@ async def _media_persist_lock(
-         if released:
-             return
-         released = True
-+        entry.owner_sync_session = None
-+        entry.owner_root_transaction = None
-+        entry.reentry_depth = 0
-         if lock.locked():
-             lock.release()
-         _release_in_process_persist_waiter(tenant_uuid, media_id)
-@@ -171,6 +243,8 @@ async def _media_persist_lock(
- 
-     try:
-         if sync_session is not None:
-+            if root_transaction is None:
-+                event.listen(sync_session, "after_transaction_create", _capture_owner)
-             event.listen(sync_session, "after_transaction_end", _release)
-             hold_until_commit = True
-         yield
-diff --git a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
---- a/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
-+++ b/apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py
-@@ -1591,7 +1591,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-         # Extract centroid from materialized view relationship if available
-         centroid = None
-         centroid_refreshed_at = None
--        if hasattr(model, "centroid_data") and model.centroid_data is not None:
-+        if "centroid_data" in state.dict and model.centroid_data is not None:
-             centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
-             if isinstance(model.centroid_data.refreshed_at, datetime):
-                 centroid_refreshed_at = model.centroid_data.refreshed_at
-@@ -1639,6 +1639,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
-             .where(ClusterModel.disposed_at.is_(None))
-             .options(
-                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
-+                selectinload(ClusterModel.centroid_data),
-                 selectinload(ClusterModel.merge_receipts),
-             )
-             .order_by(ClusterModel.created_at)
-diff --git a/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py b/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
---- a/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
-+++ b/apps/prototype-description-service/recognition/tests/api/test_api_clusters.py
-@@ -3,14 +3,16 @@
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py b/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
+--- a/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
++++ b/apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py
+@@ -3,7 +3,10 @@
  from __future__ import annotations
  
- import uuid
--from types import SimpleNamespace
--from unittest.mock import AsyncMock
-+from unittest.mock import AsyncMock, create_autospec
- 
- import pytest
- from fastapi import FastAPI
- from fastapi.testclient import TestClient
- 
-+from db.models import IdentityMember as IdentityMemberModel
-+from db.models import MediaIdentity as MediaIdentityModel
- from recognition.domain.job import Job, JobStatus, JobType
-+from recognition.domain.representative import ClusterRepresentative
- from recognition.interface_adapters.http import deps as dependencies
- from recognition.interface_adapters.http import router as recognition_router
- from recognition.tests.api.conftest import FakeSession, seed_cluster
-@@ -345,14 +347,14 @@ def test_cluster_delta_returns_only_changed_clusters(
-         identity_id=str(uuid.uuid4()),
-         media_id="202",
-     )
--    fake_cluster_repository.clusters[changed.id].representatives = [
--        SimpleNamespace(
--            id=str(uuid.uuid4()),
--            identity_id=changed_identity_id,
--            media_id="101",
--            is_user_selected=True,
--        )
--    ]
-+    representative = create_autospec(ClusterRepresentative, instance=True)
-+    representative.id = str(uuid.uuid4())
-+    representative.identity_id = changed_identity_id
-+    representative.media_id = "101"
-+    representative.is_user_selected = True
-+    representative.quality_score = 1.0
-+    representative.quality_components = None
-+    fake_cluster_repository.clusters[changed.id].representatives = [representative]
-     snapshot_version = fake_cluster_repository._snapshot_version
- 
-     async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
-@@ -924,21 +926,19 @@ def test_list_cluster_members_includes_face_thumb_url_for_blob_backed_members(
-     )
-     fake_cluster_service.cluster_repository = fake_cluster_repository
- 
--    fake_cluster_repository.members_by_cluster[cluster.id] = [
--        (
--            SimpleNamespace(similarity=0.9),
--            SimpleNamespace(
--                id=str(uuid.uuid4()),
--                media_id="909",
--                confidence=0.97,
--                bbox_x=5,
--                bbox_y=6,
--                bbox_width=20,
--                bbox_height=24,
--                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
--            ),
--        )
--    ]
-+    member = create_autospec(IdentityMemberModel, instance=True)
-+    member.cluster_id = cluster.id
-+    member.similarity = 0.9
-+    identity = create_autospec(MediaIdentityModel, instance=True)
-+    identity.id = str(uuid.uuid4())
-+    identity.media_id = "909"
-+    identity.confidence = 0.97
-+    identity.bbox_x = 5
-+    identity.bbox_y = 6
-+    identity.bbox_width = 20
-+    identity.bbox_height = 24
-+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
-+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
- 
-     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
- 
-@@ -959,21 +959,19 @@ def test_list_cluster_members_does_not_synthesize_missing_crop_coordinates(
-     )
-     fake_cluster_service.cluster_repository = fake_cluster_repository
- 
--    fake_cluster_repository.members_by_cluster[cluster.id] = [
--        (
--            SimpleNamespace(similarity=0.9),
--            SimpleNamespace(
--                id=str(uuid.uuid4()),
--                media_id="909",
--                confidence=0.97,
--                bbox_x=None,
--                bbox_y=6,
--                bbox_width=20,
--                bbox_height=24,
--                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
--            ),
--        )
--    ]
-+    member = create_autospec(IdentityMemberModel, instance=True)
-+    member.cluster_id = cluster.id
-+    member.similarity = 0.9
-+    identity = create_autospec(MediaIdentityModel, instance=True)
-+    identity.id = str(uuid.uuid4())
-+    identity.media_id = "909"
-+    identity.confidence = 0.97
-+    identity.bbox_x = None
-+    identity.bbox_y = 6
-+    identity.bbox_width = 20
-+    identity.bbox_height = 24
-+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
-+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
- 
-     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
- 
-@@ -995,21 +993,19 @@ def test_list_cluster_members_omits_face_thumb_url_when_crop_exceeds_max_geometr
-     )
-     fake_cluster_service.cluster_repository = fake_cluster_repository
- 
--    fake_cluster_repository.members_by_cluster[cluster.id] = [
--        (
--            SimpleNamespace(similarity=0.9),
--            SimpleNamespace(
--                id=str(uuid.uuid4()),
--                media_id="909",
--                confidence=0.97,
--                bbox_x=5,
--                bbox_y=6,
--                bbox_width=40_000,
--                bbox_height=24,
--                media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
--            ),
--        )
--    ]
-+    member = create_autospec(IdentityMemberModel, instance=True)
-+    member.cluster_id = cluster.id
-+    member.similarity = 0.9
-+    identity = create_autospec(MediaIdentityModel, instance=True)
-+    identity.id = str(uuid.uuid4())
-+    identity.media_id = "909"
-+    identity.confidence = 0.97
-+    identity.bbox_x = 5
-+    identity.bbox_y = 6
-+    identity.bbox_width = 40_000
-+    identity.bbox_height = 24
-+    identity.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
-+    fake_cluster_repository.members_by_cluster[cluster.id] = [(member, identity)]
- 
-     resp = api_client.get(f"/recognition/clusters/{cluster.id}/members", headers={"X-Tenant-ID": tenant_id})
- 
-@@ -1029,18 +1025,16 @@ def test_top_unlabeled_omits_invalid_representative_bbox_and_thumb_url(
-         identity_count=2,
-     )
-     fake_cluster_repository.clusters[cluster.id].user_confirmed = False
--    fake_cluster_repository.clusters[cluster.id].representatives = [
--        SimpleNamespace(
--            id=str(uuid.uuid4()),
--            media_id="909",
--            media_url=f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin",
--            bbox_x=5,
--            bbox_y=6,
--            bbox_width=0,
--            bbox_height=24,
--            is_user_selected=True,
--        )
--    ]
-+    representative = create_autospec(ClusterRepresentative, instance=True)
-+    representative.id = str(uuid.uuid4())
-+    representative.media_id = "909"
-+    representative.media_url = f"file:///tmp/blob-root/{tenant_id}/job-24/909.bin"
-+    representative.bbox_x = 5
-+    representative.bbox_y = 6
-+    representative.bbox_width = 0
-+    representative.bbox_height = 24
-+    representative.is_user_selected = True
-+    fake_cluster_repository.clusters[cluster.id].representatives = [representative]
- 
-     resp = api_client.get(
-         "/recognition/clusters/top-unlabeled",
-@@ -1122,14 +1116,14 @@ def test_get_tenant_snapshot_returns_correct_shape(
-         fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
-     )
-     representative_id = str(uuid.uuid4())
--    fake_cluster_repository.clusters[cluster1.id].representatives = [
--        SimpleNamespace(
--            id=str(uuid.uuid4()),
--            identity_id=representative_id,
--            media_id="101",
--            is_user_selected=True,
--        )
--    ]
-+    representative = create_autospec(ClusterRepresentative, instance=True)
-+    representative.id = str(uuid.uuid4())
-+    representative.identity_id = representative_id
-+    representative.media_id = "101"
-+    representative.is_user_selected = True
-+    representative.quality_score = 1.0
-+    representative.quality_components = None
-+    fake_cluster_repository.clusters[cluster1.id].representatives = [representative]
-     latest_job = Job(
-         id=str(uuid.uuid4()),
-         type=JobType.CLUSTERING,
-@@ -1190,19 +1184,23 @@ def test_get_tenant_snapshot_prefers_pinned_representative_when_order_is_unsorte
-     )
-     unpinned_representative_id = str(uuid.uuid4())
-     pinned_representative_id = str(uuid.uuid4())
-+    unpinned_representative = create_autospec(ClusterRepresentative, instance=True)
-+    unpinned_representative.id = str(uuid.uuid4())
-+    unpinned_representative.identity_id = unpinned_representative_id
-+    unpinned_representative.media_id = "101"
-+    unpinned_representative.is_user_selected = False
-+    unpinned_representative.quality_score = 1.0
-+    unpinned_representative.quality_components = None
-+    pinned_representative = create_autospec(ClusterRepresentative, instance=True)
-+    pinned_representative.id = str(uuid.uuid4())
-+    pinned_representative.identity_id = pinned_representative_id
-+    pinned_representative.media_id = "202"
-+    pinned_representative.is_user_selected = True
-+    pinned_representative.quality_score = 1.0
-+    pinned_representative.quality_components = None
-     fake_cluster_repository.clusters[cluster.id].representatives = [
--        SimpleNamespace(
--            id=str(uuid.uuid4()),
--            identity_id=unpinned_representative_id,
--            media_id="101",
--            is_user_selected=False,
--        ),
--        SimpleNamespace(
--            id=str(uuid.uuid4()),
--            identity_id=pinned_representative_id,
--            media_id="202",
--            is_user_selected=True,
--        ),
-+        unpinned_representative,
-+        pinned_representative,
-     ]
- 
-     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
-diff --git a/apps/prototype-description-service/recognition/tests/conftest.py b/apps/prototype-description-service/recognition/tests/conftest.py
---- a/apps/prototype-description-service/recognition/tests/conftest.py
-+++ b/apps/prototype-description-service/recognition/tests/conftest.py
-@@ -12,7 +12,7 @@ from typing import NoReturn
- import numpy as np
- import pytest
- import pytest_asyncio
--from sqlalchemy import Table, event, text
-+from sqlalchemy import Table, event, inspect, text
- from sqlalchemy.dialects.postgresql import UUID
- from sqlalchemy.exc import OperationalError
- from sqlalchemy.ext.compiler import compiles
-@@ -44,6 +44,31 @@ os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
- os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
- 
- 
-+SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
-+    {
-+        # Scene-description tables are registered by db.models but provisioned by scene fixtures.
-+        "describe_demand_leases",
-+        "describe_operations",
-+        "describe_startups",
-+        "image_description_run_items",
-+        "image_description_runs",
-+        "image_descriptions",
-+        # Portal and billing tables are outside this recognition fixture's schema.
-+        "api_key_rotation_history",
-+        "billing_subscription_projection",
-+        "billing_webhook_inbox",
-+        "export_jobs",
-+        "portal_identity",
-+        "portal_tenant_invitation",
-+        "tenant_entitlement",
-+        "tenant_key_idempotency",
-+        "usage_reservation",
-+        # This identity table is provisioned by the migration but not needed here.
-+        "identity_name_suppressions",
-+    }
-+)
-+
-+
- @compiles(UUID, "sqlite")
- def _sqlite_uuid_storage(type_, compiler, **kwargs) -> str:
-     # SQLite gives a literal UUID declaration NUMERIC affinity. Valid UUIDs
-@@ -85,6 +110,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
-         tables: list[Table] = [
-             Table("identity_clusters", Base.metadata),
-             Table("curation_replay_records", Base.metadata),
-+            Table("cluster_merge_receipts", Base.metadata),
-             Table("identity_cluster_representatives", Base.metadata),
-             Table("identity_members", Base.metadata),
-             Table("cluster_merge_suggestions", Base.metadata),
-@@ -127,6 +153,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
-                 """
-             )
-         )
-+        created_table_names = await conn.run_sync(
-+            lambda sync_conn: set(inspect(sync_conn).get_table_names())
-+        )
-+        missing_table_names = sorted(
-+            set(Base.metadata.tables) - created_table_names - SQLITE_TEST_TABLE_EXCLUSIONS
-+        )
-+        if missing_table_names:
-+            raise RuntimeError(
-+                "db_session did not create all mapped SQLite tables; missing: "
-+                + ", ".join(missing_table_names)
-+            )
- 
-     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-     async with session_factory() as session:
-diff --git a/apps/prototype-description-service/recognition/tests/db_seed.py b/apps/prototype-description-service/recognition/tests/db_seed.py
---- a/apps/prototype-description-service/recognition/tests/db_seed.py
-+++ b/apps/prototype-description-service/recognition/tests/db_seed.py
-@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
- 
- from db.models import MediaIdentity
- from db.settings import get_database_settings
-+from recognition.application.embedding.manifest import active_embedding_model_id
- from recognition.infrastructure.repositories._helpers import coerce_uuid
- 
- _DB_SETTINGS = get_database_settings()
-@@ -44,7 +45,7 @@ async def ensure_media_identity(
-         bbox_height=1,
-         confidence=1.0,
-         embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
--        embedding_model="buffalo_l@insightface",
-+        embedding_model=active_embedding_model_id(),
-     )
-     session.add(media)
-     await session.flush()
-diff --git a/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py b/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
---- a/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
-+++ b/apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py
-@@ -405,7 +405,11 @@ def _run_do_restart(
-             echo "ssh $@" >> "{log}"
-             # Join args for pattern matching.
-             cmd="$*"
-+            # Consume piped remote bodies so pipefail does not turn a fake
-+            # successful SSH response into a local SIGPIPE failure.
-+            cat >/dev/null
-             case "$cmd" in
-+              *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
-               *image*inspect*|*RepoDigests*)
-                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
-                 exit 0 ;;
-@@ -434,6 +438,12 @@ def _run_do_restart(
-         assert_remote_disk_headroom_for_pull() {{ :; }}
-         assert_remote_build_free_space() {{ :; }}
-         ship_remote_image_repo_env() {{ echo "ship $1" >> "{log}"; }}
-+        # Keep this gate focused on pull → repair → restart ordering; the
-+        # candidate health checks are covered by their own fake-SSH tests.
-+        probe_cutover_api_health() {{ :; }}
-+        probe_canonical_api_health() {{ :; }}
-+        verify_running_image_digest() {{ :; }}
-+        curl() {{ :; }}
-         if do_restart dev "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; then exit 0; else exit $?; fi
-         """
-     )
-@@ -880,6 +890,13 @@ def test_converge_runtime_zero_refuses_drift() -> None:
-             textwrap.dedent(
-                 f"""\
-                 source "{DEPLOY_SCRIPT}"
-+                image_repo_resource() {{
-+                  case "$1" in
-+                    claim) printf '%s\n' fake-owner ;;
-+                    restore) echo RESTORE_CALLED >&2 ;;
-+                    *) return 1 ;;
-+                  esac
-+                }}
-                 read_remote_image_repo() {{ echo ""; }}
-                 ship_remote_image_repo_env() {{ :; }}
-                 preserve_rollback_tag() {{ :; }}
-@@ -896,6 +913,7 @@ def test_converge_runtime_zero_refuses_drift() -> None:
-     assert proc.returncode != 0
-     combined = (proc.stdout or "") + (proc.stderr or "")
-     assert "ACX_CONVERGE_RUNTIME=0 refused" in combined, combined
-+    assert "RESTORE_CALLED" in combined, combined
- 
- 
- def test_repair_probe_skips_when_uid_matches(tmp_path: Path) -> None:
-@@ -1177,9 +1195,9 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
- def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
-     """R0811-D-05 / D-06: ship_remote appends on its own line via sudo tee.
- 
--    Behavioural: fake ssh executes the remote snippet against a local file that
--    lacks a trailing newline; result must be prior secret intact + ACX_IMAGE_REPO
--    on a new line; remote command must use sudo.
-+    Behavioural: the fake SSH/resource seams apply the operation to a local file
-+    that lacks a trailing newline; result must be prior secret intact plus
-+    ACX_IMAGE_REPO on a new line, and the recorded command must use sudo.
-     """
-     log = tmp_path / "ssh.log"
-     env_file = tmp_path / "prod.env"
-@@ -1218,11 +1236,31 @@ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
-         "ACX_BUILD_TARGET": "",
-         "ACX_IMAGE_VARIANT": "",
-     }
-+    script = textwrap.dedent(
-+        f"""\
-+        source "{DEPLOY_SCRIPT}"
-+        image_repo_resource() {{
-+          case "$1" in
-+            ship)
-+              ssh -l "$OCI_USER" -- "$OCI_HOST" "sudo true"
-+              echo "sudo tail -c1 {env_file}" >> "{log}"
-+              last_byte="$(tail -c1 "{env_file}" | od -An -t x1 | tr -d '[:space:]')"
-+              if [ -n "$last_byte" ] && [ "$last_byte" != "0a" ]; then
-+                echo >> "{env_file}"
-+              fi
-+              echo "ACX_IMAGE_REPO=$4" >> "{env_file}"
-+              ;;
-+            *) return 1 ;;
-+          esac
-+        }}
-+        ship_remote_image_repo_env /opt/acx-backend/dev
-+        """
-+    )
-     proc = subprocess.run(
-         [
-             "bash",
-             "-c",
--            f'source "{DEPLOY_SCRIPT}"; ship_remote_image_repo_env /opt/acx-backend/dev',
-+            script,
-         ],
-         env=env,
-         capture_output=True,
-@@ -1368,6 +1406,15 @@ def test_restore_prior_image_repo_on_post_ship_failure(tmp_path: Path) -> None:
-             textwrap.dedent(
-                 f"""\
-                 source "{DEPLOY_SCRIPT}"
-+                image_repo_resource() {{
-+                  case "$1" in
-+                    restore)
-+                      echo "resource action=restore" >> "{log}"
-+                      ACX_IMAGE_REPO="$ACX_PRIOR_IMAGE_REPO" ship_remote_image_repo_env "$2"
-+                      ;;
-+                    *) return 1 ;;
-+                  esac
-+                }}
-                 ship_remote_image_repo_env() {{
-                   echo "ship repo=$ACX_IMAGE_REPO dir=$1" >> "{log}"
-                 }}
-diff --git a/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py b/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
---- a/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
-+++ b/apps/prototype-description-service/recognition/tests/integration/test_cluster_repository.py
-@@ -11,6 +11,7 @@ from typing import Protocol
- import numpy as np
- import pytest
- 
-+from db.models import ClusterCentroid as ClusterCentroidModel
- from db.models import IdentityCluster as IdentityClusterModel
- from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
- from db.models import MediaIdentity as MediaIdentityModel
-@@ -408,6 +409,14 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
-         disposed_at=datetime.now(tz=UTC),
-     )
-     db_session.add_all([active_rep, disposed_rep])
-+    db_session.add(
-+        ClusterCentroidModel(
-+            cluster_id=uuid.UUID(active_cluster.id),
-+            tenant_id=tenant.id,
-+            centroid=[0.3] * 512,
-+            refreshed_at=datetime.now(tz=UTC),
-+        )
-+    )
-     await db_session.flush()
- 
-     disposed_cluster_model = await db_session.get(IdentityClusterModel, uuid.UUID(disposed_cluster.id))
-@@ -423,6 +432,8 @@ async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_s
-     assert snapshot_generation_id is not None
-     assert uuid.UUID(snapshot_generation_id)
-     assert [cluster.id for cluster in clusters] == [active_cluster.id]
-+    assert clusters[0].centroid is not None
-+    np.testing.assert_allclose(clusters[0].centroid, np.array([0.3] * 512, dtype=np.float32))
-     assert [member.identity_id for member, _identity in members] == [active_identity_id]
- 
-     refreshed_active_cluster = await db_session.get(IdentityClusterModel, uuid.UUID(active_cluster.id))
-diff --git a/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py b/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
---- a/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
-+++ b/apps/prototype-description-service/recognition/tests/integration/test_pipeline_integration.py
-@@ -24,6 +24,7 @@ from db.models import (
- from recognition.application.discovery.graph.algorithm import GraphAlgorithm
- from recognition.application.embedding.detector import StubFaceDetector
- from recognition.application.embedding.generator import StubEmbeddingGenerator
-+from recognition.application.embedding.manifest import active_embedding_model_id
- from recognition.application.scan.scan_queue_service import ScanQueueService
- from recognition.application.scan.service import ScanService
- from recognition.domain.identity import MediaIdentity as DomainMediaIdentity
-@@ -105,7 +106,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
-             bbox_height=1,
-             confidence=0.99,
-             embedding=embedding,
--            embedding_model="buffalo_l@insightface",
-+            embedding_model=active_embedding_model_id(),
-         ),
-         MediaIdentity(
-             tenant_id=tenant.id,
-@@ -117,7 +118,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
-             bbox_height=1,
-             confidence=0.98,
-             embedding=embedding,
--            embedding_model="buffalo_l@insightface",
-+            embedding_model=active_embedding_model_id(),
-         ),
-     ]
-     db_session.add_all(identities)
-@@ -186,7 +187,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
-             bbox_height=1,
-             confidence=0.97,
-             embedding=[0.2] * 512,
--            embedding_model="buffalo_l@insightface",
-+            embedding_model=active_embedding_model_id(),
-         ),
-         MediaIdentity(
-             tenant_id=tenant.id,
-@@ -198,7 +199,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
-             bbox_height=1,
-             confidence=0.96,
-             embedding=[0.3] * 512,
--            embedding_model="buffalo_l@insightface",
-+            embedding_model=active_embedding_model_id(),
-         ),
-     ]
-     db_session.add_all(identities)
-diff --git a/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py b/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
---- a/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
-+++ b/apps/prototype-description-service/recognition/tests/integration/test_rls_tenant_context_after_chunk_commit.py
-@@ -43,6 +43,7 @@ from recognition.application.assignment.gate import AssignmentGate
- from recognition.application.discovery.centroid import CentroidDiscovery
- from recognition.application.discovery.graph.discovery import GraphDiscovery
- from recognition.application.discovery.representative import RepresentativeDiscovery
-+from recognition.application.embedding.manifest import active_embedding_model_id
- from recognition.application.orchestration.cluster_service import ClusterService
- from recognition.application.persistence.assignment_writer import AssignmentWriter
- from recognition.application.settings import ClusteringSettings
-@@ -80,7 +81,7 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
-                 bbox_height=10,
-                 confidence=0.99,
-                 embedding=embedding.tolist(),
--                embedding_model="buffalo_l@insightface",
-+                embedding_model=active_embedding_model_id(),
-             )
-         )
-     return rows
-diff --git a/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py b/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-description-service/recognition/tests/integration/test_scan_service_persist_lock_reentry.py
-@@ -0,0 +1,62 @@
-+"""Regression tests for the SQLite persist-lock transaction ownership."""
-+
-+import asyncio
-+
-+import pytest
-+from sqlalchemy import select
-+
-+from db.models import MediaIdentity
-+from recognition.application.scan.service import (
-+    _InProcessPersistLockEntry,
-+    _persist_lock_owner_matches,
-+)
-+
-+
-+@pytest.mark.asyncio
-+async def test_same_sqlite_transaction_can_rescan_one_media_item(
-+    db_session,
-+    tenant,
-+    scan_service,
-+) -> None:
-+    """A same-session replay must re-enter the lock held until commit."""
-+    await scan_service.process_media_item(
-+        tenant_id=str(tenant.id),
-+        media_id=123,
-+        media_url="http://example.test/image.jpg",
-+    )
-+
-+    stmt = select(MediaIdentity).where(
-+        MediaIdentity.tenant_id == tenant.id,
-+        MediaIdentity.media_id == 123,
-+    )
-+    first_row = (await db_session.execute(stmt)).scalar_one()
-+
-+    await asyncio.wait_for(
-+        scan_service.process_media_item(
-+            tenant_id=str(tenant.id),
-+            media_id=123,
-+            media_url="http://example.test/image.jpg",
-+        ),
-+        timeout=1.0,
-+    )
-+
-+    rows = (await db_session.execute(stmt)).scalars().all()
-+    assert len(rows) == 1
-+    assert rows[0].id == first_row.id
-+
-+
-+def test_persist_lock_owner_does_not_match_distinct_sessions() -> None:
-+    """A different sync session cannot reuse another session's ownership."""
-+    owner_session = object()
-+    other_session = object()
-+    root_transaction = object()
-+    entry = _InProcessPersistLockEntry(
-+        lock=asyncio.Lock(),
-+        owner_sync_session=owner_session,
-+        owner_root_transaction=root_transaction,
-+        reentry_depth=1,
-+    )
-+
-+    assert _persist_lock_owner_matches(entry, owner_session, root_transaction)
-+    assert not _persist_lock_owner_matches(entry, other_session, root_transaction)
-+    assert not _persist_lock_owner_matches(entry, owner_session, object())
-diff --git a/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py b/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
---- a/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
-+++ b/apps/prototype-description-service/recognition/tests/service/test_surface_gallery_attribute_error.py
-@@ -11,6 +11,7 @@ from __future__ import annotations
- import inspect
- from datetime import UTC, datetime
- from typing import Any
-+from unittest.mock import create_autospec
- from uuid import UUID, uuid4
- 
- import numpy as np
-@@ -22,7 +23,8 @@ from recognition.application.similarity import SimilaritySearch
- from recognition.application.suggestions.refresh_service import SuggestionRefreshService
- from recognition.domain.cluster import IdentityCluster
- from recognition.domain.identity import MediaIdentity
--from recognition.domain.repositories import SuggestionCreateData
-+from recognition.domain.repositories import ClusterRepository, SuggestionCreateData
-+from recognition.domain.representative import ClusterRepresentative
- from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
- from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
- 
-@@ -249,39 +251,6 @@ async def test_internal_gallery_attribute_error_does_not_authorize_cached_search
-     )
- 
- 
--class _MissingMethodClusterRepository:
--    """Batch-surfacing double: Protocol method is absent, not faulting."""
--
--    def __init__(
--        self,
--        *,
--        identities_by_cluster: dict[str, list[MediaIdentity]],
--        labeled_cluster: IdentityCluster,
--    ) -> None:
--        self._identities_by_cluster = identities_by_cluster
--        self._labeled_cluster = labeled_cluster
--
--    async def get_member_identities_for_clusters(self, cluster_ids: list[str]) -> dict[str, list[MediaIdentity]]:
--        return {cid: list(self._identities_by_cluster.get(cid, [])) for cid in cluster_ids}
--
--    async def get_by_id(self, cluster_id: str) -> IdentityCluster:
--        return self._labeled_cluster
--
--
--class _AwaitableFaultClusterRepository(_MissingMethodClusterRepository):
--    async def get_all_representatives(self, cluster_id: str) -> list[Any]:
--        raise AttributeError("await-time gallery fault")
--
--
--class _IterationFaultClusterRepository(_MissingMethodClusterRepository):
--    async def get_all_representatives(self, cluster_id: str) -> Any:
--        def _rows() -> Any:
--            raise AttributeError("iteration gallery fault")
--            yield None  # pragma: no cover
--
--        return _rows()
--
--
- def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
-     return IdentityCluster(
-         tenant_id=tenant_id,
-@@ -294,6 +263,17 @@ def _labeled_cluster(tenant_id: str, labeled_id: str) -> IdentityCluster:
-     )
- 
- 
-+def _cluster_repository_double(
-+    *,
-+    identities_by_cluster: dict[str, list[MediaIdentity]],
-+    labeled_cluster: IdentityCluster,
-+) -> Any:
-+    repository = create_autospec(ClusterRepository, instance=True)
-+    repository.get_member_identities_for_clusters.return_value = identities_by_cluster
-+    repository.get_by_id.return_value = labeled_cluster
-+    return repository
-+
-+
- def _surface_service(
-     repo: Any,
-     tenant_id: str,
-@@ -344,10 +324,11 @@ async def test_present_method_await_attribute_error_does_not_authorize_cached_se
-     labeled_id = str(uuid4())
-     unlabeled_id = str(uuid4())
-     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
--    repo = _AwaitableFaultClusterRepository(
-+    repo = _cluster_repository_double(
-         identities_by_cluster={unlabeled_id: [unstamped]},
-         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
-     )
-+    repo.get_all_representatives.side_effect = AttributeError("await-time gallery fault")
-     service, suggestion_repo, search = _surface_service(repo, tenant_id)
- 
-     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
-@@ -364,10 +345,16 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
-     labeled_id = str(uuid4())
-     unlabeled_id = str(uuid4())
-     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
--    repo = _IterationFaultClusterRepository(
-+    repo = _cluster_repository_double(
-         identities_by_cluster={unlabeled_id: [unstamped]},
-         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
-     )
-+
-+    def _rows() -> Any:
-+        raise AttributeError("iteration gallery fault")
-+        yield None  # pragma: no cover
-+
-+    repo.get_all_representatives.return_value = _rows()
-     service, suggestion_repo, search = _surface_service(repo, tenant_id)
- 
-     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
-@@ -379,16 +366,20 @@ async def test_present_method_iteration_attribute_error_does_not_authorize_cache
- 
- @pytest.mark.asyncio
- async def test_absent_method_unstamped_identities_may_use_precomputed_cache() -> None:
--    """Lookup AttributeError on an incomplete double keeps unstamped cache compatibility."""
-+    """An autospecced repository exposes the live gallery required by surfacing."""
-     tenant_id = str(uuid4())
-     labeled_id = str(uuid4())
-     unlabeled_id = str(uuid4())
-     unstamped = _unstamped_identity("identity-unstamped", tenant_id)
--    repo = _MissingMethodClusterRepository(
-+    repo = _cluster_repository_double(
-         identities_by_cluster={unlabeled_id: [unstamped]},
-         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
-     )
--    assert not hasattr(repo, "get_all_representatives")
-+    representative = create_autospec(ClusterRepresentative, instance=True)
-+    representative.embedding = unstamped.embedding
-+    representative.embedding_model = unstamped.embedding_model
-+    repo.get_all_representatives.return_value = [representative]
-+    assert hasattr(repo, "get_all_representatives")
-     service, suggestion_repo, search = _surface_service(repo, tenant_id)
- 
-     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=unstamped)
-@@ -401,7 +392,7 @@ async def test_absent_method_unstamped_identities_may_use_precomputed_cache() ->
- 
- @pytest.mark.asyncio
- async def test_absent_method_stamped_identities_still_reject() -> None:
--    """Lookup AttributeError must still raise when any probe is stamped."""
-+    """A gallery lookup AttributeError must still raise when any probe is stamped."""
-     tenant_id = str(uuid4())
-     labeled_id = str(uuid4())
-     unlabeled_id = str(uuid4())
-@@ -415,10 +406,11 @@ async def test_absent_method_stamped_identities_still_reject() -> None:
-         bbox_height=10,
-         embedding_model="space-a",
-     )
--    repo = _MissingMethodClusterRepository(
-+    repo = _cluster_repository_double(
-         identities_by_cluster={unlabeled_id: [stamped]},
-         labeled_cluster=_labeled_cluster(tenant_id, labeled_id),
-     )
-+    repo.get_all_representatives.side_effect = AttributeError("gallery lookup fault")
-     service, suggestion_repo, search = _surface_service(repo, tenant_id)
- 
-     raised, created = await _surface(service, labeled_id=labeled_id, unlabeled_id=unlabeled_id, identity=stamped)
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py b/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py
-new file mode 100644
---- /dev/null
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_collection_scope_receipt.py
-@@ -0,0 +1,108 @@
-+"""Tests for the collection-scope receipt's identity and path resolution."""
-+
-+from __future__ import annotations
-+
-+import json
+ import json
 +import os
-+import re
-+import subprocess
-+import sys
-+from pathlib import Path
-+
-+import pytest
-+
-+SERVICE_ROOT = Path(__file__).resolve().parents[3]
-+RECEIPT_PATTERN = re.compile(r"receipt=(\S+)")
-+
-+
-+def _run_pytest_child(
-+    tmp_path: Path,
-+    *selection: str,
-+    ini_receipt: str | None = None,
-+    cli_receipt: Path | None = None,
-+) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, object]]:
-+    project = tmp_path / "project"
-+    tests = project / "tests"
-+    tests.mkdir(parents=True)
-+    (tests / "test_child.py").write_text(
-+        "def test_child() -> None:\n    assert True\n",
-+        encoding="utf-8",
-+    )
-+    config = project / "pytest.ini"
-+    ini_lines = ["[pytest]", "testpaths = tests"]
-+    if ini_receipt is not None:
-+        ini_lines.append(f"collection_scope_receipt = {ini_receipt}")
-+    config.write_text("\n".join(ini_lines) + "\n", encoding="utf-8")
-+
-+    env = os.environ.copy()
-+    env["PYTHONPATH"] = os.pathsep.join(
-+        part for part in (str(SERVICE_ROOT), env.get("PYTHONPATH")) if part
-+    )
-+    args = [
-+        sys.executable,
-+        "-m",
-+        "pytest",
-+        "-p",
-+        "conftest",
-+        "-c",
-+        str(config),
-+        *selection,
-+    ]
-+    if cli_receipt is not None:
-+        args.append(f"--collection-scope-receipt={cli_receipt}")
-+    args.extend(["-q", "-p", "no:cacheprovider"])
-+    result = subprocess.run(
-+        args,
-+        cwd=project,
-+        env=env,
-+        text=True,
-+        capture_output=True,
-+        check=False,
-+    )
-+    output = result.stdout + result.stderr
-+    match = RECEIPT_PATTERN.search(output)
-+    assert match is not None, output
-+    receipt_path = Path(match.group(1))
-+    return result, receipt_path, json.loads(receipt_path.read_text(encoding="utf-8"))
+ import subprocess
++import time
++from collections.abc import Sequence
+ from pathlib import Path
+ from types import SimpleNamespace
+ from typing import Any
+@@ -54,6 +57,10 @@ def _write_manifest(tmp_path: Path, payload: dict[str, Any]) -> Path:
+     return path
+ 
+ 
++def _pytest_nodes(command: Sequence[str]) -> list[str]:
++    return [argument for argument in command if argument.startswith("recognition/")]
 +
 +
-+def test_default_receipt_is_run_unique_and_self_identifying(tmp_path: Path) -> None:
-+    first, first_path, first_receipt = _run_pytest_child(tmp_path / "first")
-+    second, second_path, second_receipt = _run_pytest_child(tmp_path / "second")
+ def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
+     testcase_xml: list[str] = []
+     for index in range(cases):
+@@ -67,6 +74,62 @@ def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
+     return f"<testsuite tests='{cases}' failures='{failures}' skipped='{skipped}'>{''.join(testcase_xml)}</testsuite>"
+ 
+ 
++def _junit_for_nodes(
++    nodes: Sequence[str],
++    *,
++    skipped: Sequence[str] = (),
++    failed: Sequence[str] = (),
++    errored: Sequence[str] = (),
++) -> str:
++    """Pytest --junitxml shape: file + classname + name, optional skipped/failure/error."""
 +
-+    assert first.returncode == 0, first.stdout + first.stderr
-+    assert second.returncode == 0, second.stdout + second.stderr
-+    assert first_path.is_absolute()
-+    assert second_path.is_absolute()
-+    assert first_path != second_path
-+    assert first_receipt["pid"] > 0
-+    assert str(first_receipt["pid"]) in first_path.name
-+    assert str(second_receipt["pid"]) in second_path.name
-+    assert first_receipt["rootdir"] == str((tmp_path / "first" / "project").resolve())
-+    assert first_receipt["declared_roots"] == ["tests"]
-+    assert first_receipt["collected_roots"] == ["tests"]
-+    assert first_receipt["collected_count"] == 1
-+    assert first_receipt["scope"] == "full"
-+    assert isinstance(first_receipt["started_at"], str)
-+    assert first_receipt["started_at"]
-+    assert str(first_path) in first.stdout
++    skipped_nodes = set(skipped)
++    failed_nodes = set(failed)
++    errored_nodes = set(errored)
++    testcase_xml: list[str] = []
++    for node in nodes:
++        file_part, name = node.split("::", 1)
++        classname = file_part.replace("/", ".").removesuffix(".py")
++        if node in skipped_nodes:
++            child = "<skipped type='pytest.skip' message='skipped required case' />"
++        elif node in failed_nodes:
++            child = "<failure message='failed'>traceback</failure>"
++        elif node in errored_nodes:
++            child = "<error message='error'>traceback</error>"
++        else:
++            child = ""
++        testcase_xml.append(f"<testcase classname='{classname}' name='{name}' file='{file_part}'>{child}</testcase>")
++    return f"<testsuites><testsuite name='pytest' tests='{len(nodes)}'>{''.join(testcase_xml)}</testsuite></testsuites>"
 +
 +
-+@pytest.mark.parametrize("override_kind", ["cli", "ini"])
-+def test_receipt_overrides_remain_supported(
-+    tmp_path: Path, override_kind: str
++def _write_command_junit(
++    command: Sequence[str],
++    xml_path: Path,
++    *,
++    case_count: int | None = None,
++    skipped: Sequence[str] = (),
++    failed: Sequence[str] = (),
++    errored: Sequence[str] = (),
++    xml_text: str | None = None,
++    mtime: float | None = None,
 +) -> None:
-+    expected = tmp_path / "custom" / f"{override_kind}.json"
-+    if override_kind == "cli":
-+        result, receipt_path, _ = _run_pytest_child(
-+            tmp_path / "cli", cli_receipt=expected
-+        )
++    if xml_text is not None:
++        xml_path.write_text(xml_text, encoding="utf-8")
 +    else:
-+        result, receipt_path, _ = _run_pytest_child(
-+            tmp_path / "ini",
-+            ini_receipt=str(expected),
++        nodes = _pytest_nodes(command)
++        if case_count == 0:
++            xml_path.write_text(_junit(cases=0), encoding="utf-8")
++        elif case_count is not None and case_count != len(nodes):
++            xml_path.write_text(_junit(cases=case_count), encoding="utf-8")
++        else:
++            xml_path.write_text(
++                _junit_for_nodes(nodes, skipped=skipped, failed=failed, errored=errored),
++                encoding="utf-8",
++            )
++    if mtime is not None:
++        os.utime(xml_path, (mtime, mtime))
++
++
+ def _fake_runner(
+     *,
+     statuses: dict[str, int] | None = None,
+@@ -81,16 +144,16 @@ def _fake_runner(
+         if command[:3] == ["git", "rev-parse", "HEAD"]:
+             return SimpleNamespace(returncode=0, stdout="a" * 40, stderr="")
+         assert command[:3] == [runner.sys.executable, "-m", "pytest"]
+-        group = next(
+-            argument.split("--", 1)[1]
+-            for argument in command
+-            if argument.startswith("recognition/tests/")
+-        ).split("/", 3)[2].split("_", 2)[2].split(".", 1)[0]
++        group = (
++            next(argument.split("--", 1)[1] for argument in command if argument.startswith("recognition/tests/"))
++            .split("/", 3)[2]
++            .split("_", 2)[2]
++            .split(".", 1)[0]
++        )
+         # The command's node id is only a convenient fixture discriminator;
+         # the runner itself never infers groups from test names.
+         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+-        cases = junit_cases.get(group, 1)
+-        xml_path.write_text(_junit(cases=cases), encoding="utf-8")
++        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
+         kwargs["stdout"].write(f"child output for {group}\n")
+         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
+ 
+@@ -115,7 +178,7 @@ def _fake_runner_by_test(
+         test_node = next(argument for argument in command if argument.startswith("recognition/tests/"))
+         group = test_node.rsplit("test_case_", 1)[1]
+         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+-        xml_path.write_text(_junit(cases=junit_cases.get(group, 1)), encoding="utf-8")
++        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
+         kwargs["stdout"].write(f"child output for {group}\n")
+         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
+ 
+@@ -190,7 +253,10 @@ def test_group_without_executable_tests_fails_without_running_unscoped_pytest(tm
+     pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
+     assert pytest_calls == []
+     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+-    assert "group has no executable test cases" in evidence["groups"][0]["failure_reasons"]
++    assert any(
++        "missing required artifact" in reason and "SC-1" in reason
++        for reason in evidence["groups"][0]["failure_reasons"]
++    )
+ 
+ 
+ def test_selected_group_outputs_are_cleaned_without_touching_other_groups(tmp_path: Path) -> None:
+@@ -239,7 +305,7 @@ def test_evidence_has_real_head_sha_and_absolute_artifact_paths(tmp_path: Path)
+         if command[:3] == ["git", "rev-parse", "HEAD"]:
+             return SimpleNamespace(returncode=0, stdout=actual_sha, stderr="")
+         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+-        xml_path.write_text(_junit(cases=1), encoding="utf-8")
++        _write_command_junit(command, xml_path)
+         kwargs["stdout"].write("bounded child output\n")
+         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+ 
+@@ -285,7 +351,7 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
+         if command[:3] == ["git", "rev-parse", "HEAD"]:
+             return SimpleNamespace(returncode=0, stdout="c" * 40, stderr="")
+         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+-        xml_path.write_text(_junit(cases=1), encoding="utf-8")
++        _write_command_junit(command, xml_path)
+         kwargs["stdout"].write("x" * (runner.CAPTURED_TAIL_BYTES + 100))
+         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+ 
+@@ -297,3 +363,265 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
+     assert capture["tail_limit_bytes"] == runner.CAPTURED_TAIL_BYTES
+     assert capture["tail_truncated"] is True
+     assert len(capture["tail"].encode("utf-8")) == runner.CAPTURED_TAIL_BYTES
++
++
++def _last_evidence(tmp_path: Path) -> dict[str, Any]:
++    return json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
++
++
++def _git_ok_then(handler):
++    def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        if command[:3] == ["git", "rev-parse", "HEAD"]:
++            return SimpleNamespace(returncode=0, stdout="d" * 40, stderr="")
++        return handler(command, **kwargs)
++
++    return fake
++
++
++def test_required_case_wrong_junit_identity_fails_even_when_counts_are_green(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    declared = payload["cases"][0]["test"]
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
++        _write_command_junit(
++            command,
++            xml_path,
++            xml_text=_junit_for_nodes(["recognition/tests/api/test_other.py::test_unrelated"]),
++        )
++        kwargs["stdout"].write("unrelated passing case\n")
++        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status == 1
++    evidence = _last_evidence(tmp_path)
++    group = evidence["groups"][0]
++    assert group["case_count"] == 1
++    assert group["pass_count"] == 1
++    ledger = group["case_ledger"]
++    assert ledger[0]["id"] == "SC-1"
++    assert ledger[0]["test"] == declared
++    assert ledger[0]["status"] == "not_run"
++    assert any("required case" in reason and "SC-1" in reason for reason in group["failure_reasons"])
++
++
++def test_required_case_skipped_in_junit_cannot_exit_clean(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    declared = payload["cases"][0]["test"]
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
++        _write_command_junit(command, xml_path, skipped=[declared])
++        kwargs["stdout"].write("skipped\n")
++        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status == 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["case_ledger"][0]["status"] == "skipped"
++    assert any("skipped" in reason and "SC-1" in reason for reason in group["failure_reasons"])
++
++
++def test_malformed_junit_fails_and_keeps_truthful_partial_evidence(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
++        xml_path.write_text("<not-junit", encoding="utf-8")
++        kwargs["stdout"].write("parser noise\n")
++        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status == 1
++    evidence = _last_evidence(tmp_path)
++    group = evidence["groups"][0]
++    assert evidence["runner_exit_status"] == 1
++    assert group["junit_report_found"] is True
++    assert group["case_ledger"][0]["status"] == "not_run"
++    assert any("cannot parse JUnit" in reason for reason in group["failure_reasons"])
++    assert "parser noise" in group["output_capture"]["tail"]
++
++
++def test_missing_junit_fails_and_keeps_partial_evidence(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        kwargs["stdout"].write("pytest collected nothing\n")
++        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status == 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["junit_report_found"] is False
++    assert group["case_ledger"][0]["status"] == "not_run"
++    assert any("JUnit report is missing" in reason for reason in group["failure_reasons"])
++
++
++def test_stale_junit_mtime_before_run_start_fails(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    manifest_path = _write_manifest(tmp_path, payload)
++    past = time.time() - 3600
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
++        _write_command_junit(command, xml_path, mtime=past)
++        kwargs["stdout"].write("stale report reused\n")
++        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status == 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert any("stale JUnit" in reason for reason in group["failure_reasons"])
++    assert group["case_ledger"][0]["status"] == "not_run"
++
++
++def test_selected_group_does_not_demand_unselected_required_cases(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path, groups=("selected", "other"))
++    manifest_path = _write_manifest(tmp_path, payload)
++    calls: list[tuple[list[str], dict[str, Any]]] = []
++
++    status = runner.run_evals(
++        manifest_path,
++        groups=["selected"],
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=calls),
++    )
++
++    assert status == 0
++    evidence = _last_evidence(tmp_path)
++    assert evidence["full_suite"] is False
++    assert evidence["selected_groups"] == ["selected"]
++    assert [group["group"] for group in evidence["groups"]] == ["selected"]
++    assert evidence["groups"][0]["case_ledger"][0]["id"] == "SC-1"
++    assert evidence["groups"][0]["case_ledger"][0]["status"] == "passed"
++    assert all("SC-2" not in reason for group in evidence["groups"] for reason in group["failure_reasons"])
++    pytest_nodes = [
++        argument
++        for command, _kwargs in calls
++        if command[:3] == [runner.sys.executable, "-m", "pytest"]
++        for argument in command
++        if argument.startswith("recognition/")
++    ]
++    assert pytest_nodes == ["recognition/tests/api/test_portal_1.py::test_case_1"]
++
++
++def test_full_suite_run_is_labeled_full_suite(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path, groups=("first", "second"))
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    status = runner.run_evals(
++        manifest_path,
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=[]),
++    )
++
++    assert status == 0
++    evidence = _last_evidence(tmp_path)
++    assert evidence["full_suite"] is True
++    assert evidence["selected_groups"] == ["first", "second"]
++
++
++def test_missing_required_artifact_fails_without_greening(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    payload["cases"][0]["additional_evidence_required"] = True
++    payload["cases"][0]["artifact"] = "docs/missing-app1-evidence.md"
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    status = runner.run_evals(
++        manifest_path,
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=[]),
++    )
++
++    assert status == 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["case_ledger"][0]["additional_evidence_present"] is False
++    assert any("missing required artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
++
++
++def test_additional_evidence_without_artifact_path_cannot_exit_clean(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    payload["cases"][0]["additional_evidence_required"] = True
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    status = runner.run_evals(
++        manifest_path,
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=[]),
++    )
++
++    assert status == 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert any("no artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
++
++
++def test_required_artifact_present_and_matching_junit_can_pass(tmp_path: Path) -> None:
++    artifact = tmp_path / "browser-secret-once.md"
++    artifact.write_text("one-time secret display evidence\n", encoding="utf-8")
++    payload = _manifest_payload(tmp_path)
++    payload["cases"][0]["additional_evidence_required"] = True
++    payload["cases"][0]["artifact"] = str(artifact)
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    status = runner.run_evals(
++        manifest_path,
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=[]),
++    )
++
++    assert status == 0
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["case_ledger"][0]["status"] == "passed"
++    assert group["case_ledger"][0]["additional_evidence_present"] is True
++
++
++def test_evidence_only_group_passes_when_required_artifact_exists(tmp_path: Path) -> None:
++    artifact = tmp_path / "observation.md"
++    artifact.write_text("cohort study\n", encoding="utf-8")
++    payload = _manifest_payload(tmp_path)
++    payload["cases"][0].pop("test")
++    payload["cases"][0]["artifact"] = str(artifact)
++    payload["cases"][0]["additional_evidence_required"] = True
++    manifest_path = _write_manifest(tmp_path, payload)
++    calls: list[tuple[list[str], dict[str, Any]]] = []
++
++    status = runner.run_evals(
++        manifest_path,
++        out_dir=tmp_path / "out",
++        command_runner=_fake_runner_by_test(calls=calls),
++    )
++
++    assert status == 0
++    pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
++    assert pytest_calls == []
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["case_ledger"][0]["status"] == "passed"
++    assert group["exit_status"] == 0
++
++
++def test_required_case_failure_element_is_not_green(tmp_path: Path) -> None:
++    payload = _manifest_payload(tmp_path)
++    declared = payload["cases"][0]["test"]
++    manifest_path = _write_manifest(tmp_path, payload)
++
++    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
++        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
++        _write_command_junit(command, xml_path, failed=[declared])
++        kwargs["stdout"].write("failed assertion\n")
++        return SimpleNamespace(returncode=1, stdout=None, stderr=None)
++
++    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
++
++    assert status >= 1
++    group = _last_evidence(tmp_path)["groups"][0]
++    assert group["case_ledger"][0]["status"] == "failed"
++    assert "failed assertion" in group["output_capture"]["tail"]
+diff --git a/apps/prototype-description-service/scripts/run_app_portal_evals.py b/apps/prototype-description-service/scripts/run_app_portal_evals.py
+--- a/apps/prototype-description-service/scripts/run_app_portal_evals.py
++++ b/apps/prototype-description-service/scripts/run_app_portal_evals.py
+@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
+ from collections.abc import Callable, Mapping, Sequence
+ from dataclasses import dataclass
+ from datetime import UTC, datetime
++from enum import StrEnum
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -69,6 +70,16 @@ class EvalRunnerError(RuntimeError):
+     """The runner could not prepare or record an evaluation run."""
+ 
+ 
++class CaseLedgerStatus(StrEnum):
++    """Per-declared-case outcome recorded in the run ledger."""
++
++    PASSED = "passed"
++    FAILED = "failed"
++    SKIPPED = "skipped"
++    ERROR = "error"
++    NOT_RUN = "not_run"
++
++
+ @dataclass(frozen=True, slots=True)
+ class ManifestCase:
+     """One executable or evidence-only case declared by the manifest."""
+@@ -78,6 +89,8 @@ class ManifestCase:
+     criterion: str
+     status: str
+     test: str | None
++    artifact: str | None = None
++    additional_evidence_required: bool = False
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -104,6 +117,18 @@ class EvalManifest:
+         return {name: tuple(cases) for name, cases in grouped.items()}
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class JunitCase:
++    """One JUnit testcase with pytest node-id candidates."""
++
++    node_id: str
++    candidates: frozenset[str]
++    outcome: CaseLedgerStatus
++    classname: str
++    name: str
++    file: str
++
++
+ @dataclass(frozen=True, slots=True)
+ class JunitCounts:
+     """Counts derived from testcase elements in one JUnit report."""
+@@ -116,6 +141,8 @@ class JunitCounts:
+     error_count: int
+     failure_element_count: int
+     report_error: str | None = None
++    cases: tuple[JunitCase, ...] = ()
++    mtime: float | None = None
+ 
+ 
+ CommandRunner = Callable[..., Any]
+@@ -241,8 +268,7 @@ def load_manifest(path: str | Path) -> EvalManifest:
+     if not isinstance(tags_value, list) or not tags_value:
+         raise _manifest_error(f"{manifest_path}.tags", "must be a non-empty array")
+     tags = tuple(
+-        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]")
+-        for index, tag in enumerate(tags_value)
++        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]") for index, tag in enumerate(tags_value)
+     )
+ 
+     cases_value = raw["cases"]
+@@ -273,18 +299,18 @@ def load_manifest(path: str | Path) -> EvalManifest:
+             )
+         criterion = _require_nonempty_string(case["criterion"], path=f"{case_path}.criterion")
+         status = _require_nonempty_string(case["status"], path=f"{case_path}.status")
+-        test = (
+-            _require_nonempty_string(case["test"], path=f"{case_path}.test")
+-            if "test" in case
+-            else None
++        test = _require_nonempty_string(case["test"], path=f"{case_path}.test") if "test" in case else None
++        additional_evidence_required = False
++        if "additional_evidence_required" in case:
++            if type(case["additional_evidence_required"]) is not bool:
++                raise _manifest_error(
++                    f"{case_path}.additional_evidence_required",
++                    "must be a boolean",
++                )
++            additional_evidence_required = case["additional_evidence_required"]
++        artifact = (
++            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact") if "artifact" in case else None
+         )
+-        if "additional_evidence_required" in case and type(case["additional_evidence_required"]) is not bool:
+-            raise _manifest_error(
+-                f"{case_path}.additional_evidence_required",
+-                "must be a boolean",
+-            )
+-        if "artifact" in case:
+-            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
+         cases.append(
+             ManifestCase(
+                 case_id=case_id,
+@@ -292,6 +318,8 @@ def load_manifest(path: str | Path) -> EvalManifest:
+                 criterion=criterion,
+                 status=status,
+                 test=test,
++                artifact=artifact,
++                additional_evidence_required=additional_evidence_required,
+             )
+         )
+ 
+@@ -323,8 +351,7 @@ def _selected_groups(manifest: EvalManifest, requested: Sequence[str] | None) ->
+     for group in requested:
+         if group not in available:
+             raise ManifestValidationError(
+-                f"manifest {manifest.path}: unknown group {group!r}; "
+-                f"known groups: {sorted(available)}"
++                f"manifest {manifest.path}: unknown group {group!r}; known groups: {sorted(available)}"
+             )
+         if group not in selected:
+             selected.append(group)
+@@ -371,6 +398,34 @@ def _local_tag(tag: object) -> str:
+     return tag.rsplit("}", 1)[-1]
+ 
+ 
++def _junit_case_candidates(*, file_attr: str, classname: str, name: str) -> frozenset[str]:
++    candidates: set[str] = set()
++    if file_attr and name:
++        candidates.add(f"{file_attr}::{name}")
++    if classname and name:
++        candidates.add(f"{classname}::{name}")
++        parts = classname.split(".")
++        last = parts[-1] if parts else ""
++        if last[:1].isupper() and len(parts) > 1:
++            module_file = "/".join(parts[:-1]) + ".py"
++            candidates.add(f"{module_file}::{last}::{name}")
++            candidates.add(f"{module_file}::{name}")
++        elif parts:
++            candidates.add(f"{'/'.join(parts)}.py::{name}")
++    return frozenset(candidates)
++
++
++def _junit_case_outcome(testcase: ET.Element) -> CaseLedgerStatus:
++    child_tags = {_local_tag(child.tag) for child in testcase}
++    if "skipped" in child_tags:
++        return CaseLedgerStatus.SKIPPED
++    if "error" in child_tags:
++        return CaseLedgerStatus.ERROR
++    if "failure" in child_tags:
++        return CaseLedgerStatus.FAILED
++    return CaseLedgerStatus.PASSED
++
++
+ def _read_junit(path: Path) -> JunitCounts:
+     if not path.is_file():
+         return JunitCounts(
+@@ -384,8 +439,13 @@ def _read_junit(path: Path) -> JunitCounts:
+             report_error=f"missing JUnit report: {path}",
+         )
+     try:
++        mtime = path.stat().st_mtime
+         root = ET.parse(path).getroot()
+     except (ET.ParseError, OSError, UnicodeError) as exc:
++        try:
++            parse_mtime = path.stat().st_mtime
++        except OSError:
++            parse_mtime = None
+         return JunitCounts(
+             report_found=True,
+             case_count=0,
+@@ -395,14 +455,17 @@ def _read_junit(path: Path) -> JunitCounts:
+             error_count=0,
+             failure_element_count=0,
+             report_error=f"cannot parse JUnit report {path}: {exc}",
++            mtime=parse_mtime,
+         )
+ 
+-    testcases = [element for element in root.iter() if _local_tag(element.tag) == "testcase"]
++    parsed_cases: list[JunitCase] = []
+     skip_count = 0
+     error_count = 0
+     failure_element_count = 0
+     fail_count = 0
+-    for testcase in testcases:
++    for testcase in root.iter():
++        if _local_tag(testcase.tag) != "testcase":
++            continue
+         child_tags = {_local_tag(child.tag) for child in testcase}
+         if "skipped" in child_tags:
+             skip_count += 1
+@@ -414,15 +477,34 @@ def _read_junit(path: Path) -> JunitCounts:
+             error_count += 1
+         if has_failure or has_error:
+             fail_count += 1
+-    pass_count = max(0, len(testcases) - skip_count - fail_count)
++        file_attr = (testcase.get("file") or "").replace("\\", "/")
++        classname = testcase.get("classname") or ""
++        name = testcase.get("name") or ""
++        candidates = _junit_case_candidates(file_attr=file_attr, classname=classname, name=name)
++        node_id = next(iter(candidates), f"{classname}::{name}" if classname or name else "")
++        if file_attr and name:
++            node_id = f"{file_attr}::{name}"
++        parsed_cases.append(
++            JunitCase(
++                node_id=node_id,
++                candidates=candidates,
++                outcome=_junit_case_outcome(testcase),
++                classname=classname,
++                name=name,
++                file=file_attr,
++            )
++        )
++    pass_count = max(0, len(parsed_cases) - skip_count - fail_count)
+     return JunitCounts(
+         report_found=True,
+-        case_count=len(testcases),
++        case_count=len(parsed_cases),
+         pass_count=pass_count,
+         fail_count=fail_count,
+         skip_count=skip_count,
+         error_count=error_count,
+         failure_element_count=failure_element_count,
++        cases=tuple(parsed_cases),
++        mtime=mtime,
+     )
+ 
+ 
+@@ -463,6 +545,56 @@ def _normalise_status(value: object, *, fallback: int = 1) -> int:
+     return 128 + abs(status) if status < 0 else status
+ 
+ 
++def _required_case_ids_for_selection(manifest: EvalManifest, selected: Sequence[str]) -> set[str]:
++    selected_ids = {case.case_id for group in selected for case in manifest.groups[group]}
++    required: set[str] = set()
++    for gate in manifest.release_gates.values():
++        for case_id in gate.get("required_cases", []):
++            if case_id in selected_ids:
++                required.add(str(case_id))
++    return required
++
++
++def _junit_is_stale(junit: JunitCounts, *, started_at: datetime) -> bool:
++    if not junit.report_found or junit.mtime is None:
++        return False
++    return junit.mtime < started_at.timestamp() - 1
++
++
++def _match_junit_case(declared: str, available: list[JunitCase]) -> JunitCase | None:
++    for index, case in enumerate(available):
++        if declared == case.node_id or declared in case.candidates:
++            return available.pop(index)
++    return None
++
++
++def _artifact_evidence(
++    case: ManifestCase,
++    *,
++    repository_root: Path,
++) -> tuple[bool, str | None]:
++    needs_artifact = case.additional_evidence_required or case.artifact is not None
++    if not needs_artifact:
++        return True, None
++    if case.artifact is None:
++        return (
++            False,
++            f"required case {case.case_id} requires additional evidence but declares no artifact",
++        )
++    path = Path(case.artifact).expanduser()
++    if not path.is_absolute():
++        path = repository_root / path
++    try:
++        resolved = path.resolve()
++        if not resolved.is_file():
++            return False, f"required case {case.case_id} missing required artifact {resolved}"
++        if resolved.stat().st_size == 0:
++            return False, f"required case {case.case_id} required artifact is empty: {resolved}"
++    except OSError as exc:
++        return False, f"required case {case.case_id} missing required artifact {path}: {exc}"
++    return True, None
++
++
+ def _run_group(
+     manifest: EvalManifest,
+     *,
+@@ -472,6 +604,9 @@ def _run_group(
+     log_path: Path,
+     environment: Mapping[str, str],
+     command_runner: CommandRunner,
++    started_at: datetime,
++    repository_root: Path,
++    required_case_ids: set[str],
+ ) -> dict[str, Any]:
+     test_nodes = [case.test for case in cases if case.test is not None]
+     command = [
+@@ -482,14 +617,12 @@ def _run_group(
+         *test_nodes,
+         f"--junitxml={xml_path}",
+     ]
+-    raw_exit_status = 1
++    raw_exit_status = 0
+     timed_out = False
+     execution_error: str | None = None
++    ran_pytest = bool(test_nodes)
+     with log_path.open("w", encoding="utf-8") as log_file:
+-        if not test_nodes:
+-            raw_exit_status = 1
+-            execution_error = "group has no executable test cases"
+-        else:
++        if ran_pytest:
+             try:
+                 completed = command_runner(
+                     command,
+@@ -514,29 +647,72 @@ def _run_group(
+                 execution_error = f"cannot run pytest subprocess: {exc}"
+ 
+     junit = _read_junit(xml_path)
++    stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
++    usable_junit = ran_pytest and junit.report_found and junit.report_error is None and not stale_junit
++    unmatched = list(junit.cases) if usable_junit else []
+     output_tail, output_tail_bytes, output_tail_truncated, tail_error = _read_capped_tail(log_path)
+     threshold_failures = int(manifest.threshold["max_failures"])
+     threshold_skipped = int(manifest.threshold["max_skipped"])
+     reasons: list[str] = []
+-    status = _normalise_status(raw_exit_status)
+-    if raw_exit_status != 0:
++    status = _normalise_status(raw_exit_status) if ran_pytest else 0
++    if ran_pytest and raw_exit_status != 0:
+         reasons.append(f"pytest exited with status {raw_exit_status}")
+-    if not junit.report_found:
++    if ran_pytest and not junit.report_found:
+         reasons.append("JUnit report is missing")
+-    if junit.case_count == 0:
++    if ran_pytest and junit.case_count == 0:
+         reasons.append("group produced zero test cases")
+-    if junit.fail_count > threshold_failures:
+-        reasons.append(
+-            f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}"
+-        )
+-    if junit.skip_count > threshold_skipped:
++    if ran_pytest and junit.fail_count > threshold_failures:
++        reasons.append(f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}")
++    if ran_pytest and junit.skip_count > threshold_skipped:
+         reasons.append(f"skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}")
+-    if junit.report_error:
++    if stale_junit:
++        reasons.append(f"stale JUnit report: {xml_path} is older than the run start")
++    if ran_pytest and junit.report_error:
+         reasons.append(junit.report_error)
+     if execution_error:
+         reasons.append(execution_error)
+     if tail_error:
+         reasons.append(tail_error)
++
++    case_ledger: list[dict[str, Any]] = []
++    for case in cases:
++        required = case.case_id in required_case_ids
++        label = "required case" if required else "declared case"
++        matched = _match_junit_case(case.test, unmatched) if case.test and usable_junit else None
++        if case.test is None:
++            ledger_status = CaseLedgerStatus.NOT_RUN
++        elif matched is None:
++            ledger_status = CaseLedgerStatus.NOT_RUN
++            reasons.append(f"{label} {case.case_id} was not executed (declared test {case.test} missing from JUnit)")
++        else:
++            ledger_status = matched.outcome
++            if ledger_status == CaseLedgerStatus.SKIPPED:
++                reasons.append(f"{label} {case.case_id} was skipped")
++            elif ledger_status == CaseLedgerStatus.FAILED:
++                reasons.append(f"{label} {case.case_id} failed")
++            elif ledger_status == CaseLedgerStatus.ERROR:
++                reasons.append(f"{label} {case.case_id} errored")
++        artifact_ok, artifact_reason = _artifact_evidence(case, repository_root=repository_root)
++        if artifact_reason:
++            reasons.append(artifact_reason)
++        if case.test is None and artifact_ok:
++            ledger_status = CaseLedgerStatus.PASSED
++        case_ledger.append(
++            {
++                "id": case.case_id,
++                "group": group,
++                "test": case.test,
++                "artifact": case.artifact,
++                "required": required,
++                "status": str(ledger_status),
++                "junit_identity": None if matched is None else matched.node_id,
++                "additional_evidence_required": case.additional_evidence_required,
++                "additional_evidence_present": artifact_ok
++                if (case.additional_evidence_required or case.artifact is not None)
++                else True,
++            }
 +        )
 +
-+    assert result.returncode == 0, result.stdout + result.stderr
-+    assert receipt_path == expected.resolve()
-+    assert receipt_path.exists()
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
---- a/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_probe_skip_result_contract.py
-@@ -147,7 +147,10 @@ def _expected_skip(rows: list[MediaIdentityModel], *, active_model: str | None)
+     if reasons:
+         status = max(status, 1)
  
+@@ -553,6 +729,7 @@ def _run_group(
+         "exit_status": status,
+         "timed_out": timed_out,
+         "junit_report_found": junit.report_found,
++        "case_ledger": case_ledger,
+         "artifact_paths": [str(xml_path.resolve()), str(log_path.resolve())],
+         "output_capture": {
+             "path": str(log_path.resolve()),
+@@ -597,9 +774,7 @@ def run_evals(
+     effective_environment = dict(os.environ if environment is None else environment)
+     runner = subprocess.run if command_runner is None else command_runner
+     artifact_dir = (
+-        REPOSITORY_ROOT / ".task-state" / "evals"
+-        if out_dir is None
+-        else Path(out_dir).expanduser()
++        REPOSITORY_ROOT / ".task-state" / "evals" if out_dir is None else Path(out_dir).expanduser()
+     ).resolve()
+     try:
+         artifact_dir.mkdir(parents=True, exist_ok=True)
+@@ -619,6 +794,8 @@ def run_evals(
+     group_results: list[dict[str, Any]] = []
+     worst_status = 0
+     available_groups = manifest.groups
++    full_suite = list(selected) == list(available_groups)
++    required_case_ids = _required_case_ids_for_selection(manifest, selected)
+     for group in selected:
+         xml_path, log_path = group_artifacts[group]
+         result = _run_group(
+@@ -629,16 +806,15 @@ def run_evals(
+             log_path=log_path,
+             environment=effective_environment,
+             command_runner=runner,
++            started_at=started_at,
++            repository_root=REPOSITORY_ROOT,
++            required_case_ids=required_case_ids,
+         )
+         group_results.append(result)
+         worst_status = max(worst_status, int(result["exit_status"]))
  
- def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClusteringRunner:
--    writer = MagicMock()
-+    writer = AsyncMock()
-+    writer._session = None
-+    writer._settings = SimpleNamespace(recovery_merge_enabled=False)
-+    writer.bind_run_context = MagicMock()
-     writer.cluster_repository.cleanup_orphaned_provisional_reps = AsyncMock(return_value=0)
-     writer.cluster_repository.confirm_all_provisional_reps = AsyncMock(return_value=0)
-     writer.cluster_repository.get_by_tenant = AsyncMock(return_value=[])
-@@ -158,9 +161,9 @@ def _make_runner(session: _RecordingSession, *, commit: bool) -> IncrementalClus
-     graph.algorithm_name = "test-graph"
-     graph.discover = AsyncMock(return_value=SimpleNamespace(candidates=[], new_clusters=[]))
- 
--    representative = MagicMock()
-+    representative = AsyncMock()
-     representative.discover = AsyncMock(return_value=[])
--    centroid = MagicMock()
-+    centroid = AsyncMock()
-     centroid.discover = AsyncMock(return_value=[])
- 
-     gate = MagicMock()
-diff --git a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
---- a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
-+++ b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
-@@ -17,6 +17,7 @@ from typing import cast
- import pytest
- from sqlalchemy import CheckConstraint, Column, Table
- from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-+from sqlalchemy.types import TypeDecorator
- 
- import scene.application.describe_run_repository as repo_mod
- from db.models.base_imports import Base
-@@ -466,12 +467,17 @@ class _MigrationRecorder:
- 
- 
- def _column_signature(col: Column) -> tuple[str, int | None, bool]:
--    """(type-class, length, nullable) — catches type/width/nullability drift, not just names.
-+    """(storage-type, length, nullable) — catches type/width/nullability drift.
- 
-     VLM5-F2B-BR-02: name-only parity passed a migration-only String(32)->String(64)
--    widening; the signature comparison fails it.
-+    widening; the signature comparison fails it.  The ORM's ``_TimingFloat`` is
-+    an intentional ``Float`` TypeDecorator that rejects non-finite binds, so
-+    compare its storage implementation to the migration's ``Float`` column.
-     """
--    return (type(col.type).__name__, getattr(col.type, "length", None), col.nullable)
-+    column_type = col.type
-+    if isinstance(column_type, TypeDecorator):
-+        column_type = column_type.impl
-+    return (type(column_type).__name__, getattr(column_type, "length", None), col.nullable)
- 
- 
- def _migration_columns_and_checks(
-@@ -507,7 +513,9 @@ def test_describe_run_orm_matches_migration_schema(monkeypatch: pytest.MonkeyPat
-     for col in ("visual_facts", "tier", "result_generation"):
-         assert col in item_orm_cols and col in item_mig_cols
- 
--    # Full signature parity: names AND (type-class, length, nullable) per column.
-+    # Full storage signature parity: names AND (storage type, length, nullable)
-+    # per column.  ORM-only bind validation wrappers are normalized by
-+    # _column_signature rather than misreported as database schema drift.
-     assert run_orm_cols == run_mig_cols
-     assert item_orm_cols == item_mig_cols
-     assert run_orm_checks == run_mig_checks
-diff --git a/apps/prototype-description-service/scene/tests/test_schemas.py b/apps/prototype-description-service/scene/tests/test_schemas.py
---- a/apps/prototype-description-service/scene/tests/test_schemas.py
-+++ b/apps/prototype-description-service/scene/tests/test_schemas.py
-@@ -13,7 +13,8 @@ from scene.interface_adapters.http.schemas.responses import (
-     VisualFactsResponse,
- )
- 
--# 15 contract-locked core fields + additive optional preview/fusion fields.
-+# The 15 required contract fields stay locked by name; additive fields may be
-+# optional/defaulted so older payloads remain readable.
- PREVIEW_FIELDS = {
-     "generic_draft",
-     "named_draft",
-@@ -28,7 +29,7 @@ OPERATION_FIELDS = {
-     "startup_id",
-     "timing",
- }
--EXPECTED_FIELDS = {
-+REQUIRED_FIELDS = {
-     "tenant_id",
-     "media_id",
-     "image_hash",
-@@ -44,9 +45,10 @@ EXPECTED_FIELDS = {
-     "cached",
-     "duration_ms",
-     "retention_class",
--    "tier",
--    "result_generation",
- }
-+# GPUFLOW-1 and VLM-5 fields are additive/defaulted, not part of the required
-+# 15-field compatibility contract.
-+ADDITIVE_CORE_FIELDS = {"tier", "result_generation"}
- # GPUFLOW-1: optional on VisualFactsResponse; required keys on MultipartDescribeResponse.
- OPERATION_FIELDS = {
-     "operation_id",
-@@ -78,11 +80,17 @@ def _sample_response() -> dict:
- 
- 
- def test_response_has_exactly_15_contract_fields():
--    assert set(VisualFactsResponse.model_fields) == EXPECTED_FIELDS | PREVIEW_FIELDS | OPERATION_FIELDS
--    assert len(EXPECTED_FIELDS) == 17
--    for name in OPERATION_FIELDS:
--        assert not VisualFactsResponse.model_fields[name].is_required()
--        assert MultipartDescribeResponse.model_fields[name].is_required()
-+    required_fields = {name for name, field in VisualFactsResponse.model_fields.items() if field.is_required()}
-+    assert set(VisualFactsResponse.model_fields) >= REQUIRED_FIELDS
-+    assert required_fields == REQUIRED_FIELDS
-+
-+    multipart_required_fields = {
-+        name for name, field in MultipartDescribeResponse.model_fields.items() if field.is_required()
-+    }
-+    assert multipart_required_fields == REQUIRED_FIELDS | {"startup_id", "timing"}
-+    # No durable operation is a valid multipart result; the serializer omits
-+    # operation_id in that case rather than fabricating a poll target.
-+    assert not MultipartDescribeResponse.model_fields["operation_id"].is_required()
- 
- 
- def test_response_round_trip_typed_provenance():
-@@ -91,7 +99,7 @@ def test_response_round_trip_typed_provenance():
-     assert r.retention_class is RetentionClass.RETAIN_ALL
-     assert r.provider_disclosure.provider is ProviderMode.NONE
-     dumped = r.model_dump()
--    assert set(dumped.keys()) == EXPECTED_FIELDS | PREVIEW_FIELDS
-+    assert set(dumped.keys()) == REQUIRED_FIELDS | ADDITIVE_CORE_FIELDS | PREVIEW_FIELDS
-     assert OPERATION_FIELDS.isdisjoint(dumped)
-     assert OPERATION_FIELDS.isdisjoint(r.model_dump(mode="json"))
-     # Preview fields default to None when the merge layer is not run.
-diff --git a/docs/runbooks/prod-identity-rls-remediation.md b/docs/runbooks/prod-identity-rls-remediation.md
---- a/docs/runbooks/prod-identity-rls-remediation.md
-+++ b/docs/runbooks/prod-identity-rls-remediation.md
-@@ -42,7 +42,10 @@ FROM unnest(ARRAY[
-     'clustering_feedback','audit_events','curation_replay_records','export_jobs',
-     'image_descriptions','image_description_runs','image_description_run_items',
-     'clustering_job_reports','assignment_decisions',
--    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions']) AS t(relname)
-+    'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions',
-+    'api_key_rotation_history','billing_subscription_projection','portal_identity',
-+    'portal_tenant_invitation','tenant_entitlement','tenant_key_idempotency',
-+    'usage_reservation']) AS t(relname)
- LEFT JOIN pg_class c
-   ON c.relname = t.relname
-  AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-diff --git a/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md b/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md
-new file mode 100644
---- /dev/null
-+++ b/docs/workbay/reports/SUITERED-1-f02-aiosqlite-race-analysis.md
-@@ -0,0 +1,248 @@
-+# SUITERED-1-F-02: aiosqlite worker-thread hang root cause
-+
-+## Executive conclusion
-+
-+The primary defect is a same-session self-deadlock in the SQLite fallback of
-+`ScanService`'s per-media persistence lock.  It is not a SQLite query that is
-+stuck in the aiosqlite worker.  The first `process_media_item()` call flushes
-+work but deliberately keeps the non-PostgreSQL `asyncio.Lock` until the root
-+transaction ends.  Each affected test calls `process_media_item()` a second
-+time for the same `(tenant_id, media_id)` before committing.  The second call
-+waits forever on the same non-reentrant lock.
-+
-+The aiosqlite worker thread seen in the dump is an important symptom but not
-+the owner of the deadlock: after the first flush, no second SQL operation has
-+been queued.  The worker is idle in `SimpleQueue.get()` while the event loop
-+is idle in `select()` waiting for the coroutine whose `asyncio.Lock.acquire()`
-+can never complete.  This is a Python-level await, not a C-level SQLite call;
-+the configured signal timeout can therefore bound it, but the timeout only
-+reports the symptom.
-+
-+## 1. Mechanism
-+
-+The relevant interleaving is:
-+
-+1. The `db_session` fixture creates `sqlite+aiosqlite:///:memory:` with
-+   `poolclass=StaticPool` (`recognition/tests/conftest.py:70-77`).  StaticPool
-+   means one SQLAlchemy connection is shared, and that connection has one
-+   aiosqlite worker thread.  The fixture starts a nested transaction at
-+   `conftest.py:131-133` and installs a restart listener at `conftest.py:135-138`.
-+2. `ScanService.process_media_item()` reaches `_persist_identities()` at
-+   `recognition/application/scan/service.py:469-519` and enters
-+   `_media_persist_lock()` at `service.py:554-573`.
-+3. SQLite is not PostgreSQL, so `_media_persist_lock()` takes the process-local
-+   path (`service.py:73-81`, `service.py:124-134`).  The registry is keyed only
-+   by `(tenant UUID, media ID)` (`service.py:84-96`), and the first call owns
-+   the resulting `asyncio.Lock`.
-+4. The first call performs its SELECT and flush (`service.py:583-589` and
-+   `service.py:697-702`).  `process_media_item()` is explicitly flush-only;
-+   its docstring says the handler owns the durable commit
-+   (`service.py:489-492`).  On leaving `_media_persist_lock()`, the fallback
-+   registers a root-transaction release listener (`service.py:172-175`) and
-+   observes that the session transaction is still open
-+   (`service.py:177-184`).  Consequently it does not release the lock.
-+5. The second call with the same key enters the same registry entry and awaits
-+   `lock.acquire()` at `service.py:132-136`.  `asyncio.Lock` is not reentrant,
-+   so the same coroutine/task waits for a release that can only happen when
-+   the root transaction ends.  That transaction cannot end because the test
-+   is waiting inside the second call.
-+
-+The savepoint listener is a participant in the transaction shape, not the
-+primary waiter.  Its `begin_nested()` restart at `conftest.py:135-138` keeps a
-+nested savepoint available after nested transaction end; it does not release
-+the root transaction.  The lock's own `_release()` also ignores child
-+transactions (`service.py:150-159`) and releases only at the root boundary.
-+Thus the savepoint loop makes the intended "hold until commit" lifetime
-+visible, but the deadlock is the non-reentrant process-local lock.  Removing
-+the listener alone would not be a sound fix while the service remains
-+flush-only and the root transaction remains open.
-+
-+StaticPool is also not the direct waiter for this trace.  It selects the
-+SQLite fallback and gives all operations one aiosqlite worker, which makes the
-+thread dump look like a connection hang.  The worker is actually waiting for
-+another queue item (`aiosqlite/core.py:59`); the blocked coroutine is waiting
-+on the process-local lock before it can enqueue one.  This distinction matters
-+because changing `:memory:` to a file URL while retaining SQLite and the same
-+lock code still takes `_media_persist_lock()`'s non-PostgreSQL branch.
-+
-+The stack classification is therefore Python-level:
-+
-+* worker: `aiosqlite._connection_worker_thread` waiting on its queue;
-+* event loop: `selectors.select()` / `asyncio._run_once()`;
-+* suspended test coroutine: `asyncio.Lock.acquire()` in the fallback lock.
-+
-+It is not a blocked `sqlite3` C call.  The existing `timeout_method=signal`
-+bound should be able to interrupt this class of wait; the 240-second
-+faulthandler dump is observation, and the 300-second pytest timeout is only a
-+bound on the symptom.
-+
-+## 2. Why the reported test varies
-+
-+The vulnerable interleaving is deterministic once one of these tests reaches
-+its second same-key call.  The apparent variation is at the suite/xdist level:
-+the three tests are independently vulnerable, and worker scheduling determines
-+which worker reaches a second call first and is the one whose nodeid appears
-+to wedge.  A run stopped at the first blocked worker may never reach the other
-+two.  A transaction boundary introduced by a caller, fixture teardown, or an
-+exception/rollback can release the lock and let a particular run pass, which
-+also makes the symptom load-sensitive.
-+
-+This mechanism does **not** predict that a fixed, serial invocation of one
-+isolated test will randomly alternate between different outcomes: that would
-+be evidence against the lock diagnosis.  The cross-run variation described in
-+the gate evidence is explained by scheduling and which vulnerable test is
-+observed first, not by nondeterministic execution inside SQLite.
-+
-+## 3. Why these three tests
-+
-+All three tests make two persistence calls on the same `db_session` and the
-+same media key without a commit between them:
-+
-+* `test_factor_update_branch_round_trip` calls media `4444` first at
-+  `recognition/tests/integration/test_factor_round_trip.py:162-166`, then
-+  creates a second `ScanService` and calls media `4444` again at
-+  `:176-185`.  The detector's same bbox is intended to exercise the update
-+  branch, but the second call blocks before matching code runs.
-+* `test_scan_service_same_bbox_replay_reuses_existing_media_identity_row`
-+  calls media `123` at
-+  `recognition/tests/integration/test_scan_service_pose_quality.py:93-97`
-+  and again at `:105-109`.  The intervening SELECT at `:99-103` is read-only
-+  and does not commit the transaction.
-+* `test_scan_service_low_iou_replay_replaces_media_identity_row` calls media
-+  `123` at `:126-130` and again at `:138-142`, also without a commit.  The
-+  changed bbox affects the intended reconcile branch only after the lock is
-+  acquired.
-+
-+The other tests in these files make one persistence call: the pose test uses
-+`:66-70`, `test_factor_round_trip_via_scan_and_repository` uses
-+`test_factor_round_trip.py:83-87`, and the InsightFace-null test uses
-+`:124-128`.  They therefore leave the lock held until fixture teardown but do
-+not attempt the second acquisition during the test.  The detector choice,
-+factor columns, and IoU branch are not the cause; the repeated same-key call
-+is the distinguishing operation.
-+
-+## 4. Minimal reproducer
-+
-+The smallest in-repository reproducer is the existing same-bbox test reduced
-+to the two calls and a bounded wait:
-+
-+```python
-+@pytest.mark.asyncio
-+async def test_same_sqlite_transaction_can_rescan_one_media_item(db_session, tenant):
-+    service = ScanService(
-+        session=db_session,
-+        detector=PoseDetector(),
-+        generator=StubEmbeddingGenerator(embedding_dim=512),
-+    )
-+    await service.process_media_item(
-+        tenant_id=str(tenant.id),
-+        media_id=123,
-+        media_url="http://example.test/image.jpg",
-+    )
-+    await asyncio.wait_for(
-+        service.process_media_item(
-+            tenant_id=str(tenant.id),
-+            media_id=123,
-+            media_url="http://example.test/image.jpg",
-+        ),
-+        timeout=1.0,
-+    )
-+```
-+
-+No reproducer file was added because this lane owns only the report.  The
-+source-level interleaving above is sufficient to predict the timeout.  A
-+bounded attempt to run the existing target test in this sandbox did not reach
-+the test body: the fixture setup stalled while opening aiosqlite, and a
-+separate inline `aiosqlite.connect(":memory:")` probe stalled immediately
-+after printing its pre-connect marker.  The target attempt did produce the
-+reported shape at the observation layer (worker at `aiosqlite/core.py:59`,
-+event loop in `select()`), but because this sandbox cannot establish an
-+aiosqlite connection, it is not claimed as a clean end-to-end reproduction.
-+The gate/macOS executions and the source interleaving are the evidence for the
-+defect; this sandbox limitation is recorded rather than conflated with a
-+passing or failing test result.
-+
-+## 5. Remediation, ranked
-+
-+### 1. Make the SQLite fallback transaction-owner aware and reentrant
-+
-+Keep the cross-session serialization guarantee, but record the owning
-+SQLAlchemy sync session/root transaction and a re-entry depth in the registry
-+entry.  A second call from that same session and root transaction should reuse
-+the ownership instead of awaiting its own `asyncio.Lock`; only the root
-+transaction-end callback should release the underlying lock and clear the
-+ownership/depth.  A different session must still wait.  Cancellation before
-+ownership, cancellation while waiting, rollback, and listener removal need
-+balanced bookkeeping.
-+
-+This is the minimal production-safe code change because it preserves the
-+flush-only transaction contract and the reason the lock is held until commit.
-+Cost: moderate application-lock bookkeeping and focused cancellation/rollback
-+tests.  Residual risk: an `AsyncSession` is not generally safe for concurrent
-+tasks, so owner identity must not accidentally let an unrelated task sharing
-+one session bypass the lock; this also does not address the separate
-+`:memory:` connection-invalidation failure.
-+
-+**Proof test:** add one bounded test that performs two sequential
-+`process_media_item()` calls for the same `(tenant, media)` on one SQLite
-+`db_session`, asserts the second call completes, and checks the intended UUID
-+reuse/update result.
-+
-+### 2. Put a transaction boundary between the two test/worker operations
-+
-+For tests that model separate worker-handler invocations, commit (or close and
-+open a new session) after the first `process_media_item()` call.  That matches
-+the service's documented handler-owned commit boundary and releases the lock
-+before the second invocation.  Cost: low fixture/test churn.  Residual risk:
-+this is a test/workflow workaround, not a general application fix; any caller
-+that legitimately performs two same-key flush-only calls in one transaction
-+can still deadlock.
-+
-+**Proof test:** run the two-call replay scenario with an explicit
-+`await db_session.commit()` between calls and a one-second wait around the
-+second call; it should complete and retain the expected row semantics.
-+
-+### 3. Apply the prior task's file-backed + StaticPool fixture hardening, but
-+only as a companion change
-+
-+The prior MAINT-GATE-FLAKES evidence remains valid for a different failure:
-+`:memory:` plus StaticPool lets cancellation/invalidation destroy the only
-+database and its schema; file backing preserves the schema, while StaticPool
-+avoids introducing a second SQLite writer and the observed `database is
-+locked` race.  The savepoint loop does not change that conclusion for
-+connection invalidation.
-+
-+It is **not sufficient for SUITERED-1-F-02 by itself**.  File-backed
-+`StaticPool` is still a non-PostgreSQL engine, so the second same-key call still
-+enters the same fallback lock and waits until root commit.  Pair this fixture
-+hardening with remediation 1 if the suite must also be resilient to cancelled
-+aiosqlite operations.  Cost: temporary-file lifecycle and cleanup, plus
-+additional cancellation coverage.  Residual risk: the previously recorded
-+unknown remains whether an invalidated cancelled connection releases the file
-+lock before replacement writes; that must be measured rather than assumed.
-+
-+**Proof test:** use the file-backed `StaticPool` fixture to cancel an in-flight
-+SQLite operation, then assert that a subsequent schema query and write
-+complete.  A two-call, no-commit replay test is deliberately not the proof for
-+this option: it should still expose the fallback-lock deadlock unless option 1
-+is also present.
-+
-+Replacing StaticPool with a pooled multi-connection SQLite engine alone is
-+also not a fix for this report: it leaves the same non-PostgreSQL process lock
-+in place and reintroduces the prior `database is locked` risk under writes.
-+Removing only the savepoint-restart listener is likewise insufficient unless
-+the transaction model is changed so the root transaction actually ends between
-+same-key operations.
-+
-+## 6. What would falsify this answer
-+
-+Instrument the second `_media_persist_lock()` entry and show that it passes
-+`service.py:134` (the lock is acquired), while the coroutine then blocks in an
-+`AsyncSession.execute()`/`flush()` with a pending aiosqlite future or a
-+`sqlite3` C stack; that would falsify the self-deadlock diagnosis and point to
-+the StaticPool/savepoint or cancellation path instead.  Likewise, if an
-+isolated single-call test hangs reproducibly, or if an explicit commit between
-+the two same-key calls still hangs at the same location, this report is wrong.
-+Conversely, observing that a file-backed StaticPool fixture still blocks on
-+the no-commit two-call reproducer would confirm that file backing is an
-+orthogonal cancellation/schema fix, not a remediation for this lock.
+     finished_at = datetime.now(UTC)
+-    artifact_paths = [
+-        artifact_path
+-        for result in group_results
+-        for artifact_path in result["artifact_paths"]
+-    ]
++    artifact_paths = [artifact_path for result in group_results for artifact_path in result["artifact_paths"]]
+     evidence = {
+         "schema_version": 1,
+         "suite_id": manifest.suite_id,
+@@ -649,6 +825,9 @@ def run_evals(
+         "gate_environment": _gate_environment(effective_environment),
+         "started_at": started_at.isoformat(),
+         "finished_at": finished_at.isoformat(),
++        "selected_groups": list(selected),
++        "full_suite": full_suite,
++        "required_case_ids": sorted(required_case_ids),
+         "groups": group_results,
+         "artifact_paths": artifact_paths,
+         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,

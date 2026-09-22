@@ -1,6 +1,6 @@
 # ADR-016: Refuse AuraFace 512D activation while preprocessing or provenance is unverified
 
-- **Status:** Accepted as policy; **enforcement is not closed at the production readiness base.**
+- **Status:** Accepted policy; readiness refusal integrated, serving enforcement and composed parity still pending.
 - **Date:** 2026-09-22
 - **Deciders:** FIR512-2 docs lane (records the policy already implied by FIRDV-3 S1 / FIR512-1 plumbing)
 - **Context task:** FIR512-2
@@ -9,7 +9,7 @@
 
 ## Status
 
-Accepted as **activation policy**. Not implemented as a fail-closed gate on the default ready/serve path. FIR512-2 still owns measurement, fail-closed readiness wiring, and ORT composed parity.
+Accepted as **activation policy**. AuraFace readiness now refuses unverified metadata before model I/O. FIR512-2 still owns the shared serving-path guard, verified external preprocessing, and ORT composed parity. This development change has not been deployed or quality-qualified.
 
 ## Date
 

@@ -366,18 +366,49 @@ class OutboxDrain {
 	}
 
 	public function purge_terminal_rows(): void {
-		$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids();
-		if ( empty( $tenant_ids ) ) {
-			$tenant = TenantIdentity::resolve();
-			$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
-			if ( '' === $tenant_id ) {
-				return;
+		try {
+			$tenant_ids = $this->maintenance_service->list_terminal_purge_tenant_ids();
+			if ( empty( $tenant_ids ) ) {
+				$tenant = TenantIdentity::resolve();
+				$tenant_id = trim( (string) ( $tenant['value'] ?? '' ) );
+				if ( '' === $tenant_id ) {
+					return;
+				}
+
+				$tenant_ids = array( $tenant_id );
 			}
 
-			$tenant_ids = array( $tenant_id );
+			$this->purge_terminal_rows_for_tenants( $tenant_ids );
+		} catch ( Throwable $exception ) {
+			do_action( 'acx_sync_purge_terminal_rows_failed', '', $exception );
+		} finally {
+			// A failed tenant, a failed tenant scan, or an early return must not
+			// strand the recurring purge hook.
+			try {
+				OutboxMaintenanceService::maybe_schedule_purge();
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_reschedule_failed', $exception );
+			}
 		}
+	}
 
-		$this->purge_terminal_rows_for_tenants( $tenant_ids );
+	/**
+	 * Run one bounded, tenant-scoped purge for inline sync recovery.
+	 *
+	 * @return array<string,mixed>|false
+	 */
+	public function purge_terminal_rows_for_tenant( string $tenant_id, int $batch_cap = ReclaimerLiveness::INLINE_PURGE_BATCH_SIZE ): array|false {
+		return $this->maintenance_service->purge_terminal_rows(
+			trim( $tenant_id ),
+			max( 1, $batch_cap ),
+			$this->resolve_reclaimer_scheduler_mode()
+		);
+	}
+
+	private function resolve_reclaimer_scheduler_mode(): string {
+		return function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' )
+			? ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER
+			: ReclaimerLiveness::SCHEDULER_WP_CRON;
 	}
 
 	/**

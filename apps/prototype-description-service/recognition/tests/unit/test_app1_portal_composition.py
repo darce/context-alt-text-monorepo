@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
 
+from recognition.interface_adapters.http.deps import portal_composition as composition
 from recognition.interface_adapters.http.deps.portal_composition import _portal_auth_settings
 
 ISSUER = "https://clerk.example.test"
@@ -75,3 +77,21 @@ def test_missing_configuration_is_reported_rather_than_guessed() -> None:
 
     assert resolved is None
     assert "ACX_CLERK_AUTHORIZED_PARTIES" in missing
+
+
+def test_install_portal_composition_installs_usage_admission_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = composition.PortalCompositionConfig(
+        portal_auth=SimpleNamespace(),
+        billing_webhook_secret="secret",
+        billing_product_ids={"starter": "product"},
+    )
+    monkeypatch.setattr(composition, "_composition_config", lambda _settings: config)
+    monkeypatch.setattr(composition, "build_portal_token_verifier", lambda *_args: object())
+    monkeypatch.setattr(composition, "PolarBillingProvider", lambda *_args, **_kwargs: object())
+    monkeypatch.setenv("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S", "7.5")
+
+    app = FastAPI()
+    composition.install_portal_composition(app, settings=SimpleNamespace())
+
+    assert isinstance(app.state.usage_admission_service, composition.UsageAdmissionServiceFactory)
+    assert app.state.usage_admission_service.timeout_s == 7.5

@@ -57,9 +57,15 @@ In **Sessions → Customize session token**, set:
 }
 ```
 
-`email_verified` must remain a JSON boolean (use the shortcode alone; do not
-interpolate it inside a string). First-claim in the portal rejects unverified
-email. Authorized party for this product is the exact origin
+Keep the dashboard-template quotes around `{{user.email_verified}}`. Clerk
+[JWT template shortcodes](https://clerk.com/docs/guides/sessions/jwt-templates#shortcodes)
+retain the underlying type when quoted, so the **decoded JWT** claim is a
+boolean (`true`/`false`), not the string `"true"`/`"false"`. The quoted form is
+also what Clerk shows in
+[How we roll JWT SSO](https://clerk.com/blog/how-we-roll-jwt-sso). Do **not**
+remove those quotes from the dashboard JSON; do not confuse the template
+document with the verified token payload. First-claim in the portal rejects
+unverified email. Authorized party for this product is the exact origin
 `https://app.altcontext.com` (no path, no trailing slash).
 
 The issuer is **derived from the live publishable key** (base64 FAPI hostname
@@ -109,14 +115,25 @@ shred -u /tmp/clerk-pk
 Optional secret (backend only): `--secret-key-file` or `CLERK_SECRET_KEY` in
 the environment. Publishable key may also come from `CLERK_PUBLISHABLE_KEY`.
 
-`--check` GETs the derived JWKS URL with a 2s timeout and bounded body. It
-does not rotate, delete, or otherwise mutate Clerk. A failed check never
-writes.
+`--check` GETs the derived JWKS URL with a **2s total deadline** (not only a
+per-socket idle timeout) and a bounded body. Slow trickles that stay under the
+socket timeout still fail if they exceed 2s wall time. It does not rotate,
+delete, or otherwise mutate Clerk. A failed check never writes.
 
 The CLI is idempotent: a second `--apply` with the same inputs rewrites the
 managed keys in place and leaves unrelated env content alone. Contradictory
 duplicate keys and newline injection are refused. Destinations are replaced
 atomically at mode 0600.
+
+Frontend artifacts are validated against backend-only secret boundaries
+**before any write**. A prepopulated `CLERK_SECRET_KEY` (or `sk_live_` /
+`sk_test_` material) in `--frontend-env` is refused; both destination files
+stay unchanged and the error names the key, never the secret value. Legitimate
+public `VITE_*` settings are preserved. `--apply` with both backend and
+frontend files is a staged transaction: if the second write fails, the first
+is rolled back. If rollback itself fails, the CLI exits with an explicit
+"recovery cannot be guaranteed" error instead of leaving a silent partial
+config.
 
 ## 5. Runtime / rebuild
 

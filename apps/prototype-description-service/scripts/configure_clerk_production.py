@@ -17,6 +17,7 @@ import re
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,10 +40,13 @@ FRONTEND_MANAGED_KEYS = (
     "VITE_CLERK_FAPI",
 )
 SECRET_BACKEND_KEY = "CLERK_SECRET_KEY"
+FRONTEND_FORBIDDEN_KEYS = frozenset({SECRET_BACKEND_KEY})
+_SECRET_VALUE_PREFIXES = ("sk_live_", "sk_test_")
 MANAGED_COMMENT = "# Clerk production portal auth (managed by configure_clerk_production.py)"
 JWKS_PATH = "/.well-known/jwks.json"
 CHECK_TIMEOUT_S = 2.0
 CHECK_MAX_BYTES = 256 * 1024
+CHECK_READ_CHUNK = 4096
 _HOSTNAME_RE = re.compile(
     r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
@@ -228,6 +232,23 @@ def reject_duplicate_assignments(found: Mapping[str, list[tuple[int, str]]]) -> 
         raise ClerkConfigError(f"duplicate env var {key}")
 
 
+def reject_frontend_secret_boundary(existing: str, planned: str) -> None:
+    """Refuse frontend env that contains backend-only secret keys or values.
+
+    Validation is input+output and happens before any destination write. Error
+    text names keys only — never secret values (RES-01, DATA-03).
+    """
+    for text in (existing, planned):
+        found = assignment_index(parse_env_lines(text))
+        reject_duplicate_assignments(found)
+        for key, occurrences in found.items():
+            if key in FRONTEND_FORBIDDEN_KEYS:
+                raise ClerkConfigError(f"refusing frontend env: {key} is backend-only")
+            for _index, value in occurrences:
+                if value.startswith(_SECRET_VALUE_PREFIXES):
+                    raise ClerkConfigError(f"refusing frontend env: backend-only secret material in {key}")
+
+
 def merge_env_updates(existing: str, updates: Mapping[str, str]) -> str:
     for key, value in updates.items():
         _reject_unsafe_env_value(key, value)
@@ -275,19 +296,36 @@ def atomic_write_text(path: Path, content: str) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
-def fetch_jwks(url: str, *, timeout_s: float = CHECK_TIMEOUT_S) -> dict[str, object]:
+def fetch_jwks(
+    url: str,
+    *,
+    timeout_s: float = CHECK_TIMEOUT_S,
+    clock: Callable[[], float] | None = None,
+) -> dict[str, object]:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise ClerkConfigError("JWKS URL must be https")
     request = Request(
         url, method="GET", headers={"Accept": "application/json", "User-Agent": "acx-configure-clerk-production"}
     )
+    now = time.monotonic if clock is None else clock
+    deadline = now() + timeout_s
+    remaining = deadline - now()
+    if remaining <= 0:
+        raise ClerkConfigError("JWKS check exceeded timeout")
     try:
-        with urlopen(request, timeout=timeout_s) as response:  # noqa: S310 — scheme pinned to https above
-            raw = response.read(CHECK_MAX_BYTES + 1)
+        with urlopen(request, timeout=remaining) as response:  # noqa: S310 — scheme pinned to https above
+            raw = _read_jwks_body(response, max_bytes=CHECK_MAX_BYTES, deadline=deadline, clock=now)
     except HTTPError as exc:
         raise ClerkConfigError(f"JWKS check HTTP {exc.code}") from exc
-    except (URLError, TimeoutError, OSError) as exc:
+    except ClerkConfigError:
+        raise
+    except TimeoutError as exc:
+        raise ClerkConfigError("JWKS check exceeded timeout") from exc
+    except (URLError, OSError) as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError):
+            raise ClerkConfigError("JWKS check exceeded timeout") from exc
         raise ClerkConfigError("JWKS check failed") from exc
     if len(raw) > CHECK_MAX_BYTES:
         raise ClerkConfigError("JWKS response exceeded bounded size")
@@ -373,7 +411,9 @@ def print_plan(
         stdout.write("frontend_note=no committed app-portal; bake VITE_* at a later frontend build\n")
 
 
-def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None) -> None:
+def plan_env_files(
+    config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None
+) -> list[tuple[Path, str]]:
     planned: list[tuple[Path, str]] = []
     if backend is not None:
         _assert_safe_destination(backend)
@@ -382,9 +422,15 @@ def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: P
     if frontend is not None:
         _assert_safe_destination(frontend)
         existing = _read_existing_env(frontend)
-        planned.append((frontend, merge_env_updates(existing, config.frontend_updates())))
-    for path, content in planned:
-        atomic_write_text(path, content)
+        merged = merge_env_updates(existing, config.frontend_updates())
+        reject_frontend_secret_boundary(existing, merged)
+        planned.append((frontend, merged))
+    return planned
+
+
+def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None) -> None:
+    planned = plan_env_files(config, backend=backend, frontend=frontend)
+    _commit_env_files(planned)
 
 
 def execute(
@@ -421,6 +467,8 @@ def execute(
             authorized_parties=parties,
             secret_key=secret,
         )
+        if args.backend_env is not None or args.frontend_env is not None:
+            plan_env_files(config, backend=args.backend_env, frontend=args.frontend_env)
         if args.check:
             getter = fetch_jwks if jwks_get is None else jwks_get
             getter(config.jwks_url)
@@ -541,6 +589,93 @@ def _read_existing_env(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ClerkConfigError(f"cannot read {path}") from exc
+
+
+def _commit_env_files(planned: Sequence[tuple[Path, str]]) -> None:
+    snapshots: list[tuple[Path, str | None]] = []
+    committed = 0
+    try:
+        for path, content in planned:
+            snapshots.append((path, _read_existing_env(path) if path.exists() else None))
+            atomic_write_text(path, content)
+            committed += 1
+    except BaseException as exc:
+        rollback_error = _rollback_env_files(snapshots[:committed])
+        if rollback_error is not None:
+            raise ClerkConfigError(
+                "partial Clerk env apply; rollback failed and recovery cannot be guaranteed"
+            ) from exc
+        if isinstance(exc, ClerkConfigError):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        raise ClerkConfigError("atomic write failed during Clerk env apply") from exc
+
+
+def _rollback_env_files(snapshots: Sequence[tuple[Path, str | None]]) -> BaseException | None:
+    last_error: BaseException | None = None
+    for path, original in reversed(list(snapshots)):
+        try:
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, original)
+        except (OSError, ClerkConfigError) as exc:
+            last_error = exc
+    return last_error
+
+
+def _read_jwks_body(
+    response: object,
+    *,
+    max_bytes: int,
+    deadline: float,
+    clock: Callable[[], float],
+    chunk_size: int = CHECK_READ_CHUNK,
+) -> bytes:
+    buf = bytearray()
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ClerkConfigError("JWKS check exceeded timeout")
+        _apply_socket_timeout(response, remaining)
+        to_read = min(chunk_size, max_bytes + 1 - len(buf))
+        if to_read <= 0:
+            break
+        try:
+            chunk = response.read(to_read)  # type: ignore[attr-defined]
+        except TimeoutError as exc:
+            raise ClerkConfigError("JWKS check exceeded timeout") from exc
+        if not chunk:
+            break
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise ClerkConfigError("JWKS response is not JSON")
+        buf.extend(chunk)
+        if len(buf) > max_bytes:
+            break
+    return bytes(buf)
+
+
+def _apply_socket_timeout(response: object, timeout_s: float) -> None:
+    bounded = max(timeout_s, 0.001)
+    targets: list[object] = [response]
+    fp = getattr(response, "fp", None)
+    if fp is not None:
+        targets.append(fp)
+        raw = getattr(fp, "raw", None)
+        if raw is not None:
+            targets.append(raw)
+            sock = getattr(raw, "_sock", None)
+            if sock is not None:
+                targets.append(sock)
+    for target in targets:
+        setter = getattr(target, "settimeout", None)
+        if not callable(setter):
+            continue
+        try:
+            setter(bounded)
+        except (OSError, TypeError, ValueError):
+            continue
 
 
 if __name__ == "__main__":

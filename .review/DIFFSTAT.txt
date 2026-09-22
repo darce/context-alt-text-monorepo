@@ -1,12 +1,15 @@
- .../db/migrations/versions/001_identity_schema.py  | 214 +++++++++
- .../db/models/portal_billing.py                    | 126 +++++
- .../recognition/domain/portal_contracts.py         | 273 ++++++++++-
- .../infrastructure/billing/polar_provider.py       | 107 ++++-
- .../billing_reconciliation_repository.py           | 534 +++++++++++++++++++++
- .../test_app1_billing_recovery_postgres.py         | 248 ++++++++++
- .../tests/unit/test_app1_billing_provider.py       |   5 +
- .../unit/test_app1_billing_recovery_contracts.py   | 469 ++++++++++++++++++
- .../unit/test_app1_checkout_attempt_repository.py  |  25 +-
- .../tests/unit/test_app1_portal_contracts.py       |   1 +
- .../current/app1-billing-recovery-contract.md      | 114 +++++
- 11 files changed, 2086 insertions(+), 30 deletions(-)
+ .../db/migrations/versions/001_identity_schema.py  | 139 +++++-
+ .../db/models/portal_billing.py                    |  53 +-
+ .../recognition/domain/billing_work_lease.py       |  81 ++++
+ .../repositories/billing_repository.py             | 405 +++++++++++++++-
+ .../http/deps/portal_composition.py                |  76 ++-
+ .../test_app1_billing_namespace_postgres.py        | 351 ++++++++++++++
+ .../tests/schema/test_identity_schema_pg.py        |  30 ++
+ .../tests/test_identity_schema_migration.py        |  10 +
+ .../tests/unit/test_app1_billing_namespace.py      | 536 +++++++++++++++++++++
+ .../tests/unit/test_app1_billing_webhook_router.py |  38 ++
+ .../tests/unit/test_app1_portal_checkout_router.py |  20 +
+ .../tests/unit/test_app1_portal_composition.py     |  66 ++-
+ .../scripts/billing_namespace_migrate.py           | 253 ++++++++++
+ docs/runbooks/app1-billing-namespace-upgrade.md    | 124 +++++
+ 14 files changed, 2152 insertions(+), 30 deletions(-)

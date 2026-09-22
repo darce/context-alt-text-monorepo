@@ -1,1 +1,2 @@
-acaf7755ebed offload: C0 recovery contract is committed: fenced cursor/quarantine
+e162ea0ed602 offload: N1 billing-namespace WIP verified green (109 passed);
+54d0249b2958 APP-1 WIP: preserve remote namespace work at turn limit; unverified

@@ -353,6 +353,34 @@ Rules:
     (`apps/prototype-description-service/Dockerfile`) — a separate namespace
     from the host, and every chown on both sides is numeric.
 
+## Finite warming observation
+
+The SPA uses a bounded observation policy for a live describe run whose phase is
+`warming`. This is a UI policy fallback, not a backend SLO: it does not cancel,
+fail, or re-submit a live run. The constants are
+`WARMING_OBSERVATION_LIMIT_MS = 600000` and
+`WARMING_OBSERVATION_GRACE_MS = 30000`.
+
+The first warming observation is persisted in `sessionStorage` under
+`acx:warming-observation:v1:<run_id>:<startup_id>` (the two identifiers are
+URI-encoded; a missing startup id uses `null`). The record is keyed by the
+`(run_id, startup_id)` pair and is never renewed by another poll, render,
+remount, navigation, reload, or Retry. A new run or startup id starts a new
+bound. Older trustworthy phase-start evidence may shorten the bound, never
+lengthen it. Terminal runs remove the record. If session storage cannot be
+read or written, the UI keeps the same first observation in memory so storage
+failure cannot disable the watchdog.
+
+`unknown` evidence means the GPU snapshot is absent, malformed, stale, or the
+status request failed. It is distinct from fresh `stopped`: a fresh stopped
+snapshot with no intent is still provisional `waiting`, because the reaper may
+not have consumed demand yet. Valid pending start demand is also `waiting`; an
+explicit fresh start/demand failure may be immediately `overdue`. At the bound,
+`overdue` means that readiness confirmation is overdue, never that the job
+failed. The UI copy must preserve that distinction, and `unknown` exposes a
+Retry/refetch action rather than claiming the GPU is stopped or healthy. Actual
+resumed progress and terminal state always win over a stale overdue display.
+
 ## GPUFLOW-1 synchronous demand and timing
 
 The service registers demand at `before_compute`, after validation, adapter

@@ -32,6 +32,7 @@ from recognition.infrastructure.face_pipeline._common import (
     ZeroNormEmbeddingError,
     _ensure_bgr_u8,
     embed_batch,
+    resolve_embedding_dim,
     resolve_sface_embedding_dim,
 )
 from recognition.infrastructure.face_pipeline.provenance import (
@@ -141,7 +142,7 @@ class OpenCVSFaceEmbedder:
         self._model_name = model_name
         self._model_path = model_path
         self._recognizer = cv2.FaceRecognizerSF.create(str(model_path), "")
-        self.embedding_dim = SFACE_EMBEDDING_DIM
+        self.embedding_dim = resolve_embedding_dim(model_name)
 
     def _feature(self, crop: np.ndarray) -> np.ndarray:
         """Raw model feature for one crop (hookable in tests)."""
@@ -171,5 +172,6 @@ __all__ = [
     "SFACE_CROP_SIZE",
     "SFACE_EMBEDDING_DIM",
     "ZeroNormEmbeddingError",
+    "resolve_embedding_dim",
     "resolve_sface_embedding_dim",
 ]

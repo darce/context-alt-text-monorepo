@@ -127,6 +127,16 @@ class _FakeAdmission:
     async def release(self, ticket: UsageTicket) -> None:
         self.releases.append(ticket)
 
+    async def commit_fenced(self, ticket: UsageTicket, *, fence_token: str) -> None:
+        if fence_token != ticket.fence_token:
+            raise UsageAdmissionUnavailableError("stale usage fence")
+        self.commits.append(ticket)
+
+    async def release_fenced(self, ticket: UsageTicket, *, fence_token: str) -> None:
+        if fence_token != ticket.fence_token:
+            raise UsageAdmissionUnavailableError("stale usage fence")
+        self.releases.append(ticket)
+
 
 @contextmanager
 def _census_client(admission: _FakeAdmission, monkeypatch):
@@ -308,6 +318,10 @@ def test_three_compute_posts_reserve_before_dispatch(monkeypatch):
     assert "async-op-00000000" in modes_seen
     assert "bulk-op-0000000000" in modes_seen
     assert multipart.json()["operation_id"] in modes_seen
+    async_id = uuid.UUID(async_job.json()["job_id"])
+    bulk_id = uuid.UUID(bulk.json()["run_id"])
+    assert any(reserve["job_id"] == str(async_id) for reserve in admission.reserves)
+    assert any(reserve["job_id"] == str(bulk_id) for reserve in admission.reserves)
     for reserve in admission.reserves:
         assert isinstance(reserve["job_id"], str) and reserve["job_id"]
         assert isinstance(reserve["request_fingerprint"], str) and len(str(reserve["request_fingerprint"])) == 64
@@ -319,7 +333,8 @@ def test_three_compute_posts_reserve_before_dispatch(monkeypatch):
         assert ticket_fields.cost_units >= 1
         assert ticket_fields.job_id == reserve["job_id"]
         assert ticket_fields.fence_token == "fence-scene-g2"
-    assert admission.commits == []
+    assert len(admission.commits) == 1
+    assert admission.commits[0].job_id == admission.reserves[0]["job_id"]
 
 
 def test_get_polling_status_and_results_stay_free(monkeypatch):
@@ -442,4 +457,4 @@ def test_decorative_and_cache_paths_stay_free(monkeypatch):
     assert cached.status_code == 200, cached.text
     assert cached.json()["cached"] is True
     assert len(admission.reserves) == 1
-    assert admission.commits == []
+    assert len(admission.commits) == 1

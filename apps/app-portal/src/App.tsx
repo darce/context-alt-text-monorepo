@@ -101,6 +101,14 @@ function readAttemptId(value: string | null | undefined): string | null {
   return value;
 }
 
+function matchesPortalSegment(path: string, route: string): boolean {
+  return path === route || path.startsWith(`${route}/`);
+}
+
+function matchesExactPortalPath(path: string, route: string): boolean {
+  return path === route || path === `${route}/`;
+}
+
 function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
   const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
   return {
@@ -324,7 +332,7 @@ function PortalShell({
     return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
   }
   if (displayAccount.status === 'not_admitted') {
-    if (path.startsWith('/claim') && claimClient) {
+    if (matchesPortalSegment(path, '/claim') && claimClient) {
       return wrapPrivate(
         <ClaimScreen
           key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
@@ -370,15 +378,15 @@ function PortalShell({
   }
 
   const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
-  if (path.startsWith('/claim')) {
+  if (matchesPortalSegment(path, '/claim')) {
     return <Navigate to="/" replace />;
   }
-  if (path.startsWith('/keys/wordpress')) {
+  if (matchesPortalSegment(path, '/keys/wordpress')) {
     return wrapPrivate(
       <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
     );
   }
-  if (path.startsWith('/keys') && keyClient) {
+  if (matchesPortalSegment(path, '/keys') && keyClient) {
     return wrapPrivate(
       <KeysScreen
         client={keyClient}
@@ -389,7 +397,7 @@ function PortalShell({
       />,
     );
   }
-  if (path.startsWith('/usage') && usageClient) {
+  if (matchesPortalSegment(path, '/usage') && usageClient) {
     return wrapPrivate(
       <UsageScreen
         client={usageClient}
@@ -399,7 +407,7 @@ function PortalShell({
       />,
     );
   }
-  if (path.startsWith('/billing/return') && billingClient) {
+  if (matchesPortalSegment(path, '/billing/return') && billingClient) {
     return wrapPrivate(
       <BillingReturnScreen
         client={billingClient}
@@ -411,7 +419,7 @@ function PortalShell({
       />,
     );
   }
-  if (path.startsWith('/billing') && billingClient) {
+  if (matchesExactPortalPath(path, '/billing') && billingClient) {
     return wrapPrivate(
       <BillingScreen
         client={billingClient}

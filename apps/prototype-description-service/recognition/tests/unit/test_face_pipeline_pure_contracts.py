@@ -249,6 +249,24 @@ def test_resolve_embedding_dim_refuses_unknown_model_and_missing_dim(
         resolve_embedding_dim("auraface")
 
 
+def test_resolve_embedding_dim_refuses_non_l2_normalization_for_auraface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = MODEL_MANIFEST["auraface"]
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, normalization="none"))
+    with pytest.raises(ValueError, match=r"normalization"):
+        resolve_embedding_dim("auraface")
+
+
+def test_resolve_embedding_dim_refuses_non_cosine_metric_for_auraface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = MODEL_MANIFEST["auraface"]
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, metric="euclidean"))
+    with pytest.raises(ValueError, match=r"metric"):
+        resolve_embedding_dim("auraface")
+
+
 def test_ort_embedder_resolves_auraface_dim_without_model_bytes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

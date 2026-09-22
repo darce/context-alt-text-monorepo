@@ -3,6 +3,10 @@
 Proves production API-key auth, tenant fencing, and zero usage admission on
 status reads. External compute is not invoked; require_auth and tenant scope
 stay on the real dependency path.
+
+Job status is exercised through the production producer
+``get_job_service_dependency`` -> ``get_job_service(None, None)`` -> shared
+``get_mem_job_repo``. This is in-memory JobService evidence, not PostgreSQL RLS.
 """
 
 from __future__ import annotations
@@ -16,17 +20,22 @@ import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
+from db.models.jobs import IdentityScanJob
+from recognition.application.orchestration.job_service import JobService
 from recognition.domain.job import Job, JobStatus, JobType
 from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.deps import auth as auth_module
 from recognition.interface_adapters.http.deps import rate_limit as rate_limit_module
+from recognition.interface_adapters.http.deps import stores as stores_module
+from recognition.interface_adapters.http.deps.services import get_job_service, get_job_service_dependency
+from recognition.interface_adapters.http.deps.stores import InMemoryJobRepository, get_mem_job_repo
 from recognition.interface_adapters.http.routers import analyze as analyze_router
 from recognition.tests.api.conftest import FakeSession
-from recognition.tests.fakes import FakeJobService
 
 OWNER_KEY = "owner-job-status-key"
 OTHER_KEY = "other-job-status-key"
+ADMIN_KEY = "admin-job-status-key"
 
 
 class _AdmissionSpy:
@@ -54,7 +63,8 @@ class _AdmissionSpy:
 class _CensusHarness:
     client: TestClient
     admission: _AdmissionSpy
-    job_service: FakeJobService
+    mem_repo: InMemoryJobRepository
+    session: FakeSession
     owner_tenant: str
     other_tenant: str
     admit_usage_calls: list[dict[str, object]] = field(default_factory=list)
@@ -65,7 +75,14 @@ def _enable_production_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
 
 
-def _seed_job(job_service: FakeJobService, *, tenant_id: str, job_type: JobType, status: JobStatus, **payload) -> Job:
+def _isolate_mem_job_repo(monkeypatch: pytest.MonkeyPatch) -> InMemoryJobRepository:
+    """Point the shared production singleton at a per-test in-memory repo."""
+    repo = InMemoryJobRepository()
+    monkeypatch.setattr(stores_module, "_MEM_JOB_REPO", repo)
+    return repo
+
+
+def _seed_job(repo: InMemoryJobRepository, *, tenant_id: str, job_type: JobType, status: JobStatus, **payload) -> Job:
     job = Job(
         id=str(uuid.uuid4()),
         type=job_type,
@@ -76,7 +93,7 @@ def _seed_job(job_service: FakeJobService, *, tenant_id: str, job_type: JobType,
         message="census-job",
         payload=payload or None,
     )
-    job_service.repository.jobs[job.id] = job
+    repo.jobs[job.id] = job
     return job
 
 
@@ -84,20 +101,23 @@ def _census_harness(
     monkeypatch: pytest.MonkeyPatch,
     *,
     lookup: Callable[..., object] | None,
+    admin_tenant: str | None = None,
 ) -> _CensusHarness:
-    """Build the analyze router with production auth and a usage-admission spy."""
+    """Build the analyze router with production auth and the real job-service path."""
     _enable_production_auth(monkeypatch)
     rate_limit_module._reset_state_for_tests()
+    mem_repo = _isolate_mem_job_repo(monkeypatch)
 
     owner_tenant = str(uuid.uuid4())
     other_tenant = str(uuid.uuid4())
     admission = _AdmissionSpy()
-    job_service = FakeJobService()
+    session = FakeSession()
     admit_usage_calls: list[dict[str, object]] = []
 
     key_map = {
         OWNER_KEY: (owner_tenant, str(uuid.uuid4()), "STANDARD", False),
         OTHER_KEY: (other_tenant, str(uuid.uuid4()), "STANDARD", False),
+        ADMIN_KEY: (admin_tenant, str(uuid.uuid4()), "STANDARD", True),
     }
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
@@ -122,19 +142,17 @@ def _census_harness(
     app.state.usage_admission_service = admission
 
     async def _session_dep():
-        yield FakeSession()
-
-    async def _job_service_dep():
-        return job_service
+        yield session
 
     app.dependency_overrides[dependencies.get_optional_session] = _session_dep
     app.dependency_overrides[dependencies.get_session] = _session_dep
-    app.dependency_overrides[dependencies.get_job_service_dependency] = _job_service_dep
+    assert dependencies.get_job_service_dependency not in app.dependency_overrides
 
     return _CensusHarness(
         client=TestClient(app),
         admission=admission,
-        job_service=job_service,
+        mem_repo=mem_repo,
+        session=session,
         owner_tenant=owner_tenant,
         other_tenant=other_tenant,
         admit_usage_calls=admit_usage_calls,
@@ -152,6 +170,32 @@ def _other_headers(tenant_id: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _admin_headers(tenant_id: str | None = None) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    if tenant_id is not None:
+        headers["X-Tenant-ID"] = tenant_id
+    return headers
+
+
+@pytest.mark.asyncio
+async def test_get_job_service_dependency_uses_shared_mem_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proof: production dependency is JobService(get_mem_job_repo()), not FakeJobService."""
+    repo = _isolate_mem_job_repo(monkeypatch)
+    dep = await get_job_service_dependency()
+    direct = await get_job_service(session=None, tenant_id=None)
+
+    assert isinstance(dep, JobService)
+    assert isinstance(direct, JobService)
+    assert dep.repository is repo
+    assert direct.repository is repo
+    assert dep.repository is get_mem_job_repo()
+
+    job = _seed_job(repo, tenant_id=str(uuid.uuid4()), job_type=JobType.ANALYZE, status=JobStatus.RUNNING)
+    loaded = await dep.get_job_status(job.id)
+    assert loaded is job
+    assert loaded.tenant_id == job.tenant_id
+
+
 def test_missing_api_key_denied_under_production_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proof: production require_auth rejects a missing key. No ledger writes."""
 
@@ -160,7 +204,7 @@ def test_missing_api_key_denied_under_production_auth(monkeypatch: pytest.Monkey
 
     harness = _census_harness(monkeypatch, lookup=_lookup_must_not_run)
     job = _seed_job(
-        harness.job_service,
+        harness.mem_repo,
         tenant_id=harness.owner_tenant,
         job_type=JobType.ANALYZE,
         status=JobStatus.RUNNING,
@@ -176,13 +220,13 @@ def test_missing_api_key_denied_under_production_auth(monkeypatch: pytest.Monkey
 
 
 def test_invalid_api_key_denied_under_production_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Proof: production require_auth + DB key lookup rejects an unknown key."""
+    """Proof: production require_auth + real _lookup_api_key rejects an unknown key."""
     _enable_production_auth(monkeypatch)
     rate_limit_module._reset_state_for_tests()
-    job_service = FakeJobService()
+    mem_repo = _isolate_mem_job_repo(monkeypatch)
     admission = _AdmissionSpy()
     job = _seed_job(
-        job_service,
+        mem_repo,
         tenant_id=str(uuid.uuid4()),
         job_type=JobType.ANALYZE,
         status=JobStatus.RUNNING,
@@ -195,12 +239,9 @@ def test_invalid_api_key_denied_under_production_auth(monkeypatch: pytest.Monkey
     async def _session_dep():
         yield FakeSession()
 
-    async def _job_service_dep():
-        return job_service
-
     app.dependency_overrides[dependencies.get_optional_session] = _session_dep
     app.dependency_overrides[dependencies.get_session] = _session_dep
-    app.dependency_overrides[dependencies.get_job_service_dependency] = _job_service_dep
+    assert dependencies.get_job_service_dependency not in app.dependency_overrides
     client = TestClient(app)
 
     resp = client.get(
@@ -218,7 +259,7 @@ def test_owner_poll_returns_200_without_usage_admission(monkeypatch: pytest.Monk
     """Proof: authenticated owner poll is 200 FREE-POLL; ledger unchanged."""
     harness = _census_harness(monkeypatch, lookup=None)
     job = _seed_job(
-        harness.job_service,
+        harness.mem_repo,
         tenant_id=harness.owner_tenant,
         job_type=JobType.ANALYZE,
         status=JobStatus.RUNNING,
@@ -242,11 +283,12 @@ def test_other_tenant_cannot_read_job_even_by_spoofing_query_tenant_id(
 ) -> None:
     """Proof: another tenant cannot read the job, including query tenant_id spoof.
 
-    Handler/auth-boundary proof (in-memory job service). Not PostgreSQL RLS.
+    Handler/auth-boundary proof against the shared in-memory JobService.
+    Not PostgreSQL RLS.
     """
     harness = _census_harness(monkeypatch, lookup=None)
     job = _seed_job(
-        harness.job_service,
+        harness.mem_repo,
         tenant_id=harness.owner_tenant,
         job_type=JobType.ANALYZE,
         status=JobStatus.RUNNING,
@@ -289,13 +331,13 @@ def test_pipeline_followup_is_tenant_scoped_and_free(monkeypatch: pytest.MonkeyP
     """Proof: linked clustering follow-up is still a free tenant-scoped read."""
     harness = _census_harness(monkeypatch, lookup=None)
     scan_job = _seed_job(
-        harness.job_service,
+        harness.mem_repo,
         tenant_id=harness.owner_tenant,
         job_type=JobType.ANALYZE,
         status=JobStatus.COMPLETED,
     )
     _seed_job(
-        harness.job_service,
+        harness.mem_repo,
         tenant_id=harness.owner_tenant,
         job_type=JobType.CLUSTERING,
         status=JobStatus.RUNNING,
@@ -316,5 +358,106 @@ def test_pipeline_followup_is_tenant_scoped_and_free(monkeypatch: pytest.MonkeyP
     assert body["status"] == "running"
     assert other.status_code == 404, other.text
     assert other.json()["detail"] == "Job not found"
+    assert harness.admission.reserves == []
+    assert harness.admit_usage_calls == []
+
+
+def test_pipeline_followup_foreign_tenant_is_not_returned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proof: a linked clustering job for another tenant is not substituted."""
+    harness = _census_harness(monkeypatch, lookup=None)
+    scan_job = _seed_job(
+        harness.mem_repo,
+        tenant_id=harness.owner_tenant,
+        job_type=JobType.ANALYZE,
+        status=JobStatus.COMPLETED,
+    )
+    _seed_job(
+        harness.mem_repo,
+        tenant_id=harness.other_tenant,
+        job_type=JobType.CLUSTERING,
+        status=JobStatus.RUNNING,
+        scan_job_id=scan_job.id,
+    )
+
+    owner = harness.client.get(f"/recognition/jobs/{scan_job.id}", headers=_owner_headers(harness.owner_tenant))
+
+    assert owner.status_code == 200, owner.text
+    body = owner.json()
+    assert body["id"] == scan_job.id
+    assert body["type"] == "analyze"
+    assert body["status"] == "completed"
+    assert harness.admission.reserves == []
+    assert harness.admit_usage_calls == []
+
+
+def test_sql_fallback_job_is_tenant_fenced_without_rls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proof: SQL get(job_id) fallback is Python-fenced by key tenant.
+
+    FakeSession scan-row lookup, not PostgreSQL RLS.
+    """
+    harness = _census_harness(monkeypatch, lookup=None)
+    scan_job_id = uuid.uuid4()
+    scan_job = IdentityScanJob(
+        id=scan_job_id,
+        tenant_id=uuid.UUID(harness.owner_tenant),
+        status="running",
+        media_ids=[],
+        total_media=1,
+        processed_media=1,
+        identities_detected=0,
+        message="census-sql-job",
+    )
+    harness.session.set_get_result(model_class=IdentityScanJob, pk=scan_job_id, value=scan_job)
+
+    owner = harness.client.get(
+        f"/recognition/jobs/{scan_job_id}",
+        headers=_owner_headers(harness.owner_tenant),
+    )
+    other = harness.client.get(
+        f"/recognition/jobs/{scan_job_id}",
+        params={"tenant_id": harness.owner_tenant},
+        headers=_other_headers(),
+    )
+
+    assert owner.status_code == 200, owner.text
+    assert owner.json()["id"] == str(scan_job_id)
+    assert owner.json()["status"] == "running"
+    assert other.status_code == 404, other.text
+    assert other.json()["detail"] == "Job not found"
+    assert harness.admission.reserves == []
+    assert harness.admit_usage_calls == []
+
+
+def test_admin_header_can_read_job_query_cannot_override_key_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proof: admin uses X-Tenant-ID; a tenant key ignores spoofed query tenant_id."""
+    harness = _census_harness(monkeypatch, lookup=None)
+    job = _seed_job(
+        harness.mem_repo,
+        tenant_id=harness.owner_tenant,
+        job_type=JobType.ANALYZE,
+        status=JobStatus.RUNNING,
+    )
+
+    owner_with_foreign_query = harness.client.get(
+        f"/recognition/jobs/{job.id}",
+        params={"tenant_id": harness.other_tenant},
+        headers=_owner_headers(harness.owner_tenant),
+    )
+    admin_without_header = harness.client.get(
+        f"/recognition/jobs/{job.id}",
+        params={"tenant_id": harness.owner_tenant},
+        headers=_admin_headers(),
+    )
+    admin_with_header = harness.client.get(
+        f"/recognition/jobs/{job.id}",
+        params={"tenant_id": harness.other_tenant},
+        headers=_admin_headers(harness.owner_tenant),
+    )
+
+    assert owner_with_foreign_query.status_code == 200, owner_with_foreign_query.text
+    assert owner_with_foreign_query.json()["id"] == job.id
+    assert admin_without_header.status_code == 403, admin_without_header.text
+    assert admin_with_header.status_code == 200, admin_with_header.text
+    assert admin_with_header.json()["id"] == job.id
     assert harness.admission.reserves == []
     assert harness.admit_usage_calls == []

@@ -964,3 +964,28 @@ async def test_unsupported_repository_without_n1_methods_fails_closed() -> None:
     assert repository.upserts == []
     assert repository.marks == []
     assert all(mark.get("status") is not WebhookInboxStatus.PROCESSED for mark in repository.marks)
+
+
+@pytest.mark.asyncio
+async def test_stale_inbox_lease_cannot_mark_or_apply_paid() -> None:
+    repository = _Repository([_row("evt-stale-lock")], session=_Session())
+    repository.stale_on_lock = True
+    provider = _Provider()
+    provider.session = repository.session
+    entitlement_service = _EntitlementService()
+
+    report = await reconcile(
+        repository,
+        provider,
+        entitlement_service=entitlement_service,
+        config=_config(),
+        sleeper=_no_sleep,
+    )
+
+    assert report.exit_code == 1
+    assert report.failed == 1
+    assert repository.upserts == []
+    assert entitlement_service.states == []
+    assert repository.marks == []
+    assert repository.rows[0].status == WebhookInboxStatus.RECEIVED.value
+    assert repository.finishes == []

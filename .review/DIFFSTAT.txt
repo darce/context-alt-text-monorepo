@@ -1,3 +1,4 @@
- .../tests/unit/test_run_app_portal_evals.py        | 350 ++++++++++++++++++++-
- .../scripts/run_app_portal_evals.py                | 263 +++++++++++++---
- 2 files changed, 560 insertions(+), 53 deletions(-)
+ .../tests/unit/test_configure_clerk_production.py  | 425 ++++++++++++++++
+ .../scripts/configure_clerk_production.py          | 547 +++++++++++++++++++++
+ docs/runbooks/clerk-production-auth.md             | 155 ++++++
+ 3 files changed, 1127 insertions(+)

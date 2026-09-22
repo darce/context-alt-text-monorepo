@@ -874,8 +874,24 @@ _remote_dotenv_value() {
   printf '%s' "$raw"
 }
 
+# Cutover compose interpolates ${ACX_IMAGE_TAG} from remote_dir/.env, while
+# do_restart / promote / rollback retag env_to_tag <env>. Refuse before compose
+# up when the file disagrees (FIR512-3-HR-02). Uses _remote_dotenv_value so
+# this does not add a new ssh protocol.
+assert_remote_env_image_tag() {
+  local env="$1" remote_dir expected file_tag
+  remote_dir="$(env_to_remote_dir "$env")"
+  expected="$(env_to_tag "$env")"
+  file_tag="$(_remote_dotenv_value "$remote_dir" ACX_IMAGE_TAG)"
+  if [[ "${file_tag}" != "${expected}" ]]; then
+    fail "ACX_IMAGE_TAG=${file_tag:-<empty>} in ${remote_dir}/.env does not match env_to_tag(${env})=${expected}; refusing compose up. Set ACX_IMAGE_TAG=${expected} in ${remote_dir}/.env"
+  fi
+}
+
 preflight_remote_face_pipeline_models() {
   local env="$1"
+  # Existing remote .env read before compose up (deploy/promote/reset).
+  assert_remote_env_image_tag "$env"
   # Only dev-fir uses the face_pipeline profile with host-mounted weights.
   [[ "$env" == "dev-fir" ]] || return 0
 
@@ -3248,6 +3264,7 @@ do_restart() {
   expected_repo="${expected_digest%@sha256:*}"
   env_tag="$(env_to_tag "${env}")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  assert_remote_env_image_tag "$env"
   if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ \
     || "${expected_repo}" != "${ACX_IMAGE_REPO}" ]]; then
     warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${ACX_IMAGE_REPO} (got: ${expected_digest:-empty})"
@@ -3629,6 +3646,7 @@ restore_runtime_and_edge() {
     return 1
   fi
   if [[ "${restart_runtime}" == "1" ]]; then
+    assert_remote_env_image_tag "$env"
     unit="$(env_to_unit "${env}")"
     if ! run_with_deadline "${inspect_timeout}" "rollback systemctl restart ${unit}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then

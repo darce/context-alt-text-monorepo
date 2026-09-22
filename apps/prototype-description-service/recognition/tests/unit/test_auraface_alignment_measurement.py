@@ -15,10 +15,12 @@ from typing import Any
 
 import pytest
 
-from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+from recognition.infrastructure.face_pipeline import provenance
+from recognition.infrastructure.face_pipeline.provenance import AURAFACE_REVISION, MODEL_MANIFEST
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "face_pipeline"
 _EVIDENCE_PATH = _FIXTURE_DIR / "auraface_alignment_measurement.json"
+_CROP_PATH = _FIXTURE_DIR / "synthetic_112_crop.npy"
 _LIVE_MODEL = Path("/opt/acx-backend/data/dev-models/face_pipeline/glintr100.onnx")
 _LIVE_LICENSE = Path("/opt/acx-backend/data/dev-models/face_pipeline/LICENSE.auraface.md")
 
@@ -170,6 +172,12 @@ def test_raw_output_is_measured_not_l2_normalized_in_graph() -> None:
         assert value > 1.0, label
 
 
+def test_raw_output_fixture_digest_matches_saved_measurement() -> None:
+    fixture = _load_evidence()["raw_output_normalization"]["fixture_inference"]
+    assert fixture["fixture"] == _CROP_PATH.name
+    assert _sha256(_CROP_PATH) == _assert_sha256(fixture["fixture_sha256"])
+
+
 def test_composed_sface_golden_is_not_auraface_proof() -> None:
     composed = _load_evidence()["composed_parity"]["sface_composed_golden"]
     assert composed["status"] == "not_auraface_proof"
@@ -190,6 +198,115 @@ def test_documented_contract_is_not_treated_as_measurement() -> None:
     assert contract["independently_supported"] is False
     assert contract["insightface_runtime"]["status"] == "blocked"
     assumption = contract["local_manifest_assumption"]
+    entry = MODEL_MANIFEST["auraface"]
+    preprocessing = entry.preprocessing
+    assert preprocessing is not None
     assert assumption["status"] == "unverified"
-    assert assumption["declared_unverified_alignment_template_id"] == "arcface-112-unverified"
+    scale_expression = assumption["declared_unverified_input_scale"]
+    assert isinstance(scale_expression, str)
+    numerator, separator, denominator = scale_expression.partition("/")
+    assert separator == "/"
+    assert float(numerator) / float(denominator) == pytest.approx(preprocessing.input_scale)
+    assert assumption["declared_unverified_alignment_template_id"] == preprocessing.alignment_template_id
+    assert assumption["declared_unverified_channel_order"] == preprocessing.channel_order
+    assert assumption["declared_unverified_output_l2_normalized"] is preprocessing.output_l2_normalized
+    assert contract["publisher_model_card"]["revision"] == AURAFACE_REVISION == entry.source_ref
     assert "UNVERIFIED" in assumption["note"]
+
+    provenance_source = Path(provenance.__file__).read_text(encoding="utf-8")
+    for marker in (
+        "input_scale=1.0 / 127.5,  # UNVERIFIED",
+        'alignment_template_id="arcface-112-unverified",  # UNVERIFIED',
+        "output_l2_normalized=True,  # UNVERIFIED",
+    ):
+        assert marker in provenance_source
+
+
+def test_upstream_reference_and_composed_parity_are_distinguished() -> None:
+    evidence = _load_evidence()
+    reference = evidence["upstream_documented_contract"]["insightface_reference"]
+    assert reference["status"] == "reference_supported_not_independently_verified"
+    assert reference["independently_supported"] is False
+    assert reference["source_commit"] == "1480e705287bc5d59f923b46c260ec6e3e4150f6"
+    assert reference["arcface_onnx_url"].endswith(
+        "/python-package/insightface/model_zoo/arcface_onnx.py"
+    )
+    assert reference["face_align_url"].endswith(
+        "/python-package/insightface/utils/face_align.py"
+    )
+    assert reference["recipe"]["input_scale"] == "1.0/127.5"
+    assert reference["recipe"]["input_offset"] == "127.5"
+    assert reference["recipe"]["channel_order"].startswith("swapRB=True")
+    assert reference["recipe"]["alignment_template_id"] == "arcface-112"
+    assert reference["recipe"]["alignment_coordinates"] == [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+        [56.0252, 71.7366],
+        [41.5493, 92.3655],
+        [70.7299, 92.2041],
+    ]
+    composed = evidence["composed_parity"]["auraface_ort_composed_parity"]
+    assert composed["status"] == "pending"
+    assert composed["independently_supported"] is False
+    assert "composed" in composed["reason"]
+
+
+def _normalise_ort_shape(shape: list[object]) -> list[int | None]:
+    return [None if dimension in (None, "None") else int(dimension) for dimension in shape]
+
+
+@pytest.mark.skipif(
+    not _LIVE_MODEL.is_file() or not _LIVE_LICENSE.is_file(),
+    reason="AuraFace VM artifact is absent",
+)
+def test_live_artifact_replays_ort_io_and_saved_raw_norm_conventions() -> None:
+    np = pytest.importorskip("numpy")
+    ort = pytest.importorskip("onnxruntime")
+    evidence = _load_evidence()
+    graph = evidence["graph"]
+    fixture = evidence["raw_output_normalization"]["fixture_inference"]
+    crop = np.load(_CROP_PATH, allow_pickle=False)
+    assert crop.shape == (112, 112, 3)
+    assert crop.dtype == np.uint8
+
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    session = ort.InferenceSession(
+        str(_LIVE_MODEL),
+        sess_options=options,
+        providers=["CPUExecutionProvider"],
+    )
+
+    input_meta = session.get_inputs()[0]
+    output_meta = session.get_outputs()[0]
+    assert input_meta.name == graph["input"]["name"] == "data"
+    assert _normalise_ort_shape(input_meta.shape) == graph["input"]["shape"]
+    assert input_meta.type == graph["input"]["ort_type"]
+    assert output_meta.name == graph["output"]["name"] == "1333"
+    assert _normalise_ort_shape(output_meta.shape) == graph["output"]["shape"]
+    assert output_meta.type == graph["output"]["ort_type"]
+    assert session.get_providers() == ["CPUExecutionProvider"]
+
+    def nchw(value: Any) -> Any:
+        return np.ascontiguousarray(value.astype(np.float32).transpose(2, 0, 1)[None, ...])
+
+    conventions = {
+        "hwc_as_float_0_255": nchw(crop),
+        "swap_channels_float_0_255": nchw(crop[..., ::-1]),
+        "arcface_minus_127p5_div_127p5_as_is": nchw((crop.astype(np.float32) - 127.5) / 127.5),
+        "arcface_minus_127p5_div_127p5_swapped": nchw(
+            (crop[..., ::-1].astype(np.float32) - 127.5) / 127.5
+        ),
+        "div_255_as_is": nchw(crop.astype(np.float32) / 255.0),
+    }
+    expected_l2 = fixture["l2_by_convention"]
+    assert set(conventions) == set(expected_l2)
+    for label, blob in conventions.items():
+        output = session.run([output_meta.name], {input_meta.name: blob})[0]
+        assert output.shape == (1, 512)
+        actual_l2 = float(np.linalg.norm(output[0]))
+        assert actual_l2 == pytest.approx(expected_l2[label], rel=0.0, abs=1e-5)
+        assert actual_l2 > 1.0

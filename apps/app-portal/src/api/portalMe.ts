@@ -1,3 +1,5 @@
+import { resolvePortalPath } from './portalRequest';
+
 export const PortalMeOutcome = {
   Ok: 'ok',
   Empty: 'empty',
@@ -59,6 +61,36 @@ function interpretSuccess(body: unknown): PortalMeResult {
   return { outcome: PortalMeOutcome.Outage };
 }
 
+function isPortalMeResponse(response: Response, requestedPath: string): boolean {
+  if (requestedPath !== PORTAL_ME_PATH) {
+    return false;
+  }
+  const raw = response.url;
+  if (!raw) {
+    return true;
+  }
+  let url: URL;
+  try {
+    url = new URL(raw, 'https://app.altcontext.com');
+  } catch {
+    return false;
+  }
+  if (url.username || url.password) {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return false;
+  }
+  if (resolvePortalPath(`${url.pathname}${url.search}`) !== PORTAL_ME_PATH) {
+    return false;
+  }
+  const allowedOrigins = new Set(['https://app.altcontext.com']);
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    allowedOrigins.add(window.location.origin);
+  }
+  return allowedOrigins.has(url.origin);
+}
+
 function interpretError(status: number, body: unknown): PortalMeResult {
   if (status === 401) {
     return { outcome: PortalMeOutcome.Unauthorized };
@@ -84,6 +116,11 @@ export async function fetchPortalMe({
 }: FetchPortalMeOptions): Promise<PortalMeResult> {
   if (signal?.aborted) {
     return { outcome: PortalMeOutcome.Aborted };
+  }
+
+  const resolvedPath = resolvePortalPath(PORTAL_ME_PATH);
+  if (!resolvedPath) {
+    return { outcome: PortalMeOutcome.Outage };
   }
 
   const controller = new AbortController();
@@ -132,15 +169,19 @@ export async function fetchPortalMe({
     }
 
     const response = await Promise.race([
-      fetchImpl(PORTAL_ME_PATH, {
+      fetchImpl(resolvedPath, {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',
+        redirect: 'error',
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       }),
       aborted,
     ]);
+    if (!isPortalMeResponse(response, resolvedPath)) {
+      return finish({ outcome: PortalMeOutcome.Outage });
+    }
     const body = await readJson(response);
     if (response.ok) {
       return finish(interpretSuccess(body));

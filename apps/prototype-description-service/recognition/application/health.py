@@ -25,7 +25,6 @@ from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
     PENDING_OPERATOR_FETCH,
     ModelVerifyOutcome,
-    load_verified_model,
     verify_face_pipeline_model,
 )
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -683,6 +682,11 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
 
 def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     """Run the readiness check belonging to one model space."""
+    try:
+        assert_space_activatable(space)
+    except ValueError as exc:
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc))
+
     if space is ModelSpace.INSIGHTFACE:
         from recognition.config import get_settings
 
@@ -693,10 +697,13 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     if space is not ModelSpace.AURAFACE:
         raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
 
-    try:
-        load_verified_model("auraface", models_dir=store)
-    except Exception as exc:  # noqa: BLE001 - provenance detail is the readiness contract
-        return CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc))
+    outcome = _cached_verify_outcome("auraface", models_dir=store)
+    if not outcome.ok:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            outcome.reason or "auraface: unverified",
+        )
 
     try:
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (

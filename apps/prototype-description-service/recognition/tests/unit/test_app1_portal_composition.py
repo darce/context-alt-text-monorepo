@@ -334,6 +334,7 @@ def test_payments_disabled_installs_without_seller_or_credentials(monkeypatch: p
     assert isinstance(app.state.billing_provider, PolarBillingProvider)
     assert app.state.billing_provider._seller_account is None
     assert getattr(app.state, "checkout_service", None) is None
+    assert getattr(app.state, "billing_repository", None) is None
     assert (
         app.state.portal_composition_config is config
         or app.state.portal_composition_config.billing_seller_account is None

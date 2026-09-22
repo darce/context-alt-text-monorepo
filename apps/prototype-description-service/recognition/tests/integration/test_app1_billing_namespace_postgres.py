@@ -349,3 +349,208 @@ def test_existing_unique_drop_requires_drain_and_rolls_back(pg_empty_engine) -> 
     with pg_empty_engine.connect() as conn:
         restored = _inbox_uniques(conn)
         assert "uq_billing_webhook_inbox_provider_event" in restored
+
+
+def _guc_on(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+async def _current_setting(session: AsyncSession, name: str) -> str:
+    result = await session.execute(text("SELECT current_setting(:name, true)"), {"name": name})
+    value = result.scalar()
+    return "" if value is None else str(value)
+
+
+async def _assert_foreign_query_denied(session: AsyncSession, tenant_id: object) -> None:
+    previous = await _current_setting(session, "app.current_tenant")
+    try:
+        await session.execute(
+            text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)},
+        )
+        visible = await session.execute(text("SELECT count(*) FROM billing_known_item_lease"))
+        assert visible.scalar_one() == 0
+        foreign = await session.execute(
+            text("SELECT count(*) FROM portal_identity WHERE tenant_id <> :tenant_id"),
+            {"tenant_id": tenant_id},
+        )
+        assert foreign.scalar_one() == 0
+    finally:
+        await session.execute(
+            text("SELECT set_config('app.current_tenant', :value, true)"),
+            {"value": previous},
+        )
+
+
+@pytest.mark.asyncio
+async def test_postgres_operator_bypass_restored_after_every_path(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        role = conn.execute(
+            text("SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
+        ).one()
+    assert role[1] is False
+    assert role[2] is False
+
+    engine = create_async_engine(_async_url(pg_empty_engine), pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with session_factory() as session:
+            tenant_a = Tenant(site_url="https://ns-op-a.example.test")
+            tenant_b = Tenant(site_url="https://ns-op-b.example.test")
+            session.add_all([tenant_a, tenant_b])
+            await session.flush()
+            await session.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+            await session.execute(
+                text(
+                    "INSERT INTO portal_identity (id, tenant_id, issuer, subject, status) "
+                    "VALUES (:id, :tenant_id, :issuer, :subject, 'active')"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": tenant_a.id,
+                    "issuer": "https://issuer.example.test",
+                    "subject": "user-a",
+                },
+            )
+            await session.execute(
+                text(
+                    "INSERT INTO portal_identity (id, tenant_id, issuer, subject, status) "
+                    "VALUES (:id, :tenant_id, :issuer, :subject, 'active')"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": tenant_b.id,
+                    "issuer": "https://issuer.example.test",
+                    "subject": "user-b",
+                },
+            )
+            await session.execute(text("SELECT set_config('app.bypass_rls', '', true)"))
+
+            repo = BillingRepository(session, environment="sandbox", seller_account="org-a")
+            first = await repo.claim_reconcile_item(
+                provider="polar",
+                kind="inbox",
+                remote_id="evt-op",
+                owner="worker-a",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW,
+            )
+            assert first is not None
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            await _assert_foreign_query_denied(session, tenant_a.id)
+
+            busy = await repo.claim_reconcile_item(
+                provider="polar",
+                kind="inbox",
+                remote_id="evt-op",
+                owner="worker-b",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW + timedelta(seconds=1),
+            )
+            assert busy is None
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            await _assert_foreign_query_denied(session, tenant_a.id)
+
+            with pytest.raises(BillingWorkLeaseConflictError):
+                await repo.lock_reconcile_item(first, now=NOW + timedelta(seconds=32))
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            await _assert_foreign_query_denied(session, tenant_a.id)
+
+            stolen = await repo.claim_reconcile_item(
+                provider="polar",
+                kind="inbox",
+                remote_id="evt-op",
+                owner="worker-b",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW + timedelta(seconds=31),
+            )
+            assert stolen is not None
+            await repo.lock_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+            await repo.finish_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            await _assert_foreign_query_denied(session, tenant_a.id)
+
+            with pytest.raises(ValueError, match="owner"):
+                await repo.claim_reconcile_item(
+                    provider="polar",
+                    kind="inbox",
+                    remote_id="evt-op",
+                    owner="",
+                    lease_ttl=timedelta(seconds=30),
+                    now=NOW + timedelta(seconds=33),
+                )
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            await session.rollback()
+
+        async with session_factory() as session:
+            tenant = Tenant(site_url="https://ns-bound.example.test")
+            session.add(tenant)
+            await session.flush()
+            await set_tenant_context(session, tenant.id)
+            repo = BillingRepository(session, environment="sandbox", seller_account="org-a")
+            with pytest.raises(ValueError, match="tenant-bound"):
+                await repo.claim_reconcile_item(
+                    provider="polar",
+                    kind="inbox",
+                    remote_id="evt-bound",
+                    owner="worker-a",
+                    lease_ttl=timedelta(seconds=30),
+                    now=NOW,
+                )
+            assert not _guc_on(await _current_setting(session, "app.bypass_rls"))
+            visible = await session.execute(text("SELECT count(*) FROM billing_known_item_lease"))
+            assert visible.scalar_one() == 0
+            await session.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgres_same_session_returning_lease_is_fresh(pg_empty_engine) -> None:
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+        role = conn.execute(
+            text("SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
+        ).one()
+    assert role[1] is False
+    assert role[2] is False
+
+    engine = create_async_engine(_async_url(pg_empty_engine), pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        async with session_factory() as session:
+            repo = BillingRepository(session, environment="sandbox", seller_account="org-a")
+            first = await repo.claim_reconcile_item(
+                provider="polar",
+                kind="inbox",
+                remote_id="evt-fresh",
+                owner="worker-a",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW,
+            )
+            await session.commit()
+            assert first is not None
+            assert first.fence == 1
+            stolen = await repo.claim_reconcile_item(
+                provider="polar",
+                kind="inbox",
+                remote_id="evt-fresh",
+                owner="worker-b",
+                lease_ttl=timedelta(seconds=30),
+                now=NOW + timedelta(seconds=31),
+            )
+            assert stolen is not None
+            assert stolen.owner == "worker-b"
+            assert stolen.fence == 2
+            await session.commit()
+            with pytest.raises(BillingWorkLeaseConflictError):
+                await repo.lock_reconcile_item(first, now=NOW + timedelta(seconds=32))
+            with pytest.raises(BillingWorkLeaseConflictError):
+                await repo.finish_reconcile_item(first, now=NOW + timedelta(seconds=32))
+            await repo.lock_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+            await repo.finish_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+            await session.commit()
+            assert stolen.fence == 2
+    finally:
+        await engine.dispose()

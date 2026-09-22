@@ -286,16 +286,63 @@ describe('resolveActivityStatus', () => {
         runId: 'run-1',
         progress: describeProgress(
           { isWarming: true, progressFraction: 0, etaSeconds: 180 },
-          { phase: DESCRIBE_RUN_PHASE.WARMING, gpu_state: GPU_STATE.STARTING, eta_seconds: 180, completed: 0 },
+          { phase: DESCRIBE_RUN_PHASE.WARMING, gpu_state: GPU_STATE.READY, eta_seconds: 180, completed: 0 },
         ),
       },
-      gpu: gpuInput({ gpuState: GPU_STATE.STARTING, isRunPending: true }),
+      gpu: gpuInput({ gpuState: GPU_STATE.READY, isRunPending: true }),
     });
     expect(status.kind).toBe(ACTIVITY_KIND.WARMING);
     expect(status.etaSeconds).toBe(180);
     expect(status.canCancel).toBe(true);
-    expect(status.gpuState).toBe(GPU_STATE.STARTING);
+    expect(status.gpuState).toBe(GPU_STATE.READY);
     expect(status.warmingObservation?.status).toBe('unknown');
+  });
+
+  it('does not relabel a queued live run as warming when the GPU is warming', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-queued',
+        progress: describeProgress(
+          { progressFraction: 0, etaSeconds: 60 },
+          {
+            phase: DESCRIBE_RUN_PHASE.QUEUED,
+            gpu_state: GPU_STATE.WARMING,
+            eta_seconds: 60,
+            completed: 0,
+            status: DESCRIBE_RUN_STATUS.PENDING,
+          },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING, isRunPending: true }),
+    });
+
+    expect(status.kind).toBe(ACTIVITY_KIND.DESCRIBING);
+    expect(status.retryable).toBe(false);
+    expect(status.warmingObservation).toBeUndefined();
+  });
+
+  it('keeps a describing live run on the describing watchdog when the GPU is warming', () => {
+    const status = resolveActivityStatus({
+      scan: idleScan(),
+      describe: {
+        runId: 'run-describing',
+        progress: describeProgress(
+          { progressFraction: 0.25, etaSeconds: 40 },
+          {
+            phase: DESCRIBE_RUN_PHASE.DESCRIBING,
+            gpu_state: GPU_STATE.WARMING,
+            eta_seconds: 40,
+          },
+        ),
+      },
+      gpu: gpuInput({ gpuState: GPU_STATE.WARMING, isRunPending: true }),
+    });
+
+    expect(status.kind).toBe(ACTIVITY_KIND.DESCRIBING);
+    expect(status.canCancel).toBe(true);
+    expect(status.retryable).toBe(false);
+    expect(status.warmingObservation).toBeUndefined();
   });
 
   it('keeps fresh stopped evidence provisional and preserves unknown stale evidence', () => {
@@ -432,7 +479,7 @@ describe('resolveActivityStatus', () => {
     expect(status.retryable).toBe(true);
   });
 
-  it('maps idle GPU starting/warming to warming without cancel', () => {
+  it('keeps idle GPU warming presentation without a live run', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
       describe: idleDescribe(),

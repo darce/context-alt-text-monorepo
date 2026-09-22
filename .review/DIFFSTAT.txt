@@ -1,9 +1,8 @@
- .../app-portal/src/__tests__/keys-journey.test.tsx | 562 +++++++++++++++++++++
- .../src/__tests__/usage-journey.test.tsx           | 251 +++++++++
- apps/app-portal/src/api/portalKeys.ts              | 328 ++++++++++++
- apps/app-portal/src/api/portalUsage.ts             | 201 ++++++++
- .../src/components/OneTimeSecretDialog.tsx         |  68 +++
- .../components/WordPressTestConnectionGuidance.tsx |  30 ++
- apps/app-portal/src/screens/KeysScreen.tsx         | 433 ++++++++++++++++
- apps/app-portal/src/screens/UsageScreen.tsx        | 136 +++++
- 8 files changed, 2009 insertions(+)
+ .../src/__tests__/billing-journey.test.tsx         | 361 ++++++++++++++++++
+ .../src/__tests__/claim-journey.test.tsx           | 262 +++++++++++++
+ apps/app-portal/src/api/portalBilling.ts           | 229 ++++++++++++
+ apps/app-portal/src/api/portalClaim.ts             | 138 +++++++
+ .../app-portal/src/screens/BillingReturnScreen.tsx |  52 +++
+ apps/app-portal/src/screens/BillingScreen.tsx      | 405 +++++++++++++++++++++
+ apps/app-portal/src/screens/ClaimScreen.tsx        | 284 +++++++++++++++
+ 7 files changed, 1731 insertions(+)

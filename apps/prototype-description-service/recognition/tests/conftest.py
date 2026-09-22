@@ -55,6 +55,7 @@ SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
         "image_descriptions",
         # Portal and billing tables are outside this recognition fixture's schema.
         "api_key_rotation_history",
+        "billing_checkout_attempt",
         "billing_subscription_projection",
         "billing_webhook_inbox",
         "export_jobs",
@@ -62,6 +63,7 @@ SQLITE_TEST_TABLE_EXCLUSIONS = frozenset(
         "portal_tenant_invitation",
         "tenant_entitlement",
         "tenant_key_idempotency",
+        "usage_admission_global_state",
         "usage_reservation",
         # This identity table is provisioned by the migration but not needed here.
         "identity_name_suppressions",
@@ -153,16 +155,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 """
             )
         )
-        created_table_names = await conn.run_sync(
-            lambda sync_conn: set(inspect(sync_conn).get_table_names())
-        )
-        missing_table_names = sorted(
-            set(Base.metadata.tables) - created_table_names - SQLITE_TEST_TABLE_EXCLUSIONS
-        )
+        created_table_names = await conn.run_sync(lambda sync_conn: set(inspect(sync_conn).get_table_names()))
+        missing_table_names = sorted(set(Base.metadata.tables) - created_table_names - SQLITE_TEST_TABLE_EXCLUSIONS)
         if missing_table_names:
             raise RuntimeError(
-                "db_session did not create all mapped SQLite tables; missing: "
-                + ", ".join(missing_table_names)
+                "db_session did not create all mapped SQLite tables; missing: " + ", ".join(missing_table_names)
             )
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -399,15 +396,10 @@ def assert_engine_role_rls_enforceable(engine) -> None:
     """
     with engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT current_user, r.rolsuper, r.rolbypassrls "
-                "FROM pg_roles r WHERE r.rolname = current_user"
-            )
+            text("SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
         ).one()
     role, rolsuper, rolbypassrls = str(row[0]), bool(row[1]), bool(row[2])
-    msg = rls_unenforceable_role_message(
-        role=role, rolsuper=rolsuper, rolbypassrls=rolbypassrls
-    )
+    msg = rls_unenforceable_role_message(role=role, rolsuper=rolsuper, rolbypassrls=rolbypassrls)
     if msg is not None:
         pytest.fail(msg)
 

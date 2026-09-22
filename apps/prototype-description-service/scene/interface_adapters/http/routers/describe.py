@@ -381,12 +381,42 @@ def _scene_usage_fingerprint(
     )
 
 
+def _require_metered_admission(service) -> None:
+    """Fail closed before metered compute when usage admission is not installed."""
+    if service is None or not all(callable(getattr(service, name, None)) for name in ("reserve", "commit", "release")):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "usage_admission_unavailable"},
+        )
+
+
+def _adapter_consumed_from(exc: BaseException | None) -> bool:
+    timing = getattr(exc, "attempt_timing", None) if exc is not None else None
+    return bool(getattr(timing, "entered_adapter", False))
+
+
+async def _settle_usage_ticket(service, ticket, *, commit: bool) -> None:
+    """Terminal fenced settlement; unfenced commit/release is the fallback."""
+    if ticket is None or service is None:
+        return
+    fence = getattr(ticket, "fence_token", None)
+    method_name = "commit_fenced" if commit else "release_fenced"
+    method = getattr(service, method_name, None)
+    if isinstance(fence, str) and fence.strip() and callable(method):
+        await method(ticket, fence_token=fence)
+        return
+    fallback = getattr(service, "commit" if commit else "release", None)
+    if callable(fallback):
+        await fallback(ticket)
+
+
 @asynccontextmanager
 async def _maybe_admit_usage(service, *, enabled: bool, **kwargs):
     """Reserve when metering this request; no-op for free cache/decorative paths."""
     if not enabled:
         yield None
         return
+    _require_metered_admission(service)
     async with admit_usage(service, **kwargs) as ticket:
         yield ticket
 
@@ -1435,6 +1465,7 @@ async def describe_image_multipart(
     usage_operation_id = operation_id or _usage_operation_id(submission.operation_id)
     job_id = str(uuid.uuid4())
     metered = cached_row is None and not unavailable_fast_path
+    pending_error: Exception | None = None
     async with _maybe_admit_usage(
         usage_admission_service,
         enabled=metered,
@@ -1493,7 +1524,7 @@ async def describe_image_multipart(
             await _charge_demo_quota()
 
         terminalized = False
-        compute_started = False
+        adapter_consumed = False
 
         async def _cleanup_accepted() -> None:
             nonlocal terminalized
@@ -1510,13 +1541,27 @@ async def describe_image_multipart(
             terminalized = True
 
         async def _commit_usage_if_computed() -> None:
-            if not compute_started or ticket is None or usage_admission_service is None:
+            if not adapter_consumed:
                 return
-            fence = getattr(ticket, "fence_token", None)
-            commit_fenced = getattr(usage_admission_service, "commit_fenced", None)
-            if not fence or not callable(commit_fenced):
-                return
-            await commit_fenced(ticket, fence_token=fence)
+            await _settle_usage_ticket(usage_admission_service, ticket, commit=True)
+
+        async def _account_consumed_failure(exc: Exception) -> None:
+            nonlocal pending_error
+            with suppress(Exception):
+                await _commit_usage_if_computed()
+            if session is not None:
+                with suppress(Exception):
+                    await session.commit()
+            pending_error = exc
+
+        async def _release_reserved_failure(exc: Exception) -> None:
+            nonlocal pending_error
+            with suppress(Exception):
+                await _settle_usage_ticket(usage_admission_service, ticket, commit=False)
+            if session is not None:
+                with suppress(Exception):
+                    await session.commit()
+            pending_error = exc
 
         try:
             if unavailable_fast_path:
@@ -1543,16 +1588,21 @@ async def describe_image_multipart(
                     tenant_uuid=tenant_uuid,
                 )
             else:
-                compute_started = True
-                response = await service.describe(
-                    tenant_id=tenant_uuid,
-                    media_id=envelope.media_id,
-                    image_bytes=image_bytes,
-                    context=submission.context,
-                    confirmed_faces=confirmed_faces,
-                    naming_policy=naming_policy,
-                    before_compute=_before_compute,
-                )
+                try:
+                    response = await service.describe(
+                        tenant_id=tenant_uuid,
+                        media_id=envelope.media_id,
+                        image_bytes=image_bytes,
+                        context=submission.context,
+                        confirmed_faces=confirmed_faces,
+                        naming_policy=naming_policy,
+                        before_compute=_before_compute,
+                    )
+                except BaseException as exc:
+                    if _adapter_consumed_from(exc):
+                        adapter_consumed = True
+                    raise
+                adapter_consumed = not bool(getattr(response, "cached", False))
             # N-R-03: no stored unnamed base — cached draft may already hold names.
             # Keep the service response; do not re-run preview on alt_text_draft.
             if not cached_naming_preview_skipped(response):
@@ -1609,6 +1659,7 @@ async def describe_image_multipart(
             except HTTPException:
                 await _cleanup_accepted()
                 raise
+            await _commit_usage_if_computed()
             if session is not None:
                 await session.commit()
             if completed is not None and completed.ramp_up_ms is not None:
@@ -1631,13 +1682,11 @@ async def describe_image_multipart(
                 # durable DescribeOperation to advertise.
                 if gpu_compute:
                     raise RuntimeError("gpu describe succeeded without an accepted operation")
-                await _commit_usage_if_computed()
                 return MultipartDescribeResponse(
                     **dumped,
                     startup_id=startup_id,
                     timing=timing,
                 )
-            await _commit_usage_if_computed()
             return MultipartDescribeResponse(
                 **dumped,
                 operation_id=accepted.operation_id,
@@ -1647,26 +1696,31 @@ async def describe_image_multipart(
         except HTTPException as exc:
             if not _preserves_demand_lease(exc):
                 await _cleanup_accepted()
+            rebuilt = exc
             if op is not None and _typed_error_detail_needs_rebuild(
                 exc,
                 accepted_operation_id=getattr(op, "operation_id", None),
             ):
-                raise _rebuild_post_accept_typed_error(
+                rebuilt = _rebuild_post_accept_typed_error(
                     exc,
                     op=op,
                     settings=settings,
                     server_start=server_start,
-                ) from exc
-            raise
-        except TimeoutError as exc:
-            if compute_started:
-                with suppress(Exception):
-                    await _commit_usage_if_computed()
+                )
+            if adapter_consumed:
+                await _account_consumed_failure(rebuilt)
+            else:
+                await _release_reserved_failure(rebuilt)
+        except TimeoutError:
             await _cleanup_accepted()
-            raise HTTPException(
+            timeout_error = HTTPException(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 f"description generation exceeded {effective_timeout}s",
-            ) from exc
+            )
+            if adapter_consumed:
+                await _account_consumed_failure(timeout_error)
+            else:
+                await _release_reserved_failure(timeout_error)
         except DescriptionAdapterUnavailableError as exc:
             await _cleanup_accepted()
             if gpu_compute:
@@ -1677,7 +1731,7 @@ async def describe_image_multipart(
                         if not settings.gpu_endpoint_url
                         else UnavailableReason.ENDPOINT_NOT_PRIVATE
                     )
-                raise _typed_describe_error(
+                unavailable_error = _typed_describe_error(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     code="description_service_unavailable",
                     message=str(exc),
@@ -1685,15 +1739,17 @@ async def describe_image_multipart(
                     startup_id=None if op is None else op.startup_id,
                     timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
                     reason=adapter_reason,
-                ) from exc
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+                )
+            else:
+                unavailable_error = HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+            if adapter_consumed:
+                await _account_consumed_failure(unavailable_error)
+            else:
+                await _release_reserved_failure(unavailable_error)
         except (GpuRemoteAdapterError, HostedProviderError) as exc:
             processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
             server_elapsed_ms = _elapsed_ms(server_start)
             safe_message = exc.message if isinstance(exc, GpuRemoteAdapterError) else str(exc)
-            if compute_started:
-                with suppress(Exception):
-                    await _commit_usage_if_computed()
             if gpu_compute:
                 try:
                     completed = await _complete_operation(
@@ -1715,28 +1771,36 @@ async def describe_image_multipart(
                     server_elapsed_ms=server_elapsed_ms,
                     cached=False,
                 )
-                raise _typed_describe_error(
+                remote_error = _typed_describe_error(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     code="description_service_error",
                     message=safe_message,
                     operation_id=operation_id,
                     startup_id=None if completed is None else completed.startup_id,
                     timing=timing,
-                ) from exc
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, safe_message) from exc
-        except Exception as exc:
-            if compute_started:
-                with suppress(Exception):
-                    await _commit_usage_if_computed()
+                )
+            else:
+                remote_error = HTTPException(status.HTTP_502_BAD_GATEWAY, safe_message)
+            if adapter_consumed:
+                await _account_consumed_failure(remote_error)
+            else:
+                await _release_reserved_failure(remote_error)
+        except Exception:
             await _cleanup_accepted()
-            raise _typed_describe_error(
+            generic_error = _typed_describe_error(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 code="description_service_error",
                 message="Description service error",
                 operation_id=operation_id,
                 startup_id=None if op is None else op.startup_id,
                 timing=_untimed_with_elapsed(_elapsed_ms(server_start)),
-            ) from exc
+            )
+            if adapter_consumed:
+                await _account_consumed_failure(generic_error)
+            else:
+                await _release_reserved_failure(generic_error)
+    if pending_error is not None:
+        raise pending_error
 
 
 async def _with_bypass_session(session_factory: async_sessionmaker[AsyncSession], op):
@@ -1803,8 +1867,9 @@ async def enqueue_describe_image(
         tier=envelope.tier,
     )
     job_id = uuid.uuid4()
-    async with admit_usage(
+    async with _maybe_admit_usage(
         usage_admission_service,
+        enabled=True,
         tenant_id=submission.tenant_uuid,
         idempotency_key=operation_id,
         job_id=str(job_id),

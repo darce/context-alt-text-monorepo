@@ -1,1 +1,1 @@
-8be73dc0beb2 offload: G3 binds reserved job UUIDs to persisted runs and settles
+acaf7755ebed offload: C0 recovery contract is committed: fenced cursor/quarantine

@@ -14,10 +14,12 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.application.services.checkout_service import CheckoutService
 from recognition.application.services.usage_admission_service import UsageAdmissionService
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
+from recognition.infrastructure.repositories.checkout_attempt_repository import CheckoutAttemptRepository
 from recognition.interface_adapters.http.deps.portal_auth import (
     PortalAuthSettings,
     build_portal_token_verifier,
@@ -50,6 +52,9 @@ class PortalCompositionConfig:
     billing_payments_enabled: bool = False
     billing_environment: str = "sandbox"
     billing_allowed_return_origins: tuple[str, ...] = ()
+    billing_seller_account: str | None = None
+    app_public_origin: str = ""
+    app_allowed_origins: tuple[str, ...] = ()
 
 
 class _OutboundHttpClient:
@@ -103,6 +108,27 @@ class BillingRepositoryFactory:
 
     def __call__(self, session: AsyncSession) -> BillingRepository:
         return BillingRepository(session)
+
+
+@dataclass(frozen=True, slots=True)
+class CheckoutServiceFactory:
+    """Construct a checkout service around the session for one request."""
+
+    provider: Any
+    seller_account: str
+    payments_enabled: bool = False
+    provider_name: str = "polar"
+    environment: str = "sandbox"
+
+    def __call__(self, session: AsyncSession) -> CheckoutService:
+        return CheckoutService(
+            CheckoutAttemptRepository(session),
+            self.provider,
+            payments_enabled=self.payments_enabled,
+            provider_name=self.provider_name,
+            environment=self.environment,
+            seller_account=self.seller_account,
+        )
 
 
 class UsageAdmissionServiceFactory:
@@ -328,6 +354,61 @@ def _polar_base_url(settings: RecognitionSettings, *, environment: str) -> str:
     return _validated_polar_base_url(base_url.strip(), environment=environment)
 
 
+def _absolute_origin(value: str, *, setting_name: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{setting_name} must be an absolute HTTP(S) origin")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username is not None:
+        raise ValueError(f"{setting_name} must be an absolute HTTP(S) origin")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _seller_account(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool,
+) -> str | None:
+    sections = ("billing", "polar")
+    value = _setting_value(
+        settings,
+        sections,
+        ("seller_account", "organization_id", "polar_organization_id", "polar_seller_account"),
+    )
+    if not isinstance(value, str) or not value.strip():
+        value = _environment_value(("POLAR_ORGANIZATION_ID", "POLAR_SELLER_ACCOUNT", "POLAR_ORGANIZATION"))
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if required:
+        missing.append("POLAR_ORGANIZATION_ID")
+    return None
+
+
+def _app_public_origin(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool,
+) -> str:
+    sections = ("portal", "app", "billing")
+    value = _setting_value(settings, sections, ("public_origin", "app_public_origin"))
+    if not isinstance(value, str) or not value.strip():
+        value = _environment_value(("APP_PUBLIC_ORIGIN",))
+    if isinstance(value, str) and value.strip():
+        return _absolute_origin(value.strip(), setting_name="APP_PUBLIC_ORIGIN")
+    if required:
+        missing.append("APP_PUBLIC_ORIGIN")
+    return ""
+
+
+def _app_allowed_origins(settings: RecognitionSettings) -> tuple[str, ...]:
+    sections = ("portal", "app")
+    configured = _setting_value(settings, sections, ("allowed_origins", "app_allowed_origins"))
+    if configured is None:
+        configured = _environment_value(("APP_ALLOWED_ORIGINS",))
+    return _text_values(configured)
+
+
 def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfig:
     missing: list[str] = []
     portal_auth = _portal_auth_settings(settings, missing)
@@ -358,11 +439,21 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
     payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
     if payments_enabled is None:
         payments_enabled = _environment_value(("POLAR_PAYMENTS_ENABLED",))
+    billing_payments_enabled = _boolean(payments_enabled, default=False)
+
+    seller_account = _seller_account(settings, missing, required=billing_payments_enabled)
+    app_public_origin = _app_public_origin(settings, missing, required=billing_payments_enabled)
+    app_allowed_origins = _app_allowed_origins(settings)
+    if missing:
+        missing_names = ", ".join(dict.fromkeys(missing))
+        raise ValueError(f"portal and billing composition requires: {missing_names}")
 
     origins = _setting_value(settings, sections, ("allowed_return_origins", "return_origins"))
     if origins is None:
         origins = _environment_value(("POLAR_ALLOWED_RETURN_ORIGINS",))
     allowed_return_origins = _text_values(origins)
+    if app_public_origin and app_public_origin not in allowed_return_origins:
+        allowed_return_origins = (*allowed_return_origins, app_public_origin)
 
     access_token = _secret_value(("POLAR_ACCESS_TOKEN", "POLAR_API_TOKEN"))
     return PortalCompositionConfig(
@@ -372,9 +463,12 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         billing_access_token=access_token,
         billing_base_url=base_url,
         billing_timeout_seconds=timeout_seconds,
-        billing_payments_enabled=_boolean(payments_enabled, default=False),
+        billing_payments_enabled=billing_payments_enabled,
         billing_environment=environment,
         billing_allowed_return_origins=allowed_return_origins,
+        billing_seller_account=seller_account,
+        app_public_origin=app_public_origin,
+        app_allowed_origins=app_allowed_origins,
     )
 
 
@@ -406,7 +500,7 @@ def install_portal_composition(
         outbound_client,
         config.portal_auth,
     )
-    app.state.billing_provider = PolarBillingProvider(
+    billing_provider = PolarBillingProvider(
         outbound_client,
         config.billing_webhook_secret,
         access_token=config.billing_access_token,
@@ -416,8 +510,22 @@ def install_portal_composition(
         payments_enabled=config.billing_payments_enabled,
         environment=config.billing_environment,
         allowed_return_origins=config.billing_allowed_return_origins,
+        seller_account=config.billing_seller_account,
     )
+    app.state.portal_composition_config = config
+    app.state.app_allowed_origins = config.app_allowed_origins
+    app.state.billing_provider = billing_provider
     app.state.billing_repository = BillingRepositoryFactory()
+    if config.billing_seller_account:
+        app.state.checkout_service = CheckoutServiceFactory(
+            provider=billing_provider,
+            seller_account=config.billing_seller_account,
+            payments_enabled=config.billing_payments_enabled,
+            provider_name="polar",
+            environment=config.billing_environment,
+        )
+    else:
+        app.state.checkout_service = None
     usage_timeout_value = _environment_value(("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",))
     usage_timeout_s = _positive_float(
         usage_timeout_value,
@@ -430,6 +538,7 @@ def install_portal_composition(
 
 __all__ = [
     "BillingRepositoryFactory",
+    "CheckoutServiceFactory",
     "PortalCompositionConfig",
     "UsageAdmissionServiceFactory",
     "install_portal_composition",

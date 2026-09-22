@@ -7,6 +7,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 
+from recognition.application.services.checkout_service import CheckoutService
+from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
+from recognition.infrastructure.repositories.checkout_attempt_repository import CheckoutAttemptRepository
 from recognition.interface_adapters.http.deps import portal_composition as composition
 from recognition.interface_adapters.http.deps.portal_composition import _portal_auth_settings
 
@@ -33,6 +36,11 @@ def _clear_portal_and_polar_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "POLAR_PRODUCT_ID",
         "POLAR_ALLOWED_RETURN_ORIGINS",
         "POLAR_REQUEST_TIMEOUT_SECONDS",
+        "POLAR_ORGANIZATION_ID",
+        "POLAR_SELLER_ACCOUNT",
+        "POLAR_ORGANIZATION",
+        "APP_PUBLIC_ORIGIN",
+        "APP_ALLOWED_ORIGINS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -296,3 +304,105 @@ def test_missing_billing_product_ids_are_reported(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError, match="POLAR_PRODUCT_IDS"):
         composition._composition_config(_composition_settings(omit_billing=("product_ids",)))
+
+
+class _StubOutboundClient:
+    async def get(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("composition tests must not call Polar")
+
+    async def post(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("composition tests must not call Polar")
+
+
+def test_payments_disabled_installs_without_seller_or_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_secrets(monkeypatch)
+    config = composition._composition_config(_composition_settings())
+    app = FastAPI()
+    composition.install_portal_composition(app, settings=_composition_settings(), http_client=_StubOutboundClient())
+
+    assert config.billing_payments_enabled is False
+    assert config.billing_seller_account is None
+    assert config.billing_access_token is None
+    assert isinstance(app.state.billing_provider, PolarBillingProvider)
+    assert app.state.billing_provider._seller_account is None
+    assert getattr(app.state, "checkout_service", None) is None
+    assert (
+        app.state.portal_composition_config is config
+        or app.state.portal_composition_config.billing_seller_account is None
+    )
+
+
+def test_payments_enabled_requires_configured_seller_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_secrets(monkeypatch)
+    with pytest.raises(ValueError, match="POLAR_ORGANIZATION_ID"):
+        composition._composition_config(_composition_settings(billing={"payments_enabled": True}))
+
+
+def test_seller_account_is_threaded_identically_to_provider_and_checkout_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_secrets(monkeypatch)
+    captured: list[dict[str, object]] = []
+    real_provider = composition.PolarBillingProvider
+
+    def _capture(*args: object, **kwargs: object) -> PolarBillingProvider:
+        captured.append(dict(kwargs))
+        return real_provider(*args, **kwargs)
+
+    monkeypatch.setattr(composition, "PolarBillingProvider", _capture)
+    settings = _composition_settings(
+        billing={
+            "payments_enabled": True,
+            "seller_account": "org-from-settings",
+            "allowed_return_origins": AUTHORIZED_ORIGIN,
+        },
+        portal={"authorized_parties": AUTHORIZED_ORIGIN},
+    )
+    monkeypatch.setenv("APP_PUBLIC_ORIGIN", AUTHORIZED_ORIGIN)
+    monkeypatch.setenv("APP_ALLOWED_ORIGINS", AUTHORIZED_ORIGIN)
+    app = FastAPI()
+    composition.install_portal_composition(app, settings=settings, http_client=_StubOutboundClient())
+
+    factory = app.state.checkout_service
+    provider = app.state.billing_provider
+    session = object()
+    service = factory(session)
+    assert captured[0]["seller_account"] == "org-from-settings"
+    assert provider._seller_account == "org-from-settings"
+    assert factory.seller_account == "org-from-settings"
+    assert isinstance(factory, composition.CheckoutServiceFactory)
+    assert isinstance(service, CheckoutService)
+    assert isinstance(service._repository, CheckoutAttemptRepository)
+    assert service._repository.session is session
+    assert service._seller_account == "org-from-settings"
+    assert service._provider is provider
+    assert app.state.portal_composition_config.billing_seller_account == "org-from-settings"
+    assert app.state.portal_composition_config.app_public_origin == AUTHORIZED_ORIGIN
+    assert AUTHORIZED_ORIGIN in app.state.app_allowed_origins
+
+
+def test_seller_account_from_env_is_used_and_never_defaulted(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_secrets(monkeypatch)
+    monkeypatch.setenv("POLAR_ORGANIZATION_ID", "org-from-env")
+    monkeypatch.setenv("POLAR_PAYMENTS_ENABLED", "true")
+    monkeypatch.setenv("APP_PUBLIC_ORIGIN", AUTHORIZED_ORIGIN)
+    monkeypatch.setenv("APP_ALLOWED_ORIGINS", AUTHORIZED_ORIGIN)
+    config = composition._composition_config(
+        _composition_settings(billing={"allowed_return_origins": AUTHORIZED_ORIGIN})
+    )
+
+    assert config.billing_seller_account == "org-from-env"
+    assert config.billing_payments_enabled is True
+    assert "org_sandbox" not in {config.billing_seller_account}
+    assert config.app_public_origin == AUTHORIZED_ORIGIN
+
+
+def test_payments_enabled_does_not_invent_an_organization_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_secrets(monkeypatch)
+    monkeypatch.setenv("APP_PUBLIC_ORIGIN", AUTHORIZED_ORIGIN)
+    with pytest.raises(ValueError, match="POLAR_ORGANIZATION_ID"):
+        composition.install_portal_composition(
+            FastAPI(),
+            settings=_composition_settings(billing={"payments_enabled": True}),
+            http_client=_StubOutboundClient(),
+        )

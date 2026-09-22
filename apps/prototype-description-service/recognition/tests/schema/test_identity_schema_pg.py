@@ -71,3 +71,59 @@ def test_matview_centroid_carries_vector_typmod(pg_migrated_engine) -> None:
     assert typmod == MIGRATION.EMBEDDING_DIMENSION, (
         f"centroid typmod={typmod!r}, expected vector({MIGRATION.EMBEDDING_DIMENSION})"
     )
+
+
+def test_pg_test_role_is_nonsuperuser_without_bypassrls(pg_migrated_engine) -> None:
+    with pg_migrated_engine.connect() as conn:
+        role, rolsuper, rolbypassrls, database = conn.execute(
+            text(
+                "SELECT current_user, r.rolsuper, r.rolbypassrls, current_database() "
+                "FROM pg_roles r WHERE r.rolname = current_user"
+            )
+        ).one()
+    assert rolsuper is False, f"role {role!r} on {database!r} is superuser; RLS evidence would be vacuous"
+    assert rolbypassrls is False, f"role {role!r} on {database!r} has BYPASSRLS; RLS evidence would be vacuous"
+
+
+def test_checkout_and_usage_are_tenant_tables_global_state_is_nontenant_singleton(
+    pg_migrated_engine,
+) -> None:
+    tenant_tables = ("billing_checkout_attempt", "usage_reservation")
+    with pg_migrated_engine.connect() as conn:
+        tenant_rows = conn.execute(
+            text(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname = ANY(:tables)"
+            ),
+            {"tables": list(tenant_tables)},
+        ).fetchall()
+        global_flags = conn.execute(
+            text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='usage_admission_global_state'"
+            )
+        ).one()
+        global_policies = conn.execute(
+            text(
+                "SELECT policyname FROM pg_policies "
+                "WHERE schemaname='public' AND tablename='usage_admission_global_state'"
+            )
+        ).fetchall()
+        singleton = conn.execute(text("SELECT id, COUNT(*) OVER () FROM usage_admission_global_state")).one()
+        tenant_id_col = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='usage_admission_global_state' "
+                "AND column_name='tenant_id'"
+            )
+        ).scalar()
+    state = {name: (enabled, forced) for name, enabled, forced in tenant_rows}
+    assert set(state) == set(tenant_tables)
+    assert all(flags == (True, True) for flags in state.values()), state
+    assert global_flags == (False, False)
+    assert global_policies == []
+    assert tenant_id_col is None
+    assert singleton[0] == "global"
+    assert singleton[1] == 1

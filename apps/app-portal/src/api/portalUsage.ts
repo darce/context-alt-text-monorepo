@@ -24,6 +24,7 @@ export type PortalUsageApiError = {
 export type PortalUsageClient = { read(): Promise<PortalUsageResponse> };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const USAGE_STATUSES = new Set(['beta_active', 'paid_active', 'past_due', 'expired', 'revoked']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -38,21 +39,27 @@ function parseRequiredString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function parseNullableString(value: unknown): string | null | undefined {
+function parseIsoDateTime(value: unknown): string | null {
+  if (typeof value !== 'string' || !ISO_DATE_TIME_RE.test(value)) {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? value : null;
+}
+
+function parseNullableIsoDateTime(value: unknown): string | null | undefined {
   if (value === null) {
     return null;
   }
-  if (typeof value === 'string') {
-    return value;
-  }
-  return undefined;
+  const parsed = parseIsoDateTime(value);
+  return parsed === null ? undefined : parsed;
 }
 
 function parseNullableInt(value: unknown): number | null | undefined {
   if (value === null) {
     return null;
   }
-  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value)) {
+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     return undefined;
   }
   return value;
@@ -117,8 +124,8 @@ function parsePeriod(value: unknown): PortalUsagePeriodResponse | null {
   if (!isRecord(value)) {
     return null;
   }
-  const start = parseRequiredString(value.start);
-  const end = parseRequiredString(value.end);
+  const start = parseIsoDateTime(value.start);
+  const end = parseIsoDateTime(value.end);
   if (!start || !end) {
     return null;
   }
@@ -134,10 +141,10 @@ function parseUsage(value: unknown): PortalUsageResponse | null {
   const reserved = parseNullableInt(value.reserved);
   const remaining = parseNullableInt(value.remaining);
   const allowance = parseNullableInt(value.allowance);
-  const periodStart = parseRequiredString(value.period_start);
-  const periodEnd = parseRequiredString(value.period_end);
+  const periodStart = parseIsoDateTime(value.period_start);
+  const periodEnd = parseIsoDateTime(value.period_end);
   const period = parsePeriod(value.period);
-  const asOf = parseNullableString(value.as_of);
+  const asOf = parseNullableIsoDateTime(value.as_of);
   const status = parseStatus(value.status);
   const dataSource = parseRequiredString(value.data_source);
   if (

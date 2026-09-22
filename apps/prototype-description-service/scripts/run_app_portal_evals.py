@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,16 @@ class EvalRunnerError(RuntimeError):
     """The runner could not prepare or record an evaluation run."""
 
 
+class CaseLedgerStatus(StrEnum):
+    """Per-declared-case outcome recorded in the run ledger."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    ERROR = "error"
+    NOT_RUN = "not_run"
+
+
 @dataclass(frozen=True, slots=True)
 class ManifestCase:
     """One executable or evidence-only case declared by the manifest."""
@@ -78,6 +89,8 @@ class ManifestCase:
     criterion: str
     status: str
     test: str | None
+    artifact: str | None = None
+    additional_evidence_required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +118,18 @@ class EvalManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class JunitCase:
+    """One JUnit testcase with pytest node-id candidates."""
+
+    node_id: str
+    candidates: frozenset[str]
+    outcome: CaseLedgerStatus
+    classname: str
+    name: str
+    file: str
+
+
+@dataclass(frozen=True, slots=True)
 class JunitCounts:
     """Counts derived from testcase elements in one JUnit report."""
 
@@ -116,6 +141,8 @@ class JunitCounts:
     error_count: int
     failure_element_count: int
     report_error: str | None = None
+    cases: tuple[JunitCase, ...] = ()
+    mtime: float | None = None
 
 
 CommandRunner = Callable[..., Any]
@@ -241,8 +268,7 @@ def load_manifest(path: str | Path) -> EvalManifest:
     if not isinstance(tags_value, list) or not tags_value:
         raise _manifest_error(f"{manifest_path}.tags", "must be a non-empty array")
     tags = tuple(
-        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]")
-        for index, tag in enumerate(tags_value)
+        _require_nonempty_string(tag, path=f"{manifest_path}.tags[{index}]") for index, tag in enumerate(tags_value)
     )
 
     cases_value = raw["cases"]
@@ -273,18 +299,18 @@ def load_manifest(path: str | Path) -> EvalManifest:
             )
         criterion = _require_nonempty_string(case["criterion"], path=f"{case_path}.criterion")
         status = _require_nonempty_string(case["status"], path=f"{case_path}.status")
-        test = (
-            _require_nonempty_string(case["test"], path=f"{case_path}.test")
-            if "test" in case
-            else None
+        test = _require_nonempty_string(case["test"], path=f"{case_path}.test") if "test" in case else None
+        additional_evidence_required = False
+        if "additional_evidence_required" in case:
+            if type(case["additional_evidence_required"]) is not bool:
+                raise _manifest_error(
+                    f"{case_path}.additional_evidence_required",
+                    "must be a boolean",
+                )
+            additional_evidence_required = case["additional_evidence_required"]
+        artifact = (
+            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact") if "artifact" in case else None
         )
-        if "additional_evidence_required" in case and type(case["additional_evidence_required"]) is not bool:
-            raise _manifest_error(
-                f"{case_path}.additional_evidence_required",
-                "must be a boolean",
-            )
-        if "artifact" in case:
-            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
         cases.append(
             ManifestCase(
                 case_id=case_id,
@@ -292,6 +318,8 @@ def load_manifest(path: str | Path) -> EvalManifest:
                 criterion=criterion,
                 status=status,
                 test=test,
+                artifact=artifact,
+                additional_evidence_required=additional_evidence_required,
             )
         )
 
@@ -323,8 +351,7 @@ def _selected_groups(manifest: EvalManifest, requested: Sequence[str] | None) ->
     for group in requested:
         if group not in available:
             raise ManifestValidationError(
-                f"manifest {manifest.path}: unknown group {group!r}; "
-                f"known groups: {sorted(available)}"
+                f"manifest {manifest.path}: unknown group {group!r}; known groups: {sorted(available)}"
             )
         if group not in selected:
             selected.append(group)
@@ -371,6 +398,34 @@ def _local_tag(tag: object) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _junit_case_candidates(*, file_attr: str, classname: str, name: str) -> frozenset[str]:
+    candidates: set[str] = set()
+    if file_attr and name:
+        candidates.add(f"{file_attr}::{name}")
+    if classname and name:
+        candidates.add(f"{classname}::{name}")
+        parts = classname.split(".")
+        last = parts[-1] if parts else ""
+        if last[:1].isupper() and len(parts) > 1:
+            module_file = "/".join(parts[:-1]) + ".py"
+            candidates.add(f"{module_file}::{last}::{name}")
+            candidates.add(f"{module_file}::{name}")
+        elif parts:
+            candidates.add(f"{'/'.join(parts)}.py::{name}")
+    return frozenset(candidates)
+
+
+def _junit_case_outcome(testcase: ET.Element) -> CaseLedgerStatus:
+    child_tags = {_local_tag(child.tag) for child in testcase}
+    if "skipped" in child_tags:
+        return CaseLedgerStatus.SKIPPED
+    if "error" in child_tags:
+        return CaseLedgerStatus.ERROR
+    if "failure" in child_tags:
+        return CaseLedgerStatus.FAILED
+    return CaseLedgerStatus.PASSED
+
+
 def _read_junit(path: Path) -> JunitCounts:
     if not path.is_file():
         return JunitCounts(
@@ -384,8 +439,13 @@ def _read_junit(path: Path) -> JunitCounts:
             report_error=f"missing JUnit report: {path}",
         )
     try:
+        mtime = path.stat().st_mtime
         root = ET.parse(path).getroot()
     except (ET.ParseError, OSError, UnicodeError) as exc:
+        try:
+            parse_mtime = path.stat().st_mtime
+        except OSError:
+            parse_mtime = None
         return JunitCounts(
             report_found=True,
             case_count=0,
@@ -395,14 +455,17 @@ def _read_junit(path: Path) -> JunitCounts:
             error_count=0,
             failure_element_count=0,
             report_error=f"cannot parse JUnit report {path}: {exc}",
+            mtime=parse_mtime,
         )
 
-    testcases = [element for element in root.iter() if _local_tag(element.tag) == "testcase"]
+    parsed_cases: list[JunitCase] = []
     skip_count = 0
     error_count = 0
     failure_element_count = 0
     fail_count = 0
-    for testcase in testcases:
+    for testcase in root.iter():
+        if _local_tag(testcase.tag) != "testcase":
+            continue
         child_tags = {_local_tag(child.tag) for child in testcase}
         if "skipped" in child_tags:
             skip_count += 1
@@ -414,15 +477,34 @@ def _read_junit(path: Path) -> JunitCounts:
             error_count += 1
         if has_failure or has_error:
             fail_count += 1
-    pass_count = max(0, len(testcases) - skip_count - fail_count)
+        file_attr = (testcase.get("file") or "").replace("\\", "/")
+        classname = testcase.get("classname") or ""
+        name = testcase.get("name") or ""
+        candidates = _junit_case_candidates(file_attr=file_attr, classname=classname, name=name)
+        node_id = next(iter(candidates), f"{classname}::{name}" if classname or name else "")
+        if file_attr and name:
+            node_id = f"{file_attr}::{name}"
+        parsed_cases.append(
+            JunitCase(
+                node_id=node_id,
+                candidates=candidates,
+                outcome=_junit_case_outcome(testcase),
+                classname=classname,
+                name=name,
+                file=file_attr,
+            )
+        )
+    pass_count = max(0, len(parsed_cases) - skip_count - fail_count)
     return JunitCounts(
         report_found=True,
-        case_count=len(testcases),
+        case_count=len(parsed_cases),
         pass_count=pass_count,
         fail_count=fail_count,
         skip_count=skip_count,
         error_count=error_count,
         failure_element_count=failure_element_count,
+        cases=tuple(parsed_cases),
+        mtime=mtime,
     )
 
 
@@ -463,6 +545,56 @@ def _normalise_status(value: object, *, fallback: int = 1) -> int:
     return 128 + abs(status) if status < 0 else status
 
 
+def _required_case_ids_for_selection(manifest: EvalManifest, selected: Sequence[str]) -> set[str]:
+    selected_ids = {case.case_id for group in selected for case in manifest.groups[group]}
+    required: set[str] = set()
+    for gate in manifest.release_gates.values():
+        for case_id in gate.get("required_cases", []):
+            if case_id in selected_ids:
+                required.add(str(case_id))
+    return required
+
+
+def _junit_is_stale(junit: JunitCounts, *, started_at: datetime) -> bool:
+    if not junit.report_found or junit.mtime is None:
+        return False
+    return junit.mtime < started_at.timestamp() - 1
+
+
+def _match_junit_case(declared: str, available: list[JunitCase]) -> JunitCase | None:
+    for index, case in enumerate(available):
+        if declared == case.node_id or declared in case.candidates:
+            return available.pop(index)
+    return None
+
+
+def _artifact_evidence(
+    case: ManifestCase,
+    *,
+    repository_root: Path,
+) -> tuple[bool, str | None]:
+    needs_artifact = case.additional_evidence_required or case.artifact is not None
+    if not needs_artifact:
+        return True, None
+    if case.artifact is None:
+        return (
+            False,
+            f"required case {case.case_id} requires additional evidence but declares no artifact",
+        )
+    path = Path(case.artifact).expanduser()
+    if not path.is_absolute():
+        path = repository_root / path
+    try:
+        resolved = path.resolve()
+        if not resolved.is_file():
+            return False, f"required case {case.case_id} missing required artifact {resolved}"
+        if resolved.stat().st_size == 0:
+            return False, f"required case {case.case_id} required artifact is empty: {resolved}"
+    except OSError as exc:
+        return False, f"required case {case.case_id} missing required artifact {path}: {exc}"
+    return True, None
+
+
 def _run_group(
     manifest: EvalManifest,
     *,
@@ -472,6 +604,9 @@ def _run_group(
     log_path: Path,
     environment: Mapping[str, str],
     command_runner: CommandRunner,
+    started_at: datetime,
+    repository_root: Path,
+    required_case_ids: set[str],
 ) -> dict[str, Any]:
     test_nodes = [case.test for case in cases if case.test is not None]
     command = [
@@ -482,14 +617,12 @@ def _run_group(
         *test_nodes,
         f"--junitxml={xml_path}",
     ]
-    raw_exit_status = 1
+    raw_exit_status = 0
     timed_out = False
     execution_error: str | None = None
+    ran_pytest = bool(test_nodes)
     with log_path.open("w", encoding="utf-8") as log_file:
-        if not test_nodes:
-            raw_exit_status = 1
-            execution_error = "group has no executable test cases"
-        else:
+        if ran_pytest:
             try:
                 completed = command_runner(
                     command,
@@ -514,29 +647,72 @@ def _run_group(
                 execution_error = f"cannot run pytest subprocess: {exc}"
 
     junit = _read_junit(xml_path)
+    stale_junit = ran_pytest and _junit_is_stale(junit, started_at=started_at)
+    usable_junit = ran_pytest and junit.report_found and junit.report_error is None and not stale_junit
+    unmatched = list(junit.cases) if usable_junit else []
     output_tail, output_tail_bytes, output_tail_truncated, tail_error = _read_capped_tail(log_path)
     threshold_failures = int(manifest.threshold["max_failures"])
     threshold_skipped = int(manifest.threshold["max_skipped"])
     reasons: list[str] = []
-    status = _normalise_status(raw_exit_status)
-    if raw_exit_status != 0:
+    status = _normalise_status(raw_exit_status) if ran_pytest else 0
+    if ran_pytest and raw_exit_status != 0:
         reasons.append(f"pytest exited with status {raw_exit_status}")
-    if not junit.report_found:
+    if ran_pytest and not junit.report_found:
         reasons.append("JUnit report is missing")
-    if junit.case_count == 0:
+    if ran_pytest and junit.case_count == 0:
         reasons.append("group produced zero test cases")
-    if junit.fail_count > threshold_failures:
-        reasons.append(
-            f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}"
-        )
-    if junit.skip_count > threshold_skipped:
+    if ran_pytest and junit.fail_count > threshold_failures:
+        reasons.append(f"failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}")
+    if ran_pytest and junit.skip_count > threshold_skipped:
         reasons.append(f"skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}")
-    if junit.report_error:
+    if stale_junit:
+        reasons.append(f"stale JUnit report: {xml_path} is older than the run start")
+    if ran_pytest and junit.report_error:
         reasons.append(junit.report_error)
     if execution_error:
         reasons.append(execution_error)
     if tail_error:
         reasons.append(tail_error)
+
+    case_ledger: list[dict[str, Any]] = []
+    for case in cases:
+        required = case.case_id in required_case_ids
+        label = "required case" if required else "declared case"
+        matched = _match_junit_case(case.test, unmatched) if case.test and usable_junit else None
+        if case.test is None:
+            ledger_status = CaseLedgerStatus.NOT_RUN
+        elif matched is None:
+            ledger_status = CaseLedgerStatus.NOT_RUN
+            reasons.append(f"{label} {case.case_id} was not executed (declared test {case.test} missing from JUnit)")
+        else:
+            ledger_status = matched.outcome
+            if ledger_status == CaseLedgerStatus.SKIPPED:
+                reasons.append(f"{label} {case.case_id} was skipped")
+            elif ledger_status == CaseLedgerStatus.FAILED:
+                reasons.append(f"{label} {case.case_id} failed")
+            elif ledger_status == CaseLedgerStatus.ERROR:
+                reasons.append(f"{label} {case.case_id} errored")
+        artifact_ok, artifact_reason = _artifact_evidence(case, repository_root=repository_root)
+        if artifact_reason:
+            reasons.append(artifact_reason)
+        if case.test is None and artifact_ok:
+            ledger_status = CaseLedgerStatus.PASSED
+        case_ledger.append(
+            {
+                "id": case.case_id,
+                "group": group,
+                "test": case.test,
+                "artifact": case.artifact,
+                "required": required,
+                "status": str(ledger_status),
+                "junit_identity": None if matched is None else matched.node_id,
+                "additional_evidence_required": case.additional_evidence_required,
+                "additional_evidence_present": artifact_ok
+                if (case.additional_evidence_required or case.artifact is not None)
+                else True,
+            }
+        )
+
     if reasons:
         status = max(status, 1)
 
@@ -553,6 +729,7 @@ def _run_group(
         "exit_status": status,
         "timed_out": timed_out,
         "junit_report_found": junit.report_found,
+        "case_ledger": case_ledger,
         "artifact_paths": [str(xml_path.resolve()), str(log_path.resolve())],
         "output_capture": {
             "path": str(log_path.resolve()),
@@ -597,9 +774,7 @@ def run_evals(
     effective_environment = dict(os.environ if environment is None else environment)
     runner = subprocess.run if command_runner is None else command_runner
     artifact_dir = (
-        REPOSITORY_ROOT / ".task-state" / "evals"
-        if out_dir is None
-        else Path(out_dir).expanduser()
+        REPOSITORY_ROOT / ".task-state" / "evals" if out_dir is None else Path(out_dir).expanduser()
     ).resolve()
     try:
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -619,6 +794,8 @@ def run_evals(
     group_results: list[dict[str, Any]] = []
     worst_status = 0
     available_groups = manifest.groups
+    full_suite = list(selected) == list(available_groups)
+    required_case_ids = _required_case_ids_for_selection(manifest, selected)
     for group in selected:
         xml_path, log_path = group_artifacts[group]
         result = _run_group(
@@ -629,16 +806,15 @@ def run_evals(
             log_path=log_path,
             environment=effective_environment,
             command_runner=runner,
+            started_at=started_at,
+            repository_root=REPOSITORY_ROOT,
+            required_case_ids=required_case_ids,
         )
         group_results.append(result)
         worst_status = max(worst_status, int(result["exit_status"]))
 
     finished_at = datetime.now(UTC)
-    artifact_paths = [
-        artifact_path
-        for result in group_results
-        for artifact_path in result["artifact_paths"]
-    ]
+    artifact_paths = [artifact_path for result in group_results for artifact_path in result["artifact_paths"]]
     evidence = {
         "schema_version": 1,
         "suite_id": manifest.suite_id,
@@ -649,6 +825,9 @@ def run_evals(
         "gate_environment": _gate_environment(effective_environment),
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
+        "selected_groups": list(selected),
+        "full_suite": full_suite,
+        "required_case_ids": sorted(required_case_ids),
         "groups": group_results,
         "artifact_paths": artifact_paths,
         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,

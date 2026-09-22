@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -54,6 +57,10 @@ def _write_manifest(tmp_path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def _pytest_nodes(command: Sequence[str]) -> list[str]:
+    return [argument for argument in command if argument.startswith("recognition/")]
+
+
 def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
     testcase_xml: list[str] = []
     for index in range(cases):
@@ -65,6 +72,62 @@ def _junit(*, cases: int = 1, failures: int = 0, skipped: int = 0) -> str:
             child = ""
         testcase_xml.append(f"<testcase classname='tests' name='case-{index}'>{child}</testcase>")
     return f"<testsuite tests='{cases}' failures='{failures}' skipped='{skipped}'>{''.join(testcase_xml)}</testsuite>"
+
+
+def _junit_for_nodes(
+    nodes: Sequence[str],
+    *,
+    skipped: Sequence[str] = (),
+    failed: Sequence[str] = (),
+    errored: Sequence[str] = (),
+) -> str:
+    """Pytest --junitxml shape: file + classname + name, optional skipped/failure/error."""
+
+    skipped_nodes = set(skipped)
+    failed_nodes = set(failed)
+    errored_nodes = set(errored)
+    testcase_xml: list[str] = []
+    for node in nodes:
+        file_part, name = node.split("::", 1)
+        classname = file_part.replace("/", ".").removesuffix(".py")
+        if node in skipped_nodes:
+            child = "<skipped type='pytest.skip' message='skipped required case' />"
+        elif node in failed_nodes:
+            child = "<failure message='failed'>traceback</failure>"
+        elif node in errored_nodes:
+            child = "<error message='error'>traceback</error>"
+        else:
+            child = ""
+        testcase_xml.append(f"<testcase classname='{classname}' name='{name}' file='{file_part}'>{child}</testcase>")
+    return f"<testsuites><testsuite name='pytest' tests='{len(nodes)}'>{''.join(testcase_xml)}</testsuite></testsuites>"
+
+
+def _write_command_junit(
+    command: Sequence[str],
+    xml_path: Path,
+    *,
+    case_count: int | None = None,
+    skipped: Sequence[str] = (),
+    failed: Sequence[str] = (),
+    errored: Sequence[str] = (),
+    xml_text: str | None = None,
+    mtime: float | None = None,
+) -> None:
+    if xml_text is not None:
+        xml_path.write_text(xml_text, encoding="utf-8")
+    else:
+        nodes = _pytest_nodes(command)
+        if case_count == 0:
+            xml_path.write_text(_junit(cases=0), encoding="utf-8")
+        elif case_count is not None and case_count != len(nodes):
+            xml_path.write_text(_junit(cases=case_count), encoding="utf-8")
+        else:
+            xml_path.write_text(
+                _junit_for_nodes(nodes, skipped=skipped, failed=failed, errored=errored),
+                encoding="utf-8",
+            )
+    if mtime is not None:
+        os.utime(xml_path, (mtime, mtime))
 
 
 def _fake_runner(
@@ -81,16 +144,16 @@ def _fake_runner(
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout="a" * 40, stderr="")
         assert command[:3] == [runner.sys.executable, "-m", "pytest"]
-        group = next(
-            argument.split("--", 1)[1]
-            for argument in command
-            if argument.startswith("recognition/tests/")
-        ).split("/", 3)[2].split("_", 2)[2].split(".", 1)[0]
+        group = (
+            next(argument.split("--", 1)[1] for argument in command if argument.startswith("recognition/tests/"))
+            .split("/", 3)[2]
+            .split("_", 2)[2]
+            .split(".", 1)[0]
+        )
         # The command's node id is only a convenient fixture discriminator;
         # the runner itself never infers groups from test names.
         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-        cases = junit_cases.get(group, 1)
-        xml_path.write_text(_junit(cases=cases), encoding="utf-8")
+        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
         kwargs["stdout"].write(f"child output for {group}\n")
         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
 
@@ -115,7 +178,7 @@ def _fake_runner_by_test(
         test_node = next(argument for argument in command if argument.startswith("recognition/tests/"))
         group = test_node.rsplit("test_case_", 1)[1]
         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-        xml_path.write_text(_junit(cases=junit_cases.get(group, 1)), encoding="utf-8")
+        _write_command_junit(command, xml_path, case_count=junit_cases.get(group))
         kwargs["stdout"].write(f"child output for {group}\n")
         return SimpleNamespace(returncode=statuses.get(group, 0), stdout=None, stderr=None)
 
@@ -190,7 +253,10 @@ def test_group_without_executable_tests_fails_without_running_unscoped_pytest(tm
     pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
     assert pytest_calls == []
     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
-    assert "group has no executable test cases" in evidence["groups"][0]["failure_reasons"]
+    assert any(
+        "missing required artifact" in reason and "SC-1" in reason
+        for reason in evidence["groups"][0]["failure_reasons"]
+    )
 
 
 def test_selected_group_outputs_are_cleaned_without_touching_other_groups(tmp_path: Path) -> None:
@@ -239,7 +305,7 @@ def test_evidence_has_real_head_sha_and_absolute_artifact_paths(tmp_path: Path) 
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout=actual_sha, stderr="")
         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-        xml_path.write_text(_junit(cases=1), encoding="utf-8")
+        _write_command_junit(command, xml_path)
         kwargs["stdout"].write("bounded child output\n")
         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
 
@@ -285,7 +351,7 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout="c" * 40, stderr="")
         xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
-        xml_path.write_text(_junit(cases=1), encoding="utf-8")
+        _write_command_junit(command, xml_path)
         kwargs["stdout"].write("x" * (runner.CAPTURED_TAIL_BYTES + 100))
         return SimpleNamespace(returncode=0, stdout=None, stderr=None)
 
@@ -297,3 +363,265 @@ def test_evidence_reads_only_the_bounded_child_output_tail(tmp_path: Path) -> No
     assert capture["tail_limit_bytes"] == runner.CAPTURED_TAIL_BYTES
     assert capture["tail_truncated"] is True
     assert len(capture["tail"].encode("utf-8")) == runner.CAPTURED_TAIL_BYTES
+
+
+def _last_evidence(tmp_path: Path) -> dict[str, Any]:
+    return json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+
+
+def _git_ok_then(handler):
+    def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="d" * 40, stderr="")
+        return handler(command, **kwargs)
+
+    return fake
+
+
+def test_required_case_wrong_junit_identity_fails_even_when_counts_are_green(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    declared = payload["cases"][0]["test"]
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(
+            command,
+            xml_path,
+            xml_text=_junit_for_nodes(["recognition/tests/api/test_other.py::test_unrelated"]),
+        )
+        kwargs["stdout"].write("unrelated passing case\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    assert group["case_count"] == 1
+    assert group["pass_count"] == 1
+    ledger = group["case_ledger"]
+    assert ledger[0]["id"] == "SC-1"
+    assert ledger[0]["test"] == declared
+    assert ledger[0]["status"] == "not_run"
+    assert any("required case" in reason and "SC-1" in reason for reason in group["failure_reasons"])
+
+
+def test_required_case_skipped_in_junit_cannot_exit_clean(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    declared = payload["cases"][0]["test"]
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path, skipped=[declared])
+        kwargs["stdout"].write("skipped\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "skipped"
+    assert any("skipped" in reason and "SC-1" in reason for reason in group["failure_reasons"])
+
+
+def test_malformed_junit_fails_and_keeps_truthful_partial_evidence(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        xml_path.write_text("<not-junit", encoding="utf-8")
+        kwargs["stdout"].write("parser noise\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
+    assert evidence["runner_exit_status"] == 1
+    assert group["junit_report_found"] is True
+    assert group["case_ledger"][0]["status"] == "not_run"
+    assert any("cannot parse JUnit" in reason for reason in group["failure_reasons"])
+    assert "parser noise" in group["output_capture"]["tail"]
+
+
+def test_missing_junit_fails_and_keeps_partial_evidence(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        kwargs["stdout"].write("pytest collected nothing\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["junit_report_found"] is False
+    assert group["case_ledger"][0]["status"] == "not_run"
+    assert any("JUnit report is missing" in reason for reason in group["failure_reasons"])
+
+
+def test_stale_junit_mtime_before_run_start_fails(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    past = time.time() - 3600
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path, mtime=past)
+        kwargs["stdout"].write("stale report reused\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert any("stale JUnit" in reason for reason in group["failure_reasons"])
+    assert group["case_ledger"][0]["status"] == "not_run"
+
+
+def test_selected_group_does_not_demand_unselected_required_cases(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path, groups=("selected", "other"))
+    manifest_path = _write_manifest(tmp_path, payload)
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["selected"],
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=calls),
+    )
+
+    assert status == 0
+    evidence = _last_evidence(tmp_path)
+    assert evidence["full_suite"] is False
+    assert evidence["selected_groups"] == ["selected"]
+    assert [group["group"] for group in evidence["groups"]] == ["selected"]
+    assert evidence["groups"][0]["case_ledger"][0]["id"] == "SC-1"
+    assert evidence["groups"][0]["case_ledger"][0]["status"] == "passed"
+    assert all("SC-2" not in reason for group in evidence["groups"] for reason in group["failure_reasons"])
+    pytest_nodes = [
+        argument
+        for command, _kwargs in calls
+        if command[:3] == [runner.sys.executable, "-m", "pytest"]
+        for argument in command
+        if argument.startswith("recognition/")
+    ]
+    assert pytest_nodes == ["recognition/tests/api/test_portal_1.py::test_case_1"]
+
+
+def test_full_suite_run_is_labeled_full_suite(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path, groups=("first", "second"))
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 0
+    evidence = _last_evidence(tmp_path)
+    assert evidence["full_suite"] is True
+    assert evidence["selected_groups"] == ["first", "second"]
+
+
+def test_missing_required_artifact_fails_without_greening(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["additional_evidence_required"] = True
+    payload["cases"][0]["artifact"] = "docs/missing-app1-evidence.md"
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["additional_evidence_present"] is False
+    assert any("missing required artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
+
+
+def test_additional_evidence_without_artifact_path_cannot_exit_clean(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert any("no artifact" in reason and "SC-1" in reason for reason in group["failure_reasons"])
+
+
+def test_required_artifact_present_and_matching_junit_can_pass(tmp_path: Path) -> None:
+    artifact = tmp_path / "browser-secret-once.md"
+    artifact.write_text("one-time secret display evidence\n", encoding="utf-8")
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["additional_evidence_required"] = True
+    payload["cases"][0]["artifact"] = str(artifact)
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 0
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "passed"
+    assert group["case_ledger"][0]["additional_evidence_present"] is True
+
+
+def test_evidence_only_group_passes_when_required_artifact_exists(tmp_path: Path) -> None:
+    artifact = tmp_path / "observation.md"
+    artifact.write_text("cohort study\n", encoding="utf-8")
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=calls),
+    )
+
+    assert status == 0
+    pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
+    assert pytest_calls == []
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "passed"
+    assert group["exit_status"] == 0
+
+
+def test_required_case_failure_element_is_not_green(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    declared = payload["cases"][0]["test"]
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(command, xml_path, failed=[declared])
+        kwargs["stdout"].write("failed assertion\n")
+        return SimpleNamespace(returncode=1, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status >= 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "failed"
+    assert "failed assertion" in group["output_capture"]["tail"]

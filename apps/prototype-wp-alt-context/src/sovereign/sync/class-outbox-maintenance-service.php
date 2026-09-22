@@ -57,6 +57,7 @@ class OutboxMaintenanceService {
 	use RunsTransactional;
 
 	private const DEFAULT_PURGE_BATCH_SIZE = 50;
+	private const DEFAULT_PURGE_TENANT_PAGE_SIZE = 25;
 	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
 	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
 	private const DEFAULT_FAILED_RETENTION_DAYS = 7;
@@ -422,29 +423,68 @@ class OutboxMaintenanceService {
 	/**
 	 * @return string[]
 	 */
-	public function list_terminal_purge_tenant_ids(): array {
+	public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_col' ) ) {
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ( ! method_exists( $wpdb, 'get_col' ) && ! method_exists( $wpdb, 'get_results' ) )
+		) {
 			return array();
 		}
 
+		$limit = null === $limit
+			? $this->resolve_positive_int_tunable( 'acx_sync_purge_tenant_page_size', self::DEFAULT_PURGE_TENANT_PAGE_SIZE )
+			: max( 1, $limit );
+		$after_tenant_id = trim( $after_tenant_id );
+
+		$build_query = static function ( string $table_name ) use ( $wpdb, $limit, $after_tenant_id ): string {
+			if ( '' === $after_tenant_id ) {
+				return $wpdb->prepare(
+					'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s ORDER BY tenant_id ASC LIMIT %d',
+					$table_name,
+					'',
+					$limit
+				);
+			}
+
+			return $wpdb->prepare(
+				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s AND tenant_id > %s ORDER BY tenant_id ASC LIMIT %d',
+				$table_name,
+				'',
+				$after_tenant_id,
+				$limit
+			);
+		};
+		$read_tenant_ids = static function ( string $query ) use ( $wpdb ): array {
+			if ( method_exists( $wpdb, 'get_col' ) ) {
+				$tenant_ids = $wpdb->get_col( $query );
+				return is_array( $tenant_ids ) ? $tenant_ids : array();
+			}
+
+			$rows = $wpdb->get_results( $query, ARRAY_A );
+			if ( ! is_array( $rows ) ) {
+				return array();
+			}
+
+			$tenant_ids = array();
+			foreach ( $rows as $row ) {
+				if ( is_array( $row ) ) {
+					$tenant_ids[] = $row['tenant_id'] ?? ( array_values( $row )[0] ?? '' );
+				} elseif ( is_object( $row ) ) {
+					$tenant_ids[] = $row->tenant_id ?? '';
+				}
+			}
+
+			return $tenant_ids;
+		};
+
 		$tenant_ids = array();
 
-		$outbox_tenant_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
-				$this->table_name,
-				''
-			)
-		);
-		$conflict_tenant_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
-				$this->conflicts_table_name,
-				''
-			)
-		);
+		$outbox_tenant_ids = $read_tenant_ids( $build_query( $this->table_name ) );
+		$conflict_tenant_ids = $read_tenant_ids( $build_query( $this->conflicts_table_name ) );
 
 		foreach ( array_merge( is_array( $outbox_tenant_ids ) ? $outbox_tenant_ids : array(), is_array( $conflict_tenant_ids ) ? $conflict_tenant_ids : array() ) as $tenant_id ) {
 			$normalized_tenant_id = trim( (string) $tenant_id );
@@ -453,7 +493,14 @@ class OutboxMaintenanceService {
 			}
 		}
 
-		return array_values( array_unique( $tenant_ids ) );
+		sort( $tenant_ids, SORT_STRING );
+		$tenant_ids = array_values( array_unique( $tenant_ids ) );
+		/*
+		 * WHY: each table query returns a sorted prefix of the same keyset; sorting
+		 * and merging those prefixes before truncating therefore yields the global
+		 * prefix without materializing the unbounded tenant set.
+		 */
+		return array_slice( $tenant_ids, 0, $limit );
 	}
 
 	/**

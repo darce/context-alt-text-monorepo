@@ -13,6 +13,104 @@ use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServicePurgeTest extends TestCase
 {
+    public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            if (str_contains($sql, 'wp_acx_sync_outbox')) {
+                return array_map(
+                    static fn(int $index): array => ['tenant_id' => sprintf('tenant-%02d', $index)],
+                    range(1, 30)
+                );
+            }
+
+            return [];
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids();
+
+        $this->assertSame(
+            array_map(static fn(int $index): string => sprintf('tenant-%02d', $index), range(1, 25)),
+            $tenantIds
+        );
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString('ORDER BY tenant_id ASC', $query);
+            $this->assertStringContainsString('LIMIT 25', $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsHonorsPageSizeFilterOverride(): void
+    {
+        global $wpdb;
+
+        add_filter('acx_sync_purge_tenant_page_size', static fn(): int => 3);
+        $wpdb->onGetResults = static function (string $sql): array {
+            return array_map(
+                static fn(int $index): array => ['tenant_id' => sprintf('tenant-%02d', $index)],
+                range(1, 5)
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids();
+
+        $this->assertSame(['tenant-01', 'tenant-02', 'tenant-03'], $tenantIds);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString('LIMIT 3', $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsUsesKeysetCursorForBothQueries(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            if (!str_contains($sql, "tenant_id > 'tenant-02'")) {
+                return [];
+            }
+
+            return array_map(
+                static fn(string $tenantId): array => ['tenant_id' => $tenantId],
+                ['tenant-03', 'tenant-04']
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $tenantIds = $service->list_terminal_purge_tenant_ids(25, 'tenant-02');
+
+        $this->assertSame(['tenant-03', 'tenant-04'], $tenantIds);
+        $this->assertCount(2, $wpdb->queries);
+        foreach ($wpdb->queries as $query) {
+            $this->assertStringContainsString("tenant_id > 'tenant-02'", $query);
+        }
+    }
+
+    public function testListTerminalPurgeTenantIdsMergesInterleavedSourcesBeforeTruncating(): void
+    {
+        global $wpdb;
+
+        $wpdb->onGetResults = static function (string $sql): array {
+            $tenantIds = str_contains($sql, 'wp_acx_sync_outbox')
+                ? ['tenant-01', 'tenant-03', 'tenant-05', 'tenant-07']
+                : ['tenant-02', 'tenant-04', 'tenant-06', 'tenant-08'];
+
+            return array_map(
+                static fn(string $tenantId): array => ['tenant_id' => $tenantId],
+                $tenantIds
+            );
+        };
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+
+        $this->assertSame(
+            ['tenant-01', 'tenant-02', 'tenant-03', 'tenant-04', 'tenant-05'],
+            $service->list_terminal_purge_tenant_ids(5)
+        );
+    }
+
     public function testPurgeTerminalRowsDeletesAcknowledgedOutboxOlderThanRetentionWindow(): void
     {
         global $wpdb;

@@ -23,10 +23,14 @@ use function method_exists;
 use function microtime;
 use function preg_replace;
 use function random_int;
+use function serialize;
 use function strtotime;
 use function time;
 use function trim;
 use function update_option;
+use function wp_cache_delete;
+use function wp_cache_get;
+use function wp_cache_set;
 use function wp_generate_uuid4;
 
 /**
@@ -492,6 +496,17 @@ class ReclaimerLiveness {
 					)
 				);
 			}
+			if ( self::WRITE_STATUS_NO_OP === $result['status'] && function_exists( 'do_action' ) ) {
+				do_action(
+					'acx_sovereign_warning',
+					'reclaimer_liveness_write_no_op',
+					array(
+						'tenant_id' => $tenant_id,
+						'status' => $result['status'],
+						'method' => __METHOD__,
+					)
+				);
+			}
 			return;
 		}
 
@@ -568,6 +583,7 @@ class ReclaimerLiveness {
 		);
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
+		$this->invalidate_option_caches( $option_name );
 		if ( $affected > 0 ) {
 			return array(
 				'committed' => true,
@@ -597,19 +613,55 @@ class ReclaimerLiveness {
 		);
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
-		if ( $affected <= 0 ) {
+		$this->invalidate_option_caches( $option_name );
+		if ( $affected > 0 ) {
 			return array(
-				'committed' => false,
-				'status' => self::WRITE_STATUS_NO_OP,
+				'committed' => true,
+				'status' => $fence_available
+					? self::WRITE_STATUS_COMMITTED
+					: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
+			);
+		}
+
+		$current = $this->load_state( $tenant_id );
+		if ( serialize( $current ) === serialize( $state ) ) {
+			return array(
+				'committed' => true,
+				'status' => $fence_available
+					? self::WRITE_STATUS_COMMITTED
+					: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
 			);
 		}
 
 		return array(
-			'committed' => true,
-			'status' => $fence_available
-				? self::WRITE_STATUS_COMMITTED
-				: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
+			'committed' => false,
+			'status' => self::WRITE_STATUS_NO_OP,
 		);
+	}
+
+	private function invalidate_option_caches( string $option_name ): void {
+		if ( function_exists( 'wp_cache_delete' ) ) {
+			wp_cache_delete( $option_name, 'options' );
+		}
+		if ( ! function_exists( 'wp_cache_get' ) ) {
+			return;
+		}
+
+		$alloptions = wp_cache_get( 'alloptions', 'options' );
+		if ( is_array( $alloptions ) && array_key_exists( $option_name, $alloptions ) ) {
+			unset( $alloptions[ $option_name ] );
+			if ( function_exists( 'wp_cache_set' ) ) {
+				wp_cache_set( 'alloptions', $alloptions, 'options' );
+			}
+		}
+
+		$notoptions = wp_cache_get( 'notoptions', 'options' );
+		if ( is_array( $notoptions ) && isset( $notoptions[ $option_name ] ) ) {
+			unset( $notoptions[ $option_name ] );
+			if ( function_exists( 'wp_cache_set' ) ) {
+				wp_cache_set( 'notoptions', $notoptions, 'options' );
+			}
+		}
 	}
 
 	private function lease_is_current(

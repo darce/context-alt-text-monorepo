@@ -345,15 +345,244 @@ class ReclaimerLivenessTest extends TestCase
 		$wpdb->onGetVarResolve = static fn (string $query): string => 'owner-b|2|1700000300';
 		$liveness->record_success($tenant, 1, 0, 0, false, ReclaimerLiveness::SCHEDULER_WP_CRON);
 
-		$warnings = array_values(
+		$warnings = $this->sovereignWarnings();
+		$this->assertCount(1, $warnings);
+		$this->assertSame('reclaimer_liveness_write_fence_rejected', $warnings[0]['args'][0]);
+		$this->assertSame($tenant, $warnings[0]['args'][1]['tenant_id']);
+	}
+
+	public function testRecordAttemptThenSuccessUnderLeasePersistsThroughObjectCache(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenant = 'tenant-cache-coherent';
+		$liveness->record_success(
+			$tenant,
+			1,
+			8,
+			40,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$this->assertIsString($liveness->claim($tenant));
+		$liveness->record_attempt($tenant, ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$liveness->record_success(
+			$tenant,
+			4,
+			2,
+			15,
+			true,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$state = $liveness->read($tenant);
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $state['last_outcome']);
+		$this->assertSame(4, $state['last_purged_count']);
+		$this->assertSame(2, $state['backlog_remaining']);
+		$this->assertSame(15, $state['backlog_oldest_age_seconds']);
+		$this->assertTrue($state['batch_cap_reached']);
+		$this->assertSame('2023-11-14T22:13:20Z', $state['last_success_at']);
+		$this->assertSame(array(), $this->sovereignWarningCodes());
+	}
+
+	public function testStaleAlloptionsAndNotoptionsDoNotHideLaterFencedSuccess(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenant = 'tenant-stale-option-caches';
+		$option = 'acx_reclaimer_liveness_' . $tenant;
+		$liveness->record_success(
+			$tenant,
+			1,
+			9,
+			90,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+		$prior = get_option($option);
+		$this->assertIsArray($prior);
+
+		$this->assertIsString($liveness->claim($tenant));
+		wp_cache_set($option, $prior, 'options');
+		wp_cache_set('alloptions', array( $option => $prior ), 'options');
+		wp_cache_set('notoptions', array( 'unrelated-missing-option' => true ), 'options');
+
+		$liveness->record_attempt($tenant, ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$liveness->record_success(
+			$tenant,
+			6,
+			1,
+			3,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$state = $liveness->read($tenant);
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $state['last_outcome']);
+		$this->assertSame(6, $state['last_purged_count']);
+		$this->assertSame(1, $state['backlog_remaining']);
+		$stored = get_option($option);
+		$this->assertIsArray($stored);
+		$this->assertSame(6, $stored['last_purged_count']);
+		$notoptions = wp_cache_get('notoptions', 'options');
+		$this->assertFalse(is_array($notoptions) && isset($notoptions[$option]));
+		$alloptions = wp_cache_get('alloptions', 'options');
+		$this->assertFalse(is_array($alloptions) && array_key_exists($option, $alloptions));
+	}
+
+	public function testFencedWritesKeepSeparateTenantsIsolatedWithStaleCache(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$this->assertIsString($liveness->claim('tenant-cache-a'));
+		$this->assertIsString($liveness->claim('tenant-cache-b'));
+
+		$liveness->record_attempt('tenant-cache-a', ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$liveness->record_success(
+			'tenant-cache-a',
+			4,
+			1,
+			10,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+		wp_cache_set(
+			'acx_reclaimer_liveness_tenant-cache-a',
+			array( 'last_purged_count' => 99, 'last_outcome' => ReclaimerLiveness::OUTCOME_FAILED ),
+			'options'
+		);
+		$liveness->record_attempt('tenant-cache-b', ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$liveness->record_success(
+			'tenant-cache-b',
+			7,
+			3,
+			20,
+			true,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+		wp_cache_delete('acx_reclaimer_liveness_tenant-cache-a', 'options');
+
+		$stateA = $liveness->read('tenant-cache-a');
+		$stateB = $liveness->read('tenant-cache-b');
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $stateA['last_outcome']);
+		$this->assertSame(4, $stateA['last_purged_count']);
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $stateB['last_outcome']);
+		$this->assertSame(7, $stateB['last_purged_count']);
+		$this->assertTrue($stateB['batch_cap_reached']);
+		$this->assertFalse($stateA['batch_cap_reached']);
+	}
+
+	public function testRejectedFencingLeavesOtherTenantStateIntact(): void
+	{
+		global $wpdb;
+
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$this->assertIsString($liveness->claim('tenant-kept'));
+		$liveness->record_success(
+			'tenant-kept',
+			5,
+			0,
+			0,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$rejected = 'tenant-rejected-neighbor';
+		$wpdb->onGetVarResolve = static fn (string $query): ?string => null;
+		$this->assertIsString($liveness->claim($rejected));
+		$wpdb->onGetVarResolve = static fn (string $query): string => 'owner-b|2|1700000300';
+		$liveness->record_success($rejected, 99, 0, 0, false, ReclaimerLiveness::SCHEDULER_WP_CRON);
+
+		$kept = $liveness->read('tenant-kept');
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $kept['last_outcome']);
+		$this->assertSame(5, $kept['last_purged_count']);
+		$this->assertFalse(get_option('acx_reclaimer_liveness_' . $rejected));
+		$codes = $this->sovereignWarningCodes();
+		$this->assertSame(array( 'reclaimer_liveness_write_fence_rejected' ), $codes);
+	}
+
+	public function testRepeatedIdenticalSuccessDoesNotWarn(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenant = 'tenant-identical-success';
+		$this->assertIsString($liveness->claim($tenant));
+		$liveness->record_success(
+			$tenant,
+			3,
+			1,
+			8,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+		$liveness->record_success(
+			$tenant,
+			3,
+			1,
+			8,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$state = $liveness->read($tenant);
+		$this->assertSame(ReclaimerLiveness::OUTCOME_SUCCESS, $state['last_outcome']);
+		$this->assertSame(3, $state['last_purged_count']);
+		$this->assertSame(array(), $this->sovereignWarningCodes());
+	}
+
+	public function testUnexpectedNoOpDispatchesSovereignWarning(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenant = 'tenant-unexpected-noop';
+		$option = 'acx_reclaimer_liveness_' . $tenant;
+		$this->assertIsString($liveness->claim($tenant));
+		$liveness->record_success(
+			$tenant,
+			1,
+			0,
+			0,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$GLOBALS['__ac_option_before_update'][ $option ] = static function () use ( $option ): void {
+			$GLOBALS['__ac_options'][ $option ] = array(
+				'last_outcome' => ReclaimerLiveness::OUTCOME_FAILED,
+				'last_purged_count' => 123,
+			);
+		};
+		$liveness->record_success(
+			$tenant,
+			4,
+			2,
+			15,
+			false,
+			ReclaimerLiveness::SCHEDULER_WP_CRON
+		);
+
+		$codes = $this->sovereignWarningCodes();
+		$this->assertContains('reclaimer_liveness_write_no_op', $codes);
+	}
+
+	/** @return list<array{hook:string,args:array<int,mixed>}> */
+	private function sovereignWarnings(): array
+	{
+		return array_values(
 			array_filter(
 				$GLOBALS['__ac_do_action_log'],
 				static fn (array $action): bool => 'acx_sovereign_warning' === $action['hook']
 			)
 		);
-		$this->assertCount(1, $warnings);
-		$this->assertSame('reclaimer_liveness_write_fence_rejected', $warnings[0]['args'][0]);
-		$this->assertSame($tenant, $warnings[0]['args'][1]['tenant_id']);
+	}
+
+	/** @return list<string> */
+	private function sovereignWarningCodes(): array
+	{
+		$codes = array();
+		foreach ( $this->sovereignWarnings() as $warning ) {
+			if ( isset( $warning['args'][0] ) && is_string( $warning['args'][0] ) ) {
+				$codes[] = $warning['args'][0];
+			}
+		}
+
+		return $codes;
 	}
 
 	/** @return mixed */

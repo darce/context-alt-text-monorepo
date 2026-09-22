@@ -1757,6 +1757,7 @@ if (!function_exists('update_option')) {
             $GLOBALS['__ac_options'] = [];
         }
         $GLOBALS['__ac_options'][$key] = $value;
+        __ac_remember_option_cache($key, $value);
         return true;
     }
 }
@@ -1795,6 +1796,7 @@ if (!function_exists('add_option')) {
             $GLOBALS['__ac_options'] = [];
         }
         $GLOBALS['__ac_options'][$key] = $value;
+        __ac_remember_option_cache($key, $value);
         return true;
     }
 }
@@ -1807,7 +1809,83 @@ if (!function_exists('get_option')) {
             $GLOBALS['__ac_get_option_read_calls'][$key] = ($GLOBALS['__ac_get_option_read_calls'][$key] ?? 0) + 1;
             $beforeRead($key, $GLOBALS['__ac_get_option_read_calls'][$key]);
         }
-        return $GLOBALS['__ac_options'][$key] ?? $default;
+
+        $notoptions = wp_cache_get('notoptions', 'options');
+        if (is_array($notoptions) && isset($notoptions[$key])) {
+            return $default;
+        }
+
+        $alloptions = wp_cache_get('alloptions', 'options');
+        if (is_array($alloptions) && array_key_exists($key, $alloptions)) {
+            return $alloptions[$key];
+        }
+
+        $found = false;
+        $cached = wp_cache_get($key, 'options', false, $found);
+        if ($found) {
+            return $cached;
+        }
+
+        if (!is_array($GLOBALS['__ac_options'] ?? null) || !array_key_exists($key, $GLOBALS['__ac_options'])) {
+            return $default;
+        }
+
+        $value = $GLOBALS['__ac_options'][$key];
+        if ($value === null) {
+            return $default;
+        }
+
+        wp_cache_add($key, $value, 'options');
+        return $value;
+    }
+}
+
+if (!function_exists('wp_cache_get')) {
+    function wp_cache_get($key, $group = '', $force = false, &$found = null)
+    {
+        unset($force);
+        $group = (string) $group;
+        $key = (string) $key;
+        if (!isset($GLOBALS['__ac_object_cache']) || !is_array($GLOBALS['__ac_object_cache'])) {
+            $GLOBALS['__ac_object_cache'] = [];
+        }
+        if (!isset($GLOBALS['__ac_object_cache'][$group]) || !array_key_exists($key, $GLOBALS['__ac_object_cache'][$group])) {
+            $found = false;
+            return false;
+        }
+
+        $found = true;
+        return $GLOBALS['__ac_object_cache'][$group][$key];
+    }
+}
+
+if (!function_exists('wp_cache_set')) {
+    function wp_cache_set($key, $data, $group = '', $expire = 0): bool
+    {
+        unset($expire);
+        $group = (string) $group;
+        $key = (string) $key;
+        if (!isset($GLOBALS['__ac_object_cache']) || !is_array($GLOBALS['__ac_object_cache'])) {
+            $GLOBALS['__ac_object_cache'] = [];
+        }
+        if (!isset($GLOBALS['__ac_object_cache'][$group]) || !is_array($GLOBALS['__ac_object_cache'][$group])) {
+            $GLOBALS['__ac_object_cache'][$group] = [];
+        }
+        $GLOBALS['__ac_object_cache'][$group][$key] = $data;
+        return true;
+    }
+}
+
+if (!function_exists('wp_cache_add')) {
+    function wp_cache_add($key, $data, $group = '', $expire = 0): bool
+    {
+        $found = false;
+        wp_cache_get($key, $group, false, $found);
+        if ($found) {
+            return false;
+        }
+
+        return wp_cache_set($key, $data, $group, $expire);
     }
 }
 
@@ -1815,7 +1893,50 @@ if (!function_exists('wp_cache_delete')) {
     function wp_cache_delete($key, $group = ''): bool
     {
         $GLOBALS['__ac_cache_deletions'][] = [$key, $group];
+        $group = (string) $group;
+        $key = (string) $key;
+        if (isset($GLOBALS['__ac_object_cache'][$group]) && array_key_exists($key, $GLOBALS['__ac_object_cache'][$group])) {
+            unset($GLOBALS['__ac_object_cache'][$group][$key]);
+        }
         return true;
+    }
+}
+
+if (!function_exists('__ac_remember_option_cache')) {
+    /**
+     * Keep the object-cache view aligned after option-API writes.
+     * Raw $wpdb option updates deliberately skip this helper.
+     *
+     * @param mixed $value
+     */
+    function __ac_remember_option_cache($key, $value): void
+    {
+        $key = (string) $key;
+        $notoptions = wp_cache_get('notoptions', 'options');
+        if (is_array($notoptions) && isset($notoptions[$key])) {
+            unset($notoptions[$key]);
+            wp_cache_set('notoptions', $notoptions, 'options');
+        }
+
+        wp_cache_set($key, $value, 'options');
+        $alloptions = wp_cache_get('alloptions', 'options');
+        if (!is_array($alloptions)) {
+            return;
+        }
+
+        $autoload = $GLOBALS['__ac_option_autoload'][$key] ?? true;
+        $isAutoload = true === $autoload
+            || 1 === $autoload
+            || '1' === $autoload
+            || (is_string($autoload) && in_array(strtolower($autoload), ['yes', 'on', 'true', 'auto', 'auto-on'], true));
+        if ($isAutoload) {
+            $alloptions[$key] = $value;
+        } elseif (array_key_exists($key, $alloptions)) {
+            unset($alloptions[$key]);
+        } else {
+            return;
+        }
+        wp_cache_set('alloptions', $alloptions, 'options');
     }
 }
 
@@ -1827,6 +1948,18 @@ if (!function_exists('delete_option')) {
             $beforeDelete();
         }
         unset($GLOBALS['__ac_options'][$key]);
+        wp_cache_delete($key, 'options');
+        $alloptions = wp_cache_get('alloptions', 'options');
+        if (is_array($alloptions) && array_key_exists($key, $alloptions)) {
+            unset($alloptions[$key]);
+            wp_cache_set('alloptions', $alloptions, 'options');
+        }
+        $notoptions = wp_cache_get('notoptions', 'options');
+        if (!is_array($notoptions)) {
+            $notoptions = [];
+        }
+        $notoptions[$key] = true;
+        wp_cache_set('notoptions', $notoptions, 'options');
         if (function_exists('do_action')) {
             do_action('delete_option_' . $key, $key);
         }
@@ -3441,6 +3574,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->onGetVar = null;
             $this->onGetResults = null;
             $this->onGetVarResolve = null;
+            $GLOBALS['__ac_object_cache'] = [];
         }
     }
 

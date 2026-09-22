@@ -98,7 +98,7 @@ def test_model_provenance_declares_frozen_typed_preprocessing_record() -> None:
 
 
 def test_auraface_manifest_is_declarable_and_operator_pinned() -> None:
-    """AuraFace metadata is present without pretending its bytes were locally hashed."""
+    """AuraFace metadata carries the measured operator-provided pins."""
     entry = _auraface_entry()
 
     assert entry.file_name.endswith(".onnx")
@@ -111,8 +111,25 @@ def test_auraface_manifest_is_declarable_and_operator_pinned() -> None:
     assert entry.framework
     assert entry.normalization
     assert entry.metric
-    assert entry.sha256 == PENDING_OPERATOR_FETCH
-    assert entry.license_sha256 == PENDING_OPERATOR_FETCH
+    assert entry.sha256 == "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60"
+    assert entry.license_sha256 == "609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338"
+
+
+def test_auraface_pins_are_not_the_operator_fetch_sentinel() -> None:
+    entry = _auraface_entry()
+
+    for pin in (entry.sha256, entry.license_sha256):
+        assert pin != PENDING_OPERATOR_FETCH
+        assert len(pin) == 64
+        assert pin == pin.lower()
+        assert all(character in "0123456789abcdef" for character in pin)
+
+
+def test_auraface_license_file_matches_the_fetched_artifact() -> None:
+    entry = _auraface_entry()
+
+    assert entry.license_file == "LICENSE.auraface.md"
+    assert entry.license_id == "Apache-2.0"
 
 
 def test_auraface_preprocessing_is_rgb_arcface_family_and_declared() -> None:
@@ -132,10 +149,18 @@ def test_auraface_preprocessing_is_rgb_arcface_family_and_declared() -> None:
         assert preprocessing.alignment_template_id != sface_preprocessing.alignment_template_id
 
 
-def test_pending_auraface_pin_is_missing_not_loadable(tmp_path: Path) -> None:
+def test_auraface_preprocessing_stays_unverified() -> None:
+    preprocessing = _preprocessing(_auraface_entry())
+    source = Path(provenance.__file__).read_text(encoding="utf-8")
+
+    assert preprocessing.output_l2_normalized is True
+    assert "output_l2_normalized=True,  # UNVERIFIED" in source
+
+
+def test_pinned_auraface_without_files_is_missing_not_loadable(tmp_path: Path) -> None:
     _auraface_entry()
 
-    with pytest.raises(ModelMissingError, match=PENDING_OPERATOR_FETCH):
+    with pytest.raises(ModelMissingError, match="model file missing"):
         load_verified_model("auraface", models_dir=tmp_path)
 
 

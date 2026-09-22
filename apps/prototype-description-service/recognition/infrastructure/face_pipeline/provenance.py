@@ -121,12 +121,12 @@ MODEL_MANIFEST: dict[str, ModelProvenance] = {
     # license_id is the publisher-declared Apache-2.0 grant, not an independent rights finding.
     "auraface": ModelProvenance(
         file_name=_AURAFACE_ARTIFACT,
-        sha256=PENDING_OPERATOR_FETCH,
+        sha256="a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
         source_url=f"{_AURAFACE_REPOSITORY}/resolve/{AURAFACE_REVISION}/{_AURAFACE_ARTIFACT}",
         source_ref=AURAFACE_REVISION,
         license_id="Apache-2.0",
-        license_file="LICENSE.auraface",
-        license_sha256=PENDING_OPERATOR_FETCH,
+        license_file="LICENSE.auraface.md",
+        license_sha256="609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338",
         size_bytes=260_694_151,
         framework="insightface",
         embedding_dim=512,

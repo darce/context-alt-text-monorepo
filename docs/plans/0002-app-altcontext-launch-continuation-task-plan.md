@@ -7,6 +7,12 @@
 - Epic: [E16 SaaS foundation](../epics/v0.3.1/saas-foundation-epic.md).
 - The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and `codex-remote` / `gpt-5.6-luna` / max for grunt work. Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
 
+## Supporting assessments
+
+- [Checkout ownership, provider portability and Link](../assessments/current/app-altcontext-checkout-provider-portability-and-link-2026-09-22.md) — current account/billing UX direction and operator prerequisites.
+- [Remote vendor terms comparison](../assessments/current/app1-payment-vendor-terms-comparison.md) — source collection, not provider approval.
+- [Usage/evidence adjudication](../assessments/current/app1-usage-evidence-adjudication.md) — remaining admission contracts; evaluator work must target the actual APP-1 runner, not assume the generic gate is its execution path.
+
 ## Objective
 
 An invited customer signs into app.altcontext.com with Clerk, claims one local tenant, obtains and manages a local API key, connects WordPress, produces a caption, sees accurate allowance and can later opt into Polar billing without replacing tenant or key. Complete sandbox billing before admitting the free beta. Keep live payments disabled until the separate paid gate.

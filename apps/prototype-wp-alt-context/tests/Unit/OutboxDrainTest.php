@@ -1098,7 +1098,7 @@ class OutboxDrainTest extends TestCase
 				return array( 'tenant-bad', 'tenant-good' );
 			}
 
-			public function purge_terminal_rows( string $tenant_id ): array|false {
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
 				$this->purgeCalls[] = $tenant_id;
 				if ( 'tenant-bad' === $tenant_id ) {
 					throw new RuntimeException( 'purge failed' );
@@ -1141,7 +1141,7 @@ class OutboxDrainTest extends TestCase
 		};
 
 		$maintenance = new class() extends OutboxMaintenanceService {
-			public function purge_terminal_rows( string $tenant_id ): array|false {
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
 				throw new RuntimeException( 'purge failed' );
 			}
 		};

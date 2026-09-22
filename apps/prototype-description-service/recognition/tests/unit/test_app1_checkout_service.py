@@ -24,7 +24,11 @@ from recognition.application.services.checkout_service import (
     CheckoutService,
 )
 from recognition.domain.portal_contracts import CheckoutSession
-from recognition.infrastructure.billing.polar_provider import CheckoutAmbiguityError, PolarRequestError
+from recognition.infrastructure.billing.polar_provider import (
+    CheckoutAmbiguityError,
+    PolarBillingProvider,
+    PolarRequestError,
+)
 from recognition.infrastructure.repositories.checkout_attempt_repository import CheckoutAttemptRepository
 
 
@@ -114,6 +118,27 @@ class FakeBillingProvider:
         )
 
 
+class _FakePolarResponse:
+    def __init__(self, payload: object, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _FakePolarHttpClient:
+    """Injected Polar transport: records POSTs, never opens a network socket."""
+
+    def __init__(self, response: _FakePolarResponse) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    async def post(self, url: str, **kwargs: object) -> _FakePolarResponse:
+        self.calls.append({"url": url, **kwargs})
+        return self.response
+
+
 @pytest_asyncio.fixture
 async def checkout_session() -> AsyncGenerator[_AsyncSessionFacade, None]:
     engine = create_engine(
@@ -159,6 +184,39 @@ def _service(
         provider_name="fake",
         environment=environment,
         seller_account=seller_account,
+        idempotency_key_factory=lambda: next(remaining),
+    )
+
+
+def _polar_provider(client: _FakePolarHttpClient) -> PolarBillingProvider:
+    return PolarBillingProvider(
+        client=client,
+        access_token="test-access-token",
+        webhook_secret="whsec_checkout-service-test",
+        product_ids={"pro": "product-pro"},
+        base_url="https://sandbox.example.test",
+        timeout=2.5,
+        payments_enabled=True,
+        environment="sandbox",
+        seller_account="org_sandbox",
+        allowed_return_origins={"https://app.example.test"},
+    )
+
+
+def _polar_service(
+    session: _AsyncSessionFacade,
+    client: _FakePolarHttpClient,
+    *,
+    keys: list[str] | None = None,
+) -> CheckoutService:
+    remaining = iter(keys or ["provider-key-1", "provider-key-2", "provider-key-3"])
+    return CheckoutService(
+        CheckoutAttemptRepository(session),
+        _polar_provider(client),
+        payments_enabled=True,
+        provider_name="polar",
+        environment="sandbox",
+        seller_account="org_sandbox",
         idempotency_key_factory=lambda: next(remaining),
     )
 
@@ -285,6 +343,50 @@ async def test_timeout_marks_ambiguous_and_retry_does_not_mutate_vendor(
 
     assert retry.value.attempt_id == attempt_id
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"url": "https://pay.example.test/session"},
+        {"id": "chk-malformed"},
+        ["not-an-object"],
+    ),
+    ids=("missing_id", "missing_url", "nonobject_body"),
+)
+async def test_polar_http_200_malformed_body_stays_ambiguous_and_retry_does_not_post(
+    checkout_session: _AsyncSessionFacade,
+    payload: object,
+) -> None:
+    tenant = await _create_tenant(checkout_session, "polar-malformed")
+    client = _FakePolarHttpClient(_FakePolarResponse(payload))
+    service = _polar_service(checkout_session, client)
+
+    with pytest.raises(CheckoutAmbiguousError) as first:
+        await service.create_checkout(**_create_kwargs(tenant.id))
+
+    attempt_id = first.value.attempt_id
+    row = await _load_attempt(checkout_session, attempt_id)
+    assert row.status == CheckoutAttemptStatus.AMBIGUOUS.value
+    assert row.last_error_class == CheckoutAttemptErrorClass.AMBIGUOUS.value
+    assert row.provider_checkout_id is None
+    assert row.checkout_url is None
+    assert row.idempotency_key == "provider-key-1"
+    assert len(client.calls) == 1
+    headers = client.calls[0]["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Idempotency-Key"] == "provider-key-1"
+    assert str(client.calls[0]["url"]).endswith("/v1/checkouts/")
+
+    with pytest.raises(CheckoutAmbiguousError) as retry:
+        await service.create_checkout(**_create_kwargs(tenant.id))
+
+    assert retry.value.attempt_id == attempt_id
+    assert len(client.calls) == 1
+    retried = await _load_attempt(checkout_session, attempt_id)
+    assert retried.idempotency_key == "provider-key-1"
+    assert retried.status == CheckoutAttemptStatus.AMBIGUOUS.value
 
 
 @pytest.mark.asyncio

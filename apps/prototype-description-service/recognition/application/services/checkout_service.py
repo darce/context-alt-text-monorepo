@@ -110,13 +110,14 @@ def _status_of(value: str) -> CheckoutAttemptStatus:
 
 
 def _is_rejected_provider_error(exc: BaseException) -> bool:
-    if isinstance(exc, (CheckoutAmbiguityError, TimeoutError, ConnectionError, OSError)):
+    # HTTP 200 missing id/url or a non-object body raises ValueError after Polar POST.
+    if isinstance(exc, (CheckoutAmbiguityError, TimeoutError, ConnectionError, OSError, ValueError)):
         return False
     if isinstance(exc, PaymentsDisabledError):
         return True
     if isinstance(exc, PolarRequestError):
         return exc.status_code < 500
-    return isinstance(exc, ValueError)
+    return False
 
 
 async def _await_maybe(result: object) -> None:

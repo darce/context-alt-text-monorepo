@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Sync;
 use DateTimeInterface;
 
 use function add_option;
+use function delete_option;
 use function function_exists;
 use function get_option;
 use function gmdate;
@@ -54,6 +55,7 @@ class ReclaimerLiveness {
 	private const OPTION_PREFIX = 'acx_reclaimer_liveness_';
 	private const PURGE_SCHEDULER_OPTION = 'acx_reclaimer_purge_scheduler';
 	private const LEASE_OPTION_PREFIX = 'acx_reclaimer_lease_';
+	private const TENANT_INDEX_OPTION = 'acx_reclaimer_tenant_index';
 	private const LEASE_SECONDS = 300;
 
 	/** @var callable():int|DateTimeInterface|string|null */
@@ -274,6 +276,8 @@ class ReclaimerLiveness {
 			return null;
 		}
 
+		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
+
 		$stored_lease_value = $this->read_lease_value( $wpdb, $option_name );
 		if ( is_string( $stored_lease_value ) ) {
 			$parsed_lease = $this->parse_lease_value( $stored_lease_value );
@@ -371,6 +375,51 @@ class ReclaimerLiveness {
 		return null;
 	}
 
+	/**
+	 * Remove all reclaimer options recorded in the tenant index.
+	 *
+	 * @return int Number of options that were present and removed.
+	 */
+	public function purge_all_options(): int {
+		$registered_keys = get_option( self::TENANT_INDEX_OPTION, array() );
+		$tenant_keys = array();
+		if ( is_array( $registered_keys ) ) {
+			foreach ( $registered_keys as $registered_key ) {
+				if ( is_string( $registered_key ) && '' !== $registered_key && ! in_array( $registered_key, $tenant_keys, true ) ) {
+					$tenant_keys[] = $registered_key;
+				}
+			}
+		}
+
+		$removed = 0;
+		$missing = new \stdClass();
+		foreach ( $tenant_keys as $tenant_key ) {
+			$state_option = self::OPTION_PREFIX . $tenant_key;
+			if ( $missing !== get_option( $state_option, $missing ) ) {
+				delete_option( $state_option );
+				++$removed;
+			}
+
+			$lease_option = self::LEASE_OPTION_PREFIX . $tenant_key;
+			if ( $missing !== get_option( $lease_option, $missing ) ) {
+				delete_option( $lease_option );
+				++$removed;
+			}
+		}
+
+		if ( $missing !== get_option( self::PURGE_SCHEDULER_OPTION, $missing ) ) {
+			delete_option( self::PURGE_SCHEDULER_OPTION );
+			++$removed;
+		}
+
+		if ( $missing !== get_option( self::TENANT_INDEX_OPTION, $missing ) ) {
+			delete_option( self::TENANT_INDEX_OPTION );
+			++$removed;
+		}
+
+		return $removed;
+	}
+
 	public function effective_period_seconds( string $scheduler_mode ): int {
 		return self::SCHEDULER_ACTION_SCHEDULER === $scheduler_mode
 			? self::ACTION_SCHEDULER_PERIOD_SECONDS
@@ -437,6 +486,7 @@ class ReclaimerLiveness {
 		}
 
 		update_option( $this->state_option_name( $tenant_id ), $state, false );
+		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
 	}
 
 	/**
@@ -464,6 +514,7 @@ class ReclaimerLiveness {
 		}
 
 		$option_name = $this->state_option_name( $tenant_id );
+		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
 		$previous = $this->load_state( $tenant_id );
 		if ( array() === $previous ) {
 			add_option( $option_name, $state, '', false );
@@ -583,6 +634,30 @@ class ReclaimerLiveness {
 
 	private function lease_option_name( string $tenant_id ): string {
 		return self::LEASE_OPTION_PREFIX . $this->safe_tenant_key( $tenant_id );
+	}
+
+	private function register_tenant_key( string $safe_key ): void {
+		if ( '' === $safe_key ) {
+			return;
+		}
+
+		$registered_keys = get_option( self::TENANT_INDEX_OPTION, array() );
+		$tenant_keys = array();
+		if ( is_array( $registered_keys ) ) {
+			foreach ( $registered_keys as $registered_key ) {
+				if ( is_string( $registered_key ) && '' !== $registered_key && ! in_array( $registered_key, $tenant_keys, true ) ) {
+					$tenant_keys[] = $registered_key;
+				}
+			}
+		}
+
+		if ( in_array( $safe_key, $tenant_keys, true ) ) {
+			return;
+		}
+
+		$tenant_keys[] = $safe_key;
+		sort( $tenant_keys, SORT_STRING );
+		update_option( self::TENANT_INDEX_OPTION, $tenant_keys, false );
 	}
 
 	private function safe_tenant_key( string $tenant_id ): string {

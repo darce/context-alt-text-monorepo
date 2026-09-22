@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 
 from recognition.application.services.usage_admission_service import (
     AllowanceExceededError,
+    UsageAdmissionTimeoutError,
     UsageAdmissionUnavailableError,
     UsageFingerprintConflictError,
 )
@@ -449,3 +450,47 @@ async def test_missing_global_state_maps_to_unavailable() -> None:
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == {"error": "usage_admission_unavailable"}
+
+
+class _TimeoutAdmission:
+    def __init__(self) -> None:
+        self.commits: list[UsageTicket] = []
+        self.releases: list[UsageTicket] = []
+        self.rollback_calls = 0
+        self._session = self
+
+    async def reserve(self, tenant_id, **kwargs):
+        raise UsageAdmissionTimeoutError("usage admission database operation timed out: reserve")
+
+    async def commit(self, ticket: UsageTicket) -> None:
+        self.commits.append(ticket)
+
+    async def release(self, ticket: UsageTicket) -> None:
+        self.releases.append(ticket)
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_reservation_timeout_maps_to_bounded_503_without_dispatch() -> None:
+    admission = _TimeoutAdmission()
+    dispatched = False
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            admission,
+            tenant_id=TENANT_ID,
+            idempotency_key="key",
+            job_id="job-timeout",
+            cost_units=1,
+        ):
+            dispatched = True
+
+    assert dispatched is False
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {"error": "reservation_timeout"}
+    assert exc_info.value.headers is not None
+    assert int(exc_info.value.headers["Retry-After"]) >= 1
+    assert admission.rollback_calls == 1
+    assert admission.commits == []
+    assert admission.releases == []

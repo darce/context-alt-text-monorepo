@@ -12,6 +12,7 @@ import asyncio
 import math
 from collections.abc import Awaitable, Iterable
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select, update
@@ -117,6 +118,77 @@ def _utc_day_bounds(now: datetime) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
+_FENCE_LEGACY_MARKER = "legacy"
+
+
+class _ParsedFence(NamedTuple):
+    epoch: int | None
+    legacy: bool
+    token_uuid: UUID
+
+
+def _parse_uuid_text(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except (TypeError, ValueError) as exc:
+        raise UsageFenceMismatchError("usage ticket fence is malformed") from exc
+
+
+def _parse_positive_epoch(value: str) -> int:
+    if not value.isdigit() or value.startswith("0"):
+        raise UsageFenceMismatchError("usage ticket fence epoch is malformed")
+    epoch = int(value)
+    if epoch < 1:
+        raise UsageFenceMismatchError("usage ticket fence epoch is malformed")
+    return epoch
+
+
+def _parse_fence_token(raw: str | None) -> _ParsedFence:
+    value = (raw or "").strip()
+    if not value:
+        raise UsageFenceMismatchError("usage ticket fence is missing")
+    parts = value.split(":")
+    if len(parts) == 1:
+        return _ParsedFence(epoch=None, legacy=False, token_uuid=_parse_uuid_text(parts[0]))
+    if len(parts) == 2:
+        return _ParsedFence(
+            epoch=_parse_positive_epoch(parts[0]),
+            legacy=False,
+            token_uuid=_parse_uuid_text(parts[1]),
+        )
+    if len(parts) == 3:
+        if parts[1] != _FENCE_LEGACY_MARKER:
+            raise UsageFenceMismatchError("usage ticket fence marker is malformed")
+        return _ParsedFence(
+            epoch=_parse_positive_epoch(parts[0]),
+            legacy=True,
+            token_uuid=_parse_uuid_text(parts[2]),
+        )
+    raise UsageFenceMismatchError("usage ticket fence is malformed")
+
+
+def _mint_modern_fence_token(epoch: int) -> str:
+    return f"{int(epoch)}:{uuid4()}"
+
+
+def _has_explicit_legacy_marker(raw: str | None, reservation_id: UUID) -> bool:
+    parts = (raw or "").strip().split(":")
+    if len(parts) != 3 or parts[1] != _FENCE_LEGACY_MARKER:
+        return False
+    try:
+        epoch = int(parts[0], 10)
+        marker_uuid = UUID(parts[2])
+    except (TypeError, ValueError):
+        return False
+    return epoch >= 1 and marker_uuid == reservation_id
+
+
+def _legacy_row_tuple(reservation: UsageReservation) -> bool:
+    return (reservation.operation_id or "") == reservation.idempotency_key and (
+        reservation.request_fingerprint or ""
+    ) == reservation.idempotency_key
+
+
 class SqlAlchemyUsageRepository:
     """Persist usage reservations through a request-scoped async session.
 
@@ -161,6 +233,22 @@ class SqlAlchemyUsageRepository:
         )
         return result.scalar_one_or_none()
 
+    def _ticket_identity_matches(self, reservation: UsageReservation, ticket: UsageTicket) -> bool:
+        if reservation.job_id != ticket.job_id:
+            return False
+        ticket_operation = (ticket.operation_id or "").strip()
+        ticket_fingerprint = (ticket.request_fingerprint or "").strip()
+        explicit_legacy = _has_explicit_legacy_marker(reservation.fence_token, reservation.id) and _legacy_row_tuple(
+            reservation
+        )
+        if explicit_legacy:
+            operation_ok = not ticket_operation or ticket_operation == reservation.operation_id
+            fingerprint_ok = not ticket_fingerprint or ticket_fingerprint == reservation.request_fingerprint
+            return operation_ok and fingerprint_ok
+        if not ticket_operation or not ticket_fingerprint:
+            return False
+        return ticket_operation == reservation.operation_id and ticket_fingerprint == reservation.request_fingerprint
+
     async def _get_by_ticket(self, ticket: UsageTicket) -> UsageReservation | None:
         stmt = (
             select(UsageReservation)
@@ -177,7 +265,10 @@ class SqlAlchemyUsageRepository:
             timeout_s=self._timeout_s,
             operation="find reservation by ticket",
         )
-        return result.scalar_one_or_none()
+        reservation = result.scalar_one_or_none()
+        if reservation is None or not self._ticket_identity_matches(reservation, ticket):
+            return None
+        return reservation
 
     def _replay_or_conflict(self, existing: UsageReservation, request_fingerprint: str) -> UsageReservation:
         stored = existing.request_fingerprint or existing.idempotency_key
@@ -396,7 +487,7 @@ class SqlAlchemyUsageRepository:
             operation_id=normalized_operation,
             request_fingerprint=normalized_fingerprint,
             job_id=bound_job_id,
-            fence_token=uuid4().hex,
+            fence_token=_mint_modern_fence_token(int(global_state.fence_epoch)),
             queue_bytes=queue_bytes,
             status=UsageReservationStatus.RESERVED,
             cost_units=cost_units,
@@ -419,12 +510,21 @@ class SqlAlchemyUsageRepository:
         self._apply_reserve_counters(global_state, cost_units=cost_units, queue_bytes=queue_bytes, now=now)
         return reservation
 
-    def _fence_matches(self, reservation: UsageReservation, fence_token: str | None) -> bool:
-        stored = reservation.fence_token or ""
+    def _assert_fence_current(
+        self,
+        global_state: GlobalUsageAdmissionState,
+        reservation: UsageReservation,
+        fence_token: str | None,
+    ) -> None:
+        parsed = _parse_fence_token(reservation.fence_token)
+        if parsed.legacy and parsed.token_uuid != reservation.id:
+            raise UsageFenceMismatchError("usage ticket fence does not match the reservation")
+        if parsed.epoch is not None and parsed.epoch != int(global_state.fence_epoch):
+            raise UsageFenceMismatchError("usage ticket fence epoch is stale")
         provided = (fence_token or "").strip()
-        if not stored:
-            return True
-        return bool(provided) and provided == stored
+        stored = (reservation.fence_token or "").strip()
+        if not provided or provided != stored:
+            raise UsageFenceMismatchError("usage ticket fence does not match the reservation")
 
     async def _settle(
         self,
@@ -438,6 +538,11 @@ class SqlAlchemyUsageRepository:
         reservation = await self._get_by_ticket(ticket)
         if reservation is None:
             raise ReservationNotFoundError("usage ticket does not identify a reservation")
+        self._assert_fence_current(
+            global_state,
+            reservation,
+            fence_token if fence_token is not None else ticket.fence_token,
+        )
 
         try:
             current_status = UsageReservationStatus(reservation.status)
@@ -449,8 +554,6 @@ class SqlAlchemyUsageRepository:
             return
         if current_status is not UsageReservationStatus.RESERVED:
             return
-        if not self._fence_matches(reservation, fence_token if fence_token is not None else ticket.fence_token):
-            raise UsageFenceMismatchError("usage ticket fence does not match the reservation")
 
         stmt = (
             update(UsageReservation)
@@ -459,6 +562,9 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.tenant_id == ticket.tenant_id,
                 UsageReservation.idempotency_key == ticket.idempotency_key,
                 UsageReservation.cost_units == ticket.cost_units,
+                UsageReservation.job_id == reservation.job_id,
+                UsageReservation.operation_id == reservation.operation_id,
+                UsageReservation.request_fingerprint == reservation.request_fingerprint,
                 UsageReservation.status == UsageReservationStatus.RESERVED,
                 UsageReservation.fence_token == reservation.fence_token,
             )

@@ -45,6 +45,7 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+from recognition.interface_adapters.http.deps.tenant_common import normalize_tenant_id
 from recognition.interface_adapters.http.deps.usage_admission import (
     admit_usage,
     get_usage_admission_service,
@@ -188,17 +189,95 @@ async def json_request_envelope(http_request: Request) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _canonical_tenant_id(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return normalize_tenant_id(text)
+    except HTTPException:
+        return text
+
+
+def _poll_tenant_authority(auth, *, x_tenant_id: str | None) -> str | None:
+    """Return the tenant allowed to read a job, or None when auth is disabled.
+
+    Tenant-scoped API keys always win. Query ``tenant_id`` is never authority.
+    Admin keys may use ``X-Tenant-ID``. Enabled auth without a tenant fails closed.
+    """
+    if auth is None or not getattr(auth, "enabled", False):
+        return None
+    tenant_claim = getattr(auth, "tenant_claim", None)
+    if tenant_claim:
+        canonical = _canonical_tenant_id(tenant_claim)
+        if canonical is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="tenant-scoped API key or admin override required",
+            )
+        return canonical
+    if getattr(auth, "is_admin", False):
+        if not x_tenant_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="X-Tenant-ID header required")
+        return normalize_tenant_id(x_tenant_id)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="tenant-scoped API key or admin override required",
+    )
+
+
+def _job_is_visible(*, job: object, caller_tenant: str | None) -> bool:
+    if caller_tenant is None:
+        return True
+    job_tenant = _canonical_tenant_id(getattr(job, "tenant_id", None))
+    if job_tenant is None:
+        return False
+    return job_tenant == caller_tenant
+
+
+def _followup_from_in_memory_jobs(repo: object, scan_job_id: str) -> Job | None:
+    jobs_holder = getattr(repo, "repository", repo)
+    jobs = getattr(jobs_holder, "jobs", None)
+    if not isinstance(jobs, dict):
+        return None
+    matched: Job | None = None
+    for job in jobs.values():
+        if not isinstance(job, Job) or job.type is not JobType.CLUSTERING:
+            continue
+        payload = job.payload or {}
+        if payload.get("scan_job_id") == scan_job_id:
+            matched = job
+    return matched
+
+
+async def _load_followup_clustering_job(repo: JobRepository, scan_job_id: str) -> Job | None:
+    getter = getattr(repo, "get_followup_clustering_job", None)
+    if callable(getter):
+        try:
+            return await getter(scan_job_id)
+        except AttributeError:
+            pass
+    return _followup_from_in_memory_jobs(repo, scan_job_id)
+
+
 async def _resolve_pipeline_job(
     *,
     requested_job_id: str,
     domain_job: Job | None,
     repo: JobRepository,
+    caller_tenant: str | None = None,
 ) -> Job | None:
     """Treat auto-chained clustering work as part of the original analyze pipeline."""
     if domain_job is None or domain_job.type is not JobType.ANALYZE or domain_job.status is not JobStatus.COMPLETED:
         return domain_job
-    followup_job = await repo.get_followup_clustering_job(requested_job_id)
-    return followup_job or domain_job
+    followup_job = await _load_followup_clustering_job(repo, requested_job_id)
+    if followup_job is None:
+        return domain_job
+    if not _job_is_visible(job=followup_job, caller_tenant=caller_tenant):
+        return domain_job
+    return followup_job
 
 
 async def _job_to_pipeline_response(
@@ -208,8 +287,14 @@ async def _job_to_pipeline_response(
     repo: JobRepository,
     scan_repo,
     cluster_repo=None,
+    caller_tenant: str | None = None,
 ):
-    resolved_job = await _resolve_pipeline_job(requested_job_id=requested_job_id, domain_job=domain_job, repo=repo)
+    resolved_job = await _resolve_pipeline_job(
+        requested_job_id=requested_job_id,
+        domain_job=domain_job,
+        repo=repo,
+        caller_tenant=caller_tenant,
+    )
     if resolved_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     response = await _job_to_response(resolved_job, scan_repo=scan_repo)
@@ -486,16 +571,29 @@ async def analyze_media(
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(
     job_id: str,
-    tenant_id: str = Query(default=None),
+    _query_tenant_id: str | None = Query(default=None, alias="tenant_id"),
+    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
+    auth=Depends(require_auth),
     job_service=Depends(get_job_service_dependency),
     session=Depends(get_optional_session),
 ) -> JobStatusResponse:
-    """Poll job status by ID."""
+    """Poll job status by ID.
+
+    Tenant authority is the authenticated key claim (or admin ``X-Tenant-ID``).
+    Client query/header cannot override a tenant-scoped key. Auth-disabled
+    polls remain unfenced for compatibility. Status reads never admit usage.
+    """
+    caller_tenant = _poll_tenant_authority(auth, x_tenant_id=x_tenant_id)
+
     # First check in-memory job service (for tests and in-memory mode)
     job = await job_service.get_job_status(job_id)
     if job and hasattr(job, "status") and hasattr(job, "id"):
         if isinstance(job, JobStatusResponse):
+            if caller_tenant is not None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
             return job
+        if not _job_is_visible(job=job, caller_tenant=caller_tenant):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
         scan_repo = None
         cluster_repo = getattr(job_service, "cluster_repository", None)
         if session is not None:
@@ -512,6 +610,7 @@ async def get_job_status(
             repo=job_service,
             scan_repo=scan_repo,
             cluster_repo=cluster_repo,
+            caller_tenant=caller_tenant,
         )
 
     # Look up from database if we have a session
@@ -522,6 +621,8 @@ async def get_job_status(
         repo = SqlAlchemyJobRepository(session)
         domain_job = await repo.get(job_id)
         if domain_job:
+            if not _job_is_visible(job=domain_job, caller_tenant=caller_tenant):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
             from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
@@ -533,6 +634,7 @@ async def get_job_status(
                 repo=repo,
                 scan_repo=scan_repo,
                 cluster_repo=cluster_repo,
+                caller_tenant=caller_tenant,
             )
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")

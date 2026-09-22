@@ -39,6 +39,10 @@ function asClaimError(error: unknown): PortalClaimApiError {
   };
 }
 
+function retainInvitationForTransportRetry(error: PortalClaimApiError): boolean {
+  return error.code === 'portal_identity_unavailable';
+}
+
 function claimCopy(error: PortalClaimApiError): ClaimCopy {
   switch (error.code) {
     case 'email_unverified':
@@ -181,7 +185,11 @@ export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
       if (epoch !== epochRef.current) {
         return;
       }
-      const copy = claimCopy(asClaimError(error));
+      const parsed = asClaimError(error);
+      const copy = claimCopy(parsed);
+      if (!retainInvitationForTransportRetry(parsed)) {
+        setToken('');
+      }
       setBusy(false);
       setRetry(copy.retry);
       setStatus({ tone: copy.tone, message: copy.message });

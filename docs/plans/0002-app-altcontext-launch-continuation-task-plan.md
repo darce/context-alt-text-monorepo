@@ -1,6 +1,6 @@
 # APP-1. Plan 0002 — complete app.altcontext.com launch
 
-- Status: active continuation; remote execution authorized, contract amendments still under review. Prepared 2026-09-21 America/Toronto (handoff records extend into 2026-09-22 UTC).
+- Status: active continuation; offline landed-work reconciliation recorded 2026-09-22. This document is not a release acceptance or live-integration receipt.
 - Owner: APP-1, existing `feature/app-1` integration worktree.
 - Inspected baseline: `11fe4dea7ae1b065893aca38d215b38e7a18c23f`.
 - Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-polar-task-plan.md).
@@ -23,35 +23,46 @@ Handoff MCP reads the repository `.task-state/handoff.db`. APP-1 decision 12900 
 
 Semantic retrieval used `find_related_prior_work`: `embeddings_mode=verified`, model `gte-base-en-v1.5`, `semantic_degrade_reason=null`. Relevant hits include APP-1 decisions 12633, 12639, 12649, 13218 and E20-7 finding 1726. Similarity is discovery evidence, not proof a requirement is satisfied.
 
-APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* findings does not mean launch-ready. Its only returned planning review is run 1163, `pass_with_findings`, against the old September 19 plan. There is no clean planning pass for this continuation.
+APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* findings does not mean launch-ready. The latest user-requested harmonizing gate supersedes the older request for a clean planning review before dispatch; do not repeat that older review. The coordinator records gate state and supported dispositions.
 
-The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. Its S0 route inventory and E16-7 disposition matrix exist but retain pre-implementation claims. Refresh them; do not redo the entire original discovery program.
+The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. Its S0 route inventory and E16-7 disposition matrix retain some pre-implementation claims; the current source and supplied receipts are reconciled in [the offline evidence report](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). Do not redo the original discovery program or a second fixwave review.
+
+## Offline evidence reconciliation — 2026-09-22
+
+This is a documentation-only classification. The current checkout is the source authority; the supplied landed receipts are execution evidence even when their historical SHAs or VM bundles are not resolvable here. No MCP status is changed, no credentials or accounts are provisioned, and no live provider, host, browser, or deployment evidence is implied.
+
+- W4 usage findings 15849–15852 are offline-addressed by the landed G1/G2/G3 source and receipts. The exact matrix, including residual evidence, is in [app1-offline-evidence-reconciliation-20260922.md](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). A new operation remains independently chargeable even for identical bytes; a terminal ticket cannot mint work. Post-start compute failures remain conservatively chargeable under the accepted cost contract; “all failures free” is not the contract.
+- P01 enumeration and recovery are implemented in the current provider, reconciliation worker, and fenced repository. The supplied R1 receipt is green offline; the initial R1 review remains pending, and Polar sandbox/live evidence is external.
+- P02 now adjudicates the scene compute paths and covered operator controls from source. Operator GPU/clustering/revert mutations are paid-only through durable `TenantEntitlement(PAID_ACTIVE)` plus the existing write/auth guard; beta/demo markers are not authority. The `/recognition/jobs/{id}` tenant census and other intentionally open-Q control-plane decisions remain pending.
+- P03 is not closed as a whole: durable checkout-attempt identity, recovery/enumeration, and full-header verifier code are landed and receipted offline, but genuine webhook sandbox compatibility remains unproven. Keep the finding open until V has that evidence.
+- P05 is split: the evaluator now fail-closes untyped/partial evidence, zero/failed/skipped JUnit, missing or mismatched parametrized cases, missing evidence-only artifacts, and release-mode partial selection. The supplied evaluator receipt is green offline; the full current manifest plus real PostgreSQL, restore, Clerk, Polar, browser, and alert/telemetry rehearsals remain V work.
+- HOST-RV01 still blocks main after the host single-fix wave; no extra host fix is authorized here. N1 recovery work remains queued/running under coordinator control, B1’s remaining UI is incomplete, and user accounts are not provisioned.
 
 ## Wind-down addendum — 2026-09-22
 
-This addendum supersedes the live-handle descriptions in the historical checkpoint below.
+This addendum supersedes the live-handle descriptions and stale implementation priorities in the historical checkpoint below. The checkpoint remains historical context, not current lane state.
 
 - No APP-1 implementation pass remains in progress. The final pretenant-auth pass `app1-pretenant-auth-20260922-v1` ended with 26 focused VM tests passing, then failed WorkBay final verification/reporting. Checkpoint `17a6cf46e` is integrated into the feature branch; its verified bundle is `app1-pretenant-auth-20260922.bundle` and its clean worktree is retired. Billing, storage, composition and evaluator worktrees are also retired.
 - An SSH `/proc` survey found no live APP-1 Grok/Codex/remote-agent processes. This is task-scoped evidence, not a claim that the whole VM is idle. No new work was dispatched during wind-down. Remote sandbox deletion remains unverified; preserved UX-map patches must survive cleanup.
 - Main advanced independently to `cebc972bc1429eb8a8a07bae78993af84de9f3e0`; reconcile the feature against current main before final release checks. Nothing was deployed by this session.
-- Highest priorities: adjudicate evaluator RV01–03 evidence concerns against the exact reviewed delta (CARD-06, Principle 13, GRPH-14); repair remaining usage HIGH findings 15849–15852 (SEC-01, bounded resource admission); verify schema upgrade/RLS evidence and update table inventory fixtures. These are release concerns, not reasons to repeat finished implementation.
-- Evaluator RV04–06 are medium candidates: parametrized JUnit matching, nonexistent evidence-only JUnit references, and a case ledger remaining passed when its required artifact is missing. Confirm once, then include same-file repairs in the one authorized evaluator fix wave; no second review. Reported severities remain provisional until exact-range adjudication.
+- Historical checkpoint priorities included evaluator RV01–03, usage findings 15849–15852, and schema/RLS evidence. The supplied receipts and current-source reconciliation above now classify the landed evaluator and G1/G2/G3 repairs offline; release evidence and residual route census remain separate work.
+- The historical RV04–06 concerns are covered by the supplied evaluator receipt: parametrized JUnit matching, missing evidence-only artifacts, and missing-artifact ledger demotion now fail closed. The full V packet and real fixtures/rehearsals remain pending; no second review or fixwave is implied.
 - Semantic reinjection selected verified `gte-base-en-v1.5` prior art, including decisions 13281/13294 and finding 15555. Codemap re-found `claim_tenant` and `require_portal_principal`; coverage checks reported no recorded issue for auth, identity service and evaluator paths, which is not proof of completeness or feature-tip freshness.
 - Clerk remains unavailable. Real sign-in rehearsal remains pending Clerk; nothing was deployed.
 
 ## Execution checkpoint — 2026-09-22 06:41 UTC
 
-- Usage checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated at `1a3f51fe4` after 28 focused VM tests. Findings 15849–15852 still block main: global budget, scene coverage, premature settlement and operation-id reuse. Feature integration is not launch acceptance.
+- At this historical checkpoint, usage checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated at `1a3f51fe4` after 28 focused VM tests and the four usage findings still blocked main. Later supplied G1/G2/G3 receipts reconcile those findings offline as recorded above; feature integration is not launch acceptance.
 - Keys/hooks checkpoint `1f168a2de` integrated at `8f12a1e8` after 35 focused VM tests passed. The remote review expired; no completed review is claimed and no second fix loop is authorized.
 - Vendor assessment `d4bee9e24` integrated at `375a4a7e9`; usage/evidence adjudication `321e8773d` integrated at `23e581153`. Focused protocol smoke checks passed, which does not prove the documents complete. Earlier failed/expired passes are superseded by these preserved artifacts.
 - Checkout/Link portability assessment committed at `581405f99`; operator decisions recorded in handoff decision 13236. Checkout, reconcile and keys/hooks branches were bundled under `.task-state/branch-archive/` and their clean, integrated worktrees retired before new admission.
 - Billing spec checkpoint `49325e31a` integrated at `0307f770b`; evaluator checkpoint `34b2572ff` integrated at `5d5717c3f`, with 21 focused VM tests after behavioral RED. Their worktrees were bundled and retired. The evaluator review is `app1-eval-review-20260922-v2` on Luna/max.
 - Composition guard `6ecb1ce5f` integrated at `8d15cace1` with 19 focused VM tests. Its worktree is bundled and retired. Audience and authorized-party configuration are separate in composition; the second loader in `PortalAuthSettings.from_env` still requires correction.
 - Billing adapter `bbcab9a90` integrated at `3c41aef1e` with 58 focused VM tests and a formatting receipt. It supplies attempt-owned idempotency, typed checkout ID/URL, bounded recovery/enumeration and full-header signature verification. Real Polar delivery rehearsal remains outstanding. Its worktree is retained only while the existing remote review owns a live lease; no additional review is admitted.
-- Active implementation passes: `app1-checkout-store-20260922-v2` and `app1-pretenant-auth-20260922-v1`, both Grok/high on the VM. Four slice worktrees include these, the billing review and evaluator review; no fifth slice is admitted. The bundled composition tree has already been removed. Adapter-internal review began independently of coordinator review admission; no further reviewer will be admitted until this overlap clears.
+- Historical active-pass snapshot: `app1-checkout-store-20260922-v2` and `app1-pretenant-auth-20260922-v1` were Grok/high VM passes with four slice worktrees. Wind-down supersedes those handles; no live implementation pass or new reviewer is claimed here.
 - Pretenant authentication is split from the full claim endpoint to run independently of checkout schema. It owns only `portal_auth.py` and two auth test files. The claim endpoint still needs an explicit durable replay outcome; the existing `claim_tenant` service returns only `PortalPrincipal`. Do not infer 201 versus 200 from a racy pre-read.
 - Codemap discovers existing symbols; its main index predates feature changes, so remote briefs require exact-source verification. Verified semantic reinjection uses `gte-base-en-v1.5`; prior art and limitations accompany dispatch.
-- Operator will provision Clerk development and Polar sandbox credentials through untracked `.env` and notify the coordinator. Blocker 821 gates real rehearsal/release, not offline work. Never print credential values or package `.env` into a lane.
+- The historical checkpoint said the operator would provision Clerk development and Polar sandbox credentials. They are not provisioned for this offline task; no credentials, accounts or live provider/network action is claimed. Blocker 821 still gates genuine rehearsal/release.
 - Composition now rejects known Polar host/environment mismatches and uses the sandbox default correctly. Seller-account wiring and cross-slice construction still need harmonizing verification.
 - Installed Grok adapter emits `--no-subagents`; parallelism is coordinator-owned remote lanes, not nested Grok flocks. Never spoof capability or sandbox receipts. Model discovery warning does not prove the pinned model was served; record actual receipts.
 
@@ -93,11 +104,11 @@ These are point-in-time observations. Consult MCP pass state before recovery; an
 | K — keys/hooks | Integrated; no duplicate implementation | Preserve `8f12a1e8`; check cross-slice contracts at the final gate |
 | D — app host preparation | Bounded implementation candidate | Freeze host allowlist/env names in P and record a planning pass; DNS/secrets are staging inputs, not grounds to fabricate a deploy pass |
 | C — checkout/provider/schema | Provider integrated; persistence executing remotely | Consume typed provider results and tenant-scoped attempt repository in a subsequent checkout-service slice |
-| U — usage and cost | Needs scope amendment | Include scene routes and background completion/cancel, classify every remaining OPEN-Q route, enforce global cost bounds |
-| R — reconciliation | Not ready as current manifest describes it | Local projection scan cannot discover a provider subscription with no local row; needs C's provider enumeration and persistence contract |
+| U — usage and cost | Offline-landed for the G1/G2/G3 route set; residual census/evidence pending | Preserve global bounds, exact operation/fingerprint/job/fence identity, conservative post-start charging, and classify remaining OPEN-Q routes |
+| R — reconciliation | Offline implementation and receipts present; initial R1 review pending | Retain bounded provider enumeration, cursor/lease fencing, quarantine/retry, and obtain the initial review plus external provider evidence |
 | H — portal HTTP | Dependency blocked | Consume reviewed C interfaces; one owner for claim, checkout and manage routes |
 | B — browser UI | Dependency blocked for integration | Freeze HTTP schemas and Clerk browser contract; consume H and U, serialize app mount ownership |
-| V — evidence and release rehearsal | Needs explicit packet | Own eval enforcement, PostgreSQL/security evidence and browser/vendor/restore rehearsal; not just targeted unit tests |
+| V — evidence and release rehearsal | Offline enforcement addressed; full packet pending | Use the fail-closed evaluator checks, then run the current manifest with PostgreSQL/security, browser/vendor/restore and alert/telemetry rehearsals; targeted unit tests are not sufficient |
 | L — live paid activation | Release blocked | Beta engineering gate, approved catalog/account and separately authorized real-money canary |
 
 ## Files and surfaces to change
@@ -113,7 +124,7 @@ Own this plan, the epic's active APP-1 section, the now-present `docs/specs/app-
 - Define bounded authoritative provider enumeration, cursor/checkpoint durability, lease/fencing ownership and no network calls while holding database row locks. C owns shared schema/provider protocol; R owns processing.
 - Resolve webhook signature compatibility (APP1-HG-45) before treating internal fixtures as vendor proof. This packet does not claim the existing verifier accepts genuine Polar deliveries.
 - Refresh the route inventory, including `/scene/describe/multipart`, `/scene/describe/async`, `/scene/describe/run`, cancellation and costly cluster/GPU controls. Name actual handlers/worker completion seams and grant U the necessary paths before dispatch. Free polling does not consume image allowance.
-- Resolve the missing contract artifact, stale inherited dispositions and one-time ownership of app mount, composition, migration and contract files. P requires a subsequent clean planning pass; no blanket S0 redispatch.
+- Resolve the remaining stale inherited dispositions and one-time ownership of app mount, composition, migration and contract files. The latest user-requested harmonizing gate supersedes the older request for a clean planning review before dispatch; the coordinator records gate state. No blanket S0 redispatch.
 
 ### C — checkout, provider and shared schema
 
@@ -127,7 +138,7 @@ Acceptance: concurrency, tenant/environment isolation, timeout-after-provider-su
 
 ### U — admission, usage and cost
 
-Existing anchors: `recognition/application/services/usage_admission_service.py:UsageAdmissionService.reserve/commit/release`; `recognition/infrastructure/repositories/usage_repository.py`; `recognition/interface_adapters/http/deps/portal_composition.py:install_portal_composition`; analyze JSON/multipart routers. New dependency `deps/usage_admission.py` and `scripts/usage_reservation_sweeper.py`.
+Landed anchors: `recognition/application/services/usage_admission_service.py:UsageAdmissionService.reserve/commit/release`; `recognition/infrastructure/repositories/usage_repository.py`; `recognition/interface_adapters/http/deps/portal_composition.py:install_portal_composition`; `recognition/interface_adapters/http/deps/usage_admission.py`; analyze JSON/multipart routers; `scripts/usage_reservation_sweeper.py`.
 
 Expand owned paths to the scene dispatch and terminal-job seams identified by P. Apply admission before all costly customer work; settle successful units exactly once; release terminal failures/cancel according to the accepted cost contract. Bind retry keys to tenant, operation/job and cost; a released/committed ticket cannot authorize new work. Sweep abandoned reservations with bounded progress and restart safety. Enforce per-tenant and global in-flight cost limits; plugin-side accounting is not sufficient.
 
@@ -135,7 +146,7 @@ U is sole composition-root owner, including HG-60 and provider/repository wiring
 
 ### R — reconciliation and recoverability
 
-Existing anchors: `scripts/billing_reconcile.py:BillingReconciliationWorker.run`, `ReconciliationProvider.retrieve_state`, `_normalize_state`; `recognition/infrastructure/repositories/billing_repository.py`. Depends on C for provider enumeration and agreed cursor/lease schema.
+Landed anchors: `scripts/billing_reconcile.py:BillingReconciliationWorker.run`, bounded provider enumeration, `ReconciliationProvider.retrieve_state`, `_normalize_state`; `recognition/infrastructure/repositories/billing_repository.py`; `recognition/infrastructure/repositories/billing_reconciliation_repository.py`. Offline R1 implementation/receipt is present; the initial R1 review and live provider evidence remain pending.
 
 Recover missed events both for known projections and provider subscriptions without a local subscription projection. Bound pages, work and vendor timeouts; resume cursor across restarts; lease/fence concurrent workers; keep per-item failures isolated. Reject mismatched provider tenant/customer identity rather than inventing it from request context. Make quarantine observable and recoverable with an audited retry operation. Prove stalled/wholly unprogressed `--once` execution cannot report healthy success. APP-SC-11/12/13.
 
@@ -165,7 +176,7 @@ Allow only agreed app/auth/static/webhook routes on app host; block admin/intern
 
 ### V — evidence integrity and complete beta rehearsal
 
-Own `scripts/run_app_portal_evals.py:run_evals`, its tests, APP-1 eval manifest and release dossier. Existing runner is implemented, contrary to old Plan 0001 wording; fix only the recorded enforcement gap. Include collection receipt changes only where reproduced against the APP-1 gate and coordinate with infrastructure owners.
+Own `scripts/run_app_portal_evals.py:run_evals`, its tests, APP-1 eval manifest and release dossier. The current runner now fail-closes untyped artifacts, partial release selections, zero/failing/skipped evidence-only JUnit, missing or mismatched parametrized cases, missing evidence-only paths, and missing required artifacts. The supplied receipt proves the enforcement unit suite only; the current manifest and real rehearsals remain V work.
 
 First prove missing artifacts, zero cases, skipped mandatory cases, failed child commands and omitted required cases cannot produce a passing release record. Then run the full declared testpaths with `ACX_STRICT_GATE=1`, `ACX_PORTAL_TESTS_REQUIRE_PG=1`, locked dev environment and fresh JUnit, without positional narrowing. Keep red and green evidence, SHA, count, exit status and artifact identity.
 
@@ -173,7 +184,7 @@ Require real PostgreSQL RLS/concurrency under a non-owner role; reset-role denia
 
 ## Deferred-finding ownership crosswalk
 
-These assignments deduplicate work; they do not change finding status or claim fixes. Numeric IDs are database row IDs; full finding keys remain in handoff.db.
+These assignments deduplicate work; this offline document classification does not change MCP finding status or claim release acceptance. Numeric IDs are database row IDs; full finding keys remain in handoff.db.
 
 | Owner | Existing finding rows |
 | --- | --- |
@@ -220,14 +231,14 @@ Use a maximum of four workers when later authorized and admitted by the harness.
 - Exact endpoint/worker ownership and vendor enumeration/signature/ambiguous-checkout contracts remain P outputs. Do not invent provider APIs to make a lane appear ready.
 - Final cohort, allowance, cost ceiling, price/currency/catalog, failed-payment grace, stale entitlement policy and vendor account eligibility remain explicit decisions. Preserve current proposals without presenting them as approved.
 - Add a predeclared paid-conversion hypothesis before free-beta admission, then record actual offers/purchases separately from sandbox evidence. Resolve AP-7 coexistence without building a second billing stack.
-- Subsequent planning review must record a clean pass and accepted baseline before fresh remote implementation; the user has explicitly requested no dispatch now.
+- The latest user-requested harmonizing gate supersedes the older request for a clean planning review before dispatch; do not repeat that older review. Record only the remaining gate state, supported dispositions, external-evidence requirements and current blockers. No dispatch is authorized by this document.
 
 ## Consolidated Checklist
 
 - [x] Recover handoff state, verified semantic prior art, current branch tips and deferred findings.
 - [x] Deduplicate app-launch work and publish a proposed DAG with shared-file ownership.
-- [ ] P: finish exact contracts and refresh stale inventory/epic crosswalk; obtain clean planning review.
-- [ ] Recover existing W4 receipts/checkpoint; confirm lifecycle and remote preflight readiness.
+- [x] P: reconcile the landed usage, recovery and evaluator contracts into the owned inventory/matrices; retain the initial R1 review and external-evidence actions.
+- [x] Reconcile the supplied W4/fixwave receipts; they are offline evidence, not release acceptance.
 - [ ] C/U/R/K/H/B/D: record behavioral RED, implement only authorized slices, record GREEN and review.
 - [ ] V: prove evidence enforcement, full suite scope, PostgreSQL isolation, browser/vendor/restore/alert rehearsals.
 - [ ] Authorize and admit bounded free beta; measure APP-SC-19.

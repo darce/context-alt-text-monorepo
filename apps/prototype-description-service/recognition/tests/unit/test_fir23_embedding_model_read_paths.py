@@ -68,11 +68,17 @@ def test_active_embedding_model_id_auraface_uses_auraface_manifest(
 
     get_settings.cache_clear()
     try:
+        from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
         model_id = active_embedding_model_id()
         expected = auraface_embedding_model_manifest().model_id
+        space = numeric_runtime_fingerprint().space_token
         assert model_id == expected
         assert "auraface" in model_id.lower()
         assert "@512d/" in model_id
+        assert space in model_id
+        assert model_id.startswith(f"insightface-auraface+{space}@")
+        assert model_id.endswith("@512d/l2/cosine")
         assert "buffalo" not in model_id.lower()
         assert model_id != incumbent_embedding_model_manifest().model_id
     finally:

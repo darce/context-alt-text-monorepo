@@ -28,15 +28,18 @@ if str(_SERVICE_ROOT) not in sys.path:
 import cv2  # noqa: E402
 
 from recognition.infrastructure.face_pipeline.aligner import (  # noqa: E402
+    ARCFACE_CANONICAL_LANDMARKS_112,
     YUNET_LANDMARK_NAMES,
     FivePointAligner,
 )
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace  # noqa: E402
 from recognition.infrastructure.face_pipeline.opencv_ref import (  # noqa: E402
     DEFAULT_NMS_THRESHOLD,
     DEFAULT_SCORE_THRESHOLD,
     OpenCVSFaceEmbedder,
     OpenCVYuNetDetector,
 )
+from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder  # noqa: E402
 from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
@@ -45,9 +48,14 @@ from recognition.infrastructure.face_pipeline.provenance import (  # noqa: E402
 )
 
 FIXTURE_DIR = Path(__file__).resolve().parent
+AURAFACE_COMPOSED_DIR = FIXTURE_DIR / "auraface_composed"
+AURAFACE_LIVE_MODELS_DIR = Path("/opt/acx-backend/data/dev-models/face_pipeline")
 SEED = 20260715
 EMBED_SEED = 20260716
 GENERATOR_RELPATH = "recognition/tests/fixtures/face_pipeline/generate_goldens.py"
+# Independent Umeyama vs OpenCV-port Umeyama is float32-tight, not bit-exact.
+# Measured cosine 0.99999994; floor 0.9999999 is ~10× float32 epsilon at 1.0.
+_AURAFACE_COSINE_MIN = 0.9999999
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -142,6 +150,186 @@ def write_embedding_goldens(*, output_dir: Path | None = None) -> dict:
         **toolchain_provenance(),
     }
     (out_dir / "embedding_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return meta
+
+
+def _auraface_models_dir(models_dir: Path | None = None) -> Path:
+    if models_dir is not None:
+        return Path(models_dir)
+    if (
+        AURAFACE_LIVE_MODELS_DIR.is_dir()
+        and (AURAFACE_LIVE_MODELS_DIR / MODEL_MANIFEST["auraface"].file_name).is_file()
+    ):
+        return AURAFACE_LIVE_MODELS_DIR
+    return DEFAULT_MODELS_DIR
+
+
+def reference_arcface_similarity_matrix(src_landmarks: np.ndarray) -> np.ndarray:
+    """Independent Umeyama similarity for InsightFace estimate_norm (not the OpenCV port)."""
+    src = np.asarray(src_landmarks, dtype=np.float64)
+    if src.shape == (10,):
+        src = src.reshape(5, 2)
+    if src.shape != (5, 2):
+        raise ValueError(f"expected 5 landmarks as (5, 2) or (10,), got {src.shape}")
+    dst = np.asarray(ARCFACE_CANONICAL_LANDMARKS_112, dtype=np.float64)
+    src_mean = src.mean(axis=0)
+    dst_mean = dst.mean(axis=0)
+    src_demean = src - src_mean
+    dst_demean = dst - dst_mean
+    cov = (dst_demean.T @ src_demean) / 5.0
+    u, singular, vt = np.linalg.svd(cov)
+    r = u @ vt
+    if np.linalg.det(r) < 0:
+        vt = vt.copy()
+        vt[-1, :] *= -1.0
+        r = u @ vt
+    var = float(np.sum(src_demean * src_demean) / 5.0)
+    if var <= 0.0:
+        raise ValueError("degenerate landmarks (zero variance); cannot align")
+    scale = float(np.sum(singular) / var)
+    translation = dst_mean - scale * (r @ src_mean)
+    matrix = np.zeros((2, 3), dtype=np.float64)
+    matrix[:, :2] = scale * r
+    matrix[:, 2] = translation
+    return matrix
+
+
+def reference_arcface_align(image_bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+    """BGR 112 crop via the independent ArcFace formula (InsightFace norm_crop)."""
+    affine = reference_arcface_similarity_matrix(landmarks)
+    return cv2.warpAffine(
+        image_bgr,
+        affine,
+        (112, 112),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0.0,
+    )
+
+
+def reference_arcface_blob(crop_bgr: np.ndarray) -> np.ndarray:
+    """RGB NCHW ``(pixel - 127.5) / 127.5`` blob (InsightFace ArcFaceONNX, no cv2.dnn)."""
+    rgb = crop_bgr[:, :, ::-1].astype(np.float32)
+    scaled = (rgb - np.float32(127.5)) / np.float32(127.5)
+    return np.ascontiguousarray(scaled.transpose(2, 0, 1)[None, ...])
+
+
+def _l2_normalize(vector: np.ndarray) -> tuple[np.ndarray, float]:
+    raw = np.asarray(vector, dtype=np.float32).reshape(-1)
+    norm = float(np.linalg.norm(raw))
+    if norm == 0.0 or not np.isfinite(norm):
+        raise RuntimeError(f"AuraFace raw embedding has zero/non-finite L2 norm ({norm})")
+    return raw / np.float32(norm), norm
+
+
+def _auraface_ort_session(model_path: Path):
+    import onnxruntime as ort
+
+    opts = ort.SessionOptions()
+    opts.log_severity_level = 3
+    opts.inter_op_num_threads = 1
+    opts.intra_op_num_threads = 1
+    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    return ort.InferenceSession(str(model_path), sess_options=opts, providers=["CPUExecutionProvider"])
+
+
+def write_auraface_composed_goldens(
+    *,
+    output_dir: Path | None = None,
+    models_dir: Path | None = None,
+) -> dict:
+    """Composed AuraFace golden: independent ArcFace reference vs in-house aligner+ORT.
+
+    Writes only under ``auraface_composed/``. Never overwrites SFace fixtures.
+    """
+    out_dir = AURAFACE_COMPOSED_DIR if output_dir is None else Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    models_root = _auraface_models_dir(models_dir)
+    model_path = load_verified_model("auraface", models_dir=models_root)
+    entry = MODEL_MANIFEST["auraface"]
+    preprocessing = entry.preprocessing
+    if preprocessing is None:
+        raise RuntimeError("auraface manifest is missing preprocessing")
+
+    img, landmarks = aligner_source_image()
+    src_path = FIXTURE_DIR / "aligner_source_image.npy"
+    lm_path = FIXTURE_DIR / "aligner_landmarks.npy"
+    if src_path.is_file() and lm_path.is_file():
+        img = np.load(src_path)
+        landmarks = np.load(lm_path)
+
+    reference_crop = reference_arcface_align(img, landmarks)
+    reference_blob = reference_arcface_blob(reference_crop)
+    session = _auraface_ort_session(model_path)
+    input_name = session.get_inputs()[0].name
+    reference_raw = np.asarray(session.run(None, {input_name: reference_blob})[0], dtype=np.float32).reshape(-1)
+    reference_vec, reference_norm = _l2_normalize(reference_raw)
+
+    inhouse_crop = FivePointAligner(space=ModelSpace.AURAFACE).align(img, landmarks).crop
+    inhouse = OrtSFaceEmbedder(model_name="auraface", models_dir=models_root).embed([inhouse_crop])
+    inhouse_vec = np.asarray(inhouse.vectors[0], dtype=np.float32).reshape(-1)
+    cosine = float(np.dot(reference_vec, inhouse_vec))
+    if cosine < _AURAFACE_COSINE_MIN:
+        raise RuntimeError(
+            "AuraFace composed independent reference diverges from in-house aligner+ORT "
+            f"(cosine={cosine} < {_AURAFACE_COSINE_MIN})"
+        )
+
+    np.save(out_dir / "source_image.npy", img)
+    np.save(out_dir / "landmarks.npy", landmarks)
+    np.save(out_dir / "reference_crop.npy", reference_crop)
+    np.save(out_dir / "inhouse_crop.npy", inhouse_crop)
+    np.save(out_dir / "reference_embedding.npy", reference_vec.reshape(1, -1))
+    np.save(out_dir / "inhouse_embedding.npy", inhouse_vec.reshape(1, -1))
+
+    meta = {
+        "kind": "auraface_composed_embedding_golden",
+        "description": (
+            "Independent ArcFace align+blob+ORT vs in-house FivePointAligner+OrtSFaceEmbedder "
+            "on the existing aligner source image/landmarks. Not a quality or deployment claim."
+        ),
+        "source_image": "aligner_source_image.npy",
+        "source_landmarks": "aligner_landmarks.npy",
+        "reference_crop_sha256": _sha256_bytes(reference_crop.tobytes()),
+        "inhouse_crop_sha256": _sha256_bytes(inhouse_crop.tobytes()),
+        "embedding_shape": [1, int(inhouse_vec.size)],
+        "embedding_dim": int(inhouse_vec.size),
+        "l2_norm": float(np.linalg.norm(inhouse_vec)),
+        "reference_pre_norm_magnitude": float(reference_norm),
+        "inhouse_pre_norm_magnitude": float(inhouse.norms[0]),
+        "composed_cosine": cosine,
+        "cosine_min": _AURAFACE_COSINE_MIN,
+        "model": entry.file_name,
+        "model_sha256": entry.sha256,
+        "models_dir": str(models_root),
+        "ort_session": {
+            "intra_op_num_threads": 1,
+            "inter_op_num_threads": 1,
+            "graph_optimization_level": "ORT_DISABLE_ALL",
+            "execution_mode": "ORT_SEQUENTIAL",
+            "providers": ["CPUExecutionProvider"],
+        },
+        "preprocessing": {
+            "input_size": list(preprocessing.input_size),
+            "channel_order": preprocessing.channel_order,
+            "input_scale": float(preprocessing.input_scale),
+            "input_mean": float(preprocessing.input_mean),
+            "alignment_template_id": preprocessing.alignment_template_id,
+            "output_l2_normalized": bool(preprocessing.output_l2_normalized),
+            "blob_formula": "(rgb_pixel - input_mean) * input_scale",
+        },
+        "reference": {
+            "align_formula": "independent Umeyama onto InsightFace arcface_dst 112",
+            "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6",
+            "insightface_runtime_imported": False,
+            "blob_formula": "RGB (pixel-127.5)/127.5",
+        },
+        **toolchain_provenance(),
+    }
+    (out_dir / "aligner_composed_embedding_meta.json").write_text(
+        json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return meta
 
 
@@ -440,8 +628,32 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Directory for golden outputs (default: fixture dir next to this script).",
     )
+    parser.add_argument(
+        "--auraface-composed",
+        action="store_true",
+        help="Also write AuraFace composed goldens (never overwrites SFace fixtures).",
+    )
+    parser.add_argument(
+        "--only-auraface-composed",
+        action="store_true",
+        help="Write only AuraFace composed goldens into auraface_composed/.",
+    )
+    parser.add_argument(
+        "--auraface-models-dir",
+        type=Path,
+        default=None,
+        help="Directory containing glintr100.onnx + LICENSE.auraface.md.",
+    )
     args = parser.parse_args(argv)
     output_dir = FIXTURE_DIR if args.output_dir is None else Path(args.output_dir)
+
+    if args.only_auraface_composed:
+        aura_dir = AURAFACE_COMPOSED_DIR if args.output_dir is None else Path(args.output_dir)
+        aura_meta = write_auraface_composed_goldens(output_dir=aura_dir, models_dir=args.auraface_models_dir)
+        print("Wrote AuraFace composed goldens:", aura_meta["inhouse_crop_sha256"][:12], "...")
+        print("composed_cosine:", aura_meta["composed_cosine"])
+        print("output_dir:", aura_dir)
+        return 0
 
     # Prove models load before writing goldens that depend on them.
     load_verified_model("sface")
@@ -457,6 +669,11 @@ def main(argv: list[str] | None = None) -> int:
     print("Wrote aligner goldens:", align_meta["crop_sha256"][:12], "...")
     print("Wrote composed aligner→embedder goldens:", composed_meta["crop_sha256"][:12], "...")
     print("Detector golden:", det_meta.get("status"), det_meta.get("kind"))
+    if args.auraface_composed:
+        aura_dir = AURAFACE_COMPOSED_DIR if args.output_dir is None else Path(args.output_dir) / "auraface_composed"
+        aura_meta = write_auraface_composed_goldens(output_dir=aura_dir, models_dir=args.auraface_models_dir)
+        print("Wrote AuraFace composed goldens:", aura_meta["inhouse_crop_sha256"][:12], "...")
+        print("composed_cosine:", aura_meta["composed_cosine"])
     print("models_dir:", DEFAULT_MODELS_DIR)
     print("output_dir:", output_dir)
     return 0

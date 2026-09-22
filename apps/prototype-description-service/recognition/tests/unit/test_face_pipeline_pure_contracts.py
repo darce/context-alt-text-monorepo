@@ -181,21 +181,13 @@ def test_ort_sface_embedder_hands_the_legacy_sface_blob_to_session(
     np.testing.assert_array_equal(session.blobs[0], _bgr_to_sface_blob(crop))
 
 
-def test_ort_embedder_uses_declared_rgb_scale_for_session_blob(
+def test_ort_embedder_uses_declared_rgb_mean_scale_blob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     entry = MODEL_MANIFEST["auraface"]
     assert entry.preprocessing is not None
-    preprocessing = replace(
-        entry.preprocessing,
-        alignment_template_id="sface-5pt-112",
-    )
-    monkeypatch.setitem(
-        ort_adapters.MODEL_MANIFEST,
-        "auraface",
-        replace(entry, preprocessing=preprocessing),
-    )
+    assert entry.preprocessing.alignment_template_id == "arcface-112"
     session = _RecordingSession(512)
     monkeypatch.setattr(
         ort_adapters,
@@ -214,8 +206,22 @@ def test_ort_embedder_uses_declared_rgb_scale_for_session_blob(
 
     assert result.vectors.shape == (1, 512)
     assert len(session.blobs) == 1
-    expected = _bgr_to_sface_blob(crop) * np.float32(1.0 / 127.5)
+    expected = (_bgr_to_sface_blob(crop) - np.float32(127.5)) * np.float32(1.0 / 127.5)
     np.testing.assert_allclose(session.blobs[0], expected)
+
+
+def test_declared_blob_mean_zero_scale_one_matches_sface_rgb() -> None:
+    crop = np.zeros((SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3), dtype=np.uint8)
+    crop[..., 0] = 10
+    crop[..., 1] = 40
+    crop[..., 2] = 70
+    blob = ort_adapters._bgr_to_declared_blob(
+        crop,
+        channel_order="RGB",
+        input_scale=1.0,
+        input_mean=0.0,
+    )
+    np.testing.assert_array_equal(blob, _bgr_to_sface_blob(crop))
 
 
 # ---------------------------------------------------------------------------
@@ -343,10 +349,7 @@ def test_resolve_embedding_dim_refuses_non_cosine_metric_for_auraface(
         resolve_embedding_dim("auraface")
 
 
-def test_ort_embedder_refuses_unsupported_auraface_preprocessing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def _patch_ort_embedder_io(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class _FakeInput:
         name = "input"
 
@@ -361,7 +364,70 @@ def test_ort_embedder_refuses_unsupported_auraface_preprocessing(
     )
     monkeypatch.setattr(ort_adapters, "_ort_session", lambda model_path: _FakeSession())
 
+
+def test_ort_embedder_accepts_measured_auraface_preprocessing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_ort_embedder_io(monkeypatch, tmp_path)
+    embedder = ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+    assert embedder.embedding_dim == 512
+
+
+def test_ort_embedder_refuses_unverified_alignment_template(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_ort_embedder_io(monkeypatch, tmp_path)
+    entry = MODEL_MANIFEST["auraface"]
+    assert entry.preprocessing is not None
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, alignment_template_id="arcface-112-unverified")),
+    )
     with pytest.raises(UnsupportedModelPreprocessingError, match=r"auraface.*arcface-112-unverified"):
+        ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+
+
+def test_ort_embedder_refuses_wrong_channel_size_and_nonfinite_mean_scale(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_ort_embedder_io(monkeypatch, tmp_path)
+    entry = MODEL_MANIFEST["auraface"]
+    assert entry.preprocessing is not None
+
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, channel_order="XYZ")),
+    )
+    with pytest.raises(UnsupportedModelPreprocessingError, match=r"channel_order"):
+        ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, input_size=(128, 128))),
+    )
+    with pytest.raises(UnsupportedModelPreprocessingError, match=r"input_size"):
+        ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, input_scale=float("nan"))),
+    )
+    with pytest.raises(UnsupportedModelPreprocessingError, match=r"non-finite input_scale"):
+        ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, input_mean=float("inf"))),
+    )
+    with pytest.raises(UnsupportedModelPreprocessingError, match=r"non-finite input_mean"):
         ort_adapters.OrtSFaceEmbedder(model_name="auraface")
 
 

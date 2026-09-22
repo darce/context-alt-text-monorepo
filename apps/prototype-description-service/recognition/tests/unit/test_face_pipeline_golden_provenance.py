@@ -24,6 +24,7 @@ import pytest
 
 from recognition.config import settings as settings_mod
 from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+from recognition.tests.unit.face_pipeline_support import MODELS_SKIP, models_absent_allows_skip
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURE_DIR = _SERVICE_ROOT / "recognition" / "tests" / "fixtures" / "face_pipeline"
@@ -64,6 +65,17 @@ _GOLDEN_NPY = (
     "aligner_crop.npy",
     "aligner_composed_embedding.npy",
 )
+_AURAFACE_COMPOSED_DIR = _FIXTURE_DIR / "auraface_composed"
+_AURAFACE_COMPOSED_META = "aligner_composed_embedding_meta.json"
+_AURAFACE_COMPOSED_NPY = (
+    "source_image.npy",
+    "landmarks.npy",
+    "reference_crop.npy",
+    "inhouse_crop.npy",
+    "reference_embedding.npy",
+    "inhouse_embedding.npy",
+)
+_LIVE_AURAFACE_MODELS_DIR = Path("/opt/acx-backend/data/dev-models/face_pipeline")
 
 
 def _load_meta(name: str) -> dict:
@@ -588,14 +600,15 @@ def test_meta_schema_equal_red_on_extra_and_missing_keys() -> None:
     assert _REGENERATE_CMD in msg
 
 
+@pytest.mark.skipif(models_absent_allows_skip(), reason=MODELS_SKIP)
 def test_committed_fixtures_match_current_generator(tmp_path: Path) -> None:
     """Run generate_goldens into tmp_path; schema + values must match committed fixtures.
 
-    No skip: missing models fail via load_verified_model (fail closed, not greenwash).
+    Ordinary runs skip when SFace/YuNet bytes are absent. FACE_PIPELINE_PARITY_REQUIRED=1
+    still fail-closes via load_verified_model.
     """
     from recognition.infrastructure.face_pipeline.provenance import load_verified_model
 
-    # Fail loud if ONNX bytes are absent or corrupt — never skip.
     load_verified_model("sface")
     load_verified_model("yunet")
 
@@ -633,3 +646,63 @@ def test_committed_fixtures_match_current_generator(tmp_path: Path) -> None:
         assert committed_path.is_file(), f"missing committed golden array: {committed_path}"
         assert generated_path.is_file(), f"generator did not write {name} under {out}"
         assert_npy_matches_golden(name, np.load(committed_path), np.load(generated_path))
+
+
+@pytest.mark.skipif(
+    not (_LIVE_AURAFACE_MODELS_DIR / "glintr100.onnx").is_file()
+    or not (_LIVE_AURAFACE_MODELS_DIR / "LICENSE.auraface.md").is_file(),
+    reason="AuraFace VM artifact is absent",
+)
+def test_committed_auraface_composed_fixtures_match_current_generator(tmp_path: Path) -> None:
+    gen = _load_generate_goldens()
+    aura_out = tmp_path / "auraface_composed"
+    aura_out.mkdir()
+    gen.write_auraface_composed_goldens(output_dir=aura_out, models_dir=_LIVE_AURAFACE_MODELS_DIR)
+    committed_meta_path = _AURAFACE_COMPOSED_DIR / _AURAFACE_COMPOSED_META
+    generated_meta_path = aura_out / _AURAFACE_COMPOSED_META
+    assert committed_meta_path.is_file(), f"missing committed AuraFace composed meta: {committed_meta_path}"
+    assert generated_meta_path.is_file(), f"generator did not write {_AURAFACE_COMPOSED_META}"
+    committed_meta = json.loads(committed_meta_path.read_text(encoding="utf-8"))
+    generated_meta = json.loads(generated_meta_path.read_text(encoding="utf-8"))
+    assert_meta_schema_equal(committed_meta, generated_meta, meta_name=f"auraface_composed/{_AURAFACE_COMPOSED_META}")
+    assert_meta_values_equal(
+        committed_meta,
+        generated_meta,
+        meta_name=f"auraface_composed/{_AURAFACE_COMPOSED_META}",
+    )
+    for name in _AURAFACE_COMPOSED_NPY:
+        committed_path = _AURAFACE_COMPOSED_DIR / name
+        generated_path = aura_out / name
+        assert committed_path.is_file(), f"missing committed AuraFace array: {committed_path}"
+        assert generated_path.is_file(), f"generator did not write {name} under {aura_out}"
+        if name.endswith("embedding.npy"):
+            cos = _embedding_cosine(np.load(generated_path)[0], np.load(committed_path)[0])
+            cosine_min = float(committed_meta.get("cosine_min", _GOLDEN_COSINE_MIN))
+            assert cos >= cosine_min, (
+                f"auraface_composed/{name}: cosine={cos} < {cosine_min}. Regenerate:\n  {_REGENERATE_CMD}"
+            )
+        else:
+            np.testing.assert_array_equal(
+                np.load(generated_path),
+                np.load(committed_path),
+                err_msg=f"auraface_composed/{name} drifted. Regenerate:\n  {_REGENERATE_CMD}",
+            )
+
+
+def test_opencv_sface_embedder_rejects_non_sface_before_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    from recognition.infrastructure.face_pipeline import opencv_ref
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("load_verified_model must not run for non-sface")
+
+    monkeypatch.setattr(opencv_ref, "load_verified_model", _boom)
+    with pytest.raises(ValueError, match=r"OpenCVSFaceEmbedder only supports model_name='sface'"):
+        opencv_ref.OpenCVSFaceEmbedder(model_name="auraface")
+
+
+def test_sface_goldens_are_not_written_into_auraface_composed() -> None:
+    assert not (_AURAFACE_COMPOSED_DIR / "synthetic_112_embedding.npy").exists()
+    assert not (_AURAFACE_COMPOSED_DIR / "aligner_composed_embedding.npy").exists()
+    sface_meta = _load_meta("aligner_composed_embedding_meta.json")
+    assert sface_meta["model"] == "face_recognition_sface_2021dec.onnx"
+    assert sface_meta["embedding_dim"] == 128

@@ -35,7 +35,6 @@ from db.models import BillingWebhookInbox
 from db.tenant_context import clear_tenant_context, set_tenant_context
 from recognition.config.settings import RecognitionSettings
 from recognition.domain.portal_contracts import (
-    RECONCILIATION_DEFAULT_LEASE_SECONDS,
     RECONCILIATION_MAX_PAGES_PER_RUN,
     RECONCILIATION_PAGE_LIMIT,
     RECONCILIATION_PROVIDER_TIMEOUT_SECONDS,
@@ -44,7 +43,6 @@ from recognition.domain.portal_contracts import (
     BillingSubscriptionStatus,
     EnumerationObservation,
     EnumerationObservationReason,
-    QuarantineStatus,
     ReconciliationCursorKey,
     ReconciliationKind,
     ReconciliationLeaseConflictError,
@@ -188,14 +186,11 @@ class _HttpxBillingClient:
 
 
 class BillingRepositoryLike(Protocol):
-    async def list_pending_webhooks(self, *, limit: int) -> Sequence[object]:
-        ...
+    async def list_pending_webhooks(self, *, limit: int) -> Sequence[object]: ...
 
-    async def get_projection(self, tenant_id: UUID, *, provider: str | None = None) -> object | None:
-        ...
+    async def get_projection(self, tenant_id: UUID, *, provider: str | None = None) -> object | None: ...
 
-    async def upsert_projection(self, **kwargs: object) -> bool:
-        ...
+    async def upsert_projection(self, **kwargs: object) -> bool: ...
 
     async def mark_webhook_processed(
         self,
@@ -204,8 +199,7 @@ class BillingRepositoryLike(Protocol):
         provider_event_id: str,
         status: WebhookInboxStatus,
         processed_at: datetime | None = None,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     async def list_known_projections(
         self,
@@ -213,8 +207,7 @@ class BillingRepositoryLike(Protocol):
         provider: str,
         limit: int,
         after_tenant_id: UUID | None = None,
-    ) -> Sequence[object]:
-        ...
+    ) -> Sequence[object]: ...
 
     async def claim_reconcile_item(
         self,
@@ -225,19 +218,15 @@ class BillingRepositoryLike(Protocol):
         owner: str,
         lease_ttl: timedelta,
         now: datetime,
-    ) -> object | None:
-        ...
+    ) -> object | None: ...
 
-    async def lock_reconcile_item(self, lease: object, *, now: datetime) -> None:
-        ...
+    async def lock_reconcile_item(self, lease: object, *, now: datetime) -> None: ...
 
-    async def finish_reconcile_item(self, lease: object, *, now: datetime) -> None:
-        ...
+    async def finish_reconcile_item(self, lease: object, *, now: datetime) -> None: ...
 
 
 class EntitlementServiceLike(Protocol):
-    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> object:
-        ...
+    async def apply_billing_state(self, tenant_id: UUID, state: BillingState) -> object: ...
 
 
 class ReconciliationProvider(BillingProvider, Protocol):
@@ -256,8 +245,7 @@ class ReconciliationProvider(BillingProvider, Protocol):
         provider_customer_id: str,
         provider_subscription_id: str | None,
         request_timeout: float,
-    ) -> object:
-        ...
+    ) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,13 +283,9 @@ class ReconcileConfig:
         values = os.environ if environ is None else environ
         timeout_raw = values.get("BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS")
         if timeout_raw is None or not timeout_raw.strip():
-            raise ConfigurationError(
-                "missing required configuration BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS"
-            )
+            raise ConfigurationError("missing required configuration BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS")
         return cls(
-            provider_timeout_s=_parse_float_env(
-                "BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS", timeout_raw
-            ),
+            provider_timeout_s=_parse_float_env("BILLING_RECONCILE_PROVIDER_TIMEOUT_SECONDS", timeout_raw),
             retry_attempts=_parse_int_env(
                 "BILLING_RECONCILE_RETRY_ATTEMPTS",
                 values.get("BILLING_RECONCILE_RETRY_ATTEMPTS", str(DEFAULT_RETRY_ATTEMPTS)),
@@ -513,7 +497,9 @@ class BillingReconciliationWorker:
                 cycle_progress = cycle_progress or outcome.progressed
                 if outcome.dry_run_change is not None:
                     report.changes.append(outcome.dry_run_change)
-                    report.would_change += int(outcome.dry_run_change.action in {"create_projection", "update_projection"})
+                    report.would_change += int(
+                        outcome.dry_run_change.action in {"create_projection", "update_projection"}
+                    )
 
             projection_progress = await self._reconcile_known_projections(report, dry_run=dry_run)
             recovery_progress = False
@@ -636,7 +622,10 @@ class BillingReconciliationWorker:
                 return _RowOutcome()
             current_projection = await self._get_projection(context.tenant_id, provider_name)
             stored_customer_id = _projection_value(current_projection, "provider_customer_id")
-            if stored_customer_id is not None and _normalize_customer_id(stored_customer_id) != context.provider_customer_id:
+            if (
+                stored_customer_id is not None
+                and _normalize_customer_id(stored_customer_id) != context.provider_customer_id
+            ):
                 raise ReconciliationError("tenant projection customer does not match inbox customer")
             projection = current_projection
 
@@ -730,12 +719,22 @@ class BillingReconciliationWorker:
         except ProviderUnavailable as exc:
             if dry_run:
                 return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
-            await self._mark_failure(row, exc)
+            await self._mark_failure(
+                row,
+                exc,
+                work_lease=work_lease,
+                lease_committed=lease_committed,
+            )
             return _RowOutcome(failed=True)
         except Exception as exc:  # noqa: BLE001
             if dry_run:
                 return await self._dry_run_failure(row, provider_event_id, inbox_row_id, exc)
-            await self._mark_failure(row, exc)
+            await self._mark_failure(
+                row,
+                exc,
+                work_lease=work_lease,
+                lease_committed=lease_committed,
+            )
             return _RowOutcome(failed=True)
 
     async def _apply_billing_state(self, state: AuthoritativeBillingState) -> None:
@@ -753,9 +752,7 @@ class BillingReconciliationWorker:
 
                 service = TenantEntitlementService(session)
         if service is None:
-            raise ReconciliationError(
-                "entitlement service unavailable; refusing to mark inbox row processed"
-            )
+            raise ReconciliationError("entitlement service unavailable; refusing to mark inbox row processed")
 
         apply_state = getattr(service, "apply_billing_state", None)
         if not callable(apply_state):
@@ -982,9 +979,7 @@ class BillingReconciliationWorker:
                     await _maybe_await(
                         get_webhook(
                             provider=_required_text(_row_value(row, "provider"), "provider"),
-                            provider_event_id=_required_text(
-                                _row_value(row, "provider_event_id"), "provider_event_id"
-                            ),
+                            provider_event_id=_required_text(_row_value(row, "provider_event_id"), "provider_event_id"),
                         )
                     ),
                 )
@@ -1009,9 +1004,7 @@ class BillingReconciliationWorker:
         await _maybe_await(
             self._repository.mark_webhook_processed(
                 provider=_required_text(_row_value(row, "provider"), "provider"),
-                provider_event_id=_required_text(
-                    _row_value(row, "provider_event_id"), "provider_event_id"
-                ),
+                provider_event_id=_required_text(_row_value(row, "provider_event_id"), "provider_event_id"),
                 status=status,
                 processed_at=self._clock() if status is WebhookInboxStatus.PROCESSED else None,
             )
@@ -1025,9 +1018,23 @@ class BillingReconciliationWorker:
     async def _finish_work_lease(self, lease: object, *, now: datetime) -> None:
         await _maybe_await(self._repository.finish_reconcile_item(lease, now=now))
 
-    async def _mark_failure(self, row: object, exc: BaseException) -> None:
+    async def _mark_failure(
+        self,
+        row: object,
+        exc: BaseException,
+        *,
+        work_lease: object | None = None,
+        lease_committed: bool = False,
+    ) -> None:
         try:
             await self._rollback()
+            if work_lease is not None and lease_committed:
+                try:
+                    await self._lock_work_lease(work_lease, now=self._clock())
+                except Exception:  # noqa: BLE001
+                    await self._rollback()
+                    self._log_failure(row, "stale_lease_skip_failure_mark", exc)
+                    return
             await _maybe_await(
                 self._repository.mark_webhook_processed(
                     provider=_safe_log_id(row, "provider"),
@@ -1139,7 +1146,11 @@ class BillingReconciliationWorker:
                 await self._rollback()
                 return False
             await self._commit()
-            context = _EventContext(tenant_id, _normalize_customer_id(customer_id), subscription_id if isinstance(subscription_id, str) else None)
+            context = _EventContext(
+                tenant_id,
+                _normalize_customer_id(customer_id),
+                subscription_id if isinstance(subscription_id, str) else None,
+            )
             state = await self._retrieve_state(context)
             await self._lock_work_lease(lease, now=self._clock())
             changed = await _maybe_await(
@@ -1185,9 +1196,7 @@ class BillingReconciliationWorker:
             self._logger.error("billing_reconcile orphan_namespace_invalid error_type=%s", type(exc).__name__)
             report.failed += 1
             return False
-        lease = await _maybe_await(
-            recovery.acquire_lease(key, owner=self._owner, lease_ttl=lease_ttl(), now=now)
-        )
+        lease = await _maybe_await(recovery.acquire_lease(key, owner=self._owner, lease_ttl=lease_ttl(), now=now))
         if lease is None:
             await self._rollback()
             return False
@@ -1398,9 +1407,7 @@ class BillingReconciliationWorker:
         attempts = await self._list_stale_checkout_attempts(now)
         if not attempts and self._stale_checkout_attempts is None:
             return False
-        lease = await _maybe_await(
-            recovery.acquire_lease(key, owner=self._owner, lease_ttl=lease_ttl(), now=now)
-        )
+        lease = await _maybe_await(recovery.acquire_lease(key, owner=self._owner, lease_ttl=lease_ttl(), now=now))
         if lease is None:
             await self._rollback()
             return False
@@ -1519,7 +1526,7 @@ class BillingReconciliationWorker:
         subscription_id = checkout_subscription_id(payload)
         if checkout_is_paid_status(status) and subscription_id:
             customer_id = checkout_customer_id(payload) or _projection_value(
-                await self._get_projection(getattr(attempt, "tenant_id"), provider_code(self._provider)),
+                await self._get_projection(attempt.tenant_id, provider_code(self._provider)),
                 "provider_customer_id",
             )
             if not isinstance(customer_id, str) or not customer_id:
@@ -1532,7 +1539,7 @@ class BillingReconciliationWorker:
                 await _maybe_await(recovery.quarantine_item(lease, observation=observation, now=self._clock()))
                 await self._commit()
                 return True
-            context = _EventContext(getattr(attempt, "tenant_id"), customer_id, subscription_id)
+            context = _EventContext(attempt.tenant_id, customer_id, subscription_id)
             state = await self._retrieve_state(context)
             await _maybe_await(recovery.heartbeat(lease, now=self._clock(), lease_ttl=lease_ttl()))
             changed = await _maybe_await(
@@ -1767,6 +1774,9 @@ async def _build_runtime(
                 environment=environment,
                 seller_account=seller_account,
             )
+            if getattr(provider, "seller_account", None) in {None, ""}:
+                with contextlib.suppress(AttributeError, TypeError):
+                    provider.seller_account = seller_account
         else:
             environment, seller_account = configured_namespace(provider)
         if repository is None:
@@ -1787,6 +1797,10 @@ async def _build_runtime(
             if "seller_account" in ctor:
                 repo_kwargs["seller_account"] = seller_account
             repository = BillingRepository(session, **repo_kwargs)
+            try:
+                require_n1_repository(repository)
+            except UnsupportedRepositoryError as exc:
+                raise ConfigurationError(str(exc)) from exc
             recovery_repository = BillingReconciliationRepository(session)
             checkout_repository = CheckoutAttemptRepository(session)
         else:

@@ -362,7 +362,7 @@
     {
       "id": "proposed-sign-out",
       "job": "manage-session",
-      "label": "OBSERVED-UI: account menu/Sign out → session ended → signed-out chrome",
+      "label": "OBSERVED-UI: account menu/Sign out → logout loading (data cleared) → session ended → signed-out chrome. Sign in doors restore only after sign-out succeeds (RLSE-04, CARD-15).",
       "steps": [
         {
           "screen_id": "portal-account",
@@ -370,11 +370,38 @@
         },
         {
           "screen_id": "logout-complete",
-          "branch_label": "Session ends; existing API keys are unchanged"
+          "branch_label": "loading: account/tenant fetch data already cleared; API keys unchanged"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "default: session ended"
         },
         {
           "screen_id": "portal-signed-out",
-          "branch_label": "Sign in / Create account restored"
+          "branch_label": "Sign in / Create account restored only after sign-out succeeds"
+        }
+      ]
+    },
+    {
+      "id": "observed-sign-out-retry",
+      "job": "manage-session",
+      "label": "OBSERVED-UI RLSE-04: Sign out failure keeps account data cleared; Try again retries the same sign-out; Sign in doors are not restored until success",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Sign out visible in signed-in chrome"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "loading: tenant/account fetch data already cleared"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "error: Sign out failed; Try again retries sign-out; Sign in doors stay hidden"
+        },
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Sign in / Create account restored only after sign-out succeeds"
         }
       ]
     },

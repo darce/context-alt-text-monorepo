@@ -55,7 +55,7 @@ Supersedes the dropped per-request header design (decision #2947).
 
 ## Canonical stack identity (single source of truth)
 
-- `ACX_ENV=dev-fir` · `COMPOSE_PROJECT_NAME=acx-dev-fir` · `ACX_IMAGE_TAG=dev`
+- `ACX_ENV=dev-fir` · `COMPOSE_PROJECT_NAME=acx-dev-fir` · `ACX_IMAGE_TAG=dev-fir` (independent tag promoted from `:dev`)
 - containers: `acx-dev-fir-postgres-1`, `acx-dev-fir-api-1`, `acx-dev-fir-worker-1` · api alias `dev-fir-api`
 - network: `acx-dev-fir-net` (OWN network, `external`) · remote dir `/opt/acx-backend/dev-fir`
 - data: `ACX_PGDATA_PATH=/opt/acx-backend/data/dev-fir-pgdata`, `ACX_MODELS_PATH=/opt/acx-backend/data/dev-fir-models`
@@ -97,15 +97,18 @@ Ordered (gates matter):
    existing weights; neither provisions them.
 3. **Operator adds DNS A/CNAME record `fir.dev.api.altcontext.com → VM`; CONFIRM it resolves** (BR-07)
    BEFORE public health verify.
-4. **First dev-fir deploy:** run `make deploy-dev-fir` with `ACX_EDGE_APPLY=1` so `converge_runtime`
+4. Edit the live `/opt/acx-backend/dev-fir/secrets/.env` so `ACX_IMAGE_TAG=dev-fir` (independent
+   `:dev-fir` tag promoted from `:dev`; compose selects the image via `${ACX_IMAGE_TAG}`). Do this
+   before the first `dev-fir` deploy.
+5. **First dev-fir deploy:** run `make deploy-dev-fir` with `ACX_EDGE_APPLY=1` so `converge_runtime`
    creates/attaches `acx-dev-fir-net`, ships Caddyfile + `docker-compose.caddy.yml`, and applies edge
    mutation (vhost + network membership). Without the lever the driver fail-closes and prints it.
    Fallback only if the net must be pre-created by hand: `docker network create --label com.docker.compose.network=backend --label com.docker.compose.project=acx-dev-fir acx-dev-fir-net`
    (compose refuses adopting an unlabeled pre-existing net; the deploy driver auto-creates it in
    boot smoke + converge, so this is rarely needed).
-5. Verify: container Up, boot migration at `vector(128)`, three-way guard passes,
+6. Verify: container Up, boot migration at `vector(128)`, three-way guard passes,
    `active_embedding_model_id()==opencv-sface@128d/l2/cosine`, **local** `/health` green.
-6. Verify public `https://fir.dev.api.altcontext.com/health` green + TLS issued.
+7. Verify public `https://fir.dev.api.altcontext.com/health` green + TLS issued.
 
 ### Slice 3 — fir LocalWP wiring + benchmark (ORCHESTRATION)
 

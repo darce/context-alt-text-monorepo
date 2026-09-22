@@ -8,6 +8,7 @@ use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\ConflictResolutionStatus;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxStatus;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServicePurgeTest extends TestCase
@@ -601,6 +602,37 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertContains('ROLLBACK', $wpdb->queries);
         $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
         $this->assertSame([], $this->actionsNamed('acx_sync_outbox_exhausted_purged'));
+    }
+
+    public function testPurgeDoesNotStampSuccessWhenAcknowledgedDeleteFails(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-purge-delete-error';
+        $wpdb->defaultQueryResult = 0;
+        $now = (int) current_time('timestamp');
+        $GLOBALS['__ac_current_time'] = $now;
+        $cutoff = gmdate('Y-m-d H:i:s', $now - (14 * 86400));
+        $acknowledgedDelete = $wpdb->prepare(
+            "DELETE FROM %i\n\t\t\t\tWHERE tenant_id = %s\n\t\t\t\t\tAND status = %s\n\t\t\t\t\tAND acknowledged_at IS NOT NULL\n\t\t\t\t\tAND acknowledged_at < %s\n\t\t\t\tORDER BY acknowledged_at ASC\n\t\t\t\tLIMIT %d",
+            'wp_acx_sync_outbox',
+            $tenantId,
+            OutboxStatus::ACKNOWLEDGED,
+            $cutoff,
+            50
+        );
+        $wpdb->queryResults[$acknowledgedDelete] = false;
+
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertFalse($purged);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::OUTCOME_FAILED, $state['last_outcome']);
+        $this->assertNull($state['last_success_at']);
     }
 
     public function testPurgeDoesNotRetryClusterNotFoundEvenWhenRetryableFlagIsTrue(): void

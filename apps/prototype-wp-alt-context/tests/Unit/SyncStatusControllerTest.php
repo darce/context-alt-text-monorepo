@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\SyncStatusController;
+use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\OutboxMaintenanceService;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\InMemoryOutboxDrain;
@@ -599,6 +602,71 @@ class SyncStatusControllerTest extends TestCase
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
         $this->assertSame('stale', $data['sync_health']);
+    }
+
+    public function testTriggerSyncDoesNotRewriteContendedInlinePurgeAsFailure(): void
+    {
+        $liveness = new class() extends ReclaimerLiveness {
+            public int $lockContendedCalls = 0;
+            public int $failureCalls = 0;
+
+            public function should_run_inline(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function claim(string $tenant_id): string|false|null
+            {
+                return null;
+            }
+
+            public function record_lock_contended(string $tenant_id, ?string $scheduler_mode = null): void
+            {
+                ++$this->lockContendedCalls;
+            }
+
+            public function record_failure(string $tenant_id, ?string $scheduler_mode = null): void
+            {
+                ++$this->failureCalls;
+            }
+        };
+        $maintenance = new OutboxMaintenanceService(
+            null,
+            null,
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts',
+            $liveness
+        );
+        $outboxDrain = new OutboxDrain(null, null, null, null, null, null, $maintenance);
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+        };
+
+        $controller = new SyncStatusController(
+            new NullSyncStateRepository(),
+            $syncJob,
+            null,
+            $outboxDrain,
+            $liveness
+        );
+        $response = $controller->trigger_sync(new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger'));
+
+        $this->assertTrue($response->get_data()['synced']);
+        $this->assertSame(1, $liveness->lockContendedCalls);
+        $this->assertSame(0, $liveness->failureCalls);
     }
 
     public function testTriggerSyncReturnsFullShapeWhenSyncJobCannotBeBuilt(): void

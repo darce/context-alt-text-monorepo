@@ -36,6 +36,7 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function do_action;
+use function is_array;
 use function is_string;
 use function max;
 use function method_exists;
@@ -401,6 +402,12 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				$tenant_id,
 				ReclaimerLiveness::INLINE_PURGE_BATCH_SIZE
 			);
+			if (
+				is_array( $purged )
+				&& ReclaimerLiveness::OUTCOME_LOCK_CONTENDED === ( $purged['outcome'] ?? null )
+			) {
+				return;
+			}
 			if ( false === $purged ) {
 				$this->record_inline_reclaimer_failure( $tenant_id );
 			}

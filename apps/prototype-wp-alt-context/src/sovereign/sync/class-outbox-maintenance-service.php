@@ -111,7 +111,7 @@ class OutboxMaintenanceService {
 	}
 
 	/**
-	 * @return array{outbox:int,conflicts:int,retried:int,dead_lettered:int,purged_failed:int,skipped_concurrent:int,orphaned:int,purged_exhausted:int}|false
+	 * @return array{outbox?:int,conflicts?:int,retried?:int,dead_lettered?:int,purged_failed?:int,skipped_concurrent?:int,orphaned?:int,purged_exhausted?:int,outcome?:string}|false
 	 */
 	public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
 		$normalized_tenant_id = trim( $tenant_id );
@@ -157,7 +157,7 @@ class OutboxMaintenanceService {
 					$this->reclaimer_liveness->record_lock_contended( $normalized_tenant_id, $resolved_scheduler_mode );
 				}
 			);
-			return false;
+			return array( 'outcome' => ReclaimerLiveness::OUTCOME_LOCK_CONTENDED );
 		}
 
 		$this->run_reclaimer_liveness_side_effect(
@@ -756,6 +756,10 @@ class OutboxMaintenanceService {
 			)
 		);
 
+		if ( false === $deleted || null === $deleted ) {
+			throw new RuntimeException( 'Could not purge acknowledged outbox rows.' );
+		}
+
 		return max( 0, (int) $deleted );
 	}
 
@@ -792,6 +796,10 @@ class OutboxMaintenanceService {
 				$batch_size
 			)
 		);
+
+		if ( false === $deleted || null === $deleted ) {
+			throw new RuntimeException( 'Could not purge resolved conflicts.' );
+		}
 
 		return max( 0, (int) $deleted );
 	}

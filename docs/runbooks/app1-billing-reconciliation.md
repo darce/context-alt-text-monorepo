@@ -1,8 +1,9 @@
 # APP-1 billing reconciliation (R1 worker)
 
 Operator runbook for the bounded billing recovery worker. This is not Polar
-sandbox evidence and does not claim N1 production integration until the
-coordinator records that receipt.
+sandbox evidence. N1 item-lease methods are landed; the worker constructs a
+namespaced `BillingRepository` and PostgreSQL tests witness claim / lock /
+finish against that production seam.
 
 Rules used: DDIA ch7/8/11 (lease, fence, commit-before-GET); Release It ch4/5
 (timeouts, bulkheads); RES-01/02/05; DATA-03; PERF-11/13; GRPH-09/31.
@@ -25,9 +26,9 @@ stall, timeout, or zero verified page progress. Exit `2` is configuration.
 The worker constructs Polar from configured `environment` and
 `POLAR_ORGANIZATION_ID` (`seller_account`). It never derives namespace from a
 webhook, email, or request tenant. `BillingRepository` is constructed with
-those values when N1 accepts them. Until N1 lands, missing
-`claim_reconcile_item` / `lock_reconcile_item` / `finish_reconcile_item` /
-`list_known_projections` **fail closed**. Do not run unfenced.
+those validated values. Missing `claim_reconcile_item` / `lock_reconcile_item` /
+`finish_reconcile_item` / `list_known_projections` **fail closed**. Do not run
+unfenced.
 
 Required:
 
@@ -78,6 +79,9 @@ they do not abort the batch.
 
 ## N1 status
 
-R1 fakes the frozen N1 item-lease seam in tests. Production verification of
-namespace-bound inbox/projection writers is a coordinator receipt after N1
-lands. Until then, an old repository without those methods is unsupported.
+N1 `BillingRepository` item-lease methods are landed. The R1 worker runtime
+constructs the repository with configured `environment` / `seller_account`.
+Unit tests still use local seam doubles; PostgreSQL C0 tests use the real
+namespaced repository and worker. Polar live/sandbox provider evidence is
+still out of scope. An old repository without those methods remains
+unsupported.

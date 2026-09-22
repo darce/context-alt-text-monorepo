@@ -568,10 +568,13 @@ def install_portal_composition(
         seller_account=config.billing_seller_account,
     )
     app.state.billing_provider = billing_provider
-    app.state.billing_repository = BillingRepositoryFactory(
-        environment=config.billing_environment,
-        seller_account=config.billing_seller_account,
-    )
+    if config.billing_environment and config.billing_seller_account:
+        app.state.billing_repository = BillingRepositoryFactory(
+            environment=config.billing_environment,
+            seller_account=config.billing_seller_account,
+        )
+    else:
+        app.state.billing_repository = None
     if config.billing_seller_account:
         app.state.checkout_service = CheckoutServiceFactory(
             provider=billing_provider,

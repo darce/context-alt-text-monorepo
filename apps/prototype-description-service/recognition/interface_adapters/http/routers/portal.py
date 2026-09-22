@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Final, NoReturn, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.routing import APIRoute
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,7 +82,30 @@ _CLAIM_ERROR_STATUS = {
     "portal_identity_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
+
+def _http_exception_with_no_store(exc: HTTPException) -> HTTPException:
+    headers = dict(exc.headers or {})
+    headers.update(NO_STORE_HEADERS)
+    return HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers)
+
+
+class _NoStoreAPIRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        original = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                response = await original(request)
+            except HTTPException as exc:
+                raise _http_exception_with_no_store(exc) from None
+            response.headers.update(NO_STORE_HEADERS)
+            return response
+
+        return handler
+
+
 router = APIRouter(prefix="/portal", tags=["portal"])
+_me_router = APIRouter(route_class=_NoStoreAPIRoute)
 
 
 class PortalMeResponse(BaseModel):
@@ -695,15 +719,22 @@ async def _last_usable_key(
     return target_seen and usable_count == 1
 
 
-@router.get("/me", response_model=PortalMeResponse)
-async def portal_me(principal: PortalPrincipal = Depends(require_portal_principal)) -> PortalMeResponse:
+@_me_router.get("/me", response_model=PortalMeResponse)
+async def portal_me(
+    response: Response,
+    principal: PortalPrincipal = Depends(require_portal_principal),
+) -> PortalMeResponse:
     """Return the authenticated principal's authoritative tenant binding."""
+    response.headers.update(NO_STORE_HEADERS)
     return PortalMeResponse(
         tenant_id=principal.tenant_id,
         issuer=principal.issuer,
         subject=principal.subject,
         email=principal.email,
     )
+
+
+router.include_router(_me_router)
 
 
 @router.post("/onboarding/claim", response_model=PortalClaimResponse)

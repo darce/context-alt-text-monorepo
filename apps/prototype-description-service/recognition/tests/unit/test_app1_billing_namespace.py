@@ -125,6 +125,10 @@ def test_constructor_rejects_inferred_or_invalid_namespace() -> None:
         BillingRepository(_Session(), environment="staging", seller_account="org-a")
     with pytest.raises(ValueError, match="seller_account"):
         BillingRepository(_Session(), environment="sandbox", seller_account="  ")
+    with pytest.raises(ValueError, match="both"):
+        BillingRepository(_Session(), environment="sandbox")
+    with pytest.raises(ValueError, match="both"):
+        BillingRepository(_Session(), seller_account="org-a")
 
 
 @pytest.mark.asyncio
@@ -141,6 +145,67 @@ async def test_bound_operations_refuse_null_legacy_namespace(billing_session: _A
             lease_ttl=timedelta(seconds=30),
             now=NOW,
         )
+
+
+@pytest.mark.asyncio
+async def test_unbound_writers_fail_closed_and_do_not_null_bound_projection(
+    billing_session: _AsyncSessionFacade,
+) -> None:
+    tenant = await _tenant(billing_session, "https://bound-writer.example.test")
+    bound = _repo(billing_session)
+    assert (
+        await bound.upsert_projection(
+            tenant_id=tenant.id,
+            provider="polar",
+            provider_customer_id="cus-bound",
+            provider_subscription_id="sub-bound",
+            status=BillingSubscriptionStatus.ACTIVE,
+            current_period_end=None,
+            past_due_since=None,
+            provider_event_id="evt-bound",
+            event_position=EVENT_POSITION,
+        )
+        is True
+    )
+    await billing_session.commit()
+
+    unbound = BillingRepository(billing_session)
+    assert await unbound.get_projection(tenant.id, provider="polar") is not None
+    with pytest.raises(BillingNamespaceRequiredError):
+        await unbound.record_webhook(
+            provider="polar",
+            provider_event_id="evt-unbound",
+            event_type="subscription.active",
+            signature_verified=True,
+            payload={"id": "evt-unbound"},
+        )
+    with pytest.raises(BillingNamespaceRequiredError):
+        await unbound.upsert_projection(
+            tenant_id=tenant.id,
+            provider="polar",
+            provider_customer_id="cus-overwrite",
+            provider_subscription_id="sub-overwrite",
+            status=BillingSubscriptionStatus.ACTIVE,
+            current_period_end=None,
+            past_due_since=None,
+            provider_event_id="evt-overwrite",
+            event_position=EVENT_POSITION + timedelta(seconds=1),
+        )
+    with pytest.raises(BillingNamespaceRequiredError):
+        await unbound.mark_webhook_processed(
+            provider="polar",
+            provider_event_id="evt-bound",
+            status=WebhookInboxStatus.PROCESSED,
+            processed_at=NOW,
+        )
+    with pytest.raises(BillingNamespaceRequiredError):
+        await unbound.list_pending_webhooks()
+
+    stored = (await billing_session.execute(select(BillingSubscriptionProjection))).scalar_one()
+    assert stored.provider_customer_id == "cus-bound"
+    assert stored.environment == "sandbox"
+    assert stored.seller_account == "org-a"
+    assert list((await billing_session.execute(select(BillingWebhookInbox))).scalars()) == []
 
 
 @pytest.mark.asyncio
@@ -419,6 +484,48 @@ async def test_claim_lock_finish_lease_and_stale_owner_cannot_finish(
 
     with pytest.raises(BillingWorkLeaseConflictError):
         await repo.lock_reconcile_item(stolen, now=NOW + timedelta(seconds=33))
+
+
+@pytest.mark.asyncio
+async def test_same_session_steal_reacquire_is_monotonic_and_stale_cannot_finish(
+    billing_session: _AsyncSessionFacade,
+) -> None:
+    repo = _repo(billing_session)
+    first = await repo.claim_reconcile_item(
+        provider="polar",
+        kind="inbox",
+        remote_id="evt-same-session",
+        owner="worker-a",
+        lease_ttl=timedelta(seconds=30),
+        now=NOW,
+    )
+    assert first is not None
+    assert first.fence == 1
+    stolen = await repo.claim_reconcile_item(
+        provider="polar",
+        kind="inbox",
+        remote_id="evt-same-session",
+        owner="worker-b",
+        lease_ttl=timedelta(seconds=30),
+        now=NOW + timedelta(seconds=31),
+    )
+    assert stolen is not None
+    assert stolen.owner == "worker-b"
+    assert stolen.fence == 2
+    with pytest.raises(BillingWorkLeaseConflictError):
+        await repo.lock_reconcile_item(first, now=NOW + timedelta(seconds=32))
+    with pytest.raises(BillingWorkLeaseConflictError):
+        await repo.finish_reconcile_item(first, now=NOW + timedelta(seconds=32))
+    await repo.lock_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+    await repo.finish_reconcile_item(stolen, now=NOW + timedelta(seconds=32))
+    await billing_session.commit()
+    loaded = (
+        await billing_session.execute(
+            select(BillingKnownItemLease).where(BillingKnownItemLease.remote_id == "evt-same-session")
+        )
+    ).scalar_one()
+    assert loaded.fence == 2
+    assert loaded.lease_owner is None
 
 
 @pytest.mark.asyncio

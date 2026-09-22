@@ -659,3 +659,23 @@ def test_manage_payments_disabled_and_origin_and_extra_fields() -> None:
         assert provider.customer_calls == []
     finally:
         engine.dispose()
+
+
+def test_portal_me_works_without_polar_or_billing_accounts() -> None:
+    application = FastAPI()
+    application.include_router(portal.router)
+    principal = _principal(uuid4())
+
+    async def override_principal() -> PortalPrincipal:
+        return principal
+
+    application.dependency_overrides[require_portal_principal] = override_principal
+    assert not hasattr(application.state, "billing_provider")
+
+    with TestClient(application) as client:
+        response = client.get("/portal/me", headers={"Authorization": "Bearer token"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tenant_id"] == str(principal.tenant_id)
+    assert payload["issuer"] == ISSUER

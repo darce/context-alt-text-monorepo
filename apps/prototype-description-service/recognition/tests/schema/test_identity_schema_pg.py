@@ -167,3 +167,33 @@ def test_checkout_provider_key_unique_and_invitation_nullability(pg_migrated_eng
     assert unique_cols == ["provider", "environment", "seller_account", "idempotency_key"]
     assert invitation_nullable == "YES"
     assert invitation_fk == 1
+
+
+def test_billing_known_item_lease_is_operator_scope_and_namespace_inbox_unique(pg_migrated_engine) -> None:
+    with pg_migrated_engine.connect() as conn:
+        flags = conn.execute(
+            text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname='public' AND c.relname='billing_known_item_lease'"
+            )
+        ).one()
+        inbox_unique = [
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT a.attname "
+                    "FROM pg_constraint c "
+                    "JOIN pg_class t ON c.conrelid = t.oid "
+                    "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                    "JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+                    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+                    "WHERE n.nspname = current_schema() "
+                    "AND t.relname = 'billing_webhook_inbox' "
+                    "AND c.conname = 'uq_billing_webhook_inbox_provider_namespace_event' "
+                    "ORDER BY k.ord"
+                )
+            ).fetchall()
+        ]
+    assert flags == (True, True)
+    assert inbox_unique == ["provider", "environment", "seller_account", "provider_event_id"]

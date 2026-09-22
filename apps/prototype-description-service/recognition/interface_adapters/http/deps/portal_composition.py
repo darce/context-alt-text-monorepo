@@ -103,11 +103,19 @@ class _OutboundHttpClient:
         return float(resolved)
 
 
+@dataclass(frozen=True, slots=True)
 class BillingRepositoryFactory:
     """Construct a billing repository around the session for one request."""
 
+    environment: str | None = None
+    seller_account: str | None = None
+
     def __call__(self, session: AsyncSession) -> BillingRepository:
-        return BillingRepository(session)
+        return BillingRepository(
+            session,
+            environment=self.environment,
+            seller_account=self.seller_account,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,7 +252,12 @@ def _portal_auth_settings(
     )
 
 
-def _product_ids(settings: RecognitionSettings, missing: list[str]) -> Mapping[str, str]:
+def _product_ids(
+    settings: RecognitionSettings,
+    missing: list[str],
+    *,
+    required: bool = True,
+) -> Mapping[str, str]:
     sections = ("billing", "polar")
     configured = _setting_value(settings, sections, ("product_ids", "products", "plan_products"))
     if configured is None:
@@ -285,7 +298,7 @@ def _product_ids(settings: RecognitionSettings, missing: list[str]) -> Mapping[s
     else:
         result = {}
 
-    if not result:
+    if not result and required:
         missing.append("POLAR_PRODUCT_IDS")
     return result
 
@@ -412,18 +425,22 @@ def _app_allowed_origins(settings: RecognitionSettings) -> tuple[str, ...]:
 def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfig:
     missing: list[str] = []
     portal_auth = _portal_auth_settings(settings, missing)
-    webhook_secret = _secret_value(("POLAR_WEBHOOK_SECRET", "POLAR_WEBHOOK_SIGNING_SECRET")) or ""
-    if not webhook_secret:
-        missing.append("POLAR_WEBHOOK_SECRET")
+    sections = ("billing", "polar")
+    payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
+    if payments_enabled is None:
+        payments_enabled = _environment_value(("POLAR_PAYMENTS_ENABLED",))
+    billing_payments_enabled = _boolean(payments_enabled, default=False)
 
-    product_ids = _product_ids(settings, missing)
+    webhook_secret = _secret_value(("POLAR_WEBHOOK_SECRET", "POLAR_WEBHOOK_SIGNING_SECRET")) or ""
+    product_ids = _product_ids(settings, missing, required=billing_payments_enabled)
+    if billing_payments_enabled and not webhook_secret:
+        missing.append("POLAR_WEBHOOK_SECRET")
     if missing:
         missing_names = ", ".join(dict.fromkeys(missing))
         raise ValueError(f"portal and billing composition requires: {missing_names}")
     if portal_auth is None:
         raise ValueError("portal and billing composition requires portal authentication settings")
 
-    sections = ("billing", "polar")
     environment = _polar_environment(settings)
     base_url = _polar_base_url(settings, environment=environment)
 
@@ -435,11 +452,6 @@ def _composition_config(settings: RecognitionSettings) -> PortalCompositionConfi
         setting_name="POLAR_REQUEST_TIMEOUT_SECONDS",
         default=_DEFAULT_POLAR_TIMEOUT_SECONDS,
     )
-
-    payments_enabled = _setting_value(settings, sections, ("payments_enabled", "polar_payments_enabled"))
-    if payments_enabled is None:
-        payments_enabled = _environment_value(("POLAR_PAYMENTS_ENABLED",))
-    billing_payments_enabled = _boolean(payments_enabled, default=False)
 
     seller_account = _seller_account(settings, missing, required=billing_payments_enabled)
     app_public_origin = _app_public_origin(settings, missing, required=billing_payments_enabled)
@@ -496,6 +508,33 @@ def install_usage_admission_factory(app: FastAPI) -> None:
     app.state.usage_admission_service = UsageAdmissionServiceFactory(timeout_s=usage_timeout_s)
 
 
+def install_portal_fallback(
+    app: FastAPI,
+    *,
+    settings: RecognitionSettings,
+    http_client: Any | None = None,
+) -> None:
+    """Install Clerk portal auth/keys/usage without Polar."""
+    config = _composition_config(settings)
+    outbound_client = http_client or _OutboundHttpClient(
+        default_timeout_seconds=config.billing_timeout_seconds,
+    )
+    app.state.portal_token_verifier = build_portal_token_verifier(
+        outbound_client,
+        config.portal_auth,
+    )
+    app.state.portal_composition_config = config
+    app.state.app_allowed_origins = config.app_allowed_origins
+    app.state.billing_provider = None
+    app.state.billing_repository = None
+    app.state.checkout_service = None
+    install_usage_admission_factory(app)
+
+
+def _polar_configured(config: PortalCompositionConfig) -> bool:
+    return bool(config.billing_webhook_secret and config.billing_product_ids)
+
+
 def install_portal_composition(
     app: FastAPI,
     *,
@@ -511,6 +550,11 @@ def install_portal_composition(
         outbound_client,
         config.portal_auth,
     )
+    app.state.portal_composition_config = config
+    app.state.app_allowed_origins = config.app_allowed_origins
+    if not _polar_configured(config):
+        install_portal_fallback(app, settings=settings, http_client=outbound_client)
+        return
     billing_provider = PolarBillingProvider(
         outbound_client,
         config.billing_webhook_secret,
@@ -523,10 +567,11 @@ def install_portal_composition(
         allowed_return_origins=config.billing_allowed_return_origins,
         seller_account=config.billing_seller_account,
     )
-    app.state.portal_composition_config = config
-    app.state.app_allowed_origins = config.app_allowed_origins
     app.state.billing_provider = billing_provider
-    app.state.billing_repository = BillingRepositoryFactory()
+    app.state.billing_repository = BillingRepositoryFactory(
+        environment=config.billing_environment,
+        seller_account=config.billing_seller_account,
+    )
     if config.billing_seller_account:
         app.state.checkout_service = CheckoutServiceFactory(
             provider=billing_provider,
@@ -547,5 +592,6 @@ __all__ = [
     "PortalCompositionConfig",
     "UsageAdmissionServiceFactory",
     "install_portal_composition",
+    "install_portal_fallback",
     "install_usage_admission_factory",
 ]

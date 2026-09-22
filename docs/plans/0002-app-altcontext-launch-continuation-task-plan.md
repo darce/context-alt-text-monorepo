@@ -5,7 +5,7 @@
 - Inspected baseline: `11fe4dea7ae1b065893aca38d215b38e7a18c23f`.
 - Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-polar-task-plan.md).
 - Epic: [E16 SaaS foundation](../epics/v0.3.1/saas-foundation-epic.md).
-- The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and, per the latest override, `grok-remote` / high for research and context collection (earlier Luna/max preference superseded for that work). Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
+- The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and `codex-remote` / `gpt-5.6-luna` / max for grunt work under the latest operator instruction. Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
 
 ## Supporting assessments
 
@@ -25,19 +25,35 @@ Semantic retrieval used `find_related_prior_work`: `embeddings_mode=verified`, m
 
 APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* findings does not mean launch-ready. Its only returned planning review is run 1163, `pass_with_findings`, against the old September 19 plan. There is no clean planning pass for this continuation.
 
-The old plan still calls implemented surfaces new, and references `docs/specs/app-portal-account-billing-spec.md`, which is absent. Its S0 route inventory and E16-7 disposition matrix exist but retain pre-implementation claims. Refresh them; do not redo the entire original discovery program.
+The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. Its S0 route inventory and E16-7 disposition matrix exist but retain pre-implementation claims. Refresh them; do not redo the entire original discovery program.
 
-## Execution checkpoint — 2026-09-22 03:22 UTC
+## Execution checkpoint — 2026-09-22 06:41 UTC
 
 - Usage checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated at `1a3f51fe4` after 28 focused VM tests. Findings 15849–15852 still block main: global budget, scene coverage, premature settlement and operation-id reuse. Feature integration is not launch acceptance.
 - Keys/hooks checkpoint `1f168a2de` integrated at `8f12a1e8` after 35 focused VM tests passed. The remote review expired; no completed review is claimed and no second fix loop is authorized.
 - Vendor assessment `d4bee9e24` integrated at `375a4a7e9`; usage/evidence adjudication `321e8773d` integrated at `23e581153`. Focused protocol smoke checks passed, which does not prove the documents complete. Earlier failed/expired passes are superseded by these preserved artifacts.
 - Checkout/Link portability assessment committed at `581405f99`; operator decisions recorded in handoff decision 13236. Checkout, reconcile and keys/hooks branches were bundled under `.task-state/branch-archive/` and their clean, integrated worktrees retired before new admission.
-- The current manifest admits three disjoint ready nodes, validated by WorkBay `lane_dag`: `billing-contract`, `portal-uxmap`, `eval-evidence`. Width 3, no edges inside this wave, one spare slice slot. Billing contract precedes checkout/provider implementation; UX map precedes UI implementation. Evidence enforcement can proceed independently. Later integration consumes their outputs and the existing C/U/R/H dependencies below.
-- `eval-evidence` targets `apps/prototype-description-service/scripts/run_app_portal_evals.py` and its unit tests. The assessment's generic `scripts/eval_harness` suggestion does not establish the actual APP-1 execution path and is overridden.
+- Billing spec checkpoint `49325e31a` integrated at `0307f770b`; evaluator checkpoint `34b2572ff` integrated at `5d5717c3f`, with 21 focused VM tests after behavioral RED. Their worktrees were bundled and retired. The evaluator review is `app1-eval-review-20260922-v2` on Luna/max.
+- Composition guard `6ecb1ce5f` integrated at `8d15cace1` with 19 focused VM tests. Its worktree is bundled and retired. Audience and authorized-party configuration are separate in composition; the second loader in `PortalAuthSettings.from_env` still requires correction.
+- Billing adapter `bbcab9a90` integrated at `3c41aef1e` with 58 focused VM tests and a formatting receipt. It supplies attempt-owned idempotency, typed checkout ID/URL, bounded recovery/enumeration and full-header signature verification. Real Polar delivery rehearsal remains outstanding. Its worktree is retained only while the existing remote review owns a live lease; no additional review is admitted.
+- Active implementation passes: `app1-checkout-store-20260922-v2` and `app1-pretenant-auth-20260922-v1`, both Grok/high on the VM. Four slice worktrees include these, the billing review and evaluator review; no fifth slice is admitted. The bundled composition tree has already been removed. Adapter-internal review began independently of coordinator review admission; no further reviewer will be admitted until this overlap clears.
+- Pretenant authentication is split from the full claim endpoint to run independently of checkout schema. It owns only `portal_auth.py` and two auth test files. The claim endpoint still needs an explicit durable replay outcome; the existing `claim_tenant` service returns only `PortalPrincipal`. Do not infer 201 versus 200 from a racy pre-read.
+- Codemap discovers existing symbols; its main index predates feature changes, so remote briefs require exact-source verification. Verified semantic reinjection uses `gte-base-en-v1.5`; prior art and limitations accompany dispatch.
 - Operator will provision Clerk development and Polar sandbox credentials through untracked `.env` and notify the coordinator. Blocker 821 gates real rehearsal/release, not offline work. Never print credential values or package `.env` into a lane.
-- Composition currently defaults Polar environment to sandbox while its default API base is live. C/U must reject inconsistent environment/base configuration before vendor calls.
+- Composition now rejects known Polar host/environment mismatches and uses the sandbox default correctly. Seller-account wiring and cross-slice construction still need harmonizing verification.
 - Installed Grok adapter emits `--no-subagents`; parallelism is coordinator-owned remote lanes, not nested Grok flocks. Never spoof capability or sandbox receipts. Model discovery warning does not prove the pinned model was served; record actual receipts.
+
+WorkBay `lane_dag` validates the next-stage edges below: four manifest roots, two second-layer nodes, one third-layer node; three lane-durations is a structural lower bound, not a wall-clock forecast. Billing implementation is already integrated, although its remote review still owns its tree. Planned nodes are not dispatched and have no worktrees; exact tests and claim persistence ownership must be finalized before admission.
+
+```text
+checkout-store ──┐
+billing-adapter ┴─► checkout-service ──┐
+                                      ├─► checkout-http
+pretenant-auth ──► claim-http ─────────┘
+eval-review (independent)
+```
+
+The claim-to-checkout HTTP edge serializes shared `portal.py` ownership; the other edges carry interfaces or implementation prerequisites. GRPH-09 conflict coloring and GRPH-31 critical-path list scheduling justify that distinction. Keep at most four actual slice trees, including review trees. Clerk/Polar accounts gate real rehearsal after browser integration, not these offline nodes.
 
 These are point-in-time observations. Consult MCP pass state before recovery; an RPC timeout does not prove a remote pass stopped. Use the recorded pass ID with `await_offload_pass`, never duplicate a live dispatch.
 
@@ -62,9 +78,9 @@ These are point-in-time observations. Consult MCP pass state before recovery; an
 | Node | Current disposition | What makes the next action executable |
 | --- | --- | --- |
 | P — contract and ownership refresh | Ready for planning work | Close the concrete planning gaps below; publish exact route, provider and transaction contracts |
-| K — keys/hooks | Ready for checkpoint review, not duplicate implementation | Inspect `29c357fd4`, recover its full receipt, identify missing tests/fixes |
+| K — keys/hooks | Integrated; no duplicate implementation | Preserve `8f12a1e8`; check cross-slice contracts at the final gate |
 | D — app host preparation | Bounded implementation candidate | Freeze host allowlist/env names in P and record a planning pass; DNS/secrets are staging inputs, not grounds to fabricate a deploy pass |
-| C — checkout/provider/schema | Needs contract amendment | Durable attempt states and vendor-supported recovery, provider enumeration and signature fixture, schema/lease ownership |
+| C — checkout/provider/schema | Provider integrated; persistence executing remotely | Consume typed provider results and tenant-scoped attempt repository in a subsequent checkout-service slice |
 | U — usage and cost | Needs scope amendment | Include scene routes and background completion/cancel, classify every remaining OPEN-Q route, enforce global cost bounds |
 | R — reconciliation | Not ready as current manifest describes it | Local projection scan cannot discover a provider subscription with no local row; needs C's provider enumeration and persistence contract |
 | H — portal HTTP | Dependency blocked | Consume reviewed C interfaces; one owner for claim, checkout and manage routes |
@@ -78,7 +94,7 @@ Paths below are relative to `apps/prototype-description-service/` unless prefixe
 
 ### P — contract and ownership refresh
 
-Own this plan, the epic's active APP-1 section, the missing `docs/specs/app-portal-account-billing-spec.md` (new), S0 route/metering inventory and E16-7 matrix, and a later revision of the W4 manifest. The operator has authorized execution; update the manifest only after preserving finished lanes and validating disjoint ownership.
+Own this plan, the epic's active APP-1 section, the now-present `docs/specs/app-portal-account-billing-spec.md`, S0 route/metering inventory and E16-7 matrix, and a later revision of the W4 manifest. The operator has authorized execution; update the manifest only after preserving finished lanes and validating disjoint ownership.
 
 - Record endpoint schemas, error/status vocabulary, verified pre-tenant identity versus tenant-bound principal, invitation claim plus beta grant transaction, and replay behavior.
 - Define durable checkout attempt lifecycle, tenant/catalog/environment binding, customer mapping, ambiguous result recovery and a new attempt after a completed/expired purchase. Pin supported vendor behavior with official documentation and sanitized sandbox fixtures before C implementation.

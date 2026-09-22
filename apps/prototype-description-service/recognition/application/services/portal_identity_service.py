@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -11,14 +13,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import PortalIdentity
+from db.tenant_context import set_tenant_context
 from recognition.domain.portal_contracts import PortalIdentityService as PortalIdentityServiceProtocol
 from recognition.domain.portal_contracts import PortalIdentityStatus, PortalPrincipal
 from recognition.infrastructure.repositories.portal_identity_repository import (
+    PortalIdentityClaimError,
+    PortalIdentityClaimRecord,
     PortalIdentityClaimRefused,
     SqlAlchemyPortalIdentityRepository,
 )
+from recognition.shared.db.dialect import is_postgres
 
 _DEFAULT_DB_TIMEOUT_S = 5.0
+_BETA_ALLOWANCE_JOBS = 10
+_BETA_ALLOWANCE_VERSION = "beta-v1"
+_BETA_PERIOD_DAYS = 30
+_BETA_GRANT_SOURCE = "portal.onboarding.claim"
+_CLAIM_AUDIT_EVENT = "portal.identity.claim"
+_CLAIM_AUDIT_ACTOR = "portal-identity-service"
+_CLAIM_AUDIT_SCOPE = "portal.identity"
 
 
 class _PortalIdentityRepository(Protocol):
@@ -61,6 +74,14 @@ def _is_active(identity: PortalIdentity) -> bool:
         return False
 
 
+@dataclass(frozen=True, slots=True)
+class PortalClaimOutcome:
+    """HTTP-facing claim result whose replay flag is decided in the same transaction."""
+
+    principal: PortalPrincipal
+    replayed: bool
+
+
 def _principal_from_identity(identity: PortalIdentity) -> PortalPrincipal:
     if not _is_active(identity):
         raise PortalIdentityClaimRefused("portal identity is not active")
@@ -85,6 +106,10 @@ class SqlAlchemyPortalIdentityService:
         *,
         session: AsyncSession | None = None,
         timeout_s: float = _DEFAULT_DB_TIMEOUT_S,
+        beta_grant: Callable[..., Awaitable[object]] | None = None,
+        audit_service: object | None = None,
+        entitlement_service: object | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         if timeout_s <= 0:
             raise ValueError("timeout_s must be positive")
@@ -94,6 +119,10 @@ class SqlAlchemyPortalIdentityService:
         if candidate is None:
             raise ValueError("a repository or session is required")
         self._timeout_s = timeout_s
+        self._beta_grant = beta_grant
+        self._audit_service = audit_service
+        self._entitlement_service = entitlement_service
+        self._clock = clock or (lambda: datetime.now(UTC))
         if callable(getattr(candidate, "claim", None)) and callable(getattr(candidate, "get_by_issuer_subject", None)):
             self._repository: _PortalIdentityRepository = candidate  # type: ignore[assignment]
         else:
@@ -143,8 +172,115 @@ class SqlAlchemyPortalIdentityService:
             raise PortalIdentityClaimRefused("portal identity claim was refused") from exc
         return _principal_from_identity(identity)
 
+    async def claim_onboarding(
+        self,
+        *,
+        issuer: str,
+        subject: str,
+        email: str | None,
+        invitation_token: str,
+    ) -> PortalClaimOutcome:
+        """Atomically redeem or replay one invitation and grant beta once."""
+        _validate_identity_part("issuer", issuer)
+        _validate_identity_part("subject", subject)
+        _validate_email(email)
+        if not isinstance(invitation_token, str) or not invitation_token.strip():
+            raise PortalIdentityClaimError("invalid_claim_request")
+        claimer = getattr(self._repository, "claim_onboarding", None)
+        if not callable(claimer):
+            raise PortalIdentityClaimError("portal_identity_unavailable")
+        try:
+            record = await _with_timeout(
+                claimer(
+                    issuer=issuer,
+                    subject=subject,
+                    email=email,
+                    invitation_token=invitation_token,
+                ),
+                self._timeout_s,
+            )
+        except PortalIdentityClaimError:
+            raise
+        except PortalIdentityClaimRefused:
+            raise
+        except TimeoutError as exc:
+            await self._rollback()
+            raise PortalIdentityClaimError("portal_identity_unavailable") from exc
+        except IntegrityError as exc:
+            raise PortalIdentityClaimError("not_admitted") from exc
+        if not isinstance(record, PortalIdentityClaimRecord):
+            raise PortalIdentityClaimError("portal_identity_unavailable")
+        principal = _principal_from_identity(record.identity)
+        if record.replayed:
+            return PortalClaimOutcome(principal=principal, replayed=True)
+        try:
+            await self._complete_first_claim(principal)
+        except PortalIdentityClaimError:
+            raise
+        except Exception as exc:
+            await self._rollback()
+            raise PortalIdentityClaimError("portal_identity_unavailable") from exc
+        return PortalClaimOutcome(principal=principal, replayed=False)
+
+    async def _complete_first_claim(self, principal: PortalPrincipal) -> None:
+        session = getattr(self._repository, "session", None)
+        try:
+            postgres = session is not None and is_postgres(session)
+        except Exception:
+            postgres = False
+        if postgres:
+            await set_tenant_context(session, principal.tenant_id)
+        now = self._clock()
+        grant = self._beta_grant
+        if grant is None and self._entitlement_service is not None:
+            grant = getattr(self._entitlement_service, "grant_beta", None)
+        if grant is None and session is not None:
+            from recognition.application.services.tenant_entitlement_service import TenantEntitlementService
+
+            grant = TenantEntitlementService(session).grant_beta
+        if not callable(grant):
+            raise PortalIdentityClaimError("portal_identity_unavailable")
+        await grant(
+            principal.tenant_id,
+            allowance_jobs=_BETA_ALLOWANCE_JOBS,
+            allowance_version=_BETA_ALLOWANCE_VERSION,
+            period_start=now,
+            period_end=now + timedelta(days=_BETA_PERIOD_DAYS),
+            source=_BETA_GRANT_SOURCE,
+        )
+        audit = self._audit_service
+        if audit is None and session is not None:
+            from recognition.application.services.audit_service import AuditService
+
+            audit = AuditService()
+        recorder = getattr(audit, "record_event", None)
+        if not callable(recorder):
+            raise PortalIdentityClaimError("portal_identity_unavailable")
+        await recorder(
+            session,
+            tenant_id=str(principal.tenant_id),
+            event_type=_CLAIM_AUDIT_EVENT,
+            actor=_CLAIM_AUDIT_ACTOR,
+            scope=_CLAIM_AUDIT_SCOPE,
+            payload={
+                "issuer": principal.issuer,
+                "subject": principal.subject,
+                "replayed": False,
+            },
+        )
+
+    async def _rollback(self) -> None:
+        session = getattr(self._repository, "session", None)
+        rollback = getattr(session, "rollback", None)
+        if not callable(rollback):
+            rollback = getattr(self._repository, "_rollback_after_failure", None)
+        if callable(rollback):
+            await rollback()
+
 
 __all__ = [
+    "PortalClaimOutcome",
+    "PortalIdentityClaimError",
     "PortalIdentityClaimRefused",
     "PortalIdentityServiceProtocol",
     "SqlAlchemyPortalIdentityService",

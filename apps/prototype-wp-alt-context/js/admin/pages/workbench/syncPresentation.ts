@@ -10,11 +10,12 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type {
   LastSyncResult,
+  ReclaimerStatus,
   SyncHealth,
   SyncHealthResponse,
   SyncStatusResponse,
 } from '../../api/recognition/types/sync';
-import { LAST_SYNC_RESULT } from '../../api/recognition/types/sync';
+import { LAST_SYNC_RESULT, RECLAIMER_VOCABULARY } from '../../api/recognition/types/sync';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import { resolveEffectiveSyncHealth } from './degradedModeBannerLogic';
@@ -43,6 +44,10 @@ export const SYNC_PRESENTATION_STATUS = {
   RESULTS_SYNCING: 'results_syncing',
   CONNECTED_EMPTY: 'connected_empty',
   ATTENTION: 'attention',
+  RECLAIMER_UNKNOWN: 'reclaimer_unknown',
+  RECLAIMER_NEVER_RUN: 'reclaimer_never_run',
+  RECLAIMER_OVERDUE: 'reclaimer_overdue',
+  RECLAIMER_BREACH: 'reclaimer_breach',
 } as const;
 
 export type SyncPresentationStatus =
@@ -133,6 +138,7 @@ export interface SyncPresentationInput {
   pendingChanges?: number;
   failedOps?: number;
   conflictCount?: number;
+  reclaimer?: ReclaimerStatus | null;
 }
 
 const formatTimestamp = (value: string | null | undefined): string | null => {
@@ -195,6 +201,146 @@ const presentation = (
   ...partial,
 });
 
+const reclaimerBacklogDetails = (reclaimer: ReclaimerStatus): string[] => {
+  const details: string[] = [];
+  if (reclaimer.backlog_remaining !== null) {
+    details.push(sprintf(SYNC_VOCABULARY.reclaimerBacklogRemaining, reclaimer.backlog_remaining));
+  }
+  if (reclaimer.backlog_oldest_age_seconds !== null) {
+    details.push(
+      sprintf(SYNC_VOCABULARY.reclaimerBacklogOldestAge, reclaimer.backlog_oldest_age_seconds),
+    );
+  }
+  if (reclaimer.batch_cap_reached) {
+    details.push(SYNC_VOCABULARY.reclaimerBacklogCapReached);
+  }
+  return details;
+};
+
+const withReclaimerDetails = (
+  base: SyncPresentation,
+  details: Array<string | null | undefined>,
+): SyncPresentation => {
+  if (details.length === 0) {
+    return base;
+  }
+  const combined = [base.detail, ...details]
+    .filter((value): value is string => Boolean(value))
+    .join(' · ');
+  return { ...base, detail: combined || null };
+};
+
+const reclaimerSeverity = (reclaimer: ReclaimerStatus | null | undefined): number => {
+  if (reclaimer === null || reclaimer === undefined) {
+    return 2;
+  }
+  if (
+    reclaimer.state === RECLAIMER_VOCABULARY.state.HEALTHY &&
+    typeof reclaimer.last_success_at !== 'string'
+  ) {
+    return 2;
+  }
+  switch (reclaimer.state) {
+    case RECLAIMER_VOCABULARY.state.BREACH:
+      return 3;
+    case RECLAIMER_VOCABULARY.state.NEVER_RUN:
+    case RECLAIMER_VOCABULARY.state.OVERDUE:
+      return 2;
+    case RECLAIMER_VOCABULARY.state.HEALTHY:
+      return 0;
+    default:
+      return 2;
+  }
+};
+
+const syncHealthSeverity = (health: SyncHealth): number => {
+  switch (health) {
+    case 'healthy':
+      return 0;
+    case 'queued':
+      return 1;
+    case 'stale':
+    case 'conflicts':
+    case 'failures':
+    case 'offline':
+    default:
+      return 2;
+  }
+};
+
+const buildReclaimerPresentation = (reclaimer: ReclaimerStatus | null): SyncPresentation | null => {
+  if (
+    reclaimer !== null &&
+    (reclaimer.state === RECLAIMER_VOCABULARY.state.HEALTHY && reclaimer.last_success_at !== null)
+  ) {
+    return null;
+  }
+
+  if (
+    reclaimer === null ||
+    (reclaimer.last_success_at === null &&
+      reclaimer.state !== RECLAIMER_VOCABULARY.state.NEVER_RUN)
+  ) {
+    return presentation({
+      status: SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN,
+      headline: SYNC_VOCABULARY.reclaimerUnknownHeadline,
+      detail: [SYNC_VOCABULARY.reclaimerUnknownSummary].join(' · '),
+      badge: SYNC_VOCABULARY.reclaimerUnknownBadge,
+      icon: SYNC_PRESENTATION_ICON.WARNING,
+      tone: SYNC_PRESENTATION_TONE.WARNING,
+    });
+  }
+
+  switch (reclaimer.state) {
+    case RECLAIMER_VOCABULARY.state.NEVER_RUN:
+      return presentation({
+        status: SYNC_PRESENTATION_STATUS.RECLAIMER_NEVER_RUN,
+        headline: SYNC_VOCABULARY.reclaimerNeverRunHeadline,
+        detail: [
+          SYNC_VOCABULARY.reclaimerNeverRunSummary,
+          ...reclaimerBacklogDetails(reclaimer),
+        ].join(' · '),
+        badge: SYNC_VOCABULARY.reclaimerNeverRunBadge,
+        icon: SYNC_PRESENTATION_ICON.WARNING,
+        tone: SYNC_PRESENTATION_TONE.WARNING,
+      });
+    case RECLAIMER_VOCABULARY.state.OVERDUE:
+      return presentation({
+        status: SYNC_PRESENTATION_STATUS.RECLAIMER_OVERDUE,
+        headline: SYNC_VOCABULARY.reclaimerOverdueHeadline,
+        detail: [
+          SYNC_VOCABULARY.reclaimerOverdueSummary,
+          ...reclaimerBacklogDetails(reclaimer),
+        ].join(' · '),
+        badge: SYNC_VOCABULARY.reclaimerOverdueBadge,
+        icon: SYNC_PRESENTATION_ICON.WARNING,
+        tone: SYNC_PRESENTATION_TONE.WARNING,
+      });
+    case RECLAIMER_VOCABULARY.state.BREACH:
+      return presentation({
+        status: SYNC_PRESENTATION_STATUS.RECLAIMER_BREACH,
+        headline: SYNC_VOCABULARY.reclaimerBreachHeadline,
+        detail: [
+          SYNC_VOCABULARY.reclaimerBreachSummary,
+          ...reclaimerBacklogDetails(reclaimer),
+        ].join(' · '),
+        badge: SYNC_VOCABULARY.reclaimerBreachBadge,
+        icon: SYNC_PRESENTATION_ICON.ERROR,
+        tone: SYNC_PRESENTATION_TONE.DANGER,
+      });
+    case RECLAIMER_VOCABULARY.state.HEALTHY:
+    default:
+      return presentation({
+        status: SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN,
+        headline: SYNC_VOCABULARY.reclaimerUnknownHeadline,
+        detail: SYNC_VOCABULARY.reclaimerUnknownSummary,
+        badge: SYNC_VOCABULARY.reclaimerUnknownBadge,
+        icon: SYNC_PRESENTATION_ICON.WARNING,
+        tone: SYNC_PRESENTATION_TONE.WARNING,
+      });
+  }
+};
+
 /**
  * Build the single SyncPresentation view-model from health + job/run inputs.
  * Order mirrors prior SyncStatusIndicator priority: results error → pipeline
@@ -220,6 +366,7 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     resultsError = null,
     jobActivity = 'idle',
     activeSection = 'scan',
+    reclaimer = undefined,
   } = input;
 
   if (isLoading) {
@@ -238,6 +385,12 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
       icon: SYNC_PRESENTATION_ICON.ERROR,
       tone: SYNC_PRESENTATION_TONE.WARNING,
     });
+  }
+
+  const earlyReclaimerPresentation =
+    reclaimer === undefined ? null : buildReclaimerPresentation(reclaimer);
+  if (earlyReclaimerPresentation && reclaimerSeverity(reclaimer) > 0) {
+    return earlyReclaimerPresentation;
   }
 
   // R23-BR-23: durable resync marker must outrank a stale "healthy" sync_health
@@ -366,64 +519,94 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
     : SYNC_VOCABULARY.empty;
   const conflictsHref = buildWorkbenchOverlayHref(activeSection, 'conflicts');
   const failuresHref = buildWorkbenchOverlayHref(activeSection, 'dead-letter');
+  const reclaimerPresentation = reclaimer === undefined ? null : buildReclaimerPresentation(reclaimer);
+  const decorateIdlePresentation = (base: SyncPresentation): SyncPresentation => {
+    if (reclaimer === undefined) {
+      return base;
+    }
+    if (reclaimerPresentation && reclaimerSeverity(reclaimer) > syncHealthSeverity(effective)) {
+      return reclaimerPresentation;
+    }
+    if (reclaimerPresentation) {
+      return withReclaimerDetails(base, [
+        reclaimerPresentation.headline,
+        reclaimerPresentation.detail,
+      ]);
+    }
+    return reclaimer === null
+      ? withReclaimerDetails(base, [SYNC_VOCABULARY.reclaimerUnknownSummary])
+      : withReclaimerDetails(base, reclaimerBacklogDetails(reclaimer));
+  };
 
   switch (effective) {
     case 'offline':
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.OFFLINE,
-        headline: SYNC_VOCABULARY.offlineHeadline,
-        detail: SYNC_VOCABULARY.offlineDetail,
-        badge: SYNC_VOCABULARY.offlineBadge,
-        icon: SYNC_PRESENTATION_ICON.OFFLINE,
-        tone: SYNC_PRESENTATION_TONE.WARNING,
-        action: { label: SYNC_VOCABULARY.retry, kind: 'retry' },
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.OFFLINE,
+          headline: SYNC_VOCABULARY.offlineHeadline,
+          detail: SYNC_VOCABULARY.offlineDetail,
+          badge: SYNC_VOCABULARY.offlineBadge,
+          icon: SYNC_PRESENTATION_ICON.OFFLINE,
+          tone: SYNC_PRESENTATION_TONE.WARNING,
+          action: { label: SYNC_VOCABULARY.retry, kind: 'retry' },
+        }),
+      );
     case 'failures':
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.FAILURES,
-        headline: SYNC_VOCABULARY.failuresHeadline,
-        badge: SYNC_VOCABULARY.failuresBadge,
-        badgeHref: failuresHref,
-        icon: SYNC_PRESENTATION_ICON.WARNING,
-        tone: SYNC_PRESENTATION_TONE.WARNING,
-        action: { label: SYNC_VOCABULARY.failuresBadge, kind: 'open_failures', href: failuresHref },
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.FAILURES,
+          headline: SYNC_VOCABULARY.failuresHeadline,
+          badge: SYNC_VOCABULARY.failuresBadge,
+          badgeHref: failuresHref,
+          icon: SYNC_PRESENTATION_ICON.WARNING,
+          tone: SYNC_PRESENTATION_TONE.WARNING,
+          action: { label: SYNC_VOCABULARY.failuresBadge, kind: 'open_failures', href: failuresHref },
+        }),
+      );
     case 'conflicts':
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.CONFLICTS,
-        headline: SYNC_VOCABULARY.conflictsHeadline,
-        badge: SYNC_VOCABULARY.conflictsBadge,
-        badgeHref: conflictsHref,
-        icon: SYNC_PRESENTATION_ICON.WARNING,
-        tone: SYNC_PRESENTATION_TONE.WARNING,
-        action: { label: SYNC_VOCABULARY.conflictsBadge, kind: 'open_conflicts', href: conflictsHref },
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.CONFLICTS,
+          headline: SYNC_VOCABULARY.conflictsHeadline,
+          badge: SYNC_VOCABULARY.conflictsBadge,
+          badgeHref: conflictsHref,
+          icon: SYNC_PRESENTATION_ICON.WARNING,
+          tone: SYNC_PRESENTATION_TONE.WARNING,
+          action: { label: SYNC_VOCABULARY.conflictsBadge, kind: 'open_conflicts', href: conflictsHref },
+        }),
+      );
     case 'queued':
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.QUEUED,
-        headline: SYNC_VOCABULARY.queuedHeadline,
-        badge: SYNC_VOCABULARY.queuedBadge,
-        icon: SYNC_PRESENTATION_ICON.INFO,
-        tone: SYNC_PRESENTATION_TONE.INFO,
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.QUEUED,
+          headline: SYNC_VOCABULARY.queuedHeadline,
+          badge: SYNC_VOCABULARY.queuedBadge,
+          icon: SYNC_PRESENTATION_ICON.INFO,
+          tone: SYNC_PRESENTATION_TONE.INFO,
+        }),
+      );
     case 'stale':
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.STALE,
-        headline: lastSyncLabel,
-        badge: SYNC_VOCABULARY.staleBadge,
-        icon: SYNC_PRESENTATION_ICON.WARNING,
-        tone: SYNC_PRESENTATION_TONE.WARNING,
-        action: { label: SYNC_VOCABULARY.syncNow, kind: 'sync_now' },
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.STALE,
+          headline: lastSyncLabel,
+          badge: SYNC_VOCABULARY.staleBadge,
+          icon: SYNC_PRESENTATION_ICON.WARNING,
+          tone: SYNC_PRESENTATION_TONE.WARNING,
+          action: { label: SYNC_VOCABULARY.syncNow, kind: 'sync_now' },
+        }),
+      );
     case 'healthy':
     default:
-      return presentation({
-        status: SYNC_PRESENTATION_STATUS.HEALTHY,
-        headline: lastSyncLabel,
-        badge: SYNC_VOCABULARY.healthyBadge,
-        icon: SYNC_PRESENTATION_ICON.CHECK,
-        tone: SYNC_PRESENTATION_TONE.NEUTRAL,
-      });
+      return decorateIdlePresentation(
+        presentation({
+          status: SYNC_PRESENTATION_STATUS.HEALTHY,
+          headline: lastSyncLabel,
+          badge: SYNC_VOCABULARY.healthyBadge,
+          icon: SYNC_PRESENTATION_ICON.CHECK,
+          tone: SYNC_PRESENTATION_TONE.NEUTRAL,
+        }),
+      );
   }
 };
 
@@ -493,6 +676,7 @@ export const syncPresentationInputFromStatus = (
     | 'failedOps'
     | 'conflictCount'
     | 'lastSyncResult'
+    | 'reclaimer'
   > = {},
 ): SyncPresentationInput => ({
   ...extras,
@@ -503,4 +687,5 @@ export const syncPresentationInputFromStatus = (
   pendingChanges: data?.pending_curation_operations,
   failedOps: data?.failed_curation_operations,
   conflictCount: data?.conflict_count,
+  reclaimer: data?.reclaimer ?? null,
 });

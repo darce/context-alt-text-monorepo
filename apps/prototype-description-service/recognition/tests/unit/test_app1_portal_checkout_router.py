@@ -196,7 +196,13 @@ def _app(
     application.state.portal_composition_config = resolved
     application.state.app_allowed_origins = resolved.app_allowed_origins
     application.state.billing_provider = provider
-    application.state.billing_repository = BillingRepositoryFactory()
+    if resolved.billing_environment and resolved.billing_seller_account:
+        application.state.billing_repository = BillingRepositoryFactory(
+            environment=resolved.billing_environment,
+            seller_account=resolved.billing_seller_account,
+        )
+    else:
+        application.state.billing_repository = None
     if install_factory and resolved.billing_seller_account:
         application.state.checkout_service = CheckoutServiceFactory(
             provider=provider,
@@ -224,6 +230,8 @@ def _activate_subscription(session: _AsyncSessionFacade, tenant_id: UUID) -> Non
             provider="polar",
             provider_customer_id=f"cus_{tenant_id}",
             status="active",
+            environment="sandbox",
+            seller_account=SELLER_ACCOUNT,
         )
     )
     session._session.commit()
@@ -600,6 +608,8 @@ def test_manage_requires_mapping_then_calls_create_portal_session(harness: tuple
             provider="polar",
             provider_customer_id="cus_mapped",
             status="active",
+            environment="sandbox",
+            seller_account=SELLER_ACCOUNT,
         )
     )
     session._session.commit()
@@ -635,6 +645,8 @@ def test_manage_payments_disabled_and_origin_and_extra_fields() -> None:
             provider="polar",
             provider_customer_id="cus_mapped",
             status="active",
+            environment="sandbox",
+            seller_account=SELLER_ACCOUNT,
         )
     )
     session._session.commit()
@@ -679,3 +691,4 @@ def test_portal_me_works_without_polar_or_billing_accounts() -> None:
     payload = response.json()
     assert payload["tenant_id"] == str(principal.tenant_id)
     assert payload["issuer"] == ISSUER
+    assert response.headers["cache-control"] == "no-store"

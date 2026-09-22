@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -77,6 +77,8 @@ class BillingRepository:
             if not isinstance(seller_account, str) or not seller_account.strip():
                 raise ValueError("seller_account must be a non-empty string")
             seller_account = seller_account.strip()
+        if (environment is None) ^ (seller_account is None):
+            raise ValueError("environment and seller_account must both be configured")
         self._session = session
         self._environment = environment
         self._seller_account = seller_account
@@ -171,6 +173,7 @@ class BillingRepository:
             raise PermissionError("only a verified webhook may enter the inbox")
         if not isinstance(payload, Mapping):
             raise ValueError("payload must be a mapping")
+        environment, seller_account = self._require_namespace()
 
         existing = await self.get_webhook(provider=provider, provider_event_id=provider_event_id)
         if existing is not None:
@@ -182,8 +185,8 @@ class BillingRepository:
             signature_verified=True,
             payload=dict(payload),
             status=WebhookInboxStatus.RECEIVED.value,
-            environment=self._environment,
-            seller_account=self._seller_account,
+            environment=environment,
+            seller_account=seller_account,
         )
         try:
             async with self._session.begin_nested():
@@ -220,6 +223,7 @@ class BillingRepository:
         normalized_position = _coerce_position(event_position, "event_position")
         normalized_period_end = _coerce_optional_datetime(current_period_end, "current_period_end")
         normalized_past_due_since = _coerce_optional_datetime(past_due_since, "past_due_since")
+        self._require_namespace()
 
         # WHY: the projection has one row per tenant and is FORCE-RLS protected;
         # keep its read/compare/write sequence inside one tenant context.
@@ -365,6 +369,7 @@ class BillingRepository:
         """Advance an inbox row using only the published status vocabulary."""
         _validate_non_empty("provider", provider)
         _validate_non_empty("provider_event_id", provider_event_id)
+        self._require_namespace()
         normalized_status = _coerce_inbox_status(status)
         row = await self.get_webhook(provider=provider, provider_event_id=provider_event_id)
         if row is None:
@@ -406,6 +411,7 @@ class BillingRepository:
         """Return a bounded batch for a later reconciliation worker."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
+        environment, seller_account = self._require_namespace()
         statement = (
             select(BillingWebhookInbox)
             .where(BillingWebhookInbox.status.in_([WebhookInboxStatus.RECEIVED.value, WebhookInboxStatus.FAILED.value]))
@@ -417,11 +423,10 @@ class BillingRepository:
             .order_by(BillingWebhookInbox.received_at, BillingWebhookInbox.id)
             .limit(limit)
         )
-        if self._is_bound():
-            statement = statement.where(
-                BillingWebhookInbox.environment == self._environment,
-                BillingWebhookInbox.seller_account == self._seller_account,
-            )
+        statement = statement.where(
+            BillingWebhookInbox.environment == environment,
+            BillingWebhookInbox.seller_account == seller_account,
+        )
         # WHY: the worker scan intentionally spans tenants because inbox rows
         # have no tenant key; use the approved maintenance bypass only around
         # this bounded read and always release it on success or failure.
@@ -480,28 +485,28 @@ class BillingRepository:
         owner = _bounded_text("owner", owner, RECONCILIATION_MAX_OWNER_LENGTH)
         now = _require_aware(now)
         until = now + _require_ttl(lease_ttl)
-        await self._operator_scope()
-        await self._ensure_known_item_row(
-            provider=provider,
-            environment=environment,
-            seller_account=seller_account,
-            kind=kind_value,
-            remote_id=remote_id,
-            now=now,
-        )
-        row = await self._claim_known_item_row(
-            provider=provider,
-            environment=environment,
-            seller_account=seller_account,
-            kind=kind_value,
-            remote_id=remote_id,
-            owner=owner,
-            until=until,
-            now=now,
-        )
-        if row is None:
-            return None
-        return _lease_from_row(row)
+        async with self._operator_scope():
+            await self._ensure_known_item_row(
+                provider=provider,
+                environment=environment,
+                seller_account=seller_account,
+                kind=kind_value,
+                remote_id=remote_id,
+                now=now,
+            )
+            row = await self._claim_known_item_row(
+                provider=provider,
+                environment=environment,
+                seller_account=seller_account,
+                kind=kind_value,
+                remote_id=remote_id,
+                owner=owner,
+                until=until,
+                now=now,
+            )
+            if row is None:
+                return None
+            return _lease_from_row(row)
 
     async def lock_reconcile_item(self, lease: object, *, now: datetime) -> None:
         """Lock the leased row and reject stale/stolen/expired fences.
@@ -509,54 +514,72 @@ class BillingRepository:
         The row lock is held through later projection/entitlement/inbox writes
         in the same database transaction. Does not mark the inbox processed.
         """
-        await self._operator_scope()
-        now = _require_aware(now)
-        bound = _coerce_lease(lease)
-        environment, seller_account = self._require_namespace()
-        if bound.environment != environment or bound.seller_account != seller_account:
-            raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
-        statement = (
-            select(BillingKnownItemLease)
-            .where(*_lease_identity(bound))
-            .where(
-                BillingKnownItemLease.lease_owner == bound.owner,
-                BillingKnownItemLease.fence == bound.fence,
-                BillingKnownItemLease.lease_until.is_not(None),
-                BillingKnownItemLease.lease_until > now,
+        async with self._operator_scope():
+            now = _require_aware(now)
+            bound = _coerce_lease(lease)
+            environment, seller_account = self._require_namespace()
+            if bound.environment != environment or bound.seller_account != seller_account:
+                raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
+            statement = (
+                select(BillingKnownItemLease)
+                .where(*_lease_identity(bound))
+                .where(
+                    BillingKnownItemLease.lease_owner == bound.owner,
+                    BillingKnownItemLease.fence == bound.fence,
+                    BillingKnownItemLease.lease_until.is_not(None),
+                    BillingKnownItemLease.lease_until > now,
+                )
+                .limit(1)
+                .with_for_update()
             )
-            .limit(1)
-            .with_for_update()
-        )
-        result = await self._session.execute(statement)
-        if result.scalar_one_or_none() is None:
-            raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
+            result = await self._session.execute(statement)
+            if result.scalar_one_or_none() is None:
+                raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
 
     async def finish_reconcile_item(self, lease: object, *, now: datetime) -> None:
         """Release a live fenced lease. Never marks inbox processed."""
-        await self._operator_scope()
-        now = _require_aware(now)
-        bound = _coerce_lease(lease)
-        environment, seller_account = self._require_namespace()
-        if bound.environment != environment or bound.seller_account != seller_account:
-            raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
-        stmt = (
-            update(BillingKnownItemLease)
-            .where(*_lease_identity(bound))
-            .where(
-                BillingKnownItemLease.lease_owner == bound.owner,
-                BillingKnownItemLease.fence == bound.fence,
-                BillingKnownItemLease.lease_until.is_not(None),
-                BillingKnownItemLease.lease_until > now,
+        async with self._operator_scope():
+            now = _require_aware(now)
+            bound = _coerce_lease(lease)
+            environment, seller_account = self._require_namespace()
+            if bound.environment != environment or bound.seller_account != seller_account:
+                raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
+            stmt = (
+                update(BillingKnownItemLease)
+                .where(*_lease_identity(bound))
+                .where(
+                    BillingKnownItemLease.lease_owner == bound.owner,
+                    BillingKnownItemLease.fence == bound.fence,
+                    BillingKnownItemLease.lease_until.is_not(None),
+                    BillingKnownItemLease.lease_until > now,
+                )
+                .values(lease_owner=None, lease_until=None, updated_at=now)
+                .returning(BillingKnownItemLease)
             )
-            .values(lease_owner=None, lease_until=None, updated_at=now)
-            .returning(BillingKnownItemLease)
-        )
-        result = await self._session.execute(stmt)
-        if result.scalar_one_or_none() is None:
-            raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
+            result = await self._session.execute(stmt)
+            if result.scalar_one_or_none() is None:
+                raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
 
-    async def _operator_scope(self) -> None:
-        await enable_rls_bypass(self._session)
+    @contextlib.asynccontextmanager
+    async def _operator_scope(self) -> AsyncIterator[None]:
+        # WHY: SET LOCAL bypass must not outlive this method or mix with tenant-bound work.
+        # Nested savepoint keeps FOR UPDATE on the outer transaction after success.
+        if _is_sqlite_session(self._session):
+            yield
+            return
+        tenant = await _session_setting(self._session, "app.current_tenant")
+        if tenant.strip():
+            raise ValueError("billing repository operator scope cannot run on a tenant-bound session")
+        previous = await _session_setting(self._session, "app.bypass_rls")
+        await self._session.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        try:
+            async with self._session.begin_nested():
+                yield
+        finally:
+            await self._session.execute(
+                text("SELECT set_config('app.bypass_rls', :value, true)"),
+                {"value": previous},
+            )
 
     async def _ensure_known_item_row(
         self,
@@ -596,10 +619,8 @@ class BillingRepository:
         now: datetime,
     ) -> BillingKnownItemLease | None:
         if is_postgres(self._session) and not is_sqlite(self._session):
-            from sqlalchemy import text as sql_text
-
             result = await self._session.execute(
-                sql_text(
+                text(
                     """
                     WITH claimed AS (
                       SELECT provider, environment, seller_account, kind, remote_id
@@ -642,15 +663,21 @@ class BillingRepository:
             if mapping is None:
                 return None
             loaded = await self._session.execute(
-                select(BillingKnownItemLease).where(
+                select(BillingKnownItemLease)
+                .where(
                     BillingKnownItemLease.provider == provider,
                     BillingKnownItemLease.environment == environment,
                     BillingKnownItemLease.seller_account == seller_account,
                     BillingKnownItemLease.kind == kind,
                     BillingKnownItemLease.remote_id == remote_id,
                 )
+                .limit(1)
+                .execution_options(populate_existing=True)
             )
-            return loaded.scalar_one_or_none()
+            row = loaded.scalar_one_or_none()
+            if row is None:
+                return None
+            return _apply_lease_returning(row, mapping)
         stmt = (
             update(BillingKnownItemLease)
             .where(
@@ -829,6 +856,23 @@ def _lease_identity(lease: BillingWorkLease) -> tuple[object, object, object, ob
         BillingKnownItemLease.kind == lease.kind,
         BillingKnownItemLease.remote_id == lease.remote_id,
     )
+
+
+def _apply_lease_returning(
+    row: BillingKnownItemLease,
+    mapping: Mapping[str, object],
+) -> BillingKnownItemLease:
+    # WHY: raw UPDATE RETURNING is the fresh owner/fence; identity-map rows can lag.
+    row.lease_owner = mapping["lease_owner"]  # type: ignore[assignment]
+    row.lease_until = mapping["lease_until"]  # type: ignore[assignment]
+    row.fence = int(mapping["fence"])  # type: ignore[arg-type]
+    return row
+
+
+async def _session_setting(session: AsyncSession, name: str) -> str:
+    result = await session.execute(text("SELECT current_setting(:name, true)"), {"name": name})
+    value = result.scalar()
+    return "" if value is None else str(value)
 
 
 def _lease_from_row(row: BillingKnownItemLease) -> BillingWorkLease:

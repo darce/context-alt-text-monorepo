@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 import recognition.infrastructure.repositories.billing_repository as billing_module
 from db.base import Base
 from db.models import BillingSubscriptionProjection, BillingWebhookInbox, Tenant
+from recognition.domain.billing_work_lease import BillingNamespaceConflictError
 from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
 
@@ -106,17 +107,42 @@ async def billing_session() -> AsyncGenerator[_AsyncSessionFacade, None]:
         engine.dispose()
 
 
-async def _create_inbox_row(session: _AsyncSessionFacade, event_id: str) -> BillingWebhookInbox:
+async def _create_inbox_row(
+    session: _AsyncSessionFacade,
+    event_id: str,
+    *,
+    environment: str = "sandbox",
+    seller_account: str = "org-a",
+) -> BillingWebhookInbox:
     row = BillingWebhookInbox(
         provider="polar",
         provider_event_id=event_id,
         event_type="subscription.active",
         signature_verified=True,
         payload={"data": {"id": event_id}},
+        environment=environment,
+        seller_account=seller_account,
     )
     session.add(row)
     await session.flush()
     return row
+
+
+def _bound_repo(
+    session: object,
+    *,
+    max_attempts: int = 5,
+    retry_backoff_base_s: float = 2.0,
+    retry_backoff_max_s: float = 60.0,
+) -> BillingRepository:
+    return BillingRepository(
+        session,  # type: ignore[arg-type]
+        environment="sandbox",
+        seller_account="org-a",
+        max_attempts=max_attempts,
+        retry_backoff_base_s=retry_backoff_base_s,
+        retry_backoff_max_s=retry_backoff_max_s,
+    )
 
 
 @pytest.mark.asyncio
@@ -154,7 +180,7 @@ async def test_pending_scan_releases_maintenance_bypass_on_failure(monkeypatch: 
     monkeypatch.setattr(billing_module, "disable_rls_bypass", disable)
 
     with pytest.raises(RuntimeError, match="scan failed"):
-        await BillingRepository(session).list_pending_webhooks()
+        await _bound_repo(session).list_pending_webhooks()
 
     assert events == ["enable", "disable"]
     assert session.events == ["execute"]
@@ -166,13 +192,18 @@ async def test_failed_inbox_rows_back_off_and_quarantine_at_ceiling(
 ) -> None:
     backoff_row = await _create_inbox_row(billing_session, "evt-backoff")
     quarantine_row = await _create_inbox_row(billing_session, "evt-quarantine")
-    backoff_repo = BillingRepository(
+    backoff_repo = _bound_repo(
         billing_session,
         max_attempts=20,
         retry_backoff_base_s=2,
         retry_backoff_max_s=5,
     )
-    quarantine_repo = BillingRepository(billing_session, max_attempts=2, retry_backoff_base_s=2, retry_backoff_max_s=5)
+    quarantine_repo = _bound_repo(
+        billing_session,
+        max_attempts=2,
+        retry_backoff_base_s=2,
+        retry_backoff_max_s=5,
+    )
     now = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 
     for attempt, expected_delay in enumerate((2, 4, 5, 5), start=1):
@@ -218,7 +249,7 @@ async def test_duplicate_projection_race_uses_savepoint_and_reports_discard(
     billing_session: _AsyncSessionFacade,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repo = BillingRepository(billing_session)
+    repo = _bound_repo(billing_session)
     first_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     second_tenant_id = UUID("00000000-0000-0000-0000-000000000002")
     event_position = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
@@ -249,7 +280,7 @@ async def test_duplicate_projection_race_uses_savepoint_and_reports_discard(
         return await original_execute(statement)
 
     monkeypatch.setattr(billing_session, "execute", hide_winner)
-    assert (
+    with pytest.raises(BillingNamespaceConflictError):
         await repo.upsert_projection(
             tenant_id=first_tenant_id,
             provider="polar",
@@ -261,8 +292,6 @@ async def test_duplicate_projection_race_uses_savepoint_and_reports_discard(
             provider_event_id="evt-1",
             event_position=event_position,
         )
-        is False
-    )
 
     monkeypatch.setattr(billing_session, "execute", original_execute)
     assert (
@@ -287,3 +316,61 @@ async def test_duplicate_projection_race_uses_savepoint_and_reports_discard(
     assert first_projection.last_event_id == "evt-1"
     assert second_projection is not None
     assert second_projection.last_event_id == "evt-2"
+
+
+class _OperatorSession:
+    def __init__(self, *, tenant: str = "") -> None:
+        self.tenant = tenant
+        self.bypass = ""
+        self.events: list[str] = []
+
+    async def execute(self, statement: object, params: dict[str, object] | None = None) -> SimpleNamespace:
+        sql = str(statement)
+        self.events.append(sql)
+        if "current_setting" in sql:
+            name = str((params or {}).get("name") or "")
+            value = self.tenant if "current_tenant" in name else self.bypass
+            return SimpleNamespace(scalar=lambda: value)
+        if "set_config" in sql:
+            if params is not None and "value" in params:
+                self.bypass = str(params["value"] or "")
+            else:
+                self.bypass = "true"
+            return SimpleNamespace(scalar=lambda: None)
+        raise AssertionError(sql)
+
+    def begin_nested(self) -> _AsyncTransactionFacade:
+        return _AsyncTransactionFacade(_NullTransaction())
+
+
+class _NullTransaction:
+    def __enter__(self) -> _NullTransaction:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_operator_scope_restores_bypass_on_success_busy_and_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(billing_module, "_is_sqlite_session", lambda _session: False)
+    session = _OperatorSession()
+    repo = _bound_repo(session)
+
+    async with repo._operator_scope():
+        assert session.bypass == "true"
+    assert session.bypass == ""
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with repo._operator_scope():
+            assert session.bypass == "true"
+            raise RuntimeError("boom")
+    assert session.bypass == ""
+
+    session.tenant = "11111111-1111-1111-1111-111111111111"
+    with pytest.raises(ValueError, match="tenant-bound"):
+        async with repo._operator_scope():
+            raise AssertionError("must not enter operator work on a tenant session")
+    assert session.bypass == ""

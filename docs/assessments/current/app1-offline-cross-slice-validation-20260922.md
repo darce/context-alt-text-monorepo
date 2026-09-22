@@ -1,8 +1,10 @@
 # APP-1 offline cross-slice validation receipt
 
 - Date: 2026-09-22
-- Current SHA (tested snapshot): `c1f0982d4f1d8a0f249ecc555a75773ffa85cf0d`
-- Import origin (existing lane interpreter): `/home/gate/grok-sandbox/.venv-lane-feature-app-1-offline-cross-slice-valida-2206d2aa/bin/python`; `recognition` loaded from `/home/gate/grok-sandbox/feature-app-1-offline-cross-slice-valida-2206d2aa/apps/prototype-description-service/recognition/__init__.py`.
+- Authoritative native VM validation: the exact declared 61-test command exited `0`; `61 passed in 19.94s`; no tests were skipped.
+- Authoritative receipt: coordinator `.task-state/app1-resume-offline-cross-slice-validation/actual-selfverify-v5-green.json`.
+- Tested-source provenance (native VM snapshot; hashes intentionally differ from feature refs): agent spec head `9cca9a2f7425f4b04b6fd7fb5cc48593c10ba9fd`; remote source commit `9cca9a2f7425f4b04b6fd7fb5cc48593c10ba9fd`; remote source tree `89a3f19b0e1649e7941db3ca2368f94ccbaaaaa3`; dispatch ref `refs/heads/feature-app-1-offline-cross-slice-valida-2206d2aa-65200-b19e9c7b3fe49246`; dispatch nonce `65200-b19e9c7b3fe49246`; requested branch/ref `feature/app-1-offline-cross-slice-validation` / `refs/heads/feature/app-1-offline-cross-slice-validation`; sandbox base commit/tree `243b4b32a2d57f9fb99f416e35f94c3b05c5bf25` / `89a3f19b0e1649e7941db3ca2368f94ccbaaaaa3`; history stripped: `true`; model process started: `true`.
+- Feature integration prerequisite: PostgreSQL fixture fix `8fbdc701ad554a74eba03b2d8c299ebbaa21b146`; this evidence lane contains no production or test edits.
 
 ## Exact TEST_CMD
 
@@ -12,11 +14,7 @@ IDENTITY_PG_REQUIRED=1 uv run --directory apps/prototype-description-service --e
 
 ## Result
 
-- Exact command exit status: `2`; `0 collected`; `0 passed`; `0 failed`; `0 skipped`; `0 errors`; timing: `120 ms`.
-- Exact command could not prepare the lane environment: `uv` failed to remove `.../site-packages/__editable__.prototype_description_service-0.4.2.4.pth` with `Read-only file system (os error 30)`.
-- Read-only fallback command: `UV_NO_SYNC=1` plus the exact command above; exit status: `1`; timing: `1.74s` pytest time.
-- Fallback collection: `61 collected`; `46 passed`; `0 failed`; `0 skipped`; `15 errors`.
-- All 15 errors were setup failures with `(psycopg.OperationalError) connection is bad: no error details available`, followed by `Postgres unreachable at postgresql+psycopg://localhost:5432/postgres; start it with make postgres-start (IDENTITY_PG_REQUIRED=1: the pg suite may not skip)`.
-- The 15 unexecuted PostgreSQL tests were: `test_postgres_real_repo_claim_commit_before_get_apply_finish`, `test_postgres_stale_inbox_lease_refuses_paid_and_failure_marks`, `test_postgres_stale_projection_lease_refuses_paid_state`, `test_postgres_namespace_isolation_on_real_repository`, `test_postgres_namespace_isolation_legacy_fail_closed_leases_and_rls`, `test_existing_unique_drop_requires_drain_and_rolls_back`, `test_postgres_operator_bypass_restored_after_every_path`, `test_postgres_same_session_returning_lease_is_fresh`, `test_postgres_recovery_fencing_isolation_and_page_idempotency`, `test_postgres_acquire_rollback_releases_cursor`, `test_postgres_same_session_reacquire_returns_fresh_fence`, `test_postgres_operator_bypass_restored_and_rejects_tenant_bound`, `test_postgres_worker_usage_lifecycle`, `test_postgres_epoch_advance_old_callback_rejects_and_recovery_settles_once`, and `test_postgres_recovery_mismatch_concurrency_and_period_fail_closed`.
-
-This receipt records the actual current run. The fallback reached the declared 61-test collection, but the required local PostgreSQL fixture was unavailable; no application cross-slice owner is implicated and no source repair or harmonizing integration conclusion is made. Provider accounts were not used and no live requests were made.
+- Native VM exact command exit status: `0`; `61 passed`; `0 failed`; `0 skipped`; timing: `19.94s`.
+- Native VM output tail: `receipt=/tmp/prototype-description-service-pytest-collection-scope-4146206-1790084895954617102.json` and `61 passed in 19.94s`.
+- Earlier restrictive model-sandbox attempt (not the authoritative result): `uv` could not prepare the lane because it failed to remove `.../site-packages/__editable__.prototype_description_service-0.4.2.4.pth` with `Read-only file system (os error 30)`; its `UV_NO_SYNC=1` fallback collected 61 tests, with `46 passed`, `0 failed`, `0 skipped`, and `15 PostgreSQL setup errors` because PostgreSQL was unavailable in that sandbox.
+- The earlier sandbox limitation does not establish that native VM tests were unavailable and is not a current failure or blocker. Provider accounts were not used and no live requests were made.

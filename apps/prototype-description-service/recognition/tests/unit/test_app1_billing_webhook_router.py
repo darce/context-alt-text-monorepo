@@ -10,7 +10,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,6 +22,7 @@ from recognition.interface_adapters.http.routers import billing_webhooks
 
 SECRET = b"router-test-secret"
 TENANT_ID = uuid4()
+WEBHOOK_NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 
 
 @dataclass
@@ -164,6 +165,7 @@ class _RepositoryStub:
 
 def _app(provider: _ProviderStub, repository: _RepositoryStub) -> FastAPI:
     app = FastAPI()
+    app.state.webhook_clock = lambda: WEBHOOK_NOW
     app.include_router(billing_webhooks.router)
     app.dependency_overrides[billing_webhooks.get_billing_provider] = lambda: provider
     app.dependency_overrides[billing_webhooks.get_billing_repository] = lambda: repository
@@ -302,6 +304,45 @@ def test_replay_window_failure_is_rejected_before_repository_write() -> None:
 
     assert response.status_code == 401
     assert repository.rows == {}
+
+
+def test_webhook_timestamp_tolerance_uses_injected_clock() -> None:
+    """Reject stale delivery auth without rejecting old domain events."""
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    stale_delivery = WEBHOOK_NOW - timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1)
+    fresh_delivery = WEBHOOK_NOW + timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS)
+    current_event = _event_body(
+        event_id="evt-stale-delivery",
+        timestamp=WEBHOOK_NOW.isoformat().replace("+00:00", "Z"),
+    )
+    old_event = _event_body(
+        event_id="evt-old-domain",
+        timestamp=(WEBHOOK_NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+    )
+
+    with TestClient(_app(provider, repository)) as client:
+        rejected = client.post(
+            "/billing/webhooks/polar",
+            content=current_event,
+            headers={
+                "webhook-signature": _signature(current_event),
+                "webhook-timestamp": str(int(stale_delivery.timestamp())),
+            },
+        )
+        accepted = client.post(
+            "/billing/webhooks/polar",
+            content=old_event,
+            headers={
+                "webhook-signature": _signature(old_event),
+                "webhook-timestamp": str(int(fresh_delivery.timestamp())),
+            },
+        )
+
+    assert rejected.status_code == 400
+    assert accepted.status_code == 202
+    assert "evt-stale-delivery" not in repository.rows
+    assert "evt-old-domain" in repository.rows
 
 
 def test_duplicate_event_has_one_inbox_row_one_transition_and_same_ack() -> None:
@@ -575,7 +616,52 @@ def test_unknown_subscription_status_stays_pending_and_is_logged(caplog: pytest.
     assert response.status_code == 202
     assert repository.rows["evt-unknown-status"].status == WebhookInboxStatus.RECEIVED.value
     assert repository.transitions == []
-    assert "mystery_status" in caplog.text
+    assert "mystery_status" not in caplog.text
+    assert "projection_skipped" in caplog.text
+
+
+def test_webhook_logs_never_include_body_signature_or_authorization(caplog: pytest.LogCaptureFixture) -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    accepted_body = _event_body(
+        event_id="evt-safe-log",
+        event_type="subscription.updated",
+        status_value="body-marker-must-not-leak",
+    )
+    rejected_body = _event_body(event_id="evt-rejected-log", customer_id="rejected-body-marker-must-not-leak")
+    accepted_signature = _signature(accepted_body)
+    rejected_signature = "rejected-signature-must-not-leak"
+    authorization = "Bearer authorization-must-not-leak"
+    caplog.set_level(logging.WARNING, logger=billing_webhooks.logger.name)
+
+    with TestClient(_app(provider, repository)) as client:
+        accepted = client.post(
+            "/billing/webhooks/polar",
+            content=accepted_body,
+            headers={
+                "webhook-signature": accepted_signature,
+                "Authorization": authorization,
+            },
+        )
+        rejected = client.post(
+            "/billing/webhooks/polar",
+            content=rejected_body,
+            headers={
+                "webhook-signature": rejected_signature,
+                "Authorization": authorization,
+            },
+        )
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert accepted.status_code == 202
+    assert rejected.status_code == 401
+    assert accepted_body.decode() not in log_text
+    assert rejected_body.decode() not in log_text
+    assert accepted_signature not in log_text
+    assert rejected_signature not in log_text
+    assert authorization not in log_text
+    assert "body-marker-must-not-leak" not in log_text
+    assert "rejected-body-marker-must-not-leak" not in log_text
 
 
 def test_commit_failure_is_not_acknowledged_as_accepted() -> None:

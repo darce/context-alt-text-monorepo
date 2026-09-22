@@ -1,6 +1,1 @@
-30b68704a4f9 APP-1: land usage-recognition after scoped VM verification
-f3a4ae6b6e3e offload: Recognition analyze ingress now reserves with
-0638552fa8f9 APP-1: land clerk-fixwave after scoped VM verification
-8c42e97513ea offload: Clerk fixwave landed: frontend secrets refused, two-file apply
-3c727f7da930 APP-1: land usage-operators after scoped VM verification
-3763ac6892b9 offload: G4 operator mutations now deny trusted beta/portal callers
+8be73dc0beb2 offload: G3 binds reserved job UUIDs to persisted runs and settles

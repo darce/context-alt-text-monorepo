@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Final, NoReturn, cast
@@ -14,6 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import async_session_factory
 from db.tenant_context import set_tenant_context
+from recognition.application.services.portal_identity_service import (
+    PortalClaimOutcome,
+    PortalIdentityClaimError,
+    PortalIdentityClaimRefused,
+    SqlAlchemyPortalIdentityService,
+)
 from recognition.application.services.tenant_entitlement_service import TenantEntitlementService
 from recognition.application.services.tenant_key_service import (
     IdempotencyKeyReuseError,
@@ -29,7 +36,11 @@ from recognition.application.services.tenant_key_service import (
     TenantKeyService,
 )
 from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal
-from recognition.interface_adapters.http.deps.portal_auth import require_portal_principal
+from recognition.interface_adapters.http.deps.portal_auth import (
+    PortalTokenClaims,
+    require_portal_principal,
+    require_verified_portal_identity,
+)
 from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
@@ -38,6 +49,16 @@ DEFAULT_KEY_PAGE_LIMIT = 25
 MAX_KEY_PAGE_LIMIT = 100
 MAX_KEY_LOOKUP_PAGES: Final[int] = 100
 NO_STORE_HEADERS = {"Cache-Control": "no-store"}
+_CLAIM_ERROR_STATUS = {
+    "invalid_claim_request": 422,
+    "not_admitted": status.HTTP_403_FORBIDDEN,
+    "tenant_header_forbidden": status.HTTP_403_FORBIDDEN,
+    "csrf_origin_denied": status.HTTP_403_FORBIDDEN,
+    "email_unverified": status.HTTP_403_FORBIDDEN,
+    "invitation_consumed": status.HTTP_409_CONFLICT,
+    "identity_already_bound": status.HTTP_409_CONFLICT,
+    "portal_identity_unavailable": status.HTTP_503_SERVICE_UNAVAILABLE,
+}
 
 router = APIRouter(prefix="/portal", tags=["portal"])
 
@@ -51,6 +72,18 @@ class PortalMeResponse(BaseModel):
     issuer: str
     subject: str
     email: str | None
+
+
+class PortalClaimResponse(BaseModel):
+    """Durable onboarding claim result; replay is decided in the claim transaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID
+    issuer: str
+    subject: str
+    email: str | None
+    replayed: bool
 
 
 class PortalKeyMetadataResponse(BaseModel):
@@ -198,6 +231,80 @@ async def get_portal_usage_service(request: Request) -> object | None:
     if configured is not None:
         return configured
     return getattr(request.app.state, "usage_admission_service", None)
+
+
+async def get_claim_session() -> AsyncIterator[AsyncSession]:
+    """Provide a request-scoped session that does not take tenant from the client."""
+    session = async_session_factory()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def get_portal_claim_service(
+    request: Request,
+    session: AsyncSession = Depends(get_claim_session),
+) -> SqlAlchemyPortalIdentityService:
+    """Resolve the identity service used by invitation claim, without Polar."""
+    configured = getattr(request.app.state, "portal_identity_service", None)
+    if configured is not None:
+        return cast(SqlAlchemyPortalIdentityService, configured)
+    entitlement = getattr(request.app.state, "tenant_entitlement_service", None)
+    return SqlAlchemyPortalIdentityService(
+        session=session,
+        beta_grant=getattr(entitlement, "grant_beta", None) if entitlement is not None else None,
+        audit_service=getattr(request.app.state, "audit_service", None),
+        entitlement_service=entitlement,
+    )
+
+
+def _claim_http_error(status_code: int, code: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code}, headers=dict(NO_STORE_HEADERS))
+
+
+def _allowed_claim_origins(request: Request) -> frozenset[str]:
+    configured = getattr(getattr(request, "app", None), "state", None)
+    origins = getattr(configured, "app_allowed_origins", None) if configured is not None else None
+    if origins is not None:
+        return frozenset(str(item).strip() for item in origins if str(item).strip())
+    raw = os.getenv("APP_ALLOWED_ORIGINS", "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _require_claim_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not isinstance(origin, str) or not origin or origin not in _allowed_claim_origins(request):
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "csrf_origin_denied")
+
+
+def _reject_claim_tenant_selection(request: Request, payload: Mapping[str, object]) -> None:
+    if request.headers.get("x-tenant-id") is not None:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
+    if "tenant_id" in request.query_params:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
+    if "tenant_id" in payload or "tenantId" in payload:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "tenant_header_forbidden")
+
+
+async def _claim_payload(request: Request) -> dict[str, object]:
+    try:
+        payload = await request.json()
+    except Exception:
+        raise _claim_http_error(422, "invalid_claim_request") from None
+    if not isinstance(payload, dict):
+        raise _claim_http_error(422, "invalid_claim_request")
+    return cast(dict[str, object], payload)
+
+
+async def _rollback_claim_session(session: AsyncSession) -> None:
+    rollback = getattr(session, "rollback", None)
+    if callable(rollback):
+        await rollback()
 
 
 def _no_store_error(code: int, detail: object) -> HTTPException:
@@ -423,6 +530,65 @@ async def portal_me(principal: PortalPrincipal = Depends(require_portal_principa
         issuer=principal.issuer,
         subject=principal.subject,
         email=principal.email,
+    )
+
+
+@router.post("/onboarding/claim", response_model=PortalClaimResponse)
+async def portal_onboarding_claim(
+    request: Request,
+    response: Response,
+    claims: PortalTokenClaims = Depends(require_verified_portal_identity),
+    service: SqlAlchemyPortalIdentityService = Depends(get_portal_claim_service),
+    session: AsyncSession = Depends(get_claim_session),
+) -> PortalClaimResponse:
+    """Redeem one invitation into a local tenant without billing-provider calls or client tenant selection."""
+    response.headers.update(NO_STORE_HEADERS)
+    _require_claim_origin(request)
+    payload = await _claim_payload(request)
+    _reject_claim_tenant_selection(request, payload)
+    if getattr(claims, "email_verified", False) is not True:
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "email_unverified")
+    token = payload.get("invitation_token")
+    if not isinstance(token, str) or not token.strip():
+        raise _claim_http_error(422, "invalid_claim_request")
+    try:
+        outcome = await service.claim_onboarding(
+            issuer=claims.issuer,
+            subject=claims.subject,
+            email=claims.email,
+            invitation_token=token,
+        )
+    except HTTPException:
+        raise
+    except PortalIdentityClaimError as exc:
+        await _rollback_claim_session(session)
+        raise _claim_http_error(
+            _CLAIM_ERROR_STATUS.get(exc.code, status.HTTP_503_SERVICE_UNAVAILABLE),
+            exc.code if exc.code in _CLAIM_ERROR_STATUS else "portal_identity_unavailable",
+        ) from None
+    except PortalIdentityClaimRefused:
+        await _rollback_claim_session(session)
+        raise _claim_http_error(status.HTTP_403_FORBIDDEN, "not_admitted") from None
+    except TimeoutError:
+        await _rollback_claim_session(session)
+        raise _claim_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "portal_identity_unavailable") from None
+    except Exception:
+        await _rollback_claim_session(session)
+        logger.exception("Portal onboarding claim failed")
+        raise _claim_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "portal_identity_unavailable") from None
+    if not isinstance(outcome, PortalClaimOutcome):
+        await _rollback_claim_session(session)
+        raise _claim_http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "portal_identity_unavailable")
+    commit = getattr(session, "commit", None)
+    if callable(commit):
+        await commit()
+    response.status_code = status.HTTP_200_OK if outcome.replayed else status.HTTP_201_CREATED
+    return PortalClaimResponse(
+        tenant_id=outcome.principal.tenant_id,
+        issuer=outcome.principal.issuer,
+        subject=outcome.principal.subject,
+        email=outcome.principal.email,
+        replayed=outcome.replayed,
     )
 
 
@@ -676,6 +842,7 @@ __all__ = [
     "MAX_KEY_PAGE_LIMIT",
     "MAX_KEY_LOOKUP_PAGES",
     "NO_STORE_HEADERS",
+    "PortalClaimResponse",
     "PortalKeyIssueResponse",
     "PortalKeyMetadataResponse",
     "PortalKeyPageResponse",
@@ -684,9 +851,12 @@ __all__ = [
     "RevokeKeyRequest",
     "RevokeKeyResponse",
     "RotateKeyRequest",
+    "get_claim_session",
+    "get_portal_claim_service",
     "get_portal_session",
     "get_portal_usage_service",
     "get_tenant_entitlement_service",
     "get_tenant_key_service",
+    "portal_onboarding_claim",
     "router",
 ]

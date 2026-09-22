@@ -233,10 +233,10 @@ export function BillingScreen({
       }
       if (result.status === 'pending' || result.status === 'provider_requested') {
         completedRef.current = true;
+        onNavigateToReturn(result.attempt_id);
         if (result.checkout_url) {
           hostedNavigation.open(result.checkout_url);
         }
-        onNavigateToReturn(result.attempt_id);
         setBusy(false);
         setStatus({
           tone: 'info',
@@ -330,6 +330,8 @@ export function BillingScreen({
       return;
     }
     setPreview(true);
+    setRetry(false);
+    setRetryKind(null);
     setStatus({
       tone: 'info',
       message: 'This opens an external payment page. Access changes only after backend confirmation.',

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Iterable
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select, update
@@ -49,6 +49,12 @@ class InvalidUsageRequestError(ValueError):
 
 class AllowanceExceededError(UsageAdmissionError):
     """No active entitlement has enough remaining allowance."""
+
+    def __init__(
+        self, message: str = "tenant usage allowance exhausted", *, period_end: datetime | None = None
+    ) -> None:
+        super().__init__(message)
+        self.period_end = period_end
 
 
 class ReservationNotFoundError(LookupError):
@@ -205,7 +211,10 @@ class SqlAlchemyUsageRepository:
         used_units = int(used_result.scalar_one() or 0)
         allowance = int(entitlement.allowance_jobs)
         if used_units + cost_units > allowance:
-            raise AllowanceExceededError("tenant usage allowance exhausted")
+            raise AllowanceExceededError(
+                "tenant usage allowance exhausted",
+                period_end=entitlement.period_end,
+            )
 
         reservation = UsageReservation(
             id=uuid4(),
@@ -275,6 +284,75 @@ class SqlAlchemyUsageRepository:
     async def release(self, ticket: UsageTicket) -> None:
         """Release a reserved ticket exactly once."""
         await self._settle(ticket, UsageReservationStatus.RELEASED)
+
+    async def list_stale_reservations(
+        self,
+        stale_after_seconds: float,
+        *,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> list[UsageReservation]:
+        """Return a bounded, oldest-first batch of reservations still held open."""
+        if isinstance(stale_after_seconds, bool) or not isinstance(stale_after_seconds, (int, float)):
+            raise ValueError("stale_after_seconds must be a finite non-negative number")
+        stale_after = float(stale_after_seconds)
+        if not math.isfinite(stale_after) or stale_after < 0:
+            raise ValueError("stale_after_seconds must be a finite non-negative number")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+
+        reference_time = now or datetime.now(tz=UTC)
+        if reference_time.tzinfo is None:
+            reference_time = reference_time.replace(tzinfo=UTC)
+        cutoff = reference_time - timedelta(seconds=stale_after)
+        stmt = (
+            select(UsageReservation)
+            .where(
+                UsageReservation.status == UsageReservationStatus.RESERVED,
+                UsageReservation.reserved_at <= cutoff,
+            )
+            .order_by(UsageReservation.reserved_at.asc(), UsageReservation.id.asc())
+            .limit(limit)
+        )
+        result = await _with_timeout(
+            self._session.execute(stmt),
+            timeout_s=self._timeout_s,
+            operation="list stale usage reservations",
+        )
+        return list(result.scalars().all())
+
+    async def release_batch(self, reservations: Iterable[UsageReservation | UsageTicket]) -> int:
+        """Release a bounded batch without reviving rows settled by a racer."""
+        reservation_ids: list[UUID] = []
+        for reservation in reservations:
+            reservation_id = getattr(reservation, "reservation_id", None) or getattr(reservation, "id", None)
+            if isinstance(reservation_id, UUID):
+                reservation_ids.append(reservation_id)
+        if not reservation_ids:
+            return 0
+
+        stmt = (
+            update(UsageReservation)
+            .where(
+                UsageReservation.id.in_(reservation_ids),
+                UsageReservation.status == UsageReservationStatus.RESERVED,
+            )
+            .values(status=UsageReservationStatus.RELEASED, settled_at=func.now())
+        )
+        result = await _with_timeout(
+            self._session.execute(stmt),
+            timeout_s=self._timeout_s,
+            operation="release stale usage reservations",
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def release_stale_reservations(self, reservations: Iterable[UsageReservation | UsageTicket]) -> int:
+        """Compatibility name for sweepers that describe the reclaimed rows explicitly."""
+        return await self.release_batch(reservations)
+
+    async def release_reservations(self, reservations: Iterable[UsageReservation | UsageTicket]) -> int:
+        """Release a batch under the generic repository naming used by maintenance jobs."""
+        return await self.release_batch(reservations)
 
 
 # Short aliases keep the infrastructure seam convenient for callers that do

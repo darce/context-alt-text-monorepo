@@ -41,6 +41,11 @@ from recognition.interface_adapters.http.deps import (
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+from recognition.interface_adapters.http.deps.usage_admission import (
+    admit_usage,
+    build_usage_idempotency_key,
+    get_usage_admission_service,
+)
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
 from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 from recognition.interface_adapters.http.schemas.requests import (
@@ -287,6 +292,7 @@ async def analyze_media(
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
     _demo_quota=Depends(enforce_demo_quota),
+    usage_admission_service=Depends(get_usage_admission_service),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None
@@ -304,18 +310,26 @@ async def analyze_media(
             inline_processing=inline_processing,
         )
 
+        idempotency_key = build_usage_idempotency_key(tenant_uuid, media_ids, media_sources)
         # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
-        response = await _schedule_analysis(
-            background_tasks=background_tasks,
-            session=session,
-            scan_queue=scan_queue,
-            tenant_uuid=tenant_uuid,
-            media_items=media_items,
-            media_ids=media_ids,
-            media_sources=media_sources,
-            inline_processing=inline_processing,
-            auth=auth,
-        )
+        async with admit_usage(
+            usage_admission_service,
+            tenant_id=tenant_uuid,
+            idempotency_key=idempotency_key,
+            job_id=None,
+            cost_units=total_media_items,
+        ):
+            response = await _schedule_analysis(
+                background_tasks=background_tasks,
+                session=session,
+                scan_queue=scan_queue,
+                tenant_uuid=tenant_uuid,
+                media_items=media_items,
+                media_ids=media_ids,
+                media_sources=media_sources,
+                inline_processing=inline_processing,
+                auth=auth,
+            )
         outcome = "queued"
         return response
     except ProgrammingError as exc:

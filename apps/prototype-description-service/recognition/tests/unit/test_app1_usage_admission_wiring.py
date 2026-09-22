@@ -1,0 +1,302 @@
+"""APP-1 usage admission behavior at the HTTP dispatch boundary."""
+
+from __future__ import annotations
+
+import io
+import json
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import httpx
+import pytest
+from fastapi import FastAPI, HTTPException
+
+from recognition.application.services.usage_admission_service import AllowanceExceededError
+from recognition.domain.job import JobPhase, JobStatus, JobType
+from recognition.domain.portal_contracts import UsageTicket
+from recognition.interface_adapters.http.deps import (
+    get_optional_session,
+    get_scan_queue_service_optional,
+    require_auth,
+    require_write_access,
+)
+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+from recognition.interface_adapters.http.deps.usage_admission import (
+    admit_usage,
+    build_usage_idempotency_key,
+    get_usage_admission_service,
+)
+from recognition.interface_adapters.http.routers import analyze as analyze_router
+from recognition.interface_adapters.http.routers import analyze_multipart as multipart_router
+from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+
+TENANT_ID = UUID("11111111-1111-1111-1111-111111111111")
+MEDIA_ID = "22222222-2222-2222-2222-222222222222"
+
+
+class _FakeAdmission:
+    def __init__(self, *, exhausted: bool = False) -> None:
+        self.exhausted = exhausted
+        self.reserves: list[dict[str, object]] = []
+        self.commits: list[UsageTicket] = []
+        self.releases: list[UsageTicket] = []
+
+    async def reserve(self, tenant_id, *, idempotency_key, job_id, cost_units):
+        self.reserves.append(
+            {
+                "tenant_id": tenant_id,
+                "idempotency_key": idempotency_key,
+                "job_id": job_id,
+                "cost_units": cost_units,
+            }
+        )
+        if self.exhausted:
+            raise AllowanceExceededError()
+        return UsageTicket(uuid4(), tenant_id, idempotency_key, cost_units)
+
+    async def commit(self, ticket: UsageTicket) -> None:
+        self.commits.append(ticket)
+
+    async def release(self, ticket: UsageTicket) -> None:
+        self.releases.append(ticket)
+
+
+def _job_response() -> JobStatusResponse:
+    return JobStatusResponse(
+        id=str(uuid4()),
+        type=JobType.ANALYZE,
+        status=JobStatus.PENDING,
+        progress=JobProgressResponse(completed=0, total=1, phase=JobPhase.QUEUED),
+        started_at=datetime.now(UTC),
+        finished_at=None,
+    )
+
+
+def _json_app(admission: _FakeAdmission, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    app = FastAPI()
+    app.include_router(analyze_router.router, prefix="/recognition")
+    app.state.usage_admission_service = admission
+
+    async def _none():
+        return None
+
+    async def _auth():
+        return SimpleNamespace(tenant_claim=None, user_id=None)
+
+    async def _queue():
+        return object()
+
+    async def _service():
+        return admission
+
+    app.dependency_overrides.update(
+        {
+            require_auth: _none,
+            enforce_rate_limit: _none,
+            require_write_access: _auth,
+            get_optional_session: _none,
+            get_scan_queue_service_optional: _queue,
+            enforce_demo_quota: _none,
+            get_usage_admission_service: _service,
+        }
+    )
+
+    async def _schedule(**_kwargs):
+        return _job_response()
+
+    monkeypatch.setattr(analyze_router, "_schedule_analysis", _schedule)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_admit_usage_commits_after_normal_body() -> None:
+    admission = _FakeAdmission()
+    async with admit_usage(
+        admission,
+        tenant_id=TENANT_ID,
+        idempotency_key="key",
+        job_id="job",
+        cost_units=2,
+    ):
+        pass
+
+    assert len(admission.reserves) == 1
+    assert len(admission.commits) == 1
+    assert admission.releases == []
+
+
+@pytest.mark.asyncio
+async def test_admit_usage_releases_when_dispatch_raises() -> None:
+    admission = _FakeAdmission()
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        async with admit_usage(
+            admission,
+            tenant_id=TENANT_ID,
+            idempotency_key="key",
+            job_id=None,
+            cost_units=1,
+        ):
+            raise RuntimeError("dispatch failed")
+
+    assert len(admission.commits) == 0
+    assert len(admission.releases) == 1
+
+
+@pytest.mark.asyncio
+async def test_allowance_exhaustion_maps_to_payment_required() -> None:
+    admission = _FakeAdmission(exhausted=True)
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            admission,
+            tenant_id=TENANT_ID,
+            idempotency_key="key",
+            job_id=None,
+            cost_units=1,
+        ):
+            pass
+
+    assert exc_info.value.status_code == 402
+    assert exc_info.value.detail == {"error": "allowance_exhausted"}
+
+
+@pytest.mark.asyncio
+async def test_absent_service_does_not_call_anything() -> None:
+    async with admit_usage(
+        None,
+        tenant_id=TENANT_ID,
+        idempotency_key="key",
+        job_id=None,
+        cost_units=1,
+    ) as ticket:
+        assert ticket is None
+
+
+@pytest.mark.asyncio
+async def test_identical_requests_use_the_same_key_and_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+    app = _json_app(admission, monkeypatch)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
+        first = await client.post("/recognition/analyze", json=payload)
+        second = await client.post("/recognition/analyze", json=payload)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert len(admission.reserves) == 2
+    assert admission.reserves[0]["idempotency_key"] == admission.reserves[1]["idempotency_key"]
+    assert len(admission.commits) == 2
+
+
+@pytest.mark.asyncio
+async def test_service_absent_keeps_analyze_route_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+    app = _json_app(admission, monkeypatch)
+
+    async def _absent_service():
+        return None
+
+    app.dependency_overrides[get_usage_admission_service] = _absent_service
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze",
+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
+        )
+
+    assert response.status_code == 202
+    assert admission.reserves == []
+
+
+@pytest.mark.asyncio
+async def test_exhausted_analyze_request_returns_402(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission(exhausted=True)
+    app = _json_app(admission, monkeypatch)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze",
+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
+        )
+
+    assert response.status_code == 402
+    assert response.json()["detail"] == {"error": "allowance_exhausted"}
+
+
+class _FakeObjectStore:
+    def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+        return f"blob://{job_id}/{media_id}"
+
+    def cleanup(self, *, job_id: str) -> None:
+        return None
+
+    @contextmanager
+    def open(self, _uri: str):
+        yield io.BytesIO(b"image")
+
+
+class _FakeScanQueue:
+    async def create_scan_job_record(self, *, tenant_id, total, job_id, created_by_user_id):
+        return job_id
+
+
+@pytest.mark.asyncio
+async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+    app = FastAPI()
+    app.include_router(multipart_router.router, prefix="/recognition")
+
+    async def _auth():
+        return SimpleNamespace(tenant_claim=None, user_id=None)
+
+    async def _session():
+        return None
+
+    async def _queue():
+        return _FakeScanQueue()
+
+    async def _none():
+        return None
+
+    async def _service():
+        return admission
+
+    async def _store_factory():
+        return lambda _tenant: _FakeObjectStore()
+
+    app.dependency_overrides.update(
+        {
+            require_write_access: _auth,
+            get_optional_session: _session,
+            get_scan_queue_service_optional: _queue,
+            enforce_demo_quota: _none,
+            get_usage_admission_service: _service,
+            multipart_router.get_object_store_factory_for_request: _store_factory,
+        }
+    )
+
+    async def _noop_background(**_kwargs):
+        return None
+
+    monkeypatch.setattr(multipart_router, "chain_populate_and_process", _noop_background)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
+            files={"image_1": ("image.png", b"image", "image/png")},
+        )
+
+    assert response.status_code == 202
+    assert len(admission.reserves) == 1
+    assert admission.reserves[0]["cost_units"] == 1
+    assert len(admission.commits) == 1
+
+
+def test_build_usage_key_is_order_stable() -> None:
+    first = build_usage_idempotency_key(TENANT_ID, ["2", "1"], ["source-2", "source-1"])
+    second = build_usage_idempotency_key(TENANT_ID, ["1", "2"], ["source-1", "source-2"])
+    assert first == second

@@ -13,6 +13,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.application.services.usage_admission_service import UsageAdmissionService
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
@@ -27,6 +28,7 @@ from shared.secrets import get_secret_provider
 _MISSING = object()
 _DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
+_DEFAULT_USAGE_ADMISSION_TIMEOUT_S = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +97,20 @@ class BillingRepositoryFactory:
 
     def __call__(self, session: AsyncSession) -> BillingRepository:
         return BillingRepository(session)
+
+
+class UsageAdmissionServiceFactory:
+    """Construct a usage admission service around the session for one request."""
+
+    def __init__(self, *, timeout_s: float = _DEFAULT_USAGE_ADMISSION_TIMEOUT_S) -> None:
+        self.timeout_s = _positive_float(
+            timeout_s,
+            setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
+            default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
+        )
+
+    def __call__(self, session: AsyncSession) -> UsageAdmissionService:
+        return UsageAdmissionService(session, timeout_s=self.timeout_s)
 
 
 def _setting_value(settings: RecognitionSettings, sections: Collection[str], names: Collection[str]) -> object:
@@ -369,11 +385,19 @@ def install_portal_composition(
         allowed_return_origins=config.billing_allowed_return_origins,
     )
     app.state.billing_repository = BillingRepositoryFactory()
+    usage_timeout_value = _environment_value(("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",))
+    usage_timeout_s = _positive_float(
+        usage_timeout_value,
+        setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
+        default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
+    )
+    app.state.usage_admission_service = UsageAdmissionServiceFactory(timeout_s=usage_timeout_s)
     app.dependency_overrides[get_billing_repository] = _resolve_billing_repository
 
 
 __all__ = [
     "BillingRepositoryFactory",
     "PortalCompositionConfig",
+    "UsageAdmissionServiceFactory",
     "install_portal_composition",
 ]

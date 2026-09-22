@@ -22,7 +22,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 .PHONY: deploy-help deploy-build deploy-build-remote \
         deploy-dev deploy-dev-fir deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
-        deploy-rollback-dev-fir \
+        deploy-reset-dev-fir-to-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
@@ -53,7 +53,8 @@ deploy-help:
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
 	@echo "    make deploy-promote-prod CONFIRM=PROMOTE   Retag :staging -> :latest, restart, verify"
 	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev"
-	@echo "    make deploy-rollback-dev-fir               Retag :dev -> :dev-fir (reset dev-fir to the current :dev image)"
+	@echo "    make deploy-reset-dev-fir-to-dev           Retag :dev -> :dev-fir (reset FIR forward to current :dev)"
+	@echo "                                               Previous-digest rollback: recognition-service.sh rollback dev-fir <id>"
 	@echo ""
 	@echo "  Verify / status / sticky-repo reset:"
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
@@ -159,10 +160,10 @@ deploy-rollback-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote staging dev
 
-# Reset dev-fir to the current :dev image. rollback <env> requires a digest
-# id, so this Make lever is an ordinary promote/retag onto the independent
-# :dev-fir tag.
-deploy-rollback-dev-fir:
+# Reset dev-fir forward to the current :dev image (promote/retag). This is
+# not a previous-digest rollback; that remains:
+#   scripts/deploy/recognition-service.sh rollback dev-fir <id>
+deploy-reset-dev-fir-to-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote dev dev-fir
 

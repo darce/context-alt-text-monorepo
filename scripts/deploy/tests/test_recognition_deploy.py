@@ -970,6 +970,25 @@ env_to_tag {env}
     )
 
 
+def _run_assert_remote_env_image_tag(
+    env: str, file_tag: str
+) -> subprocess.CompletedProcess[str]:
+    """Exercise the fail-closed remote ACX_IMAGE_TAG guard without SSH."""
+    command = f'''
+source "{SCRIPT}"
+GREEN=; YELLOW=; RED=; RESET=
+_remote_dotenv_value() {{ printf '%s' "{file_tag}"; }}
+assert_remote_env_image_tag {env}
+'''
+    return subprocess.run(
+        ["/bin/bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+
+
 def test_env_to_tag_dev_fir_is_independent() -> None:
     result = _run_env_to_tag("dev-fir")
     combined = result.stdout + result.stderr
@@ -984,8 +1003,55 @@ def test_env_to_tag_dev_is_unchanged() -> None:
     assert result.stdout.strip() == "dev"
 
 
-def test_make_n_deploy_rollback_dev_fir_is_not_refused() -> None:
-    """FIR-only rollback is a real lever: dry-run must retag, not refuse/exit 2."""
+def test_remote_env_image_tag_guard_refuses_dev_fir_file_tag_dev() -> None:
+    """FIR512-3-HR-02: stale ACX_IMAGE_TAG=dev on env=dev-fir must refuse compose."""
+    result = _run_assert_remote_env_image_tag("dev-fir", "dev")
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "ACX_IMAGE_TAG" in combined
+    assert "/opt/acx-backend/dev-fir/.env" in combined
+    assert "dev-fir" in combined
+    assert "refusing" in combined.lower()
+
+
+def test_remote_env_image_tag_guard_passes_when_file_matches_env_tag() -> None:
+    result = _run_assert_remote_env_image_tag("dev-fir", "dev-fir")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+
+
+def test_remote_env_image_tag_guard_leaves_dev_unaffected() -> None:
+    result = _run_assert_remote_env_image_tag("dev", "dev")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+
+
+def test_do_restart_guards_remote_env_image_tag_before_compose() -> None:
+    """Cutover compose interpolates ACX_IMAGE_TAG; refuse before compose up."""
+    body = _function_body("do_restart")
+    assert "assert_remote_env_image_tag" in body
+    assert body.index("assert_remote_env_image_tag") < body.index("render_cutover_compose")
+    assert body.index("assert_remote_env_image_tag") < body.index("recreate_cutover_candidate")
+
+
+def test_make_n_deploy_reset_dev_fir_to_dev_prints_promote() -> None:
+    """FIR512-3-HR-03: reset lever is promote dev -> dev-fir, not a digest rollback."""
+    repo = SCRIPT.parents[2]
+    result = subprocess.run(
+        ["make", "-n", "deploy-reset-dev-fir-to-dev"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "promote" in combined
+    assert "dev-fir" in combined
+
+
+def test_make_deploy_rollback_dev_fir_target_removed() -> None:
     repo = SCRIPT.parents[2]
     result = subprocess.run(
         ["make", "-n", "deploy-rollback-dev-fir"],
@@ -996,10 +1062,8 @@ def test_make_n_deploy_rollback_dev_fir_is_not_refused() -> None:
         env={**os.environ, "LC_ALL": "C"},
     )
     combined = result.stdout + result.stderr
-    assert result.returncode != 2, combined
-    assert "refused" not in combined.lower(), combined
-    assert "promote" in combined
-    assert "dev-fir" in combined
+    assert result.returncode != 0, combined
+    assert "deploy-rollback-dev-fir" in combined.lower() or "no rule" in combined.lower()
 
 
 def test_boot_smoke_captures_crash_logs_after_entrypoint_exit(tmp_path: Path) -> None:
@@ -2740,6 +2804,7 @@ def _run_actual_restart_failure_transaction(
     remote_dir = state / "remote"
     remote_dir.mkdir()
     (remote_dir / "docker-compose.cutover.yml").write_text("# fake cutover compose\n")
+    (remote_dir / ".env").write_text(f"ACX_IMAGE_TAG={env_name}\n")
     if invoke.startswith("do_rollback"):
         (state / "prior-stopped").write_text("")
     else:

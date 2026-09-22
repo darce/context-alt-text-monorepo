@@ -489,3 +489,37 @@ def test_resolve_sface_still_accepts_canonical_contract() -> None:
     assert MODEL_MANIFEST["sface"].metric == "cosine"
     assert resolve_sface_embedding_dim() == 128
     assert resolve_sface_embedding_dim() == SFACE_EMBEDDING_DIM
+
+
+def test_arcface_similarity_preserves_native_dtype_and_rejects_degenerate() -> None:
+    """AuraFace Umeyama must not reuse the SFace float64-promoting port."""
+    from recognition.infrastructure.face_pipeline.aligner import (
+        ARCFACE_CANONICAL_LANDMARKS_112,
+        AlignmentError,
+        arcface_similarity_transform_matrix,
+        similarity_transform_matrix,
+    )
+
+    src_f32 = np.array(
+        [
+            [40.5, 50.25],
+            [80.75, 49.5],
+            [60.0, 70.125],
+            [45.25, 90.5],
+            [75.0, 91.75],
+        ],
+        dtype=np.float32,
+    )
+    actual = arcface_similarity_transform_matrix(src_f32)
+    assert actual.shape == (2, 3)
+    assert actual.dtype == np.float64
+    sface_with_dst = similarity_transform_matrix(src_f32, dst_landmarks=ARCFACE_CANONICAL_LANDMARKS_112)
+    assert not np.array_equal(actual, sface_with_dst)
+    with pytest.raises(AlignmentError, match="expected 5 landmarks"):
+        arcface_similarity_transform_matrix(np.zeros((4, 2), dtype=np.float32))
+    with pytest.raises(AlignmentError, match="non-finite"):
+        bad = src_f32.copy()
+        bad[0, 0] = np.nan
+        arcface_similarity_transform_matrix(bad)
+    with pytest.raises(AlignmentError, match="degenerate"):
+        arcface_similarity_transform_matrix(np.zeros((5, 2), dtype=np.float32))

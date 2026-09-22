@@ -241,8 +241,7 @@ export const resolveActivityStatus = (input: ResolveActivityStatusInput): Activi
   const describeWarming =
     describeLive &&
     (describe.progress.isWarming === true ||
-      run?.phase === DESCRIBE_RUN_PHASE.WARMING ||
-      gpuIsWarming(runGpu ?? GPU_STATE.UNKNOWN));
+      run?.phase === DESCRIBE_RUN_PHASE.WARMING);
   const warmingObservation = deriveWarmingObservation({
     runId: describe.runId ?? run?.run_id ?? null,
     startupId: describe.progress.startupId ?? run?.startup_id ?? null,

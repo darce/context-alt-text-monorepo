@@ -1,11 +1,11 @@
 # APP-1. Plan 0002 — complete app.altcontext.com launch
 
-- Status: review draft; no dispatch authorization. Prepared 2026-09-21 America/Toronto (handoff records extend into 2026-09-22 UTC).
+- Status: active continuation; remote execution authorized, contract amendments still under review. Prepared 2026-09-21 America/Toronto (handoff records extend into 2026-09-22 UTC).
 - Owner: APP-1, existing `feature/app-1` integration worktree.
 - Inspected baseline: `11fe4dea7ae1b065893aca38d215b38e7a18c23f`.
 - Supersedes the execution sequence, not APP-R1..R6 or APP-SC-01..20, in [Plan 0001](0001-app-altcontext-beta-clerk-polar-task-plan.md).
 - Epic: [E16 SaaS foundation](../epics/v0.3.1/saas-foundation-epic.md).
-- This session selects and deduplicates tasks only. No Git cherry-pick, worker dispatch, vendor mutation, deployment, invitation or charge is authorized by this packet.
+- The operator subsequently authorized remote implementation and orchestration. Use `grok-remote` / `grok-4.6` / high for implementation and `codex-remote` / `gpt-5.6-luna` / max for grunt work. Local implementation lanes remain prohibited. Account provisioning and real integration rehearsal remain operator-dependent; live charges remain behind the paid gate.
 
 ## Objective
 
@@ -23,6 +23,18 @@ The old plan still calls implemented surfaces new, and references `docs/specs/ap
 
 Existing branch `feature/app-1-w4-keys-hooks` contains unmerged checkpoint `29c357fd4` (four files, 221 insertions/13 deletions). Its lane is blocked and the commit message reports focused probes passing but an incomplete full result. Treat it as a review/recovery candidate, never as landed or cleanly verified. Other W4 tips inspected were at the main baseline; that alone does not prove no remote artifacts exist. Inspect existing handles before any later retry.
 
+## Execution checkpoint — 2026-09-22 UTC
+
+- Plan/epic preservation commit: `727dd66c0`. Usage admission checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated into `feature/app-1` at `1a3f51fe4c45ada621a649a92b77bbfbdc389722`, after 28 focused VM tests passed. This is feature integration, not launch acceptance. Review identified operation-id reuse, premature settlement, scene coverage and global-budget gaps; all block main pending the U amendment/fix.
+- Keys/hooks checkpoint rebased to `35a5288fb`; fresh VM verification produced 30 passes and 5 webhook timestamp failures. One Grok/high fix pass is active: `app1-keys-hooks-fix-20260922-v1`. No green claim yet.
+- Usage/evidence contract adjudication is running remotely with Codex/Luna/max, pass `9b83f1f9-3b7a-484c-9b0e-0272821b331e`. Billing contract adjudication refused before model spawn with `capability_unknown`, including a retry after a fresh receipt. Both adapters independently pass live availability probes; this dispatch error is not proof of unsupported inference providers.
+- Operator will provision Clerk development and Polar sandbox credentials through untracked `.env` and notify the coordinator. Handoff blocker 821 gates real rehearsal/release, not offline work. Never print credential values or package `.env` into a lane.
+- Actual composition currently defaults Polar environment to sandbox while its default API base is live. C/U must validate environment/base consistency and reject incoherent configuration before vendor calls; publishing an environment-variable checklist alone does not fix this defect.
+- Three clean, unstarted baseline-only worktrees (deploy, portal, UI) were bundled and retired. The usage implementation branch was bundled after integration. Remote reaper dry-run found zero eligible sandboxes; locked/young/foreign sandboxes remain protected.
+- Installed Grok adapter emits `--no-subagents`; current parallelism is coordinator-owned disjoint remote lanes. Nested Grok flocks need supported adapter configuration before being claimed available. Never spoof capability or sandbox receipts.
+
+These are point-in-time observations. Consult MCP pass state and process ownership before recovering or retrying; a tool RPC timeout does not prove the remote pass stopped. Decisions 13221, 13223 and 13225 preserve the changed authorization and landing evidence.
+
 ## Scope selection and deduplication
 
 | Source | Keep for this launch | Disposition |
@@ -39,7 +51,7 @@ Existing branch `feature/app-1-w4-keys-hooks` contains unmerged checkpoint `29c3
 
 ## Implementation readiness
 
-**No complete plan is unconditionally ready for a fresh remote implementation dispatch today.** The following distinctions prevent an old review or a queued lane from being mistaken for current readiness.
+**The full launch plan is not cleared for unrestricted dispatch. Bounded checkpoint fixes and parallel contract adjudication are executing under the operator's later authorization.** The following distinctions prevent an old review or a queued lane from being mistaken for current readiness.
 
 | Node | Current disposition | What makes the next action executable |
 | --- | --- | --- |

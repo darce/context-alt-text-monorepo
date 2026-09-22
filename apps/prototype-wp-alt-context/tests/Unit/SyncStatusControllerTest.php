@@ -63,6 +63,33 @@ class SyncStatusControllerTest extends TestCase
         );
     }
 
+    public function testGetSyncStatusIncludesReclaimerContractShapeFromFixture(): void
+    {
+        $fixture = json_decode(
+            (string) file_get_contents(dirname(__DIR__) . '/fixtures/sync-status/reclaimer.json'),
+            true
+        );
+        $this->assertIsArray($fixture);
+        $this->assertArrayHasKey('never_run', $fixture);
+
+        $controller = new SyncStatusController(new NullSyncStateRepository());
+        $response = $controller->get_sync_status(new WP_REST_Request('GET', '/acx/v1/recognition/sync-status'));
+        $reclaimer = $response->get_data()['reclaimer'];
+        $expected = $fixture['never_run'];
+
+        $this->assertSame(array_keys($expected), array_keys($reclaimer));
+        $this->assertSame('never_run', $reclaimer['state']);
+        $this->assertIsString($reclaimer['scheduler_mode']);
+        $this->assertIsInt($reclaimer['effective_period_seconds']);
+        $this->assertTrue($reclaimer['last_attempt_at'] === null || is_string($reclaimer['last_attempt_at']));
+        $this->assertTrue($reclaimer['last_success_at'] === null || is_string($reclaimer['last_success_at']));
+        $this->assertTrue($reclaimer['last_outcome'] === null || is_string($reclaimer['last_outcome']));
+        $this->assertTrue($reclaimer['last_purged_count'] === null || is_int($reclaimer['last_purged_count']));
+        $this->assertTrue($reclaimer['backlog_remaining'] === null || is_int($reclaimer['backlog_remaining']));
+        $this->assertTrue($reclaimer['backlog_oldest_age_seconds'] === null || is_int($reclaimer['backlog_oldest_age_seconds']));
+        $this->assertIsBool($reclaimer['batch_cap_reached']);
+    }
+
     public function testGetSyncStatusIncludesCurationCountersWhenAvailable(): void
     {
         $syncRepo = new class() extends NullSyncStateRepository {

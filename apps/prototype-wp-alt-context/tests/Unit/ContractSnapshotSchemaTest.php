@@ -66,7 +66,7 @@ class ContractSnapshotSchemaTest extends TestCase
         $clusters_repo = new class() extends NullClustersRepository {
             public array $calls = [];
 
-            public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
+            public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version, bool $is_complete = false): void
             {
                 $this->calls[] = [$tenant_id, $clusters, $snapshot_version];
             }

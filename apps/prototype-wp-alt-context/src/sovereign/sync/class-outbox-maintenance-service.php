@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Sync;
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/class-conflict-resolution-status.php';
 require_once __DIR__ . '/class-outbox-status.php';
+require_once __DIR__ . '/class-reclaimer-liveness.php';
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
 
 use AltContext\Support\RunsTransactional;
@@ -56,6 +57,7 @@ class OutboxMaintenanceService {
 	use RunsTransactional;
 
 	private const DEFAULT_PURGE_BATCH_SIZE = 50;
+	private const DEFAULT_PURGE_TENANT_PAGE_SIZE = 25;
 	private const DEFAULT_ACKNOWLEDGED_RETENTION_DAYS = 14;
 	private const DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS = 14;
 	private const DEFAULT_FAILED_RETENTION_DAYS = 7;
@@ -76,8 +78,10 @@ class OutboxMaintenanceService {
 
 	private OutboxQueryRepository $query_repository;
 	private SyncStateRepository $sync_state_repository;
+	private ReclaimerLiveness $reclaimer_liveness;
 	private string $table_name;
 	private string $conflicts_table_name;
+	private bool $purge_batch_cap_reached = false;
 	/** @var list<array{tenant_id:string,outbox_id:int,last_error_code:?string,reason:string}> */
 	private array $pending_orphan_discard_events = array();
 
@@ -85,7 +89,8 @@ class OutboxMaintenanceService {
 		?OutboxQueryRepository $query_repository = null,
 		?SyncStateRepository $sync_state_repository = null,
 		?string $table_name = null,
-		?string $conflicts_table_name = null
+		?string $conflicts_table_name = null,
+		?ReclaimerLiveness $reclaimer_liveness = null
 	) {
 		global $wpdb;
 
@@ -103,96 +108,198 @@ class OutboxMaintenanceService {
 		$this->conflicts_table_name = $conflicts_table_name ?? $default_conflicts_table;
 		$this->query_repository = $query_repository ?? new OutboxQueryRepository( $this->table_name );
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->reclaimer_liveness = $reclaimer_liveness ?? new ReclaimerLiveness();
 	}
 
 	/**
-	 * @return array{outbox:int,conflicts:int,retried:int,dead_lettered:int,purged_failed:int,skipped_concurrent:int,orphaned:int,purged_exhausted:int}|false
+	 * @return array{outbox?:int,conflicts?:int,retried?:int,dead_lettered?:int,purged_failed?:int,skipped_concurrent?:int,orphaned?:int,purged_exhausted?:int,outcome?:string}|false
 	 */
-	public function purge_terminal_rows( string $tenant_id ): array|false {
+	public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
 		$normalized_tenant_id = trim( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
 			return false;
 		}
 
-		$this->pending_orphan_discard_events = array();
-		$result = $this->run_transactional(
-			function () use ( $normalized_tenant_id ): array|WP_Error {
-				try {
-					$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id );
-					$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id );
-					$failed_purge = $this->purge_failed_non_retryable_batch( $normalized_tenant_id );
-					$purged_failed = $failed_purge['deleted'];
-					$purged_acknowledged = $this->purge_acknowledged_outbox_batch( $normalized_tenant_id );
-
-					return array(
-						// Keep the established aggregate meaning: all acknowledged and failed
-						// outbox deletions. The failed-only breakdown remains available below.
-						'outbox' => $purged_acknowledged + $purged_failed,
-						'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id ),
-						'retried' => $reclaim['retried'],
-						'dead_lettered' => $reclaim['dead_lettered'],
-						'purged_failed' => $purged_failed,
-						'skipped_concurrent' => $orphans['skipped_concurrent'] + $reclaim['skipped_concurrent'],
-						'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
-						'purged_exhausted' => $failed_purge['exhausted'],
-						'_orphan_discard_events' => $this->pending_orphan_discard_events,
-					);
-				} catch ( RuntimeException $exception ) {
-					return new WP_Error( 'acx_db_error', $exception->getMessage(), array( 'status' => 500 ) );
+		try {
+			$resolved_scheduler_mode = $scheduler_mode ?? $this->reclaimer_liveness->current_scheduler_mode(
+				$this->reclaimer_liveness->booked_scheduler_mode()
+			);
+		} catch ( Throwable $exception ) {
+			$resolved_scheduler_mode = $scheduler_mode ?? ReclaimerLiveness::SCHEDULER_WP_CRON;
+			$this->report_reclaimer_liveness_failure( $normalized_tenant_id, 'scheduler_mode', $exception );
+		}
+		$batch_size = null === $batch_cap ? null : max( 1, $batch_cap );
+		try {
+			$lease_owner = $this->reclaimer_liveness->claim( $normalized_tenant_id );
+		} catch ( Throwable $exception ) {
+			$this->report_reclaimer_liveness_failure( $normalized_tenant_id, 'claim', $exception );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
 				}
+			);
+			return false;
+		}
+		if ( false === $lease_owner ) {
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
+			return false;
+		}
+		if ( null === $lease_owner ) {
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_lock_contended',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_lock_contended( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
+			return array( 'outcome' => ReclaimerLiveness::OUTCOME_LOCK_CONTENDED );
+		}
+
+		$this->run_reclaimer_liveness_side_effect(
+			$normalized_tenant_id,
+			'record_attempt',
+			function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+				$this->reclaimer_liveness->record_attempt( $normalized_tenant_id, $resolved_scheduler_mode );
 			}
 		);
-
-		if ( is_wp_error( $result ) ) {
-			$this->pending_orphan_discard_events = array();
-			return false;
-		}
-
-		if ( ! is_array( $result ) ) {
-			$this->pending_orphan_discard_events = array();
-			return false;
-		}
-
-		$orphan_events = array();
-		if ( isset( $result['_orphan_discard_events'] ) && is_array( $result['_orphan_discard_events'] ) ) {
-			$orphan_events = $result['_orphan_discard_events'];
-		}
-		unset( $result['_orphan_discard_events'] );
 		$this->pending_orphan_discard_events = array();
+		$this->purge_batch_cap_reached = false;
 
-		foreach ( $orphan_events as $payload ) {
-			if ( ! is_array( $payload ) ) {
-				continue;
+		try {
+			$result = $this->run_transactional(
+				function () use ( $normalized_tenant_id, $batch_size ): array|WP_Error {
+					try {
+						$single_batch = null !== $batch_size;
+						$orphans = $this->discard_orphaned_failed_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
+						$reclaim = $this->reclaim_retryable_failed_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
+						$failed_purge = $this->purge_failed_non_retryable_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
+						$purged_failed = $failed_purge['deleted'];
+						$purged_acknowledged = $this->purge_acknowledged_outbox_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null );
+
+						return array(
+							// Keep the established aggregate meaning: all acknowledged and failed
+							// outbox deletions. The failed-only breakdown remains available below.
+							'outbox' => $purged_acknowledged + $purged_failed,
+							'conflicts' => $this->purge_resolved_conflicts_batch( $normalized_tenant_id, $batch_size, $single_batch ? 1 : null ),
+							'retried' => $reclaim['retried'],
+							'dead_lettered' => $reclaim['dead_lettered'],
+							'purged_failed' => $purged_failed,
+							'skipped_concurrent' => $orphans['skipped_concurrent'] + $reclaim['skipped_concurrent'],
+							'orphaned' => $orphans['orphaned'] + $reclaim['orphaned'],
+							'purged_exhausted' => $failed_purge['exhausted'],
+							'_orphan_discard_events' => $this->pending_orphan_discard_events,
+						);
+					} catch ( RuntimeException $exception ) {
+						return new WP_Error( 'acx_db_error', $exception->getMessage(), array( 'status' => 500 ) );
+					}
+				}
+			);
+
+			if ( is_wp_error( $result ) || ! is_array( $result ) ) {
+				$this->pending_orphan_discard_events = array();
+				$this->run_reclaimer_liveness_side_effect(
+					$normalized_tenant_id,
+					'record_failure',
+					function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+						$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+					}
+				);
+				return false;
 			}
-			do_action( 'acx_sync_outbox_orphan_discarded', $payload );
-		}
 
-		if ( ( $result['retried'] + $result['dead_lettered'] + $result['purged_failed'] + $result['orphaned'] ) > 0 ) {
-			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
-		}
-		if ( $result['retried'] > 0 ) {
-			OutboxDrain::maybe_schedule_drain();
-		}
-		if ( $result['purged_exhausted'] > 0 ) {
-			do_action(
-				'acx_sync_outbox_exhausted_purged',
-				array(
-					'tenant_id' => $normalized_tenant_id,
-					'purged_count' => $result['purged_exhausted'],
-				)
+			// Returning an array from run_transactional means COMMIT succeeded. Stamp
+			// that boundary before post-commit hooks or metric refreshes can throw.
+			try {
+				$backlog = $this->measure_reclaimer_backlog( $normalized_tenant_id );
+			} catch ( Throwable $exception ) {
+				$backlog = array( 'remaining' => null, 'oldest_age_seconds' => null );
+			}
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_success',
+				function () use ( $normalized_tenant_id, $result, $backlog, $batch_size, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_success(
+						$normalized_tenant_id,
+						(int) $result['outbox'] + (int) $result['conflicts'],
+						$backlog['remaining'],
+						$backlog['oldest_age_seconds'],
+						$batch_size !== null && $this->purge_batch_cap_reached,
+						$resolved_scheduler_mode
+					);
+				}
+			);
+
+			$orphan_events = array();
+			if ( isset( $result['_orphan_discard_events'] ) && is_array( $result['_orphan_discard_events'] ) ) {
+				$orphan_events = $result['_orphan_discard_events'];
+			}
+			unset( $result['_orphan_discard_events'] );
+			$this->pending_orphan_discard_events = array();
+
+			foreach ( $orphan_events as $payload ) {
+				if ( ! is_array( $payload ) ) {
+					continue;
+				}
+				do_action( 'acx_sync_outbox_orphan_discarded', $payload );
+			}
+
+			if ( ( $result['retried'] + $result['dead_lettered'] + $result['purged_failed'] + $result['orphaned'] ) > 0 ) {
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+			}
+			if ( $result['retried'] > 0 ) {
+				OutboxDrain::maybe_schedule_drain();
+			}
+			if ( $result['purged_exhausted'] > 0 ) {
+				do_action(
+					'acx_sync_outbox_exhausted_purged',
+					array(
+						'tenant_id' => $normalized_tenant_id,
+						'purged_count' => $result['purged_exhausted'],
+					)
+				);
+			}
+
+			try {
+				self::maybe_schedule_purge();
+			} catch ( Throwable $exception ) {
+				do_action( 'acx_sync_purge_reschedule_failed', $exception );
+			}
+
+			return $result;
+		} catch ( Throwable $exception ) {
+			$this->pending_orphan_discard_events = array();
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
+			throw $exception;
+		} finally {
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'release',
+				function () use ( $normalized_tenant_id, $lease_owner ): void {
+					$this->reclaimer_liveness->release( $normalized_tenant_id, $lease_owner );
+				}
 			);
 		}
-
-		self::maybe_schedule_purge();
-
-		return $result;
 	}
 
 	/**
 	 * Schedule the next terminal-row purge: Action Scheduler when available, WP-Cron otherwise
 	 * (same pattern as OutboxDrain::maybe_schedule_drain).
 	 */
-	public static function maybe_schedule_purge(): void {
+	public static function maybe_schedule_purge(): ?string {
 		$hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? (int) HOUR_IN_SECONDS : 3600;
 		$timestamp = time() + $hour_seconds;
 		$group = self::action_scheduler_group();
@@ -201,14 +308,18 @@ class OutboxMaintenanceService {
 			$existing = as_next_scheduled_action( self::PURGE_HOOK, array(), $group );
 			if ( true === $existing || ( is_numeric( $existing ) && (int) $existing > 0 ) ) {
 				wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
-				return;
+				$mode = ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER;
+				( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+				return $mode;
 			}
 
 			try {
 				$action_id = as_schedule_single_action( $timestamp, self::PURGE_HOOK, array(), $group );
 				if ( (int) $action_id > 0 ) {
 					wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
-					return;
+					$mode = ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER;
+					( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+					return $mode;
 				}
 			} catch ( Throwable $exception ) {
 				do_action( 'acx_outbox_action_scheduler_enqueue_failed', $exception );
@@ -218,6 +329,10 @@ class OutboxMaintenanceService {
 		if ( false === wp_next_scheduled( self::PURGE_HOOK, array() ) ) {
 			wp_schedule_event( $timestamp, 'daily', self::PURGE_HOOK, array() );
 		}
+
+		$mode = ReclaimerLiveness::SCHEDULER_WP_CRON;
+		( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+		return $mode;
 	}
 
 	private static function action_scheduler_group(): string {
@@ -308,29 +423,68 @@ class OutboxMaintenanceService {
 	/**
 	 * @return string[]
 	 */
-	public function list_terminal_purge_tenant_ids(): array {
+	public function list_terminal_purge_tenant_ids( ?int $limit = null, string $after_tenant_id = '' ): array {
 		global $wpdb;
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_col' ) ) {
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ( ! method_exists( $wpdb, 'get_col' ) && ! method_exists( $wpdb, 'get_results' ) )
+		) {
 			return array();
 		}
 
+		$limit = null === $limit
+			? $this->resolve_positive_int_tunable( 'acx_sync_purge_tenant_page_size', self::DEFAULT_PURGE_TENANT_PAGE_SIZE )
+			: max( 1, $limit );
+		$after_tenant_id = trim( $after_tenant_id );
+
+		$build_query = static function ( string $table_name ) use ( $wpdb, $limit, $after_tenant_id ): string {
+			if ( '' === $after_tenant_id ) {
+				return $wpdb->prepare(
+					'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s ORDER BY tenant_id ASC LIMIT %d',
+					$table_name,
+					'',
+					$limit
+				);
+			}
+
+			return $wpdb->prepare(
+				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s AND tenant_id > %s ORDER BY tenant_id ASC LIMIT %d',
+				$table_name,
+				'',
+				$after_tenant_id,
+				$limit
+			);
+		};
+		$read_tenant_ids = static function ( string $query ) use ( $wpdb ): array {
+			if ( method_exists( $wpdb, 'get_col' ) ) {
+				$tenant_ids = $wpdb->get_col( $query );
+				return is_array( $tenant_ids ) ? $tenant_ids : array();
+			}
+
+			$rows = $wpdb->get_results( $query, ARRAY_A );
+			if ( ! is_array( $rows ) ) {
+				return array();
+			}
+
+			$tenant_ids = array();
+			foreach ( $rows as $row ) {
+				if ( is_array( $row ) ) {
+					$tenant_ids[] = $row['tenant_id'] ?? ( array_values( $row )[0] ?? '' );
+				} elseif ( is_object( $row ) ) {
+					$tenant_ids[] = $row->tenant_id ?? '';
+				}
+			}
+
+			return $tenant_ids;
+		};
+
 		$tenant_ids = array();
 
-		$outbox_tenant_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
-				$this->table_name,
-				''
-			)
-		);
-		$conflict_tenant_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				'SELECT DISTINCT tenant_id FROM %i WHERE tenant_id <> %s',
-				$this->conflicts_table_name,
-				''
-			)
-		);
+		$outbox_tenant_ids = $read_tenant_ids( $build_query( $this->table_name ) );
+		$conflict_tenant_ids = $read_tenant_ids( $build_query( $this->conflicts_table_name ) );
 
 		foreach ( array_merge( is_array( $outbox_tenant_ids ) ? $outbox_tenant_ids : array(), is_array( $conflict_tenant_ids ) ? $conflict_tenant_ids : array() ) as $tenant_id ) {
 			$normalized_tenant_id = trim( (string) $tenant_id );
@@ -339,16 +493,117 @@ class OutboxMaintenanceService {
 			}
 		}
 
-		return array_values( array_unique( $tenant_ids ) );
+		sort( $tenant_ids, SORT_STRING );
+		$tenant_ids = array_values( array_unique( $tenant_ids ) );
+		/*
+		 * WHY: each table query returns a sorted prefix of the same keyset; sorting
+		 * and merging those prefixes before truncating therefore yields the global
+		 * prefix without materializing the unbounded tenant set.
+		 */
+		return array_slice( $tenant_ids, 0, $limit );
 	}
 
-	public function purge_acknowledged_outbox_batch( string $tenant_id ): int {
-		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+	/**
+	 * Measure eligible rows after a committed purge without changing eligibility.
+	 * A database failure is deliberately represented as null metrics; liveness still
+	 * records the committed success, while the API can distinguish an unmeasured
+	 * backlog from an empty one.
+	 *
+	 * @return array{remaining:?int,oldest_age_seconds:?int}
+	 */
+	private function measure_reclaimer_backlog( string $tenant_id ): array {
+		global $wpdb;
+		if (
+			! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array( 'remaining' => null, 'oldest_age_seconds' => null );
+		}
+
+		$now_epoch = (int) current_time( 'timestamp' );
+		$failed_cutoff = gmdate(
+			'Y-m-d H:i:s',
+			$now_epoch - ( $this->resolve_positive_int_tunable( 'acx_sync_purge_failed_days', self::DEFAULT_FAILED_RETENTION_DAYS ) * ( defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400 ) )
+		);
+		$exhausted_cutoff = gmdate(
+			'Y-m-d H:i:s',
+			$now_epoch - ( $this->resolve_positive_int_tunable( 'acx_sync_purge_exhausted_days', self::DEFAULT_EXHAUSTED_RETENTION_DAYS ) * ( defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400 ) )
+		);
+		$acknowledged_cutoff = gmdate(
+			'Y-m-d H:i:s',
+			$now_epoch - ( $this->resolve_positive_int_tunable( 'acx_sync_purge_acknowledged_days', self::DEFAULT_ACKNOWLEDGED_RETENTION_DAYS ) * ( defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400 ) )
+		);
+		$conflict_cutoff = gmdate(
+			'Y-m-d H:i:s',
+			$now_epoch - ( $this->resolve_positive_int_tunable( 'acx_sync_purge_resolved_conflict_days', self::DEFAULT_RESOLVED_CONFLICT_RETENTION_DAYS ) * ( defined( 'DAY_IN_SECONDS' ) ? (int) DAY_IN_SECONDS : 86400 ) )
+		);
+
+		$outbox_rows = $wpdb->get_results(
+			$wpdb->prepare(
+				' SELECT COUNT(*) AS backlog_remaining, MIN(COALESCE(acknowledged_at, last_attempted_at, first_failed_at, created_at)) AS backlog_oldest_at FROM %i WHERE tenant_id = %s AND ((status = %s AND acknowledged_at IS NOT NULL AND acknowledged_at < %s) OR (status = %s AND ((last_error_retryable IS NULL OR last_error_retryable <> 1 OR last_error_code IS NULL) AND COALESCE(first_failed_at, last_attempted_at, created_at) < %s)) OR (status = %s AND last_error_code = %s AND COALESCE(last_attempted_at, first_failed_at, created_at) < %s))',
+				$this->table_name,
+				$tenant_id,
+				OutboxStatus::ACKNOWLEDGED,
+				$acknowledged_cutoff,
+				OutboxStatus::FAILED,
+				$failed_cutoff,
+				OutboxStatus::FAILED,
+				self::DEAD_LETTER_REASON_AUTO_RETRY_EXHAUSTED,
+				$exhausted_cutoff
+			),
+			ARRAY_A
+		);
+		$conflict_rows = $wpdb->get_results(
+			$wpdb->prepare(
+				' SELECT COUNT(*) AS backlog_remaining, MIN(resolved_at) AS backlog_oldest_at FROM %i WHERE tenant_id = %s AND resolution_status <> %s AND resolved_at IS NOT NULL AND resolved_at < %s',
+				$this->conflicts_table_name,
+				$tenant_id,
+				ConflictResolutionStatus::OPEN,
+				$conflict_cutoff
+			),
+			ARRAY_A
+		);
+
+		if ( ! is_array( $outbox_rows ) || ! is_array( $conflict_rows ) ) {
+			return array( 'remaining' => null, 'oldest_age_seconds' => null );
+		}
+
+		$remaining = 0;
+		$oldest_epoch = null;
+		foreach ( array( $outbox_rows, $conflict_rows ) as $rows ) {
+			$row = isset( $rows[0] ) && is_array( $rows[0] ) ? $rows[0] : array();
+			$remaining += max( 0, (int) ( $row['backlog_remaining'] ?? 0 ) );
+			$stamp = trim( (string) ( $row['backlog_oldest_at'] ?? '' ) );
+			if ( '' === $stamp ) {
+				continue;
+			}
+			$epoch = $this->wp_datetime_to_epoch( $stamp );
+			if ( null !== $epoch && ( null === $oldest_epoch || $epoch < $oldest_epoch ) ) {
+				$oldest_epoch = $epoch;
+			}
+		}
+
+		return array(
+			'remaining' => $remaining,
+			'oldest_age_seconds' => null === $oldest_epoch ? 0 : max( 0, $now_epoch - $oldest_epoch ),
+		);
+	}
+
+	public function purge_acknowledged_outbox_batch( string $tenant_id, ?int $batch_size = null, ?int $max_iterations = null ): int {
+		$batch_size = null === $batch_size
+			? max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) )
+			: max( 1, $batch_size );
+		$max_iterations = null === $max_iterations ? self::MAX_PURGE_BATCH_ITERATIONS : max( 1, $max_iterations );
 		$total_deleted = 0;
 
-		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+		for ( $iteration = 0; $iteration < $max_iterations; $iteration++ ) {
 			$deleted = $this->purge_acknowledged_outbox_batch_once( $tenant_id, $batch_size );
 			$total_deleted += $deleted;
+			if ( 1 === $max_iterations && $deleted >= $batch_size ) {
+				$this->purge_batch_cap_reached = true;
+			}
 			if ( $deleted < $batch_size ) {
 				break;
 			}
@@ -357,13 +612,19 @@ class OutboxMaintenanceService {
 		return $total_deleted;
 	}
 
-	public function purge_resolved_conflicts_batch( string $tenant_id ): int {
-		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+	public function purge_resolved_conflicts_batch( string $tenant_id, ?int $batch_size = null, ?int $max_iterations = null ): int {
+		$batch_size = null === $batch_size
+			? max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) )
+			: max( 1, $batch_size );
+		$max_iterations = null === $max_iterations ? self::MAX_PURGE_BATCH_ITERATIONS : max( 1, $max_iterations );
 		$total_deleted = 0;
 
-		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+		for ( $iteration = 0; $iteration < $max_iterations; $iteration++ ) {
 			$deleted = $this->purge_resolved_conflicts_batch_once( $tenant_id, $batch_size );
 			$total_deleted += $deleted;
+			if ( 1 === $max_iterations && $deleted >= $batch_size ) {
+				$this->purge_batch_cap_reached = true;
+			}
 			if ( $deleted < $batch_size ) {
 				break;
 			}
@@ -375,17 +636,23 @@ class OutboxMaintenanceService {
 	/**
 	 * @return array{deleted:int,exhausted:int}
 	 */
-	public function purge_failed_non_retryable_batch( string $tenant_id ): array {
-		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+	public function purge_failed_non_retryable_batch( string $tenant_id, ?int $batch_size = null, ?int $max_iterations = null ): array {
+		$batch_size = null === $batch_size
+			? max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) )
+			: max( 1, $batch_size );
+		$max_iterations = null === $max_iterations ? self::MAX_PURGE_BATCH_ITERATIONS : max( 1, $max_iterations );
 		$total_deleted = 0;
 		$total_exhausted = 0;
 		$after_id = 0;
 
-		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+		for ( $iteration = 0; $iteration < $max_iterations; $iteration++ ) {
 			$batch = $this->purge_failed_non_retryable_batch_once( $tenant_id, $batch_size, $after_id );
 			$total_deleted += $batch['deleted'];
 			$total_exhausted += $batch['exhausted'];
 			$after_id = $batch['after_id'];
+			if ( 1 === $max_iterations && $batch['scanned'] >= $batch_size ) {
+				$this->purge_batch_cap_reached = true;
+			}
 			if ( $batch['scanned'] < $batch_size ) {
 				break;
 			}
@@ -403,15 +670,18 @@ class OutboxMaintenanceService {
 	/**
 	 * @return array{retried:int,dead_lettered:int,skipped_concurrent:int,orphaned:int}
 	 */
-	private function reclaim_retryable_failed_batch( string $tenant_id ): array {
-		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+	private function reclaim_retryable_failed_batch( string $tenant_id, ?int $batch_size = null, ?int $max_iterations = null ): array {
+		$batch_size = null === $batch_size
+			? max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) )
+			: max( 1, $batch_size );
+		$max_iterations = null === $max_iterations ? self::MAX_PURGE_BATCH_ITERATIONS : max( 1, $max_iterations );
 		$retried = 0;
 		$dead_lettered = 0;
 		$skipped_concurrent = 0;
 		$orphaned = 0;
 		$after_id = 0;
 
-		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+		for ( $iteration = 0; $iteration < $max_iterations; $iteration++ ) {
 			$candidates = $this->load_failed_reclaim_candidates( $tenant_id, $batch_size, $after_id );
 			if ( array() === $candidates ) {
 				break;
@@ -419,6 +689,9 @@ class OutboxMaintenanceService {
 
 			$last = $candidates[ count( $candidates ) - 1 ];
 			$after_id = (int) ( $last['id'] ?? $after_id );
+			if ( 1 === $max_iterations && count( $candidates ) >= $batch_size ) {
+				$this->purge_batch_cap_reached = true;
+			}
 
 			foreach ( $candidates as $candidate ) {
 				if ( $this->is_entity_gone_error_code( $candidate['last_error_code'] ?? null ) ) {
@@ -461,13 +734,16 @@ class OutboxMaintenanceService {
 	/**
 	 * @return array{orphaned:int,skipped_concurrent:int}
 	 */
-	private function discard_orphaned_failed_batch( string $tenant_id ): array {
-		$batch_size = max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) );
+	private function discard_orphaned_failed_batch( string $tenant_id, ?int $batch_size = null, ?int $max_iterations = null ): array {
+		$batch_size = null === $batch_size
+			? max( 1, (int) apply_filters( 'acx_sync_purge_batch_size', self::DEFAULT_PURGE_BATCH_SIZE ) )
+			: max( 1, $batch_size );
+		$max_iterations = null === $max_iterations ? self::MAX_PURGE_BATCH_ITERATIONS : max( 1, $max_iterations );
 		$orphaned = 0;
 		$skipped_concurrent = 0;
 		$after_id = 0;
 
-		for ( $iteration = 0; $iteration < self::MAX_PURGE_BATCH_ITERATIONS; $iteration++ ) {
+		for ( $iteration = 0; $iteration < $max_iterations; $iteration++ ) {
 			$candidates = $this->load_failed_orphan_candidates( $tenant_id, $batch_size, $after_id );
 			if ( array() === $candidates ) {
 				break;
@@ -475,6 +751,9 @@ class OutboxMaintenanceService {
 
 			$last = $candidates[ count( $candidates ) - 1 ];
 			$after_id = (int) ( $last['id'] ?? $after_id );
+			if ( 1 === $max_iterations && count( $candidates ) >= $batch_size ) {
+				$this->purge_batch_cap_reached = true;
+			}
 
 			foreach ( $candidates as $candidate ) {
 				if ( ! $this->is_entity_gone_error_code( $candidate['last_error_code'] ?? null ) ) {
@@ -534,6 +813,10 @@ class OutboxMaintenanceService {
 			)
 		);
 
+		if ( false === $deleted || null === $deleted ) {
+			throw new RuntimeException( 'Could not purge acknowledged outbox rows.' );
+		}
+
 		return max( 0, (int) $deleted );
 	}
 
@@ -570,6 +853,10 @@ class OutboxMaintenanceService {
 				$batch_size
 			)
 		);
+
+		if ( false === $deleted || null === $deleted ) {
+			throw new RuntimeException( 'Could not purge resolved conflicts.' );
+		}
 
 		return max( 0, (int) $deleted );
 	}
@@ -1297,8 +1584,19 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
-		OutboxDrain::maybe_schedule_drain();
+		// The status CAS above is the operator retry result. Metrics refresh and drain
+		// scheduling are additive follow-up work; a failure in either must not turn a
+		// committed requeue into a reported retry failure.
+		try {
+			$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+		} catch ( Throwable $exception ) {
+			$this->record_retry_additive_failure( $tenant_id, 'metrics_refresh', $exception );
+		}
+		try {
+			OutboxDrain::maybe_schedule_drain();
+		} catch ( Throwable $exception ) {
+			$this->record_retry_additive_failure( $tenant_id, 'drain_schedule', $exception );
+		}
 
 		return true;
 	}
@@ -1410,8 +1708,16 @@ class OutboxMaintenanceService {
 		$requeued = is_int( $updated ) ? max( 0, $updated ) : 0;
 
 		if ( $requeued > 0 ) {
-			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
-			OutboxDrain::maybe_schedule_drain();
+			try {
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+			} catch ( Throwable $exception ) {
+				$this->record_retry_additive_failure( $normalized_tenant_id, 'metrics_refresh', $exception );
+			}
+			try {
+				OutboxDrain::maybe_schedule_drain();
+			} catch ( Throwable $exception ) {
+				$this->record_retry_additive_failure( $normalized_tenant_id, 'drain_schedule', $exception );
+			}
 		}
 
 		return $requeued;
@@ -1607,5 +1913,30 @@ class OutboxMaintenanceService {
 
 	private function fingerprint_nullable_int( mixed $value ): ?int {
 		return null === $value ? null : (int) $value;
+	}
+
+	private function record_retry_additive_failure( string $tenant_id, string $operation, Throwable $exception ): void {
+		try {
+			do_action( 'acx_sync_outbox_retry_additive_failed', $tenant_id, $operation, $exception );
+		} catch ( Throwable $ignored ) {
+			// Observability hooks are additive too; never replace the committed retry
+			// result with a failure from an observer.
+		}
+	}
+
+	private function run_reclaimer_liveness_side_effect( string $tenant_id, string $operation, callable $callback ): void {
+		try {
+			$callback();
+		} catch ( Throwable $exception ) {
+			$this->report_reclaimer_liveness_failure( $tenant_id, $operation, $exception );
+		}
+	}
+
+	private function report_reclaimer_liveness_failure( string $tenant_id, string $operation, Throwable $exception ): void {
+		try {
+			do_action( 'acx_sync_reclaimer_liveness_failed', $tenant_id, $operation, $exception );
+		} catch ( Throwable $ignored ) {
+			// Liveness instrumentation is additive and must never replace purge work.
+		}
 	}
 }

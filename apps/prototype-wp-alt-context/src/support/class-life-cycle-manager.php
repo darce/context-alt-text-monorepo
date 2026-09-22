@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Support;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
+require_once __DIR__ . '/../sovereign/sync/class-reclaimer-liveness.php';
 require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
 require_once __DIR__ . '/../api/class-tenant-identity.php';
@@ -15,9 +16,12 @@ use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Api\TenantIdentity;
 use AltContext\PublicSite\PublicGuideRoute;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
+use Throwable;
 use function array_keys;
 use function class_exists;
 use function defined;
+use function do_action;
 use function function_exists;
 use function get_debug_type;
 use function get_option;
@@ -648,6 +652,15 @@ class LifecycleManager {
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
 		OutboxDrain::clear_scheduled_purge();
+		try {
+			( new ReclaimerLiveness() )->purge_all_options();
+		} catch ( Throwable $exception ) {
+			try {
+				do_action( 'acx_reclaimer_liveness_options_purge_failed', $exception );
+			} catch ( Throwable $ignored ) {
+				// Observability hooks are additive; never let one block table cleanup.
+			}
+		}
 		$this->drop_tables();
 		flush_rewrite_rules( false );
 	}

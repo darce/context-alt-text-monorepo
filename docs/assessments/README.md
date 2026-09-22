@@ -8,6 +8,7 @@ These docs can inform planning, but they are not themselves active epics or task
 
 ## Active Assessments
 
+- [Demo Operability Defects](current/demo-operability-defects-assessment-2026-09-21.md) traces five demo symptoms to ten defects in three families (untruthful service state, derived state that cannot heal, no operator visibility), distinguishes confirmed mechanisms from hypotheses, validates remedies against the distilled canon, and feeds E25/DEMOHEAL with [parallel adjudication](../scopes/demoheal-parallel-delivery.md).
 - [FIR Model Capacity and Training](current/fir-model-capacity-and-training-2026-09-19.md) answers 128D vs 512D, checks higher-dimensional checkpoint licenses, and separates A10 feasibility from training-data readiness.
 - [Concrete FIR Corpus Population Allocation](current/fir-corpus-population-allocation-2026-09-19.md) maps 646 records into reproducible private review queues, preserves duplicate/identity dependencies and leaves unseen-test/training claims unassigned.
 - [FIR Development and Measurement Wave](current/fir-development-wave-assessment-2026-09-19.md) reconciles shipped FIR code, semantic handoff history, isolated LocalWP/remote deployment, PG19 timing and canon constraints into E24/FIRDV.

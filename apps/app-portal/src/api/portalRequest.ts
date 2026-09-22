@@ -68,6 +68,62 @@ function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => Porta
   }
 }
 
+async function readBoundedBody(
+  response: Response,
+  signal: AbortSignal,
+  abortGate: Promise<void>,
+): Promise<ArrayBuffer | null> {
+  const stream = response.body;
+  if (!stream) {
+    return null;
+  }
+  const reader = stream.getReader();
+  const cancelReader = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  if (signal.aborted) {
+    cancelReader();
+    throw abortError();
+  }
+  signal.addEventListener('abort', cancelReader, { once: true });
+  try {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      if (signal.aborted) {
+        throw abortError();
+      }
+      const outcome = await Promise.race([reader.read(), abortGate.then(() => null)]);
+      if (outcome === null || signal.aborted) {
+        cancelReader();
+        throw abortError();
+      }
+      if (outcome.done) {
+        break;
+      }
+      if (outcome.value) {
+        chunks.push(outcome.value);
+        total += outcome.value.byteLength;
+      }
+    }
+    const body = new ArrayBuffer(total);
+    const view = new Uint8Array(body);
+    let offset = 0;
+    for (const chunk of chunks) {
+      view.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  } catch (error) {
+    if (signal.aborted) {
+      throw abortError();
+    }
+    throw error;
+  } finally {
+    signal.removeEventListener('abort', cancelReader);
+  }
+}
+
 export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -147,7 +203,19 @@ export function createPortalRequest(options: CreatePortalRequestOptions): Portal
       if (options.signal?.aborted || init?.signal?.aborted) {
         throw abortError();
       }
-      return fetchResult.response;
+      const body = await readBoundedBody(fetchResult.response, controller.signal, abortGate);
+      if (controller.signal.aborted) {
+        throw abortError();
+      }
+      assertCurrentOwner(options.owner, options.currentOwner);
+      if (options.signal?.aborted || init?.signal?.aborted) {
+        throw abortError();
+      }
+      return new Response(body, {
+        status: fetchResult.response.status,
+        statusText: fetchResult.response.statusText,
+        headers: new Headers(fetchResult.response.headers),
+      });
     } finally {
       window.clearTimeout(timer);
       options.signal?.removeEventListener('abort', onAbort);

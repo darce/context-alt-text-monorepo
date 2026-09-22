@@ -1,87 +1,45 @@
-# APP-1 R1 reconciliation review
+# APP-1 browser keys/usage postlanding review
 
-Verdict: changes_requested
+Scope: initial review of the integrated `ea146c3f971a13d0a6fa3962c36cfbe019e3e536..c951de548924ef34df731c09c0271168b2b00ef5` delta only. The feature modules remain intentionally unmounted; this report does not treat mounting or the shared transport as defects.
 
-GROK_REVIEW_FINDINGS_JSON
-[
-  {
-    "finding_id": "APP1-RECONCILE-RV01",
-    "severity": "medium",
-    "category": "bounded_work",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1087,
-    "line_end": 1124,
-    "description": "Known-projection reconciliation fetches pages of 50 but loops until the repository is empty, with no per-run page, item, or total-time bound. A large configured namespace can therefore make one --once invocation perform unbounded provider GETs and delay the other recovery phases.",
-    "fix": "Apply the same bounded page/time policy used by orphan recovery to known projections, with a durable continuation cursor or an explicit non-healthy continuation result when the bound is reached."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV02",
-    "severity": "medium",
-    "category": "item_isolation",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1210,
-    "line_end": 1219,
-    "description": "The page loop calls remote_id_from_state before entering a per-item fenced handler. A malformed enumerated BillingState with neither subscription nor customer id raises ValueError into the page-level handler, records a page failure, and stops processing later valid items instead of quarantining only the bad item.",
-    "fix": "Turn malformed items into a durable EnumerationObservation/quarantine result inside the item boundary, append its id only after that outcome is committed, and continue with the remaining page items."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV03",
-    "severity": "medium",
-    "category": "failure_signaling",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1174,
-    "line_end": 1181,
-    "description": "Known-projection failures are caught, logged, and returned as False without incrementing unresolved_failures; ReconcileReport.exit_code only considers stalled or unresolved_failures. Thus a failed provider refresh can return exit 0 when another phase advances (or when recovery is not configured), silently leaving stale billing state. The analogous checkout/page catches only increment failed and have the same masking risk.",
-    "fix": "Propagate every failed recovery/projection/checkout phase into the unresolved failure set (or make failed affect exit_code) while preserving durable progress from other items."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV04",
-    "severity": "medium",
-    "category": "ambiguous_checkout_progress",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1418,
-    "line_end": 1429,
-    "description": "Ambiguous checkout selection is limited to 50 rows, but the recovery cursor is always advanced as exhausted with no attempt cursor. An open/provider_requested checkout remains stale because _recover_checkout_attempt does not change its attempt status; if the first 50 remain open, every bounded run selects the same 50 and later stale attempts are starved indefinitely.",
-    "fix": "Persist and use a stable attempt cursor (updated_at,id), or record a durable retry/backoff position/status so advancing past one bounded page cannot repeatedly select the same unresolved rows."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV05",
-    "severity": "high",
-    "category": "tenant_data_integrity",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1149,
-    "line_end": 1170,
-    "description": "The known-projection path requests state for the projection customer but never verifies that the returned provider_customer_id matches that context before upsert and entitlement application. _normalize_state validates tenant_id for typed state but not customer identity, unlike the inbox path's explicit check; a mismatched provider response can rebind a tenant projection and apply billing to the wrong customer.",
-    "fix": "Require normalized returned customer and subscription identifiers to match the requested projection context before lock/write/apply, and fail or quarantine the item on mismatch."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV06",
-    "severity": "medium",
-    "category": "retry_cli_runtime",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile_retry.py",
-    "line_start": 62,
-    "line_end": 71,
-    "description": "The real retry CLI builds the full billing runtime with provider=None even though it only needs the recovery repository and explicit namespace. This requires Polar webhook/access/product/organization configuration and creates a provider HTTP client before either dry-run or audited retry, so a DB-only operator retry fails closed on unrelated provider secrets/configuration.",
-    "fix": "Construct a recovery-only runtime/repository for this command; validate the supplied namespace but do not load provider credentials or instantiate network transport for dry-run or retry bookkeeping."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV07",
-    "severity": "medium",
-    "category": "transaction_ordering",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1527,
-    "line_end": 1544,
-    "description": "When an ambiguous checkout's paid payload omits customer_id, the worker opens a repository transaction in _get_projection to find the customer and then calls _retrieve_state without committing or rolling back that read transaction. That provider GET therefore runs with an open database transaction after the lease commit, violating the no-network-under-transaction ordering contract.",
-    "fix": "Finish the lookup transaction before retrieve_state (or carry only a detached snapshot), then open a fresh transaction for the fenced projection/entitlement write."
-  },
-  {
-    "finding_id": "APP1-RECONCILE-RV08",
-    "severity": "medium",
-    "category": "idempotency",
-    "file_path": "apps/prototype-description-service/scripts/billing_reconcile.py",
-    "line_start": 1302,
-    "line_end": 1324,
-    "description": "Orphan application substitutes the local wall clock for a missing provider event_position when building the event id and projection position. A repeated full scan of an item without a verified provider position therefore looks like a new event on every run and can repeatedly update the projection and entitlement instead of being safely deduplicated or quarantined.",
-    "fix": "Require a verified provider event position for an applicable orphan; quarantine malformed/missing-position items rather than synthesizing now."
-  }
-]
+Verdict: findings remain; the delta is not clean for orchestration without the follow-ups below.
+
+## Findings
+
+### APP1-KEYS-RV01 — high — one-time secret can be replaced before the user closes it
+
+- Location: `apps/app-portal/src/screens/KeysScreen.tsx:319-327,418-425`; `apps/app-portal/src/components/OneTimeSecretDialog.tsx:48-65`
+- Scenario: After a create succeeds and the refresh finishes, `creating` becomes false while `secret` is still set. The underlying Create API key control is therefore enabled while the `aria-modal` secret dialog is open. The dialog has no focus trap or inert background. A keyboard user can leave the dialog and start a second create; when it succeeds, `setSecret` replaces the first raw secret, so an un-copied one-time secret is lost with no recovery path.
+- Minimal fix: Make the secret dialog an exclusive modal (trap focus, handle Escape/close, and make the background inert or disable all underlying actions while it is present). Do not allow a second create/rotate until the current secret dialog is closed.
+
+### APP1-KEYS-RV02 — medium — initial revoke preview does not move focus into the modal
+
+- Location: `apps/app-portal/src/screens/KeysScreen.tsx:187-191,395-417`
+- Scenario: Clicking Revoke mounts the `phase: 'preview'` dialog, but the focus effect only runs for `phase: 'last_usable'`. Focus remains on the row's Revoke button behind an `aria-modal="true"` dialog, and normal Tab/Shift-Tab navigation can leave the dialog. A keyboard user can miss the irreversible confirmation or activate controls behind it; only the later last-usable warning gets Cancel-first focus.
+- Minimal fix: On every revoke-dialog mount/phase change, focus Keep key (or another explicit cancel-first control), trap focus within the dialog, support Escape, and restore focus to the initiating row button after either close path.
+
+### APP1-KEYS-RV03 — high — revoke accepts a 200 response that says no revocation occurred
+
+- Location: `apps/app-portal/src/api/portalKeys.ts:237-247`; success handling in `apps/app-portal/src/screens/KeysScreen.tsx:249-251`
+- Scenario: `parseRevoke` treats any boolean `revoked` as a valid success envelope. If a 200 response contains valid UUIDs but `revoked: false` (a malformed/proxy response or contract drift), `client.revoke` resolves; the screen closes the destructive confirmation and refreshes as though the action succeeded. The UI has no failure state for an operation that did not revoke the key.
+- Minimal fix: Require `revoked === true` and the returned `id` to equal the requested UUID before resolving; otherwise return `invalid_portal_key_response` and retain the row/confirmation for recovery.
+
+### APP1-KEYS-RV04 — medium — tenant key-limit errors leave Create enabled
+
+- Location: `apps/app-portal/src/screens/KeysScreen.tsx:56-81,203-214,319-327`
+- Scenario: The route contract says `409 tenant key limit reached` keeps Create unavailable until the usable key changes. The catch path only updates status; `finally` clears `creating`, `busy` then becomes false, and the Create button is disabled only by `busy`. The user can repeatedly submit the same create action while the existing usable key is unchanged.
+- Minimal fix: Add a create-blocked state for the exact tenant-limit error, disable Create while it is set, and clear it only after a successful list confirms the usable-key state changed (or after an explicit successful refresh).
+
+### APP1-KEYS-RV05 — medium — malformed key timestamps fail open as usable
+
+- Location: `apps/app-portal/src/api/portalKeys.ts:63-74,169-199`; `apps/app-portal/src/screens/KeysScreen.tsx:95-105`
+- Scenario: The backend contract fields are datetimes, but the client accepts any non-empty string. A 200 metadata row with `expires_at: "not-a-date"` passes parsing; `isUsable` excludes it because `Date.parse` is not finite, while `rowStatus` falls through to `usable`. The row publishes `status: usable` even though expiry was not established, and the status disagrees with the rotation-selection logic.
+- Minimal fix: Validate all key datetime fields as finite ISO/datetime values in the API parser and reject the envelope (or render an explicit unknown/degraded state) instead of labeling invalid expiry usable.
+
+### APP1-KEYS-RV06 — medium — usage parser publishes invalid counts and timestamps
+
+- Location: `apps/app-portal/src/api/portalUsage.ts:37-59,116-155`; rendering in `apps/app-portal/src/screens/UsageScreen.tsx:107-117`
+- Scenario: `parseNullableInt` accepts negative integers and the string parsers accept arbitrary non-empty timestamps. A malformed 200 such as `{used:-1, remaining:-5, period_start:"not-a-date", ...}` is accepted and displayed as authoritative usage/period evidence; the screen does not turn a negative remaining value into an error or unknown state. This bypasses the fail-closed shape validation expected for the backend's non-negative count and datetime contract.
+- Minimal fix: Require non-negative count fields and validate `period_start`, `period_end`, nested period bounds, and non-null `as_of` as datetimes; reject invalid 200 envelopes so the screen uses its bounded error/recovery state.
+
+The provided scoped VM self-verification reported 21/21 tests passing; it was not rerun in this lane per the review brief's instruction to use the supplied verification and not run the app or whole suites. No provider, live request, or feature-code change was made.

@@ -19,9 +19,15 @@ from recognition.config.settings import (
     ClusteringLimitsSettings,
     FacePipelineSettings,
     IdentityDetectionSettings,
+    RecognitionSettings,
     apply_oact_bridge_to_clustering,
     bridge_oact_into_quality_settings,
     resolve_face_pipeline_knobs,
+)
+from recognition.infrastructure.face_pipeline._common import (
+    DEFAULT_NMS_THRESHOLD,
+    DEFAULT_SCORE_THRESHOLD,
+    DEFAULT_TOP_K,
 )
 
 _KNOB_ENV_KEYS = (
@@ -36,6 +42,9 @@ _KNOB_ENV_KEYS = (
     "RECOGNITION_FACE_FACTOR_FLOOR_EMBEDDING_NORM",
     "RECOGNITION_FACE_FACTOR_CEILING_OCCLUSION",
     "RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED",
+    "RECOGNITION_FACE_SCORE_THRESHOLD",
+    "RECOGNITION_FACE_NMS_THRESHOLD",
+    "RECOGNITION_FACE_TOP_K",
 )
 
 
@@ -254,6 +263,9 @@ def test_valid_joint_assignment_bool_accepted() -> None:
         ("RECOGNITION_FACE_FACTOR_CEILING_OCCLUSION", "factor_ceiling_occlusion", "0.88", 0.88),
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", "joint_assignment_enabled", "false", False),
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", "joint_assignment_enabled", "true", True),
+        ("RECOGNITION_FACE_SCORE_THRESHOLD", "score_threshold", "0.75", 0.75),
+        ("RECOGNITION_FACE_NMS_THRESHOLD", "nms_threshold", "0.4", 0.4),
+        ("RECOGNITION_FACE_TOP_K", "top_k", "300", 300),
     ],
 )
 def test_knob_env_ingestion(
@@ -284,12 +296,43 @@ def test_knob_env_ingestion(
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", "1"),
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", "yes"),
         ("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", "True"),
+        ("RECOGNITION_FACE_SCORE_THRESHOLD", ""),
+        ("RECOGNITION_FACE_SCORE_THRESHOLD", "abc"),
+        ("RECOGNITION_FACE_SCORE_THRESHOLD", "1.5"),
+        ("RECOGNITION_FACE_NMS_THRESHOLD", ""),
+        ("RECOGNITION_FACE_NMS_THRESHOLD", "abc"),
+        ("RECOGNITION_FACE_NMS_THRESHOLD", "1.5"),
+        ("RECOGNITION_FACE_TOP_K", ""),
+        ("RECOGNITION_FACE_TOP_K", "0"),
+        ("RECOGNITION_FACE_TOP_K", "-1"),
+        ("RECOGNITION_FACE_TOP_K", "2.5"),
+        ("RECOGNITION_FACE_TOP_K", "abc"),
     ],
 )
 def test_knob_env_fail_closed(monkeypatch: pytest.MonkeyPatch, env_key: str, raw: str) -> None:
     monkeypatch.setenv(env_key, raw)
     with pytest.raises((ValidationError, ValueError)):
         FacePipelineSettings()
+
+
+def test_yunet_detector_knobs_default_to_shared_constants() -> None:
+    settings = FacePipelineSettings()
+    assert settings.score_threshold == DEFAULT_SCORE_THRESHOLD
+    assert settings.nms_threshold == DEFAULT_NMS_THRESHOLD
+    assert settings.top_k == DEFAULT_TOP_K
+
+
+def test_yunet_detector_knobs_are_the_values_runtime_factory_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """runtime_factory.py:83-85 reads settings.face_pipeline.{score,nms,top_k}."""
+    monkeypatch.setenv("RECOGNITION_FACE_SCORE_THRESHOLD", "0.75")
+    monkeypatch.setenv("RECOGNITION_FACE_NMS_THRESHOLD", "0.4")
+    monkeypatch.setenv("RECOGNITION_FACE_TOP_K", "300")
+    settings = RecognitionSettings()
+    assert settings.face_pipeline.score_threshold == 0.75
+    assert settings.face_pipeline.nms_threshold == 0.4
+    assert settings.face_pipeline.top_k == 300
 
 
 def test_bridge_oact_profile_gates_and_updates_quality() -> None:

@@ -21,8 +21,8 @@
   },
   "toolchain": {
     "python": "3.12.7",
-    "onnxruntime": "1.29.0",
-    "numpy": "2.5.2",
+    "onnxruntime": "1.28.0",
+    "numpy": "2.5.1",
     "onnx_package": null,
     "insightface_package": null
   },
@@ -32,7 +32,7 @@
     "stat -c '%s %n' /opt/acx-backend/data/dev-models/face_pipeline/glintr100.onnx /opt/acx-backend/data/dev-models/face_pipeline/LICENSE.auraface.md",
     "onnxruntime.InferenceSession(path, providers=['CPUExecutionProvider'], graph_optimization_level=ORT_DISABLE_ALL).get_inputs()/get_outputs()/get_modelmeta()",
     "minimal protobuf walk of ModelProto.graph (nodes, initializers, op_types, first/last node, small-tensor values)",
-    "onnxruntime run on recognition/tests/fixtures/face_pipeline/synthetic_112_crop.npy under several external scale/channel conventions"
+    "opts=onnxruntime.SessionOptions(); opts.graph_optimization_level=onnxruntime.GraphOptimizationLevel.ORT_DISABLE_ALL; opts.intra_op_num_threads=1; opts.inter_op_num_threads=1; opts.execution_mode=onnxruntime.ExecutionMode.ORT_SEQUENTIAL; onnxruntime.InferenceSession(path, sess_options=opts, providers=['CPUExecutionProvider']); np.load('recognition/tests/fixtures/face_pipeline/synthetic_112_crop.npy', allow_pickle=False); transpose HWC→NCHW float32 and run hwc_0_255, swapped_0_255, (pixel-127.5)/127.5 as-is, the same swapped, and pixel/255 conventions; record np.linalg.norm(output[0])"
   ],
   "graph": {
     "status": "measured",
@@ -165,6 +165,14 @@
       "model": "face_recognition_sface_2021dec.onnx",
       "embedding_dim": 128,
       "reason": "Existing composed SFace golden is not AuraFace proof."
+    },
+    "auraface_ort_composed_parity": {
+      "status": "pending",
+      "independently_supported": false,
+      "detector": "in-house YuNet",
+      "aligner": "in-house FivePointAligner",
+      "embedder": "ONNX Runtime glintr100.onnx",
+      "reason": "No composed YuNet + in-house aligner + ORT AuraFace run was performed; fixture-only ORT runs do not establish external preprocessing or composed parity."
     }
   },
   "upstream_documented_contract": {
@@ -173,6 +181,27 @@
     "insightface_runtime": {
       "status": "blocked",
       "reason": "insightface is not importable in the lane interpreter, so InsightFace reference preprocessing could not be executed."
+    },
+    "insightface_reference": {
+      "status": "reference_supported_not_independently_verified",
+      "independently_supported": false,
+      "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6",
+      "arcface_onnx_url": "https://raw.githubusercontent.com/deepinsight/insightface/1480e705287bc5d59f923b46c260ec6e3e4150f6/python-package/insightface/model_zoo/arcface_onnx.py",
+      "face_align_url": "https://raw.githubusercontent.com/deepinsight/insightface/1480e705287bc5d59f923b46c260ec6e3e4150f6/python-package/insightface/utils/face_align.py",
+      "recipe": {
+        "input_scale": "1.0/127.5",
+        "input_offset": "127.5",
+        "channel_order": "swapRB=True (BGR crop to RGB NCHW)",
+        "alignment_template_id": "arcface-112",
+        "alignment_coordinates": [
+          [38.2946, 51.6963],
+          [73.5318, 51.5014],
+          [56.0252, 71.7366],
+          [41.5493, 92.3655],
+          [70.7299, 92.2041]
+        ]
+      },
+      "reason": "The immutable InsightFace source documents an ArcFace-family recipe, but its applicability to AuraFace is not proven by that source alone and the InsightFace runtime was unavailable in this lane."
     },
     "publisher_model_card": {
       "status": "documented_not_measured",
@@ -199,12 +228,13 @@
     "A single file-level float32 1/255 bit-pattern (count=1) is treated as a coincidental weight value, not a preprocessing node.",
     "Fixture inference used existing synthetic_112_crop.npy pixels only; there is no AuraFace reference embedding for this crop.",
     "Publisher/InsightFace runtime alignment and (x-127.5)/127.5 scaling are external to the ONNX graph and were not executed here.",
+    "InsightFace source commit 1480e705287bc5d59f923b46c260ec6e3e4150f6 documents an ArcFace-family recipe and five-point targets; it is a cited upstream reference, not independent AuraFace or composed-pipeline evidence.",
     "LICENSE.auraface.md is Apache-2.0 license text and does not document preprocessing.",
     "A blocked independent measurement of input_scale and alignment_template_id is valid evidence; those fields stay unsupported."
   ],
   "unresolved_questions": [
-    "What external input_scale and offset, if any, this glintr100.onnx expects.",
-    "Which five-point 112 template, if any, matches AuraFace training alignment.",
+    "Whether the cited ArcFace-family input scale/offset/channel recipe applies to this glintr100.onnx.",
+    "Which five-point 112 template, if any, matches AuraFace training alignment rather than the cited ArcFace reference.",
     "Whether the intended channel order is RGB or BGR.",
     "Whether comparison-time L2 should be applied after the graph, given raw outputs are not unit-normalized."
   ]

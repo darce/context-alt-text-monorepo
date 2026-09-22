@@ -717,6 +717,60 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         $this->assertNotFalse($this->actionSchedulerPurgeTimestamp());
     }
 
+    public function testMaybeSchedulePurgeRecordsActionSchedulerBooking(): void
+    {
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 42;
+
+        $mode = OutboxMaintenanceService::maybe_schedule_purge();
+
+        $liveness = new ReclaimerLiveness();
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER, $mode);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER, $liveness->booked_scheduler_mode());
+        $this->assertFalse($GLOBALS['__ac_option_autoload']['acx_reclaimer_purge_scheduler'] ?? true);
+    }
+
+    public function testPurgeTerminalRowsUsesRecordedWpCronBookingWhenActionSchedulerCannotEnqueue(): void
+    {
+        global $wpdb;
+
+        $GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;
+        $mode = OutboxMaintenanceService::maybe_schedule_purge();
+
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $mode);
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+
+        $tenantId = 'tenant-purge-wp-cron-booking';
+        $wpdb->defaultQueryResult = 0;
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $service->purge_terminal_rows($tenantId);
+
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $state['scheduler_mode']);
+        $this->assertSame(ReclaimerLiveness::WP_CRON_PERIOD_SECONDS, $state['effective_period_seconds']);
+        $this->assertNotSame(ReclaimerLiveness::ACTION_SCHEDULER_PERIOD_SECONDS, $state['effective_period_seconds']);
+    }
+
+    public function testGarbageBookedSchedulerModeIsIgnoredWhenPurgeResolvesSchedulerMode(): void
+    {
+        global $wpdb;
+
+        update_option('acx_reclaimer_purge_scheduler', 'bogus', false);
+        $liveness = new ReclaimerLiveness();
+        $this->assertNull($liveness->booked_scheduler_mode());
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $liveness->current_scheduler_mode(null));
+
+        $tenantId = 'tenant-purge-invalid-booking';
+        $wpdb->defaultQueryResult = 0;
+        $service = new OutboxMaintenanceService(null, null, 'wp_acx_sync_outbox', 'wp_acx_sync_conflicts');
+        $service->purge_terminal_rows($tenantId);
+
+        $state = $GLOBALS['__ac_options']['acx_reclaimer_liveness_' . $tenantId] ?? null;
+        $this->assertIsArray($state);
+        $this->assertSame(ReclaimerLiveness::SCHEDULER_WP_CRON, $state['scheduler_mode']);
+        $this->assertSame(ReclaimerLiveness::WP_CRON_PERIOD_SECONDS, $state['effective_period_seconds']);
+    }
+
     /**
      * @return SyncStateRepository&object{refreshCount:int,lastTenantId:?string}
      */

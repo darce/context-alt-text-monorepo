@@ -365,6 +365,30 @@ def _patch_ort_embedder_io(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(ort_adapters, "_ort_session", lambda model_path: _FakeSession())
 
 
+def test_ort_session_keeps_baseline_threads_without_disabling_graph_opt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SFace/YuNet must keep default graph optimization (FIR-3 baseline)."""
+    import onnxruntime as ort
+
+    captured: dict[str, object] = {}
+
+    def _fake_session(path: object, sess_options: object = None, providers: object = None) -> object:
+        captured["opts"] = sess_options
+        captured["providers"] = providers
+        return object()
+
+    monkeypatch.setattr(ort_adapters.ort, "InferenceSession", _fake_session)
+    ort_adapters._ort_session(Path("dummy.onnx"))
+    opts = captured["opts"]
+    assert opts is not None
+    assert opts.inter_op_num_threads == 1
+    assert opts.intra_op_num_threads == 1
+    assert opts.graph_optimization_level == ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    assert opts.execution_mode == ort.ExecutionMode.ORT_SEQUENTIAL
+    assert captured["providers"] == ["CPUExecutionProvider"]
+
+
 def test_ort_embedder_accepts_measured_auraface_preprocessing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

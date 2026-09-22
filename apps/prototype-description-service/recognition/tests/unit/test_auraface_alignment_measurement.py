@@ -17,6 +17,7 @@ import pytest
 
 from recognition.infrastructure.face_pipeline import provenance
 from recognition.infrastructure.face_pipeline.provenance import AURAFACE_REVISION, MODEL_MANIFEST
+from recognition.tests.unit.test_face_pipeline_golden_provenance import _load_generate_goldens
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "face_pipeline"
 _EVIDENCE_PATH = _FIXTURE_DIR / "auraface_alignment_measurement.json"
@@ -269,9 +270,10 @@ def test_upstream_reference_and_composed_parity_are_distinguished() -> None:
     assert composed["raw_output_normalized"] is False
     assert composed["pipeline_l2_applied"] is True
     assert composed["insightface_runtime_imported"] is False
-    assert composed["composed_cosine"] >= composed["cosine_min"] == pytest.approx(0.9999999)
+    assert composed["composed_cosine"] >= composed["cosine_min"] == pytest.approx(0.99999999)
     assert composed["crop_sha256"] == _assert_sha256(composed["crop_sha256"])
-    assert composed["ort_session"]["graph_optimization_level"] == "ORT_DISABLE_ALL"
+    assert composed["ort_session"]["graph_optimization_level"] != "ORT_DISABLE_ALL"
+    assert composed["ort_session"]["graph_optimization_level"] == "ORT_ENABLE_ALL"
     assert composed["ort_session"]["intra_op_num_threads"] == 1
 
 
@@ -351,6 +353,80 @@ def test_auraface_aligner_crop_stays_bgr_not_rgb_swapped() -> None:
     assert aligner.template_id == "arcface-112"
 
 
+def test_composed_auraface_crops_are_bgr_channel_order() -> None:
+    """Composed in-house and independent crops stay BGR; RGB swap must not match."""
+    np = pytest.importorskip("numpy")
+    inhouse = np.load(_COMPOSED_DIR / "inhouse_crop.npy", allow_pickle=False)
+    reference = np.load(_COMPOSED_DIR / "reference_crop.npy", allow_pickle=False)
+    assert inhouse.dtype == np.uint8 and reference.dtype == np.uint8
+    assert inhouse.shape == (112, 112, 3)
+    assert reference.shape == inhouse.shape
+    for crop, name in ((inhouse, "inhouse"), (reference, "reference")):
+        swapped = crop[:, :, ::-1]
+        assert not np.array_equal(crop, swapped), f"{name} crop equals its RGB swap"
+        assert not np.array_equal(crop[:, :, 0], crop[:, :, 2]), (
+            f"{name} crop B and R planes are identical; channel-order regression is vacuous"
+        )
+    assert not np.array_equal(inhouse[:, :, ::-1], reference), (
+        "independent crop matches RGB-swapped in-house crop; composed path swapped channels"
+    )
+
+
+def test_unknown_alignment_template_is_rejected_before_transform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+
+    entry = MODEL_MANIFEST["auraface"]
+    assert entry.preprocessing is not None
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, alignment_template_id="not-a-template")),
+    )
+    with pytest.raises(AlignmentError, match=r"unknown alignment template 'not-a-template'"):
+        FivePointAligner(space=ModelSpace.AURAFACE)
+
+
+def test_independent_arcface_dst_is_float32_literal_not_production_import() -> None:
+    np = pytest.importorskip("numpy")
+    gen = _load_generate_goldens()
+    from recognition.infrastructure.face_pipeline.aligner import ARCFACE_CANONICAL_LANDMARKS_112
+
+    dst = gen.REFERENCE_ARCFACE_DST_112
+    assert dst.dtype == np.float32
+    assert dst is not ARCFACE_CANONICAL_LANDMARKS_112
+    np.testing.assert_array_equal(dst, np.asarray(_ARCFACE_DST, dtype=np.float32))
+    source = Path(gen.__file__).read_text(encoding="utf-8")
+    assert "ARCFACE_CANONICAL_LANDMARKS_112" not in source
+
+
+def test_independent_umeyama_includes_reflection_singular_sign_in_scale() -> None:
+    np = pytest.importorskip("numpy")
+    gen = _load_generate_goldens()
+    dst = np.asarray(gen.REFERENCE_ARCFACE_DST_112, dtype=np.float64)
+    src = dst.copy()
+    src[:, 0] = 2.0 * float(dst[:, 0].mean()) - dst[:, 0]
+    src_demean = src - src.mean(axis=0)
+    dst_demean = dst - dst.mean(axis=0)
+    covariance = dst_demean.T @ src_demean / 5.0
+    _u, singular, _vt = np.linalg.svd(covariance)
+    d = np.array([1.0, -1.0], dtype=np.float64)
+    assert float(np.linalg.det(covariance)) < 0
+    var = float(src_demean.var(axis=0).sum())
+    expected_scale = float(singular @ d) / var
+    unsigned_scale = float(np.sum(singular)) / var
+    assert expected_scale != pytest.approx(unsigned_scale)
+    matrix = gen.reference_arcface_similarity_matrix(src)
+    rotation = matrix[:, :2]
+    recovered_scale = float(np.sqrt(rotation[0, 0] ** 2 + rotation[0, 1] ** 2))
+    assert recovered_scale == pytest.approx(abs(expected_scale), rel=0, abs=1e-12)
+
+
 def test_composed_goldens_match_evidence_and_manifest() -> None:
     np = pytest.importorskip("numpy")
     evidence = _load_evidence()
@@ -371,6 +447,10 @@ def test_composed_goldens_match_evidence_and_manifest() -> None:
     assert meta["preprocessing"]["output_l2_normalized"] is False
     assert meta["reference"]["source_commit"] == "1480e705287bc5d59f923b46c260ec6e3e4150f6"
     assert meta["reference"]["insightface_runtime_imported"] is False
+    assert meta["reference"]["dst_dtype"] == "float32"
+    assert meta["reference"]["dst_imported_from_production"] is False
+    assert meta["ort_session"]["graph_optimization_level"] == "ORT_ENABLE_ALL"
+    assert meta["cosine_min"] == pytest.approx(0.99999999)
     assert meta["inhouse_crop_sha256"] == meta["reference_crop_sha256"] == composed["crop_sha256"]
 
     def array_sha(path: Path) -> str:

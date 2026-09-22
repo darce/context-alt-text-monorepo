@@ -40,7 +40,8 @@ SFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
 )
 
 # InsightFace arcface_dst for 112×112 (python-package/insightface/utils/face_align.py)
-# pinned commit 1480e705287bc5d59f923b46c260ec6e3e4150f6. Same numbers as SFace.
+# pinned commit 1480e705287bc5d59f923b46c260ec6e3e4150f6. Same decimal literals as
+# SFace, but float32 as in that file (not a view/import of the SFace float64 array).
 ARCFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
     [
         [38.2946, 51.6963],
@@ -49,7 +50,7 @@ ARCFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
         [41.5493, 92.3655],
         [70.7299, 92.2041],
     ],
-    dtype=np.float64,
+    dtype=np.float32,
 )
 
 # Precomputed mean of SFACE_CANONICAL_LANDMARKS_112 (opencv hard-codes this).
@@ -198,7 +199,12 @@ class FivePointAligner:
         preprocessing = entry.preprocessing if entry is not None else None
         self.template_id = preprocessing.alignment_template_id if preprocessing else _SFACE_TEMPLATE_ID
         self.channel_order = preprocessing.channel_order if preprocessing else _DEFAULT_CHANNEL_ORDER
-        self.dst_landmarks = _TEMPLATE_LANDMARKS.get(self.template_id, SFACE_CANONICAL_LANDMARKS_112)
+        if self.template_id not in _TEMPLATE_LANDMARKS:
+            supported = ", ".join(sorted(_TEMPLATE_LANDMARKS))
+            raise AlignmentError(
+                f"unknown alignment template {self.template_id!r}; supported templates: {supported}"
+            )
+        self.dst_landmarks = _TEMPLATE_LANDMARKS[self.template_id]
 
     def align(
         self,

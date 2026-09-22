@@ -86,8 +86,9 @@ def _ort_session(model_path: Path) -> ort.InferenceSession:
     opts.log_severity_level = 3  # ERROR
     opts.inter_op_num_threads = 1
     opts.intra_op_num_threads = 1
-    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    # Graph optimization and execution_mode stay SessionOptions defaults
+    # (ORT_ENABLE_ALL / ORT_SEQUENTIAL). Do not pin ORT_DISABLE_ALL here —
+    # that would change SFace/YuNet numerics relative to the FIR-3 baseline.
     return ort.InferenceSession(
         str(model_path),
         sess_options=opts,

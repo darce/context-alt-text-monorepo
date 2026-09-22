@@ -14,8 +14,11 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 
-from recognition.domain.portal_contracts import PortalPrincipal
 from recognition.interface_adapters.http.deps import require_auth, require_write_access
+from recognition.interface_adapters.http.deps.operator_authorization import (
+    authorize_operator_control,
+    get_operator_entitlement_repository,
+)
 from scene.application.describe_load import resolve_load_path
 from scene.application.gpu_intent import (
     IntentAction,
@@ -157,10 +160,16 @@ async def get_gpu_status(auth=Depends(require_auth)) -> GpuStatusResponse:
 async def post_gpu_intent(
     request: GpuIntentRequest,
     auth=Depends(require_write_access),
+    entitlement_repository: Any = Depends(get_operator_entitlement_repository),
 ) -> GpuStatusResponse:
     """Persist one operator intent and return the resulting status view."""
-    if _is_demo_tier(auth) or _is_beta_or_portal_caller(auth):
+    if _is_demo_tier(auth):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="gpu_control_forbidden")
+    await authorize_operator_control(
+        auth,
+        repository=entitlement_repository,
+        forbidden_detail="gpu_control_forbidden",
+    )
     now = _now()
     intent_path = resolve_gpu_intent_path()
     try:
@@ -358,35 +367,11 @@ def _authenticated_principal(auth: Any) -> str | None:
     return None
 
 
-_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
-
-
 def _normalized_auth_marker(value: Any) -> str | None:
     raw = getattr(value, "value", value)
     if isinstance(raw, str) and raw.strip():
         return raw.strip().lower().replace("-", "_")
     return None
-
-
-def _is_portal_principal(auth: Any) -> bool:
-    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
-    if isinstance(auth, PortalPrincipal):
-        return True
-    issuer = getattr(auth, "issuer", None)
-    subject = getattr(auth, "subject", None)
-    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
-
-
-def _is_beta_or_portal_caller(auth: Any) -> bool:
-    """Fail closed for portal principals; AuthContext has no entitlement field."""
-    if auth is None:
-        return False
-    if _is_portal_principal(auth):
-        return True
-    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
-        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
-            return True
-    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
 
 
 def _is_demo_tier(auth: Any) -> bool:

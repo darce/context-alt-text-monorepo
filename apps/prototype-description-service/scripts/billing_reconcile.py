@@ -26,10 +26,11 @@ import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, Protocol, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 
 from db.models import BillingWebhookInbox
 from db.tenant_context import clear_tenant_context, set_tenant_context
@@ -55,7 +56,10 @@ from scripts._billing_reconcile_recovery import (
     checkout_subscription_id,
     configured_namespace,
     cursor_key,
+    decode_checkout_attempt_cursor,
+    encode_checkout_attempt_cursor,
     lease_ttl,
+    missing_remote_id_for_item,
     projection_in_namespace,
     projection_is_legacy_null,
     provider_code,
@@ -501,13 +505,19 @@ class BillingReconciliationWorker:
                         outcome.dry_run_change.action in {"create_projection", "update_projection"}
                     )
 
+            failed_before = report.failed
             projection_progress = await self._reconcile_known_projections(report, dry_run=dry_run)
+            if report.failed > failed_before:
+                unresolved.add("known_projections")
             recovery_progress = False
             if self._recovery_repository is not None:
                 recovery_progress = await self._reconcile_remote_orphans(report, dry_run=dry_run)
+                failed_before = report.failed
                 recovery_progress = (
                     await self._reconcile_ambiguous_checkouts(report, dry_run=dry_run) or recovery_progress
                 )
+                if report.failed > failed_before:
+                    unresolved.add("ambiguous_checkouts")
             cycle_progress = cycle_progress or projection_progress or recovery_progress
             if self._recovery_repository is not None and not cycle_progress and not dry_run:
                 unresolved.add("recovery_zero_progress")
@@ -1088,7 +1098,7 @@ class BillingReconciliationWorker:
         progressed = False
         after: UUID | None = None
         provider_name = provider_code(self._provider)
-        while True:
+        for _ in range(RECONCILIATION_MAX_PAGES_PER_RUN):
             try:
                 rows = await _maybe_await(
                     self._repository.list_known_projections(
@@ -1118,16 +1128,19 @@ class BillingReconciliationWorker:
                 if dry_run:
                     progressed = True
                     continue
-                outcome = await self._reconcile_known_projection(projection)
+                outcome = await self._reconcile_known_projection(projection, report)
                 progressed = progressed or outcome
             if len(bounded) < RECONCILIATION_PAGE_LIMIT:
                 return progressed
+        report.failed += 1
+        return progressed
 
-    async def _reconcile_known_projection(self, projection: object) -> bool:
+    async def _reconcile_known_projection(self, projection: object, report: ReconcileReport) -> bool:
         tenant_id = _projection_value(projection, "tenant_id")
         customer_id = _projection_value(projection, "provider_customer_id")
         subscription_id = _projection_value(projection, "provider_subscription_id")
         if not isinstance(tenant_id, UUID) or not isinstance(customer_id, str):
+            report.failed += 1
             return False
         remote_id = subscription_id if isinstance(subscription_id, str) and subscription_id else customer_id
         now = self._clock()
@@ -1178,6 +1191,7 @@ class BillingReconciliationWorker:
                 tenant_id,
                 type(exc).__name__,
             )
+            report.failed += 1
             return False
 
     async def _reconcile_remote_orphans(self, report: ReconcileReport, *, dry_run: bool) -> bool:
@@ -1210,14 +1224,35 @@ class BillingReconciliationWorker:
                 page_ids: list[str] = []
                 for observation in page.observations:
                     quarantined = await self._fence_quarantine(lease, observation)
+                    if not quarantined:
+                        raise ReconciliationLeaseConflictError("stale quarantine lease")
                     page_ids.append(observation.remote_id)
-                    progressed = progressed or quarantined
-                    report.quarantined += int(quarantined)
+                    progressed = True
+                    report.quarantined += 1
                 for item in page.items:
-                    remote_id = remote_id_from_state(item)
+                    observation = None
+                    try:
+                        remote_id = remote_id_from_state(item)
+                    except ValueError:
+                        remote_id = missing_remote_id_for_item(item)
+                        observation = EnumerationObservation(
+                            reason=EnumerationObservationReason.MISSING_REMOTE_ID,
+                            remote_id=remote_id,
+                            details={"identity": "missing_remote_id"},
+                        )
+                    if observation is not None:
+                        quarantined = await self._fence_quarantine(lease, observation)
+                        if not quarantined:
+                            raise ReconciliationLeaseConflictError("stale malformed lease")
+                        page_ids.append(remote_id)
+                        progressed = True
+                        report.quarantined += 1
+                        continue
                     applied = await self._fence_orphan_item(lease, item, remote_id)
+                    if not applied:
+                        raise ReconciliationLeaseConflictError("stale orphan lease")
                     page_ids.append(remote_id)
-                    progressed = progressed or applied
+                    progressed = True
                 await self._fence_advance(
                     lease,
                     next_cursor=page.next_cursor,
@@ -1298,6 +1333,17 @@ class BillingReconciliationWorker:
                 await _maybe_await(recovery.quarantine_item(lease, observation=observation, now=now))
                 await self._commit()
                 return True
+            event_position = item.event_position
+            if event_position is None:
+                observation = EnumerationObservation(
+                    reason=EnumerationObservationReason.MALFORMED_ITEM,
+                    remote_id=remote_id,
+                    details={"identity": "missing_event_position"},
+                )
+                await _maybe_await(recovery.heartbeat(lease, now=now, lease_ttl=lease_ttl()))
+                await _maybe_await(recovery.quarantine_item(lease, observation=observation, now=now))
+                await self._commit()
+                return True
             await _maybe_await(recovery.heartbeat(lease, now=now, lease_ttl=lease_ttl()))
             changed = await _maybe_await(
                 self._repository.upsert_projection(
@@ -1308,8 +1354,8 @@ class BillingReconciliationWorker:
                     status=item.status,
                     current_period_end=item.current_period_end,
                     past_due_since=item.past_due_since,
-                    provider_event_id=reconcile_event_id(remote_id, item.event_position or now),
-                    event_position=item.event_position or now,
+                    provider_event_id=reconcile_event_id(remote_id, event_position),
+                    event_position=event_position,
                 )
             )
             if changed:
@@ -1321,7 +1367,7 @@ class BillingReconciliationWorker:
                         status=item.status,
                         current_period_end=item.current_period_end,
                         past_due_since=item.past_due_since,
-                        event_position=item.event_position or now,
+                        event_position=event_position,
                     )
                 )
             await _maybe_await(recovery.complete_item(lease, remote_id=remote_id, now=now))
@@ -1404,9 +1450,15 @@ class BillingReconciliationWorker:
             )
         except ValueError:
             return False
-        attempts = await self._list_stale_checkout_attempts(now)
-        if not attempts and self._stale_checkout_attempts is None:
-            return False
+        if self._stale_checkout_attempts is None:
+            session = getattr(self._repository, "session", None)
+            execute = getattr(session, "execute", None)
+            if session is None or not callable(execute):
+                return False
+            peek = await self._list_stale_checkout_attempts(now)
+            if not peek:
+                await self._rollback()
+                return False
         lease = await _maybe_await(recovery.acquire_lease(key, owner=self._owner, lease_ttl=lease_ttl(), now=now))
         if lease is None:
             await self._rollback()
@@ -1415,16 +1467,32 @@ class BillingReconciliationWorker:
         progressed = False
         page_ids: list[str] = []
         try:
-            for attempt in attempts[:RECONCILIATION_PAGE_LIMIT]:
+            after = decode_checkout_attempt_cursor(None if lease.exhausted else lease.cursor)
+            attempts = [
+                _detach_checkout_attempt(attempt)
+                for attempt in await self._list_stale_checkout_attempts(now, after=after)
+            ]
+            await self._rollback()
+            for attempt in attempts:
                 remote_id = _checkout_remote_id(attempt)
-                page_ids.append(remote_id)
                 handled = await self._recover_checkout_attempt(lease, attempt, remote_id)
-                progressed = progressed or handled
-                report.quarantined += int(handled and getattr(attempt, "provider_checkout_id", None) in {None, ""})
+                if not handled:
+                    raise ReconciliationLeaseConflictError("stale checkout lease")
+                page_ids.append(remote_id)
+                progressed = True
+                report.quarantined += int(getattr(attempt, "provider_checkout_id", None) in {None, ""})
+            exhausted = len(attempts) < RECONCILIATION_PAGE_LIMIT
+            next_cursor = None
+            if attempts and not exhausted:
+                last = attempts[-1]
+                next_cursor = encode_checkout_attempt_cursor(
+                    _checkout_attempt_sort_key(last)[0],
+                    _checkout_attempt_sort_key(last)[1],
+                )
             await self._fence_advance(
                 lease,
-                next_cursor=None,
-                exhausted=True,
+                next_cursor=next_cursor,
+                exhausted=exhausted,
                 page_remote_ids=tuple(page_ids),
             )
             return True if attempts else progressed
@@ -1441,14 +1509,23 @@ class BillingReconciliationWorker:
             report.failed += 1
             return progressed
 
-    async def _list_stale_checkout_attempts(self, now: datetime) -> list[object]:
+    async def _list_stale_checkout_attempts(
+        self,
+        now: datetime,
+        *,
+        after: tuple[datetime, UUID] | None = None,
+    ) -> list[object]:
         if self._stale_checkout_attempts is not None:
             cutoff = now - timedelta(seconds=self._config.provider_timeout_s)
-            return [
+            rows = [
                 attempt
                 for attempt in self._stale_checkout_attempts
                 if _checkout_is_stale(attempt, cutoff, self._environment, self._seller_account)
             ]
+            rows.sort(key=_checkout_attempt_sort_key)
+            if after is not None:
+                rows = [attempt for attempt in rows if _checkout_attempt_sort_key(attempt) > after]
+            return rows[:RECONCILIATION_PAGE_LIMIT]
         session = getattr(self._repository, "session", None)
         execute = getattr(session, "execute", None)
         if session is None or not callable(execute):
@@ -1471,19 +1548,20 @@ class BillingReconciliationWorker:
             .order_by(BillingCheckoutAttempt.updated_at, BillingCheckoutAttempt.id)
             .limit(RECONCILIATION_PAGE_LIMIT)
         )
-        try:
+        if after is not None:
+            after_ts, after_id = after
+            statement = statement.where(
+                tuple_(BillingCheckoutAttempt.updated_at, BillingCheckoutAttempt.id) > tuple_(after_ts, after_id)
+            )
+        with contextlib.suppress(Exception):
             await enable_rls_bypass(session)
-        except Exception:  # noqa: BLE001
-            pass
         try:
             result = await _maybe_await(execute(statement))
             scalars = getattr(result, "scalars", None)
             rows = list(scalars().all()) if callable(scalars) else []
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await disable_rls_bypass(session)
-            except Exception:  # noqa: BLE001
-                pass
         return rows
 
     async def _recover_checkout_attempt(self, lease: object, attempt: object, remote_id: str) -> bool:
@@ -1525,10 +1603,11 @@ class BillingReconciliationWorker:
         status = payload.get("status")
         subscription_id = checkout_subscription_id(payload)
         if checkout_is_paid_status(status) and subscription_id:
-            customer_id = checkout_customer_id(payload) or _projection_value(
-                await self._get_projection(attempt.tenant_id, provider_code(self._provider)),
-                "provider_customer_id",
-            )
+            customer_id = checkout_customer_id(payload)
+            if not isinstance(customer_id, str) or not customer_id:
+                projection = await self._get_projection(attempt.tenant_id, provider_code(self._provider))
+                customer_id = _projection_value(projection, "provider_customer_id")
+                await self._rollback()
             if not isinstance(customer_id, str) or not customer_id:
                 observation = EnumerationObservation(
                     reason=EnumerationObservationReason.MALFORMED_ITEM,
@@ -2253,26 +2332,32 @@ def _normalize_state(raw_state: object, context: _EventContext) -> Authoritative
             raise ReconciliationError("provider state tenant does not match inbox tenant")
         if raw_state.event_position is None:
             raise ReconciliationError("provider event position is required")
-        return AuthoritativeBillingState(
-            tenant_id=raw_state.tenant_id,
-            provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
-            provider_subscription_id=raw_state.provider_subscription_id,
-            status=raw_state.status,
-            current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
-            past_due_since=_optional_datetime(raw_state.past_due_since, "past_due_since"),
-            event_position=_parse_datetime(raw_state.event_position, "provider event position"),
+        return _require_state_matches_context(
+            AuthoritativeBillingState(
+                tenant_id=raw_state.tenant_id,
+                provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
+                provider_subscription_id=raw_state.provider_subscription_id,
+                status=raw_state.status,
+                current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
+                past_due_since=_optional_datetime(raw_state.past_due_since, "past_due_since"),
+                event_position=_parse_datetime(raw_state.event_position, "provider event position"),
+            ),
+            context,
         )
     if isinstance(raw_state, AuthoritativeBillingState):
         if raw_state.tenant_id != context.tenant_id:
             raise ReconciliationError("provider state tenant does not match inbox tenant")
-        return AuthoritativeBillingState(
-            tenant_id=raw_state.tenant_id,
-            provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
-            provider_subscription_id=raw_state.provider_subscription_id,
-            status=raw_state.status,
-            current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
-            past_due_since=_optional_datetime(raw_state.past_due_since, "past_due_since"),
-            event_position=_parse_datetime(raw_state.event_position, "provider event position"),
+        return _require_state_matches_context(
+            AuthoritativeBillingState(
+                tenant_id=raw_state.tenant_id,
+                provider_customer_id=_normalize_customer_id(raw_state.provider_customer_id),
+                provider_subscription_id=raw_state.provider_subscription_id,
+                status=raw_state.status,
+                current_period_end=_optional_datetime(raw_state.current_period_end, "current_period_end"),
+                past_due_since=_optional_datetime(raw_state.past_due_since, "past_due_since"),
+                event_position=_parse_datetime(raw_state.event_position, "provider event position"),
+            ),
+            context,
         )
 
     if isinstance(raw_state, Mapping):
@@ -2335,15 +2420,32 @@ def _normalize_state(raw_state: object, context: _EventContext) -> Authoritative
         ),
         "past_due_since",
     )
-    return AuthoritativeBillingState(
-        tenant_id=tenant_id,
-        provider_customer_id=customer_id,
-        provider_subscription_id=subscription_value,
-        status=status,
-        current_period_end=period_end,
-        past_due_since=past_due_since,
-        event_position=event_position,
+    return _require_state_matches_context(
+        AuthoritativeBillingState(
+            tenant_id=tenant_id,
+            provider_customer_id=customer_id,
+            provider_subscription_id=subscription_value,
+            status=status,
+            current_period_end=period_end,
+            past_due_since=past_due_since,
+            event_position=event_position,
+        ),
+        context,
     )
+
+
+def _require_state_matches_context(
+    state: AuthoritativeBillingState,
+    context: _EventContext,
+) -> AuthoritativeBillingState:
+    if state.tenant_id != context.tenant_id:
+        raise ReconciliationError("provider state tenant does not match requested tenant")
+    if state.provider_customer_id != context.provider_customer_id:
+        raise ReconciliationError("provider state customer does not match requested customer")
+    requested_subscription = context.provider_subscription_id
+    if requested_subscription is not None and state.provider_subscription_id != requested_subscription:
+        raise ReconciliationError("provider state subscription does not match requested subscription")
+    return state
 
 
 def _projection_action(
@@ -2526,12 +2628,38 @@ async def _maybe_await(value: object) -> Any:
 BillingReconcileWorker = BillingReconciliationWorker
 
 
+def _detach_checkout_attempt(attempt: object) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=getattr(attempt, "id", None),
+        tenant_id=getattr(attempt, "tenant_id", None),
+        provider=getattr(attempt, "provider", None),
+        environment=getattr(attempt, "environment", None),
+        seller_account=getattr(attempt, "seller_account", None),
+        status=getattr(attempt, "status", None),
+        provider_checkout_id=getattr(attempt, "provider_checkout_id", None),
+        updated_at=getattr(attempt, "updated_at", None),
+    )
+
+
 def _checkout_remote_id(attempt: object) -> str:
     checkout_id = getattr(attempt, "provider_checkout_id", None)
     if isinstance(checkout_id, str) and checkout_id:
         return checkout_id
     attempt_id = getattr(attempt, "id", None)
     return str(attempt_id) if attempt_id is not None else "missing-checkout"
+
+
+def _checkout_attempt_sort_key(attempt: object) -> tuple[datetime, UUID]:
+    updated = getattr(attempt, "updated_at", None)
+    if not isinstance(updated, datetime) or updated.tzinfo is None:
+        raise ReconciliationError("checkout attempt updated_at must be a timezone-aware datetime")
+    attempt_id = getattr(attempt, "id", None)
+    if isinstance(attempt_id, UUID):
+        return updated, attempt_id
+    try:
+        return updated, UUID(str(attempt_id))
+    except (TypeError, ValueError) as exc:
+        raise ReconciliationError("checkout attempt id must be a UUID") from exc
 
 
 def _checkout_is_stale(

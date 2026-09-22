@@ -1,10 +1,11 @@
 """G3 usage settlement: reconstruct tickets from persisted jobs and settle once.
 
 Workers capture the opaque reservation fence at claim and pass it unchanged to
-``commit_fenced`` / ``release_fenced``. This module never synthesizes a fence or
-replaces a captured token with the current row. Sweeper/reclaim may use the
-persisted token only after proving the bound job is inactive or terminal under
-DB locks; elapsed reservation age alone is not authorization to release.
+``commit_fenced`` / ``release_fenced``. Ordinary callbacks never synthesize a
+fence or replace a captured token with the current row. Trusted recovery
+(``recover_job``) may re-fence under locked reservation+job+global identity
+after proving durable terminal or never-picked evidence; elapsed reservation
+age alone is not authorization to release.
 
 [RES-01][RES-02][RES-05][DATA-03][GRPH-09]
 """
@@ -25,7 +26,9 @@ from sqlalchemy.orm import noload
 from db.models import IdentityScanJob, UsageReservation
 from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun
 from recognition.application.services.usage_admission_service import (
+    ReservationNotFoundError,
     UsageAdmissionService,
+    UsageAdmissionUnavailableError,
     UsageFenceMismatchError,
 )
 from recognition.domain.job import TERMINAL_JOB_STATUSES, JobStatus
@@ -37,21 +40,26 @@ _logger = logging.getLogger(__name__)
 
 _ACTIVE_DESCRIBE_STATUSES = {DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING}
 _ACTIVE_SCAN_STATUSES = {JobStatus.PENDING, JobStatus.RUNNING}
-_SUCCESS_DESCRIBE_STATUSES = {
-    DescribeRunStatus.COMPLETED,
+_NEVER_PICKED_DESCRIBE_RELEASE = {
     DescribeRunStatus.COMPLETED_WITH_ERRORS,
+    DescribeRunStatus.FAILED,
+    DescribeRunStatus.CANCELLED,
 }
-_SUCCESS_SCAN_STATUSES = {JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS}
+_NEVER_PICKED_SCAN_RELEASE = {
+    JobStatus.COMPLETED_WITH_ERRORS,
+    JobStatus.FAILED,
+    JobStatus.REJECTED,
+}
 _MISSING_RELATION_MARKERS = ("no such table", "does not exist", "undefinedtable")
 
-# G1 does not expose a settle-time API that binds reservation.fence_token to
-# usage_admission_global_state.fence_epoch. Workers therefore treat the token as
-# opaque and refuse to refresh it on a callback. [GRPH-09]
+# Ordinary G1 commit/release fencing stays strict: a captured worker token is
+# opaque and is never replaced with the current row to authorize a stale
+# callback. Trusted recovery is a separate locked path. [GRPH-09]
 MISSING_GENERATION_FENCE_CONTRACT = (
     "G1 settle identity is reservation_id+tenant+idempotency+cost+opaque fence_token; "
-    "there is no shared-repo API to re-fence a captured worker callback against "
-    "usage_admission_global_state.fence_epoch. Stale callbacks must keep the claim-time "
-    "token and must not substitute the current reservation.fence_token."
+    "captured worker callbacks must keep the claim-time token and must not substitute "
+    "the current reservation.fence_token. Trusted recovery may re-fence only after "
+    "locking job+reservation+global identity and proving terminal or never-picked evidence."
 )
 
 
@@ -147,8 +155,11 @@ class UsageSettlementService:
         self._session = session
         self._admission = admission or UsageAdmissionService(session)
 
-    async def _lookup(self, statement):
+    async def _lookup(self, statement, *, for_update: bool = False):
         try:
+            if for_update:
+                result = await self._session.execute(statement)
+                return result.scalar_one_or_none()
             async with self._session.begin_nested():
                 result = await self._session.execute(statement)
                 return result.scalar_one_or_none()
@@ -183,6 +194,7 @@ class UsageSettlementService:
         request_fingerprint: str | None,
         job_id: str | None,
         tenant_id: UUID,
+        check_fence: bool = True,
     ) -> str | None:
         if reservation.tenant_id != tenant_id:
             return "tenant mismatch"
@@ -196,19 +208,28 @@ class UsageSettlementService:
             and reservation.request_fingerprint != request_fingerprint
         ):
             return "fingerprint mismatch"
-        if not fence_token or fence_token != (reservation.fence_token or ""):
+        if check_fence and (not fence_token or fence_token != (reservation.fence_token or "")):
             return "fence mismatch"
         return None
 
-    async def _describe_evidence(self, *, tenant_id: UUID, job_uuid: UUID | None) -> SettlementOutcome | None:
+    async def _describe_evidence(
+        self,
+        *,
+        tenant_id: UUID,
+        job_uuid: UUID | None,
+        for_update: bool = False,
+    ) -> SettlementOutcome | None:
         if job_uuid is None:
             return None
-        run = await self._lookup(
+        statement = (
             select(DescribeRun)
             .options(noload(DescribeRun.items))
             .where(DescribeRun.tenant_id == tenant_id, DescribeRun.id == job_uuid)
             .limit(1)
         )
+        if for_update:
+            statement = statement.with_for_update()
+        run = await self._lookup(statement, for_update=for_update)
         if run is None:
             return None
         try:
@@ -219,23 +240,32 @@ class UsageSettlementService:
             return SettlementOutcome.SKIPPED_ACTIVE
         if status not in TERMINAL_RUN_STATUSES:
             return SettlementOutcome.FAIL_CLOSED
-        if status in _SUCCESS_DESCRIBE_STATUSES:
+        if _has_started(run):
             return SettlementOutcome.COMMITTED
-        if status is DescribeRunStatus.CANCELLED and not _has_started(run):
+        if status is DescribeRunStatus.COMPLETED:
+            return SettlementOutcome.FAIL_CLOSED
+        if status in _NEVER_PICKED_DESCRIBE_RELEASE:
             return SettlementOutcome.RELEASED
-        if status is DescribeRunStatus.FAILED and not _has_started(run):
-            return SettlementOutcome.RELEASED
-        return SettlementOutcome.COMMITTED
+        return SettlementOutcome.FAIL_CLOSED
 
-    async def _scan_evidence(self, *, tenant_id: UUID, job_uuid: UUID | None) -> SettlementOutcome | None:
+    async def _scan_evidence(
+        self,
+        *,
+        tenant_id: UUID,
+        job_uuid: UUID | None,
+        for_update: bool = False,
+    ) -> SettlementOutcome | None:
         if job_uuid is None:
             return None
-        job = await self._lookup(
+        statement = (
             select(IdentityScanJob)
             .options(noload(IdentityScanJob.items))
             .where(IdentityScanJob.tenant_id == tenant_id, IdentityScanJob.id == job_uuid)
             .limit(1)
         )
+        if for_update:
+            statement = statement.with_for_update()
+        job = await self._lookup(statement, for_update=for_update)
         if job is None:
             return None
         try:
@@ -246,21 +276,24 @@ class UsageSettlementService:
             return SettlementOutcome.SKIPPED_ACTIVE
         if status not in TERMINAL_JOB_STATUSES:
             return SettlementOutcome.FAIL_CLOSED
-        if status in _SUCCESS_SCAN_STATUSES:
+        if _has_started(job):
             return SettlementOutcome.COMMITTED
-        if status is JobStatus.FAILED and not _has_started(job):
-            error = (job.error_message or "").lower()
-            if "cancel" in error:
-                return SettlementOutcome.RELEASED
+        if status is JobStatus.COMPLETED:
+            return SettlementOutcome.FAIL_CLOSED
+        if status in _NEVER_PICKED_SCAN_RELEASE:
             return SettlementOutcome.RELEASED
-        if status is JobStatus.REJECTED and not _has_started(job):
-            return SettlementOutcome.RELEASED
-        return SettlementOutcome.COMMITTED
+        return SettlementOutcome.FAIL_CLOSED
 
-    async def _operation_evidence(self, *, tenant_id: UUID, operation_id: str | None) -> SettlementOutcome | None:
+    async def _operation_evidence(
+        self,
+        *,
+        tenant_id: UUID,
+        operation_id: str | None,
+        for_update: bool = False,
+    ) -> SettlementOutcome | None:
         if not operation_id:
             return None
-        operation = await self._lookup(
+        operation_stmt = (
             select(DescribeOperation)
             .where(
                 DescribeOperation.tenant_id == tenant_id,
@@ -268,9 +301,12 @@ class UsageSettlementService:
             )
             .limit(1)
         )
+        if for_update:
+            operation_stmt = operation_stmt.with_for_update()
+        operation = await self._lookup(operation_stmt, for_update=for_update)
         if operation is None:
             return None
-        lease = await self._lookup(
+        lease_stmt = (
             select(DescribeDemandLease)
             .where(
                 DescribeDemandLease.tenant_id == tenant_id,
@@ -278,6 +314,9 @@ class UsageSettlementService:
             )
             .limit(1)
         )
+        if for_update:
+            lease_stmt = lease_stmt.with_for_update()
+        lease = await self._lookup(lease_stmt, for_update=for_update)
         if lease is not None and str(lease.state) == "active":
             return SettlementOutcome.SKIPPED_ACTIVE
         if operation.completed_at is None:
@@ -291,12 +330,17 @@ class UsageSettlementService:
         reservation: UsageReservation,
         *,
         allow_missing_job_release: bool,
+        for_update: bool = False,
     ) -> SettlementOutcome:
         job_uuid = _as_uuid(reservation.job_id)
         for reader in (
-            lambda: self._describe_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid),
-            lambda: self._scan_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid),
-            lambda: self._operation_evidence(tenant_id=reservation.tenant_id, operation_id=reservation.operation_id),
+            lambda: self._describe_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid, for_update=for_update),
+            lambda: self._scan_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid, for_update=for_update),
+            lambda: self._operation_evidence(
+                tenant_id=reservation.tenant_id,
+                operation_id=reservation.operation_id,
+                for_update=for_update,
+            ),
         ):
             outcome = await reader()
             if outcome is not None:
@@ -332,8 +376,6 @@ class UsageSettlementService:
                 reservation_id=reservation.id,
                 detail="unknown reservation status",
             )
-        if status is not UsageReservationStatus.RESERVED:
-            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=reservation.id)
 
         if fence_token is None:
             if not allow_missing_job_release:
@@ -360,6 +402,28 @@ class UsageSettlementService:
                 reservation_id=reservation.id,
                 detail=mismatch,
             )
+        try:
+            await self._admission.assert_fence_current(ticket_from_reservation(reservation), fence_token=token)
+        except UsageFenceMismatchError:
+            return SettlementResult(
+                SettlementOutcome.REJECTED,
+                reservation_id=reservation.id,
+                detail="stale fence rejected by G1",
+            )
+        except ReservationNotFoundError:
+            return SettlementResult(
+                SettlementOutcome.MISSING,
+                reservation_id=reservation.id,
+                detail="reservation not found",
+            )
+        except UsageAdmissionUnavailableError as exc:
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=reservation.id,
+                detail=str(exc),
+            )
+        if status is not UsageReservationStatus.RESERVED:
+            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=reservation.id)
 
         decision = await self._decide(reservation, allow_missing_job_release=allow_missing_job_release)
         if decision is SettlementOutcome.SKIPPED_ACTIVE:
@@ -386,6 +450,125 @@ class UsageSettlementService:
                 detail="stale fence rejected by G1",
             )
         return SettlementResult(decision, reservation_id=reservation.id)
+
+    async def recover_job(
+        self,
+        *,
+        tenant_id: UUID,
+        job_id: str,
+        operation_id: str | None = None,
+        request_fingerprint: str | None = None,
+        allow_missing_job_release: bool = False,
+    ) -> SettlementResult:
+        """Evidence-based re-fence and settle. Ordinary worker callbacks must not use this."""
+        reservation = await self._get_reservation(tenant_id=tenant_id, job_id=job_id)
+        if reservation is None:
+            return SettlementResult(SettlementOutcome.MISSING, detail="reservation not found")
+        try:
+            status = UsageReservationStatus(reservation.status)
+        except (TypeError, ValueError):
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=reservation.id,
+                detail="unknown reservation status",
+            )
+
+        mismatch = self._identity_ok(
+            reservation,
+            fence_token=reservation.fence_token or "",
+            operation_id=operation_id,
+            request_fingerprint=request_fingerprint,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            check_fence=False,
+        )
+        if mismatch:
+            return SettlementResult(
+                SettlementOutcome.REJECTED,
+                reservation_id=reservation.id,
+                detail=mismatch,
+            )
+        if status is not UsageReservationStatus.RESERVED:
+            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=reservation.id)
+
+        ticket = ticket_from_reservation(reservation)
+        try:
+            locked = await self._admission.begin_recovery(ticket)
+            await self._session.refresh(locked)
+        except UsageAdmissionUnavailableError as exc:
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=reservation.id,
+                detail=str(exc),
+            )
+        except ReservationNotFoundError:
+            return SettlementResult(
+                SettlementOutcome.MISSING,
+                reservation_id=reservation.id,
+                detail="reservation not found",
+            )
+        except UsageFenceMismatchError:
+            return SettlementResult(
+                SettlementOutcome.REJECTED,
+                reservation_id=reservation.id,
+                detail="stale fence rejected by G1",
+            )
+
+        try:
+            locked_status = UsageReservationStatus(locked.status)
+        except (TypeError, ValueError):
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=locked.id,
+                detail="unknown reservation status",
+            )
+        if locked_status is not UsageReservationStatus.RESERVED:
+            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=locked.id)
+
+        decision = await self._decide(
+            locked,
+            allow_missing_job_release=allow_missing_job_release,
+            for_update=True,
+        )
+        if decision is SettlementOutcome.SKIPPED_ACTIVE:
+            return SettlementResult(decision, reservation_id=locked.id, detail="job still active")
+        if decision is SettlementOutcome.FAIL_CLOSED:
+            return SettlementResult(
+                decision,
+                reservation_id=locked.id,
+                detail="unsafe unknown job state; not releasing",
+            )
+        if decision not in {SettlementOutcome.COMMITTED, SettlementOutcome.RELEASED}:
+            return SettlementResult(SettlementOutcome.FAIL_CLOSED, reservation_id=locked.id)
+
+        target = (
+            UsageReservationStatus.COMMITTED
+            if decision is SettlementOutcome.COMMITTED
+            else UsageReservationStatus.RELEASED
+        )
+        try:
+            settled = await self._admission.complete_recovery(locked, target_status=target)
+        except UsageAdmissionUnavailableError as exc:
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=locked.id,
+                detail=str(exc),
+            )
+        except UsageFenceMismatchError:
+            return SettlementResult(
+                SettlementOutcome.REJECTED,
+                reservation_id=locked.id,
+                detail="stale fence rejected by G1",
+            )
+        except ReservationNotFoundError:
+            return SettlementResult(
+                SettlementOutcome.MISSING,
+                reservation_id=locked.id,
+                detail="reservation not found",
+            )
+        if not settled:
+            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=locked.id)
+        return SettlementResult(decision, reservation_id=locked.id)
 
     async def settle_ticket(
         self,
@@ -427,6 +610,22 @@ class UsageSettlementService:
                 SettlementOutcome.REJECTED,
                 reservation_id=reservation.id,
                 detail=mismatch,
+            )
+        try:
+            await self._admission.assert_fence_current(ticket_from_reservation(reservation), fence_token=token)
+        except UsageFenceMismatchError:
+            return SettlementResult(
+                SettlementOutcome.REJECTED,
+                reservation_id=reservation.id,
+                detail="stale fence rejected by G1",
+            )
+        except ReservationNotFoundError:
+            return SettlementResult(SettlementOutcome.MISSING, reservation_id=reservation.id)
+        except UsageAdmissionUnavailableError as exc:
+            return SettlementResult(
+                SettlementOutcome.FAIL_CLOSED,
+                reservation_id=reservation.id,
+                detail=str(exc),
             )
         try:
             status = UsageReservationStatus(reservation.status)
@@ -475,11 +674,16 @@ class UsageSettlementService:
                 return report
             report.stale_seen += len(rows)
             progressed = 0
+            batch_skipped = 0
+            batch_rejected = 0
+            batch_fail_closed = 0
+            batch_missing = 0
             for row in rows:
-                result = await self.settle_job(
+                result = await self.recover_job(
                     tenant_id=row.tenant_id,
                     job_id=str(row.job_id or ""),
-                    fence_token=None,
+                    operation_id=row.operation_id,
+                    request_fingerprint=row.request_fingerprint,
                     allow_missing_job_release=True,
                 )
                 if result.outcome is SettlementOutcome.RELEASED:
@@ -490,17 +694,26 @@ class UsageSettlementService:
                     progressed += 1
                 elif result.outcome is SettlementOutcome.SKIPPED_ACTIVE:
                     report.skipped_active += 1
+                    batch_skipped += 1
                 elif result.outcome is SettlementOutcome.REJECTED:
                     report.rejected += 1
-                    progressed += 1
+                    batch_rejected += 1
                 elif result.outcome is SettlementOutcome.ALREADY_SETTLED:
                     report.already_settled += 1
                     progressed += 1
                 elif result.outcome is SettlementOutcome.MISSING:
                     report.missing += 1
+                    batch_missing += 1
                 else:
                     report.fail_closed += 1
-            if report.skipped_active and progressed == 0 and report.fail_closed == 0:
+                    batch_fail_closed += 1
+            if (
+                progressed == 0
+                and batch_skipped
+                and batch_rejected == 0
+                and batch_fail_closed == 0
+                and batch_missing == 0
+            ):
                 # Active work remains reserved on purpose; that is a successful sweep.
                 report.exit_code = 0
                 return report
@@ -530,6 +743,25 @@ async def capture_usage_fence(
         _logger.debug("usage fence capture failed job_id=%s", job_id, exc_info=True)
         return None
     return None if claim is None else claim.fence_token
+
+
+async def recover_usage_job(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    job_id: str,
+    allow_missing_job_release: bool = False,
+) -> SettlementResult:
+    """Trusted terminal recovery for sweep/reclaim. Does not authorize worker callbacks."""
+    try:
+        return await UsageSettlementService(session).recover_job(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            allow_missing_job_release=allow_missing_job_release,
+        )
+    except Exception as exc:
+        _logger.exception("usage recovery failed job_id=%s", job_id)
+        return SettlementResult(SettlementOutcome.FAIL_CLOSED, detail=str(exc))
 
 
 async def settle_usage_job(
@@ -577,6 +809,7 @@ __all__ = [
     "UsageClaim",
     "UsageSettlementService",
     "capture_usage_fence",
+    "recover_usage_job",
     "settle_usage_job",
     "sweep_stale_reservations",
     "ticket_from_reservation",

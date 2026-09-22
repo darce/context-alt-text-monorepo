@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from recognition.domain.portal_contracts import UsageTicket
+from recognition.domain.portal_contracts import UsageReservationStatus, UsageTicket
 from recognition.infrastructure.repositories.usage_repository import (
     AllowanceExceededError,
     GlobalUsageLimitExceededError,
@@ -101,6 +101,8 @@ class UsageAdmissionService:
 
         async def commit_fenced(ticket: UsageTicket, *, fence_token: str) -> None
         async def release_fenced(ticket: UsageTicket, *, fence_token: str) -> None
+        async def begin_recovery(ticket: UsageTicket) -> Any
+        async def complete_recovery(reservation: Any, *, target_status: UsageReservationStatus) -> None
     """
 
     def __init__(
@@ -211,6 +213,33 @@ class UsageAdmissionService:
             await release_fenced(ticket, fence_token=fence_token.strip())
             return
         await self._repository.release(ticket, fence_token=fence_token.strip())
+
+    async def assert_fence_current(self, ticket: UsageTicket, *, fence_token: str) -> None:
+        """Reject a captured worker token whose generation is no longer current."""
+        _validate_ticket(ticket)
+        if not isinstance(fence_token, str) or not fence_token.strip():
+            raise InvalidUsageRequestError("fence_token must be a non-empty string")
+        assert_fence_current = getattr(self._repository, "assert_fence_current", None)
+        if not callable(assert_fence_current):
+            raise UsageAdmissionUnavailableError("usage repository does not expose fence assertion")
+        await assert_fence_current(ticket, fence_token=fence_token.strip())
+
+    async def begin_recovery(self, ticket: UsageTicket) -> Any:
+        """Lock ledger identity for trusted terminal recovery. No new work is minted."""
+        _validate_ticket(ticket)
+        begin_recovery = getattr(self._repository, "begin_recovery", None)
+        if not callable(begin_recovery):
+            raise UsageAdmissionUnavailableError("usage repository does not support trusted recovery")
+        return await begin_recovery(ticket)
+
+    async def complete_recovery(self, reservation: Any, *, target_status: UsageReservationStatus) -> bool:
+        """Re-fence to the current epoch and settle one already-locked reservation."""
+        if target_status not in (UsageReservationStatus.COMMITTED, UsageReservationStatus.RELEASED):
+            raise InvalidUsageRequestError("recovery target must be committed or released")
+        complete_recovery = getattr(self._repository, "complete_recovery", None)
+        if not callable(complete_recovery):
+            raise UsageAdmissionUnavailableError("usage repository does not support trusted recovery")
+        return bool(await complete_recovery(reservation, target_status=target_status))
 
 
 # Explicit implementation aliases are useful to dependency-wiring code while

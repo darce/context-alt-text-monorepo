@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import os
 import tempfile
 import uuid
@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pytest
-from sqlalchemy import Table
+from sqlalchemy import Table, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.models import UsageReservation
@@ -23,7 +23,10 @@ from recognition.application.services.usage_admission_service import UsageAdmiss
 from recognition.application.services.usage_settlement_service import (
     MISSING_GENERATION_FENCE_CONTRACT,
     SettlementOutcome,
+    SettlementResult,
     UsageSettlementService,
+    recover_usage_job,
+    settle_usage_job,
     sweep_stale_reservations,
 )
 from recognition.domain.job import JobStatus
@@ -107,6 +110,35 @@ async def _seed_tenant(session, *, allowance: int = 20):
 
 def _age_reservation(reservation: UsageReservation, *, seconds: float) -> None:
     reservation.reserved_at = datetime.now(tz=UTC) - timedelta(seconds=seconds)
+
+
+async def _advance_epoch(session, *, delta: int = 1) -> int:
+    state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+    assert state is not None
+    state.fence_epoch = int(state.fence_epoch) + delta
+    await session.flush()
+    return int(state.fence_epoch)
+
+
+def test_public_settle_and_sweep_signatures_are_frozen() -> None:
+    settle = inspect.signature(settle_usage_job)
+    assert list(settle.parameters) == [
+        "session",
+        "tenant_id",
+        "job_id",
+        "fence_token",
+        "allow_missing_job_release",
+    ]
+    sweep = inspect.signature(sweep_stale_reservations)
+    assert list(sweep.parameters) == [
+        "session",
+        "stale_after_seconds",
+        "max_batches",
+        "batch_size",
+        "no_progress_limit",
+    ]
+    recover = inspect.signature(recover_usage_job)
+    assert list(recover.parameters) == ["session", "tenant_id", "job_id", "allow_missing_job_release"]
 
 
 @pytest.mark.asyncio
@@ -297,6 +329,357 @@ async def test_after_pickup_failure_is_conservatively_charged() -> None:
         async with sf() as session:
             row = await session.get(UsageReservation, ticket.reservation_id)
             assert row is not None and row.status == UsageReservationStatus.COMMITTED
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_completed_with_errors_without_start_releases_and_started_commits() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            never_id = uuid.uuid4()
+            started_id = uuid.uuid4()
+            never_ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-cwe-never",
+                job_id=str(never_id),
+                cost_units=1,
+                operation_id="op-cwe-never",
+                request_fingerprint="fp-cwe-never",
+            )
+            started_ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-cwe-started",
+                job_id=str(started_id),
+                cost_units=1,
+                operation_id="op-cwe-started",
+                request_fingerprint="fp-cwe-started",
+            )
+            session.add(
+                DescribeRun(
+                    id=never_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.BULK,
+                    status=DescribeRunStatus.COMPLETED_WITH_ERRORS,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[1],
+                    total_items=1,
+                )
+            )
+            session.add(
+                DescribeRun(
+                    id=started_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.BULK,
+                    status=DescribeRunStatus.COMPLETED_WITH_ERRORS,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[2],
+                    total_items=1,
+                    started_at=datetime.now(tz=UTC),
+                    queue_ms=8.0,
+                )
+            )
+            await session.flush()
+            settlement = UsageSettlementService(session)
+            never = await settlement.settle_job(
+                tenant_id=tenant.id,
+                job_id=str(never_id),
+                fence_token=never_ticket.fence_token,
+            )
+            started = await settlement.settle_job(
+                tenant_id=tenant.id,
+                job_id=str(started_id),
+                fence_token=started_ticket.fence_token,
+            )
+            ambiguous_id = uuid.uuid4()
+            ambiguous_ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-completed-nostart",
+                job_id=str(ambiguous_id),
+                cost_units=1,
+                operation_id="op-completed-nostart",
+                request_fingerprint="fp-completed-nostart",
+            )
+            session.add(
+                DescribeRun(
+                    id=ambiguous_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.SINGLE,
+                    status=DescribeRunStatus.COMPLETED,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[3],
+                    total_items=1,
+                )
+            )
+            await session.flush()
+            ambiguous = await settlement.settle_job(
+                tenant_id=tenant.id,
+                job_id=str(ambiguous_id),
+                fence_token=ambiguous_ticket.fence_token,
+            )
+            await session.commit()
+            assert never.outcome is SettlementOutcome.RELEASED
+            assert started.outcome is SettlementOutcome.COMMITTED
+            assert ambiguous.outcome is SettlementOutcome.FAIL_CLOSED
+        async with sf() as session:
+            never_row = await session.get(UsageReservation, never_ticket.reservation_id)
+            started_row = await session.get(UsageReservation, started_ticket.reservation_id)
+            ambiguous_row = await session.get(UsageReservation, ambiguous_ticket.reservation_id)
+            assert never_row is not None and never_row.status == UsageReservationStatus.RELEASED
+            assert started_row is not None and started_row.status == UsageReservationStatus.COMMITTED
+            assert ambiguous_row is not None and ambiguous_row.status == UsageReservationStatus.RESERVED
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_epoch_advance_rejects_captured_worker_token_without_substitution() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            job_id = uuid.uuid4()
+            ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-stale-worker",
+                job_id=str(job_id),
+                cost_units=1,
+                operation_id="op-stale-worker",
+                request_fingerprint="fp-stale-worker",
+            )
+            captured = ticket.fence_token
+            session.add(
+                DescribeRun(
+                    id=job_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.SINGLE,
+                    status=DescribeRunStatus.CANCELLED,
+                    phase=DescribeRunPhase.CANCELLED,
+                    media_ids=[1],
+                    total_items=1,
+                )
+            )
+            await session.flush()
+            await _advance_epoch(session)
+            rejected = await UsageSettlementService(session).settle_job(
+                tenant_id=tenant.id,
+                job_id=str(job_id),
+                fence_token=captured,
+            )
+            replay = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-stale-worker",
+                job_id=str(uuid.uuid4()),
+                cost_units=1,
+                operation_id="op-stale-worker",
+                request_fingerprint="fp-stale-worker",
+            )
+            await session.commit()
+            assert rejected.outcome is SettlementOutcome.REJECTED
+            assert replay.fence_token == captured
+        async with sf() as session:
+            row = await session.get(UsageReservation, ticket.reservation_id)
+            assert row is not None and row.status == UsageReservationStatus.RESERVED
+            assert row.fence_token == captured
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_trusted_recovery_settles_stale_terminal_exactly_once() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            job_id = uuid.uuid4()
+            ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-recover",
+                job_id=str(job_id),
+                cost_units=1,
+                operation_id="op-recover",
+                request_fingerprint="fp-recover",
+            )
+            captured = ticket.fence_token
+            session.add(
+                DescribeRun(
+                    id=job_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.BULK,
+                    status=DescribeRunStatus.COMPLETED_WITH_ERRORS,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[1],
+                    total_items=1,
+                )
+            )
+            await session.flush()
+            new_epoch = await _advance_epoch(session)
+            before = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert before is not None
+            inflight_before = int(before.inflight_units)
+            daily_before = int(before.daily_cost_units)
+            first = await recover_usage_job(session, tenant_id=tenant.id, job_id=str(job_id))
+            second = await recover_usage_job(session, tenant_id=tenant.id, job_id=str(job_id))
+            stale = await UsageSettlementService(session).settle_job(
+                tenant_id=tenant.id,
+                job_id=str(job_id),
+                fence_token=captured,
+            )
+            mismatch = await UsageSettlementService(session).recover_job(
+                tenant_id=tenant.id,
+                job_id=str(job_id),
+                operation_id="other-op",
+            )
+            await session.commit()
+            assert first.outcome is SettlementOutcome.RELEASED
+            assert second.outcome is SettlementOutcome.ALREADY_SETTLED
+            assert stale.outcome is SettlementOutcome.REJECTED
+            assert mismatch.outcome is SettlementOutcome.REJECTED
+            after = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            assert after is not None
+            assert int(after.inflight_units) == inflight_before - 1
+            assert int(after.daily_cost_units) == daily_before - 1
+            assert int(after.fence_epoch) == new_epoch
+        async with sf() as session:
+            row = await session.get(UsageReservation, ticket.reservation_id)
+            assert row is not None and row.status == UsageReservationStatus.RELEASED
+            assert row.fence_token != captured
+            epoch_text, _token = row.fence_token.split(":", 1)
+            assert int(epoch_text) == new_epoch
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_sweep_recovers_never_picked_terminal_and_stalls_on_ambiguous() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            ambiguous_id = uuid.uuid4()
+            terminal_id = uuid.uuid4()
+            ambiguous_ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-ambiguous-complete",
+                job_id=str(ambiguous_id),
+                cost_units=1,
+                operation_id="op-ambiguous-complete",
+                request_fingerprint="fp-ambiguous-complete",
+            )
+            terminal_ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-sweep-cwe",
+                job_id=str(terminal_id),
+                cost_units=1,
+                operation_id="op-sweep-cwe",
+                request_fingerprint="fp-sweep-cwe",
+            )
+            session.add(
+                DescribeRun(
+                    id=ambiguous_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.SINGLE,
+                    status=DescribeRunStatus.COMPLETED,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[1],
+                    total_items=1,
+                )
+            )
+            session.add(
+                DescribeRun(
+                    id=terminal_id,
+                    tenant_id=tenant.id,
+                    run_kind=RunKind.SINGLE,
+                    status=DescribeRunStatus.COMPLETED_WITH_ERRORS,
+                    phase=DescribeRunPhase.COMPLETE,
+                    media_ids=[2],
+                    total_items=1,
+                )
+            )
+            await session.flush()
+            _age_reservation(await session.get(UsageReservation, ambiguous_ticket.reservation_id), seconds=180)
+            _age_reservation(await session.get(UsageReservation, terminal_ticket.reservation_id), seconds=180)
+            await _advance_epoch(session)
+            report = await sweep_stale_reservations(
+                session,
+                stale_after_seconds=30,
+                max_batches=4,
+                batch_size=10,
+                no_progress_limit=2,
+            )
+            await session.commit()
+            assert report.released == 1
+            assert report.committed == 0
+            assert report.fail_closed >= 1
+            assert report.stalled is True
+            assert report.exit_code == 1
+        async with sf() as session:
+            statuses = {row.job_id: row.status for row in (await session.execute(select(UsageReservation))).scalars()}
+            assert statuses[str(terminal_id)] == UsageReservationStatus.RELEASED
+            assert statuses[str(ambiguous_id)] == UsageReservationStatus.RESERVED
+    finally:
+        await engine.dispose()
+        os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_sweep_rejected_only_batch_stalls_nonzero() -> None:
+    engine, sf, path = await _ledger_sessionmaker()
+    try:
+        async with sf() as session:
+            tenant = await _seed_tenant(session)
+            job_id = uuid.uuid4()
+            ticket = await UsageAdmissionService(session).reserve(
+                tenant.id,
+                idempotency_key="op-only-reject",
+                job_id=str(job_id),
+                cost_units=1,
+                operation_id="op-only-reject",
+                request_fingerprint="fp-only-reject",
+            )
+            _age_reservation(await session.get(UsageReservation, ticket.reservation_id), seconds=240)
+
+            async def _reject(self, **_kwargs):
+                return SettlementResult(
+                    SettlementOutcome.REJECTED,
+                    reservation_id=ticket.reservation_id,
+                    detail="forced reject",
+                )
+
+            original_settle = UsageSettlementService.settle_job
+            original_recover = getattr(UsageSettlementService, "recover_job", None)
+            UsageSettlementService.settle_job = _reject  # type: ignore[method-assign]
+            UsageSettlementService.recover_job = _reject  # type: ignore[method-assign]
+            try:
+                report = await sweep_stale_reservations(
+                    session,
+                    stale_after_seconds=30,
+                    max_batches=5,
+                    batch_size=10,
+                    no_progress_limit=2,
+                )
+            finally:
+                UsageSettlementService.settle_job = original_settle  # type: ignore[method-assign]
+                if original_recover is None:
+                    delattr(UsageSettlementService, "recover_job")
+                else:
+                    UsageSettlementService.recover_job = original_recover  # type: ignore[method-assign]
+            await session.commit()
+            assert report.rejected >= 1
+            assert report.released == 0
+            assert report.committed == 0
+            assert report.stalled is True
+            assert report.exit_code == 1
+            assert report.no_progress_cycles >= 2
+        async with sf() as session:
+            row = await session.get(UsageReservation, ticket.reservation_id)
+            assert row is not None and row.status == UsageReservationStatus.RESERVED
     finally:
         await engine.dispose()
         os.unlink(path)

@@ -212,4 +212,159 @@ class ReclaimerLivenessTest extends TestCase
 		$this->assertSame(2, $state['last_purged_count']);
 		$this->assertSame(3, $state['backlog_remaining']);
 	}
+
+	public function testFirstWriteRaceReportsRejectionAndPreservesWinner(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-first-write-race';
+		$stateOption = 'acx_reclaimer_liveness_' . $tenant;
+		$lease = 'owner-a|1|1700000300';
+		$winnerLease = 'owner-b|2|1700000300';
+		$winnerState = array(
+			'last_success_at' => '2023-11-14T22:13:20Z',
+			'last_purged_count' => 7,
+		);
+		$leaseReads = 0;
+		$wpdb->onGetVarResolve = static function (string $query) use (&$leaseReads, $lease, $winnerLease): ?string {
+			++$leaseReads;
+			return 1 === $leaseReads ? $lease : $winnerLease;
+		};
+
+		$stateReads = 0;
+		$GLOBALS['__ac_get_option_before_read'][ $stateOption ] = static function () use (&$stateReads, $stateOption, $winnerState, $winnerLease): void {
+			++$stateReads;
+			if ( 1 === $stateReads ) {
+				// Let the first read observe a missing value while the conditional
+				// insert is about to lose the race.
+				$GLOBALS['__ac_options'][ $stateOption ] = null;
+				return;
+			}
+
+			$GLOBALS['__ac_options'][ $stateOption ] = $winnerState;
+			$GLOBALS['__ac_options']['acx_reclaimer_lease_' . str_replace( '/', '_', 'tenant-first-write-race' )] = $winnerLease;
+		};
+
+		$result = $this->invokeFencedWrite(
+			new ReclaimerLiveness(static fn (): int => 1_700_000_000),
+			$tenant,
+			array(
+				'last_success_at' => '2023-11-14T22:30:00Z',
+				'last_purged_count' => 99,
+			),
+			$lease
+		);
+
+		$this->assertIsArray($result);
+		$this->assertFalse($result['committed']);
+		$this->assertSame('fence_rejected', $result['status']);
+		$this->assertSame($winnerState, get_option($stateOption));
+	}
+
+	public function testCleanFirstWriteReportsFencedSuccessAndStoresState(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-first-write-clean';
+		$lease = 'owner-a|1|1700000300';
+		$wpdb->onGetVarResolve = static fn (string $query): string => $lease;
+		$state = array(
+			'last_success_at' => '2023-11-14T22:30:00Z',
+			'last_purged_count' => 4,
+		);
+
+		$result = $this->invokeFencedWrite(
+			new ReclaimerLiveness(static fn (): int => 1_700_000_000),
+			$tenant,
+			$state,
+			$lease
+		);
+
+		$this->assertIsArray($result);
+		$this->assertTrue($result['committed']);
+		$this->assertSame('committed', $result['status']);
+		$this->assertSame($state, get_option('acx_reclaimer_liveness_' . $tenant));
+		$this->assertFalse($GLOBALS['__ac_option_autoload']['acx_reclaimer_liveness_' . $tenant]);
+	}
+
+	public function testStaleLeaseReportsRejectionWithoutWriting(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-stale-write';
+		$lease = 'owner-a|1|1700000300';
+		$wpdb->onGetVarResolve = static fn (string $query): string => 'owner-b|2|1700000300';
+
+		$result = $this->invokeFencedWrite(
+			new ReclaimerLiveness(static fn (): int => 1_700_000_000),
+			$tenant,
+			array('last_purged_count' => 1),
+			$lease
+		);
+
+		$this->assertIsArray($result);
+		$this->assertFalse($result['committed']);
+		$this->assertSame('fence_rejected', $result['status']);
+		$this->assertArrayNotHasKey('acx_reclaimer_liveness_' . $tenant, $GLOBALS['__ac_options']);
+		$this->assertArrayNotHasKey('acx_reclaimer_tenant_index', $GLOBALS['__ac_options']);
+	}
+
+	public function testUnreadableLeaseReportsPermissiveWriteDistinctly(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-no-fence';
+		$state = array(
+			'last_success_at' => '2023-11-14T22:30:00Z',
+			'last_purged_count' => 5,
+		);
+		$wpdb->onGetVarResolve = static fn (string $query): ?string => null;
+
+		$result = $this->invokeFencedWrite(
+			new ReclaimerLiveness(static fn (): int => 1_700_000_000),
+			$tenant,
+			$state,
+			'owner-a|1|1700000300'
+		);
+
+		$this->assertIsArray($result);
+		$this->assertTrue($result['committed']);
+		$this->assertSame('committed_without_fence', $result['status']);
+		$this->assertSame($state, get_option('acx_reclaimer_liveness_' . $tenant));
+	}
+
+	public function testRejectedFencedWriteDispatchesSovereignWarning(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-rejection-warning';
+		$wpdb->onGetVarResolve = static fn (string $query): ?string => null;
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$this->assertIsString($liveness->claim($tenant));
+
+		$wpdb->onGetVarResolve = static fn (string $query): string => 'owner-b|2|1700000300';
+		$liveness->record_success($tenant, 1, 0, 0, false, ReclaimerLiveness::SCHEDULER_WP_CRON);
+
+		$warnings = array_values(
+			array_filter(
+				$GLOBALS['__ac_do_action_log'],
+				static fn (array $action): bool => 'acx_sovereign_warning' === $action['hook']
+			)
+		);
+		$this->assertCount(1, $warnings);
+		$this->assertSame('reclaimer_liveness_write_fence_rejected', $warnings[0]['args'][0]);
+		$this->assertSame($tenant, $warnings[0]['args'][1]['tenant_id']);
+	}
+
+	/** @return mixed */
+	private function invokeFencedWrite(
+		ReclaimerLiveness $liveness,
+		string $tenant,
+		array $state,
+		string $lease
+	) {
+		$method = new \ReflectionMethod(ReclaimerLiveness::class, 'write_fenced_state');
+		$method->setAccessible(true);
+		return $method->invoke($liveness, $tenant, $state, $lease);
+	}
 }

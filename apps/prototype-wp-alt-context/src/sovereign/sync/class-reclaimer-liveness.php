@@ -8,6 +8,7 @@ use DateTimeInterface;
 
 use function add_option;
 use function delete_option;
+use function do_action;
 use function function_exists;
 use function get_option;
 use function gmdate;
@@ -57,6 +58,10 @@ class ReclaimerLiveness {
 	private const LEASE_OPTION_PREFIX = 'acx_reclaimer_lease_';
 	private const TENANT_INDEX_OPTION = 'acx_reclaimer_tenant_index';
 	private const LEASE_SECONDS = 300;
+	private const WRITE_STATUS_COMMITTED = 'committed';
+	private const WRITE_STATUS_COMMITTED_WITHOUT_FENCE = 'committed_without_fence';
+	private const WRITE_STATUS_FENCE_REJECTED = 'fence_rejected';
+	private const WRITE_STATUS_NO_OP = 'no_op';
 
 	/** @var callable():int|DateTimeInterface|string|null */
 	private $clock;
@@ -475,7 +480,18 @@ class ReclaimerLiveness {
 			}
 
 			$state['fencing_token'] = $fencing_token;
-			$this->write_fenced_state( $tenant_id, $state, $lease_value );
+			$result = $this->write_fenced_state( $tenant_id, $state, $lease_value );
+			if ( self::WRITE_STATUS_FENCE_REJECTED === $result['status'] && function_exists( 'do_action' ) ) {
+				do_action(
+					'acx_sovereign_warning',
+					'reclaimer_liveness_write_fence_rejected',
+					array(
+						'tenant_id' => $tenant_id,
+						'status' => $result['status'],
+						'method' => __METHOD__,
+					)
+				);
+			}
 			return;
 		}
 
@@ -495,8 +511,9 @@ class ReclaimerLiveness {
 	 * owner fail after a newer owner has committed its state.
 	 *
 	 * @param array<string,mixed> $state
+	 * @return array{committed:bool,status:string}
 	 */
-	private function write_fenced_state( string $tenant_id, array $state, string $lease_value ): void {
+	private function write_fenced_state( string $tenant_id, array $state, string $lease_value ): array {
 		global $wpdb;
 		if (
 			! isset( $wpdb )
@@ -506,19 +523,37 @@ class ReclaimerLiveness {
 			|| ! method_exists( $wpdb, 'prepare' )
 			|| ! method_exists( $wpdb, 'query' )
 		) {
-			return;
+			return array(
+				'committed' => false,
+				'status' => self::WRITE_STATUS_NO_OP,
+			);
 		}
 
-		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value ) ) {
-			return;
+		$fence_available = false;
+		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value, $fence_available ) ) {
+			return array(
+				'committed' => false,
+				'status' => self::WRITE_STATUS_FENCE_REJECTED,
+			);
 		}
 
 		$option_name = $this->state_option_name( $tenant_id );
 		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
 		$previous = $this->load_state( $tenant_id );
 		if ( array() === $previous ) {
-			add_option( $option_name, $state, '', false );
-			return;
+			$inserted = add_option( $option_name, $state, '', false );
+			if ( $inserted ) {
+				return array(
+					'committed' => true,
+					'status' => $fence_available
+						? self::WRITE_STATUS_COMMITTED
+						: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
+				);
+			}
+
+			// Another owner may have inserted the first row after the read above.
+			// Re-read once, then use the normal bounded CAS path against its value.
+			$previous = $this->load_state( $tenant_id );
 		}
 
 		$query = $wpdb->prepare(
@@ -534,15 +569,25 @@ class ReclaimerLiveness {
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
 		if ( $affected > 0 ) {
-			return;
+			return array(
+				'committed' => true,
+				'status' => $fence_available
+					? self::WRITE_STATUS_COMMITTED
+					: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
+			);
 		}
 
 		// Re-check before the adapter-compatible CAS fallback. Production MySQL
 		// uses the joined UPDATE above; the second form is for lightweight
 		// adapters that cannot model a self-join on wp_options.
-		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value ) ) {
-			return;
+		$retry_fence_available = false;
+		if ( ! $this->lease_is_current( $wpdb, $tenant_id, $lease_value, $retry_fence_available ) ) {
+			return array(
+				'committed' => false,
+				'status' => self::WRITE_STATUS_FENCE_REJECTED,
+			);
 		}
+		$fence_available = $fence_available && $retry_fence_available;
 
 		$query = $wpdb->prepare(
 			'UPDATE ' . $wpdb->options . ' SET option_value = %s WHERE option_name = %s AND BINARY option_value = %s',
@@ -553,12 +598,28 @@ class ReclaimerLiveness {
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
 		if ( $affected <= 0 ) {
-			return;
+			return array(
+				'committed' => false,
+				'status' => self::WRITE_STATUS_NO_OP,
+			);
 		}
+
+		return array(
+			'committed' => true,
+			'status' => $fence_available
+				? self::WRITE_STATUS_COMMITTED
+				: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
+		);
 	}
 
-	private function lease_is_current( object $wpdb, string $tenant_id, string $lease_value ): bool {
+	private function lease_is_current(
+		object $wpdb,
+		string $tenant_id,
+		string $lease_value,
+		?bool &$fence_available = null
+	): bool {
 		$stored_lease_value = $this->read_lease_value( $wpdb, $this->lease_option_name( $tenant_id ) );
+		$fence_available = null !== $stored_lease_value;
 		if ( null === $stored_lease_value ) {
 			// Some test and migration adapters cannot read raw option rows. The
 			// conditional state CAS still fences already-committed newer writers.

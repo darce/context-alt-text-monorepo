@@ -31,6 +31,37 @@ SFACE_METRIC: Final[str] = "cosine"
 _FLOAT01_TRAP_MAX: Final[float] = 1.5
 
 
+def resolve_embedding_dim(model_name: str) -> int:
+    """Return a model's embedding dim when it satisfies the embed contract.
+
+    ``embed_batch`` implements L2-normalized vectors compared with cosine
+    distance, so model metadata must explicitly describe that same contract.
+    Unknown models and incomplete metadata fail closed rather than falling back
+    to a guessed dimension.
+    """
+    try:
+        entry = MODEL_MANIFEST[model_name]
+    except KeyError:
+        known_models = ", ".join(sorted(MODEL_MANIFEST))
+        raise ValueError(f"unknown embedding model {model_name!r}; known models: {known_models}") from None
+
+    dim = entry.embedding_dim
+    if dim is None:
+        raise ValueError(
+            f"MODEL_MANIFEST[{model_name!r}].embedding_dim is None; "
+            "refusing to invent a default embedding dimension (rg-015)"
+        )
+    if entry.normalization != "l2":
+        raise ValueError(
+            f"unsupported {model_name} normalization {entry.normalization!r}; require 'l2' (embed_batch L2 contract)"
+        )
+    if entry.metric != "cosine":
+        raise ValueError(
+            f"unsupported {model_name} metric {entry.metric!r}; require 'cosine' (embed_batch cosine contract)"
+        )
+    return int(dim)
+
+
 def resolve_sface_embedding_dim() -> int:
     """Return SFace embedding dim from the provenance manifest (fail-closed).
 
@@ -186,5 +217,6 @@ __all__ = [
     "ZeroNormEmbeddingError",
     "embed_batch",
     "ensure_bgr_u8",
+    "resolve_embedding_dim",
     "resolve_sface_embedding_dim",
 ]

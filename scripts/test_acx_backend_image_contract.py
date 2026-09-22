@@ -1077,8 +1077,9 @@ def test_d10_verify_image_mismatch_returns_not_exits(
 def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
     """FIR23-STACK: .env.fir.example is the operator template for acx-dev-fir.
 
-    Shares the :dev image (ACX_IMAGE_TAG=dev) but pins PGVECTOR_DIM=128 and
-    face_pipeline models dir so the three-way embedding guard can pass.
+    Pins an independent :dev-fir image tag (ACX_IMAGE_TAG=dev-fir), promoted
+    from :dev, plus PGVECTOR_DIM=128 and face_pipeline models dir so the
+    three-way embedding guard can pass.
     """
     env_fir = (
         REPO_ROOT
@@ -1090,7 +1091,11 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
     text = env_fir.read_text(encoding="utf-8")
     assert "COMPOSE_PROJECT_NAME=acx-dev-fir" in text
     assert "ACX_ENV=dev-fir" in text
-    assert "ACX_IMAGE_TAG=dev" in text
+    assert "ACX_IMAGE_TAG=dev-fir" in text
+    assert not any(
+        line.split("#", 1)[0].strip() == "ACX_IMAGE_TAG=dev"
+        for line in text.splitlines()
+    )
     assert "PGVECTOR_DIM=128" in text
     assert "RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline" in text
     assert (

@@ -667,6 +667,7 @@ def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_
 def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
     """M-03: PostgreSQL NaN equals itself, so the upper bound is essential."""
     import sqlalchemy as sa
+
     from db.models import scene
 
     with pg_empty_engine.begin() as connection:
@@ -680,12 +681,11 @@ def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
                     f"CHECK ({check.sqltext})) ON COMMIT DROP"
                 )
                 for value in ("Infinity", "-Infinity", "NaN"):
-                    with pytest.raises(sa.exc.IntegrityError):
-                        with connection.begin_nested():
-                            connection.execute(
-                                sa.text(f"INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
-                                {"value": value},
-                            )
+                    with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+                        connection.execute(
+                            sa.text("INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
+                            {"value": value},
+                        )
                 connection.exec_driver_sql("INSERT INTO timing_finite_probe VALUES (NULL), (0), (42)")
                 connection.exec_driver_sql("DROP TABLE timing_finite_probe")
 
@@ -714,7 +714,7 @@ def test_usage_reservation_declares_expand_first_identity_fields(monkeypatch) ->
     assert colmap["request_fingerprint"].nullable is True
     assert colmap["fence_token"].nullable is True
     assert colmap["job_id"].nullable is True
-    assert colmap["queue_bytes"].nullable is False
+    assert colmap["queue_bytes"].nullable is True
     assert "uq_usage_reservation_tenant_operation_id" in tuple(kw.get("heal_constraints", ()))
     assert (
         "usage_reservation",
@@ -755,13 +755,8 @@ def test_usage_admission_global_state_is_declared_nontenant_singleton(monkeypatc
     assert "ck_usage_admission_global_fence_epoch" in tuple(kw.get("heal_constraints", ()))
 
 
-def test_checkout_provider_key_unique_currently_includes_tenant_id(monkeypatch) -> None:
-    """Current G1 unique is tenant-scoped; spec 5.1 is seller-wide without tenant_id.
-
-    Billing spec uniques: ``(provider, environment, seller_account, idempotency_key)``.
-    G1 DDL/HEAL_UNIQUE_CONSTRAINTS currently prefix ``tenant_id``. G5 records that
-    mismatch as evidence and does not patch the migration (G1-owned).
-    """
+def test_checkout_provider_key_unique_is_seller_wide_without_tenant(monkeypatch) -> None:
+    """Spec 5.1: provider-key unique is seller-wide and omits tenant_id."""
     import sqlalchemy as sa
 
     spec_seller_wide = ("provider", "environment", "seller_account", "idempotency_key")
@@ -770,11 +765,76 @@ def test_checkout_provider_key_unique_currently_includes_tenant_id(monkeypatch) 
         for table, name, cols in identity_schema.HEAL_UNIQUE_CONSTRAINTS
         if table == "billing_checkout_attempt" and name == "uq_billing_checkout_attempt_provider_key"
     )
-    assert actual[0] == "tenant_id"
-    assert actual[1:] == spec_seller_wide
+    assert actual == spec_seller_wide
+    assert "tenant_id" not in actual
 
     columns, kw = _table_declaration(monkeypatch, "billing_checkout_attempt")
-    uniques = [item for item in columns if isinstance(item, sa.UniqueConstraint)]
-    names = {item.name for item in uniques}
-    assert "uq_billing_checkout_attempt_provider_key" in names
+    provider_key = next(
+        item for item in columns if getattr(item, "name", None) == "uq_billing_checkout_attempt_provider_key"
+    )
+    assert tuple(identity_schema._constraint_column_names(provider_key)) == spec_seller_wide
     assert "uq_billing_checkout_attempt_provider_key" in tuple(kw.get("heal_constraints", ()))
+
+
+def test_portal_invitation_tenant_id_is_nullable_for_pending_rows(monkeypatch) -> None:
+    import sqlalchemy as sa
+
+    columns, kw = _table_declaration(monkeypatch, "portal_tenant_invitation")
+    colmap = {column.name: column for column in columns if isinstance(column, sa.Column)}
+    assert colmap["tenant_id"].nullable is True
+    assert colmap["tenant_id"].foreign_keys
+    check_names = {item.name for item in columns if isinstance(item, sa.CheckConstraint)}
+    assert "ck_portal_tenant_invitation_accepted_requires_tenant" in check_names
+    assert "ck_portal_tenant_invitation_accepted_requires_tenant" in tuple(kw.get("heal_constraints", ()))
+
+
+@pytest.mark.parametrize(
+    ("token", "reservation_id", "epoch", "expected"),
+    [
+        (None, "11111111-1111-1111-1111-111111111111", 1, "1:legacy:11111111-1111-1111-1111-111111111111"),
+        ("", "11111111-1111-1111-1111-111111111111", 2, "2:legacy:11111111-1111-1111-1111-111111111111"),
+        (
+            "11111111-1111-1111-1111-111111111111",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "1:legacy:11111111-1111-1111-1111-111111111111",
+        ),
+        (
+            "22222222-2222-2222-2222-222222222222",
+            "11111111-1111-1111-1111-111111111111",
+            4,
+            "4:22222222-2222-2222-2222-222222222222",
+        ),
+        (
+            "3:33333333-3333-3333-3333-333333333333",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "3:33333333-3333-3333-3333-333333333333",
+        ),
+        (
+            "9:legacy:11111111-1111-1111-1111-111111111111",
+            "11111111-1111-1111-1111-111111111111",
+            1,
+            "9:legacy:11111111-1111-1111-1111-111111111111",
+        ),
+    ],
+)
+def test_rewrite_usage_reservation_fence_token_markers(token, reservation_id, epoch, expected) -> None:
+    assert (
+        identity_schema._rewrite_usage_reservation_fence_token(token, reservation_id=reservation_id, epoch=epoch)
+        == expected
+    )
+
+
+def test_rewrite_usage_reservation_fence_token_failclosed_on_malformed() -> None:
+    reservation_id = "11111111-1111-1111-1111-111111111111"
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token("not-a-token", reservation_id=reservation_id, epoch=1)
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token(
+            "0:11111111-1111-1111-1111-111111111111", reservation_id=reservation_id, epoch=1
+        )
+    with pytest.raises(RuntimeError, match="malformed"):
+        identity_schema._rewrite_usage_reservation_fence_token(
+            "1:legacy:not-a-uuid", reservation_id=reservation_id, epoch=1
+        )

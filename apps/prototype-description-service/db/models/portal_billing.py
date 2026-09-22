@@ -266,7 +266,6 @@ class BillingCheckoutAttempt(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id",
             "provider",
             "environment",
             "seller_account",
@@ -395,8 +394,8 @@ class PortalTenantInvitation(Base):
     __tablename__ = "portal_tenant_invitation"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True
     )
     invited_email: Mapped[str] = mapped_column(Text, nullable=False)
     # WHY: only the digest is persisted, so a database read cannot mint a usable token.
@@ -408,11 +407,15 @@ class PortalTenantInvitation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
-    tenant: Mapped[Tenant] = relationship()
+    tenant: Mapped[Tenant | None] = relationship()
 
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_portal_tenant_invitation_token_hash"),
         Index("idx_portal_tenant_invitation_reclaim", "expires_at", "accepted_at"),
+        CheckConstraint(
+            "accepted_at IS NULL OR tenant_id IS NOT NULL",
+            name="ck_portal_tenant_invitation_accepted_requires_tenant",
+        ),
     )
 
 

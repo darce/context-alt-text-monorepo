@@ -22,6 +22,7 @@ function signedInPerson() {
   clerkDouble.state.isLoaded = true;
   clerkDouble.state.isSignedIn = true;
   clerkDouble.state.userId = 'user_2';
+  clerkDouble.state.sessionId = 'sess_2';
   clerkDouble.state.user = {
     fullName: 'Grace Hopper',
     primaryEmailAddress: {
@@ -123,6 +124,38 @@ describe('sign-out, retry, and stale /portal/me [CARD-15][RLSE-04]', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^sign in$/i })).toBeEnabled();
     });
+    expect(screen.queryByText(TENANT_ID)).not.toBeInTheDocument();
+  });
+
+  it('ignores a getToken that resolves after sign-out', async () => {
+    signedInPerson();
+    let finishToken: ((value: string) => void) | undefined;
+    clerkDouble.state.getToken = () =>
+      new Promise<string | null>((resolve) => {
+        finishToken = resolve;
+      });
+    const fetchImpl = vi.fn();
+    clerkDouble.state.signOut = async () => {
+      clerkDouble.state.isSignedIn = false;
+      clerkDouble.state.userId = null;
+      clerkDouble.state.sessionId = null;
+      clerkDouble.state.user = null;
+    };
+
+    const user = userEvent.setup();
+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch, portalMeTimeoutMs: 8_000 });
+
+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^sign in$/i })).toBeEnabled();
+    });
+
+    finishToken?.('session-jwt');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument();
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(screen.queryByText(TENANT_ID)).not.toBeInTheDocument();
   });
 });

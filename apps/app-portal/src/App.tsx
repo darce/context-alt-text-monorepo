@@ -19,15 +19,20 @@ export type AppProps = {
   portalMeTimeoutMs?: number;
 };
 
+type AccountOwner = {
+  userId: string;
+  sessionId: string;
+};
+
 type AccountView =
   | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ok'; tenantId: string }
-  | { status: 'empty' }
-  | { status: 'unauthorized' }
-  | { status: 'email_unverified' }
-  | { status: 'not_admitted' }
-  | { status: 'outage' };
+  | { status: 'loading'; owner: AccountOwner }
+  | { status: 'ok'; tenantId: string; owner: AccountOwner }
+  | { status: 'empty'; owner: AccountOwner }
+  | { status: 'unauthorized'; owner: AccountOwner }
+  | { status: 'email_unverified'; owner: AccountOwner }
+  | { status: 'not_admitted'; owner: AccountOwner }
+  | { status: 'outage'; owner: AccountOwner };
 
 type LogoutView = 'idle' | 'loading' | 'error';
 
@@ -43,14 +48,38 @@ function personName(user: ReturnType<typeof useUser>['user']): string | null {
   return name ? name : null;
 }
 
-function fromPortalMe(result: PortalMeResult): AccountView {
+function readOwner(userId: string | null | undefined, sessionId: string | null | undefined): AccountOwner | null {
+  if (!userId) {
+    return null;
+  }
+  return { userId, sessionId: sessionId ?? '' };
+}
+
+function ownersMatch(left: AccountOwner | null | undefined, right: AccountOwner | null | undefined): boolean {
+  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
+}
+
+function fromPortalMe(result: PortalMeResult, owner: AccountOwner): AccountView {
   if (result.outcome === PortalMeOutcome.Ok) {
-    return { status: 'ok', tenantId: result.tenantId };
+    return { status: 'ok', tenantId: result.tenantId, owner };
   }
   if (result.outcome === PortalMeOutcome.Aborted) {
-    return { status: 'loading' };
+    return { status: 'loading', owner };
   }
-  return { status: result.outcome };
+  if (result.outcome === PortalMeOutcome.Empty) {
+    return { status: 'outage', owner };
+  }
+  return { status: result.outcome, owner };
+}
+
+function ownedAccount(account: AccountView, owner: AccountOwner | null): AccountView {
+  if (!owner) {
+    return { status: 'idle' };
+  }
+  if (account.status !== 'idle' && ownersMatch(account.owner, owner)) {
+    return account;
+  }
+  return { status: 'loading', owner };
 }
 
 function PortalShell({
@@ -64,7 +93,7 @@ function PortalShell({
   portalMeTimeoutMs: number;
   onRetryClerk: () => void;
 }) {
-  const { isLoaded, isSignedIn, userId, getToken, signOut } = useAuth();
+  const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,12 +102,20 @@ function PortalShell({
   const [logout, setLogout] = useState<LogoutView>('idle');
   const [fetchEpoch, setFetchEpoch] = useState(0);
   const epochRef = useRef(0);
-  const sessionRef = useRef<string | null>(null);
+  const ownerRef = useRef<AccountOwner | null>(null);
   const logoutRef = useRef<LogoutView>('idle');
   const getTokenRef = useRef(getToken);
 
+  const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
+  if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
+    setAccount({ status: 'loading', owner: activeOwner });
+  } else if (!isSignedIn && account.status !== 'idle') {
+    setAccount({ status: 'idle' });
+  }
+  const displayAccount = ownedAccount(account, activeOwner);
+
   epochRef.current = fetchEpoch;
-  sessionRef.current = userId ?? null;
+  ownerRef.current = activeOwner;
   logoutRef.current = logout;
   getTokenRef.current = getToken;
 
@@ -92,39 +129,60 @@ function PortalShell({
   }, [isLoaded, clerkLoadTimeoutMs]);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || logout !== 'idle') {
+    const onStorage = () => {
+      setFetchEpoch((value) => value + 1);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || logout !== 'idle' || !activeOwner) {
       return;
     }
     if (user && !isEmailVerified(user)) {
-      setAccount({ status: 'email_unverified' });
+      setAccount({ status: 'email_unverified', owner: activeOwner });
       return;
     }
     const epoch = fetchEpoch;
-    const session = userId ?? null;
+    const owner = activeOwner;
     const controller = new AbortController();
-    setAccount({ status: 'loading' });
+    setAccount({ status: 'loading', owner });
     void fetchPortalMe({
       getToken: () => getTokenRef.current(),
       fetchImpl,
       signal: controller.signal,
       timeoutMs: portalMeTimeoutMs,
-    }).then((result) => {
-      if (epoch !== epochRef.current) {
-        return;
-      }
-      if (session !== sessionRef.current) {
-        return;
-      }
-      if (logoutRef.current !== 'idle') {
-        return;
-      }
-      if (result.outcome === PortalMeOutcome.Aborted) {
-        return;
-      }
-      setAccount(fromPortalMe(result));
-    });
+    })
+      .then((result) => {
+        if (epoch !== epochRef.current) {
+          return;
+        }
+        if (!ownersMatch(owner, ownerRef.current)) {
+          return;
+        }
+        if (logoutRef.current !== 'idle') {
+          return;
+        }
+        if (result.outcome === PortalMeOutcome.Aborted) {
+          return;
+        }
+        setAccount(fromPortalMe(result, owner));
+      })
+      .catch(() => {
+        if (epoch !== epochRef.current) {
+          return;
+        }
+        if (!ownersMatch(owner, ownerRef.current)) {
+          return;
+        }
+        if (logoutRef.current !== 'idle') {
+          return;
+        }
+        setAccount({ status: 'outage', owner });
+      });
     return () => controller.abort();
-  }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, user, userId]);
+  }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
 
   const handleSignOut = useCallback(async () => {
     setAccount({ status: 'idle' });
@@ -178,16 +236,23 @@ function PortalShell({
   if (path.startsWith('/sign-in') || path.startsWith('/sign-up')) {
     return <Navigate to="/" replace />;
   }
-  if (account.status === 'email_unverified') {
+  if (displayAccount.status === 'email_unverified') {
     return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
   }
-  if (account.status === 'not_admitted') {
+  if (displayAccount.status === 'not_admitted') {
     return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
   }
-  if (account.status === 'outage') {
-    return <OutageScreen kind="backend" onRetry={handleRetryFetch} />;
+  if (displayAccount.status === 'outage') {
+    return (
+      <OutageScreen
+        kind="backend"
+        onRetry={handleRetryFetch}
+        userMenu={userMenu}
+        onSignOut={() => void handleSignOut()}
+      />
+    );
   }
-  if (account.status === 'unauthorized') {
+  if (displayAccount.status === 'unauthorized') {
     return (
       <AccountScreen
         personName={personName(user)}
@@ -202,8 +267,8 @@ function PortalShell({
   return (
     <AccountScreen
       personName={personName(user)}
-      tenantId={account.status === 'ok' ? account.tenantId : null}
-      mode={account.status === 'ok' ? 'default' : account.status === 'empty' ? 'empty' : 'loading'}
+      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
+      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
       userMenu={userMenu}
       onSignOut={() => void handleSignOut()}
     />

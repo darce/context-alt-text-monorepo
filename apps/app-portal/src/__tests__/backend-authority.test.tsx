@@ -22,6 +22,7 @@ function signedInPerson() {
   clerkDouble.state.isLoaded = true;
   clerkDouble.state.isSignedIn = true;
   clerkDouble.state.userId = 'user_1';
+  clerkDouble.state.sessionId = 'sess_1';
   clerkDouble.state.user = {
     fullName: 'Ada Lovelace',
     primaryEmailAddress: {
@@ -50,6 +51,7 @@ describe('backend authority for tenant display [CARD-12][DOM-03]', () => {
       expect(String(input)).toBe('/portal/me');
       expect(init?.method ?? 'GET').toBe('GET');
       expect(init?.credentials).toBe('omit');
+      expect(init?.cache).toBe('no-store');
       expect(init?.headers).toEqual({ Authorization: 'Bearer session-jwt' });
       return jsonResponse(200, {
         tenant_id: TENANT_ID,
@@ -74,7 +76,7 @@ describe('backend authority for tenant display [CARD-12][DOM-03]', () => {
     expect(screen.queryByText(/organization switcher/i)).not.toBeInTheDocument();
   });
 
-  it('keeps the tenant strip empty when the server omits tenant_id', async () => {
+  it('does not treat a malformed 200 as not-linked [DATA-03]', async () => {
     signedInPerson();
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, {
@@ -87,10 +89,12 @@ describe('backend authority for tenant display [CARD-12][DOM-03]', () => {
     renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/not linked yet|waiting for account/i);
+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
     });
-    expect(screen.queryByText(/ada@example\.test/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/lovelace/i)).not.toHaveTextContent(/tenant/i);
+    expect(screen.queryByText(/not linked yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(TENANT_ID)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /open account menu/i })).toBeInTheDocument();
   });
 
   it('maps 401, email verification, 403 not admitted, and 503 outage explicitly', async () => {
@@ -157,6 +161,8 @@ describe('backend authority for tenant display [CARD-12][DOM-03]', () => {
       expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
     });
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /open account menu/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /try again/i }));
 
@@ -164,5 +170,43 @@ describe('backend authority for tenant display [CARD-12][DOM-03]', () => {
       expect(screen.getByText(TENANT_ID)).toBeInTheDocument();
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces getToken rejection as a signed-in outage with retry and sign-out [RLSE-04]', async () => {
+    signedInPerson();
+    clerkDouble.state.getToken = async () => {
+      throw new Error('token refresh failed');
+    };
+    const fetchImpl = vi.fn();
+
+    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
+  });
+
+  it('does not stay on checking-account when getToken never resolves [RES-02]', async () => {
+    signedInPerson();
+    clerkDouble.state.getToken = () => new Promise(() => undefined);
+    const fetchImpl = vi.fn();
+
+    renderPortal({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      portalMeTimeoutMs: 25,
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
+    await waitFor(
+      () => {
+        expect(screen.getByRole('status')).toHaveTextContent(/temporarily unavailable/i);
+      },
+      { timeout: 1_000 },
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
   });
 });

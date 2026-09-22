@@ -253,7 +253,13 @@ def test_module_manifest_covers_yunet_and_sface() -> None:
     assert auraface.embedding_dim == 512
     assert auraface.normalization == "l2"
     assert auraface.metric == "cosine"
-    assert auraface.sha256 == PENDING_OPERATOR_FETCH
+    # Operator-fetched on acx-backend (MAINT-fir-auraface-fetch-20260920): the sentinel is gone
+    # and both pins are the measured bytes, so assert the pins rather than the pending state.
+    assert auraface.sha256 == "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60"
+    assert (
+        auraface.license_sha256
+        == "609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338"
+    )
 
 
 def test_committed_license_files_match_manifest() -> None:

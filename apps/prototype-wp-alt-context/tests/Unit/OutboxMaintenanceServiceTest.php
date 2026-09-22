@@ -163,6 +163,101 @@ class OutboxMaintenanceServiceTest extends TestCase
         $this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
     }
 
+    public function testBulkRetryReturnsCommittedCountWhenMetricsRefreshThrows(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = 2;
+        $metrics = new class() extends SyncStateRepository {
+            public function refresh_curation_metrics(string $tenant_id): void
+            {
+                throw new \RuntimeException('metrics failed');
+            }
+        };
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService(null, $metrics);
+
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([
+            [$tenantId, 'metrics_refresh', 'metrics failed'],
+        ], $failures);
+    }
+
+    public function testBulkRetryReturnsCommittedCountWhenDrainSchedulingThrows(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = 2;
+        $metrics = $this->trackingSyncStateRepository();
+        add_filter(
+            'acx_outbox_action_scheduler_group',
+            static function (): string {
+                throw new \RuntimeException('drain scheduling failed');
+            }
+        );
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService(null, $metrics);
+
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([
+            [$tenantId, 'drain_schedule', 'drain scheduling failed'],
+        ], $failures);
+    }
+
+    public function testBulkRetryReturnsFalseWhenCasUpdateFails(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = false;
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService();
+
+        $this->assertFalse($service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([], $failures);
+    }
+
     public function testBulkRetryPacesRequeueSoOneDrainCycleClaimsFewerThanAllRows(): void
     {
         // E15-35 Slice 2 (PA-05): the incident's thundering herd must not recur — a bulk

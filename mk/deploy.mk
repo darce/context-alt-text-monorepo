@@ -39,7 +39,7 @@ deploy-help:
 	@echo "  Full deploy (build + push + restart + verify) — remote build by default:"
 	@echo "    make deploy-dev                            Remote build on VM, push :dev + :SHA, restart acx-dev, verify"
 	@echo "    make deploy-dev REMOTE_BUILD=0             Same, built locally (requires colima / Docker Desktop)"
-	@echo "    make deploy-dev-fir                        Same image (:dev tag), restart acx-dev-fir (isolated FIR stack), verify"
+	@echo "    make deploy-dev-fir                        Remote build on VM, push :dev-fir + :SHA, restart acx-dev-fir, verify"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
 	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev                    Remote VLM image build+deploy (default; free-space gated)"
@@ -52,8 +52,8 @@ deploy-help:
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
 	@echo "    make deploy-promote-prod CONFIRM=PROMOTE   Retag :staging -> :latest, restart, verify"
-	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path; also affects dev-fir — shared :dev tag)"
-	@echo "    make deploy-rollback-dev-fir               Refuses: FIR-only rollback impossible (shared :dev tag)"
+	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev"
+	@echo "    make deploy-rollback-dev-fir               Retag :dev -> :dev-fir (reset dev-fir to the current :dev image)"
 	@echo ""
 	@echo "  Verify / status / sticky-repo reset:"
 	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
@@ -159,15 +159,12 @@ deploy-rollback-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote staging dev
 
-# FIR-only rollback is impossible by design: dev-fir shares the :dev image tag
-# with acx-dev (env_to_tag maps both to "dev"), so retagging for dev-fir would
-# also roll back acx-dev on its next restart. Fail closed and name the real
-# lever instead of silently mutating the shared tag (gate r0811864a A-04/B-01).
+# Reset dev-fir to the current :dev image. rollback <env> requires a digest
+# id, so this Make lever is an ordinary promote/retag onto the independent
+# :dev-fir tag.
 deploy-rollback-dev-fir:
-	@echo "deploy-rollback-dev-fir: refused. dev-fir shares the :dev image tag with acx-dev;" >&2
-	@echo "a FIR-only image rollback does not exist. To roll back the shared :dev image for" >&2
-	@echo "BOTH stacks, run 'make deploy-rollback-dev' and restart acx-dev-fir afterwards." >&2
-	@exit 2
+	@REMOTE_BUILD=$(RB_DEFAULT) \
+		"$(DEPLOY_SCRIPT)" promote dev dev-fir
 
 # Verify a deployed environment matches local HEAD.
 # Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting

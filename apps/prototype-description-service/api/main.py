@@ -23,6 +23,7 @@ from db.session import get_pool_stats
 from recognition.application.health import (
     CheckResult,
     aggregate_status,
+    assert_space_activatable,
     check_active_embedding_model,
     check_breaker,
     check_database,
@@ -739,8 +740,8 @@ def register_health_probes(
 
     Model-cache probe is profile-aware ([OBS-08]): insightface uses the
     existing onnx-count check; face_pipeline uses eager sha256 verification
-    with mtime/size drift re-verify ([EMB-05]); auraface uses its own
-    provenance and embedding-space readiness check.
+    with mtime/size drift re-verify ([EMB-05]); auraface refuses unverified
+    activation before model I/O, then reuses the same cached verify outcome.
 
     Settings are constructed once at registration (S3CR-06), including the
     description profile validation; the face model profile is re-read from
@@ -767,6 +768,8 @@ def register_health_probes(
 
         face_pipeline verification runs off the event loop (S3CR-03).
         Invalid profile → UNHEALTHY CheckResult (S3CR-04), not HTTP 500.
+        Unverified AuraFace activation is refused with the same UNHEALTHY
+        contract before model I/O, never as an unhandled 500.
         """
         raw_profile = _current_profile()
         try:
@@ -788,6 +791,14 @@ def register_health_probes(
             insightface_model_name=insightface_model_name,
             models_dirs=models_dirs,
         )
+        try:
+            assert_space_activatable(profile)
+        except ValueError as exc:
+            return (
+                CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc)),
+                store,
+                label,
+            )
         return await asyncio.to_thread(probe), store, label
 
     async def _disk_headroom_probe() -> CheckResult:

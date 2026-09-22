@@ -1,2 +1,3 @@
-4427dc4887bd offload: APP-1 browser-shell is committed at d3681ae4 with green vitest,
-04c30a1d2cc4 APP-1 WIP: preserve remote browser-shell work at turn limit; unverified
+1c296172bf2f offload: R1 PostgreSQL tests now witness real namespaced
+82841032b5ec offload: R1 billing worker now refuses FAILED marks on a stolen N1 lock;
+3aa0ea562cc7 APP-1 WIP: preserve remote billing-reconcile work at turn limit; unverified

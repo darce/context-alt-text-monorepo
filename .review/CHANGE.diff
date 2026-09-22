@@ -1,2361 +1,2230 @@
-diff --git a/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py b/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py
---- a/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py
-+++ b/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py
-@@ -4,15 +4,18 @@ Analyze routes: scan media and poll job status.
- 
- from __future__ import annotations
- 
-+import hashlib
- import json
- import logging
- import os
-+import re
- import time as _time
- import uuid
-+from collections.abc import Mapping, Sequence
- from datetime import UTC, datetime
- 
- import asyncpg
--from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
-+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
- from sqlalchemy.exc import ProgrammingError
- from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
- from sse_starlette.sse import EventSourceResponse
-@@ -25,6 +28,7 @@ from recognition.application.tasks.scan import (
-     extract_media_id,
- )
- from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
-+from recognition.domain.portal_contracts import UsageTicket
- from recognition.domain.repositories import JobRepository
- from recognition.interface_adapters.http.deps import (
-     RetentionPolicyServiceProtocol,
-@@ -43,7 +47,6 @@ from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quo
- from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
- from recognition.interface_adapters.http.deps.usage_admission import (
-     admit_usage,
--    build_usage_idempotency_key,
-     get_usage_admission_service,
- )
- from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
-@@ -66,10 +69,125 @@ logger = logging.getLogger(__name__)
- # stays server-side in the log record; 501 would tell the caller the endpoint does
- # not exist and change its retry/caching decision (API-08).
- INTERNAL_ERROR_DETAIL = "internal server error"
-+_OPERATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-+_IDENTITY_ENVELOPE_KEYS = frozenset({"tenant_id", "media_ids", "media_items", "operation_id", "idempotency_key"})
- 
- router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
- 
- 
-+def _validate_operation_id(raw: str) -> str:
-+    stripped = raw.strip()
-+    if not _OPERATION_ID_RE.fullmatch(stripped):
-+        raise HTTPException(
-+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-+            detail="operation_id must be 1-128 characters in [A-Za-z0-9._:-]",
-+        )
-+    return stripped
-+
-+
-+def resolve_analyze_operation_id(
-+    *,
-+    header_value: str | None,
-+    envelope: Mapping[str, object] | None = None,
-+) -> str:
-+    """Prefer Idempotency-Key, then envelope operation_id; never hash media sources."""
-+    candidates: list[str] = []
-+    if isinstance(header_value, str) and header_value.strip():
-+        candidates.append(_validate_operation_id(header_value))
-+    if envelope is not None:
-+        for key in ("operation_id", "idempotency_key"):
-+            value = envelope.get(key)
-+            if isinstance(value, str) and value.strip():
-+                candidates.append(_validate_operation_id(value))
-+                break
-+    unique: list[str] = []
-+    for candidate in candidates:
-+        if candidate not in unique:
-+            unique.append(candidate)
-+    if len(unique) > 1:
-+        raise HTTPException(
-+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-+            detail="Idempotency-Key and envelope operation_id must match",
-+        )
-+    if unique:
-+        return unique[0]
-+    return str(uuid.uuid4())
-+
-+
-+def fingerprint_options_from_envelope(envelope: Mapping[str, object] | None) -> dict[str, object]:
-+    if not envelope:
-+        return {}
-+    return {key: value for key, value in envelope.items() if key not in _IDENTITY_ENVELOPE_KEYS}
-+
-+
-+def build_analyze_request_fingerprint(
-+    *,
-+    tenant_id: object,
-+    route: str,
-+    media_ids: Sequence[object],
-+    media_sources: Sequence[object],
-+    options: Mapping[str, object] | None = None,
-+) -> str:
-+    """Canonical content/options digest. Distinct from the logical operation id."""
-+    if len(media_ids) != len(media_sources):
-+        raise ValueError("media_ids and media_sources must have the same length")
-+    canonical_items = sorted(
-+        (str(media_id), str(media_source)) for media_id, media_source in zip(media_ids, media_sources, strict=True)
-+    )
-+    payload = {
-+        "media_ids": [media_id for media_id, _source in canonical_items],
-+        "media_sources": [source for _media_id, source in canonical_items],
-+        "options": dict(options or {}),
-+        "route": route,
-+        "tenant_id": str(tenant_id),
-+    }
-+    return hashlib.sha256(
-+        json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str).encode("utf-8")
-+    ).hexdigest()
-+
-+
-+def is_usage_replay(ticket: UsageTicket | None, generated_job_id: uuid.UUID) -> bool:
-+    if ticket is None or not ticket.job_id:
-+        return False
-+    return str(ticket.job_id) != str(generated_job_id)
-+
-+
-+def bound_job_uuid(ticket: UsageTicket | None, generated_job_id: uuid.UUID) -> uuid.UUID:
-+    if ticket is None or not ticket.job_id:
-+        return generated_job_id
-+    try:
-+        return uuid.UUID(str(ticket.job_id))
-+    except ValueError:
-+        return generated_job_id
-+
-+
-+def queued_analyze_job_response(job_id: object, total: int) -> JobStatusResponse:
-+    progress = JobProgressResponse(
-+        completed=0,
-+        total=total,
-+        phase=JobPhase.QUEUED,
-+        images_processed=0,
-+        faces_found=0,
-+    )
-+    return JobStatusResponse(
-+        id=str(job_id),
-+        type=JobType.ANALYZE.value,
-+        status=JobStatus.PENDING,
-+        progress=progress,
-+        started_at=datetime.now(tz=UTC),
-+        finished_at=None,
-+        message=f"Queueing 0/{total} items",
-+    )
-+
-+
-+async def json_request_envelope(http_request: Request) -> dict[str, object]:
-+    try:
-+        payload = await http_request.json()
-+    except Exception:
-+        return {}
-+    return payload if isinstance(payload, dict) else {}
-+
-+
- async def _resolve_pipeline_job(
-     *,
-     requested_job_id: str,
-@@ -226,6 +344,7 @@ async def _schedule_analysis(
-     media_sources: list[str],
-     inline_processing: bool,
-     auth,
-+    job_id: uuid.UUID | None = None,
- ) -> JobStatusResponse:
-     """Create the scan job, schedule background work, and build the initial response."""
-     if scan_queue is None:
-@@ -236,11 +355,14 @@ async def _schedule_analysis(
-             )
-         scan_queue = get_scan_queue_service_factory(session)
- 
--    job_id = await scan_queue.create_scan_job_record(
--        tenant_id=tenant_uuid,
--        total=len(media_items),
--        created_by_user_id=getattr(auth, "user_id", None),
--    )
-+    create_kwargs: dict[str, object] = {
-+        "tenant_id": tenant_uuid,
-+        "total": len(media_items),
-+        "created_by_user_id": getattr(auth, "user_id", None),
-+    }
-+    if job_id is not None:
-+        create_kwargs["job_id"] = job_id
-+    persisted_job_id = await scan_queue.create_scan_job_record(**create_kwargs)
- 
-     if session is not None:
-         await session.commit()
-@@ -249,45 +371,35 @@ async def _schedule_analysis(
-     if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
-         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
- 
--    correlation_id = get_correlation_id()
--
--    background_tasks.add_task(
--        chain_populate_and_process,
--        tenant_id=str(tenant_uuid),
--        job_id=str(job_id),
--        media_items=media_items,
--        media_ids=media_ids,
--        media_sources=media_sources,
--        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
--        session_factory=session_factory,
--        inline_processing=inline_processing,
--        adapter_provider=get_shared_insightface_adapter if inline_processing else None,
--        correlation_id=correlation_id,
--    )
--
--    total = len(media_items)
--    progress = JobProgressResponse(
--        completed=0,
--        total=total,
--        phase=JobPhase.QUEUED,
--        images_processed=0,
--        faces_found=0,
--    )
--    return JobStatusResponse(
--        id=str(job_id),
--        type=JobType.ANALYZE.value,
--        status=JobStatus.PENDING,
--        progress=progress,
--        started_at=datetime.now(tz=UTC),
--        finished_at=None,
--        message=f"Queueing 0/{total} items",
--    )
-+    try:
-+        correlation_id = get_correlation_id()
-+        background_tasks.add_task(
-+            chain_populate_and_process,
-+            tenant_id=str(tenant_uuid),
-+            job_id=str(persisted_job_id),
-+            media_items=media_items,
-+            media_ids=media_ids,
-+            media_sources=media_sources,
-+            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-+            session_factory=session_factory,
-+            inline_processing=inline_processing,
-+            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
-+            correlation_id=correlation_id,
-+        )
-+    except Exception:
-+        logger.exception(
-+            "Scan dispatch failed after job commit",
-+            extra={"job_id": str(persisted_job_id), "tenant_id": str(tenant_uuid)},
-+        )
-+    return queued_analyze_job_response(persisted_job_id, len(media_items))
- 
- 
- @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
- async def analyze_media(
-     request: AnalyzeRequest,
-     background_tasks: BackgroundTasks,
-+    http_request: Request,
-+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-     auth=Depends(require_write_access),
-     session=Depends(get_optional_session),
-     scan_queue=Depends(get_scan_queue_service_optional),
-@@ -310,26 +422,42 @@ async def analyze_media(
-             inline_processing=inline_processing,
-         )
- 
--        idempotency_key = build_usage_idempotency_key(tenant_uuid, media_ids, media_sources)
-+        envelope = await json_request_envelope(http_request)
-+        operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
-+        fingerprint = build_analyze_request_fingerprint(
-+            tenant_id=tenant_uuid,
-+            route="analyze",
-+            media_ids=media_ids,
-+            media_sources=media_sources,
-+            options=fingerprint_options_from_envelope(envelope),
-+        )
-+        generated_job_id = uuid.uuid4()
-         # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
-         async with admit_usage(
-             usage_admission_service,
-             tenant_id=tenant_uuid,
--            idempotency_key=idempotency_key,
--            job_id=None,
-+            idempotency_key=operation_id,
-+            job_id=str(generated_job_id),
-             cost_units=total_media_items,
--        ):
--            response = await _schedule_analysis(
--                background_tasks=background_tasks,
--                session=session,
--                scan_queue=scan_queue,
--                tenant_uuid=tenant_uuid,
--                media_items=media_items,
--                media_ids=media_ids,
--                media_sources=media_sources,
--                inline_processing=inline_processing,
--                auth=auth,
--            )
-+            operation_id=operation_id,
-+            request_fingerprint=fingerprint,
-+        ) as ticket:
-+            bound_job_id = bound_job_uuid(ticket, generated_job_id)
-+            if is_usage_replay(ticket, generated_job_id):
-+                response = queued_analyze_job_response(bound_job_id, total_media_items)
-+            else:
-+                response = await _schedule_analysis(
-+                    background_tasks=background_tasks,
-+                    session=session,
-+                    scan_queue=scan_queue,
-+                    tenant_uuid=tenant_uuid,
-+                    media_items=media_items,
-+                    media_ids=media_ids,
-+                    media_sources=media_sources,
-+                    inline_processing=inline_processing,
-+                    auth=auth,
-+                    job_id=bound_job_id,
-+                )
-         outcome = "queued"
-         return response
-     except ProgrammingError as exc:
-diff --git a/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py b/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py
---- a/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py
-+++ b/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py
-@@ -29,7 +29,7 @@ from collections.abc import Iterable
- from contextlib import suppress
- from datetime import UTC, datetime
- 
--from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
- from python_multipart.exceptions import FormParserError
- from python_multipart.multipart import parse_options_header
- from sqlalchemy.ext.asyncio import async_sessionmaker
-@@ -55,12 +55,19 @@ from recognition.interface_adapters.http.deps.object_store import (
- )
- from recognition.interface_adapters.http.deps.usage_admission import (
-     admit_usage,
--    build_usage_idempotency_key,
-     get_usage_admission_service,
- )
- from recognition.interface_adapters.http.middleware.correlation import (
-     get_correlation_id,
- )
-+from recognition.interface_adapters.http.routers.analyze import (
-+    bound_job_uuid,
-+    build_analyze_request_fingerprint,
-+    fingerprint_options_from_envelope,
-+    is_usage_replay,
-+    queued_analyze_job_response,
-+    resolve_analyze_operation_id,
-+)
- from recognition.interface_adapters.http.schemas.requests import MediaItem
- from recognition.interface_adapters.http.schemas.responses import (
-     JobProgressResponse,
-@@ -284,10 +291,11 @@ def _extract_request_envelope(form_data: FormData) -> dict:
-     return envelope
- 
- 
--def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
-+def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str], int]:
-     """Read stable upload digests without consuming the streams used by persistence."""
-     media_ids: list[str] = []
-     media_sources: list[str] = []
-+    queue_bytes = 0
-     for key, value in form_data.multi_items():
-         if not key.startswith(_IMAGE_KEY_PREFIX) or not isinstance(value, UploadFile):
-             continue
-@@ -299,7 +307,8 @@ def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
-             media_id = str(int(media_id))
-         media_ids.append(media_id)
-         media_sources.append(hashlib.sha256(data).hexdigest())
--    return media_ids, media_sources
-+        queue_bytes += len(data)
-+    return media_ids, media_sources, queue_bytes
- 
- 
- @router.post(
-@@ -310,6 +319,7 @@ def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
- async def analyze_media_multipart(
-     request: Request,
-     background_tasks: BackgroundTasks,
-+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-     auth=Depends(require_write_access),
-     session=Depends(get_optional_session),
-     scan_queue=Depends(get_scan_queue_service_optional),
-@@ -357,6 +367,7 @@ async def analyze_media_multipart(
-             scan_queue=scan_queue,
-             object_store_factory=object_store_factory,
-             usage_admission_service=usage_admission_service,
-+            idempotency_key=idempotency_key,
-         )
-     finally:
-         await form_data.close()
-@@ -371,6 +382,7 @@ async def _analyze_media_multipart_form(
-     scan_queue,
-     object_store_factory: ObjectStoreFactory,
-     usage_admission_service=None,
-+    idempotency_key: str | None = None,
- ) -> JobStatusResponse:
-     """Validate, persist, and dispatch an already-parsed multipart request."""
-     pre_generated_job_id = uuid.uuid4()
-@@ -412,20 +424,33 @@ async def _analyze_media_multipart_form(
-         await require_tenant_record(session, tenant_uuid)
-         await require_scan_dispatch_ready(session, inline_processing=inline_processing)
- 
--    usage_media_ids, usage_media_sources = _multipart_usage_inputs(form_data)
-+    usage_media_ids, usage_media_sources, queue_bytes = _multipart_usage_inputs(form_data)
-     if not usage_media_ids:
-         raise HTTPException(
-             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-             detail=("multipart submission must include at least one image_<media_id> part"),
-         )
--    idempotency_key = build_usage_idempotency_key(tenant_uuid, usage_media_ids, usage_media_sources)
-+    operation_id = resolve_analyze_operation_id(header_value=idempotency_key, envelope=envelope)
-+    fingerprint = build_analyze_request_fingerprint(
-+        tenant_id=tenant_uuid,
-+        route="analyze_multipart",
-+        media_ids=usage_media_ids,
-+        media_sources=usage_media_sources,
-+        options=fingerprint_options_from_envelope(envelope),
-+    )
-     async with admit_usage(
-         usage_admission_service,
-         tenant_id=tenant_uuid,
--        idempotency_key=idempotency_key,
-+        idempotency_key=operation_id,
-         job_id=str(pre_generated_job_id),
-         cost_units=len(usage_media_ids),
--    ):
-+        operation_id=operation_id,
-+        request_fingerprint=fingerprint,
-+        queue_bytes=queue_bytes,
-+    ) as ticket:
-+        bound_job_id = bound_job_uuid(ticket, pre_generated_job_id)
-+        if is_usage_replay(ticket, pre_generated_job_id):
-+            return queued_analyze_job_response(bound_job_id, len(usage_media_ids))
-         return await _persist_and_dispatch_multipart(
-             form_data=form_data,
-             background_tasks=background_tasks,
-@@ -435,7 +460,7 @@ async def _analyze_media_multipart_form(
-             object_store_factory=object_store_factory,
-             tenant_uuid=tenant_uuid,
-             canonical_tenant_id=canonical_tenant_id,
--            pre_generated_job_id=pre_generated_job_id,
-+            pre_generated_job_id=bound_job_id,
-             inline_processing=inline_processing,
-         )
- 
-@@ -513,19 +538,25 @@ async def _persist_and_dispatch_multipart(
-     # attribute access leaks here. Slice B (OCI) swaps the factory via
-     # app.dependency_overrides[get_object_store_factory_for_request] without
-     # touching this route.
--    background_tasks.add_task(
--        chain_populate_and_process,
--        tenant_id=str(tenant_uuid),
--        job_id=str(persisted_job_id),
--        media_items=media_items_tuples,
--        media_ids=media_ids,
--        media_sources=media_sources,
--        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
--        session_factory=session_factory,
--        inline_processing=inline_processing,
--        correlation_id=get_correlation_id(),
--        object_store_factory=object_store_factory,
--    )
-+    try:
-+        background_tasks.add_task(
-+            chain_populate_and_process,
-+            tenant_id=str(tenant_uuid),
-+            job_id=str(persisted_job_id),
-+            media_items=media_items_tuples,
-+            media_ids=media_ids,
-+            media_sources=media_sources,
-+            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-+            session_factory=session_factory,
-+            inline_processing=inline_processing,
-+            correlation_id=get_correlation_id(),
-+            object_store_factory=object_store_factory,
-+        )
-+    except Exception:
-+        logger.exception(
-+            "Multipart scan dispatch failed after job commit",
-+            extra={"job_id": str(persisted_job_id), "tenant_id": canonical_tenant_id},
-+        )
- 
-     # E15-11 S3.1: structured single-line telemetry for the multipart route so
-     # transport failures can be triaged without parsing FastAPI access logs.
-diff --git a/apps/prototype-description-service/recognition/interface_adapters/http/routers/cluster_revert.py b/apps/prototype-description-service/recognition/interface_adapters/http/routers/cluster_revert.py
---- a/apps/prototype-description-service/recognition/interface_adapters/http/routers/cluster_revert.py
-+++ b/apps/prototype-description-service/recognition/interface_adapters/http/routers/cluster_revert.py
-@@ -2,6 +2,7 @@
- 
- from __future__ import annotations
- 
-+from typing import Any
- from uuid import UUID
- 
- from fastapi import APIRouter, Depends, HTTPException, status
-@@ -15,6 +16,7 @@ from recognition.application.orchestration.cluster_merge import (
-     MergeReceiptStaleError,
-     revert_merge,
- )
-+from recognition.domain.portal_contracts import PortalPrincipal
- from recognition.interface_adapters.http.deps import (
-     get_cluster_service_builder,
-     get_session,
-@@ -28,6 +30,8 @@ router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depen
- 
- _PROBLEM_JSON = "application/problem+json"
- _PROBLEM_BASE = "https://context-alt-text.dev/problems"
-+_OPERATOR_FORBIDDEN_DETAIL = "operator_control_forbidden"
-+_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
- 
- 
- class RevertMergeRequest(BaseModel):
-@@ -38,6 +42,42 @@ class RevertMergeResponse(BaseModel):
-     source_cluster_id: UUID = Field(description="Restored source cluster id")
- 
- 
-+def _normalized_auth_marker(value: Any) -> str | None:
-+    raw = getattr(value, "value", value)
-+    if isinstance(raw, str) and raw.strip():
-+        return raw.strip().lower().replace("-", "_")
-+    return None
-+
-+
-+def _is_portal_principal(auth: Any) -> bool:
-+    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
-+    if isinstance(auth, PortalPrincipal):
-+        return True
-+    issuer = getattr(auth, "issuer", None)
-+    subject = getattr(auth, "subject", None)
-+    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
-+
-+
-+def _is_beta_or_portal_caller(auth: Any) -> bool:
-+    """Fail closed for portal principals; AuthContext has no entitlement field."""
-+    if auth is None:
-+        return False
-+    if _is_portal_principal(auth):
-+        return True
-+    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
-+        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
-+            return True
-+    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
-+
-+
-+def _deny_beta_operator_caller(auth: Any) -> None:
-+    if _is_beta_or_portal_caller(auth):
-+        raise HTTPException(
-+            status_code=status.HTTP_403_FORBIDDEN,
-+            detail=_OPERATOR_FORBIDDEN_DETAIL,
-+        )
-+
-+
- def _problem(*, code: str, title: str, type_slug: str) -> JSONResponse:
-     """RFC 7807 problem details with a stable `code` (API-05)."""
-     return JSONResponse(
-@@ -62,6 +102,7 @@ async def revert_merge_cluster(
-     cluster_service_builder=Depends(get_cluster_service_builder),
- ) -> RevertMergeResponse | JSONResponse:
-     """Revert the named receipt on the path survivor cluster (CONTRACTSROSTER-R-03)."""
-+    _deny_beta_operator_caller(_auth)
-     auth_tenant_id = getattr(_auth, "tenant_claim", None)
-     service_tenant_id = tenant_id
-     if auth_tenant_id:
-diff --git a/apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py b/apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py
---- a/apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py
-+++ b/apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters_admission.py
-@@ -10,6 +10,7 @@ from __future__ import annotations
- import logging
- import time as _time
- from datetime import UTC, datetime
-+from typing import Any
- from uuid import UUID
- 
- from fastapi import APIRouter, Depends, HTTPException, Request, status
-@@ -21,6 +22,7 @@ from db.models import Tenant
- from db.settings import get_database_settings
- from db.tenant_context import set_tenant_context
- from recognition.domain.job import JobStatus, JobType
-+from recognition.domain.portal_contracts import PortalPrincipal
- from recognition.interface_adapters.http.deps import (
-     get_cluster_service_builder,
-     get_cluster_service_builder_clustering,
-@@ -63,6 +65,8 @@ _logger = logging.getLogger(__name__)
- # clustering-service exception text (DB driver messages, SQL fragments, absolute
- # paths) never crosses.
- INTERNAL_ERROR_DETAIL = "internal server error"
-+_OPERATOR_FORBIDDEN_DETAIL = "operator_control_forbidden"
-+_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
- 
- # E15-3a-BR-21 Slice 2: admission fail-fast queries. Documented on the probe
- # helper below. The defaults used for the default statement_timeout restore
-@@ -99,6 +103,42 @@ _QUERY_CANCELED_SQLSTATE = "57014"
- router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
- 
- 
-+def _normalized_auth_marker(value: Any) -> str | None:
-+    raw = getattr(value, "value", value)
-+    if isinstance(raw, str) and raw.strip():
-+        return raw.strip().lower().replace("-", "_")
-+    return None
-+
-+
-+def _is_portal_principal(auth: Any) -> bool:
-+    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
-+    if isinstance(auth, PortalPrincipal):
-+        return True
-+    issuer = getattr(auth, "issuer", None)
-+    subject = getattr(auth, "subject", None)
-+    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
-+
-+
-+def _is_beta_or_portal_caller(auth: Any) -> bool:
-+    """Fail closed for portal principals; AuthContext has no entitlement field."""
-+    if auth is None:
-+        return False
-+    if _is_portal_principal(auth):
-+        return True
-+    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
-+        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
-+            return True
-+    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
-+
-+
-+def _deny_beta_operator_caller(auth: Any) -> None:
-+    if _is_beta_or_portal_caller(auth):
-+        raise HTTPException(
-+            status_code=status.HTTP_403_FORBIDDEN,
-+            detail=_OPERATOR_FORBIDDEN_DETAIL,
-+        )
-+
-+
- def _is_query_canceled(exc: DBAPIError) -> bool:
-     """Return True if the DBAPIError wraps a Postgres statement_timeout cancel."""
-     orig = getattr(exc, "orig", None)
-@@ -221,7 +261,9 @@ async def create_clustering_job(
-     _admission_started_at = _time.perf_counter()
-     _admission_status: int = status.HTTP_202_ACCEPTED
-     try:
--        if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
-+        _deny_beta_operator_caller(auth)
-+        tenant_claim = getattr(auth, "tenant_claim", None)
-+        if auth and tenant_claim and tenant_claim != request.tenant_id:
-             _admission_status = status.HTTP_403_FORBIDDEN
-             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
- 
-@@ -353,6 +395,7 @@ async def recover_orphan_identities(
-     _demo_quota: object = Depends(enforce_demo_quota),
- ) -> OrphanRecoveryResponse:
-     """Re-cluster any orphaned identities for a tenant."""
-+    _deny_beta_operator_caller(auth)
-     assert_tenant_match(auth, request.tenant_id)
- 
-     cluster_service = await cluster_service_builder(request.tenant_id)
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_app1_operator_usage_census.py b/apps/prototype-description-service/recognition/tests/unit/test_app1_operator_usage_census.py
+diff --git a/apps/prototype-description-service/recognition/application/services/usage_settlement_service.py b/apps/prototype-description-service/recognition/application/services/usage_settlement_service.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_app1_operator_usage_census.py
-@@ -0,0 +1,498 @@
-+"""G4 operator route census: beta/portal deny before mutation; status remains free.
++++ b/apps/prototype-description-service/recognition/application/services/usage_settlement_service.py
+@@ -0,0 +1,583 @@
++"""G3 usage settlement: reconstruct tickets from persisted jobs and settle once.
 +
-+Endpoint/method/auth classification (mounted paths below include router prefixes):
++Workers capture the opaque reservation fence at claim and pass it unchanged to
++``commit_fenced`` / ``release_fenced``. This module never synthesizes a fence or
++replaces a captured token with the current row. Sweeper/reclaim may use the
++persisted token only after proving the bound job is inactive or terminal under
++DB locks; elapsed reservation age alone is not authorization to release.
 +
-+| Method | Path | Auth | Usage policy |
-+| --- | --- | --- | --- |
-+| POST | /scene/gpu/intent | require_write_access | beta/portal/demo deny (`gpu_control_forbidden`) before intent write |
-+| GET | /scene/gpu/status | require_auth | free polling; no reservation or intent mutation |
-+| POST | /recognition/clustering/jobs | require_write_access | beta/portal deny before sync compute or async job create |
-+| POST | /recognition/clusters/recover-orphans | require_write_access | beta/portal deny before recluster |
-+| POST | /recognition/clusters/{cluster_id}/revert-merge | require_write_access | beta/portal deny before revert |
-+
-+Remaining gaps (not owned here): AuthContext has no entitlement field, so a beta
-+tenant API key without an explicit beta marker is indistinguishable from an
-+operator key; GET /recognition/jobs/{job_id} lives on the analyze router.
++[RES-01][RES-02][RES-05][DATA-03][GRPH-09]
 +"""
 +
 +from __future__ import annotations
 +
-+from collections.abc import AsyncIterator
-+from contextlib import asynccontextmanager
-+from datetime import UTC, datetime
-+from types import SimpleNamespace
++import logging
++from dataclasses import dataclass, field
++from enum import StrEnum
 +from typing import Any
-+from uuid import UUID, uuid4
++from uuid import UUID
 +
-+import httpx
-+import pytest
-+from fastapi import FastAPI
++from sqlalchemy import select
++from sqlalchemy.exc import OperationalError, ProgrammingError
++from sqlalchemy.ext.asyncio import AsyncSession
++from sqlalchemy.orm import noload
 +
-+from recognition.domain.cluster import IdentityCluster
-+from recognition.domain.portal_contracts import EntitlementStatus, PortalPrincipal, UsageTicket
-+from recognition.interface_adapters.http import deps as dependencies
-+from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth, require_write_access
-+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
-+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
-+from recognition.interface_adapters.http.deps.tenant import get_tenant_id
-+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
-+from recognition.interface_adapters.http.routers import cluster_revert as cluster_revert_module
-+from recognition.interface_adapters.http.routers import clusters_admission as clusters_admission_module
-+from recognition.tests.api.conftest import FakeSession
-+from recognition.tests.fakes import FakeJobService
-+from scene.interface_adapters.http.routers import gpu as gpu_routes
++from db.models import IdentityScanJob, UsageReservation
++from db.models.scene import DescribeDemandLease, DescribeOperation, DescribeRun
++from recognition.application.services.usage_admission_service import (
++    UsageAdmissionService,
++    UsageFenceMismatchError,
++)
++from recognition.domain.job import TERMINAL_JOB_STATUSES, JobStatus
++from recognition.domain.portal_contracts import UsageReservationStatus, UsageTicket
++from recognition.infrastructure.repositories.usage_repository import SqlAlchemyUsageRepository
++from scene.domain.describe_run import TERMINAL_RUN_STATUSES, DescribeRunStatus
 +
-+TENANT_ID = "11111111-1111-1111-1111-111111111111"
-+OTHER_TENANT_ID = "22222222-2222-2222-2222-222222222222"
-+PORTAL_TENANT = UUID(TENANT_ID)
-+NOW = 1_786_125_000.0
++_logger = logging.getLogger(__name__)
 +
-+OPERATOR_USAGE_CENSUS: tuple[tuple[str, str, str, str], ...] = (
-+    ("POST", "/scene/gpu/intent", "require_write_access", "beta_deny"),
-+    ("GET", "/scene/gpu/status", "require_auth", "free"),
-+    ("POST", "/recognition/clustering/jobs", "require_write_access", "beta_deny"),
-+    ("POST", "/recognition/clusters/recover-orphans", "require_write_access", "beta_deny"),
-+    ("POST", "/recognition/clusters/{cluster_id}/revert-merge", "require_write_access", "beta_deny"),
++_ACTIVE_DESCRIBE_STATUSES = {DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING}
++_ACTIVE_SCAN_STATUSES = {JobStatus.PENDING, JobStatus.RUNNING}
++_SUCCESS_DESCRIBE_STATUSES = {
++    DescribeRunStatus.COMPLETED,
++    DescribeRunStatus.COMPLETED_WITH_ERRORS,
++}
++_SUCCESS_SCAN_STATUSES = {JobStatus.COMPLETED, JobStatus.COMPLETED_WITH_ERRORS}
++_MISSING_RELATION_MARKERS = ("no such table", "does not exist", "undefinedtable")
++
++# G1 does not expose a settle-time API that binds reservation.fence_token to
++# usage_admission_global_state.fence_epoch. Workers therefore treat the token as
++# opaque and refuse to refresh it on a callback. [GRPH-09]
++MISSING_GENERATION_FENCE_CONTRACT = (
++    "G1 settle identity is reservation_id+tenant+idempotency+cost+opaque fence_token; "
++    "there is no shared-repo API to re-fence a captured worker callback against "
++    "usage_admission_global_state.fence_epoch. Stale callbacks must keep the claim-time "
++    "token and must not substitute the current reservation.fence_token."
 +)
 +
 +
-+class _FakeAdmission:
-+    def __init__(self) -> None:
-+        self.reserves: list[dict[str, object]] = []
-+        self.commits: list[UsageTicket] = []
-+        self.releases: list[UsageTicket] = []
-+
-+    async def reserve(self, tenant_id: object, **kwargs: object) -> UsageTicket:
-+        self.reserves.append({"tenant_id": tenant_id, **kwargs})
-+        return UsageTicket(uuid4(), PORTAL_TENANT, "key", 1)
-+
-+    async def commit(self, ticket: UsageTicket) -> None:
-+        self.commits.append(ticket)
-+
-+    async def release(self, ticket: UsageTicket) -> None:
-+        self.releases.append(ticket)
++class SettlementOutcome(StrEnum):
++    COMMITTED = "committed"
++    RELEASED = "released"
++    SKIPPED_ACTIVE = "skipped_active"
++    REJECTED = "rejected"
++    MISSING = "missing"
++    FAIL_CLOSED = "fail_closed"
++    ALREADY_SETTLED = "already_settled"
 +
 +
-+class _ClusterSpy:
-+    def __init__(self) -> None:
-+        self.calls: list[str] = []
-+        self.assignment_writer = object()
-+        self.merge_suggestion_service = None
++@dataclass(frozen=True, slots=True)
++class UsageClaim:
++    """Fence captured from the persisted reservation at work claim."""
 +
-+    async def cluster_unclustered_identities(self, tenant_id: str) -> SimpleNamespace:
-+        self.calls.append(tenant_id)
-+        now = datetime.now(tz=UTC)
-+        return SimpleNamespace(
-+            job_id=str(uuid4()),
-+            started_at=now,
-+            finished_at=now,
-+            completed=0,
-+            total=0,
-+            accepted=0,
-+            suggested=0,
-+            rejected=0,
-+            clusters_created=0,
-+        )
++    ticket: UsageTicket
++    fence_token: str
 +
 +
-+def _operator_auth(*, tenant_id: str = TENANT_ID) -> AuthContext:
-+    return AuthContext(
-+        token="operator-key",
-+        tenant_claim=tenant_id,
-+        api_key_id="key-operator",
-+        rate_limit_tier="STANDARD",
-+        enabled=True,
++@dataclass(frozen=True, slots=True)
++class SettlementResult:
++    outcome: SettlementOutcome
++    reservation_id: UUID | None = None
++    detail: str = ""
++
++
++@dataclass
++class SweepReport:
++    released: int = 0
++    committed: int = 0
++    skipped_active: int = 0
++    rejected: int = 0
++    fail_closed: int = 0
++    already_settled: int = 0
++    missing: int = 0
++    stale_seen: int = 0
++    batches: int = 0
++    no_progress_cycles: int = 0
++    stalled: bool = False
++    exit_code: int = 0
++    notes: list[str] = field(default_factory=list)
++
++
++def ticket_from_reservation(reservation: UsageReservation) -> UsageTicket:
++    """Rebuild a G1 ticket from the persisted reservation row. Token stays opaque."""
++    return UsageTicket(
++        reservation_id=reservation.id,
++        tenant_id=reservation.tenant_id,
++        idempotency_key=reservation.idempotency_key,
++        cost_units=int(reservation.cost_units),
++        operation_id=reservation.operation_id or reservation.idempotency_key,
++        request_fingerprint=reservation.request_fingerprint or reservation.idempotency_key,
++        job_id=reservation.job_id,
++        fence_token=reservation.fence_token or "",
 +    )
 +
 +
-+def _demo_auth() -> AuthContext:
-+    return AuthContext(
-+        token="demo-key",
-+        tenant_claim=TENANT_ID,
-+        api_key_id="key-demo",
-+        rate_limit_tier="demo",
-+        enabled=True,
-+    )
++def _missing_relation(exc: BaseException) -> bool:
++    message = str(exc).lower()
++    return any(marker in message for marker in _MISSING_RELATION_MARKERS)
 +
 +
-+def _beta_auth() -> AuthContext:
-+    return AuthContext(
-+        token="beta-key",
-+        tenant_claim=TENANT_ID,
-+        api_key_id="key-beta",
-+        rate_limit_tier="beta",
-+        enabled=True,
-+    )
-+
-+
-+def _beta_entitlement_auth() -> AuthContext:
-+    auth = _operator_auth()
-+    auth.entitlement_status = EntitlementStatus.BETA_ACTIVE  # type: ignore[attr-defined]
-+    return auth
-+
-+
-+def _portal_principal() -> PortalPrincipal:
-+    return PortalPrincipal(
-+        tenant_id=PORTAL_TENANT,
-+        issuer="https://issuer.example.test",
-+        subject="user_beta",
-+        email="beta@example.test",
-+    )
-+
-+
-+def _override_auth(app: FastAPI, auth: object) -> None:
-+    async def _auth() -> object:
-+        return auth
-+
-+    async def _none() -> None:
++def _as_uuid(value: str | UUID | None) -> UUID | None:
++    if value is None:
++        return None
++    if isinstance(value, UUID):
++        return value
++    try:
++        return UUID(str(value))
++    except (TypeError, ValueError):
 +        return None
 +
-+    app.dependency_overrides[require_auth] = _auth
-+    app.dependency_overrides[require_write_access] = _auth
-+    app.dependency_overrides[enforce_rate_limit] = _none
-+    app.dependency_overrides[enforce_demo_quota] = _none
 +
-+
-+@asynccontextmanager
-+async def _gpu_client(
-+    monkeypatch: pytest.MonkeyPatch,
-+    tmp_path: Any,
-+    *,
-+    auth: object,
-+    admission: _FakeAdmission | None = None,
-+) -> AsyncIterator[tuple[httpx.AsyncClient, _FakeAdmission, list[tuple[tuple[Any, ...], dict[str, Any]]]]]:
-+    state_path = tmp_path / "gpu-state.json"
-+    load_path = tmp_path / "describe-load.json"
-+    intent_path = tmp_path / "gpu-intent.json"
-+    monkeypatch.setenv("ACX_GPU_STATE_PATH", str(state_path))
-+    monkeypatch.setenv("ACX_DESCRIBE_LOAD_PATH", str(load_path))
-+    monkeypatch.setenv("ACX_GPU_INTENT_PATH", str(intent_path))
-+    monkeypatch.setattr(gpu_routes, "_now", lambda: NOW)
-+
-+    writes: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-+    original_write = gpu_routes.write_gpu_intent
-+
-+    def _spy_write(*args: Any, **kwargs: Any) -> Any:
-+        writes.append((args, kwargs))
-+        return original_write(*args, **kwargs)
-+
-+    monkeypatch.setattr(gpu_routes, "write_gpu_intent", _spy_write)
-+
-+    service = admission or _FakeAdmission()
-+    app = FastAPI()
-+    app.include_router(gpu_routes.router, prefix="/scene")
-+    app.state.usage_admission_service = service
-+    _override_auth(app, auth)
-+
-+    async def _usage() -> _FakeAdmission:
-+        return service
-+
-+    app.dependency_overrides[get_usage_admission_service] = _usage
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-+        yield client, service, writes
-+
-+
-+@asynccontextmanager
-+async def _cluster_client(
-+    monkeypatch: pytest.MonkeyPatch,
-+    *,
-+    auth: object,
-+    tenant_id: str = TENANT_ID,
-+    admission: _FakeAdmission | None = None,
-+) -> AsyncIterator[tuple[httpx.AsyncClient, _ClusterSpy, FakeJobService, _FakeAdmission, list[dict[str, Any]]]]:
-+    service = admission or _FakeAdmission()
-+    cluster_spy = _ClusterSpy()
-+    job_service = FakeJobService()
-+    revert_calls: list[dict[str, Any]] = []
-+    session = FakeSession()
-+
-+    async def _builder(_tenant_id: str) -> _ClusterSpy:
-+        return cluster_spy
-+
-+    async def _jobs() -> FakeJobService:
-+        return job_service
-+
-+    async def _usage() -> _FakeAdmission:
-+        return service
-+
-+    async def _revert(**kwargs: Any) -> IdentityCluster:
-+        revert_calls.append(kwargs)
-+        return IdentityCluster(
-+            id=str(uuid4()),
-+            tenant_id=str(kwargs["tenant_id"]),
-+            is_labeled=True,
-+            identity_count=1,
-+            label="restored",
-+        )
-+
-+    async def _broadcast(*_args: Any, **_kwargs: Any) -> None:
-+        return None
-+
-+    monkeypatch.setattr(cluster_revert_module, "revert_merge", _revert)
-+    monkeypatch.setattr(
-+        cluster_revert_module,
-+        "get_event_broadcaster",
-+        lambda: SimpleNamespace(broadcast=_broadcast),
++def _has_started(job: Any) -> bool:
++    return (
++        getattr(job, "started_at", None) is not None
++        or getattr(job, "queue_ms", None) is not None
++        or getattr(job, "processing_ms", None) is not None
 +    )
 +
-+    async def _yield_session() -> Any:
-+        yield session
 +
-+    def _cluster_builder() -> Any:
-+        return _builder
++class UsageSettlementService:
++    """Look up reservation+job evidence and settle through G1 only."""
 +
-+    app = FastAPI()
-+    app.include_router(clusters_admission_module.router, prefix="/recognition")
-+    app.include_router(cluster_revert_module.router, prefix="/recognition")
-+    app.state.usage_admission_service = service
-+    _override_auth(app, auth)
-+    app.dependency_overrides[get_tenant_id] = lambda: tenant_id
-+    app.dependency_overrides[dependencies.get_clustering_session] = _yield_session
-+    app.dependency_overrides[dependencies.get_session] = _yield_session
-+    app.dependency_overrides[dependencies.get_cluster_service_builder] = _cluster_builder
-+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = _cluster_builder
-+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = _jobs
-+    app.dependency_overrides[get_usage_admission_service] = _usage
++    def __init__(
++        self,
++        session: AsyncSession,
++        *,
++        admission: UsageAdmissionService | None = None,
++    ) -> None:
++        self._session = session
++        self._admission = admission or UsageAdmissionService(session)
 +
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-+        yield client, cluster_spy, job_service, service, revert_calls
++    async def _lookup(self, statement):
++        try:
++            async with self._session.begin_nested():
++                result = await self._session.execute(statement)
++                return result.scalar_one_or_none()
++        except (OperationalError, ProgrammingError) as exc:
++            if _missing_relation(exc):
++                return None
++            raise
 +
-+
-+def _mounted_routes(router: Any, prefix: str) -> set[tuple[str, str]]:
-+    mounted: set[tuple[str, str]] = set()
-+    for route in router.routes:
-+        for method in getattr(route, "methods", None) or ():
-+            if method in {"HEAD", "OPTIONS"}:
-+                continue
-+            mounted.add((method, f"{prefix}{route.path}"))
-+    return mounted
-+
-+
-+def test_operator_usage_census_matches_mounted_routes() -> None:
-+    gpu_paths = _mounted_routes(gpu_routes.router, "/scene")
-+    admission_paths = _mounted_routes(clusters_admission_module.router, "/recognition")
-+    revert_paths = _mounted_routes(cluster_revert_module.router, "/recognition")
-+    mounted = {(method, path) for method, path, _auth, _policy in OPERATOR_USAGE_CENSUS}
-+    assert mounted <= (gpu_paths | admission_paths | revert_paths)
-+    assert ("POST", "/scene/gpu/intent") in gpu_paths
-+    assert ("GET", "/scene/gpu/status") in gpu_paths
-+    assert ("POST", "/recognition/clustering/jobs") in admission_paths
-+    assert ("POST", "/recognition/clusters/recover-orphans") in admission_paths
-+    assert ("POST", "/recognition/clusters/{cluster_id}/revert-merge") in revert_paths
-+
-+
-+@pytest.mark.asyncio
-+@pytest.mark.parametrize("auth_factory", [_beta_auth, _beta_entitlement_auth, _portal_principal, _demo_auth])
-+async def test_gpu_intent_denies_restricted_callers_before_write(
-+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, auth_factory: Any
-+) -> None:
-+    async with _gpu_client(monkeypatch, tmp_path, auth=auth_factory()) as (client, admission, writes):
-+        response = await client.post("/scene/gpu/intent", json={"action": "start"})
-+
-+    assert response.status_code == 403
-+    assert response.json()["detail"] == "gpu_control_forbidden"
-+    assert writes == []
-+    assert admission.reserves == []
-+    assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_gpu_intent_allows_existing_operator_branch(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-+    async with _gpu_client(monkeypatch, tmp_path, auth=_operator_auth()) as (client, admission, writes):
-+        response = await client.post("/scene/gpu/intent", json={"action": "start", "ttl_seconds": 90})
-+
-+    assert response.status_code == 202
-+    assert response.json()["intent"]["action"] == "start"
-+    assert len(writes) == 1
-+    assert admission.reserves == []
-+    assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_gpu_status_polling_is_free_for_beta_and_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-+    for auth in (_beta_auth(), _portal_principal(), _operator_auth()):
-+        async with _gpu_client(monkeypatch, tmp_path, auth=auth) as (client, admission, writes):
-+            first = await client.get("/scene/gpu/status")
-+            second = await client.get("/scene/gpu/status")
-+
-+        assert first.status_code == 200
-+        assert second.status_code == 200
-+        assert writes == []
-+        assert admission.reserves == []
-+        assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+@pytest.mark.parametrize("mode", ["sync", "async"])
-+@pytest.mark.parametrize("auth_factory", [_beta_auth, _beta_entitlement_auth, _portal_principal])
-+async def test_clustering_jobs_deny_beta_before_compute_or_job_create(
-+    monkeypatch: pytest.MonkeyPatch, mode: str, auth_factory: Any
-+) -> None:
-+    async with _cluster_client(monkeypatch, auth=auth_factory()) as (
-+        client,
-+        cluster_spy,
-+        job_service,
-+        admission,
-+        revert_calls,
-+    ):
-+        response = await client.post(
-+            "/recognition/clustering/jobs",
-+            json={"tenant_id": TENANT_ID, "mode": mode, "is_beta": False},
++    async def _get_reservation(self, *, tenant_id: UUID, job_id: str) -> UsageReservation | None:
++        return await self._lookup(
++            select(UsageReservation)
++            .where(
++                UsageReservation.tenant_id == tenant_id,
++                UsageReservation.job_id == job_id,
++            )
++            .limit(1)
 +        )
 +
-+    assert response.status_code == 403
-+    assert response.json()["detail"] == "operator_control_forbidden"
-+    assert cluster_spy.calls == []
-+    assert job_service.repository.jobs == {}
-+    assert admission.reserves == []
-+    assert admission.commits == []
-+    assert revert_calls == []
++    async def load_claim(self, *, tenant_id: UUID, job_id: str) -> UsageClaim | None:
++        """Read the persisted fence at claim. Never invent a token."""
++        reservation = await self._get_reservation(tenant_id=tenant_id, job_id=job_id)
++        if reservation is None or not (reservation.fence_token or "").strip():
++            return None
++        return UsageClaim(ticket=ticket_from_reservation(reservation), fence_token=reservation.fence_token)
 +
++    def _identity_ok(
++        self,
++        reservation: UsageReservation,
++        *,
++        fence_token: str,
++        operation_id: str | None,
++        request_fingerprint: str | None,
++        job_id: str | None,
++        tenant_id: UUID,
++    ) -> str | None:
++        if reservation.tenant_id != tenant_id:
++            return "tenant mismatch"
++        if job_id is not None and reservation.job_id and reservation.job_id != job_id:
++            return "job mismatch"
++        if operation_id and reservation.operation_id and reservation.operation_id != operation_id:
++            return "operation mismatch"
++        if (
++            request_fingerprint
++            and reservation.request_fingerprint
++            and reservation.request_fingerprint != request_fingerprint
++        ):
++            return "fingerprint mismatch"
++        if not fence_token or fence_token != (reservation.fence_token or ""):
++            return "fence mismatch"
++        return None
 +
-+@pytest.mark.asyncio
-+@pytest.mark.parametrize("mode", ["sync", "async"])
-+async def test_clustering_jobs_preserve_operator_branch(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
-+    async with _cluster_client(monkeypatch, auth=_operator_auth()) as (
-+        client,
-+        cluster_spy,
-+        job_service,
-+        admission,
-+        _revert_calls,
-+    ):
-+        response = await client.post(
-+            "/recognition/clustering/jobs",
-+            json={"tenant_id": TENANT_ID, "mode": mode, "is_beta": True},
++    async def _describe_evidence(self, *, tenant_id: UUID, job_uuid: UUID | None) -> SettlementOutcome | None:
++        if job_uuid is None:
++            return None
++        run = await self._lookup(
++            select(DescribeRun)
++            .options(noload(DescribeRun.items))
++            .where(DescribeRun.tenant_id == tenant_id, DescribeRun.id == job_uuid)
++            .limit(1)
 +        )
++        if run is None:
++            return None
++        try:
++            status = DescribeRunStatus(run.status)
++        except (TypeError, ValueError):
++            return SettlementOutcome.FAIL_CLOSED
++        if status in _ACTIVE_DESCRIBE_STATUSES:
++            return SettlementOutcome.SKIPPED_ACTIVE
++        if status not in TERMINAL_RUN_STATUSES:
++            return SettlementOutcome.FAIL_CLOSED
++        if status in _SUCCESS_DESCRIBE_STATUSES:
++            return SettlementOutcome.COMMITTED
++        if status is DescribeRunStatus.CANCELLED and not _has_started(run):
++            return SettlementOutcome.RELEASED
++        if status is DescribeRunStatus.FAILED and not _has_started(run):
++            return SettlementOutcome.RELEASED
++        return SettlementOutcome.COMMITTED
 +
-+    assert response.status_code == 202
-+    assert admission.reserves == []
-+    assert admission.commits == []
-+    if mode == "sync":
-+        assert cluster_spy.calls == [TENANT_ID]
-+    else:
-+        assert job_service.repository.jobs
-+
-+
-+@pytest.mark.asyncio
-+async def test_clustering_jobs_reject_tenant_mismatch_before_work(monkeypatch: pytest.MonkeyPatch) -> None:
-+    async with _cluster_client(monkeypatch, auth=_operator_auth()) as (
-+        client,
-+        cluster_spy,
-+        job_service,
-+        admission,
-+        _revert_calls,
-+    ):
-+        response = await client.post(
-+            "/recognition/clustering/jobs",
-+            json={"tenant_id": OTHER_TENANT_ID, "mode": "sync"},
++    async def _scan_evidence(self, *, tenant_id: UUID, job_uuid: UUID | None) -> SettlementOutcome | None:
++        if job_uuid is None:
++            return None
++        job = await self._lookup(
++            select(IdentityScanJob)
++            .options(noload(IdentityScanJob.items))
++            .where(IdentityScanJob.tenant_id == tenant_id, IdentityScanJob.id == job_uuid)
++            .limit(1)
 +        )
++        if job is None:
++            return None
++        try:
++            status = JobStatus(job.status)
++        except (TypeError, ValueError):
++            return SettlementOutcome.FAIL_CLOSED
++        if status in _ACTIVE_SCAN_STATUSES:
++            return SettlementOutcome.SKIPPED_ACTIVE
++        if status not in TERMINAL_JOB_STATUSES:
++            return SettlementOutcome.FAIL_CLOSED
++        if status in _SUCCESS_SCAN_STATUSES:
++            return SettlementOutcome.COMMITTED
++        if status is JobStatus.FAILED and not _has_started(job):
++            error = (job.error_message or "").lower()
++            if "cancel" in error:
++                return SettlementOutcome.RELEASED
++            return SettlementOutcome.RELEASED
++        if status is JobStatus.REJECTED and not _has_started(job):
++            return SettlementOutcome.RELEASED
++        return SettlementOutcome.COMMITTED
 +
-+    assert response.status_code == 403
-+    assert response.json()["detail"] == "tenant mismatch"
-+    assert cluster_spy.calls == []
-+    assert job_service.repository.jobs == {}
-+    assert admission.reserves == []
-+
-+
-+@pytest.mark.asyncio
-+@pytest.mark.parametrize("auth_factory", [_beta_auth, _portal_principal])
-+async def test_recover_orphans_denies_beta_before_recluster(monkeypatch: pytest.MonkeyPatch, auth_factory: Any) -> None:
-+    async with _cluster_client(monkeypatch, auth=auth_factory()) as (
-+        client,
-+        cluster_spy,
-+        _jobs,
-+        admission,
-+        _revert_calls,
-+    ):
-+        response = await client.post(
-+            "/recognition/clusters/recover-orphans",
-+            json={"tenant_id": TENANT_ID, "is_beta": False},
++    async def _operation_evidence(self, *, tenant_id: UUID, operation_id: str | None) -> SettlementOutcome | None:
++        if not operation_id:
++            return None
++        operation = await self._lookup(
++            select(DescribeOperation)
++            .where(
++                DescribeOperation.tenant_id == tenant_id,
++                DescribeOperation.operation_id == operation_id,
++            )
++            .limit(1)
 +        )
-+
-+    assert response.status_code == 403
-+    assert response.json()["detail"] == "operator_control_forbidden"
-+    assert cluster_spy.calls == []
-+    assert admission.reserves == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_recover_orphans_operator_and_tenant_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-+    async with _cluster_client(monkeypatch, auth=_operator_auth()) as (
-+        client,
-+        cluster_spy,
-+        _jobs,
-+        admission,
-+        _revert_calls,
-+    ):
-+        ok = await client.post("/recognition/clusters/recover-orphans", json={"tenant_id": TENANT_ID})
-+        mismatch = await client.post(
-+            "/recognition/clusters/recover-orphans",
-+            json={"tenant_id": OTHER_TENANT_ID},
++        if operation is None:
++            return None
++        lease = await self._lookup(
++            select(DescribeDemandLease)
++            .where(
++                DescribeDemandLease.tenant_id == tenant_id,
++                DescribeDemandLease.operation_id == operation_id,
++            )
++            .limit(1)
 +        )
++        if lease is not None and str(lease.state) == "active":
++            return SettlementOutcome.SKIPPED_ACTIVE
++        if operation.completed_at is None:
++            return SettlementOutcome.SKIPPED_ACTIVE
++        if operation.processing_ms is not None:
++            return SettlementOutcome.COMMITTED
++        return SettlementOutcome.RELEASED
 +
-+    assert ok.status_code == 200
-+    assert mismatch.status_code == 403
-+    assert mismatch.json()["detail"] == "tenant mismatch"
-+    assert cluster_spy.calls == [TENANT_ID]
-+    assert admission.reserves == []
-+    assert admission.commits == []
++    async def _decide(
++        self,
++        reservation: UsageReservation,
++        *,
++        allow_missing_job_release: bool,
++    ) -> SettlementOutcome:
++        job_uuid = _as_uuid(reservation.job_id)
++        for reader in (
++            lambda: self._describe_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid),
++            lambda: self._scan_evidence(tenant_id=reservation.tenant_id, job_uuid=job_uuid),
++            lambda: self._operation_evidence(tenant_id=reservation.tenant_id, operation_id=reservation.operation_id),
++        ):
++            outcome = await reader()
++            if outcome is not None:
++                return outcome
++        if allow_missing_job_release:
++            return SettlementOutcome.RELEASED
++        return SettlementOutcome.FAIL_CLOSED
 +
++    async def settle_job(
++        self,
++        *,
++        tenant_id: UUID,
++        job_id: str,
++        fence_token: str | None = None,
++        operation_id: str | None = None,
++        request_fingerprint: str | None = None,
++        allow_missing_job_release: bool = False,
++    ) -> SettlementResult:
++        """Settle one job through G1 using captured fence when provided.
 +
-+@pytest.mark.asyncio
-+@pytest.mark.parametrize("auth_factory", [_beta_auth, _portal_principal])
-+async def test_cluster_revert_denies_beta_before_mutation(monkeypatch: pytest.MonkeyPatch, auth_factory: Any) -> None:
-+    async with _cluster_client(monkeypatch, auth=auth_factory()) as (
-+        client,
-+        _cluster_spy,
-+        _jobs,
-+        admission,
-+        revert_calls,
-+    ):
-+        response = await client.post(
-+            f"/recognition/clusters/{uuid4()}/revert-merge",
-+            json={"receipt_id": str(uuid4()), "is_beta": False},
++        A captured ``fence_token`` is retained even if the row later shows a
++        different token. Missing/unknown job evidence fail-closes unless the
++        caller is the stale sweeper proving no job row exists.
++        """
++        reservation = await self._get_reservation(tenant_id=tenant_id, job_id=job_id)
++        if reservation is None:
++            return SettlementResult(SettlementOutcome.MISSING, detail="reservation not found")
++        try:
++            status = UsageReservationStatus(reservation.status)
++        except (TypeError, ValueError):
++            return SettlementResult(
++                SettlementOutcome.FAIL_CLOSED,
++                reservation_id=reservation.id,
++                detail="unknown reservation status",
++            )
++        if status is not UsageReservationStatus.RESERVED:
++            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=reservation.id)
++
++        if fence_token is None:
++            if not allow_missing_job_release:
++                # Worker callback without a captured fence: reconstruct from the
++                # row only after job evidence is proven. Token stays the persisted
++                # opaque value, never a newly generated one.
++                token = reservation.fence_token or ""
++            else:
++                token = reservation.fence_token or ""
++        else:
++            token = fence_token
++
++        mismatch = self._identity_ok(
++            reservation,
++            fence_token=token,
++            operation_id=operation_id,
++            request_fingerprint=request_fingerprint,
++            job_id=job_id,
++            tenant_id=tenant_id,
 +        )
++        if mismatch:
++            return SettlementResult(
++                SettlementOutcome.REJECTED,
++                reservation_id=reservation.id,
++                detail=mismatch,
++            )
 +
-+    assert response.status_code == 403
-+    assert response.json()["detail"] == "operator_control_forbidden"
-+    assert revert_calls == []
-+    assert admission.reserves == []
++        decision = await self._decide(reservation, allow_missing_job_release=allow_missing_job_release)
++        if decision is SettlementOutcome.SKIPPED_ACTIVE:
++            return SettlementResult(decision, reservation_id=reservation.id, detail="job still active")
++        if decision is SettlementOutcome.FAIL_CLOSED:
++            return SettlementResult(
++                decision,
++                reservation_id=reservation.id,
++                detail="unsafe unknown job state; not releasing",
++            )
++        if decision not in {SettlementOutcome.COMMITTED, SettlementOutcome.RELEASED}:
++            return SettlementResult(SettlementOutcome.FAIL_CLOSED, reservation_id=reservation.id)
 +
++        ticket = ticket_from_reservation(reservation)
++        try:
++            if decision is SettlementOutcome.COMMITTED:
++                await self._admission.commit_fenced(ticket, fence_token=token)
++            else:
++                await self._admission.release_fenced(ticket, fence_token=token)
++        except UsageFenceMismatchError:
++            return SettlementResult(
++                SettlementOutcome.REJECTED,
++                reservation_id=reservation.id,
++                detail="stale fence rejected by G1",
++            )
++        return SettlementResult(decision, reservation_id=reservation.id)
 +
-+@pytest.mark.asyncio
-+async def test_cluster_revert_operator_and_tenant_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-+    async with _cluster_client(monkeypatch, auth=_operator_auth(), tenant_id=OTHER_TENANT_ID) as (
-+        client,
-+        _cluster_spy,
-+        _jobs,
-+        admission,
-+        revert_calls,
-+    ):
-+        mismatch = await client.post(
-+            f"/recognition/clusters/{uuid4()}/revert-merge",
-+            json={"receipt_id": str(uuid4())},
++    async def settle_ticket(
++        self,
++        ticket: UsageTicket,
++        *,
++        action: SettlementOutcome,
++        fence_token: str | None = None,
++    ) -> SettlementResult:
++        """Direct terminal callback with a captured ticket+fence (worker path)."""
++        token = fence_token if fence_token is not None else ticket.fence_token
++        if not token:
++            return SettlementResult(SettlementOutcome.FAIL_CLOSED, detail="missing captured fence")
++        if action is SettlementOutcome.COMMITTED:
++            job_decision = SettlementOutcome.COMMITTED
++        elif action is SettlementOutcome.RELEASED:
++            job_decision = SettlementOutcome.RELEASED
++        else:
++            return SettlementResult(SettlementOutcome.FAIL_CLOSED, detail="invalid terminal action")
++        reservation = await self._lookup(
++            select(UsageReservation)
++            .where(
++                UsageReservation.id == ticket.reservation_id,
++                UsageReservation.tenant_id == ticket.tenant_id,
++            )
++            .limit(1)
 +        )
-+
-+    assert mismatch.status_code == 403
-+    assert mismatch.json()["detail"] == "tenant mismatch"
-+    assert revert_calls == []
-+    assert admission.reserves == []
-+
-+    async with _cluster_client(monkeypatch, auth=_operator_auth()) as (
-+        client,
-+        _cluster_spy,
-+        _jobs,
-+        admission,
-+        revert_calls,
-+    ):
-+        ok = await client.post(
-+            f"/recognition/clusters/{uuid4()}/revert-merge",
-+            json={"receipt_id": str(uuid4())},
++        if reservation is None:
++            return SettlementResult(SettlementOutcome.MISSING, detail="reservation not found")
++        mismatch = self._identity_ok(
++            reservation,
++            fence_token=token,
++            operation_id=ticket.operation_id,
++            request_fingerprint=ticket.request_fingerprint,
++            job_id=ticket.job_id,
++            tenant_id=ticket.tenant_id,
 +        )
++        if mismatch:
++            return SettlementResult(
++                SettlementOutcome.REJECTED,
++                reservation_id=reservation.id,
++                detail=mismatch,
++            )
++        try:
++            status = UsageReservationStatus(reservation.status)
++        except (TypeError, ValueError):
++            return SettlementResult(SettlementOutcome.FAIL_CLOSED, reservation_id=reservation.id)
++        if status is not UsageReservationStatus.RESERVED:
++            return SettlementResult(SettlementOutcome.ALREADY_SETTLED, reservation_id=reservation.id)
++        reconstructed = ticket_from_reservation(reservation)
++        try:
++            if job_decision is SettlementOutcome.COMMITTED:
++                await self._admission.commit_fenced(reconstructed, fence_token=token)
++            else:
++                await self._admission.release_fenced(reconstructed, fence_token=token)
++        except UsageFenceMismatchError:
++            return SettlementResult(
++                SettlementOutcome.REJECTED,
++                reservation_id=reservation.id,
++                detail="stale fence rejected by G1",
++            )
++        return SettlementResult(job_decision, reservation_id=reservation.id)
 +
-+    assert ok.status_code == 200
-+    assert revert_calls
-+    assert admission.reserves == []
-+    assert admission.commits == []
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py
---- a/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_wiring.py
-@@ -47,6 +47,7 @@ class _FakeAdmission:
-         self.reserves: list[dict[str, object]] = []
-         self.commits: list[UsageTicket] = []
-         self.releases: list[UsageTicket] = []
-+        self._tickets: dict[tuple[object, str], UsageTicket] = {}
- 
-     async def reserve(
-         self,
-@@ -72,16 +73,25 @@ class _FakeAdmission:
-         )
-         if self.exhausted:
-             raise AllowanceExceededError()
--        return UsageTicket(
-+        resolved_operation = operation_id or idempotency_key
-+        resolved_fingerprint = request_fingerprint or idempotency_key
-+        existing = self._tickets.get((tenant_id, resolved_operation))
-+        if existing is not None:
-+            if existing.request_fingerprint != resolved_fingerprint:
-+                raise UsageFingerprintConflictError("changed fingerprint")
-+            return existing
-+        ticket = UsageTicket(
-             uuid4(),
-             tenant_id,
-             idempotency_key,
-             cost_units,
--            operation_id=operation_id or idempotency_key,
--            request_fingerprint=request_fingerprint or idempotency_key,
-+            operation_id=resolved_operation,
-+            request_fingerprint=resolved_fingerprint,
-             job_id=job_id,
-             fence_token="fence-test",
-         )
-+        self._tickets[(tenant_id, resolved_operation)] = ticket
-+        return ticket
- 
-     async def commit(self, ticket: UsageTicket) -> None:
-         self.commits.append(ticket)
-@@ -202,19 +212,66 @@ async def test_absent_service_does_not_call_anything() -> None:
- 
- 
- @pytest.mark.asyncio
--async def test_identical_requests_use_the_same_key_and_commit(monkeypatch: pytest.MonkeyPatch) -> None:
-+async def test_identical_payloads_without_operation_id_are_independently_chargeable(
-+    monkeypatch: pytest.MonkeyPatch,
-+) -> None:
-     admission = _FakeAdmission()
-     app = _json_app(admission, monkeypatch)
-     transport = httpx.ASGITransport(app=app)
-+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
-     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
--        payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
-         first = await client.post("/recognition/analyze", json=payload)
-         second = await client.post("/recognition/analyze", json=payload)
- 
-     assert first.status_code == 202
-     assert second.status_code == 202
-     assert len(admission.reserves) == 2
--    assert admission.reserves[0]["idempotency_key"] == admission.reserves[1]["idempotency_key"]
-+    assert admission.reserves[0]["operation_id"] != admission.reserves[1]["operation_id"]
-+    assert admission.reserves[0]["request_fingerprint"] == admission.reserves[1]["request_fingerprint"]
-+    assert admission.commits == []
++    async def sweep_stale_reservations(
++        self,
++        *,
++        stale_after_seconds: float,
++        max_batches: int = 10,
++        batch_size: int = 100,
++        no_progress_limit: int = 3,
++    ) -> SweepReport:
++        """Bounded stale scan. Active jobs are never released. [rg-007]"""
++        report = SweepReport()
++        report.notes.append(MISSING_GENERATION_FENCE_CONTRACT)
++        repo = SqlAlchemyUsageRepository(self._session)
++        no_progress = 0
++        for _ in range(max(1, max_batches)):
++            report.batches += 1
++            try:
++                rows = await repo.list_stale_reservations(stale_after_seconds, limit=batch_size)
++            except (OperationalError, ProgrammingError) as exc:
++                if _missing_relation(exc):
++                    report.exit_code = 0
++                    return report
++                raise
++            if not rows:
++                report.exit_code = 0
++                return report
++            report.stale_seen += len(rows)
++            progressed = 0
++            for row in rows:
++                result = await self.settle_job(
++                    tenant_id=row.tenant_id,
++                    job_id=str(row.job_id or ""),
++                    fence_token=None,
++                    allow_missing_job_release=True,
++                )
++                if result.outcome is SettlementOutcome.RELEASED:
++                    report.released += 1
++                    progressed += 1
++                elif result.outcome is SettlementOutcome.COMMITTED:
++                    report.committed += 1
++                    progressed += 1
++                elif result.outcome is SettlementOutcome.SKIPPED_ACTIVE:
++                    report.skipped_active += 1
++                elif result.outcome is SettlementOutcome.REJECTED:
++                    report.rejected += 1
++                    progressed += 1
++                elif result.outcome is SettlementOutcome.ALREADY_SETTLED:
++                    report.already_settled += 1
++                    progressed += 1
++                elif result.outcome is SettlementOutcome.MISSING:
++                    report.missing += 1
++                else:
++                    report.fail_closed += 1
++            if report.skipped_active and progressed == 0 and report.fail_closed == 0:
++                # Active work remains reserved on purpose; that is a successful sweep.
++                report.exit_code = 0
++                return report
++            if progressed == 0:
++                no_progress += 1
++                report.no_progress_cycles = no_progress
++                if no_progress >= max(1, no_progress_limit):
++                    report.stalled = True
++                    report.exit_code = 1
++                    return report
++            else:
++                no_progress = 0
++        report.exit_code = 0
++        return report
 +
 +
-+@pytest.mark.asyncio
-+async def test_same_idempotency_key_replays_without_commit(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    app = _json_app(admission, monkeypatch)
-+    transport = httpx.ASGITransport(app=app)
-+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
-+    headers = {"Idempotency-Key": "client-op-1"}
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post("/recognition/analyze", json=payload, headers=headers)
-+        second = await client.post("/recognition/analyze", json=payload, headers=headers)
-+
-+    assert first.status_code == 202
-+    assert second.status_code == 202
-+    assert len(admission.reserves) == 2
-+    assert admission.reserves[0]["operation_id"] == "client-op-1"
-+    assert admission.reserves[1]["operation_id"] == "client-op-1"
-+    assert admission.reserves[0]["request_fingerprint"] == admission.reserves[1]["request_fingerprint"]
-+    assert admission.commits == []
++async def capture_usage_fence(
++    session: AsyncSession,
++    *,
++    tenant_id: UUID,
++    job_id: str,
++) -> str | None:
++    """Best-effort claim-time fence capture; missing ledger is not an error."""
++    try:
++        claim = await UsageSettlementService(session).load_claim(tenant_id=tenant_id, job_id=job_id)
++    except Exception:
++        _logger.debug("usage fence capture failed job_id=%s", job_id, exc_info=True)
++        return None
++    return None if claim is None else claim.fence_token
 +
 +
-+@pytest.mark.asyncio
-+async def test_analyze_reserve_uses_pregenerated_job_and_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    app = _json_app(admission, monkeypatch)
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        response = await client.post(
-+            "/recognition/analyze",
-+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
-+            headers={"Idempotency-Key": "client-op-json"},
++async def settle_usage_job(
++    session: AsyncSession,
++    *,
++    tenant_id: UUID,
++    job_id: str,
++    fence_token: str | None = None,
++    allow_missing_job_release: bool = False,
++) -> SettlementResult:
++    try:
++        return await UsageSettlementService(session).settle_job(
++            tenant_id=tenant_id,
++            job_id=job_id,
++            fence_token=fence_token,
++            allow_missing_job_release=allow_missing_job_release,
 +        )
++    except Exception as exc:
++        _logger.exception("usage settlement failed job_id=%s", job_id)
++        return SettlementResult(SettlementOutcome.FAIL_CLOSED, detail=str(exc))
 +
-+    assert response.status_code == 202
-+    assert len(admission.reserves) == 1
-+    reserved = admission.reserves[0]
-+    assert reserved["operation_id"] == "client-op-json"
-+    assert reserved["idempotency_key"] == "client-op-json"
-+    assert reserved["job_id"] is not None
-+    UUID(str(reserved["job_id"]))
-+    assert reserved["request_fingerprint"] != reserved["operation_id"]
-+    assert reserved["request_fingerprint"] != MEDIA_ID
-     assert admission.commits == []
- 
- 
-@@ -266,7 +323,18 @@ class _FakeObjectStore:
- 
- 
- class _FakeScanQueue:
-+    def __init__(self) -> None:
-+        self.create_calls: list[dict[str, object]] = []
 +
-     async def create_scan_job_record(self, *, tenant_id, total, job_id, created_by_user_id):
-+        self.create_calls.append(
-+            {
-+                "tenant_id": tenant_id,
-+                "total": total,
-+                "job_id": job_id,
-+                "created_by_user_id": created_by_user_id,
-+            }
-+        )
-         return job_id
- 
- 
-@@ -275,6 +343,7 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
-     admission = _FakeAdmission()
-     app = FastAPI()
-     app.include_router(multipart_router.router, prefix="/recognition")
-+    queue = _FakeScanQueue()
- 
-     async def _auth():
-         return SimpleNamespace(tenant_claim=None, user_id=None)
-@@ -283,7 +352,7 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
-         return None
- 
-     async def _queue():
--        return _FakeScanQueue()
-+        return queue
- 
-     async def _none():
-         return None
-@@ -315,12 +384,21 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
-             "/recognition/analyze/multipart",
-             data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
-             files={"image_1": ("image.png", b"image", "image/png")},
-+            headers={"Idempotency-Key": "client-op-multipart"},
-         )
- 
-     assert response.status_code == 202
-     assert len(admission.reserves) == 1
--    assert admission.reserves[0]["cost_units"] == 1
-+    reserved = admission.reserves[0]
-+    assert reserved["cost_units"] == 1
-+    assert reserved["operation_id"] == "client-op-multipart"
-+    assert reserved["job_id"] is not None
-+    UUID(str(reserved["job_id"]))
-+    assert reserved["request_fingerprint"] != reserved["operation_id"]
-+    assert reserved["queue_bytes"] == len(b"image")
-     assert admission.commits == []
-+    assert len(queue.create_calls) == 1
-+    assert str(queue.create_calls[0]["job_id"]) == str(reserved["job_id"])
- 
- 
- def test_build_usage_key_is_order_stable() -> None:
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_recognition_lifecycle.py b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_recognition_lifecycle.py
++async def sweep_stale_reservations(
++    session: AsyncSession,
++    *,
++    stale_after_seconds: float,
++    max_batches: int = 10,
++    batch_size: int = 100,
++    no_progress_limit: int = 3,
++) -> SweepReport:
++    """Module-level sweeper used by unit tests and worker maintenance."""
++    return await UsageSettlementService(session).sweep_stale_reservations(
++        stale_after_seconds=stale_after_seconds,
++        max_batches=max_batches,
++        batch_size=batch_size,
++        no_progress_limit=no_progress_limit,
++    )
++
++
++__all__ = [
++    "MISSING_GENERATION_FENCE_CONTRACT",
++    "SettlementOutcome",
++    "SettlementResult",
++    "SweepReport",
++    "UsageClaim",
++    "UsageSettlementService",
++    "capture_usage_fence",
++    "settle_usage_job",
++    "sweep_stale_reservations",
++    "ticket_from_reservation",
++]
+diff --git a/apps/prototype-description-service/recognition/tests/integration/test_app1_usage_worker_postgres.py b/apps/prototype-description-service/recognition/tests/integration/test_app1_usage_worker_postgres.py
 new file mode 100644
 --- /dev/null
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_recognition_lifecycle.py
-@@ -0,0 +1,501 @@
-+"""Route, side-effect, and replay coverage for recognition usage admission."""
++++ b/apps/prototype-description-service/recognition/tests/integration/test_app1_usage_worker_postgres.py
+@@ -0,0 +1,291 @@
++"""PostgreSQL G3 worker lifecycle: binding, exact-once settle, sweeper fail-closed.
++
++Skip is missing release evidence, not a passing result. pg_empty_engine refuses
++privileged roles; IDENTITY_PG_REQUIRED=1 fails instead of skip.
++"""
 +
 +from __future__ import annotations
 +
-+import io
-+import json
-+from contextlib import contextmanager
-+from types import SimpleNamespace
-+from uuid import UUID, uuid4
++import importlib
++from datetime import UTC, datetime, timedelta
++from uuid import uuid4
 +
-+import httpx
 +import pytest
-+from fastapi import FastAPI, HTTPException, status
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 +
-+from recognition.application.services.usage_admission_service import UsageFingerprintConflictError
-+from recognition.domain.portal_contracts import UsageTicket
-+from recognition.interface_adapters.http.deps import (
-+    get_job_service_dependency,
-+    get_optional_session,
-+    get_scan_queue_service_optional,
-+    require_auth,
-+    require_write_access,
++from db.models import IdentityScanJob, UsageReservation
++from db.models.portal_billing import TenantEntitlement
++from db.models.scene import DescribeRun
++from db.models.tenant import Tenant
++from db.tenant_context import set_tenant_context
++from recognition.application.services.usage_admission_service import (
++    UsageAdmissionService,
++    UsageFenceMismatchError,
 +)
-+from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
-+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
-+from recognition.interface_adapters.http.deps.usage_admission import (
-+    admit_usage,
-+    get_usage_admission_service,
++from recognition.application.services.usage_settlement_service import (
++    SettlementOutcome,
++    UsageSettlementService,
++    sweep_stale_reservations,
 +)
-+from recognition.interface_adapters.http.routers import analyze as analyze_router
-+from recognition.interface_adapters.http.routers import analyze_multipart as multipart_router
++from recognition.domain.job import JobStatus
++from recognition.domain.portal_contracts import (
++    EntitlementStatus,
++    UsageReservationStatus,
++)
++from scene.application.describe_run_repository import DescribeRunRepository
++from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus, RunKind
 +
-+TENANT_ID = UUID("11111111-1111-1111-1111-111111111111")
-+MEDIA_ID = "22222222-2222-2222-2222-222222222222"
-+OTHER_MEDIA_ID = "33333333-3333-3333-3333-333333333333"
++pytestmark = pytest.mark.pg
++
++MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
 +
 +
-+class _FakeAdmission:
-+    def __init__(self) -> None:
-+        self.reserves: list[dict[str, object]] = []
-+        self.commits: list[UsageTicket] = []
-+        self.releases: list[UsageTicket] = []
-+        self._tickets: dict[tuple[object, str], UsageTicket] = {}
++def _async_url(engine) -> str:
++    return (
++        engine.url.render_as_string(hide_password=False)
++        .replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
++        .replace("postgresql://", "postgresql+asyncpg://", 1)
++    )
 +
-+    async def reserve(
++
++async def _prepare_tenant(session: AsyncSession, *, site_url: str, allowance_jobs: int) -> Tenant:
++    tenant = Tenant(site_url=site_url)
++    session.add(tenant)
++    await session.flush()
++    await set_tenant_context(session, tenant.id)
++    now = datetime.now(tz=UTC)
++    session.add(
++        TenantEntitlement(
++            tenant_id=tenant.id,
++            plan_code="beta",
++            allowance_version="pg-g3",
++            allowance_jobs=allowance_jobs,
++            period_start=now - timedelta(minutes=1),
++            period_end=now + timedelta(hours=1),
++            status=EntitlementStatus.BETA_ACTIVE,
++            source="pg-test",
++        )
++    )
++    await session.flush()
++    return tenant
++
++
++@pytest.mark.asyncio
++async def test_postgres_worker_usage_lifecycle(pg_empty_engine) -> None:
++    with pg_empty_engine.begin() as conn:
++        MIGRATION.heal(conn)
++        flags = conn.execute(
++            text(
++                "SELECT c.relrowsecurity, c.relforcerowsecurity "
++                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
++                "WHERE n.nspname = current_schema() AND c.relname = 'usage_reservation'"
++            )
++        ).one()
++        role = conn.execute(
++            text("SELECT current_user, r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
++        ).one()
++    assert flags == (True, True)
++    assert role[1] is False and role[2] is False
++
++    engine = create_async_engine(_async_url(pg_empty_engine), pool_size=8, max_overflow=4, pool_pre_ping=True)
++    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
++    try:
++        async with session_factory() as session:
++            tenant = await _prepare_tenant(session, site_url="https://g3-a.example.test", allowance_jobs=20)
++            await session.commit()
++            tenant_id = tenant.id
++
++        job_id = uuid4()
++        operation_id = "pg-op-pending"
++        fingerprint = "a" * 64
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            first = await UsageAdmissionService(session).reserve(
++                tenant_id,
++                idempotency_key=operation_id,
++                job_id=str(job_id),
++                cost_units=1,
++                operation_id=operation_id,
++                request_fingerprint=fingerprint,
++            )
++            run_id = await DescribeRunRepository(session).create_run(
++                tenant_id=tenant_id,
++                media_ids=[1],
++                run_id=job_id,
++                operation_id=operation_id,
++                request_digest=fingerprint,
++            )
++            await session.commit()
++            reservation_id = first.reservation_id
++            captured_fence = first.fence_token
++        assert run_id == job_id
++        assert first.job_id == str(job_id)
++
++        # Fresh session / restart: 202 stays RESERVED and replays the persisted job.
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            replayed = await UsageAdmissionService(session).reserve(
++                tenant_id,
++                idempotency_key=operation_id,
++                job_id=str(uuid4()),
++                cost_units=1,
++                operation_id=operation_id,
++                request_fingerprint=fingerprint,
++            )
++            run = await session.get(DescribeRun, job_id)
++            row = await session.get(UsageReservation, reservation_id)
++            assert replayed.reservation_id == reservation_id
++            assert replayed.job_id == str(job_id)
++            assert replayed.fence_token == captured_fence
++            assert run is not None and run.id == job_id
++            assert row is not None and row.status == UsageReservationStatus.RESERVED
++
++        # Cancel before pickup releases.
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            cancelled = await DescribeRunRepository(session).request_cancel(tenant_id=tenant_id, run_id=job_id)
++            assert cancelled is True
++            result = await UsageSettlementService(session).settle_job(
++                tenant_id=tenant_id,
++                job_id=str(job_id),
++                fence_token=captured_fence,
++            )
++            await session.commit()
++            assert result.outcome is SettlementOutcome.RELEASED
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            row = await session.get(UsageReservation, reservation_id)
++            assert row is not None and row.status == UsageReservationStatus.RELEASED
++
++        # New operation: pickup then fail conservatively charges; exact-once.
++        fail_id = uuid4()
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            fail_ticket = await UsageAdmissionService(session).reserve(
++                tenant_id,
++                idempotency_key="pg-op-fail",
++                job_id=str(fail_id),
++                cost_units=1,
++                operation_id="pg-op-fail",
++                request_fingerprint=fingerprint,
++            )
++            await DescribeRunRepository(session).create_run(
++                tenant_id=tenant_id,
++                media_ids=[2],
++                run_id=fail_id,
++                operation_id="pg-op-fail",
++                request_digest=fingerprint,
++            )
++            await DescribeRunRepository(session).record_pickup(tenant_id=tenant_id, run_id=fail_id)
++            await DescribeRunRepository(session).mark_run_failed(
++                tenant_id=tenant_id, run_id=fail_id, error_message="adapter exploded"
++            )
++            with pytest.raises(UsageFenceMismatchError):
++                await UsageAdmissionService(session).commit_fenced(fail_ticket, fence_token="stale-token")
++            charged = await UsageSettlementService(session).settle_job(
++                tenant_id=tenant_id,
++                job_id=str(fail_id),
++                fence_token=fail_ticket.fence_token,
++            )
++            again = await UsageSettlementService(session).settle_job(
++                tenant_id=tenant_id,
++                job_id=str(fail_id),
++                fence_token=fail_ticket.fence_token,
++            )
++            await session.commit()
++            assert charged.outcome is SettlementOutcome.COMMITTED
++            assert again.outcome is SettlementOutcome.ALREADY_SETTLED
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            fail_row = await session.get(UsageReservation, fail_ticket.reservation_id)
++            assert fail_row is not None and fail_row.status == UsageReservationStatus.COMMITTED
++
++        # Wrong tenant cannot mutate the reservation.
++        async with session_factory() as session:
++            other = await _prepare_tenant(session, site_url="https://g3-b.example.test", allowance_jobs=5)
++            rejected = await UsageSettlementService(session).settle_job(
++                tenant_id=other.id,
++                job_id=str(fail_id),
++                fence_token=fail_ticket.fence_token,
++            )
++            await session.commit()
++            assert rejected.outcome is SettlementOutcome.MISSING
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            fail_row = await session.get(UsageReservation, fail_ticket.reservation_id)
++            assert fail_row is not None and fail_row.status == UsageReservationStatus.COMMITTED
++            visible = (await session.execute(select(UsageReservation))).scalars().all()
++            assert {row.tenant_id for row in visible} == {tenant_id}
++
++        # Sweeper must not release an active running job even when the reservation is old.
++        active_id = uuid4()
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            active_ticket = await UsageAdmissionService(session).reserve(
++                tenant_id,
++                idempotency_key="pg-op-active",
++                job_id=str(active_id),
++                cost_units=1,
++                operation_id="pg-op-active",
++                request_fingerprint=fingerprint,
++            )
++            session.add(
++                DescribeRun(
++                    id=active_id,
++                    tenant_id=tenant_id,
++                    run_kind=RunKind.BULK,
++                    status=DescribeRunStatus.RUNNING,
++                    phase=DescribeRunPhase.DESCRIBING,
++                    media_ids=[3],
++                    total_items=1,
++                    started_at=datetime.now(tz=UTC),
++                )
++            )
++            await session.flush()
++            reservation = await session.get(UsageReservation, active_ticket.reservation_id)
++            assert reservation is not None
++            reservation.reserved_at = datetime.now(tz=UTC) - timedelta(hours=2)
++            report = await sweep_stale_reservations(session, stale_after_seconds=60, max_batches=3, batch_size=20)
++            await session.commit()
++            assert report.released == 0
++            assert report.skipped_active >= 1
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            active_row = await session.get(UsageReservation, active_ticket.reservation_id)
++            assert active_row is not None and active_row.status == UsageReservationStatus.RESERVED
++
++        # Scan job pending is also active work.
++        scan_id = uuid4()
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            scan_ticket = await UsageAdmissionService(session).reserve(
++                tenant_id,
++                idempotency_key="pg-op-scan",
++                job_id=str(scan_id),
++                cost_units=1,
++                operation_id="pg-op-scan",
++                request_fingerprint=fingerprint,
++            )
++            session.add(
++                IdentityScanJob(
++                    id=scan_id,
++                    tenant_id=tenant_id,
++                    status=JobStatus.PENDING,
++                    media_ids=[9],
++                    total_media=1,
++                )
++            )
++            await session.flush()
++            reservation = await session.get(UsageReservation, scan_ticket.reservation_id)
++            assert reservation is not None
++            reservation.reserved_at = datetime.now(tz=UTC) - timedelta(hours=3)
++            report = await sweep_stale_reservations(session, stale_after_seconds=30, max_batches=2, batch_size=20)
++            await session.commit()
++            assert report.released == 0
++        async with session_factory() as session:
++            await set_tenant_context(session, tenant_id)
++            scan_row = await session.get(UsageReservation, scan_ticket.reservation_id)
++            assert scan_row is not None and scan_row.status == UsageReservationStatus.RESERVED
++    finally:
++        await engine.dispose()
+diff --git a/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper.py b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper.py
+--- a/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper.py
++++ b/apps/prototype-description-service/recognition/tests/unit/test_app1_usage_sweeper.py
+@@ -1,80 +1,302 @@
+-"""APP-1 bounded stale usage reservation sweep tests."""
++"""APP-1 G3 sweeper: bounded scan, never release active work."""
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++import asyncio
++import os
++import tempfile
++import uuid
++from datetime import UTC, datetime, timedelta
++from typing import cast
+ 
+ import pytest
++from sqlalchemy import Table
++from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+-from scripts.usage_reservation_sweeper import sweep_stale_reservations
++from db.models import UsageReservation
++from db.models.base_imports import Base
++from db.models.jobs import IdentityScanJob, IdentityScanJobItem
++from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
++from db.models.scene import DescribeRun, DescribeRunItem
++from db.models.tenant import Tenant
++from recognition.application.services.usage_admission_service import UsageAdmissionService
++from recognition.application.services.usage_settlement_service import (
++    MISSING_GENERATION_FENCE_CONTRACT,
++    SettlementOutcome,
++    UsageSettlementService,
++    sweep_stale_reservations,
++)
++from recognition.domain.job import JobStatus
++from recognition.domain.portal_contracts import (
++    DEFAULT_GLOBAL_CONFIG_VERSION,
++    DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++    DEFAULT_GLOBAL_FENCE_EPOCH,
++    DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++    DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++    DEFAULT_GLOBAL_QUEUE_LIMIT,
++    GLOBAL_USAGE_ADMISSION_STATE_ID,
++    EntitlementStatus,
++    UsageReservationStatus,
++)
++from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus, RunKind
+ 
+ 
+-@dataclass
+-class _Reservation:
+-    reservation_id: str
++async def _ledger_sessionmaker():
++    path = os.path.join(tempfile.gettempdir(), f"app1_usage_sweep_{uuid.uuid4().hex}.db")
++    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
++    async with engine.begin() as conn:
++        await conn.run_sync(
++            Base.metadata.create_all,
++            tables=cast(
++                list[Table],
++                [
++                    Tenant.__table__,
++                    TenantEntitlement.__table__,
++                    UsageReservation.__table__,
++                    GlobalUsageAdmissionState.__table__,
++                    DescribeRun.__table__,
++                    DescribeRunItem.__table__,
++                    IdentityScanJob.__table__,
++                    IdentityScanJobItem.__table__,
++                ],
++            ),
++        )
++    return engine, async_sessionmaker(engine, expire_on_commit=False), path
+ 
+ 
+-class _FakeRepository:
+-    def __init__(self, rows: list[_Reservation], *, release_count: int | None = None) -> None:
+-        self.rows = rows
+-        self.release_count = release_count
+-        self.list_calls: list[tuple[float, int]] = []
+-        self.released: list[list[_Reservation]] = []
++async def _seed_tenant(session, *, allowance: int = 20):
++    tenant = Tenant(id=uuid.uuid4(), site_url=f"https://{uuid.uuid4().hex}.example.test")
++    session.add(tenant)
++    await session.flush()
++    now = datetime.now(tz=UTC)
++    period_start = now - timedelta(minutes=1)
++    session.add(
++        TenantEntitlement(
++            tenant_id=tenant.id,
++            plan_code="beta",
++            allowance_version="sweep-v1",
++            allowance_jobs=allowance,
++            period_start=period_start,
++            period_end=now + timedelta(hours=1),
++            status=EntitlementStatus.BETA_ACTIVE,
++            source="unit-test",
++        )
++    )
++    session.add(
++        GlobalUsageAdmissionState(
++            id=GLOBAL_USAGE_ADMISSION_STATE_ID,
++            period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
++            period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
++            daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++            daily_cost_units=0,
++            inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++            inflight_units=0,
++            queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
++            queue_depth=0,
++            queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++            queue_bytes=0,
++            stop_requested=False,
++            fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
++            config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
++            updated_at=now,
++        )
++    )
++    await session.flush()
++    return tenant
+ 
+-    async def list_stale_reservations(self, stale_after_seconds: float, *, limit: int):
+-        self.list_calls.append((stale_after_seconds, limit))
+-        return self.rows[:limit]
+ 
+-    async def release_batch(self, rows: list[_Reservation]) -> int:
+-        self.released.append(rows)
+-        count = len(rows) if self.release_count is None else self.release_count
+-        if count:
+-            self.rows = self.rows[count:]
+-        return count
++def _age_reservation(reservation: UsageReservation, *, seconds: float) -> None:
++    reservation.reserved_at = datetime.now(tz=UTC) - timedelta(seconds=seconds)
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_sweeper_releases_stale_rows_in_bounded_batches() -> None:
+-    repository = _FakeRepository([_Reservation("one"), _Reservation("two"), _Reservation("three")])
+-
+-    report = await sweep_stale_reservations(
+-        repository,
+-        max_batches=5,
+-        batch_size=2,
+-        stale_after_seconds=60,
+-    )
++async def test_sweeper_does_not_release_active_describe_or_scan_work() -> None:
++    engine, sf, path = await _ledger_sessionmaker()
++    try:
++        async with sf() as session:
++            tenant = await _seed_tenant(session)
++            service = UsageAdmissionService(session)
++            running_job = uuid.uuid4()
++            pending_scan = uuid.uuid4()
++            running_ticket = await service.reserve(
++                tenant.id,
++                idempotency_key="op-running",
++                job_id=str(running_job),
++                cost_units=1,
++                operation_id="op-running",
++                request_fingerprint="fp-running",
++            )
++            scan_ticket = await service.reserve(
++                tenant.id,
++                idempotency_key="op-scan",
++                job_id=str(pending_scan),
++                cost_units=1,
++                operation_id="op-scan",
++                request_fingerprint="fp-scan",
++            )
++            session.add(
++                DescribeRun(
++                    id=running_job,
++                    tenant_id=tenant.id,
++                    run_kind=RunKind.BULK,
++                    status=DescribeRunStatus.RUNNING,
++                    phase=DescribeRunPhase.DESCRIBING,
++                    media_ids=[1],
++                    total_items=1,
++                    started_at=datetime.now(tz=UTC),
++                )
++            )
++            session.add(
++                IdentityScanJob(
++                    id=pending_scan,
++                    tenant_id=tenant.id,
++                    status=JobStatus.PENDING,
++                    media_ids=[1],
++                    total_media=1,
++                )
++            )
++            await session.flush()
++            _age_reservation(await session.get(UsageReservation, running_ticket.reservation_id), seconds=3600)
++            _age_reservation(await session.get(UsageReservation, scan_ticket.reservation_id), seconds=3600)
++            report = await sweep_stale_reservations(session, stale_after_seconds=60, max_batches=3, batch_size=10)
++            await session.commit()
+ 
+-    assert report.stalled is False
+-    assert report.released == 3
+-    assert report.stale_seen == 3
+-    assert [batch[1] for batch in repository.list_calls] == [2, 2, 2]
+-    assert [row.reservation_id for batch in repository.released for row in batch] == ["one", "two", "three"]
++        async with sf() as session:
++            running_row = await session.get(UsageReservation, running_ticket.reservation_id)
++            scan_row = await session.get(UsageReservation, scan_ticket.reservation_id)
++            assert running_row is not None and running_row.status == UsageReservationStatus.RESERVED
++            assert scan_row is not None and scan_row.status == UsageReservationStatus.RESERVED
++            assert report.skipped_active >= 2
++            assert report.released == 0
++            assert report.exit_code == 0
++            assert MISSING_GENERATION_FENCE_CONTRACT in report.notes
++    finally:
++        await engine.dispose()
++        os.unlink(path)
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_sweeper_exits_non_zero_after_no_progress_cycles() -> None:
+-    repository = _FakeRepository([_Reservation("stuck")], release_count=0)
+-
+-    report = await sweep_stale_reservations(
+-        repository,
+-        max_batches=10,
+-        batch_size=1,
+-        stale_after_seconds=60,
+-        no_progress_limit=3,
+-    )
+-
+-    assert report.stalled is True
+-    assert report.exit_code == 1
+-    assert report.no_progress_cycles == 3
+-    assert len(repository.released) == 3
++async def test_sweeper_releases_stale_reservation_when_job_never_persisted() -> None:
++    engine, sf, path = await _ledger_sessionmaker()
++    try:
++        async with sf() as session:
++            tenant = await _seed_tenant(session)
++            ticket = await UsageAdmissionService(session).reserve(
++                tenant.id,
++                idempotency_key="op-missing",
++                job_id=str(uuid.uuid4()),
++                cost_units=1,
++                operation_id="op-missing",
++                request_fingerprint="fp-missing",
++            )
++            _age_reservation(await session.get(UsageReservation, ticket.reservation_id), seconds=120)
++            report = await sweep_stale_reservations(session, stale_after_seconds=30, max_batches=2, batch_size=5)
++            await session.commit()
++        async with sf() as session:
++            row = await session.get(UsageReservation, ticket.reservation_id)
++            assert row is not None and row.status == UsageReservationStatus.RELEASED
++            assert report.released == 1
++            assert report.exit_code == 0
++    finally:
++        await engine.dispose()
++        os.unlink(path)
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_sweeper_accepts_an_empty_repository_as_success() -> None:
+-    repository = _FakeRepository([])
++async def test_cancel_before_pickup_releases_and_stale_fence_is_rejected() -> None:
++    engine, sf, path = await _ledger_sessionmaker()
++    try:
++        async with sf() as session:
++            tenant = await _seed_tenant(session)
++            job_id = uuid.uuid4()
++            ticket = await UsageAdmissionService(session).reserve(
++                tenant.id,
++                idempotency_key="op-cancel",
++                job_id=str(job_id),
++                cost_units=1,
++                operation_id="op-cancel",
++                request_fingerprint="fp-cancel",
++            )
++            session.add(
++                DescribeRun(
++                    id=job_id,
++                    tenant_id=tenant.id,
++                    run_kind=RunKind.SINGLE,
++                    status=DescribeRunStatus.CANCELLED,
++                    phase=DescribeRunPhase.CANCELLED,
++                    media_ids=[1],
++                    total_items=1,
++                )
++            )
++            await session.flush()
++            settlement = UsageSettlementService(session)
++            released = await settlement.settle_job(
++                tenant_id=tenant.id, job_id=str(job_id), fence_token=ticket.fence_token
++            )
++            assert released.outcome is SettlementOutcome.RELEASED
++            stale = await settlement.settle_ticket(ticket, action=SettlementOutcome.COMMITTED, fence_token="old-fence")
++            assert stale.outcome is SettlementOutcome.REJECTED
++            wrong_tenant = await settlement.settle_job(
++                tenant_id=uuid.uuid4(),
++                job_id=str(job_id),
++                fence_token=ticket.fence_token,
++            )
++            assert wrong_tenant.outcome is SettlementOutcome.MISSING
++            await session.commit()
++        async with sf() as session:
++            row = await session.get(UsageReservation, ticket.reservation_id)
++            assert row is not None and row.status == UsageReservationStatus.RELEASED
++    finally:
++        await engine.dispose()
++        os.unlink(path)
+ 
+-    report = await sweep_stale_reservations(repository, max_batches=2, batch_size=5, stale_after_seconds=0)
+ 
+-    assert report.exit_code == 0
+-    assert report.batches == 1
+-    assert report.released == 0
++@pytest.mark.asyncio
++async def test_after_pickup_failure_is_conservatively_charged() -> None:
++    engine, sf, path = await _ledger_sessionmaker()
++    try:
++        async with sf() as session:
++            tenant = await _seed_tenant(session)
++            job_id = uuid.uuid4()
++            ticket = await UsageAdmissionService(session).reserve(
++                tenant.id,
++                idempotency_key="op-fail",
++                job_id=str(job_id),
++                cost_units=1,
++                operation_id="op-fail",
++                request_fingerprint="fp-fail",
++            )
++            session.add(
++                DescribeRun(
++                    id=job_id,
++                    tenant_id=tenant.id,
++                    run_kind=RunKind.BULK,
++                    status=DescribeRunStatus.FAILED,
++                    phase=DescribeRunPhase.FAILED,
++                    media_ids=[1],
++                    total_items=1,
++                    started_at=datetime.now(tz=UTC),
++                    queue_ms=12.0,
++                )
++            )
++            await session.flush()
++            captured = ticket.fence_token
++            result = await UsageSettlementService(session).settle_job(
++                tenant_id=tenant.id,
++                job_id=str(job_id),
++                fence_token=captured,
++            )
++            again = await UsageSettlementService(session).settle_job(
++                tenant_id=tenant.id,
++                job_id=str(job_id),
++                fence_token=captured,
++            )
++            await session.commit()
++            assert result.outcome is SettlementOutcome.COMMITTED
++            assert again.outcome is SettlementOutcome.ALREADY_SETTLED
++        async with sf() as session:
++            row = await session.get(UsageReservation, ticket.reservation_id)
++            assert row is not None and row.status == UsageReservationStatus.COMMITTED
++    finally:
++        await engine.dispose()
++        os.unlink(path)
+diff --git a/apps/prototype-description-service/recognition/worker/scan_worker.py b/apps/prototype-description-service/recognition/worker/scan_worker.py
+--- a/apps/prototype-description-service/recognition/worker/scan_worker.py
++++ b/apps/prototype-description-service/recognition/worker/scan_worker.py
+@@ -37,6 +37,10 @@ from recognition.application.scan.capability import (
+ )
+ from recognition.application.scan.queue_repository import ScanQueueItem
+ from recognition.application.scan.scan_queue_service import ScanQueueService
++from recognition.application.services.usage_settlement_service import (
++    capture_usage_fence,
++    settle_usage_job,
++)
+ from recognition.config import get_settings as get_recognition_settings
+ from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
+ from recognition.domain.repositories import MvRefreshOutcome
+@@ -69,22 +73,16 @@ def _resolve_worker_metrics_port() -> int:
+     try:
+         port = int(raw)
+     except (TypeError, ValueError) as exc:
+-        raise ValueError(
+-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535"
+-        ) from exc
++        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535") from exc
+     if port < 1 or port > 65535:
+-        raise ValueError(
+-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535"
+-        )
++        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535")
+     return port
+ 
+ 
+ def _validate_worker_metrics_addr(raw: str) -> str:
+     """Reject empty / whitespace / control-character bind addresses (fail closed)."""
+     if not isinstance(raw, str):
+-        raise ValueError(
+-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string"
+-        )
++        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string")
+     addr = raw.strip()
+     if not addr:
+         raise ValueError(
+@@ -92,10 +90,7 @@ def _validate_worker_metrics_addr(raw: str) -> str:
+             "(default 127.0.0.1; empty would bind all interfaces in prometheus_client)"
+         )
+     if any(ord(ch) < 32 for ch in addr):
+-        raise ValueError(
+-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; "
+-            "must not contain control characters"
+-        )
++        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must not contain control characters")
+     return addr
+ 
+ 
+@@ -113,8 +108,7 @@ def _resolve_worker_metrics_export_enabled() -> bool:
+     if raw in {"1", "true", "yes", "on"}:
+         return True
+     raise ValueError(
+-        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
+-        "use 1/true/yes/on or 0/false/no/off"
++        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; use 1/true/yes/on or 0/false/no/off"
+     )
+ 
+ 
+@@ -132,9 +126,7 @@ def start_process_metrics_exporter(
+     """
+     global _process_metrics_exporter_registry
+     if not config.metrics_export_enabled:
+-        logger.info(
+-            "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
+-        )
++        logger.info("[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)")
+         return
+     registry = metrics.registry
+     if _process_metrics_exporter_registry is registry:
+@@ -309,6 +301,8 @@ class ScanWorker:
+         while True:
+             claimed: list[ScanQueueItem] = []
+             should_sleep = False
++            captured_fences: dict[str, str] = {}
++            stalled_terminated = 0
+             await self._probe_and_publish_embedding_runtime_capability()
+             async with self._session_factory() as session:
+                 await enable_rls_bypass(session)
+@@ -328,6 +322,7 @@ class ScanWorker:
+                     now=now,
+                 )
+                 if terminated:
++                    stalled_terminated = terminated
+                     logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
+ 
+                 if await self._process_pending_clustering_jobs(session=session, now=now):
+@@ -346,13 +341,22 @@ class ScanWorker:
+                     else:
+                         for job_id in {item.job_id for item in claimed}:
+                             await repo.mark_job_running(job_id=job_id, started_at=now)
++                        for item in claimed:
++                            fence = await capture_usage_fence(
++                                session, tenant_id=item.tenant_id, job_id=str(item.job_id)
++                            )
++                            if fence:
++                                captured_fences[str(item.job_id)] = fence
+                         await session.commit()
+ 
+             if should_sleep:
++                if stalled_terminated:
++                    await self._settle_stalled_usage()
+                 await asyncio.sleep(self._config.poll_interval_seconds)
+                 continue
+ 
+             await self._process_claimed_items(claimed=claimed)
++            await self._settle_claimed_usage(claimed=claimed, fences=captured_fences)
+ 
+     async def _process_claimed_items(
+         self,
+@@ -362,6 +366,71 @@ class ScanWorker:
+         await self._ensure_embedding_runtime()
+         await self._scan_handler.process_items(claimed=claimed)
+ 
++    async def _settle_claimed_usage(
 +        self,
-+        tenant_id,
 +        *,
-+        idempotency_key,
-+        job_id,
-+        cost_units,
-+        operation_id=None,
-+        request_fingerprint=None,
-+        queue_bytes=0,
-+    ):
-+        self.reserves.append(
-+            {
-+                "tenant_id": tenant_id,
-+                "idempotency_key": idempotency_key,
-+                "job_id": job_id,
-+                "cost_units": cost_units,
-+                "operation_id": operation_id,
-+                "request_fingerprint": request_fingerprint,
-+                "queue_bytes": queue_bytes,
-+            }
-+        )
-+        resolved_operation = operation_id or idempotency_key
-+        resolved_fingerprint = request_fingerprint or idempotency_key
-+        existing = self._tickets.get((tenant_id, resolved_operation))
-+        if existing is not None:
-+            if existing.request_fingerprint != resolved_fingerprint:
-+                raise UsageFingerprintConflictError("changed fingerprint")
-+            return existing
-+        ticket = UsageTicket(
-+            uuid4(),
-+            tenant_id,
-+            idempotency_key,
-+            cost_units,
-+            operation_id=resolved_operation,
-+            request_fingerprint=resolved_fingerprint,
-+            job_id=job_id,
-+            fence_token="fence-test",
-+        )
-+        self._tickets[(tenant_id, resolved_operation)] = ticket
-+        return ticket
++        claimed: list[ScanQueueItem],
++        fences: dict[str, str],
++    ) -> None:
++        seen: set[uuid.UUID] = set()
++        try:
++            async with self._session_factory() as session:
++                await enable_rls_bypass(session)
++                for item in claimed:
++                    if item.job_id in seen:
++                        continue
++                    seen.add(item.job_id)
++                    await settle_usage_job(
++                        session,
++                        tenant_id=item.tenant_id,
++                        job_id=str(item.job_id),
++                        fence_token=fences.get(str(item.job_id)),
++                    )
++                await session.commit()
++        except Exception:
++            logger.exception("[worker] usage settlement failed for claimed scan jobs")
 +
-+    async def commit(self, ticket: UsageTicket) -> None:
++    async def _settle_stalled_usage(self) -> None:
++        """Settle jobs that terminate_stalled_jobs just marked failed (after compute)."""
++        from db.models import IdentityScanJob, UsageReservation
++        from recognition.domain.portal_contracts import UsageReservationStatus
++
++        try:
++            async with self._session_factory() as session:
++                await enable_rls_bypass(session)
++                reserved = (
++                    (
++                        await session.execute(
++                            select(UsageReservation)
++                            .where(UsageReservation.status == UsageReservationStatus.RESERVED)
++                            .order_by(UsageReservation.reserved_at.asc())
++                            .limit(self._config.claim_batch_size)
++                        )
++                    )
++                    .scalars()
++                    .all()
++                )
++                for reservation in reserved:
++                    if not reservation.job_id:
++                        continue
++                    try:
++                        job_uuid = uuid.UUID(str(reservation.job_id))
++                    except ValueError:
++                        continue
++                    job = await session.get(IdentityScanJob, job_uuid)
++                    if job is None:
++                        continue
++                    await settle_usage_job(
++                        session,
++                        tenant_id=reservation.tenant_id,
++                        job_id=str(reservation.job_id),
++                        fence_token=None,
++                        allow_missing_job_release=False,
++                    )
++                await session.commit()
++        except Exception:
++            logger.exception("[worker] usage settlement failed for stalled scan jobs")
++
+     def _can_claim_scan_items(self) -> bool:
+         """Whether this worker may claim pending scan items this cycle.
+ 
+diff --git a/apps/prototype-description-service/scene/application/describe_async_worker.py b/apps/prototype-description-service/scene/application/describe_async_worker.py
+--- a/apps/prototype-description-service/scene/application/describe_async_worker.py
++++ b/apps/prototype-description-service/scene/application/describe_async_worker.py
+@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+ 
+ from db.models.scene import ImageDescription
+ from db.tenant_context import set_tenant_context
++from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.description_adapter import AdapterResult, DescriptionAdapter
+ from scene.application.description_repository import ImageDescriptionRepository
+@@ -383,15 +384,37 @@ async def run_async_describe_job(
+                     )
+                 await session.commit()
+ 
+-    if job_timeout_seconds is not None:
++    captured_fence: str | None = None
++    try:
++        async with session_factory() as claim_session:
++            await set_tenant_context(claim_session, tenant_id)
++            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
++    except Exception:
++        _logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
++
++    try:
++        if job_timeout_seconds is not None:
++            try:
++                await asyncio.wait_for(_run(), job_timeout_seconds)
++            except TimeoutError:
++                # wait_for cancels the inner task; the CancelledError cleanup usually
++                # persisted a terminal state already. _mark_terminal's terminal guard
++                # prevents a second write from overwriting that error, and its
++                # degraded-vs-failed split keeps the timeout path consistent with the
++                # GPU-exception and reclaim contracts (VLM5-F1A-BR-02).
++                await _mark_terminal(f"TimeoutError: job exceeded {job_timeout_seconds}s")
++        else:
++            await _run()
++    finally:
+         try:
+-            await asyncio.wait_for(_run(), job_timeout_seconds)
+-        except TimeoutError:
+-            # wait_for cancels the inner task; the CancelledError cleanup usually
+-            # persisted a terminal state already. _mark_terminal's terminal guard
+-            # prevents a second write from overwriting that error, and its
+-            # degraded-vs-failed split keeps the timeout path consistent with the
+-            # GPU-exception and reclaim contracts (VLM5-F1A-BR-02).
+-            await _mark_terminal(f"TimeoutError: job exceeded {job_timeout_seconds}s")
+-        return
+-    await _run()
++            async with session_factory() as settle_session:
++                await set_tenant_context(settle_session, tenant_id)
++                await settle_usage_job(
++                    settle_session,
++                    tenant_id=tenant_id,
++                    job_id=str(run_id),
++                    fence_token=captured_fence,
++                )
++                await settle_session.commit()
++        except Exception:
++            _logger.exception("usage settlement failed run_id=%s", run_id)
+diff --git a/apps/prototype-description-service/scene/application/describe_run_repository.py b/apps/prototype-description-service/scene/application/describe_run_repository.py
+--- a/apps/prototype-description-service/scene/application/describe_run_repository.py
++++ b/apps/prototype-description-service/scene/application/describe_run_repository.py
+@@ -159,6 +159,8 @@ class DescribeRunRepository:
+         idempotency_key: str | None = None,
+         request_digest: str | None = None,
+         deadline_seconds: float | None = None,
++        run_id: uuid.UUID | None = None,
++        operation_id: str | None = None,
+     ) -> uuid.UUID:
+         # PHP-04: dedup while preserving first-seen order so a caller cannot
+         # trigger redundant VLM inference by repeating a media_id.
+@@ -172,6 +174,7 @@ class DescribeRunRepository:
+         request.validate()
+         images = images or {}
+         run = DescribeRun(
++            **({"id": run_id} if run_id is not None else {}),
+             tenant_id=tenant_id,
+             run_kind=RunKind.BULK,
+             status=DescribeRunStatus.PENDING,
+@@ -194,6 +197,7 @@ class DescribeRunRepository:
+                 else compute_request_digest(media_ids=media_ids, recognition_enabled=request.recognition_enabled)
+             ),
+             deadline_seconds=deadline_seconds,
++            operation_id=operation_id,
+         )
+         run.items = [
+             DescribeRunItem(
+@@ -218,9 +222,13 @@ class DescribeRunRepository:
+         image_bytes: bytes,
+         image_content_type: str | None = None,
+         created_by_user_id: int | None = None,
++        run_id: uuid.UUID | None = None,
++        operation_id: str | None = None,
++        request_digest: str | None = None,
+     ) -> uuid.UUID:
+         """Create a one-item ``run_kind=single`` job for the async supersede path (VLM-5)."""
+         run = DescribeRun(
++            **({"id": run_id} if run_id is not None else {}),
+             tenant_id=tenant_id,
+             run_kind=RunKind.SINGLE,
+             status=DescribeRunStatus.PENDING,
+@@ -232,6 +240,8 @@ class DescribeRunRepository:
+             skipped_items=0,
+             items_timed=0,
+             created_by_user_id=created_by_user_id,
++            operation_id=operation_id,
++            request_digest=request_digest,
+         )
+         run.items = [
+             DescribeRunItem(
+diff --git a/apps/prototype-description-service/scene/application/describe_run_worker.py b/apps/prototype-description-service/scene/application/describe_run_worker.py
+--- a/apps/prototype-description-service/scene/application/describe_run_worker.py
++++ b/apps/prototype-description-service/scene/application/describe_run_worker.py
+@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+ 
+ from db.models.scene import DescribeOperation, DescribeStartup
+ from db.tenant_context import get_tenant_record, set_tenant_context
++from recognition.application.services.usage_settlement_service import capture_usage_fence, settle_usage_job
+ from scene.application.describe_load import load_snapshot, resolve_load_path, write_load_snapshot
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.identity_merge import NamingRealizer, NamingSkipReason, NamingStatus
+@@ -891,6 +892,13 @@ async def run_describe_job(
+         "describe run per-item envelope seconds=%s (PERF-10 traded for DATA-19 WBUX-6 S9-F1)",
+         item_envelope,
+     )
++    captured_fence: str | None = None
++    try:
++        async with session_factory() as claim_session:
++            await set_tenant_context(claim_session, tenant_id)
++            captured_fence = await capture_usage_fence(claim_session, tenant_id=tenant_id, job_id=str(run_id))
++    except Exception:
++        logger.debug("usage fence capture skipped run_id=%s", run_id, exc_info=True)
+ 
+     async def cancel_requested() -> bool:
+         # A fresh, short-lived session is intentional. The tracking session has
+@@ -1092,9 +1100,7 @@ async def run_describe_job(
+                     else:
+                         outcome = outcome or DescribeItemOutcome()
+                         if warmup_fallback_reason is not None:
+-                            outcome = _stamp_warmup_cpu_fallback_outcome(
+-                                outcome, warmup_fallback_reason
+-                            )
++                            outcome = _stamp_warmup_cpu_fallback_outcome(outcome, warmup_fallback_reason)
+                         await _record_item_processing_ms(
+                             repo=repo,
+                             tenant_id=tenant_id,
+@@ -1178,6 +1184,18 @@ async def run_describe_job(
+         except Exception:  # noqa: BLE001 - best-effort terminal write
+             logger.exception("failed to mark run FAILED run_id=%s", run_id)
+     finally:
++        try:
++            async with session_factory() as settle_session:
++                await set_tenant_context(settle_session, tenant_id)
++                await settle_usage_job(
++                    settle_session,
++                    tenant_id=tenant_id,
++                    job_id=str(run_id),
++                    fence_token=captured_fence,
++                )
++                await settle_session.commit()
++        except Exception:
++            logger.exception("usage settlement failed run_id=%s", run_id)
+         # GPUW-1: refresh the burst-GPU load dump on completion, failure AND
+         # cancellation. A release that only fires on the happy path is a
+         # reclaimer that eventually does not fire [RES-07] -- and here the cost
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe.py
+@@ -17,7 +17,7 @@ import os
+ import time
+ import uuid
+ from collections.abc import Mapping
+-from contextlib import asynccontextmanager
++from contextlib import asynccontextmanager, suppress
+ from dataclasses import dataclass
+ from datetime import UTC, datetime
+ from pathlib import Path
+@@ -400,6 +400,17 @@ async def _run_by_usage_operation(session: AsyncSession, *, tenant_id: uuid.UUID
+     )
+ 
+ 
++def bound_usage_job_id(ticket, fallback: uuid.UUID) -> uuid.UUID:
++    """Use the admitted ticket job id when present; otherwise the pre-generated UUID."""
++    raw = getattr(ticket, "job_id", None) if ticket is not None else None
++    if not raw:
++        return fallback
++    try:
++        return uuid.UUID(str(raw))
++    except ValueError:
++        return fallback
++
++
+ async def _bind_run_usage(
+     session: AsyncSession,
+     *,
+@@ -408,13 +419,7 @@ async def _bind_run_usage(
+     operation_id: str,
+     request_fingerprint: str,
+ ):
+-    """Persist G2 usage identity onto existing DescribeRun payload fields.
+-
+-    Shape for G3: ``DescribeRun.operation_id`` = usage operation_id,
+-    ``DescribeRun.request_digest`` = usage fingerprint. ``create_run`` /
+-    ``create_single_run`` do not accept caller ``id``, so ``UsageTicket.job_id``
+-    may differ from ``DescribeRun.id`` until G3 adds that parameter.
+-    """
++    """Persist usage identity onto DescribeRun (operation_id + fingerprint digest)."""
+     run = await session.get(DescribeRun, run_id)
+     if run is None or run.tenant_id != tenant_id:
+         raise HTTPException(
+@@ -1440,7 +1445,7 @@ async def describe_image_multipart(
+         operation_id=usage_operation_id,
+         request_fingerprint=usage_fingerprint,
+         queue_bytes=0,
+-    ):
++    ) as ticket:
+         session_factory = worker_session_factory(session) if session is not None else None
+         effective_timeout = _generation_timeout_seconds(settings, effective_adapter)
+         describe_repository = repository
+@@ -1488,6 +1493,7 @@ async def describe_image_multipart(
+             await _charge_demo_quota()
+ 
+         terminalized = False
++        compute_started = False
+ 
+         async def _cleanup_accepted() -> None:
+             nonlocal terminalized
+@@ -1503,6 +1509,15 @@ async def describe_image_multipart(
+             )
+             terminalized = True
+ 
++        async def _commit_usage_if_computed() -> None:
++            if not compute_started or ticket is None or usage_admission_service is None:
++                return
++            fence = getattr(ticket, "fence_token", None)
++            commit_fenced = getattr(usage_admission_service, "commit_fenced", None)
++            if not fence or not callable(commit_fenced):
++                return
++            await commit_fenced(ticket, fence_token=fence)
++
+         try:
+             if unavailable_fast_path:
+                 await _cleanup_accepted()
+@@ -1528,6 +1543,7 @@ async def describe_image_multipart(
+                     tenant_uuid=tenant_uuid,
+                 )
+             else:
++                compute_started = True
+                 response = await service.describe(
+                     tenant_id=tenant_uuid,
+                     media_id=envelope.media_id,
+@@ -1615,11 +1631,13 @@ async def describe_image_multipart(
+                 # durable DescribeOperation to advertise.
+                 if gpu_compute:
+                     raise RuntimeError("gpu describe succeeded without an accepted operation")
++                await _commit_usage_if_computed()
+                 return MultipartDescribeResponse(
+                     **dumped,
+                     startup_id=startup_id,
+                     timing=timing,
+                 )
++            await _commit_usage_if_computed()
+             return MultipartDescribeResponse(
+                 **dumped,
+                 operation_id=accepted.operation_id,
+@@ -1641,6 +1659,9 @@ async def describe_image_multipart(
+                 ) from exc
+             raise
+         except TimeoutError as exc:
++            if compute_started:
++                with suppress(Exception):
++                    await _commit_usage_if_computed()
+             await _cleanup_accepted()
+             raise HTTPException(
+                 status.HTTP_504_GATEWAY_TIMEOUT,
+@@ -1670,6 +1691,9 @@ async def describe_image_multipart(
+             processing_ms = getattr(getattr(exc, "attempt_timing", None), "processing_ms", None)
+             server_elapsed_ms = _elapsed_ms(server_start)
+             safe_message = exc.message if isinstance(exc, GpuRemoteAdapterError) else str(exc)
++            if compute_started:
++                with suppress(Exception):
++                    await _commit_usage_if_computed()
+             if gpu_compute:
+                 try:
+                     completed = await _complete_operation(
+@@ -1701,6 +1725,9 @@ async def describe_image_multipart(
+                 ) from exc
+             raise HTTPException(status.HTTP_502_BAD_GATEWAY, safe_message) from exc
+         except Exception as exc:
++            if compute_started:
++                with suppress(Exception):
++                    await _commit_usage_if_computed()
+             await _cleanup_accepted()
+             raise _typed_describe_error(
+                 status_code=status.HTTP_502_BAD_GATEWAY,
+@@ -1785,7 +1812,7 @@ async def enqueue_describe_image(
+         operation_id=operation_id,
+         request_fingerprint=usage_fingerprint,
+         queue_bytes=image_len,
+-    ):
++    ) as ticket:
+         repo = DescribeRunRepository(session)
+         existing = await _run_by_usage_operation(session, tenant_id=submission.tenant_uuid, operation_id=operation_id)
+         if existing is not None:
+@@ -1812,6 +1839,9 @@ async def enqueue_describe_image(
+                 media_id=envelope.media_id,
+                 image_bytes=submission.image_bytes,
+                 created_by_user_id=getattr(auth, "user_id", None),
++                run_id=bound_usage_job_id(ticket, job_id),
++                operation_id=operation_id,
++                request_digest=usage_fingerprint,
+             )
+             await _bind_run_usage(
+                 session,
+diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py
+--- a/apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py
++++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/describe_run.py
+@@ -6,6 +6,7 @@ import json
+ import logging
+ import uuid
+ from collections.abc import Mapping, Sequence
++from contextlib import suppress
+ 
+ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+ from sqlalchemy import select
+@@ -15,6 +16,7 @@ from starlette.datastructures import UploadFile
+ 
+ from db.models import DemoInstance
+ from db.tenant_context import require_tenant_record, set_tenant_context
++from recognition.application.services.usage_settlement_service import settle_usage_job
+ from recognition.infrastructure.repositories.audit_repository import AuditRepository
+ from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
+ from recognition.interface_adapters.http.deps.demo_quota import (
+@@ -63,6 +65,7 @@ from scene.interface_adapters.http.routers.describe import (
+     _run_by_usage_operation,
+     _scene_usage_fingerprint,
+     _usage_operation_id,
++    bound_usage_job_id,
+     worker_session_factory,
+ )
+ from scene.interface_adapters.http.schemas.responses import (
+@@ -575,7 +578,7 @@ async def create_describe_run(
+         operation_id=operation_id,
+         request_fingerprint=usage_fingerprint,
+         queue_bytes=queue_bytes,
+-    ):
++    ) as ticket:
+         if idempotency_key is not None:
+             existing = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+         else:
+@@ -593,6 +596,8 @@ async def create_describe_run(
+                 idempotency_key=idempotency_key,
+                 request_digest=usage_fingerprint,
+                 deadline_seconds=run_deadline_seconds,
++                run_id=bound_usage_job_id(ticket, job_id),
++                operation_id=operation_id,
+             )
+         except IntegrityError as exc:
+             if idempotency_key is None or not _is_idempotency_reservation_conflict(exc):
+@@ -721,6 +726,9 @@ async def cancel_describe_run(
+     if not await repo.request_cancel(tenant_id=tenant_id, run_id=run_id):
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+     await session.commit()
++    await settle_usage_job(session, tenant_id=tenant_id, job_id=str(run_id))
++    with suppress(Exception):
++        await session.commit()
+     run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+     if run is None:  # pragma: no cover - defensive only
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "describe run not found")
+diff --git a/apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py b/apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py
+--- a/apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py
++++ b/apps/prototype-description-service/scene/tests/test_app1_usage_scene_census.py
+@@ -127,6 +127,16 @@ class _FakeAdmission:
+     async def release(self, ticket: UsageTicket) -> None:
+         self.releases.append(ticket)
+ 
++    async def commit_fenced(self, ticket: UsageTicket, *, fence_token: str) -> None:
++        if fence_token != ticket.fence_token:
++            raise UsageAdmissionUnavailableError("stale usage fence")
 +        self.commits.append(ticket)
 +
-+    async def release(self, ticket: UsageTicket) -> None:
++    async def release_fenced(self, ticket: UsageTicket, *, fence_token: str) -> None:
++        if fence_token != ticket.fence_token:
++            raise UsageAdmissionUnavailableError("stale usage fence")
 +        self.releases.append(ticket)
 +
-+
-+class _CountingScanQueue:
-+    def __init__(self) -> None:
-+        self.create_calls: list[dict[str, object]] = []
-+
-+    async def create_scan_job_record(self, *, tenant_id, total, created_by_user_id=None, job_id=None):
-+        self.create_calls.append(
-+            {
-+                "tenant_id": tenant_id,
-+                "total": total,
-+                "job_id": job_id,
-+                "created_by_user_id": created_by_user_id,
-+            }
-+        )
-+        return job_id if job_id is not None else uuid4()
-+
-+
-+class _FakeObjectStore:
-+    def __init__(self) -> None:
-+        self.puts: list[dict[str, object]] = []
-+
-+    def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
-+        self.puts.append({"job_id": job_id, "media_id": media_id, "data": data})
-+        return f"blob://{job_id}/{media_id}"
-+
-+    def cleanup(self, *, job_id: str) -> None:
-+        return None
-+
-+    @contextmanager
-+    def open(self, _uri: str):
-+        yield io.BytesIO(b"image")
-+
-+
-+class _JobService:
-+    async def get_job_status(self, _job_id: str):
-+        return None
-+
-+
-+def _json_lifecycle_app(
-+    admission: _FakeAdmission,
-+    queue: _CountingScanQueue,
-+    monkeypatch: pytest.MonkeyPatch,
-+    *,
-+    tenant_claim: str | None = None,
-+) -> FastAPI:
-+    app = FastAPI()
-+    app.include_router(analyze_router.router, prefix="/recognition")
-+    app.state.usage_admission_service = admission
-+    dispatch_calls: list[dict[str, object]] = []
-+    app.state.dispatch_calls = dispatch_calls
-+
-+    async def _none():
-+        return None
-+
-+    async def _auth():
-+        return SimpleNamespace(tenant_claim=tenant_claim, user_id=None)
-+
-+    async def _queue():
-+        return queue
-+
-+    async def _service():
-+        return admission
-+
-+    async def _jobs():
-+        return _JobService()
-+
-+    app.dependency_overrides.update(
-+        {
-+            require_auth: _none,
-+            enforce_rate_limit: _none,
-+            require_write_access: _auth,
-+            get_optional_session: _none,
-+            get_scan_queue_service_optional: _queue,
-+            enforce_demo_quota: _none,
-+            get_usage_admission_service: _service,
-+            get_job_service_dependency: _jobs,
-+        }
-+    )
-+
-+    async def _noop_background(**kwargs):
-+        dispatch_calls.append(kwargs)
-+        return None
-+
-+    monkeypatch.setattr(analyze_router, "chain_populate_and_process", _noop_background)
-+    return app
+ 
+ @contextmanager
+ def _census_client(admission: _FakeAdmission, monkeypatch):
+@@ -308,6 +318,10 @@ def test_three_compute_posts_reserve_before_dispatch(monkeypatch):
+     assert "async-op-00000000" in modes_seen
+     assert "bulk-op-0000000000" in modes_seen
+     assert multipart.json()["operation_id"] in modes_seen
++    async_id = uuid.UUID(async_job.json()["job_id"])
++    bulk_id = uuid.UUID(bulk.json()["run_id"])
++    assert any(reserve["job_id"] == str(async_id) for reserve in admission.reserves)
++    assert any(reserve["job_id"] == str(bulk_id) for reserve in admission.reserves)
+     for reserve in admission.reserves:
+         assert isinstance(reserve["job_id"], str) and reserve["job_id"]
+         assert isinstance(reserve["request_fingerprint"], str) and len(str(reserve["request_fingerprint"])) == 64
+@@ -319,7 +333,8 @@ def test_three_compute_posts_reserve_before_dispatch(monkeypatch):
+         assert ticket_fields.cost_units >= 1
+         assert ticket_fields.job_id == reserve["job_id"]
+         assert ticket_fields.fence_token == "fence-scene-g2"
+-    assert admission.commits == []
++    assert len(admission.commits) == 1
++    assert admission.commits[0].job_id == admission.reserves[0]["job_id"]
+ 
+ 
+ def test_get_polling_status_and_results_stay_free(monkeypatch):
+@@ -442,4 +457,4 @@ def test_decorative_and_cache_paths_stay_free(monkeypatch):
+     assert cached.status_code == 200, cached.text
+     assert cached.json()["cached"] is True
+     assert len(admission.reserves) == 1
+-    assert admission.commits == []
++    assert len(admission.commits) == 1
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_async_repository.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ 
+ import asyncio
+ import importlib
++import inspect
+ import uuid
+ from dataclasses import dataclass, field
+ from datetime import UTC, datetime, timedelta
+@@ -416,6 +417,59 @@ def test_bulk_create_run_defaults_to_run_kind_bulk():
+     asyncio.run(body())
+ 
+ 
++def test_create_run_signatures_keep_optional_caller_job_id():
++    bulk = inspect.signature(DescribeRunRepository.create_run)
++    single = inspect.signature(DescribeRunRepository.create_single_run)
++    for params in (bulk.parameters, single.parameters):
++        assert params["run_id"].default is None
++        assert params["operation_id"].default is None
++    assert single.parameters["request_digest"].default is None
++    assert "run_id" in bulk.parameters
++    assert list(bulk.parameters)[:3] == ["self", "tenant_id", "media_ids"]
++    assert list(single.parameters)[:4] == ["self", "tenant_id", "media_id", "image_bytes"]
 +
 +
-+def _multipart_lifecycle_app(
-+    admission: _FakeAdmission,
-+    queue: _CountingScanQueue,
-+    store: _FakeObjectStore,
-+    monkeypatch: pytest.MonkeyPatch,
-+) -> FastAPI:
-+    app = FastAPI()
-+    app.include_router(multipart_router.router, prefix="/recognition")
-+    app.state.usage_admission_service = admission
-+    dispatch_calls: list[dict[str, object]] = []
-+    app.state.dispatch_calls = dispatch_calls
-+
-+    async def _auth():
-+        return SimpleNamespace(tenant_claim=None, user_id=None)
-+
-+    async def _session():
-+        return None
-+
-+    async def _queue():
-+        return queue
-+
-+    async def _none():
-+        return None
-+
-+    async def _service():
-+        return admission
-+
-+    async def _store_factory():
-+        return lambda _tenant: store
-+
-+    app.dependency_overrides.update(
-+        {
-+            require_write_access: _auth,
-+            get_optional_session: _session,
-+            get_scan_queue_service_optional: _queue,
-+            enforce_demo_quota: _none,
-+            get_usage_admission_service: _service,
-+            multipart_router.get_object_store_factory_for_request: _store_factory,
-+        }
-+    )
-+
-+    async def _noop_background(**kwargs):
-+        dispatch_calls.append(kwargs)
-+        return None
-+
-+    monkeypatch.setattr(multipart_router, "chain_populate_and_process", _noop_background)
-+    return app
-+
-+
-+@pytest.mark.asyncio
-+async def test_same_operation_replays_same_job_without_second_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch)
-+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
-+    headers = {"Idempotency-Key": "replay-op"}
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post("/recognition/analyze", json=payload, headers=headers)
-+        second = await client.post("/recognition/analyze", json=payload, headers=headers)
-+
-+    assert first.status_code == 202
-+    assert second.status_code == 202
-+    assert first.json()["id"] == second.json()["id"]
-+    assert first.json()["id"] == str(admission.reserves[0]["job_id"])
-+    assert len(queue.create_calls) == 1
-+    assert len(app.state.dispatch_calls) == 1
-+    assert admission.commits == []
-+    assert admission.releases == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_same_operation_changed_media_returns_409(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch)
-+    headers = {"Idempotency-Key": "conflict-op"}
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post(
-+            "/recognition/analyze",
-+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
-+            headers=headers,
-+        )
-+        second = await client.post(
-+            "/recognition/analyze",
-+            json={"tenant_id": str(TENANT_ID), "media_ids": [OTHER_MEDIA_ID]},
-+            headers=headers,
-+        )
-+
-+    assert first.status_code == 202
-+    assert second.status_code == 409
-+    assert second.json()["detail"] == {"error": "usage_fingerprint_conflict"}
-+    assert len(queue.create_calls) == 1
-+    assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_same_payload_new_operation_is_independently_chargeable(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch)
-+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post(
-+            "/recognition/analyze",
-+            json=payload,
-+            headers={"Idempotency-Key": "op-a"},
-+        )
-+        second = await client.post(
-+            "/recognition/analyze",
-+            json=payload,
-+            headers={"Idempotency-Key": "op-b"},
-+        )
-+
-+    assert first.status_code == 202
-+    assert second.status_code == 202
-+    assert first.json()["id"] != second.json()["id"]
-+    assert len(queue.create_calls) == 2
-+    assert admission.reserves[0]["request_fingerprint"] == admission.reserves[1]["request_fingerprint"]
-+    assert admission.reserves[0]["operation_id"] == "op-a"
-+    assert admission.reserves[1]["operation_id"] == "op-b"
-+
-+
-+@pytest.mark.asyncio
-+async def test_envelope_operation_id_is_used_and_not_source_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch)
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        response = await client.post(
-+            "/recognition/analyze",
-+            json={
-+                "tenant_id": str(TENANT_ID),
-+                "media_ids": [MEDIA_ID],
-+                "operation_id": "envelope-op",
-+            },
-+        )
-+
-+    assert response.status_code == 202
-+    reserved = admission.reserves[0]
-+    assert reserved["operation_id"] == "envelope-op"
-+    assert reserved["idempotency_key"] == "envelope-op"
-+    assert reserved["request_fingerprint"] != "envelope-op"
-+    assert MEDIA_ID not in str(reserved["operation_id"])
-+
-+
-+@pytest.mark.asyncio
-+async def test_tenant_mismatch_rejects_before_reserve(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch, tenant_claim=str(uuid4()))
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        response = await client.post(
-+            "/recognition/analyze",
-+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
-+            headers={"Idempotency-Key": "tenant-mismatch"},
-+        )
-+
-+    assert response.status_code == 403
-+    assert admission.reserves == []
-+    assert queue.create_calls == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_get_job_status_does_not_reserve(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    app = _json_lifecycle_app(admission, queue, monkeypatch)
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        created = await client.post(
-+            "/recognition/analyze",
-+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
-+            headers={"Idempotency-Key": "status-op"},
-+        )
-+        status_response = await client.get(f"/recognition/jobs/{created.json()['id']}")
-+
-+    assert created.status_code == 202
-+    assert status_response.status_code == 404
-+    assert len(admission.reserves) == 1
-+    assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_queue_refusal_before_dispatch_releases() -> None:
-+    admission = _FakeAdmission()
-+    job_id = uuid4()
-+
-+    class _RefuseQueue:
-+        async def create_scan_job_record(self, **_kwargs):
-+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
-+
-+    class _Background:
-+        def add_task(self, *_args, **_kwargs) -> None:
-+            raise AssertionError("dispatch must not run after queue refusal")
-+
-+    with pytest.raises(HTTPException) as exc_info:
-+        async with admit_usage(
-+            admission,
-+            tenant_id=TENANT_ID,
-+            idempotency_key="refuse-op",
-+            job_id=str(job_id),
-+            cost_units=1,
-+            operation_id="refuse-op",
-+            request_fingerprint="fp",
-+        ):
-+            await analyze_router._schedule_analysis(
-+                background_tasks=_Background(),
-+                session=None,
-+                scan_queue=_RefuseQueue(),
-+                tenant_uuid=TENANT_ID,
-+                media_items=[(1, "https://example.test/a.jpg")],
-+                media_ids=[MEDIA_ID],
-+                media_sources=["https://example.test/a.jpg"],
-+                inline_processing=False,
-+                auth=None,
-+                job_id=job_id,
++def test_create_run_persists_caller_job_id_and_operation_identity():
++    async def body():
++        engine, sf = await _sessionmaker()
++        tenant = uuid.uuid4()
++        caller_bulk = uuid.uuid4()
++        caller_single = uuid.uuid4()
++        fingerprint = "a" * 64
++        async with sf() as s:
++            repo = DescribeRunRepository(s)
++            bulk_id = await repo.create_run(
++                tenant_id=tenant,
++                media_ids=[1, 2],
++                run_id=caller_bulk,
++                operation_id="op-bulk",
++                request_digest=fingerprint,
 +            )
++            single_id = await repo.create_single_run(
++                tenant_id=tenant,
++                media_id=9,
++                image_bytes=b"img",
++                run_id=caller_single,
++                operation_id="op-single",
++                request_digest=fingerprint,
++            )
++            omitted = await repo.create_single_run(tenant_id=tenant, media_id=10, image_bytes=b"y")
++            await s.commit()
++            bulk = await repo.get_run(tenant_id=tenant, run_id=bulk_id)
++            single = await repo.get_run(tenant_id=tenant, run_id=single_id)
++            leftover = await repo.get_run(tenant_id=tenant, run_id=omitted)
++        assert bulk_id == caller_bulk
++        assert single_id == caller_single
++        assert bulk is not None and bulk.operation_id == "op-bulk"
++        assert bulk.request_digest == fingerprint
++        assert single is not None and single.operation_id == "op-single"
++        assert single.request_digest == fingerprint
++        assert leftover is not None and leftover.id != caller_single
++        await engine.dispose()
 +
-+    assert exc_info.value.status_code == 503
-+    assert len(admission.releases) == 1
-+    assert admission.commits == []
-+
-+
-+@pytest.mark.asyncio
-+async def test_committed_job_does_not_release_when_response_fails() -> None:
-+    admission = _FakeAdmission()
-+    job_id = uuid4()
-+    queue = _CountingScanQueue()
-+
-+    class _BoomBackground:
-+        def add_task(self, *_args, **_kwargs) -> None:
-+            raise RuntimeError("response failed")
-+
-+    async with admit_usage(
-+        admission,
-+        tenant_id=TENANT_ID,
-+        idempotency_key="persist-op",
-+        job_id=str(job_id),
-+        cost_units=1,
-+        operation_id="persist-op",
-+        request_fingerprint="fp",
-+    ):
-+        response = await analyze_router._schedule_analysis(
-+            background_tasks=_BoomBackground(),
-+            session=None,
-+            scan_queue=queue,
-+            tenant_uuid=TENANT_ID,
-+            media_items=[(1, "https://example.test/a.jpg")],
-+            media_ids=[MEDIA_ID],
-+            media_sources=["https://example.test/a.jpg"],
-+            inline_processing=False,
-+            auth=None,
-+            job_id=job_id,
-+        )
-+
-+    assert response.id == str(job_id)
-+    assert len(queue.create_calls) == 1
-+    assert admission.releases == []
-+    assert admission.commits == []
++    asyncio.run(body())
 +
 +
-+@pytest.mark.asyncio
-+async def test_multipart_replay_skips_second_persist(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    store = _FakeObjectStore()
-+    app = _multipart_lifecycle_app(admission, queue, store, monkeypatch)
-+    headers = {"Idempotency-Key": "multipart-replay"}
-+    form = {
-+        "data": {"request": json.dumps({"tenant_id": str(TENANT_ID)})},
-+        "files": {"image_1": ("image.png", b"image-bytes", "image/png")},
-+    }
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post("/recognition/analyze/multipart", headers=headers, **form)
-+        second = await client.post(
-+            "/recognition/analyze/multipart",
-+            headers=headers,
-+            data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
-+            files={"image_1": ("image.png", b"image-bytes", "image/png")},
-+        )
-+
-+    assert first.status_code == 202
-+    assert second.status_code == 202
-+    assert first.json()["id"] == second.json()["id"]
-+    assert len(queue.create_calls) == 1
-+    assert len(store.puts) == 1
-+    assert len(app.state.dispatch_calls) == 1
-+    assert admission.commits == []
+ @dataclass
+ class _MigrationRecorder:
+     """Record create_table args so ORM metadata can be compared to migration DDL."""
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_async_worker.py b/apps/prototype-description-service/scene/tests/test_describe_async_worker.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_async_worker.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_async_worker.py
+@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+ 
+ from db.models.base_imports import Base
+ from db.models.scene import DescribeRun, DescribeRunItem, ImageDescription
++from scene.application.describe_async_worker import run_async_describe_job
+ from scene.application.describe_run_repository import DescribeRunRepository
+ from scene.application.description_adapter import AdapterResult
+ from scene.domain.describe_run import DescribeItemStatus, DescribeJobStatus, describe_job_status
+@@ -704,3 +705,180 @@ def test_worker_bails_on_already_terminal_failed_and_completed():
+         await engine.dispose()
+ 
+     asyncio.run(body())
 +
 +
-+@pytest.mark.asyncio
-+async def test_multipart_changed_bytes_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
-+    admission = _FakeAdmission()
-+    queue = _CountingScanQueue()
-+    store = _FakeObjectStore()
-+    app = _multipart_lifecycle_app(admission, queue, store, monkeypatch)
-+    headers = {"Idempotency-Key": "multipart-conflict"}
-+    transport = httpx.ASGITransport(app=app)
-+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-+        first = await client.post(
-+            "/recognition/analyze/multipart",
-+            headers=headers,
-+            data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
-+            files={"image_1": ("image.png", b"image-one", "image/png")},
-+        )
-+        second = await client.post(
-+            "/recognition/analyze/multipart",
-+            headers=headers,
-+            data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
-+            files={"image_1": ("image.png", b"image-two", "image/png")},
-+        )
++async def _usage_sessionmaker():
++    from datetime import UTC, datetime, timedelta
 +
-+    assert first.status_code == 202
-+    assert second.status_code == 409
-+    assert len(queue.create_calls) == 1
-+    assert len(store.puts) == 1
-diff --git a/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py b/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py
---- a/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py
-+++ b/apps/prototype-description-service/recognition/tests/unit/test_configure_clerk_production.py
-@@ -423,3 +423,156 @@ def test_parser_has_no_secret_value_flags(cli: ModuleType) -> None:
-     assert "--secret-key " not in f" {help_text} "
-     assert "--publishable-key-file" in help_text
-     assert "--secret-key-file" in help_text
-+
-+
-+def test_apply_refuses_prepopulated_frontend_secret_and_writes_nothing(cli: ModuleType, tmp_path: Path) -> None:
-+    key = _pk_live()
-+    key_file = _write_key(tmp_path / "pk", key)
-+    backend = tmp_path / "backend.env"
-+    frontend = tmp_path / "frontend.env"
-+    backend_original = "COMPOSE_PROJECT_NAME=acx-prod\nACX_ENV=prod\n"
-+    secret = "sk_live_prepopulated-frontend-secret-value"
-+    frontend_original = f"VITE_PUBLIC_OK=keep-me\nCLERK_SECRET_KEY={secret}\n"
-+    backend.write_text(backend_original, encoding="utf-8")
-+    frontend.write_text(frontend_original, encoding="utf-8")
-+    os.chmod(backend, 0o600)
-+    os.chmod(frontend, 0o600)
-+
-+    code, out, err = _run(
-+        cli,
-+        [
-+            "--apply",
-+            "--publishable-key-file",
-+            str(key_file),
-+            "--audience",
-+            AUDIENCE,
-+            "--backend-env",
-+            str(backend),
-+            "--frontend-env",
-+            str(frontend),
-+        ],
++    from db.models import UsageReservation
++    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
++    from db.models.tenant import Tenant
++    from recognition.domain.portal_contracts import (
++        DEFAULT_GLOBAL_CONFIG_VERSION,
++        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++        DEFAULT_GLOBAL_FENCE_EPOCH,
++        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++        DEFAULT_GLOBAL_QUEUE_LIMIT,
++        GLOBAL_USAGE_ADMISSION_STATE_ID,
++        EntitlementStatus,
 +    )
-+    assert code == 1
-+    assert "frontend" in err.lower()
-+    assert "backend-only" in err.lower() or "secret" in err.lower()
-+    assert secret not in err
-+    assert secret not in out
-+    assert key not in out
-+    assert key not in err
-+    assert backend.read_text(encoding="utf-8") == backend_original
-+    assert frontend.read_text(encoding="utf-8") == frontend_original
-+    assert "VITE_PUBLIC_OK=keep-me" in frontend.read_text(encoding="utf-8")
-+    assert stat.S_IMODE(backend.stat().st_mode) == 0o600
-+    assert stat.S_IMODE(frontend.stat().st_mode) == 0o600
 +
-+
-+def test_second_write_failure_does_not_leave_partial_config(
-+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-+) -> None:
-+    key_file = _write_key(tmp_path / "pk", _pk_live())
-+    backend = tmp_path / "backend.env"
-+    frontend = tmp_path / "frontend.env"
-+    backend_original = "COMPOSE_PROJECT_NAME=acx-prod\nKEEP_BACKEND=yes\n"
-+    frontend_original = "VITE_PUBLIC_OK=keep-me\n"
-+    backend.write_text(backend_original, encoding="utf-8")
-+    frontend.write_text(frontend_original, encoding="utf-8")
-+    os.chmod(backend, 0o600)
-+    os.chmod(frontend, 0o600)
-+
-+    real_replace = cli.os.replace
-+    calls = {"n": 0}
-+
-+    def boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-+        calls["n"] += 1
-+        if calls["n"] == 2:
-+            raise OSError("injected second replace failure")
-+        real_replace(src, dst)
-+
-+    monkeypatch.setattr(cli.os, "replace", boom)
-+    code, out, err = _run(
-+        cli,
-+        [
-+            "--apply",
-+            "--publishable-key-file",
-+            str(key_file),
-+            "--audience",
-+            AUDIENCE,
-+            "--backend-env",
-+            str(backend),
-+            "--frontend-env",
-+            str(frontend),
-+        ],
-+    )
-+    assert code == 1
-+    assert "atomic write failed" in err or "recovery cannot be guaranteed" in err or "rollback" in err
-+    assert backend.read_text(encoding="utf-8") == backend_original
-+    assert frontend.read_text(encoding="utf-8") == frontend_original
-+    assert "sk_live_" not in out
-+    assert "sk_live_" not in err
-+
-+
-+def test_fetch_jwks_enforces_total_deadline_on_slow_trickle(cli: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-+    clock = {"now": 10.0}
-+
-+    class TrickleResponse:
-+        def __init__(self) -> None:
-+            self._payload = b'{"keys":[{"kty":"RSA","kid":"x"}]}'
-+            self._offset = 0
-+
-+        def read(self, n: int = -1) -> bytes:
-+            clock["now"] += 0.8
-+            if self._offset >= len(self._payload):
-+                return b""
-+            take = len(self._payload) - self._offset if n < 0 else min(4, n, len(self._payload) - self._offset)
-+            chunk = self._payload[self._offset : self._offset + take]
-+            self._offset += len(chunk)
-+            return chunk
-+
-+        def __enter__(self) -> TrickleResponse:
-+            return self
-+
-+        def __exit__(self, *args: object) -> None:
-+            return None
-+
-+    monkeypatch.setattr(cli, "urlopen", lambda *args, **kwargs: TrickleResponse())
-+
-+    with pytest.raises(cli.ClerkConfigError, match="timeout") as excinfo:
-+        cli.fetch_jwks(
-+            "https://clerk.altcontext.com/.well-known/jwks.json",
-+            timeout_s=2.0,
-+            clock=lambda: clock["now"],
++    tmpdir = tempfile.TemporaryDirectory(prefix="acx-usage-async-")
++    path = os.path.join(tmpdir.name, "test.db")
++    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
++    event.listen(engine.sync_engine, "engine_disposed", lambda *_: tmpdir.cleanup())
++    async with engine.begin() as conn:
++        await conn.run_sync(
++            Base.metadata.create_all,
++            tables=cast(
++                list[Table],
++                [
++                    Tenant.__table__,
++                    TenantEntitlement.__table__,
++                    UsageReservation.__table__,
++                    GlobalUsageAdmissionState.__table__,
++                    DescribeRun.__table__,
++                    DescribeRunItem.__table__,
++                    ImageDescription.__table__,
++                ],
++            ),
 +        )
-+    assert "timeout" in str(excinfo.value).lower()
-+    assert "sk_live_" not in str(excinfo.value)
++    sf = async_sessionmaker(engine, expire_on_commit=False)
++    tenant_id = uuid.uuid4()
++    now = datetime.now(tz=UTC)
++    async with sf() as session:
++        session.add(Tenant(id=tenant_id, site_url="https://async-usage.example.test"))
++        session.add(
++            TenantEntitlement(
++                tenant_id=tenant_id,
++                plan_code="beta",
++                allowance_version="async-v1",
++                allowance_jobs=10,
++                period_start=now - timedelta(minutes=1),
++                period_end=now + timedelta(hours=1),
++                status=EntitlementStatus.BETA_ACTIVE,
++                source="unit-test",
++            )
++        )
++        session.add(
++            GlobalUsageAdmissionState(
++                id=GLOBAL_USAGE_ADMISSION_STATE_ID,
++                period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
++                period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
++                daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++                daily_cost_units=0,
++                inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++                inflight_units=0,
++                queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
++                queue_depth=0,
++                queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++                queue_bytes=0,
++                stop_requested=False,
++                fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
++                config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
++                updated_at=now,
++            )
++        )
++        await session.commit()
++    return engine, sf, tenant_id
 +
 +
-+def test_fetch_jwks_accepts_fast_fake_response(cli: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-+    class FastResponse:
-+        def __init__(self) -> None:
-+            self._payload = b'{"keys":[{"kty":"RSA","kid":"x"}]}'
-+            self._offset = 0
++def test_async_worker_commits_usage_exactly_once_on_success():
++    from db.models import UsageReservation
++    from recognition.application.services.usage_admission_service import UsageAdmissionService
++    from recognition.domain.portal_contracts import UsageReservationStatus
++    from scene.application.describe_async_worker import run_async_describe_job as worker
 +
-+        def read(self, n: int = -1) -> bytes:
-+            if self._offset >= len(self._payload):
-+                return b""
-+            if n < 0:
-+                chunk = self._payload[self._offset :]
-+                self._offset = len(self._payload)
-+                return chunk
-+            chunk = self._payload[self._offset : self._offset + n]
-+            self._offset += len(chunk)
-+            return chunk
-+
-+        def __enter__(self) -> FastResponse:
-+            return self
-+
-+        def __exit__(self, *args: object) -> None:
-+            return None
-+
-+    monkeypatch.setattr(cli, "urlopen", lambda *args, **kwargs: FastResponse())
-+    payload = cli.fetch_jwks(
-+        "https://clerk.altcontext.com/.well-known/jwks.json",
-+        timeout_s=2.0,
-+        clock=lambda: 0.0,
-+    )
-+    assert payload["keys"][0]["kid"] == "x"
-diff --git a/apps/prototype-description-service/scene/interface_adapters/http/routers/gpu.py b/apps/prototype-description-service/scene/interface_adapters/http/routers/gpu.py
---- a/apps/prototype-description-service/scene/interface_adapters/http/routers/gpu.py
-+++ b/apps/prototype-description-service/scene/interface_adapters/http/routers/gpu.py
-@@ -14,6 +14,7 @@ from typing import Any, Literal
- from fastapi import APIRouter, Depends, HTTPException, status
- from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
- 
-+from recognition.domain.portal_contracts import PortalPrincipal
- from recognition.interface_adapters.http.deps import require_auth, require_write_access
- from scene.application.describe_load import resolve_load_path
- from scene.application.gpu_intent import (
-@@ -158,7 +159,7 @@ async def post_gpu_intent(
-     auth=Depends(require_write_access),
- ) -> GpuStatusResponse:
-     """Persist one operator intent and return the resulting status view."""
--    if _is_demo_tier(auth):
-+    if _is_demo_tier(auth) or _is_beta_or_portal_caller(auth):
-         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="gpu_control_forbidden")
-     now = _now()
-     intent_path = resolve_gpu_intent_path()
-@@ -225,10 +226,10 @@ def _gpu_state_response(snapshot: _GpuSnapshot | None) -> GpuStateResponse:
- def _load_response(path: Path, *, now: float) -> GpuLoadResponse:
-     payload = _read_json_object(path) or {}
-     written_at = _finite_number(payload.get("written_at"))
--    has_work = any(
--        _positive_number(payload.get(key))
--        for key in ("queue_depth", "in_flight")
--    ) or payload.get("batch_in_progress") is True
-+    has_work = (
-+        any(_positive_number(payload.get(key)) for key in ("queue_depth", "in_flight"))
-+        or payload.get("batch_in_progress") is True
-+    )
-     return GpuLoadResponse(
-         has_work=has_work,
-         written_at=written_at,
-@@ -262,10 +263,7 @@ def _is_fresh(payload: dict[str, Any] | None, *, now: float) -> bool:
- 
- 
- def _is_fresh_timestamp(written_at: float, *, now: float) -> bool:
--    return (
--        written_at - now <= GPU_STATE_FUTURE_SKEW_SECONDS
--        and now - written_at <= resolve_gpu_state_stale_seconds()
--    )
-+    return written_at - now <= GPU_STATE_FUTURE_SKEW_SECONDS and now - written_at <= resolve_gpu_state_stale_seconds()
- 
- 
- def _validated_snapshot(payload: dict[str, Any] | None) -> _GpuSnapshot | None:
-@@ -360,13 +358,42 @@ def _authenticated_principal(auth: Any) -> str | None:
-     return None
- 
- 
-+_BETA_MARKERS = frozenset({"beta", "beta_active", "beta_tier"})
-+
-+
-+def _normalized_auth_marker(value: Any) -> str | None:
-+    raw = getattr(value, "value", value)
-+    if isinstance(raw, str) and raw.strip():
-+        return raw.strip().lower().replace("-", "_")
-+    return None
-+
-+
-+def _is_portal_principal(auth: Any) -> bool:
-+    """PortalPrincipal, or the same trusted issuer/subject shape. Never request body."""
-+    if isinstance(auth, PortalPrincipal):
-+        return True
-+    issuer = getattr(auth, "issuer", None)
-+    subject = getattr(auth, "subject", None)
-+    return isinstance(issuer, str) and bool(issuer.strip()) and isinstance(subject, str) and bool(subject.strip())
-+
-+
-+def _is_beta_or_portal_caller(auth: Any) -> bool:
-+    """Fail closed for portal principals; AuthContext has no entitlement field."""
-+    if auth is None:
-+        return False
-+    if _is_portal_principal(auth):
-+        return True
-+    for attribute in ("rate_limit_tier", "entitlement_status", "plan_code"):
-+        if _normalized_auth_marker(getattr(auth, attribute, None)) in _BETA_MARKERS:
-+            return True
-+    return any(getattr(auth, attribute, False) is True for attribute in ("is_beta", "beta"))
-+
-+
- def _is_demo_tier(auth: Any) -> bool:
-     """Recognize the demo marker exposed by auth fakes and auth contexts."""
-     for attribute in ("rate_limit_tier", "tier", "demo_tier"):
--        value = getattr(auth, attribute, None)
--        if hasattr(value, "value"):
--            value = value.value
--        if isinstance(value, str) and value.strip().lower() in {"demo", "demo_tier"}:
-+        value = _normalized_auth_marker(getattr(auth, attribute, None))
-+        if value in {"demo", "demo_tier"}:
-             return True
-     return any(bool(getattr(auth, attribute, False)) for attribute in ("is_demo", "demo"))
- 
-diff --git a/apps/prototype-description-service/scripts/configure_clerk_production.py b/apps/prototype-description-service/scripts/configure_clerk_production.py
---- a/apps/prototype-description-service/scripts/configure_clerk_production.py
-+++ b/apps/prototype-description-service/scripts/configure_clerk_production.py
-@@ -17,6 +17,7 @@ import re
- import stat
- import sys
- import tempfile
-+import time
- from collections.abc import Callable, Mapping, Sequence
- from dataclasses import dataclass
- from pathlib import Path
-@@ -39,10 +40,13 @@ FRONTEND_MANAGED_KEYS = (
-     "VITE_CLERK_FAPI",
- )
- SECRET_BACKEND_KEY = "CLERK_SECRET_KEY"
-+FRONTEND_FORBIDDEN_KEYS = frozenset({SECRET_BACKEND_KEY})
-+_SECRET_VALUE_PREFIXES = ("sk_live_", "sk_test_")
- MANAGED_COMMENT = "# Clerk production portal auth (managed by configure_clerk_production.py)"
- JWKS_PATH = "/.well-known/jwks.json"
- CHECK_TIMEOUT_S = 2.0
- CHECK_MAX_BYTES = 256 * 1024
-+CHECK_READ_CHUNK = 4096
- _HOSTNAME_RE = re.compile(
-     r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
-     r"(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
-@@ -228,6 +232,23 @@ def reject_duplicate_assignments(found: Mapping[str, list[tuple[int, str]]]) ->
-         raise ClerkConfigError(f"duplicate env var {key}")
- 
- 
-+def reject_frontend_secret_boundary(existing: str, planned: str) -> None:
-+    """Refuse frontend env that contains backend-only secret keys or values.
-+
-+    Validation is input+output and happens before any destination write. Error
-+    text names keys only — never secret values (RES-01, DATA-03).
-+    """
-+    for text in (existing, planned):
-+        found = assignment_index(parse_env_lines(text))
-+        reject_duplicate_assignments(found)
-+        for key, occurrences in found.items():
-+            if key in FRONTEND_FORBIDDEN_KEYS:
-+                raise ClerkConfigError(f"refusing frontend env: {key} is backend-only")
-+            for _index, value in occurrences:
-+                if value.startswith(_SECRET_VALUE_PREFIXES):
-+                    raise ClerkConfigError(f"refusing frontend env: backend-only secret material in {key}")
-+
-+
- def merge_env_updates(existing: str, updates: Mapping[str, str]) -> str:
-     for key, value in updates.items():
-         _reject_unsafe_env_value(key, value)
-@@ -275,19 +296,36 @@ def atomic_write_text(path: Path, content: str) -> None:
-         tmp_path.unlink(missing_ok=True)
- 
- 
--def fetch_jwks(url: str, *, timeout_s: float = CHECK_TIMEOUT_S) -> dict[str, object]:
-+def fetch_jwks(
-+    url: str,
-+    *,
-+    timeout_s: float = CHECK_TIMEOUT_S,
-+    clock: Callable[[], float] | None = None,
-+) -> dict[str, object]:
-     parsed = urlparse(url)
-     if parsed.scheme != "https" or not parsed.netloc:
-         raise ClerkConfigError("JWKS URL must be https")
-     request = Request(
-         url, method="GET", headers={"Accept": "application/json", "User-Agent": "acx-configure-clerk-production"}
-     )
-+    now = time.monotonic if clock is None else clock
-+    deadline = now() + timeout_s
-+    remaining = deadline - now()
-+    if remaining <= 0:
-+        raise ClerkConfigError("JWKS check exceeded timeout")
-     try:
--        with urlopen(request, timeout=timeout_s) as response:  # noqa: S310 — scheme pinned to https above
--            raw = response.read(CHECK_MAX_BYTES + 1)
-+        with urlopen(request, timeout=remaining) as response:  # noqa: S310 — scheme pinned to https above
-+            raw = _read_jwks_body(response, max_bytes=CHECK_MAX_BYTES, deadline=deadline, clock=now)
-     except HTTPError as exc:
-         raise ClerkConfigError(f"JWKS check HTTP {exc.code}") from exc
--    except (URLError, TimeoutError, OSError) as exc:
-+    except ClerkConfigError:
-+        raise
-+    except TimeoutError as exc:
-+        raise ClerkConfigError("JWKS check exceeded timeout") from exc
-+    except (URLError, OSError) as exc:
-+        reason = getattr(exc, "reason", None)
-+        if isinstance(reason, TimeoutError):
-+            raise ClerkConfigError("JWKS check exceeded timeout") from exc
-         raise ClerkConfigError("JWKS check failed") from exc
-     if len(raw) > CHECK_MAX_BYTES:
-         raise ClerkConfigError("JWKS response exceeded bounded size")
-@@ -373,7 +411,9 @@ def print_plan(
-         stdout.write("frontend_note=no committed app-portal; bake VITE_* at a later frontend build\n")
- 
- 
--def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None) -> None:
-+def plan_env_files(
-+    config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None
-+) -> list[tuple[Path, str]]:
-     planned: list[tuple[Path, str]] = []
-     if backend is not None:
-         _assert_safe_destination(backend)
-@@ -382,9 +422,15 @@ def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: P
-     if frontend is not None:
-         _assert_safe_destination(frontend)
-         existing = _read_existing_env(frontend)
--        planned.append((frontend, merge_env_updates(existing, config.frontend_updates())))
--    for path, content in planned:
--        atomic_write_text(path, content)
-+        merged = merge_env_updates(existing, config.frontend_updates())
-+        reject_frontend_secret_boundary(existing, merged)
-+        planned.append((frontend, merged))
-+    return planned
-+
-+
-+def apply_files(config: DerivedClerkConfig, *, backend: Path | None, frontend: Path | None) -> None:
-+    planned = plan_env_files(config, backend=backend, frontend=frontend)
-+    _commit_env_files(planned)
- 
- 
- def execute(
-@@ -421,6 +467,8 @@ def execute(
-             authorized_parties=parties,
-             secret_key=secret,
-         )
-+        if args.backend_env is not None or args.frontend_env is not None:
-+            plan_env_files(config, backend=args.backend_env, frontend=args.frontend_env)
-         if args.check:
-             getter = fetch_jwks if jwks_get is None else jwks_get
-             getter(config.jwks_url)
-@@ -543,5 +591,92 @@ def _read_existing_env(path: Path) -> str:
-         raise ClerkConfigError(f"cannot read {path}") from exc
- 
- 
-+def _commit_env_files(planned: Sequence[tuple[Path, str]]) -> None:
-+    snapshots: list[tuple[Path, str | None]] = []
-+    committed = 0
-+    try:
-+        for path, content in planned:
-+            snapshots.append((path, _read_existing_env(path) if path.exists() else None))
-+            atomic_write_text(path, content)
-+            committed += 1
-+    except BaseException as exc:
-+        rollback_error = _rollback_env_files(snapshots[:committed])
-+        if rollback_error is not None:
-+            raise ClerkConfigError(
-+                "partial Clerk env apply; rollback failed and recovery cannot be guaranteed"
-+            ) from exc
-+        if isinstance(exc, ClerkConfigError):
-+            raise
-+        if not isinstance(exc, Exception):
-+            raise
-+        raise ClerkConfigError("atomic write failed during Clerk env apply") from exc
-+
-+
-+def _rollback_env_files(snapshots: Sequence[tuple[Path, str | None]]) -> BaseException | None:
-+    last_error: BaseException | None = None
-+    for path, original in reversed(list(snapshots)):
++    async def body() -> None:
++        engine, sf, tenant_id = await _usage_sessionmaker()
 +        try:
-+            if original is None:
-+                path.unlink(missing_ok=True)
-+            else:
-+                atomic_write_text(path, original)
-+        except (OSError, ClerkConfigError) as exc:
-+            last_error = exc
-+    return last_error
++            job_id = uuid.uuid4()
++            async with sf() as session:
++                ticket = await UsageAdmissionService(session).reserve(
++                    tenant_id,
++                    idempotency_key="async-op",
++                    job_id=str(job_id),
++                    cost_units=1,
++                    operation_id="async-op",
++                    request_fingerprint="fp-async",
++                )
++                captured = ticket.fence_token
++                run_id = await DescribeRunRepository(session).create_single_run(
++                    tenant_id=tenant_id,
++                    media_id=7,
++                    image_bytes=b"image",
++                    run_id=job_id,
++                    operation_id="async-op",
++                    request_digest="fp-async",
++                )
++                await session.commit()
++            assert run_id == job_id
++            cpu = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="cpu")
++            gpu = _Adapter(kind=DescriptionAdapterKind.GPU, caption="gpu")
++            await worker(
++                tenant_id=tenant_id,
++                run_id=run_id,
++                session_factory=sf,
++                cpu_adapter=cpu,
++                gpu_adapter=gpu,
++            )
++            async with sf() as session:
++                row = await session.get(UsageReservation, ticket.reservation_id)
++                assert row is not None
++                assert row.status == UsageReservationStatus.COMMITTED
++                assert row.job_id == str(job_id)
++                assert row.fence_token == captured
++                again = await UsageAdmissionService(session).commit_fenced(ticket, fence_token=captured)
++                assert again is None
++                row = await session.get(UsageReservation, ticket.reservation_id)
++                assert row is not None and row.status == UsageReservationStatus.COMMITTED
++        finally:
++            await engine.dispose()
++
++    asyncio.run(body())
 +
 +
-+def _read_jwks_body(
-+    response: object,
-+    *,
-+    max_bytes: int,
-+    deadline: float,
-+    clock: Callable[[], float],
-+    chunk_size: int = CHECK_READ_CHUNK,
-+) -> bytes:
-+    buf = bytearray()
-+    while True:
-+        remaining = deadline - clock()
-+        if remaining <= 0:
-+            raise ClerkConfigError("JWKS check exceeded timeout")
-+        _apply_socket_timeout(response, remaining)
-+        to_read = min(chunk_size, max_bytes + 1 - len(buf))
-+        if to_read <= 0:
-+            break
++def test_async_worker_charges_after_compute_failure():
++    from db.models import UsageReservation
++    from recognition.application.services.usage_admission_service import UsageAdmissionService
++    from recognition.domain.portal_contracts import UsageReservationStatus
++
++    async def body() -> None:
++        engine, sf, tenant_id = await _usage_sessionmaker()
 +        try:
-+            chunk = response.read(to_read)  # type: ignore[attr-defined]
-+        except TimeoutError as exc:
-+            raise ClerkConfigError("JWKS check exceeded timeout") from exc
-+        if not chunk:
-+            break
-+        if not isinstance(chunk, (bytes, bytearray)):
-+            raise ClerkConfigError("JWKS response is not JSON")
-+        buf.extend(chunk)
-+        if len(buf) > max_bytes:
-+            break
-+    return bytes(buf)
++            job_id = uuid.uuid4()
++            async with sf() as session:
++                ticket = await UsageAdmissionService(session).reserve(
++                    tenant_id,
++                    idempotency_key="async-fail",
++                    job_id=str(job_id),
++                    cost_units=1,
++                    operation_id="async-fail",
++                    request_fingerprint="fp-fail",
++                )
++                await DescribeRunRepository(session).create_single_run(
++                    tenant_id=tenant_id,
++                    media_id=7,
++                    image_bytes=b"image",
++                    run_id=job_id,
++                    operation_id="async-fail",
++                    request_digest="fp-fail",
++                )
++                await session.commit()
++            cpu = _Adapter(kind=DescriptionAdapterKind.LOCAL_CPU, caption="cpu")
++            gpu = _FailingGpu(kind=DescriptionAdapterKind.GPU, caption="gpu")
++            await run_async_describe_job(
++                tenant_id=tenant_id,
++                run_id=job_id,
++                session_factory=sf,
++                cpu_adapter=cpu,
++                gpu_adapter=gpu,
++            )
++            async with sf() as session:
++                row = await session.get(UsageReservation, ticket.reservation_id)
++                assert row is not None and row.status == UsageReservationStatus.COMMITTED
++        finally:
++            await engine.dispose()
++
++    asyncio.run(body())
+diff --git a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+--- a/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
++++ b/apps/prototype-description-service/scene/tests/test_describe_run_worker_phases.py
+@@ -962,3 +962,115 @@ def test_later_readiness_repairs_null_startup_id():
+         os.unlink(path)
+ 
+     asyncio.run(body())
 +
 +
-+def _apply_socket_timeout(response: object, timeout_s: float) -> None:
-+    bounded = max(timeout_s, 0.001)
-+    targets: list[object] = [response]
-+    fp = getattr(response, "fp", None)
-+    if fp is not None:
-+        targets.append(fp)
-+        raw = getattr(fp, "raw", None)
-+        if raw is not None:
-+            targets.append(raw)
-+            sock = getattr(raw, "_sock", None)
-+            if sock is not None:
-+                targets.append(sock)
-+    for target in targets:
-+        setter = getattr(target, "settimeout", None)
-+        if not callable(setter):
-+            continue
-+        try:
-+            setter(bounded)
-+        except (OSError, TypeError, ValueError):
-+            continue
++def test_run_worker_commits_usage_on_success_and_keeps_captured_fence():
++    from datetime import UTC, datetime, timedelta
 +
++    from db.models import UsageReservation
++    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
++    from db.models.scene import DescribeRun, DescribeRunItem
++    from db.models.tenant import Tenant
++    from recognition.application.services.usage_admission_service import UsageAdmissionService
++    from recognition.domain.portal_contracts import (
++        DEFAULT_GLOBAL_CONFIG_VERSION,
++        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++        DEFAULT_GLOBAL_FENCE_EPOCH,
++        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++        DEFAULT_GLOBAL_QUEUE_LIMIT,
++        GLOBAL_USAGE_ADMISSION_STATE_ID,
++        EntitlementStatus,
++        UsageReservationStatus,
++    )
++    from scene.domain.describe_run import DescribeRunStatus
 +
- if __name__ == "__main__":
-     sys.exit(main())
-diff --git a/docs/runbooks/clerk-production-auth.md b/docs/runbooks/clerk-production-auth.md
---- a/docs/runbooks/clerk-production-auth.md
-+++ b/docs/runbooks/clerk-production-auth.md
-@@ -57,9 +57,15 @@ In **Sessions → Customize session token**, set:
- }
- ```
- 
--`email_verified` must remain a JSON boolean (use the shortcode alone; do not
--interpolate it inside a string). First-claim in the portal rejects unverified
--email. Authorized party for this product is the exact origin
-+Keep the dashboard-template quotes around `{{user.email_verified}}`. Clerk
-+[JWT template shortcodes](https://clerk.com/docs/guides/sessions/jwt-templates#shortcodes)
-+retain the underlying type when quoted, so the **decoded JWT** claim is a
-+boolean (`true`/`false`), not the string `"true"`/`"false"`. The quoted form is
-+also what Clerk shows in
-+[How we roll JWT SSO](https://clerk.com/blog/how-we-roll-jwt-sso). Do **not**
-+remove those quotes from the dashboard JSON; do not confuse the template
-+document with the verified token payload. First-claim in the portal rejects
-+unverified email. Authorized party for this product is the exact origin
- `https://app.altcontext.com` (no path, no trailing slash).
- 
- The issuer is **derived from the live publishable key** (base64 FAPI hostname
-@@ -109,15 +115,26 @@ shred -u /tmp/clerk-pk
- Optional secret (backend only): `--secret-key-file` or `CLERK_SECRET_KEY` in
- the environment. Publishable key may also come from `CLERK_PUBLISHABLE_KEY`.
- 
--`--check` GETs the derived JWKS URL with a 2s timeout and bounded body. It
--does not rotate, delete, or otherwise mutate Clerk. A failed check never
--writes.
-+`--check` GETs the derived JWKS URL with a **2s total deadline** (not only a
-+per-socket idle timeout) and a bounded body. Slow trickles that stay under the
-+socket timeout still fail if they exceed 2s wall time. It does not rotate,
-+delete, or otherwise mutate Clerk. A failed check never writes.
- 
- The CLI is idempotent: a second `--apply` with the same inputs rewrites the
- managed keys in place and leaves unrelated env content alone. Contradictory
- duplicate keys and newline injection are refused. Destinations are replaced
- atomically at mode 0600.
- 
-+Frontend artifacts are validated against backend-only secret boundaries
-+**before any write**. A prepopulated `CLERK_SECRET_KEY` (or `sk_live_` /
-+`sk_test_` material) in `--frontend-env` is refused; both destination files
-+stay unchanged and the error names the key, never the secret value. Legitimate
-+public `VITE_*` settings are preserved. `--apply` with both backend and
-+frontend files is a staged transaction: if the second write fails, the first
-+is rolled back. If rollback itself fails, the CLI exits with an explicit
-+"recovery cannot be guaranteed" error instead of leaving a silent partial
-+config.
++    async def body():
++        path, url = await _make_db_async()
++        engine = create_async_engine(url)
++        async with engine.begin() as conn:
++            await conn.run_sync(
++                Tenant.__table__.create,
++                checkfirst=True,
++            )
++            await conn.run_sync(TenantEntitlement.__table__.create, checkfirst=True)
++            await conn.run_sync(UsageReservation.__table__.create, checkfirst=True)
++            await conn.run_sync(GlobalUsageAdmissionState.__table__.create, checkfirst=True)
++        sf = async_sessionmaker(engine, expire_on_commit=False)
++        now = datetime.now(tz=UTC)
++        job_id = uuid.uuid4()
++        async with sf() as s:
++            if await s.get(Tenant, TENANT_ID) is None:
++                s.add(Tenant(id=TENANT_ID, site_url="http://test.local"))
++            s.add(
++                TenantEntitlement(
++                    tenant_id=TENANT_ID,
++                    plan_code="beta",
++                    allowance_version="phase-v1",
++                    allowance_jobs=10,
++                    period_start=now - timedelta(minutes=1),
++                    period_end=now + timedelta(hours=1),
++                    status=EntitlementStatus.BETA_ACTIVE,
++                    source="unit-test",
++                )
++            )
++            s.add(
++                GlobalUsageAdmissionState(
++                    id=GLOBAL_USAGE_ADMISSION_STATE_ID,
++                    period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
++                    period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
++                    daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
++                    daily_cost_units=0,
++                    inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
++                    inflight_units=0,
++                    queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
++                    queue_depth=0,
++                    queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
++                    queue_bytes=0,
++                    stop_requested=False,
++                    fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
++                    config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
++                    updated_at=now,
++                )
++            )
++            await s.commit()
++        async with sf() as s:
++            ticket = await UsageAdmissionService(s).reserve(
++                TENANT_ID,
++                idempotency_key="bulk-op",
++                job_id=str(job_id),
++                cost_units=1,
++                operation_id="bulk-op",
++                request_fingerprint="fp-bulk",
++            )
++            captured = ticket.fence_token
++            run_id = await DescribeRunRepository(s).create_run(
++                tenant_id=TENANT_ID,
++                media_ids=[1],
++                images={1: (b"x", "image/png")},
++                run_id=job_id,
++                operation_id="bulk-op",
++                request_digest="fp-bulk",
++            )
++            await s.commit()
++        assert run_id == job_id
 +
- ## 5. Runtime / rebuild
- 
- Backend: `api` and `worker` read `.env` through Compose. After `--apply`,
++        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
++            return DescribeItemOutcome(alt_text_draft="ok", caption="c")
++
++        await run_describe_job(
++            tenant_id=TENANT_ID,
++            run_id=run_id,
++            session_factory=sf,
++            describe_one=describe_one,
++        )
++        async with sf() as s:
++            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
++            row = await s.get(UsageReservation, ticket.reservation_id)
++            assert run is not None and run.status == DescribeRunStatus.COMPLETED
++            assert row is not None and row.status == UsageReservationStatus.COMMITTED
++            assert row.fence_token == captured
++        await engine.dispose()
++        os.unlink(path)
++
++    asyncio.run(body())

@@ -343,8 +343,14 @@ async def test_postgres_real_repo_claim_commit_before_get_apply_finish(pg_empty_
             assert projection.provider_subscription_id == "sub-admitted"
             assert await _entitlement_status(session, tenant_id) == EntitlementStatus.PAID_ACTIVE.value
             finished = observer.finishes[0]
-            with pytest.raises(BillingWorkLeaseConflictError):
+            with pytest.raises(ValueError, match="tenant-bound session"):
                 await repo.lock_reconcile_item(finished, now=_NOW)
+            await session.rollback()
+
+        async with session_factory() as session:
+            operator = BillingRepository(session, environment="sandbox", seller_account=_SELLER)
+            with pytest.raises(BillingWorkLeaseConflictError):
+                await operator.lock_reconcile_item(finished, now=_NOW)
             await session.rollback()
     finally:
         await engine.dispose()

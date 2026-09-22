@@ -9,7 +9,8 @@ app.altcontext.com {
 	@unrelated path /recognition /recognition/* /roster /roster/* /scene /scene/* /billing/webhooks /billing/webhooks/* /health /health/* /ready /metrics /docs /openapi.json /redoc /x /x/*
 	respond @unrelated 404
 
-	handle /portal* {
+	@portal path /portal /portal/*
+	handle @portal {
 		reverse_proxy __APP_UPSTREAM__
 	}
 

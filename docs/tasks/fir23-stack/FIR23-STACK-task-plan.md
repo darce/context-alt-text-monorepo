@@ -80,8 +80,8 @@ Supersedes the dropped per-request header design (decision #2947).
   API_CONTAINER=`acx-dev-fir-api-1`, PG_USER=`acx_dev_fir`, PG_DB=`alt_context_dev_fir`,
   HEALTH_URL=`https://fir.dev.api.altcontext.com/health` (BR-06).
 - `mk/deploy.mk`: `deploy-dev-fir` (`.PHONY`; `deploy-verify ENV=dev-fir` already generic).
-  `deploy-rollback-dev-fir` **refuses**: dev-fir shares the `:dev` image tag with `acx-dev`, so a
-  FIR-only rollback is impossible — use `deploy-rollback-dev` (affects both).
+  `deploy-reset-dev-fir-to-dev` promotes `:dev` -> `:dev-fir` (dev-fir has its own tag; this resets
+  forward). Previous-digest rollback: `recognition-service.sh rollback dev-fir <id>`.
 - New `apps/prototype-description-service/.env.fir.example` = the "Canonical stack identity" above, incl.
   **`RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline`** (BR-01) and inline dev-style secrets,
   auth disabled, **no vault, no tenant key** (BR-05).

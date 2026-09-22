@@ -248,13 +248,40 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		}
 
 		try {
-			foreach ( self::RESET_TABLE_SUFFIXES as $suffix ) {
-				$table_name = $wpdb->prefix . $suffix;
-				$query      = $wpdb->prepare( 'DELETE FROM %i', $table_name );
-				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-				if ( false === $wpdb->query( $query ) ) {
-					throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $table_name ) );
-				}
+			$clusters_table         = $wpdb->prefix . 'acx_clusters';
+			$identity_members_table = $wpdb->prefix . 'acx_identity_members';
+			$outbox_table           = $wpdb->prefix . 'acx_sync_outbox';
+
+			// WHY: Members must be deleted before clusters so their tenant scope remains resolvable.
+			$identity_members_query = $wpdb->prepare(
+				'DELETE FROM %i WHERE cluster_uuid IN ( SELECT cluster_uuid FROM %i WHERE tenant_id = %s )',
+				$identity_members_table,
+				$clusters_table,
+				$tenant_id
+			);
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			if ( false === $wpdb->query( $identity_members_query ) ) {
+				throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $identity_members_table ) );
+			}
+
+			$clusters_query = $wpdb->prepare(
+				'DELETE FROM %i WHERE tenant_id = %s',
+				$clusters_table,
+				$tenant_id
+			);
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			if ( false === $wpdb->query( $clusters_query ) ) {
+				throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $clusters_table ) );
+			}
+
+			$outbox_query = $wpdb->prepare(
+				'DELETE FROM %i WHERE tenant_id = %s',
+				$outbox_table,
+				$tenant_id
+			);
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			if ( false === $wpdb->query( $outbox_query ) ) {
+				throw new \RuntimeException( sprintf( 'Could not clear reset mirror table %s.', $outbox_table ) );
 			}
 
 			$this->sync_state_repository->reset_projection_state( $tenant_id );

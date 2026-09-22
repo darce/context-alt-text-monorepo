@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from db.models.base_imports import (
@@ -33,6 +34,44 @@ if TYPE_CHECKING:
 def _json_col():
     """Use JSONB in PostgreSQL and JSON for the SQLite test substrate."""
     return JSONB().with_variant(JSON(), "sqlite")
+
+
+class CheckoutAttemptStatus(StrEnum):
+    CREATED = "created"
+    PROVIDER_REQUESTED = "provider_requested"
+    PENDING = "pending"
+    AMBIGUOUS = "ambiguous"
+    SUCCEEDED = "succeeded"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+    FAILED = "failed"
+
+
+class CheckoutAttemptErrorClass(StrEnum):
+    NONE = "none"
+    AMBIGUOUS = "ambiguous"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+CHECKOUT_ATTEMPT_ACTIVE_STATUSES: frozenset[CheckoutAttemptStatus] = frozenset(
+    {
+        CheckoutAttemptStatus.CREATED,
+        CheckoutAttemptStatus.PROVIDER_REQUESTED,
+        CheckoutAttemptStatus.PENDING,
+        CheckoutAttemptStatus.AMBIGUOUS,
+    }
+)
+_CHECKOUT_ATTEMPT_ACTIVE_STATUS_VALUES: tuple[str, ...] = (
+    CheckoutAttemptStatus.CREATED.value,
+    CheckoutAttemptStatus.PROVIDER_REQUESTED.value,
+    CheckoutAttemptStatus.PENDING.value,
+    CheckoutAttemptStatus.AMBIGUOUS.value,
+)
+
+_CHECKOUT_ATTEMPT_STATUS_SQL = ", ".join(f"'{status.value}'" for status in CheckoutAttemptStatus)
+_CHECKOUT_ATTEMPT_ACTIVE_STATUS_SQL = ", ".join(f"'{value}'" for value in _CHECKOUT_ATTEMPT_ACTIVE_STATUS_VALUES)
+_CHECKOUT_ATTEMPT_ERROR_CLASS_SQL = ", ".join(f"'{value.value}'" for value in CheckoutAttemptErrorClass)
 
 
 class PortalIdentity(Base):
@@ -150,6 +189,86 @@ class BillingSubscriptionProjection(Base):
     )
 
 
+class BillingCheckoutAttempt(Base):
+    __tablename__ = "billing_checkout_attempt"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    seller_account: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_code: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    client_idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text(f"'{CheckoutAttemptStatus.CREATED.value}'")
+    )
+    provider_checkout_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error_class: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text(f"'{CheckoutAttemptErrorClass.NONE.value}'")
+    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "provider",
+            "environment",
+            "seller_account",
+            "idempotency_key",
+            name="uq_billing_checkout_attempt_provider_key",
+        ),
+        Index(
+            "uq_billing_checkout_attempt_client_key",
+            "tenant_id",
+            "provider",
+            "environment",
+            "seller_account",
+            "client_idempotency_key",
+            unique=True,
+            postgresql_where=text("client_idempotency_key IS NOT NULL"),
+            sqlite_where=text("client_idempotency_key IS NOT NULL"),
+        ),
+        Index(
+            "uq_billing_checkout_attempt_one_active",
+            "tenant_id",
+            "provider",
+            "environment",
+            "seller_account",
+            "plan_code",
+            unique=True,
+            postgresql_where=text(f"status IN ({_CHECKOUT_ATTEMPT_ACTIVE_STATUS_SQL})"),
+            sqlite_where=text(f"status IN ({_CHECKOUT_ATTEMPT_ACTIVE_STATUS_SQL})"),
+        ),
+        Index("idx_billing_checkout_attempt_reclaim", "updated_at"),
+        CheckConstraint(
+            f"status IN ({_CHECKOUT_ATTEMPT_STATUS_SQL})",
+            name="ck_billing_checkout_attempt_status",
+        ),
+        CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_checkout_attempt_environment",
+        ),
+        CheckConstraint(
+            "provider IN ('polar', 'fake')",
+            name="ck_billing_checkout_attempt_provider",
+        ),
+        CheckConstraint(
+            f"last_error_class IN ({_CHECKOUT_ATTEMPT_ERROR_CLASS_SQL})",
+            name="ck_billing_checkout_attempt_last_error_class",
+        ),
+    )
+
+
 class BillingWebhookInbox(Base):
     __tablename__ = "billing_webhook_inbox"
 
@@ -253,8 +372,12 @@ class PortalTenantInvitation(Base):
 
 __all__ = [
     "ApiKeyRotationHistory",
+    "BillingCheckoutAttempt",
     "BillingSubscriptionProjection",
     "BillingWebhookInbox",
+    "CHECKOUT_ATTEMPT_ACTIVE_STATUSES",
+    "CheckoutAttemptErrorClass",
+    "CheckoutAttemptStatus",
     "PortalIdentity",
     "PortalTenantInvitation",
     "TenantEntitlement",

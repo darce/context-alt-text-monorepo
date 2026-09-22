@@ -446,6 +446,7 @@ def test_ensure_matview_skips_drop_when_vector_typmod_matches(monkeypatch: pytes
     monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "m")
     monkeypatch.setattr(MIGRATION, "_matview_centroid_typmod", lambda _op: MIGRATION.EMBEDDING_DIMENSION)
     monkeypatch.setattr(MIGRATION, "_matview_owner_and_can_drop", _ownership_must_not_run)
+    monkeypatch.setattr(MIGRATION, "_matview_stale_cluster_id_index", lambda _op: False)
 
     MIGRATION.ensure_matview(op)
 
@@ -593,6 +594,8 @@ def test_identity_vector_columns_agree_with_health_ready_probe() -> None:
 def test_heal_refuses_wrong_table_vector_typmod(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
+        # Matview FROM identity_clusters/media_identities blocks ALTER TYPE; drop first.
+        conn.execute(text("DROP MATERIALIZED VIEW IF EXISTS mv_identity_cluster_centroids"))
         conn.execute(text("ALTER TABLE media_identities ALTER COLUMN embedding TYPE vector"))
     with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
@@ -819,6 +822,245 @@ def test_adopted_observability_tables_isolate_tenants(pg_empty_engine) -> None:
                 "INSERT INTO assignment_decisions "
                 "(id, tenant_id, identity_id, decision, timestamp) "
                 "VALUES (:id, :tenant, 'ident-x', 'accept', now())"
+            ),
+            {"id": str(uuid.uuid4()), "tenant": tenant_a},
+        )
+
+
+def _unique_constraint_columns(engine, table_name: str, constraint_name: str) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT a.attname "
+                "FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+                "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+                "WHERE n.nspname = current_schema() "
+                "AND t.relname = :table AND c.conname = :name "
+                "ORDER BY k.ord"
+            ),
+            {"table": table_name, "name": constraint_name},
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def _column_is_nullable(engine, table_name: str, column_name: str) -> bool:
+    with engine.connect() as conn:
+        value = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": table_name, "c": column_name},
+        ).scalar()
+    return value == "YES"
+
+
+def _constraint_names(engine, table_name: str) -> set[str]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT c.conname FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "WHERE n.nspname = current_schema() AND t.relname = :t"
+            ),
+            {"t": table_name},
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _strip_usage_reservation_identity(conn, *, tenant_id: str, reservation_id: str) -> None:
+    conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    conn.execute(
+        text("ALTER TABLE usage_reservation DROP CONSTRAINT IF EXISTS uq_usage_reservation_tenant_operation_id")
+    )
+    for check_name in (
+        "ck_usage_reservation_queue_bytes_nonnegative",
+        "ck_usage_reservation_operation_id_present",
+        "ck_usage_reservation_request_fingerprint_present",
+        "ck_usage_reservation_fence_token_present",
+    ):
+        conn.execute(text(f'ALTER TABLE usage_reservation DROP CONSTRAINT IF EXISTS "{check_name}"'))
+    conn.execute(
+        text(
+            "ALTER TABLE usage_reservation "
+            "DROP COLUMN operation_id, "
+            "DROP COLUMN request_fingerprint, "
+            "DROP COLUMN job_id, "
+            "DROP COLUMN fence_token, "
+            "DROP COLUMN queue_bytes"
+        )
+    )
+    conn.execute(text("DROP TABLE IF EXISTS usage_admission_global_state"))
+    conn.execute(
+        text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+        {"id": tenant_id, "url": f"https://{tenant_id}.example"},
+    )
+    conn.execute(
+        text(
+            "INSERT INTO usage_reservation "
+            "(id, tenant_id, period_start, idempotency_key, status, cost_units) "
+            "VALUES (:id, :tenant, now(), 'pre-g1-key', 'reserved', 1)"
+        ),
+        {"id": reservation_id, "tenant": tenant_id},
+    )
+
+
+@pytest.mark.pg
+def test_heal_upgrades_existing_usage_reservation_rows_and_seeds_global_state(pg_empty_engine) -> None:
+    # Existing-DB proof: a pre-G1 usage_reservation row must gain identity
+    # columns, backfill, NOT NULL, unique/check constraints, and the nontenant
+    # global singleton — not just a greenfield create_all. [DATA-03][RES-05]
+    # Row visibility requires bypass because FORCE RLS is already on; G1 heal
+    # itself does not set bypass (see the companion repro below).
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    tenant_id = str(uuid.uuid4())
+    reservation_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        _strip_usage_reservation_identity(conn, tenant_id=tenant_id, reservation_id=reservation_id)
+
+    assert "operation_id" not in _table_columns(pg_empty_engine, "usage_reservation")
+    assert "usage_admission_global_state" not in _table_names(pg_empty_engine)
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        MIGRATION.heal(conn)
+
+    assert {
+        "operation_id",
+        "request_fingerprint",
+        "fence_token",
+        "job_id",
+        "queue_bytes",
+    } <= _table_columns(pg_empty_engine, "usage_reservation")
+    for column_name in ("operation_id", "request_fingerprint", "fence_token"):
+        assert _column_is_nullable(pg_empty_engine, "usage_reservation", column_name) is False
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        row = conn.execute(
+            text(
+                "SELECT operation_id, request_fingerprint, fence_token, queue_bytes "
+                "FROM usage_reservation WHERE id = :id"
+            ),
+            {"id": reservation_id},
+        ).one()
+        global_row = conn.execute(text("SELECT id, COUNT(*) OVER () FROM usage_admission_global_state")).one()
+        global_flags = conn.execute(
+            text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = 'usage_admission_global_state'"
+            )
+        ).one()
+
+    assert row == ("pre-g1-key", "pre-g1-key", reservation_id, 0)
+    assert global_row == ("global", 1)
+    assert global_flags == (False, False)
+    names = _constraint_names(pg_empty_engine, "usage_reservation")
+    assert "uq_usage_reservation_tenant_operation_id" in names
+    assert "ck_usage_reservation_operation_id_present" in names
+    assert "ck_usage_reservation_request_fingerprint_present" in names
+    assert "ck_usage_reservation_fence_token_present" in names
+    assert "ck_usage_reservation_queue_bytes_nonnegative" in names
+    assert _unique_constraint_columns(
+        pg_empty_engine, "usage_reservation", "uq_usage_reservation_tenant_operation_id"
+    ) == ["tenant_id", "operation_id"]
+
+
+@pytest.mark.pg
+def test_heal_without_bypass_cannot_backfill_usage_reservation_under_forced_rls(
+    pg_empty_engine,
+) -> None:
+    """G1 boot-heal gap: backfill UPDATE is RLS-filtered, then SET NOT NULL fails.
+
+    `_backfill_usage_reservation_identity` and `scripts/sync_identity_schema.sync_schema`
+    never SET app.bypass_rls. Under FORCE RLS the app role updates zero rows, the
+    leftover probe also sees zero rows, and SET NOT NULL raises. Owning path:
+    db/migrations/versions/001_identity_schema.py (G1). G5 records the repro only.
+    """
+    import sqlalchemy.exc
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+    tenant_id = str(uuid.uuid4())
+    reservation_id = str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        _strip_usage_reservation_identity(conn, tenant_id=tenant_id, reservation_id=reservation_id)
+
+    with pytest.raises(sqlalchemy.exc.IntegrityError, match="operation_id"), pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+
+@pytest.mark.pg
+def test_heal_isolates_checkout_and_usage_reservations_across_tenants(pg_empty_engine) -> None:
+    import sqlalchemy.exc
+
+    with pg_empty_engine.begin() as conn:
+        MIGRATION.heal(conn)
+
+    tenant_a, tenant_b = str(uuid.uuid4()), str(uuid.uuid4())
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        for tenant in (tenant_a, tenant_b):
+            conn.execute(
+                text("INSERT INTO tenants (id, site_url) VALUES (:id, :url)"),
+                {"id": tenant, "url": f"https://{tenant}.example"},
+            )
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL app.current_tenant = '{tenant_a}'"))
+        conn.execute(
+            text(
+                "INSERT INTO usage_reservation "
+                "(id, tenant_id, period_start, idempotency_key, operation_id, "
+                " request_fingerprint, fence_token, status, cost_units) "
+                "VALUES (:id, :tenant, now(), 'op-a', 'op-a', 'fp-a', 'fence-a', 'reserved', 1)"
+            ),
+            {"id": str(uuid.uuid4()), "tenant": tenant_a},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO billing_checkout_attempt "
+                "(id, tenant_id, provider, environment, seller_account, plan_code, "
+                " idempotency_key, request_fingerprint) "
+                "VALUES (:id, :tenant, 'fake', 'sandbox', 'org_sandbox', 'pro', 'key-a', 'fp-a')"
+            ),
+            {"id": str(uuid.uuid4()), "tenant": tenant_a},
+        )
+
+    with pg_empty_engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL app.current_tenant = '{tenant_b}'"))
+        usage_count = conn.execute(text("SELECT count(*) FROM usage_reservation")).scalar()
+        checkout_count = conn.execute(text("SELECT count(*) FROM billing_checkout_attempt")).scalar()
+    assert usage_count == 0
+    assert checkout_count == 0
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError), pg_empty_engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL app.current_tenant = '{tenant_b}'"))
+        conn.execute(
+            text(
+                "INSERT INTO usage_reservation "
+                "(id, tenant_id, period_start, idempotency_key, operation_id, "
+                " request_fingerprint, fence_token, status, cost_units) "
+                "VALUES (:id, :tenant, now(), 'op-x', 'op-x', 'fp-x', 'fence-x', 'reserved', 1)"
+            ),
+            {"id": str(uuid.uuid4()), "tenant": tenant_a},
+        )
+
+    with pytest.raises(sqlalchemy.exc.DBAPIError), pg_empty_engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL app.current_tenant = '{tenant_b}'"))
+        conn.execute(
+            text(
+                "INSERT INTO billing_checkout_attempt "
+                "(id, tenant_id, provider, environment, seller_account, plan_code, "
+                " idempotency_key, request_fingerprint) "
+                "VALUES (:id, :tenant, 'fake', 'sandbox', 'org_sandbox', 'pro', 'key-x', 'fp-x')"
             ),
             {"id": str(uuid.uuid4()), "tenant": tenant_a},
         )

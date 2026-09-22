@@ -102,6 +102,10 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "billing_subscription_projection",
         "billing_webhook_inbox",
         "billing_checkout_attempt",
+        "billing_reconciliation_cursor",
+        "billing_reconciliation_quarantine",
+        "billing_reconciliation_item_progress",
+        "billing_known_item_lease",
         "api_key_rotation_history",
         "tenant_key_idempotency",
         "portal_tenant_invitation",
@@ -145,6 +149,10 @@ def test_identity_schema_declares_expected_table_set() -> None:
         "portal_tenant_invitation",
         "tenant_key_idempotency",
         "api_key_rotation_history",
+        "billing_known_item_lease",
+        "billing_reconciliation_item_progress",
+        "billing_reconciliation_quarantine",
+        "billing_reconciliation_cursor",
         "billing_checkout_attempt",
         "billing_webhook_inbox",
         "billing_subscription_projection",
@@ -188,6 +196,8 @@ def test_identity_schema_declares_expected_table_set() -> None:
     assert "billing_checkout_attempt" in identity_schema.TENANT_TABLES
     assert "usage_reservation" in identity_schema.TENANT_TABLES
     assert "usage_admission_global_state" not in identity_schema.TENANT_TABLES
+    assert "billing_known_item_lease" in identity_schema.OPERATOR_SCOPE_TABLES
+    assert "billing_known_item_lease" not in identity_schema.TENANT_TABLES
 
 
 def test_identity_schema_refresh_status_constraint_matches_enum(monkeypatch) -> None:

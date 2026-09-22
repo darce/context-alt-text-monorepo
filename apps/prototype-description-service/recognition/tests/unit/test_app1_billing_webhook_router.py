@@ -101,6 +101,7 @@ class _RepositoryStub:
         self.transitions: list[str] = []
         self.skipped: list[str] = []
         self.projection_result: bool | None = None
+        self.record_extra: dict[str, object] = {}
 
     async def record_webhook(
         self,
@@ -110,9 +111,11 @@ class _RepositoryStub:
         event_type: str,
         signature_verified: bool,
         payload: Mapping[str, object],
+        **extra: object,
     ) -> bool:
         assert provider == billing_webhooks.POLAR_PROVIDER
         assert signature_verified is True
+        self.record_extra = extra
         if provider_event_id in self.rows:
             return False
         self.rows[provider_event_id] = _InboxRow(provider_event_id, event_type, dict(payload))
@@ -783,3 +786,38 @@ def test_polar_shaped_missing_headers_tamper_and_replay_never_reach_inbox() -> N
     assert body_changed.status_code == 401
     assert repository.rows == {}
     assert repository.transitions == []
+
+
+def test_payload_metadata_cannot_choose_seller_or_environment() -> None:
+    provider = _ProviderStub()
+    repository = _RepositoryStub()
+    raw_body = json.dumps(
+        {
+            "id": "evt-ns",
+            "type": "subscription.active",
+            "timestamp": "2026-09-20T12:00:00Z",
+            "data": {
+                "id": "sub-1",
+                "customer_id": "cus-1",
+                "subscription_id": "sub-1",
+                "tenant_id": str(TENANT_ID),
+                "status": "active",
+                "current_period_end": "2026-10-20T12:00:00Z",
+                "metadata": {"environment": "live", "seller_account": "org-evil"},
+            },
+        },
+        separators=(",", ":"),
+    ).encode()
+
+    with TestClient(_app(provider, repository)) as client:
+        response = client.post(
+            "/billing/webhooks/polar",
+            content=raw_body,
+            headers={"webhook-signature": _signature(raw_body)},
+        )
+
+    assert response.status_code == 202
+    assert repository.record_extra.get("environment") not in {"live"}
+    assert repository.record_extra.get("seller_account") not in {"org-evil"}
+    assert "environment" not in repository.record_extra
+    assert "seller_account" not in repository.record_extra

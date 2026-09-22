@@ -1,0 +1,11 @@
+# Overlay for the existing edge Caddy. Does not replace docker-compose.caddy.yml.
+# Later integration (on the VM, after scripts/deploy/app-portal.sh --apply):
+#   docker compose -f /opt/acx-backend/docker-compose.caddy.yml \
+#     -f /opt/acx-backend/app/docker-compose.app.yml up -d
+#
+# Mounts the staged frontend so Caddyfile.app can serve /srv/app-portal.
+# Shared compose stays the network/TLS owner; this file only adds the static root.
+services:
+  caddy:
+    volumes:
+      - /opt/acx-backend/app/www:/srv/app-portal:ro

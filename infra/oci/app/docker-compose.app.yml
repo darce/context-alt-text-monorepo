@@ -1,5 +1,8 @@
 # Overlay for the existing edge Caddy. Does not replace docker-compose.caddy.yml.
-# Later integration (on the VM, after scripts/deploy/app-portal.sh --apply):
+# scripts/deploy/app-portal.sh --apply renders __APP_WWW__ to the selected host
+# static root and publishes ${APP_ROOT}/docker-compose.app.yml. Do not compose
+# this template directly; the placeholder is not a host path.
+# Later integration (on the VM, after a successful apply):
 #   docker compose -f /opt/acx-backend/docker-compose.caddy.yml \
 #     -f /opt/acx-backend/app/docker-compose.app.yml up -d
 #
@@ -8,4 +11,4 @@
 services:
   caddy:
     volumes:
-      - /opt/acx-backend/app/www:/srv/app-portal:ro
+      - __APP_WWW__:/srv/app-portal:ro

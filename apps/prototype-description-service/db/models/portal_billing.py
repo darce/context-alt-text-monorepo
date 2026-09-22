@@ -226,13 +226,19 @@ class BillingSubscriptionProjection(Base):
         UniqueConstraint("tenant_id", name="uq_billing_subscription_projection_tenant_id"),
         UniqueConstraint(
             "provider",
+            "environment",
+            "seller_account",
             "provider_customer_id",
-            name="uq_billing_subscription_projection_provider_customer",
+            name="uq_billing_subscription_projection_provider_namespace_customer",
         ),
         Index("idx_billing_subscription_projection_reclaim", "updated_at"),
         CheckConstraint(
             "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
             name="ck_billing_subscription_projection_status",
+        ),
+        CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_subscription_projection_environment",
         ),
     )
 
@@ -335,15 +341,57 @@ class BillingWebhookInbox(Base):
     seller_account: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("provider", "provider_event_id", name="uq_billing_webhook_inbox_provider_event"),
+        UniqueConstraint(
+            "provider",
+            "environment",
+            "seller_account",
+            "provider_event_id",
+            name="uq_billing_webhook_inbox_provider_namespace_event",
+        ),
         Index("idx_billing_webhook_inbox_reclaim", "status", "processed_at"),
         Index("idx_billing_webhook_inbox_pending", "status", "next_attempt_at"),
+        CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_webhook_inbox_environment",
+        ),
     )
 
 
+_KNOWN_ITEM_KIND_SQL = "'inbox', 'projection'"
 _RECOVERY_KIND_SQL = "'subscriptions', 'ambiguous_checkouts'"
 _QUARANTINE_STATUS_SQL = "'open', 'retry_pending', 'exhausted', 'resolved'"
 _ITEM_PROGRESS_STATUS_SQL = "'completed', 'quarantined'"
+
+
+class BillingKnownItemLease(Base):
+    """Fenced per-item lease for known inbox events and projections.
+
+    Operator-scope; not a tenant row. Caller commits the claim before vendor I/O.
+    """
+
+    __tablename__ = "billing_known_item_lease"
+
+    provider: Mapped[str] = mapped_column(Text, primary_key=True)
+    environment: Mapped[str] = mapped_column(Text, primary_key=True)
+    seller_account: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    remote_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    lease_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(f"kind IN ({_KNOWN_ITEM_KIND_SQL})", name="ck_billing_known_item_lease_kind"),
+        CheckConstraint("environment IN ('sandbox', 'live')", name="ck_billing_known_item_lease_environment"),
+        CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_known_item_lease_provider"),
+        CheckConstraint("fence >= 0", name="ck_billing_known_item_lease_fence_nonnegative"),
+        CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_known_item_lease_remote_id",
+        ),
+        Index("idx_billing_known_item_lease_until", "lease_until", "kind"),
+    )
 
 
 class BillingReconciliationCursor(Base):
@@ -545,6 +593,7 @@ class PortalTenantInvitation(Base):
 __all__ = [
     "ApiKeyRotationHistory",
     "BillingCheckoutAttempt",
+    "BillingKnownItemLease",
     "BillingReconciliationCursor",
     "BillingReconciliationItemProgress",
     "BillingReconciliationQuarantine",

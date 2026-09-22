@@ -299,19 +299,27 @@ def test_settings_polar_values_win_over_environment(monkeypatch: pytest.MonkeyPa
     assert config.billing_base_url == "https://polar.settings.example"
 
 
-def test_missing_billing_product_ids_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_secrets(monkeypatch)
-
-    with pytest.raises(ValueError, match="POLAR_PRODUCT_IDS"):
-        composition._composition_config(_composition_settings(omit_billing=("product_ids",)))
-
-
 class _StubOutboundClient:
     async def get(self, *args: object, **kwargs: object) -> object:
         raise AssertionError("composition tests must not call Polar")
 
     async def post(self, *args: object, **kwargs: object) -> object:
         raise AssertionError("composition tests must not call Polar")
+
+
+def test_missing_billing_product_ids_does_not_block_portal_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_secrets(monkeypatch)
+    app = FastAPI()
+    composition.install_portal_composition(
+        app,
+        settings=_composition_settings(omit_billing=("product_ids",)),
+        http_client=_StubOutboundClient(),
+    )
+
+    assert getattr(app.state, "billing_provider", None) is None
+    assert app.state.portal_token_verifier is not None
 
 
 def test_payments_disabled_installs_without_seller_or_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,3 +414,47 @@ def test_payments_enabled_does_not_invent_an_organization_id(monkeypatch: pytest
             settings=_composition_settings(billing={"payments_enabled": True}),
             http_client=_StubOutboundClient(),
         )
+
+
+def test_portal_fallback_installs_without_polar_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_secrets(_names: object) -> str | None:
+        return None
+
+    monkeypatch.setattr(composition, "_secret_value", no_secrets)
+    app = FastAPI()
+    composition.install_portal_composition(
+        app,
+        settings=_composition_settings(omit_billing=("product_ids",)),
+        http_client=_StubOutboundClient(),
+    )
+    assert app.state.portal_token_verifier is not None
+    assert getattr(app.state, "billing_provider", None) is None
+    assert getattr(app.state, "checkout_service", None) is None
+    factory = getattr(app.state, "billing_repository", None)
+    if factory is not None:
+        repo = factory(object())
+        assert getattr(repo, "_environment", None) in {None, "sandbox"}
+        assert getattr(repo, "_seller_account", None) is None
+
+
+def test_billing_repository_factory_binds_configured_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_secrets(monkeypatch)
+    settings = _composition_settings(
+        billing={
+            "payments_enabled": True,
+            "seller_account": "org-from-settings",
+            "allowed_return_origins": AUTHORIZED_ORIGIN,
+        },
+        portal={"authorized_parties": AUTHORIZED_ORIGIN},
+    )
+    monkeypatch.setenv("APP_PUBLIC_ORIGIN", AUTHORIZED_ORIGIN)
+    app = FastAPI()
+    composition.install_portal_composition(app, settings=settings, http_client=_StubOutboundClient())
+    factory = app.state.billing_repository
+    session = object()
+    repo = factory(session)
+    assert factory.environment == "sandbox"
+    assert factory.seller_account == "org-from-settings"
+    assert repo._environment == "sandbox"
+    assert repo._seller_account == "org-from-settings"
+    assert repo.session is session

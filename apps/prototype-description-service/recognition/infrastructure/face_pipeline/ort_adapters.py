@@ -24,7 +24,7 @@ rg-013-style purity (onnxruntime/numpy + face_pipeline siblings only; no cv2).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
 
@@ -36,6 +36,7 @@ from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
     DEFAULT_SCORE_THRESHOLD,
     DEFAULT_TOP_K,
+    SFACE_CROP_SIZE,
     EmbedBatchResult,
     FacePipelineInputError,
     RawDetection,
@@ -43,7 +44,7 @@ from recognition.infrastructure.face_pipeline._common import (
     embed_batch,
     resolve_embedding_dim,
 )
-from recognition.infrastructure.face_pipeline.provenance import load_verified_model
+from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST, load_verified_model
 
 # OpenCV FaceDetectorYN pad divisor + FPN strides (face_detect.cpp).
 _YUNET_DIVISOR: Final[int] = 32
@@ -64,6 +65,12 @@ _YUNET_OUTPUT_NAMES: Final[tuple[str, ...]] = (
     "kps_16",
     "kps_32",
 )
+
+_SFACE_ALIGNMENT_TEMPLATE_ID: Final[str] = "sface-5pt-112"
+
+
+class UnsupportedModelPreprocessingError(ValueError):
+    """Raised when a model's declared preprocessing exceeds this pipeline's contract."""
 
 
 def _ort_session(model_path: Path) -> ort.InferenceSession:
@@ -108,6 +115,70 @@ def _bgr_to_sface_blob(crop_u8: np.ndarray) -> np.ndarray:
     """
     rgb = crop_u8[:, :, ::-1]
     return np.ascontiguousarray(rgb.astype(np.float32).transpose(2, 0, 1)[None, ...])
+
+
+def _bgr_to_declared_blob(
+    crop_u8: np.ndarray,
+    *,
+    channel_order: str,
+    input_scale: float,
+) -> np.ndarray:
+    """Build a float32 NCHW blob from a BGR crop using declared metadata."""
+    if channel_order == "RGB":
+        channel_ordered = crop_u8[:, :, ::-1]
+    elif channel_order == "BGR":
+        channel_ordered = crop_u8
+    else:  # validated when the model's builder is selected
+        raise ValueError(f"unsupported declared channel order {channel_order!r}")
+    blob = channel_ordered.astype(np.float32).transpose(2, 0, 1)[None, ...]
+    return np.ascontiguousarray(blob * np.float32(input_scale))
+
+
+def _blob_builder_for_model(model_name: str) -> Callable[[np.ndarray], np.ndarray]:
+    """Resolve one model's preprocessing into the callable used by ``_feature``."""
+    try:
+        entry = MODEL_MANIFEST[model_name]
+    except KeyError:
+        known_models = ", ".join(sorted(MODEL_MANIFEST))
+        raise ValueError(f"unknown embedding model {model_name!r}; known models: {known_models}") from None
+
+    preprocessing = entry.preprocessing
+    if preprocessing is None:
+        if model_name == "sface" and entry.framework == "opencv":
+            return _bgr_to_sface_blob
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} has no declared preprocessing; only the OpenCV SFace model "
+            "may use the legacy SFace preprocessing path"
+        )
+
+    expected_input_size = (SFACE_CROP_SIZE, SFACE_CROP_SIZE)
+    if preprocessing.input_size != expected_input_size:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares input_size={preprocessing.input_size!r}; "
+            f"this pipeline implements only {expected_input_size!r} SFace crops"
+        )
+    if preprocessing.alignment_template_id != _SFACE_ALIGNMENT_TEMPLATE_ID:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares alignment template "
+            f"{preprocessing.alignment_template_id!r}; this pipeline implements only the SFace template "
+            f"{_SFACE_ALIGNMENT_TEMPLATE_ID!r}"
+        )
+    if preprocessing.channel_order not in {"RGB", "BGR"}:
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares unsupported channel_order="
+            f"{preprocessing.channel_order!r} for alignment template "
+            f"{preprocessing.alignment_template_id!r}; expected 'RGB' or 'BGR'"
+        )
+    if not np.isfinite(preprocessing.input_scale):
+        raise UnsupportedModelPreprocessingError(
+            f"model {model_name!r} declares non-finite input_scale={preprocessing.input_scale!r}"
+        )
+
+    return lambda crop: _bgr_to_declared_blob(
+        crop,
+        channel_order=preprocessing.channel_order,
+        input_scale=preprocessing.input_scale,
+    )
 
 
 def decode_yunet_level(
@@ -370,7 +441,7 @@ class OrtYuNetDetector:
 
 
 class OrtSFaceEmbedder:
-    """ORT CPU SFace embedder with OpenCV FaceRecognizerSF preprocessing.
+    """ORT CPU face embedder with manifest-selected preprocessing.
 
     Batch API: ``embed(crops) -> (N, dim)`` L2-normalized float32.
     Crops must be 112×112×3 BGR. Dim from manifest (rg-015). Zero-norm raises.
@@ -383,16 +454,17 @@ class OrtSFaceEmbedder:
         model_name: str = "sface",
         models_dir: Path | None = None,
     ) -> None:
-        model_path = load_verified_model(model_name, models_dir=models_dir)
         self._model_name = model_name
+        self.embedding_dim = resolve_embedding_dim(model_name)
+        self._blob_builder = _blob_builder_for_model(model_name)
+        model_path = load_verified_model(model_name, models_dir=models_dir)
         self._model_path = model_path
         self._session = _ort_session(model_path)
         self._input_name = self._session.get_inputs()[0].name
-        self.embedding_dim = resolve_embedding_dim(model_name)
 
     def _feature(self, crop: np.ndarray) -> np.ndarray:
         """Raw model feature for one validated 112×112 BGR crop (hookable in tests)."""
-        blob = _bgr_to_sface_blob(crop)
+        blob = self._blob_builder(crop)
         out = self._session.run(None, {self._input_name: blob})[0]
         return np.asarray(out, dtype=np.float32).reshape(-1)
 
@@ -408,6 +480,7 @@ class OrtSFaceEmbedder:
 __all__ = [
     "OrtSFaceEmbedder",
     "OrtYuNetDetector",
+    "UnsupportedModelPreprocessingError",
     "decode_yunet_level",
     "decode_yunet_outputs",
     "nms_yunet",

@@ -450,6 +450,7 @@ class ReclaimerLiveness {
 			return;
 		}
 
+		$this->invalidate_option_caches( $this->state_option_name( $tenant_id ) );
 		$state = $this->load_state( $tenant_id );
 		$mode = $this->resolve_scheduler_mode( $state['scheduler_mode'] ?? null, $changes['scheduler_mode'] ?? null );
 		$defaults = array(
@@ -554,10 +555,12 @@ class ReclaimerLiveness {
 
 		$option_name = $this->state_option_name( $tenant_id );
 		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
+		$this->invalidate_option_caches( $option_name );
 		$previous = $this->load_state( $tenant_id );
 		if ( array() === $previous ) {
 			$inserted = add_option( $option_name, $state, '', false );
 			if ( $inserted ) {
+				$this->invalidate_option_caches( $option_name );
 				return array(
 					'committed' => true,
 					'status' => $fence_available

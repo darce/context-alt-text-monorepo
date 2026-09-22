@@ -37,6 +37,10 @@ from recognition.application.scan.capability import (
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.services.usage_settlement_service import (
+    capture_usage_fence,
+    settle_usage_job,
+)
 from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.job import CLUSTERING_JOB_TYPES, JobStatus
 from recognition.domain.repositories import MvRefreshOutcome
@@ -69,22 +73,16 @@ def _resolve_worker_metrics_port() -> int:
     try:
         port = int(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535"
-        ) from exc
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={raw!r}; must be an integer 1..65535") from exc
     if port < 1 or port > 65535:
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_PORT={port}; must be in range 1..65535")
     return port
 
 
 def _validate_worker_metrics_addr(raw: str) -> str:
     """Reject empty / whitespace / control-character bind addresses (fail closed)."""
     if not isinstance(raw, str):
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must be a non-empty string")
     addr = raw.strip()
     if not addr:
         raise ValueError(
@@ -92,10 +90,7 @@ def _validate_worker_metrics_addr(raw: str) -> str:
             "(default 127.0.0.1; empty would bind all interfaces in prometheus_client)"
         )
     if any(ord(ch) < 32 for ch in addr):
-        raise ValueError(
-            f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; "
-            "must not contain control characters"
-        )
+        raise ValueError(f"Invalid RECOGNITION_SCAN_WORKER_METRICS_ADDR={raw!r}; must not contain control characters")
     return addr
 
 
@@ -113,8 +108,7 @@ def _resolve_worker_metrics_export_enabled() -> bool:
     if raw in {"1", "true", "yes", "on"}:
         return True
     raise ValueError(
-        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; "
-        "use 1/true/yes/on or 0/false/no/off"
+        f"Invalid RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED={raw!r}; use 1/true/yes/on or 0/false/no/off"
     )
 
 
@@ -132,9 +126,7 @@ def start_process_metrics_exporter(
     """
     global _process_metrics_exporter_registry
     if not config.metrics_export_enabled:
-        logger.info(
-            "[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)"
-        )
+        logger.info("[worker] metrics export disabled (RECOGNITION_SCAN_WORKER_METRICS_EXPORT_ENABLED)")
         return
     registry = metrics.registry
     if _process_metrics_exporter_registry is registry:
@@ -309,6 +301,8 @@ class ScanWorker:
         while True:
             claimed: list[ScanQueueItem] = []
             should_sleep = False
+            captured_fences: dict[str, str] = {}
+            stalled_terminated = 0
             await self._probe_and_publish_embedding_runtime_capability()
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
@@ -328,6 +322,7 @@ class ScanWorker:
                     now=now,
                 )
                 if terminated:
+                    stalled_terminated = terminated
                     logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
 
                 if await self._process_pending_clustering_jobs(session=session, now=now):
@@ -346,13 +341,22 @@ class ScanWorker:
                     else:
                         for job_id in {item.job_id for item in claimed}:
                             await repo.mark_job_running(job_id=job_id, started_at=now)
+                        for item in claimed:
+                            fence = await capture_usage_fence(
+                                session, tenant_id=item.tenant_id, job_id=str(item.job_id)
+                            )
+                            if fence:
+                                captured_fences[str(item.job_id)] = fence
                         await session.commit()
 
             if should_sleep:
+                if stalled_terminated:
+                    await self._settle_stalled_usage()
                 await asyncio.sleep(self._config.poll_interval_seconds)
                 continue
 
             await self._process_claimed_items(claimed=claimed)
+            await self._settle_claimed_usage(claimed=claimed, fences=captured_fences)
 
     async def _process_claimed_items(
         self,
@@ -361,6 +365,71 @@ class ScanWorker:
     ) -> None:
         await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    async def _settle_claimed_usage(
+        self,
+        *,
+        claimed: list[ScanQueueItem],
+        fences: dict[str, str],
+    ) -> None:
+        seen: set[uuid.UUID] = set()
+        try:
+            async with self._session_factory() as session:
+                await enable_rls_bypass(session)
+                for item in claimed:
+                    if item.job_id in seen:
+                        continue
+                    seen.add(item.job_id)
+                    await settle_usage_job(
+                        session,
+                        tenant_id=item.tenant_id,
+                        job_id=str(item.job_id),
+                        fence_token=fences.get(str(item.job_id)),
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("[worker] usage settlement failed for claimed scan jobs")
+
+    async def _settle_stalled_usage(self) -> None:
+        """Settle jobs that terminate_stalled_jobs just marked failed (after compute)."""
+        from db.models import IdentityScanJob, UsageReservation
+        from recognition.domain.portal_contracts import UsageReservationStatus
+
+        try:
+            async with self._session_factory() as session:
+                await enable_rls_bypass(session)
+                reserved = (
+                    (
+                        await session.execute(
+                            select(UsageReservation)
+                            .where(UsageReservation.status == UsageReservationStatus.RESERVED)
+                            .order_by(UsageReservation.reserved_at.asc())
+                            .limit(self._config.claim_batch_size)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for reservation in reserved:
+                    if not reservation.job_id:
+                        continue
+                    try:
+                        job_uuid = uuid.UUID(str(reservation.job_id))
+                    except ValueError:
+                        continue
+                    job = await session.get(IdentityScanJob, job_uuid)
+                    if job is None:
+                        continue
+                    await settle_usage_job(
+                        session,
+                        tenant_id=reservation.tenant_id,
+                        job_id=str(reservation.job_id),
+                        fence_token=None,
+                        allow_missing_job_release=False,
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("[worker] usage settlement failed for stalled scan jobs")
 
     def _can_claim_scan_items(self) -> bool:
         """Whether this worker may claim pending scan items this cycle.

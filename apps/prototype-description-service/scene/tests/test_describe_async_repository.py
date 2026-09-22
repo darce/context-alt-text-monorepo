@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -411,6 +412,59 @@ def test_bulk_create_run_defaults_to_run_kind_bulk():
             run = await repo.get_run(tenant_id=tenant, run_id=run_id)
             assert run is not None
             assert run.run_kind == RunKind.BULK
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_create_run_signatures_keep_optional_caller_job_id():
+    bulk = inspect.signature(DescribeRunRepository.create_run)
+    single = inspect.signature(DescribeRunRepository.create_single_run)
+    for params in (bulk.parameters, single.parameters):
+        assert params["run_id"].default is None
+        assert params["operation_id"].default is None
+    assert single.parameters["request_digest"].default is None
+    assert "run_id" in bulk.parameters
+    assert list(bulk.parameters)[:3] == ["self", "tenant_id", "media_ids"]
+    assert list(single.parameters)[:4] == ["self", "tenant_id", "media_id", "image_bytes"]
+
+
+def test_create_run_persists_caller_job_id_and_operation_identity():
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        caller_bulk = uuid.uuid4()
+        caller_single = uuid.uuid4()
+        fingerprint = "a" * 64
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            bulk_id = await repo.create_run(
+                tenant_id=tenant,
+                media_ids=[1, 2],
+                run_id=caller_bulk,
+                operation_id="op-bulk",
+                request_digest=fingerprint,
+            )
+            single_id = await repo.create_single_run(
+                tenant_id=tenant,
+                media_id=9,
+                image_bytes=b"img",
+                run_id=caller_single,
+                operation_id="op-single",
+                request_digest=fingerprint,
+            )
+            omitted = await repo.create_single_run(tenant_id=tenant, media_id=10, image_bytes=b"y")
+            await s.commit()
+            bulk = await repo.get_run(tenant_id=tenant, run_id=bulk_id)
+            single = await repo.get_run(tenant_id=tenant, run_id=single_id)
+            leftover = await repo.get_run(tenant_id=tenant, run_id=omitted)
+        assert bulk_id == caller_bulk
+        assert single_id == caller_single
+        assert bulk is not None and bulk.operation_id == "op-bulk"
+        assert bulk.request_digest == fingerprint
+        assert single is not None and single.operation_id == "op-single"
+        assert single.request_digest == fingerprint
+        assert leftover is not None and leftover.id != caller_single
         await engine.dispose()
 
     asyncio.run(body())

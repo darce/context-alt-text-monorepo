@@ -47,6 +47,7 @@ class _FakeAdmission:
         self.reserves: list[dict[str, object]] = []
         self.commits: list[UsageTicket] = []
         self.releases: list[UsageTicket] = []
+        self._tickets: dict[tuple[object, str], UsageTicket] = {}
 
     async def reserve(
         self,
@@ -72,16 +73,25 @@ class _FakeAdmission:
         )
         if self.exhausted:
             raise AllowanceExceededError()
-        return UsageTicket(
+        resolved_operation = operation_id or idempotency_key
+        resolved_fingerprint = request_fingerprint or idempotency_key
+        existing = self._tickets.get((tenant_id, resolved_operation))
+        if existing is not None:
+            if existing.request_fingerprint != resolved_fingerprint:
+                raise UsageFingerprintConflictError("changed fingerprint")
+            return existing
+        ticket = UsageTicket(
             uuid4(),
             tenant_id,
             idempotency_key,
             cost_units,
-            operation_id=operation_id or idempotency_key,
-            request_fingerprint=request_fingerprint or idempotency_key,
+            operation_id=resolved_operation,
+            request_fingerprint=resolved_fingerprint,
             job_id=job_id,
             fence_token="fence-test",
         )
+        self._tickets[(tenant_id, resolved_operation)] = ticket
+        return ticket
 
     async def commit(self, ticket: UsageTicket) -> None:
         self.commits.append(ticket)
@@ -202,19 +212,66 @@ async def test_absent_service_does_not_call_anything() -> None:
 
 
 @pytest.mark.asyncio
-async def test_identical_requests_use_the_same_key_and_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_identical_payloads_without_operation_id_are_independently_chargeable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     admission = _FakeAdmission()
     app = _json_app(admission, monkeypatch)
     transport = httpx.ASGITransport(app=app)
+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
         first = await client.post("/recognition/analyze", json=payload)
         second = await client.post("/recognition/analyze", json=payload)
 
     assert first.status_code == 202
     assert second.status_code == 202
     assert len(admission.reserves) == 2
-    assert admission.reserves[0]["idempotency_key"] == admission.reserves[1]["idempotency_key"]
+    assert admission.reserves[0]["operation_id"] != admission.reserves[1]["operation_id"]
+    assert admission.reserves[0]["request_fingerprint"] == admission.reserves[1]["request_fingerprint"]
+    assert admission.commits == []
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_replays_without_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+    app = _json_app(admission, monkeypatch)
+    transport = httpx.ASGITransport(app=app)
+    payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
+    headers = {"Idempotency-Key": "client-op-1"}
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        first = await client.post("/recognition/analyze", json=payload, headers=headers)
+        second = await client.post("/recognition/analyze", json=payload, headers=headers)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert len(admission.reserves) == 2
+    assert admission.reserves[0]["operation_id"] == "client-op-1"
+    assert admission.reserves[1]["operation_id"] == "client-op-1"
+    assert admission.reserves[0]["request_fingerprint"] == admission.reserves[1]["request_fingerprint"]
+    assert admission.commits == []
+
+
+@pytest.mark.asyncio
+async def test_analyze_reserve_uses_pregenerated_job_and_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    admission = _FakeAdmission()
+    app = _json_app(admission, monkeypatch)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze",
+            json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
+            headers={"Idempotency-Key": "client-op-json"},
+        )
+
+    assert response.status_code == 202
+    assert len(admission.reserves) == 1
+    reserved = admission.reserves[0]
+    assert reserved["operation_id"] == "client-op-json"
+    assert reserved["idempotency_key"] == "client-op-json"
+    assert reserved["job_id"] is not None
+    UUID(str(reserved["job_id"]))
+    assert reserved["request_fingerprint"] != reserved["operation_id"]
+    assert reserved["request_fingerprint"] != MEDIA_ID
     assert admission.commits == []
 
 
@@ -266,7 +323,18 @@ class _FakeObjectStore:
 
 
 class _FakeScanQueue:
+    def __init__(self) -> None:
+        self.create_calls: list[dict[str, object]] = []
+
     async def create_scan_job_record(self, *, tenant_id, total, job_id, created_by_user_id):
+        self.create_calls.append(
+            {
+                "tenant_id": tenant_id,
+                "total": total,
+                "job_id": job_id,
+                "created_by_user_id": created_by_user_id,
+            }
+        )
         return job_id
 
 
@@ -275,6 +343,7 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
     admission = _FakeAdmission()
     app = FastAPI()
     app.include_router(multipart_router.router, prefix="/recognition")
+    queue = _FakeScanQueue()
 
     async def _auth():
         return SimpleNamespace(tenant_claim=None, user_id=None)
@@ -283,7 +352,7 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
         return None
 
     async def _queue():
-        return _FakeScanQueue()
+        return queue
 
     async def _none():
         return None
@@ -315,12 +384,21 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
             "/recognition/analyze/multipart",
             data={"request": json.dumps({"tenant_id": str(TENANT_ID)})},
             files={"image_1": ("image.png", b"image", "image/png")},
+            headers={"Idempotency-Key": "client-op-multipart"},
         )
 
     assert response.status_code == 202
     assert len(admission.reserves) == 1
-    assert admission.reserves[0]["cost_units"] == 1
+    reserved = admission.reserves[0]
+    assert reserved["cost_units"] == 1
+    assert reserved["operation_id"] == "client-op-multipart"
+    assert reserved["job_id"] is not None
+    UUID(str(reserved["job_id"]))
+    assert reserved["request_fingerprint"] != reserved["operation_id"]
+    assert reserved["queue_bytes"] == len(b"image")
     assert admission.commits == []
+    assert len(queue.create_calls) == 1
+    assert str(queue.create_calls[0]["job_id"]) == str(reserved["job_id"])
 
 
 def test_build_usage_key_is_order_stable() -> None:

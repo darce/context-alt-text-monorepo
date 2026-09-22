@@ -1,4 +1,29 @@
- .../tests/unit/test_configure_clerk_production.py  | 425 ++++++++++++++++
- .../scripts/configure_clerk_production.py          | 547 +++++++++++++++++++++
- docs/runbooks/clerk-production-auth.md             | 155 ++++++
- 3 files changed, 1127 insertions(+)
+ .review/CHANGE.diff                                | 2353 +++++++-------------
+ .review/COMMITS.txt                                |   13 +-
+ .review/CONTEXT.md                                 |    8 +-
+ .review/DIFFSTAT.txt                               |   22 +-
+ .../db/migrations/versions/001_identity_schema.py  |  163 ++
+ .../db/models/portal_billing.py                    |   47 +
+ .../application/services/checkout_service.py       |    5 +-
+ .../services/portal_identity_service.py            |  138 +-
+ .../services/usage_admission_service.py            |  121 +-
+ .../recognition/domain/portal_contracts.py         |   35 +-
+ .../repositories/portal_identity_repository.py     |  251 ++-
+ .../repositories/usage_repository.py               |  313 ++-
+ .../http/deps/usage_admission.py                   |   48 +-
+ .../interface_adapters/http/routers/portal.py      |  172 +-
+ .../test_app1_usage_admission_postgres.py          |  195 ++
+ .../tests/unit/test_app1_checkout_service.py       |  104 +-
+ .../tests/unit/test_app1_portal_claim_router.py    |  357 +++
+ .../unit/test_app1_portal_identity_onboarding.py   |  264 ++-
+ .../unit/test_app1_portal_identity_service.py      |  248 ++-
+ .../unit/test_app1_usage_admission_service.py      |  298 ++-
+ .../tests/unit/test_app1_usage_admission_wiring.py |   89 +-
+ .../app1-evaluator-adjudication-20260922.md        |  191 ++
+ docs/runbooks/app-portal-deploy.md                 |  131 ++
+ infra/oci/app/Caddyfile.app                        |   23 +
+ infra/oci/app/docker-compose.app.yml               |   11 +
+ infra/oci/app/env.example                          |   16 +
+ scripts/deploy/app-portal.sh                       |  341 +++
+ scripts/deploy/tests/test_app_portal_deploy.py     |  425 ++++
+ 28 files changed, 4731 insertions(+), 1651 deletions(-)

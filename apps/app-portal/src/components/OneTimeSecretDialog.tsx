@@ -9,11 +9,55 @@ export type OneTimeSecretDialogProps = {
   returnFocusId: string;
 };
 
+function dialogFocusables(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  );
+}
+
+function handleDialogKeydown(event: KeyboardEvent, container: HTMLElement, onEscape: () => void): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    onEscape();
+    return;
+  }
+  if (event.key !== 'Tab') {
+    return;
+  }
+  const nodes = dialogFocusables(container);
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+  const active = document.activeElement;
+  if (event.shiftKey) {
+    if (active === first || !container.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (active === last || !container.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function OneTimeSecretDialog({ rawKey, replayed, onCopy, onClose, returnFocusId }: OneTimeSecretDialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const copyRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const recoverable = Boolean(rawKey) && !replayed;
+
+  function handleClose() {
+    onClose();
+    document.getElementById(returnFocusId)?.focus();
+  }
 
   useEffect(() => {
     if (recoverable) {
@@ -23,6 +67,18 @@ export function OneTimeSecretDialog({ rawKey, replayed, onCopy, onClose, returnF
     }
   }, [recoverable]);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const container = dialogRef.current;
+      if (!container) {
+        return;
+      }
+      handleDialogKeydown(event, container, handleClose);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose, returnFocusId]);
+
   async function handleCopy() {
     try {
       await onCopy();
@@ -30,11 +86,6 @@ export function OneTimeSecretDialog({ rawKey, replayed, onCopy, onClose, returnF
     } catch {
       setCopyState('failed');
     }
-  }
-
-  function handleClose() {
-    onClose();
-    document.getElementById(returnFocusId)?.focus();
   }
 
   const status = !recoverable
@@ -46,7 +97,7 @@ export function OneTimeSecretDialog({ rawKey, replayed, onCopy, onClose, returnF
         : 'Not copied';
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="one-time-secret-title" className="acx-portal">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="one-time-secret-title" className="acx-portal">
       <h2 id="one-time-secret-title">Copy this API secret once</h2>
       <p>This secret will not be shown again.</p>
       {recoverable ? <p>{rawKey}</p> : null}

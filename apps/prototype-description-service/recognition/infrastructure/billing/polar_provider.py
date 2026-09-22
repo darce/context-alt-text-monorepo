@@ -878,11 +878,13 @@ def _enumeration_page_from_response(
         raise PolarEnumerationError("Polar subscription page pagination is invalid")
     items: list[BillingState] = []
     observations: list[EnumerationObservation] = []
-    for item in items_raw:
+    for index, item in enumerate(items_raw):
         state, observation = _subscription_item_result(
             item,
             environment=environment,
             seller_account=seller_account,
+            page=page,
+            index=index,
         )
         if state is not None:
             items.append(state)
@@ -902,14 +904,16 @@ def _subscription_item_result(
     *,
     environment: str,
     seller_account: str | None,
+    page: int,
+    index: int,
 ) -> tuple[BillingState | None, EnumerationObservation | None]:
     if not isinstance(item, Mapping):
         return None, EnumerationObservation(
             reason=EnumerationObservationReason.MALFORMED_ITEM,
-            remote_id=_digest_remote_id({"shape": "non_object"}),
-            details={"shape": "non_object"},
+            remote_id=_digest_item_identity(item, page=page, index=index),
+            details={"shape": "non_object", "field_class": "item"},
         )
-    remote_id, missing_id = _enumeration_remote_id(item)
+    remote_id = _enumeration_observation_id(item, page=page, index=index)
     organization_id = _first_text(
         item.get("organization_id"),
         _nested_value(item.get("customer"), "organization_id"),
@@ -919,7 +923,7 @@ def _subscription_item_result(
         return None, EnumerationObservation(
             reason=EnumerationObservationReason.SELLER_MISMATCH,
             remote_id=remote_id,
-            details={"organization_id": _bounded_detail(organization_id)},
+            details={"field_class": "organization_id"},
         )
     tenant, tenant_reason = _tenant_from_enumeration(item, environment)
     if tenant is None:
@@ -928,11 +932,20 @@ def _subscription_item_result(
             remote_id=remote_id,
             details={"identity": tenant_reason.value if tenant_reason is not None else "unparseable"},
         )
-    if missing_id:
+    vendor_id = _first_text(item.get("id"), item.get("subscription_id"))
+    if vendor_id is None:
         return None, EnumerationObservation(
             reason=EnumerationObservationReason.MISSING_REMOTE_ID,
             remote_id=remote_id,
             details={"identity": "missing_id"},
+        )
+    unusable = _unusable_billing_identifier(item, environment)
+    if unusable is not None:
+        field_class, identity = unusable
+        return None, EnumerationObservation(
+            reason=EnumerationObservationReason.MALFORMED_ITEM,
+            remote_id=remote_id,
+            details={"identity": identity, "field_class": field_class},
         )
     try:
         state = _billing_state_from_response(
@@ -943,7 +956,7 @@ def _subscription_item_result(
                 _nested_value(item.get("customer"), "id"),
             )
             or "",
-            requested_subscription_id=_first_text(item.get("id"), item.get("subscription_id")),
+            requested_subscription_id=vendor_id,
         )
     except ValueError:
         return None, EnumerationObservation(
@@ -954,12 +967,69 @@ def _subscription_item_result(
     return state, None
 
 
-def _enumeration_remote_id(item: Mapping[str, object]) -> tuple[str, bool]:
+_OPAQUE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _is_opaque_identifier(value: str) -> bool:
+    return _OPAQUE_IDENTIFIER.fullmatch(value) is not None
+
+
+def _digest_item_identity(item: object, *, page: int, index: int) -> str:
+    canonical_item: object
+    if isinstance(item, Mapping):
+        canonical_item = dict(item)
+    else:
+        canonical_item = {"shape": type(item).__name__, "value": item}
+    return _digest_remote_id(
+        {
+            "page": str(page),
+            "index": str(index),
+            "canonical": json.dumps(
+                canonical_item,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ),
+        }
+    )
+
+
+def _enumeration_observation_id(
+    item: Mapping[str, object],
+    *,
+    page: int,
+    index: int,
+) -> str:
     remote_id = _first_text(item.get("id"), item.get("subscription_id"))
-    if remote_id is not None:
-        return _bounded_identifier(remote_id), False
-    customer_id = _first_text(item.get("customer_id"), _nested_value(item.get("customer"), "id"))
-    return _digest_remote_id({"customer_id": customer_id or ""}), True
+    if (
+        remote_id is not None
+        and _is_opaque_identifier(remote_id)
+        and len(remote_id) <= RECONCILIATION_MAX_REMOTE_ID_LENGTH
+    ):
+        return remote_id
+    return _digest_item_identity(item, page=page, index=index)
+
+
+def _unusable_billing_identifier(
+    item: Mapping[str, object],
+    environment: str,
+) -> tuple[str, str] | None:
+    subscription_id = _first_text(item.get("id"), item.get("subscription_id"))
+    customer_id = _first_text(
+        item.get("customer_id"),
+        _nested_value(item.get("customer"), "id"),
+    )
+    for field_class, value in (("subscription_id", subscription_id), ("customer_id", customer_id)):
+        if value is None:
+            continue
+        if len(value) > RECONCILIATION_MAX_REMOTE_ID_LENGTH or (
+            _is_opaque_identifier(value)
+            and len(_scope_identifier(value, environment)) > RECONCILIATION_MAX_REMOTE_ID_LENGTH
+        ):
+            return field_class, "overlong_id"
+        if not _is_opaque_identifier(value):
+            return field_class, "unsafe_id"
+    return None
 
 
 def _tenant_from_enumeration(
@@ -973,40 +1043,41 @@ def _tenant_from_enumeration(
         _nested_value(payload.get("metadata"), "tenant_id"),
         payload.get("tenant_id"),
     )
+    prefixed: set[UUID] = set()
+    unprefixed: set[UUID] = set()
     saw_foreign_environment = False
-    saw_unparseable = False
     for value in candidates:
         if isinstance(value, UUID):
-            return value, None
+            unprefixed.add(value)
+            continue
         if not isinstance(value, str) or not value:
             continue
-        if ":" in value and not value.startswith(prefix):
-            saw_foreign_environment = True
+        if ":" in value:
+            if not value.startswith(prefix):
+                saw_foreign_environment = True
+                continue
+            try:
+                prefixed.add(UUID(value[len(prefix) :]))
+            except ValueError:
+                continue
             continue
-        candidate = value[len(prefix) :] if value.startswith(prefix) else value
         try:
-            return UUID(candidate), None
+            unprefixed.add(UUID(value))
         except ValueError:
-            saw_unparseable = True
             continue
+    if saw_foreign_environment:
+        return None, EnumerationObservationReason.ENVIRONMENT_MISMATCH
+    if len(prefixed) > 1:
+        return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+    if len(prefixed) == 1:
+        tenant = next(iter(prefixed))
+        if unprefixed - {tenant}:
+            return None, EnumerationObservationReason.TENANT_UNPARSEABLE
+        return tenant, None
     email = _first_text(_nested_value(payload.get("customer"), "email"), payload.get("email"))
     if email is not None:
         return None, EnumerationObservationReason.EMAIL_IDENTITY_REJECTED
-    if saw_foreign_environment:
-        return None, EnumerationObservationReason.ENVIRONMENT_MISMATCH
-    if saw_unparseable:
-        return None, EnumerationObservationReason.TENANT_UNPARSEABLE
     return None, EnumerationObservationReason.TENANT_UNPARSEABLE
-
-
-def _bounded_identifier(value: str) -> str:
-    if len(value) <= RECONCILIATION_MAX_REMOTE_ID_LENGTH:
-        return value
-    return _digest_remote_id({"id": value[:64]})
-
-
-def _bounded_detail(value: str) -> str:
-    return value if len(value) <= 128 else value[:128]
 
 
 def _digest_remote_id(fragments: Mapping[str, str]) -> str:

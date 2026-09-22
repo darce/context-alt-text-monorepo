@@ -36,7 +36,7 @@ from recognition.application.scan.capability import (
     publish_embedding_runtime_capability,
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
-from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.scan.scan_queue_service import ScanQueueService, TerminatedJobIdentity
 from recognition.application.services.usage_settlement_service import (
     capture_usage_fence,
     settle_usage_job,
@@ -249,6 +249,7 @@ class ScanWorker:
         self._object_store_factory = _worker_object_store_factory
         # Cumulative reconcile counters published on every heartbeat ([OBS-05]/[OBS-08]).
         self._scan_counters = ScanWorkerCounters()
+        self._unsettled_stalled_jobs: list[TerminatedJobIdentity] = []
 
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
@@ -302,7 +303,6 @@ class ScanWorker:
             claimed: list[ScanQueueItem] = []
             should_sleep = False
             captured_fences: dict[str, str] = {}
-            stalled_terminated = 0
             await self._probe_and_publish_embedding_runtime_capability()
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
@@ -317,13 +317,27 @@ class ScanWorker:
                     now=now,
                 )
                 queue = ScanQueueService(repo)
-                terminated = await queue.terminate_stalled_jobs(
-                    stale_after_seconds=self._config.stale_after_seconds,
-                    now=now,
-                )
-                if terminated:
-                    stalled_terminated = terminated
-                    logger.warning("[worker] Terminated %d stalled scan job(s)", terminated)
+                identities_fn = getattr(queue, "terminate_stalled_jobs_with_identities", None)
+                if callable(identities_fn):
+                    terminated_jobs = list(
+                        await identities_fn(
+                            stale_after_seconds=self._config.stale_after_seconds,
+                            now=now,
+                        )
+                    )
+                    stalled_terminated = len(terminated_jobs)
+                else:
+                    terminated_jobs = []
+                    stalled_terminated = await queue.terminate_stalled_jobs(
+                        stale_after_seconds=self._config.stale_after_seconds,
+                        now=now,
+                    )
+                if stalled_terminated:
+                    logger.warning("[worker] Terminated %d stalled scan job(s)", stalled_terminated)
+                to_settle = list(terminated_jobs) + self._unsettled_stalled_jobs
+                self._unsettled_stalled_jobs = []
+                if to_settle:
+                    self._unsettled_stalled_jobs = await self._settle_stalled_usage(session, to_settle)
 
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
@@ -350,8 +364,6 @@ class ScanWorker:
                         await session.commit()
 
             if should_sleep:
-                if stalled_terminated:
-                    await self._settle_stalled_usage()
                 await asyncio.sleep(self._config.poll_interval_seconds)
                 continue
 
@@ -390,46 +402,41 @@ class ScanWorker:
         except Exception:
             logger.exception("[worker] usage settlement failed for claimed scan jobs")
 
-    async def _settle_stalled_usage(self) -> None:
-        """Settle jobs that terminate_stalled_jobs just marked failed (after compute)."""
-        from db.models import IdentityScanJob, UsageReservation
-        from recognition.domain.portal_contracts import UsageReservationStatus
+    async def _settle_stalled_usage(
+        self,
+        session: AsyncSession,
+        terminated: list[TerminatedJobIdentity],
+    ) -> list[TerminatedJobIdentity]:
+        """Settle exact stalled job identities on the caller-owned session."""
+        from recognition.application.services.usage_settlement_service import SettlementOutcome
 
-        try:
-            async with self._session_factory() as session:
-                await enable_rls_bypass(session)
-                reserved = (
-                    (
-                        await session.execute(
-                            select(UsageReservation)
-                            .where(UsageReservation.status == UsageReservationStatus.RESERVED)
-                            .order_by(UsageReservation.reserved_at.asc())
-                            .limit(self._config.claim_batch_size)
-                        )
-                    )
-                    .scalars()
-                    .all()
+        remaining: list[TerminatedJobIdentity] = []
+        for item in terminated:
+            try:
+                result = await settle_usage_job(
+                    session,
+                    tenant_id=item.tenant_id,
+                    job_id=str(item.job_id),
+                    fence_token=None,
+                    allow_missing_job_release=False,
                 )
-                for reservation in reserved:
-                    if not reservation.job_id:
-                        continue
-                    try:
-                        job_uuid = uuid.UUID(str(reservation.job_id))
-                    except ValueError:
-                        continue
-                    job = await session.get(IdentityScanJob, job_uuid)
-                    if job is None:
-                        continue
-                    await settle_usage_job(
-                        session,
-                        tenant_id=reservation.tenant_id,
-                        job_id=str(reservation.job_id),
-                        fence_token=None,
-                        allow_missing_job_release=False,
-                    )
-                await session.commit()
-        except Exception:
-            logger.exception("[worker] usage settlement failed for stalled scan jobs")
+            except Exception:
+                logger.exception("[worker] usage settlement failed for stalled scan job %s", item.job_id)
+                remaining.append(item)
+                continue
+            if result.outcome in {
+                SettlementOutcome.FAIL_CLOSED,
+                SettlementOutcome.REJECTED,
+                SettlementOutcome.SKIPPED_ACTIVE,
+            }:
+                logger.warning(
+                    "[worker] stalled usage settlement outcome=%s job_id=%s detail=%s",
+                    result.outcome,
+                    item.job_id,
+                    result.detail,
+                )
+                remaining.append(item)
+        return remaining
 
     def _can_claim_scan_items(self) -> bool:
         """Whether this worker may claim pending scan items this cycle.

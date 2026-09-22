@@ -209,3 +209,10 @@ docs/evidence/
 
 # Review-lane scratch capsule procured by the remote harness; never a deliverable.
 .review/
+
+# Literal `~` directory: the cmux terminal host writes its Codex turn ledger to
+# an UNEXPANDED "~/.cmuxterm/codex-turn-ledger.json", so it lands relative to the
+# Codex session's cwd (this repo root) instead of $HOME. The writer lives in
+# ~/Library/Application Support/cmux, outside this monorepo, so it cannot be
+# fixed here. Anchored to the root: never match a legitimate nested path.
+/~/

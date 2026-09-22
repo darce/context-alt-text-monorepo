@@ -12,20 +12,24 @@ Heuristics: EMB-01/03/05, PROV-01/04, TEST-06/08, REF-19, TEST-01, rg-015.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from recognition.infrastructure.face_pipeline import ort_adapters
 from recognition.infrastructure.face_pipeline._common import (
     SFACE_CROP_SIZE,
     SFACE_EMBEDDING_DIM,
+    EmbedBatchResult,
     FacePipelineInputError,
     ZeroNormEmbeddingError,
-    EmbedBatchResult,
     embed_batch,
+    resolve_embedding_dim,
     resolve_sface_embedding_dim,
 )
 from recognition.infrastructure.face_pipeline.ort_adapters import (
+    UnsupportedModelPreprocessingError,
     _bgr_to_sface_blob,
     decode_yunet_level,
 )
@@ -139,6 +143,81 @@ def test_bgr_to_sface_blob_channel_distinct_rgb_nchw_scale1() -> None:
     assert float(blob.max()) > 1.5
 
 
+class _RecordingSession:
+    def __init__(self, embedding_dim: int) -> None:
+        self.embedding_dim = embedding_dim
+        self.blobs: list[np.ndarray] = []
+
+    def get_inputs(self) -> list[object]:
+        return [type("_FakeInput", (), {"name": "input"})()]
+
+    def run(self, _outputs: object, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+        self.blobs.append(feeds["input"])
+        return [np.ones((self.embedding_dim,), dtype=np.float32)]
+
+
+def test_ort_sface_embedder_hands_the_legacy_sface_blob_to_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session = _RecordingSession(SFACE_EMBEDDING_DIM)
+    monkeypatch.setattr(
+        ort_adapters,
+        "load_verified_model",
+        lambda name, models_dir=None: tmp_path / "sface.onnx",
+    )
+    monkeypatch.setattr(ort_adapters, "_ort_session", lambda model_path: session)
+
+    embedder = ort_adapters.OrtSFaceEmbedder(model_name="sface")
+    crop = np.zeros((SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3), dtype=np.uint8)
+    crop[..., 0] = 10
+    crop[..., 1] = 40
+    crop[..., 2] = 70
+
+    result = embedder.embed([crop])
+
+    assert result.vectors.shape == (1, SFACE_EMBEDDING_DIM)
+    assert len(session.blobs) == 1
+    np.testing.assert_array_equal(session.blobs[0], _bgr_to_sface_blob(crop))
+
+
+def test_ort_embedder_uses_declared_rgb_scale_for_session_blob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    entry = MODEL_MANIFEST["auraface"]
+    assert entry.preprocessing is not None
+    preprocessing = replace(
+        entry.preprocessing,
+        alignment_template_id="sface-5pt-112",
+    )
+    monkeypatch.setitem(
+        ort_adapters.MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=preprocessing),
+    )
+    session = _RecordingSession(512)
+    monkeypatch.setattr(
+        ort_adapters,
+        "load_verified_model",
+        lambda name, models_dir=None: tmp_path / "auraface.onnx",
+    )
+    monkeypatch.setattr(ort_adapters, "_ort_session", lambda model_path: session)
+
+    embedder = ort_adapters.OrtSFaceEmbedder(model_name="auraface")
+    crop = np.zeros((SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3), dtype=np.uint8)
+    crop[..., 0] = 10
+    crop[..., 1] = 40
+    crop[..., 2] = 70
+
+    result = embedder.embed([crop])
+
+    assert result.vectors.shape == (1, 512)
+    assert len(session.blobs) == 1
+    expected = _bgr_to_sface_blob(crop) * np.float32(1.0 / 127.5)
+    np.testing.assert_allclose(session.blobs[0], expected)
+
+
 # ---------------------------------------------------------------------------
 # FIR3-BR-04 — direct embed_batch characterization (injected feature_fn)
 # ---------------------------------------------------------------------------
@@ -224,6 +303,66 @@ def test_embed_batch_l2_output_and_injected_feature_fn() -> None:
 # ---------------------------------------------------------------------------
 # FIR3-BR-05 — manifest normalization/metric fail-closed (not decorative)
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_embedding_dim_returns_512_for_auraface() -> None:
+    assert resolve_embedding_dim("auraface") == MODEL_MANIFEST["auraface"].embedding_dim == 512
+
+
+def test_resolve_embedding_dim_matches_the_sface_constant() -> None:
+    assert resolve_embedding_dim("sface") == SFACE_EMBEDDING_DIM
+
+
+def test_resolve_embedding_dim_refuses_unknown_model_and_missing_dim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match=r"unknown_model.*auraface.*sface.*yunet"):
+        resolve_embedding_dim("unknown_model")
+
+    entry = MODEL_MANIFEST["auraface"]
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, embedding_dim=None))
+    with pytest.raises(ValueError, match=r"embedding_dim.*None"):
+        resolve_embedding_dim("auraface")
+
+
+def test_resolve_embedding_dim_refuses_non_l2_normalization_for_auraface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = MODEL_MANIFEST["auraface"]
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, normalization="none"))
+    with pytest.raises(ValueError, match=r"normalization"):
+        resolve_embedding_dim("auraface")
+
+
+def test_resolve_embedding_dim_refuses_non_cosine_metric_for_auraface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = MODEL_MANIFEST["auraface"]
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, metric="euclidean"))
+    with pytest.raises(ValueError, match=r"metric"):
+        resolve_embedding_dim("auraface")
+
+
+def test_ort_embedder_refuses_unsupported_auraface_preprocessing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _FakeInput:
+        name = "input"
+
+    class _FakeSession:
+        def get_inputs(self) -> list[_FakeInput]:
+            return [_FakeInput()]
+
+    monkeypatch.setattr(
+        ort_adapters,
+        "load_verified_model",
+        lambda name, models_dir=None: tmp_path / "f.onnx",
+    )
+    monkeypatch.setattr(ort_adapters, "_ort_session", lambda model_path: _FakeSession())
+
+    with pytest.raises(UnsupportedModelPreprocessingError, match=r"auraface.*arcface-112-unverified"):
+        ort_adapters.OrtSFaceEmbedder(model_name="auraface")
 
 
 def test_resolve_sface_rejects_unsupported_normalization(monkeypatch: pytest.MonkeyPatch) -> None:

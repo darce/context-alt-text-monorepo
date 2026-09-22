@@ -17,6 +17,7 @@ import pytest
 
 from recognition.infrastructure.face_pipeline import provenance
 from recognition.infrastructure.face_pipeline.provenance import AURAFACE_REVISION, MODEL_MANIFEST
+from recognition.tests.unit.test_face_pipeline_golden_provenance import _load_generate_goldens
 
 _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "face_pipeline"
 _EVIDENCE_PATH = _FIXTURE_DIR / "auraface_alignment_measurement.json"
@@ -48,7 +49,15 @@ _REQUIRED_TOP = frozenset(
 )
 _SHA256_LEN = 64
 _ABSENT_OPS = ("Sub", "Mul", "Div", "ReduceL2", "LpNormalization", "Transpose", "Sqrt")
-_UNSUPPORTED_FIELDS = ("input_scale", "input_offset", "channel_order", "alignment")
+_COMPOSED_FIELDS = ("input_scale", "input_offset", "channel_order", "alignment")
+_ARCFACE_DST = [
+    [38.2946, 51.6963],
+    [73.5318, 51.5014],
+    [56.0252, 71.7366],
+    [41.5493, 92.3655],
+    [70.7299, 92.2041],
+]
+_COMPOSED_DIR = _FIXTURE_DIR / "auraface_composed"
 
 
 def _load_evidence() -> dict[str, Any]:
@@ -84,7 +93,7 @@ def test_evidence_schema_is_complete() -> None:
     assert evidence["kind"] == "auraface_alignment_measurement"
     assert evidence["task_ref"] == "FIR512-2"
     assert evidence["lane_id"] == "measure"
-    assert evidence["production_unverified_markers_flipped"] is False
+    assert evidence["production_unverified_markers_flipped"] is True
     assert isinstance(evidence["measured_at"], str) and evidence["measured_at"].strip()
     assert isinstance(evidence["commands"], list) and evidence["commands"]
     assert all(isinstance(command, str) and command.strip() for command in evidence["commands"])
@@ -140,18 +149,28 @@ def test_graph_properties_are_measured_and_exclude_external_geometry() -> None:
     assert graph["input_size"]["value"] == [112, 112]
 
 
-def test_external_geometry_is_unsupported_without_graph_evidence() -> None:
+def test_external_geometry_stays_absent_from_graph_but_composed_reference_supports_it() -> None:
     evidence = _load_evidence()
-    for field_name in _UNSUPPORTED_FIELDS:
+    expected_values = {
+        "input_scale": 1.0 / 127.5,
+        "input_offset": 127.5,
+        "channel_order": "RGB",
+        "alignment": "arcface-112",
+    }
+    for field_name in _COMPOSED_FIELDS:
         record = evidence[field_name]
         assert record["graph_status"] == "not_in_graph", field_name
-        assert record["independently_supported"] is False, field_name
-        assert record["value"] is None, field_name
-        assert isinstance(record["blocked_reason"], str) and record["blocked_reason"].strip()
+        assert record["independently_supported"] is True, field_name
+        assert record["blocked_reason"] is None, field_name
+        assert isinstance(record["graph_blocked_reason"], str) and record["graph_blocked_reason"].strip()
+        if field_name in {"input_scale", "input_offset"}:
+            assert record["value"] == pytest.approx(expected_values[field_name])
+        else:
+            assert record["value"] == expected_values[field_name]
 
     alignment = evidence["alignment"]
-    assert alignment["template_id"] is None
-    assert alignment["coordinates"] is None
+    assert alignment["template_id"] == "arcface-112"
+    assert alignment["coordinates"] == _ARCFACE_DST
 
 
 def test_raw_output_is_measured_not_l2_normalized_in_graph() -> None:
@@ -192,7 +211,7 @@ def test_composed_sface_golden_is_not_auraface_proof() -> None:
     assert meta["embedding_dim"] == 128
 
 
-def test_documented_contract_is_not_treated_as_measurement() -> None:
+def test_documented_contract_is_not_treated_as_insightface_runtime_measurement() -> None:
     contract = _load_evidence()["upstream_documented_contract"]
     assert contract["status"] == "recorded_not_verified"
     assert contract["independently_supported"] is False
@@ -201,25 +220,27 @@ def test_documented_contract_is_not_treated_as_measurement() -> None:
     entry = MODEL_MANIFEST["auraface"]
     preprocessing = entry.preprocessing
     assert preprocessing is not None
-    assert assumption["status"] == "unverified"
-    scale_expression = assumption["declared_unverified_input_scale"]
-    assert isinstance(scale_expression, str)
+    assert assumption["status"] == "verified_by_composed_independent_reference"
+    history = assumption["historical_unverified"]
+    assert history["declared_unverified_alignment_template_id"] == "arcface-112-unverified"
+    assert history["declared_unverified_output_l2_normalized"] is True
+    scale_expression = assumption["declared_input_scale"]
     numerator, separator, denominator = scale_expression.partition("/")
     assert separator == "/"
     assert float(numerator) / float(denominator) == pytest.approx(preprocessing.input_scale)
-    assert assumption["declared_unverified_alignment_template_id"] == preprocessing.alignment_template_id
-    assert assumption["declared_unverified_channel_order"] == preprocessing.channel_order
-    assert assumption["declared_unverified_output_l2_normalized"] is preprocessing.output_l2_normalized
+    assert assumption["declared_input_mean"] == pytest.approx(preprocessing.input_mean)
+    assert assumption["declared_alignment_template_id"] == preprocessing.alignment_template_id == "arcface-112"
+    assert assumption["declared_channel_order"] == preprocessing.channel_order == "RGB"
+    assert assumption["declared_output_l2_normalized"] is preprocessing.output_l2_normalized is False
     assert contract["publisher_model_card"]["revision"] == AURAFACE_REVISION == entry.source_ref
-    assert "UNVERIFIED" in assumption["note"]
+    assert contract["publisher_model_card"]["example_uses_insightface_faceanalysis"] is True
+    assert contract["publisher_model_card"]["example_reads_normed_embedding"] is True
 
     provenance_source = Path(provenance.__file__).read_text(encoding="utf-8")
-    for marker in (
-        "input_scale=1.0 / 127.5,  # UNVERIFIED",
-        'alignment_template_id="arcface-112-unverified",  # UNVERIFIED',
-        "output_l2_normalized=True,  # UNVERIFIED",
-    ):
-        assert marker in provenance_source
+    assert 'alignment_template_id="arcface-112"' in provenance_source
+    assert "output_l2_normalized=False" in provenance_source
+    assert "arcface-112-unverified" in provenance_source
+    assert "UNVERIFIED" in provenance_source
 
 
 def test_upstream_reference_and_composed_parity_are_distinguished() -> None:
@@ -228,12 +249,8 @@ def test_upstream_reference_and_composed_parity_are_distinguished() -> None:
     assert reference["status"] == "reference_supported_not_independently_verified"
     assert reference["independently_supported"] is False
     assert reference["source_commit"] == "1480e705287bc5d59f923b46c260ec6e3e4150f6"
-    assert reference["arcface_onnx_url"].endswith(
-        "/python-package/insightface/model_zoo/arcface_onnx.py"
-    )
-    assert reference["face_align_url"].endswith(
-        "/python-package/insightface/utils/face_align.py"
-    )
+    assert reference["arcface_onnx_url"].endswith("/python-package/insightface/model_zoo/arcface_onnx.py")
+    assert reference["face_align_url"].endswith("/python-package/insightface/utils/face_align.py")
     assert reference["recipe"]["input_scale"] == "1.0/127.5"
     assert reference["recipe"]["input_offset"] == "127.5"
     assert reference["recipe"]["channel_order"].startswith("swapRB=True")
@@ -246,9 +263,18 @@ def test_upstream_reference_and_composed_parity_are_distinguished() -> None:
         [70.7299, 92.2041],
     ]
     composed = evidence["composed_parity"]["auraface_ort_composed_parity"]
-    assert composed["status"] == "pending"
-    assert composed["independently_supported"] is False
-    assert "composed" in composed["reason"]
+    assert composed["status"] == "measured"
+    assert composed["independently_supported"] is True
+    assert composed["embedding_dim"] == 512
+    assert composed["crops_bit_identical"] is True
+    assert composed["raw_output_normalized"] is False
+    assert composed["pipeline_l2_applied"] is True
+    assert composed["insightface_runtime_imported"] is False
+    assert composed["composed_cosine"] >= composed["cosine_min"] == pytest.approx(0.99999999)
+    assert composed["crop_sha256"] == _assert_sha256(composed["crop_sha256"])
+    assert composed["ort_session"]["graph_optimization_level"] != "ORT_DISABLE_ALL"
+    assert composed["ort_session"]["graph_optimization_level"] == "ORT_ENABLE_ALL"
+    assert composed["ort_session"]["intra_op_num_threads"] == 1
 
 
 def _normalise_ort_shape(shape: list[object]) -> list[int | None]:
@@ -297,9 +323,7 @@ def test_live_artifact_replays_ort_io_and_saved_raw_norm_conventions() -> None:
         "hwc_as_float_0_255": nchw(crop),
         "swap_channels_float_0_255": nchw(crop[..., ::-1]),
         "arcface_minus_127p5_div_127p5_as_is": nchw((crop.astype(np.float32) - 127.5) / 127.5),
-        "arcface_minus_127p5_div_127p5_swapped": nchw(
-            (crop[..., ::-1].astype(np.float32) - 127.5) / 127.5
-        ),
+        "arcface_minus_127p5_div_127p5_swapped": nchw((crop[..., ::-1].astype(np.float32) - 127.5) / 127.5),
         "div_255_as_is": nchw(crop.astype(np.float32) / 255.0),
     }
     expected_l2 = fixture["l2_by_convention"]
@@ -310,3 +334,135 @@ def test_live_artifact_replays_ort_io_and_saved_raw_norm_conventions() -> None:
         actual_l2 = float(np.linalg.norm(output[0]))
         assert actual_l2 == pytest.approx(expected_l2[label], rel=0.0, abs=1e-5)
         assert actual_l2 > 1.0
+
+
+def test_auraface_aligner_crop_stays_bgr_not_rgb_swapped() -> None:
+    np = pytest.importorskip("numpy")
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    image = np.load(_FIXTURE_DIR / "aligner_source_image.npy", allow_pickle=False)
+    landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy", allow_pickle=False)
+    sface_crop = FivePointAligner(space=ModelSpace.FACE_PIPELINE).align(image, landmarks).crop
+    aura_crop = FivePointAligner(space=ModelSpace.AURAFACE).align(image, landmarks).crop
+    assert not np.array_equal(aura_crop, sface_crop[..., ::-1])
+    expected = np.load(_COMPOSED_DIR / "inhouse_crop.npy", allow_pickle=False)
+    np.testing.assert_array_equal(aura_crop, expected)
+    aligner = FivePointAligner(space=ModelSpace.AURAFACE)
+    assert aligner.channel_order == "RGB"
+    assert aligner.template_id == "arcface-112"
+
+
+def test_composed_auraface_crops_are_bgr_channel_order() -> None:
+    """Composed in-house and independent crops stay BGR; RGB swap must not match."""
+    np = pytest.importorskip("numpy")
+    inhouse = np.load(_COMPOSED_DIR / "inhouse_crop.npy", allow_pickle=False)
+    reference = np.load(_COMPOSED_DIR / "reference_crop.npy", allow_pickle=False)
+    assert inhouse.dtype == np.uint8 and reference.dtype == np.uint8
+    assert inhouse.shape == (112, 112, 3)
+    assert reference.shape == inhouse.shape
+    for crop, name in ((inhouse, "inhouse"), (reference, "reference")):
+        swapped = crop[:, :, ::-1]
+        assert not np.array_equal(crop, swapped), f"{name} crop equals its RGB swap"
+        assert not np.array_equal(crop[:, :, 0], crop[:, :, 2]), (
+            f"{name} crop B and R planes are identical; channel-order regression is vacuous"
+        )
+    assert not np.array_equal(inhouse[:, :, ::-1], reference), (
+        "independent crop matches RGB-swapped in-house crop; composed path swapped channels"
+    )
+
+
+def test_unknown_alignment_template_is_rejected_before_transform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+    from recognition.infrastructure.face_pipeline.provenance import MODEL_MANIFEST
+
+    entry = MODEL_MANIFEST["auraface"]
+    assert entry.preprocessing is not None
+    monkeypatch.setitem(
+        MODEL_MANIFEST,
+        "auraface",
+        replace(entry, preprocessing=replace(entry.preprocessing, alignment_template_id="not-a-template")),
+    )
+    with pytest.raises(AlignmentError, match=r"unknown alignment template 'not-a-template'"):
+        FivePointAligner(space=ModelSpace.AURAFACE)
+
+
+def test_independent_arcface_dst_is_float32_literal_not_production_import() -> None:
+    np = pytest.importorskip("numpy")
+    gen = _load_generate_goldens()
+    from recognition.infrastructure.face_pipeline.aligner import ARCFACE_CANONICAL_LANDMARKS_112
+
+    dst = gen.REFERENCE_ARCFACE_DST_112
+    assert dst.dtype == np.float32
+    assert dst is not ARCFACE_CANONICAL_LANDMARKS_112
+    np.testing.assert_array_equal(dst, np.asarray(_ARCFACE_DST, dtype=np.float32))
+    source = Path(gen.__file__).read_text(encoding="utf-8")
+    assert "ARCFACE_CANONICAL_LANDMARKS_112" not in source
+
+
+def test_independent_umeyama_includes_reflection_singular_sign_in_scale() -> None:
+    np = pytest.importorskip("numpy")
+    gen = _load_generate_goldens()
+    dst = np.asarray(gen.REFERENCE_ARCFACE_DST_112, dtype=np.float64)
+    src = dst.copy()
+    src[:, 0] = 2.0 * float(dst[:, 0].mean()) - dst[:, 0]
+    src_demean = src - src.mean(axis=0)
+    dst_demean = dst - dst.mean(axis=0)
+    covariance = dst_demean.T @ src_demean / 5.0
+    _u, singular, _vt = np.linalg.svd(covariance)
+    d = np.array([1.0, -1.0], dtype=np.float64)
+    assert float(np.linalg.det(covariance)) < 0
+    var = float(src_demean.var(axis=0).sum())
+    expected_scale = float(singular @ d) / var
+    unsigned_scale = float(np.sum(singular)) / var
+    assert expected_scale != pytest.approx(unsigned_scale)
+    matrix = gen.reference_arcface_similarity_matrix(src)
+    rotation = matrix[:, :2]
+    recovered_scale = float(np.sqrt(rotation[0, 0] ** 2 + rotation[0, 1] ** 2))
+    assert recovered_scale == pytest.approx(abs(expected_scale), rel=0, abs=1e-12)
+
+
+def test_composed_goldens_match_evidence_and_manifest() -> None:
+    np = pytest.importorskip("numpy")
+    evidence = _load_evidence()
+    composed = evidence["composed_parity"]["auraface_ort_composed_parity"]
+    meta_path = _COMPOSED_DIR / "aligner_composed_embedding_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    entry = MODEL_MANIFEST["auraface"]
+    preprocessing = entry.preprocessing
+    assert preprocessing is not None
+
+    assert meta["kind"] == "auraface_composed_embedding_golden"
+    assert meta["model"] == entry.file_name == "glintr100.onnx"
+    assert meta["model_sha256"] == entry.sha256
+    assert meta["embedding_dim"] == 512
+    assert meta["preprocessing"]["alignment_template_id"] == preprocessing.alignment_template_id == "arcface-112"
+    assert meta["preprocessing"]["channel_order"] == "RGB"
+    assert meta["preprocessing"]["input_mean"] == pytest.approx(preprocessing.input_mean)
+    assert meta["preprocessing"]["output_l2_normalized"] is False
+    assert meta["reference"]["source_commit"] == "1480e705287bc5d59f923b46c260ec6e3e4150f6"
+    assert meta["reference"]["insightface_runtime_imported"] is False
+    assert meta["reference"]["dst_dtype"] == "float32"
+    assert meta["reference"]["dst_imported_from_production"] is False
+    assert meta["ort_session"]["graph_optimization_level"] == "ORT_ENABLE_ALL"
+    assert meta["cosine_min"] == pytest.approx(0.99999999)
+    assert meta["inhouse_crop_sha256"] == meta["reference_crop_sha256"] == composed["crop_sha256"]
+
+    def array_sha(path: Path) -> str:
+        return hashlib.sha256(np.load(path, allow_pickle=False).tobytes()).hexdigest()
+
+    assert array_sha(_COMPOSED_DIR / "inhouse_crop.npy") == composed["crop_sha256"]
+    assert array_sha(_COMPOSED_DIR / "reference_crop.npy") == composed["crop_sha256"]
+    np.testing.assert_array_equal(
+        np.load(_COMPOSED_DIR / "source_image.npy", allow_pickle=False),
+        np.load(_FIXTURE_DIR / "aligner_source_image.npy", allow_pickle=False),
+    )
+    np.testing.assert_array_equal(
+        np.load(_COMPOSED_DIR / "landmarks.npy", allow_pickle=False),
+        np.load(_FIXTURE_DIR / "aligner_landmarks.npy", allow_pickle=False),
+    )

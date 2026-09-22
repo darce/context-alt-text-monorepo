@@ -307,37 +307,42 @@ def test_replay_window_failure_is_rejected_before_repository_write() -> None:
 
 
 def test_webhook_timestamp_tolerance_uses_injected_clock() -> None:
+    """Reject stale delivery auth without rejecting old domain events."""
     provider = _ProviderStub()
     repository = _RepositoryStub()
-    outside = _event_body(
-        event_id="evt-too-old",
-        timestamp=(WEBHOOK_NOW - timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1))
-        .isoformat()
-        .replace("+00:00", "Z"),
+    stale_delivery = WEBHOOK_NOW - timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1)
+    fresh_delivery = WEBHOOK_NOW + timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS)
+    current_event = _event_body(
+        event_id="evt-stale-delivery",
+        timestamp=WEBHOOK_NOW.isoformat().replace("+00:00", "Z"),
     )
-    inside = _event_body(
-        event_id="evt-current",
-        timestamp=(WEBHOOK_NOW + timedelta(seconds=billing_webhooks.WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS))
-        .isoformat()
-        .replace("+00:00", "Z"),
+    old_event = _event_body(
+        event_id="evt-old-domain",
+        timestamp=(WEBHOOK_NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
     )
 
     with TestClient(_app(provider, repository)) as client:
         rejected = client.post(
             "/billing/webhooks/polar",
-            content=outside,
-            headers={"webhook-signature": _signature(outside)},
+            content=current_event,
+            headers={
+                "webhook-signature": _signature(current_event),
+                "webhook-timestamp": str(int(stale_delivery.timestamp())),
+            },
         )
         accepted = client.post(
             "/billing/webhooks/polar",
-            content=inside,
-            headers={"webhook-signature": _signature(inside)},
+            content=old_event,
+            headers={
+                "webhook-signature": _signature(old_event),
+                "webhook-timestamp": str(int(fresh_delivery.timestamp())),
+            },
         )
 
     assert rejected.status_code == 400
     assert accepted.status_code == 202
-    assert "evt-too-old" not in repository.rows
-    assert "evt-current" in repository.rows
+    assert "evt-stale-delivery" not in repository.rows
+    assert "evt-old-domain" in repository.rows
 
 
 def test_duplicate_event_has_one_inbox_row_one_transition_and_same_ack() -> None:

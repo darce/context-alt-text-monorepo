@@ -492,6 +492,7 @@ def test_selected_group_does_not_demand_unselected_required_cases(tmp_path: Path
     status = runner.run_evals(
         manifest_path,
         groups=["selected"],
+        disposition="slice",
         out_dir=tmp_path / "out",
         command_runner=_fake_runner_by_test(calls=calls),
     )
@@ -499,6 +500,8 @@ def test_selected_group_does_not_demand_unselected_required_cases(tmp_path: Path
     assert status == 0
     evidence = _last_evidence(tmp_path)
     assert evidence["full_suite"] is False
+    assert evidence["disposition"] == "slice"
+    assert evidence["release_evidence"] is False
     assert evidence["selected_groups"] == ["selected"]
     assert [group["group"] for group in evidence["groups"]] == ["selected"]
     assert evidence["groups"][0]["case_ledger"][0]["id"] == "SC-1"
@@ -527,6 +530,8 @@ def test_full_suite_run_is_labeled_full_suite(tmp_path: Path) -> None:
     assert status == 0
     evidence = _last_evidence(tmp_path)
     assert evidence["full_suite"] is True
+    assert evidence["disposition"] == "release"
+    assert evidence["release_evidence"] is True
     assert evidence["selected_groups"] == ["first", "second"]
 
 
@@ -565,8 +570,8 @@ def test_additional_evidence_without_artifact_path_cannot_exit_clean(tmp_path: P
 
 
 def test_required_artifact_present_and_matching_junit_can_pass(tmp_path: Path) -> None:
-    artifact = tmp_path / "browser-secret-once.md"
-    artifact.write_text("one-time secret display evidence\n", encoding="utf-8")
+    artifact = tmp_path / "browser-secret-once.json"
+    artifact.write_text(json.dumps(_typed_provenance()), encoding="utf-8")
     payload = _manifest_payload(tmp_path)
     payload["cases"][0]["additional_evidence_required"] = True
     payload["cases"][0]["artifact"] = str(artifact)
@@ -582,11 +587,12 @@ def test_required_artifact_present_and_matching_junit_can_pass(tmp_path: Path) -
     group = _last_evidence(tmp_path)["groups"][0]
     assert group["case_ledger"][0]["status"] == "passed"
     assert group["case_ledger"][0]["additional_evidence_present"] is True
+    assert group["case_ledger"][0]["additional_evidence_verified"] is True
 
 
 def test_evidence_only_group_passes_when_required_artifact_exists(tmp_path: Path) -> None:
-    artifact = tmp_path / "observation.md"
-    artifact.write_text("cohort study\n", encoding="utf-8")
+    artifact = tmp_path / "observation.json"
+    artifact.write_text(json.dumps(_typed_provenance()), encoding="utf-8")
     payload = _manifest_payload(tmp_path)
     payload["cases"][0].pop("test")
     payload["cases"][0]["artifact"] = str(artifact)
@@ -625,3 +631,217 @@ def test_required_case_failure_element_is_not_green(tmp_path: Path) -> None:
     group = _last_evidence(tmp_path)["groups"][0]
     assert group["case_ledger"][0]["status"] == "failed"
     assert "failed assertion" in group["output_capture"]["tail"]
+
+
+_FAKE_BY_TEST_SHA = "b" * 40
+
+
+def _typed_provenance(*, git_sha: str = _FAKE_BY_TEST_SHA) -> dict[str, Any]:
+    """F5-shaped provenance JSON: schema_version, commit, command, provenance."""
+
+    return {
+        "schema_version": 1,
+        "git_sha": git_sha,
+        "command": "pytest",
+        "provenance": {"source": "unit-test", "result": "pass"},
+    }
+
+
+def test_arbitrary_nonempty_artifact_is_unverified_not_proof(tmp_path: Path) -> None:
+    artifact = tmp_path / "not-proof.md"
+    artifact.write_text("not proof: arbitrary nonempty text", encoding="utf-8")
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["additional_evidence_required"] = True
+    payload["cases"][0]["artifact"] = str(artifact)
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 1
+    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    assert ledger["status"] == "unverified"
+    assert ledger["additional_evidence_present"] is True
+    assert ledger["additional_evidence_verified"] is False
+    assert any(
+        "untyped" in reason or "unverified" in reason
+        for reason in _last_evidence(tmp_path)["groups"][0]["failure_reasons"]
+    )
+
+
+def test_release_mode_partial_selection_cannot_report_a_release_pass(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path, groups=("deterministic", "browser"))
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["deterministic"],
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    assert status == 1
+    assert evidence["full_suite"] is False
+    assert evidence["disposition"] == "release"
+    assert evidence["release_evidence"] is False
+    assert evidence["groups"][0]["case_ledger"][0]["status"] == "passed"
+    assert evidence["groups"][0]["exit_status"] == 0
+    assert any("release-mode partial selection" in reason for reason in evidence["failure_reasons"])
+
+
+def test_explicit_slice_run_may_exit_clean_but_is_not_release_evidence(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path, groups=("deterministic", "browser"))
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["deterministic"],
+        disposition="slice",
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    evidence = _last_evidence(tmp_path)
+    assert status == 0
+    assert evidence["full_suite"] is False
+    assert evidence["disposition"] == "slice"
+    assert evidence["release_evidence"] is False
+    assert evidence["groups"][0]["case_ledger"][0]["status"] == "passed"
+
+
+def test_evidence_only_junit_failure_cannot_bypass_threshold(tmp_path: Path) -> None:
+    artifact = tmp_path / "failed-evidence.xml"
+    artifact.write_text(
+        _junit_for_nodes(
+            ["recognition/tests/api/test_portal_1.py::test_case_1"],
+            failed=["recognition/tests/api/test_portal_1.py::test_case_1"],
+        ),
+        encoding="utf-8",
+    )
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(artifact)
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=calls),
+    )
+
+    assert status == 1
+    pytest_calls = [call for call in calls if call[0][:3] == [runner.sys.executable, "-m", "pytest"]]
+    assert pytest_calls == []
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "failed"
+    assert any("max_failures" in reason or "failure" in reason for reason in group["failure_reasons"])
+
+
+def test_parametrized_junit_instances_match_declared_base_node(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["test"] = "recognition/tests/test_param.py::test_case"
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(
+            command,
+            xml_path,
+            xml_text=_junit_for_nodes(
+                [
+                    "recognition/tests/test_param.py::test_case[small]",
+                    "recognition/tests/test_param.py::test_case[large]",
+                ]
+            ),
+        )
+        kwargs["stdout"].write("parametrized pass\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 0
+    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    assert ledger["status"] == "passed"
+    assert ledger["junit_identity"] is not None
+    assert "test_case[small]" in ledger["junit_identity"]
+    assert "test_case[large]" in ledger["junit_identity"]
+
+
+def test_any_parametrized_instance_failure_blocks_declared_base_node(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["test"] = "recognition/tests/test_param.py::test_case"
+    manifest_path = _write_manifest(tmp_path, payload)
+    failed = "recognition/tests/test_param.py::test_case[large]"
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(
+            command,
+            xml_path,
+            xml_text=_junit_for_nodes(
+                [
+                    "recognition/tests/test_param.py::test_case[small]",
+                    failed,
+                ],
+                failed=[failed],
+            ),
+        )
+        kwargs["stdout"].write("parametrized mixed\n")
+        return SimpleNamespace(returncode=1, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 1
+    group = _last_evidence(tmp_path)["groups"][0]
+    assert group["case_ledger"][0]["status"] == "failed"
+    assert any("SC-1" in reason and "failed" in reason for reason in group["failure_reasons"])
+
+
+def test_missing_required_artifact_demotes_passing_ledger_status(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["additional_evidence_required"] = True
+    payload["cases"][0]["artifact"] = str(tmp_path / "does-not-exist.md")
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 1
+    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    assert ledger["status"] == "failed"
+    assert ledger["additional_evidence_present"] is False
+    assert any(
+        "missing required artifact" in reason and "SC-1" in reason
+        for reason in _last_evidence(tmp_path)["groups"][0]["failure_reasons"]
+    )
+
+
+def test_evidence_only_missing_artifact_stays_not_run(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0].pop("test")
+    payload["cases"][0]["artifact"] = str(tmp_path / "does-not-exist.xml")
+    payload["cases"][0]["additional_evidence_required"] = True
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        command_runner=_fake_runner_by_test(calls=[]),
+    )
+
+    assert status == 1
+    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    assert ledger["status"] == "not_run"
+    assert ledger["additional_evidence_present"] is False
+    assert any(
+        "missing required artifact" in reason for reason in _last_evidence(tmp_path)["groups"][0]["failure_reasons"]
+    )

@@ -3,6 +3,10 @@
 Default is dry-run. Real apply only records C0 retry_pending under a fenced
 lease and never grants paid entitlement or prints credentials.
 
+Audited retry is database-only: it requires a session and explicit
+environment/seller CLI values. Polar credentials and an HTTP client are not
+used. [RES-01] [GRPH-09] [Release It ch4 independent dependency]
+
 Usage:
     python -m scripts.billing_reconcile_retry --remote-id sub-x \\
         --environment sandbox --seller-account org_sandbox \\
@@ -14,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import inspect
 import sys
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -22,10 +28,57 @@ from typing import TextIO
 from recognition.domain.portal_contracts import ReconciliationKind
 from scripts.billing_reconcile import (
     ConfigurationError,
-    ReconcileConfig,
-    _build_runtime,
     audited_retry_quarantine,
 )
+
+
+class _RetryRuntime:
+    __slots__ = ("recovery_repository", "session")
+
+    def __init__(self, session: object, recovery_repository: object) -> None:
+        self.session = session
+        self.recovery_repository = recovery_repository
+
+    async def close(self) -> None:
+        close = getattr(self.session, "close", None)
+        if not callable(close):
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+
+
+async def _maybe_await(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _build_retry_runtime(
+    *,
+    session_factory: Callable[[], object] | None = None,
+) -> _RetryRuntime:
+    factory = session_factory
+    if factory is None:
+        from db.session import async_session_factory
+
+        factory = async_session_factory
+    session = await _maybe_await(factory())
+    try:
+        from recognition.infrastructure.repositories.billing_reconciliation_repository import (
+            BillingReconciliationRepository,
+        )
+
+        repository = BillingReconciliationRepository(session)
+        if getattr(repository, "session", None) is None:
+            with contextlib.suppress(AttributeError, TypeError):
+                repository.session = session  # type: ignore[attr-defined]
+        return _RetryRuntime(session=session, recovery_repository=repository)
+    except Exception:
+        close = getattr(session, "close", None)
+        if callable(close):
+            await _maybe_await(close())
+        raise
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -49,6 +102,7 @@ async def run(
     argv: Sequence[str] | None = None,
     *,
     recovery_repository: object | None = None,
+    session_factory: Callable[[], object] | None = None,
     stderr: TextIO | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> int:
@@ -63,7 +117,7 @@ async def run(
     repository = recovery_repository
     if repository is None:
         try:
-            runtime = await _build_runtime(ReconcileConfig(), repository=None, provider=None)
+            runtime = await _build_retry_runtime(session_factory=session_factory)
         except ConfigurationError as exc:
             err.write(f"error: {exc}\n")
             err.flush()
@@ -90,6 +144,10 @@ async def run(
         )
         err.flush()
         return report.exit_code
+    except ConfigurationError as exc:
+        err.write(f"error: {exc}\n")
+        err.flush()
+        return 2
     finally:
         if runtime is not None:
             await runtime.close()

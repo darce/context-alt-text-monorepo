@@ -858,7 +858,7 @@ restore_env_tag_to_rollback dev 0
 
 
 def test_rollback_push_cas_refuses_generation_changed_after_fence(tmp_path: Path) -> None:
-    """R-07: a newer shared-tag mapping between fence and push must not be overwritten."""
+    """R-07: a newer env-tag mapping between fence and push must not be overwritten."""
     records = tmp_path / "docker-commands"
     rollback = "a" * 64
     candidate = "b" * 64
@@ -872,7 +872,7 @@ with_shared_tag_lock() {{ shift; "$@"; }}
 _pull_ref_remote() {{ :; }}
 restore_runtime_and_edge() {{ return 0; }}
 remote_image_digest_ref() {{
-  if [[ "$1" == *":dev" ]]; then
+  if [[ "$1" == *":dev-fir" ]]; then
     printf 'inspect\\n' >>"{records}.inspects"
     if [[ "$(wc -l < "{records}.inspects")" -eq 1 ]]; then
       printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
@@ -886,7 +886,13 @@ remote_image_digest_ref() {{
 remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
 restore_env_tag_to_rollback dev-fir 0
 '''
-    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
     logged = records.read_text() if records.exists() else ""
     combined = result.stdout + result.stderr
     assert result.returncode == 75, combined
@@ -898,7 +904,7 @@ restore_env_tag_to_rollback dev-fir 0
 
 
 def test_rollback_push_cas_happy_path_pushes_when_tag_unchanged(tmp_path: Path) -> None:
-    """R-07: compare-and-swap must push when the shared env tag is still the planned digest."""
+    """R-07: compare-and-swap must push when the env tag is still the planned digest."""
     records = tmp_path / "docker-commands"
     rollback = "a" * 64
     candidate = "b" * 64
@@ -911,7 +917,7 @@ with_shared_tag_lock() {{ shift; "$@"; }}
 _pull_ref_remote() {{ :; }}
 restore_runtime_and_edge() {{ return 0; }}
 remote_image_digest_ref() {{
-  if [[ "$1" == *":dev" ]]; then
+  if [[ "$1" == *":dev-fir" ]]; then
     printf '%s\\n' "$IMAGE_BASE@sha256:{candidate}"
   else
     printf '%s\\n' "$1"
@@ -920,7 +926,13 @@ remote_image_digest_ref() {{
 remote_docker_with_config() {{ printf '%s\\n' "$*" >>"{records}"; return 0; }}
 restore_env_tag_to_rollback dev-fir 0
 '''
-    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
     logged = records.read_text() if records.exists() else ""
     combined = result.stdout + result.stderr
     assert result.returncode == 0, combined
@@ -930,7 +942,7 @@ restore_env_tag_to_rollback dev-fir 0
 
 
 def test_restore_and_promote_serialize_on_shared_env_tag() -> None:
-    """R-07: dev and dev-fir share :dev, so rollback and promote must lock that tag."""
+    """R-07: restore and promote still lock the env tag; lock wraps fence."""
     restore = _function_body("restore_env_tag_to_rollback")
     registry = _function_body("restore_registry_env_tag")
     promote = _function_body("do_push_tag")
@@ -942,6 +954,52 @@ def test_restore_and_promote_serialize_on_shared_env_tag() -> None:
     assert "remote_image_digest_ref" in registry
     assert restore.index("with_shared_tag_lock") < restore.index("assert_rollback_fence")
     assert registry.index("remote_image_digest_ref") < registry.index("remote_docker_with_config tag")
+
+
+def _run_env_to_tag(env: str) -> subprocess.CompletedProcess[str]:
+    command = f'''
+source "{SCRIPT}"
+env_to_tag {env}
+'''
+    return subprocess.run(
+        ["/bin/bash", "-c", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+
+
+def test_env_to_tag_dev_fir_is_independent() -> None:
+    result = _run_env_to_tag("dev-fir")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert result.stdout.strip() == "dev-fir"
+
+
+def test_env_to_tag_dev_is_unchanged() -> None:
+    result = _run_env_to_tag("dev")
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert result.stdout.strip() == "dev"
+
+
+def test_make_n_deploy_rollback_dev_fir_is_not_refused() -> None:
+    """FIR-only rollback is a real lever: dry-run must retag, not refuse/exit 2."""
+    repo = SCRIPT.parents[2]
+    result = subprocess.run(
+        ["make", "-n", "deploy-rollback-dev-fir"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 2, combined
+    assert "refused" not in combined.lower(), combined
+    assert "promote" in combined
+    assert "dev-fir" in combined
 
 
 def test_boot_smoke_captures_crash_logs_after_entrypoint_exit(tmp_path: Path) -> None:

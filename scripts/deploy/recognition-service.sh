@@ -16,10 +16,10 @@
 #   build-remote   [tag]              Build immutable :SHA on the OCI VM (no local docker).
 #   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
 #                                       env = dev|dev-fir|staging|prod. 'deploy prod' requires CONFIRM=PROMOTE.
-#                                       dev-fir shares the :dev image tag with dev (isolated runtime, same image).
+#                                       dev-fir uses the :dev-fir image tag (isolated runtime and image).
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
-#                                       promote staging dev (rollback path; also rolls back dev-fir — shared :dev tag).
+#                                       promote staging dev, promote dev dev-fir (reset FIR to current :dev).
 #   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
 #                                       restore compose/unit/edge .bak topology, restart, and verify.
 #                                       prod requires CONFIRM=PROMOTE.
@@ -561,7 +561,8 @@ assert_remote_disk_headroom_for_pull() {
 #---------------------------------------------------------------- env mapping
 env_to_tag() {
   case "$1" in
-    dev|dev-fir) echo "dev" ;;
+    dev)         echo "dev" ;;
+    dev-fir)     echo "dev-fir" ;;
     staging)     echo "staging" ;;
     prod)        echo "latest" ;;
     *)           fail "Unknown env: $1 (expected dev|dev-fir|staging|prod)" ;;
@@ -799,7 +800,7 @@ preflight_branch_synced() {
   fi
 }
 
-# FIR stack shares the :dev image and volume-mounts YuNet+SFace ONNX (not baked
+# FIR stack volume-mounts YuNet+SFace ONNX (not baked
 # in; rsync excludes them). Deploy/promote/reset must fail closed if the host
 # volume is empty or the bytes do not match the sha256 pins in
 # recognition/infrastructure/face_pipeline/provenance.py MODEL_MANIFEST.
@@ -4079,16 +4080,6 @@ do_deploy() {
 do_promote() {
   local from_env="$1" to_env="$2"
   init_deploy_ocir_docker_config
-  # Fail closed: dev-fir shares the :dev image tag with acx-dev (env_to_tag maps
-  # both to "dev"). Promoting to dev-fir would retag the SHARED :dev image and
-  # only restart acx-dev-fir — blast radius onto acx-dev identity, incomplete
-  # apply (gate r08117ab7 RA-01/RB-03/RC-02). Mirror mk/deploy.mk's
-  # deploy-rollback-dev-fir refusal; name the real lever.
-  if [[ "$to_env" == "dev-fir" ]]; then
-    printf '%sxx%s %s\n' "${RED}" "${RESET}" \
-      "promote: refused. to_env=dev-fir shares the :dev image tag with acx-dev; a FIR-only image promote/retag does not exist. To retag the shared :dev image for BOTH stacks, run '$0 promote ${from_env} dev' or 'make deploy-rollback-dev' (and restart acx-dev-fir afterwards)." >&2
-    exit 2
-  fi
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
   to_tag="$(env_to_tag "$to_env")"

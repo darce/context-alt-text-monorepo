@@ -1,18 +1,12 @@
- .../http/deps/portal_composition.py                | 113 +++-
- .../interface_adapters/http/routers/portal.py      | 289 ++++++++-
- .../recognition/tests/conftest.py                  |  22 +-
- .../test_app1_checkout_attempt_persistence.py      |  13 +
- .../tests/schema/test_identity_schema_heal_pg.py   | 242 +++++++
- .../tests/schema/test_identity_schema_pg.py        |  56 ++
- .../tests/test_identity_schema_migration.py        | 171 ++++-
- .../tests/unit/test_app1_portal_checkout_router.py | 593 +++++++++++++++++
- .../tests/unit/test_app1_portal_claim_router.py    |   9 +-
- .../tests/unit/test_app1_portal_composition.py     | 110 ++++
- .../application/describe_operation_repository.py   |  75 ++-
- .../scene/domain/describe_run.py                   |  73 ++-
- .../interface_adapters/http/routers/describe.py    | 714 +++++++++++++--------
- .../http/routers/describe_run.py                   | 264 ++++----
- .../scene/tests/test_app1_usage_scene_census.py    | 445 +++++++++++++
- .../scene/tests/test_describe_route.py             |   2 +-
- .../scene/tests/test_describe_run_idempotency.py   |  27 +-
- 17 files changed, 2693 insertions(+), 525 deletions(-)
+ .../interface_adapters/http/routers/analyze.py     | 238 +++++++---
+ .../http/routers/analyze_multipart.py              |  75 ++-
+ .../http/routers/cluster_revert.py                 |  41 ++
+ .../http/routers/clusters_admission.py             |  45 +-
+ .../tests/unit/test_app1_operator_usage_census.py  | 498 ++++++++++++++++++++
+ .../tests/unit/test_app1_usage_admission_wiring.py |  94 +++-
+ .../unit/test_app1_usage_recognition_lifecycle.py  | 501 +++++++++++++++++++++
+ .../tests/unit/test_configure_clerk_production.py  | 153 +++++++
+ .../scene/interface_adapters/http/routers/gpu.py   |  53 ++-
+ .../scripts/configure_clerk_production.py          | 151 ++++++-
+ docs/runbooks/clerk-production-auth.md             |  29 +-
+ 11 files changed, 1765 insertions(+), 113 deletions(-)

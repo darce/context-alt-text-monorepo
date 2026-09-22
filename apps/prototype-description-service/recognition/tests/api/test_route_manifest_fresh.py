@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -26,9 +28,15 @@ _RETENTION_ROUTES = {
     ("POST", "/recognition/retention/import"),
 }
 
+_OPTIONAL_ROUTER_ROUTES = {
+    ("GET", "/admin/tenants"),
+    ("GET", "/portal/me"),
+    ("POST", "/billing/webhooks/polar"),
+}
 
-def _fail_socket_connect(_socket: socket.socket, address: object) -> None:
-    raise AssertionError(f"route manifest export attempted a socket connection to {address!r}")
+
+def _fail_network(*args: object, **kwargs: object) -> None:
+    raise AssertionError("route manifest export attempted a network connection")
 
 
 @asynccontextmanager
@@ -38,7 +46,10 @@ async def _unexpected_lifespan(_app: Any):
 
 
 def _export_with_side_effect_guards(monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setattr(socket.socket, "connect", _fail_socket_connect)
+    monkeypatch.setattr(socket.socket, "connect", _fail_network)
+    monkeypatch.setattr(socket.socket, "connect_ex", _fail_network)
+    monkeypatch.setattr(socket, "create_connection", _fail_network)
+    monkeypatch.setattr(socket, "getaddrinfo", _fail_network)
 
     import api.main as api_main
 
@@ -46,7 +57,7 @@ def _export_with_side_effect_guards(monkeypatch: pytest.MonkeyPatch) -> str:
 
     from scripts.export_route_manifest import export_route_manifest
 
-    return export_route_manifest()
+    return export_route_manifest(in_process=True)
 
 
 def _route_pairs(manifest_text: str) -> set[tuple[str, str]]:
@@ -75,9 +86,62 @@ def test_route_manifest_contains_all_retention_routes(monkeypatch: pytest.Monkey
 def test_route_manifest_records_all_optional_routers_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     exported = _export_with_side_effect_guards(monkeypatch)
     posture = json.loads(exported)["settings_posture"]
+    assert _OPTIONAL_ROUTER_ROUTES <= _route_pairs(exported)
     assert posture == {
         "admin": "enabled",
         "billing_webhooks": "enabled",
         "portal": "enabled",
         "runtime_mode": "test",
     }
+
+
+def test_default_route_manifest_export_does_not_mutate_parent_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shared.secrets as secrets
+    from scripts.export_route_manifest import export_route_manifest
+
+    before_environment = dict(os.environ)
+    before_secret_provider = secrets._secret_provider
+    real_run = subprocess.run
+    subprocess_calls: list[tuple[object, ...]] = []
+
+    def recording_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        subprocess_calls.append(args)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+
+    assert export_route_manifest()
+    assert any(
+        args
+        and isinstance(args[0], list)
+        and args[0]
+        and args[0][-1] == "--stdout"
+        for args in subprocess_calls
+    )
+    assert dict(os.environ) == before_environment
+    assert secrets._secret_provider is before_secret_provider
+
+
+def test_default_route_manifest_export_ignores_ambient_description_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.export_route_manifest import export_route_manifest
+
+    monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
+    unpoisoned = export_route_manifest()
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "ambient-poison")
+    assert export_route_manifest() == unpoisoned
+
+
+def test_route_manifest_excludes_non_api_and_documentation_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exported = _export_with_side_effect_guards(monkeypatch)
+    route_pairs = _route_pairs(exported)
+
+    assert all(method not in {"HEAD", "OPTIONS"} for method, _path in route_pairs)
+    assert all(path not in {"/openapi.json", "/docs", "/redoc"} for _method, path in route_pairs)
+    assert all(path.startswith("/") for _method, path in route_pairs)

@@ -38,6 +38,7 @@ from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
     MODEL_MANIFEST,
+    InputPreprocessing,
     ModelIntegrityError,
     ModelMissingError,
     load_verified_model,
@@ -98,6 +99,21 @@ def _align_dims_to_auraface(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
     monkeypatch.setenv("PGVECTOR_DIM", "512")
     _clear_settings_caches()
+
+
+def _pin_verified_auraface_preprocessing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route AuraFace runtime tests through activation-safe metadata."""
+    from dataclasses import replace
+
+    entry = MODEL_MANIFEST["auraface"]
+    preprocessing = InputPreprocessing(
+        input_size=(112, 112),
+        channel_order="RGB",
+        input_scale=1.0 / 127.5,
+        alignment_template_id="arcface-112",
+        output_l2_normalized=False,
+    )
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, preprocessing=preprocessing))
 
 
 def _mock_runtime(monkeypatch: pytest.MonkeyPatch) -> fpa.FacePipelineRuntime:
@@ -264,6 +280,50 @@ def test_sface_manifest_model_id_exact() -> None:
     assert manifest.metric == "cosine"
     # Space token folds OpenCV major + onnxruntime (CVUP1-LC-02 / HARM-02).
     assert "cv" in space and "ort" in space
+
+
+def test_auraface_manifest_model_id_includes_numeric_runtime_fingerprint() -> None:
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
+    manifest = fpa.auraface_embedding_model_manifest()
+    space = numeric_runtime_fingerprint().space_token
+    assert isinstance(manifest, EmbeddingModelManifest)
+    assert manifest.model_id == f"insightface-auraface+{space}@512d/l2/cosine"
+    assert manifest.dimensions == 512
+    assert manifest.framework == MODEL_MANIFEST["auraface"].framework
+    assert manifest.normalization == "l2"
+    assert manifest.metric == "cosine"
+    assert "cv" in space and "ort" in space
+
+
+def test_auraface_model_id_partitions_across_opencv_and_ort_minor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenCV full version and ORT minor partition AuraFace ids; ORT patch does not."""
+    from recognition.infrastructure.face_pipeline import provenance as prov
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.0")
+    monkeypatch.setattr(prov, "_numpy_version", lambda: "2.5.1")
+    id_cv5 = fpa.auraface_embedding_model_manifest().model_id
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "4.13.0.92")
+    id_cv4 = fpa.auraface_embedding_model_manifest().model_id
+    assert id_cv5 != id_cv4
+    assert "cv5.0.0/" in id_cv5
+    assert "cv4.13.0.92/" in id_cv4
+    assert id_cv5.endswith("@512d/l2/cosine")
+    assert id_cv4.endswith("@512d/l2/cosine")
+    assert id_cv5.startswith("insightface-auraface+")
+
+    monkeypatch.setattr(prov, "_opencv_version", lambda: "5.0.0")
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.22.0")
+    id_ort_old = fpa.auraface_embedding_model_manifest().model_id
+    assert id_ort_old != id_cv5
+    assert "ort1.22" in id_ort_old
+    assert "ort1.28" in id_cv5
+
+    monkeypatch.setattr(prov, "_onnxruntime_version", lambda: "1.28.1")
+    id_ort_patch = fpa.auraface_embedding_model_manifest().model_id
+    assert id_ort_patch == id_cv5
 
 
 def test_three_way_dim_guard_raises_on_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1535,6 +1595,7 @@ def test_auraface_runtime_uses_split_detector_and_embedder_dirs(
     from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 
     _align_dims_to_auraface(monkeypatch)
+    _pin_verified_auraface_preprocessing(monkeypatch)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     face_dir = tmp_path / "face-pipeline"
     aura_dir = tmp_path / "auraface"
@@ -1573,6 +1634,7 @@ def test_missing_yunet_detector_is_named_honestly(tmp_path: Path, monkeypatch: p
     from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 
     _align_dims_to_auraface(monkeypatch)
+    _pin_verified_auraface_preprocessing(monkeypatch)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     face_dir = tmp_path / "face-pipeline"
     aura_dir = tmp_path / "auraface"
@@ -1596,6 +1658,7 @@ def test_missing_yunet_detector_is_named_honestly(tmp_path: Path, monkeypatch: p
 def test_profile_change_does_not_reuse_sface_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 
+    _pin_verified_auraface_preprocessing(monkeypatch)
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     face_dir = tmp_path / "face-pipeline"
     aura_dir = tmp_path / "auraface"

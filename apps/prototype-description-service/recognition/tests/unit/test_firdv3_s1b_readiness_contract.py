@@ -51,7 +51,7 @@ def _synthetic_auraface_entry(
         channel_order="RGB",
         input_scale=1.0 / 127.5,
         alignment_template_id="arcface-112",
-        output_l2_normalized=True,
+        output_l2_normalized=False,
     )
     synthetic = replace(
         entry,
@@ -74,6 +74,28 @@ def _pin_auraface_ok_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
 
     get_settings.cache_clear()
     get_database_settings.cache_clear()
+
+
+def _unverified_auraface_preprocessing() -> InputPreprocessing:
+    """Explicit unverified AuraFace metadata. Never assume the live manifest."""
+    return InputPreprocessing(
+        input_size=(112, 112),
+        channel_order="RGB",
+        input_scale=1.0 / 127.5,
+        alignment_template_id="arcface-112-unverified",
+        output_l2_normalized=False,
+    )
+
+
+def _install_unverified_auraface_metadata(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Pin unverified AuraFace preprocessing so refusal tests survive a verified pin."""
+    from recognition.infrastructure.face_pipeline.provenance import ModelProvenance
+
+    entry = MODEL_MANIFEST["auraface"]
+    unverified = replace(entry, preprocessing=_unverified_auraface_preprocessing())
+    monkeypatch.setitem(MODEL_MANIFEST, "auraface", unverified)
+    assert isinstance(unverified, ModelProvenance)
+    return unverified
 
 
 def _install_synthetic_auraface(
@@ -128,7 +150,12 @@ def _stub_shared_runtime_loader(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _stub_ort_session_classes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Avoid constructing ORT sessions while allowing the real loader to run."""
+    """Stub Ort* constructors so readiness can exercise routing without a real session.
+
+    This is not evidence that ``OrtSFaceEmbedder`` can load AuraFace; the
+    coordinator verifies that with the actual model. MagicMock replaces Ort*
+    types so ``_load_face_pipeline_runtime`` can compose the AuraFace path.
+    """
     fpa = _live_face_pipeline_adapter()
     fpa.reset_shared_face_pipeline_runtime_for_tests()
     for name, value in tuple(vars(fpa).items()):
@@ -406,13 +433,15 @@ def _forbid_verified_model_io(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]
     return calls
 
 
-def test_unverified_preprocessing_entry_is_refused_for_activation() -> None:
+def test_unverified_preprocessing_entry_is_refused_for_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from recognition.application.health import ModelSpace, assert_space_activatable
 
+    entry = _install_unverified_auraface_metadata(monkeypatch)
     with pytest.raises(Exception, match=f"{PENDING_OPERATOR_FETCH}|-unverified"):
         assert_space_activatable(ModelSpace.AURAFACE)
 
-    entry = MODEL_MANIFEST["auraface"]
     assert "auraface" not in REQUIRED_MODELS
     assert entry.preprocessing is not None
     assert "sface" not in entry.preprocessing.alignment_template_id.lower()
@@ -469,6 +498,8 @@ async def test_each_model_space_routes_to_its_own_check_and_store(
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", space.value)
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(face_pipeline_dir))
     monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(auraface_dir))
+    if space is ModelSpace.AURAFACE:
+        _install_unverified_auraface_metadata(monkeypatch)
 
     cache_calls: list[tuple[Path, str]] = []
     face_calls: list[Path] = []
@@ -500,9 +531,8 @@ async def test_each_model_space_routes_to_its_own_check_and_store(
     response = await _get_ready(app)
 
     # This test's subject is routing, not the verdict. Only insightface and
-    # face_pipeline have their checks patched to OK above; auraface's real check runs,
-    # and its manifest entry is PENDING_OPERATOR_FETCH, so it must not report ready --
-    # see test_real_auraface_entry_blocks_activation_while_hash_pending.
+    # face_pipeline have their checks patched to OK above; auraface uses an
+    # explicit unverified fixture so a verified live pin cannot green-light it.
     expected_code = 503 if space is ModelSpace.AURAFACE else 200
     assert response.status_code == expected_code, response.text
     assert resolver_calls and resolver_calls[-1][0] is space
@@ -639,7 +669,7 @@ def test_auraface_alignment_crop_is_rgb_relative_to_sface_bgr() -> None:
 def test_unverified_auraface_readiness_refuses_before_model_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
-    entry = MODEL_MANIFEST["auraface"]
+    entry = _install_unverified_auraface_metadata(monkeypatch)
     (tmp_path / entry.file_name).write_bytes(b"unverified-auraface-bytes")
     (tmp_path / entry.license_file).write_bytes(b"unverified-auraface-license")
     io_calls = _forbid_verified_model_io(monkeypatch)
@@ -737,7 +767,7 @@ def test_auraface_missing_artifacts_recover_on_later_probe(tmp_path: Path, monke
 async def test_unverified_auraface_ready_returns_503_not_500(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace
 
-    entry = MODEL_MANIFEST["auraface"]
+    entry = _install_unverified_auraface_metadata(monkeypatch)
     aura_dir = tmp_path / "auraface"
     aura_dir.mkdir()
     (aura_dir / entry.file_name).write_bytes(b"unverified-auraface-bytes")
@@ -778,6 +808,7 @@ async def test_ready_respects_profile_change_after_registration(
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
     monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(face_pipeline_dir))
     monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(auraface_dir))
+    _install_unverified_auraface_metadata(monkeypatch)
 
     cache_calls: list[tuple[Path, str]] = []
 
@@ -910,3 +941,205 @@ async def test_build_embedding_runtime_auraface_uses_inhouse_not_insightface(
     assert "auraface" in detector._runtime.manifest.model_id.lower()
     assert "buffalo" not in detector._runtime.manifest.model_id.lower()
     assert "sface" not in detector._runtime.manifest.model_id.lower()
+
+
+def test_activation_policy_is_shared_infrastructure_helper() -> None:
+    from recognition.application import health
+    from recognition.infrastructure.face_pipeline import activation
+
+    assert health.assert_space_activatable is activation.assert_space_activatable
+    source = Path(activation.__file__).read_text(encoding="utf-8")
+    assert "application.health" not in source
+    assert "recognition.application" not in source
+
+
+def test_incumbent_spaces_remain_activatable() -> None:
+    from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    assert_space_activatable(ModelSpace.INSIGHTFACE)
+    assert_space_activatable(ModelSpace.FACE_PIPELINE)
+
+
+def test_synthetic_verified_fixture_routes_same_activation_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import assert_space_activatable as health_assert
+    from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    _install_synthetic_auraface(tmp_path, monkeypatch)
+    assert_space_activatable(ModelSpace.AURAFACE)
+    health_assert(ModelSpace.AURAFACE)
+
+
+def _forbid_shared_runtime_io(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Explode if shared-runtime construction stats artifacts or builds ORT."""
+    fpa = _live_face_pipeline_adapter()
+    calls = {"stat": 0, "cache_key": 0, "load": 0, "detector": 0, "embedder": 0, "aligner": 0}
+
+    def _boom(name: str):
+        def _inner(*args: object, **kwargs: object) -> object:
+            calls[name] += 1
+            raise AssertionError(f"shared runtime reached {name} before activation policy")
+
+        return _inner
+
+    monkeypatch.setattr(fpa, "_artifact_stat_identity", _boom("stat"))
+    monkeypatch.setattr(fpa, "_runtime_cache_key", _boom("cache_key"))
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", _boom("load"))
+    monkeypatch.setattr(fpa, "OrtYuNetDetector", _boom("detector"))
+    monkeypatch.setattr(fpa, "OrtSFaceEmbedder", _boom("embedder"))
+    monkeypatch.setattr(fpa, "FivePointAligner", _boom("aligner"))
+    return calls
+
+
+def test_shared_runtime_rejects_unverified_before_constructors_and_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    fpa = _live_face_pipeline_adapter()
+    _pin_auraface_ok_dimensions(monkeypatch)
+    _install_synthetic_auraface(tmp_path, monkeypatch)
+    seeded = fpa.FacePipelineRuntime(
+        detector=MagicMock(),
+        aligner=MagicMock(),
+        embedder=MagicMock(),
+        manifest=fpa.auraface_embedding_model_manifest(),
+        models_dir=tmp_path,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+        embedder_models_dir=tmp_path,
+    )
+
+    def _seed(**kwargs: object) -> object:
+        return seeded
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", _seed)
+    cached = fpa.get_shared_face_pipeline_runtime(
+        profile=ModelSpace.AURAFACE,
+        models_dir=tmp_path,
+        embedder_models_dir=tmp_path,
+    )
+    assert cached is seeded
+
+    _install_unverified_auraface_metadata(monkeypatch)
+    calls = _forbid_shared_runtime_io(monkeypatch)
+    with pytest.raises(Exception, match="unverified|alignment template"):
+        fpa.get_shared_face_pipeline_runtime(
+            profile=ModelSpace.AURAFACE,
+            models_dir=tmp_path,
+            embedder_models_dir=tmp_path,
+        )
+    assert calls["stat"] == 0
+    assert calls["cache_key"] == 0
+    assert calls["load"] == 0
+    assert calls["detector"] == 0
+    assert calls["embedder"] == 0
+    assert calls["aligner"] == 0
+
+
+def test_load_runtime_rejects_unverified_before_constructors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    fpa = _live_face_pipeline_adapter()
+    _pin_auraface_ok_dimensions(monkeypatch)
+    _install_unverified_auraface_metadata(monkeypatch)
+    calls = {"detector": 0, "embedder": 0, "aligner": 0}
+
+    def _boom(name: str):
+        def _inner(*args: object, **kwargs: object) -> object:
+            calls[name] += 1
+            raise AssertionError(f"shared runtime reached {name} before activation policy")
+
+        return _inner
+
+    monkeypatch.setattr(fpa, "OrtYuNetDetector", _boom("detector"))
+    monkeypatch.setattr(fpa, "OrtSFaceEmbedder", _boom("embedder"))
+    monkeypatch.setattr(fpa, "FivePointAligner", _boom("aligner"))
+    with pytest.raises(Exception, match="unverified|alignment template"):
+        fpa._load_face_pipeline_runtime(
+            models_dir=tmp_path,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+            space=ModelSpace.AURAFACE,
+            embedder_models_dir=tmp_path,
+        )
+    assert calls == {"detector": 0, "embedder": 0, "aligner": 0}
+
+
+@pytest.mark.asyncio
+async def test_factory_rejects_unverified_auraface_before_runtime_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
+    from recognition.infrastructure.embeddings import runtime_factory as rf
+
+    fpa = _live_face_pipeline_adapter()
+    _pin_auraface_ok_dimensions(monkeypatch)
+    _install_unverified_auraface_metadata(monkeypatch)
+    calls = _forbid_shared_runtime_io(monkeypatch)
+    settings = SimpleNamespace(
+        runtime_mode="production",
+        face_pipeline=SimpleNamespace(
+            profile="auraface",
+            resolved_models_dir=tmp_path,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+            timeout_s=5.0,
+        ),
+        auraface_models_dir=tmp_path,
+    )
+    detector, generator = await rf.build_embedding_runtime(settings=settings)  # type: ignore[arg-type]
+    assert isinstance(detector, UnavailableFaceDetector)
+    assert isinstance(generator, UnavailableEmbeddingGenerator)
+    assert "unverified" in detector.reason.lower() or "alignment template" in detector.reason.lower()
+    assert calls == {"stat": 0, "cache_key": 0, "load": 0, "detector": 0, "embedder": 0, "aligner": 0}
+    assert fpa._SHARED is None
+
+
+@pytest.mark.asyncio
+async def test_factory_missing_auraface_models_dir_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from recognition.application.embedding.detector import UnavailableFaceDetector
+    from recognition.infrastructure.embeddings import runtime_factory as rf
+
+    _install_synthetic_auraface(tmp_path, monkeypatch)
+    _pin_auraface_ok_dimensions(monkeypatch)
+    constructed: list[object] = []
+
+    def _boom(**kwargs: object) -> object:
+        constructed.append(kwargs)
+        raise AssertionError("missing auraface_models_dir must not construct runtime")
+
+    monkeypatch.setattr(
+        "recognition.infrastructure.embeddings.face_pipeline_adapter.get_shared_face_pipeline_runtime",
+        _boom,
+    )
+    settings = SimpleNamespace(
+        runtime_mode="production",
+        face_pipeline=SimpleNamespace(
+            profile="auraface",
+            resolved_models_dir=tmp_path,
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+            timeout_s=5.0,
+        ),
+    )
+    detector, generator = await rf.build_embedding_runtime(settings=settings)  # type: ignore[arg-type]
+    assert isinstance(detector, UnavailableFaceDetector)
+    assert constructed == []
+    assert "auraface_models_dir" in detector.reason or "AttributeError" in detector.reason

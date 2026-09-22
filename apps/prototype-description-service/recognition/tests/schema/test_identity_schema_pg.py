@@ -127,3 +127,43 @@ def test_checkout_and_usage_are_tenant_tables_global_state_is_nontenant_singleto
     assert tenant_id_col is None
     assert singleton[0] == "global"
     assert singleton[1] == 1
+
+
+def test_checkout_provider_key_unique_and_invitation_nullability(pg_migrated_engine) -> None:
+    with pg_migrated_engine.connect() as conn:
+        unique_cols = [
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT a.attname "
+                    "FROM pg_constraint c "
+                    "JOIN pg_class t ON c.conrelid = t.oid "
+                    "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                    "JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+                    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum "
+                    "WHERE n.nspname = current_schema() "
+                    "AND t.relname = 'billing_checkout_attempt' "
+                    "AND c.conname = 'uq_billing_checkout_attempt_provider_key' "
+                    "ORDER BY k.ord"
+                )
+            ).fetchall()
+        ]
+        invitation_nullable = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'portal_tenant_invitation' AND column_name = 'tenant_id'"
+            )
+        ).scalar()
+        invitation_fk = conn.execute(
+            text(
+                "SELECT 1 FROM pg_constraint c "
+                "JOIN pg_class t ON c.conrelid = t.oid "
+                "JOIN pg_namespace n ON t.relnamespace = n.oid "
+                "WHERE n.nspname = current_schema() AND t.relname = 'portal_tenant_invitation' "
+                "AND c.contype = 'f' AND pg_get_constraintdef(c.oid) LIKE '%tenant_id%'"
+            )
+        ).scalar()
+    assert unique_cols == ["provider", "environment", "seller_account", "idempotency_key"]
+    assert invitation_nullable == "YES"
+    assert invitation_fk == 1

@@ -10,10 +10,10 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import cast
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jsonschema import Draft7Validator
-import pytest
 from referencing import Registry, Resource
 from sqlalchemy import Table, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

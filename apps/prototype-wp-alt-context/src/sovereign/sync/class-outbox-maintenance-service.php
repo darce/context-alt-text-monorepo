@@ -1708,8 +1708,16 @@ class OutboxMaintenanceService {
 		$requeued = is_int( $updated ) ? max( 0, $updated ) : 0;
 
 		if ( $requeued > 0 ) {
-			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
-			OutboxDrain::maybe_schedule_drain();
+			try {
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+			} catch ( Throwable $exception ) {
+				$this->record_retry_additive_failure( $normalized_tenant_id, 'metrics_refresh', $exception );
+			}
+			try {
+				OutboxDrain::maybe_schedule_drain();
+			} catch ( Throwable $exception ) {
+				$this->record_retry_additive_failure( $normalized_tenant_id, 'drain_schedule', $exception );
+			}
 		}
 
 		return $requeued;

@@ -423,6 +423,11 @@ class OutboxDrain {
 	}
 
 	private function resolve_reclaimer_scheduler_mode(): string {
+		$booked_scheduler_mode = ( new ReclaimerLiveness() )->booked_scheduler_mode();
+		if ( null !== $booked_scheduler_mode ) {
+			return $booked_scheduler_mode;
+		}
+
 		return function_exists( 'as_schedule_single_action' ) && function_exists( 'as_next_scheduled_action' )
 			? ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER
 			: ReclaimerLiveness::SCHEDULER_WP_CRON;

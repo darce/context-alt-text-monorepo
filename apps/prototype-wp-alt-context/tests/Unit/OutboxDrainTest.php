@@ -9,6 +9,7 @@ use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\TestCase;
 use RuntimeException;
@@ -87,6 +88,73 @@ class OutboxDrainTest extends TestCase
 
 		$this->assertFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testInlinePurgeUsesRecordedWpCronModeWhenActionSchedulerIsAvailable(): void
+	{
+		$purgeCalls = array();
+		$this->setOption('acx_reclaimer_purge_scheduler', ReclaimerLiveness::SCHEDULER_WP_CRON);
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,array{tenant_id:string,batch_cap:?int,scheduler_mode:?string}> */
+			private array $purgeCalls;
+
+			/** @param array<int,array{tenant_id:string,batch_cap:?int,scheduler_mode:?string}> $purgeCalls */
+			public function __construct( array &$purgeCalls ) {
+				$this->purgeCalls =& $purgeCalls;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->purgeCalls[] = array(
+					'tenant_id' => $tenant_id,
+					'batch_cap' => $batch_cap,
+					'scheduler_mode' => $scheduler_mode,
+				);
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$this->assertSame(
+			array( 'outbox' => 0, 'conflicts' => 0 ),
+			$drain->purge_terminal_rows_for_tenant( 'tenant-test-123', 7 )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'tenant_id' => 'tenant-test-123',
+					'batch_cap' => 7,
+					'scheduler_mode' => ReclaimerLiveness::SCHEDULER_WP_CRON,
+				),
+			),
+			$purgeCalls
+		);
+	}
+
+	public function testInlinePurgeUsesActionSchedulerCapabilityWhenNothingWasBooked(): void
+	{
+		$purgeCalls = array();
+		$maintenance = new class( $purgeCalls ) extends OutboxMaintenanceService {
+			/** @var array<int,string|null> */
+			private array $schedulerModes;
+
+			/** @param array<int,string|null> $schedulerModes */
+			public function __construct( array &$schedulerModes ) {
+				$this->schedulerModes =& $schedulerModes;
+			}
+
+			public function purge_terminal_rows( string $tenant_id, ?int $batch_cap = null, ?string $scheduler_mode = null ): array|false {
+				$this->schedulerModes[] = $scheduler_mode;
+				return array( 'outbox' => 0, 'conflicts' => 0 );
+			}
+		};
+
+		$drain = new OutboxDrain( null, null, null, null, null, null, $maintenance );
+		$drain->purge_terminal_rows_for_tenant( 'tenant-test-123', 7 );
+
+		$this->assertSame(
+			array( ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER ),
+			$purgeCalls
+		);
 	}
 
 	public function testDrainMarksAcknowledgedOperations(): void

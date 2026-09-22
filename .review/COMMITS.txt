@@ -1,3 +1,2 @@
-1c296172bf2f offload: R1 PostgreSQL tests now witness real namespaced
-82841032b5ec offload: R1 billing worker now refuses FAILED marks on a stolen N1 lock;
-3aa0ea562cc7 APP-1 WIP: preserve remote billing-reconcile work at turn limit; unverified
+c951de548924 APP-1: land browser-keys-usage after scoped VM verification
+09b787c5e2b0 offload: B1 keys/usage modules landed unmounted; 21 journey tests green

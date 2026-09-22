@@ -1,8 +1,9 @@
- .../test_app1_billing_reconcile_postgres.py        | 511 +++++++++++
- .../tests/unit/test_app1_billing_reconcile.py      | 209 +++++
- .../unit/test_app1_billing_reconcile_recovery.py   | 749 ++++++++++++++++
- .../scripts/_billing_reconcile_recovery.py         | 241 ++++++
- .../scripts/billing_reconcile.py                   | 958 +++++++++++++++++++--
- .../scripts/billing_reconcile_retry.py             | 107 +++
- docs/runbooks/app1-billing-reconciliation.md       |  87 ++
- 7 files changed, 2805 insertions(+), 57 deletions(-)
+ .../app-portal/src/__tests__/keys-journey.test.tsx | 562 +++++++++++++++++++++
+ .../src/__tests__/usage-journey.test.tsx           | 251 +++++++++
+ apps/app-portal/src/api/portalKeys.ts              | 328 ++++++++++++
+ apps/app-portal/src/api/portalUsage.ts             | 201 ++++++++
+ .../src/components/OneTimeSecretDialog.tsx         |  68 +++
+ .../components/WordPressTestConnectionGuidance.tsx |  30 ++
+ apps/app-portal/src/screens/KeysScreen.tsx         | 433 ++++++++++++++++
+ apps/app-portal/src/screens/UsageScreen.tsx        | 136 +++++
+ 8 files changed, 2009 insertions(+)

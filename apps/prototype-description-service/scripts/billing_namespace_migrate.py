@@ -88,13 +88,17 @@ def _list_unmapped(conn) -> dict[str, list[dict[str, Any]]]:
 def _apply_inbox(conn, entry: Mapping[str, Any]) -> None:
     row_id = _uuid(entry.get("id"), field="inbox.id")
     environment, seller = _namespace(entry)
-    current = conn.execute(
-        text(
-            "SELECT provider, provider_event_id, environment, seller_account "
-            "FROM billing_webhook_inbox WHERE id = :id"
-        ),
-        {"id": row_id},
-    ).mappings().first()
+    current = (
+        conn.execute(
+            text(
+                "SELECT provider, provider_event_id, environment, seller_account "
+                "FROM billing_webhook_inbox WHERE id = :id"
+            ),
+            {"id": row_id},
+        )
+        .mappings()
+        .first()
+    )
     if current is None:
         raise RuntimeError(f"inbox row {row_id} was not found")
     if current["environment"] not in {None, environment} or current["seller_account"] not in {None, seller}:
@@ -116,10 +120,7 @@ def _apply_inbox(conn, entry: Mapping[str, Any]) -> None:
     if collision is not None:
         raise RuntimeError(f"inbox mapping for {row_id} collides with {collision}")
     conn.execute(
-        text(
-            "UPDATE billing_webhook_inbox SET environment = :environment, seller_account = :seller "
-            "WHERE id = :id"
-        ),
+        text("UPDATE billing_webhook_inbox SET environment = :environment, seller_account = :seller WHERE id = :id"),
         {"environment": environment, "seller": seller, "id": row_id},
     )
 
@@ -127,33 +128,41 @@ def _apply_inbox(conn, entry: Mapping[str, Any]) -> None:
 def _apply_projection(conn, entry: Mapping[str, Any]) -> None:
     row_id = _uuid(entry.get("id"), field="projection.id")
     environment, seller = _namespace(entry)
-    current = conn.execute(
-        text(
-            "SELECT tenant_id, provider, provider_customer_id, environment, seller_account "
-            "FROM billing_subscription_projection WHERE id = :id"
-        ),
-        {"id": row_id},
-    ).mappings().first()
+    current = (
+        conn.execute(
+            text(
+                "SELECT tenant_id, provider, provider_customer_id, environment, seller_account "
+                "FROM billing_subscription_projection WHERE id = :id"
+            ),
+            {"id": row_id},
+        )
+        .mappings()
+        .first()
+    )
     if current is None:
         raise RuntimeError(f"projection row {row_id} was not found")
     if current["environment"] not in {None, environment} or current["seller_account"] not in {None, seller}:
         raise RuntimeError(f"projection row {row_id} already has a different namespace")
     if "tenant_id" in entry and str(entry["tenant_id"]) != str(current["tenant_id"]):
         raise RuntimeError(f"projection mapping for {row_id} cannot change tenant_id")
-    collision = conn.execute(
-        text(
-            "SELECT id, tenant_id FROM billing_subscription_projection "
-            "WHERE provider = :provider AND environment = :environment "
-            "AND seller_account = :seller AND provider_customer_id = :customer_id AND id <> :id"
-        ),
-        {
-            "provider": current["provider"],
-            "environment": environment,
-            "seller": seller,
-            "customer_id": current["provider_customer_id"],
-            "id": row_id,
-        },
-    ).mappings().first()
+    collision = (
+        conn.execute(
+            text(
+                "SELECT id, tenant_id FROM billing_subscription_projection "
+                "WHERE provider = :provider AND environment = :environment "
+                "AND seller_account = :seller AND provider_customer_id = :customer_id AND id <> :id"
+            ),
+            {
+                "provider": current["provider"],
+                "environment": environment,
+                "seller": seller,
+                "customer_id": current["provider_customer_id"],
+                "id": row_id,
+            },
+        )
+        .mappings()
+        .first()
+    )
     if collision is not None:
         raise RuntimeError(
             f"projection mapping for {row_id} collides with {collision['id']} "

@@ -184,13 +184,16 @@ async def test_postgres_namespace_isolation_legacy_fail_closed_leases_and_rls(pg
             assert projection is not None
             assert projection.provider_customer_id == "cus-shared"
             assert await repo_a.get_projection(tenant_b_id, provider="polar") is None
-            assert await repo_a.record_webhook(
-                provider="polar",
-                provider_event_id="evt-shared",
-                event_type="subscription.active",
-                signature_verified=True,
-                payload={"id": "evt-shared"},
-            ) is False
+            assert (
+                await repo_a.record_webhook(
+                    provider="polar",
+                    provider_event_id="evt-shared",
+                    event_type="subscription.active",
+                    signature_verified=True,
+                    payload={"id": "evt-shared"},
+                )
+                is False
+            )
 
         async with session_factory() as session:
             await session.execute(

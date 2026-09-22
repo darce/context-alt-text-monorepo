@@ -808,14 +808,14 @@ def _coerce_lease(lease: object) -> BillingWorkLease:
         return lease
     try:
         return BillingWorkLease(
-            provider=getattr(lease, "provider"),
-            environment=getattr(lease, "environment"),
-            seller_account=getattr(lease, "seller_account"),
-            kind=getattr(lease, "kind"),
-            remote_id=getattr(lease, "remote_id"),
-            owner=getattr(lease, "owner"),
-            fence=getattr(lease, "fence"),
-            lease_until=getattr(lease, "lease_until"),
+            provider=lease.provider,
+            environment=lease.environment,
+            seller_account=lease.seller_account,
+            kind=lease.kind,
+            remote_id=lease.remote_id,
+            owner=lease.owner,
+            fence=lease.fence,
+            lease_until=lease.lease_until,
         )
     except (TypeError, ValueError, AttributeError) as exc:
         raise ValueError("lease is required") from exc

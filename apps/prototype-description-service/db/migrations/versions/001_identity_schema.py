@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Sequence
 
@@ -76,6 +77,7 @@ OPERATOR_SCOPE_TABLES = [
     "billing_reconciliation_cursor",
     "billing_reconciliation_quarantine",
     "billing_reconciliation_item_progress",
+    "billing_known_item_lease",
 ]
 
 # UNIQUE constraints heal may additively CREATE on an already-provisioned table.
@@ -108,6 +110,16 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "uq_billing_reconciliation_quarantine_remote",
         ("provider", "environment", "seller_account", "kind", "remote_id"),
     ),
+    (
+        "billing_webhook_inbox",
+        "uq_billing_webhook_inbox_provider_namespace_event",
+        ("provider", "environment", "seller_account", "provider_event_id"),
+    ),
+    (
+        "billing_subscription_projection",
+        "uq_billing_subscription_projection_provider_namespace_customer",
+        ("provider", "environment", "seller_account", "provider_customer_id"),
+    ),
 )
 
 # Tables this migration creates via raw SQL only — no ORM model exists for
@@ -135,6 +147,7 @@ EXPECTED_SCHEMA_TABLES = [
     "billing_reconciliation_cursor",
     "billing_reconciliation_quarantine",
     "billing_reconciliation_item_progress",
+    "billing_known_item_lease",
     "api_key_rotation_history",
     "tenant_key_idempotency",
     "portal_tenant_invitation",
@@ -179,6 +192,7 @@ DOWNGRADE_TABLE_ORDER = [
     "portal_tenant_invitation",
     "tenant_key_idempotency",
     "api_key_rotation_history",
+    "billing_known_item_lease",
     "billing_reconciliation_item_progress",
     "billing_reconciliation_quarantine",
     "billing_reconciliation_cursor",
@@ -373,6 +387,12 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
 
 USAGE_SCHEMA_WRITERS_DRAINED_GUC = "app.usage_schema_writers_drained"
 USAGE_SCHEMA_WRITERS_DRAINED_ENV = "ACX_USAGE_SCHEMA_WRITERS_DRAINED"
+BILLING_NAMESPACE_WRITERS_DRAINED_GUC = "app.billing_namespace_writers_drained"
+BILLING_NAMESPACE_WRITERS_DRAINED_ENV = "ACX_BILLING_NAMESPACE_WRITERS_DRAINED"
+_LEGACY_INBOX_EVENT_UNIQUE = "uq_billing_webhook_inbox_provider_event"
+_LEGACY_PROJECTION_CUSTOMER_UNIQUE = "uq_billing_subscription_projection_provider_customer"
+_NAMESPACED_INBOX_EVENT_UNIQUE = "uq_billing_webhook_inbox_provider_namespace_event"
+_NAMESPACED_PROJECTION_CUSTOMER_UNIQUE = "uq_billing_subscription_projection_provider_namespace_customer"
 _USAGE_IDENTITY_CONTRACT_COLUMNS = ("operation_id", "request_fingerprint", "fence_token", "queue_bytes")
 _CHECKOUT_PROVIDER_KEY_COLUMNS = ("provider", "environment", "seller_account", "idempotency_key")
 _USAGE_SCHEMA_DRAIN_REQUIRED = (
@@ -416,6 +436,61 @@ def _writers_drained(op) -> bool:
     if not _is_postgres_op(op):
         return True
     return _current_setting(op, USAGE_SCHEMA_WRITERS_DRAINED_GUC).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _billing_namespace_writers_drained(op) -> bool:
+    if not _is_postgres_op(op):
+        return True
+    guc = _current_setting(op, BILLING_NAMESPACE_WRITERS_DRAINED_GUC).strip().lower()
+    if guc in {"1", "true", "yes", "on"}:
+        return True
+    env = os.environ.get(BILLING_NAMESPACE_WRITERS_DRAINED_ENV, "").strip().lower()
+    return env in {"1", "true", "yes", "on"}
+
+
+def _drop_unique_constraint_if_present(op, table_name: str, constraint_name: str) -> None:
+    if constraint_name in _existing_constraint_names(op, table_name):
+        op.execute(f'ALTER TABLE "{table_name}" DROP CONSTRAINT "{constraint_name}"')
+
+
+def _heal_billing_namespace_uniques(op) -> None:
+    """Add namespaced uniques; drop legacy global uniques only under writer drain."""
+    if not _is_postgres_op(op):
+        return
+    if _relkind(op, "billing_webhook_inbox") in {"r", "p"}:
+        if _NAMESPACED_INBOX_EVENT_UNIQUE not in _existing_constraint_names(op, "billing_webhook_inbox"):
+            _ensure_unique_constraint(
+                op,
+                "billing_webhook_inbox",
+                sa.UniqueConstraint(
+                    "provider",
+                    "environment",
+                    "seller_account",
+                    "provider_event_id",
+                    name=_NAMESPACED_INBOX_EVENT_UNIQUE,
+                ),
+            )
+        if _billing_namespace_writers_drained(op):
+            _drop_unique_constraint_if_present(op, "billing_webhook_inbox", _LEGACY_INBOX_EVENT_UNIQUE)
+    if _relkind(op, "billing_subscription_projection") in {"r", "p"}:
+        if _NAMESPACED_PROJECTION_CUSTOMER_UNIQUE not in _existing_constraint_names(
+            op, "billing_subscription_projection"
+        ):
+            _ensure_unique_constraint(
+                op,
+                "billing_subscription_projection",
+                sa.UniqueConstraint(
+                    "provider",
+                    "environment",
+                    "seller_account",
+                    "provider_customer_id",
+                    name=_NAMESPACED_PROJECTION_CUSTOMER_UNIQUE,
+                ),
+            )
+        if _billing_namespace_writers_drained(op):
+            _drop_unique_constraint_if_present(
+                op, "billing_subscription_projection", _LEGACY_PROJECTION_CUSTOMER_UNIQUE
+            )
 
 
 def _column_nullable(op, table_name: str, column_name: str) -> bool | None:
@@ -1144,12 +1219,22 @@ def ensure_tables(op) -> None:
         sa.UniqueConstraint("tenant_id", name="uq_billing_subscription_projection_tenant_id"),
         sa.UniqueConstraint(
             "provider",
+            "environment",
+            "seller_account",
             "provider_customer_id",
-            name="uq_billing_subscription_projection_provider_customer",
+            name="uq_billing_subscription_projection_provider_namespace_customer",
         ),
         sa.CheckConstraint(
             "status IN ('none', 'active', 'past_due', 'canceled', 'refund_hold')",
             name="ck_billing_subscription_projection_status",
+        ),
+        sa.CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_subscription_projection_environment",
+        ),
+        heal_constraints=(
+            "uq_billing_subscription_projection_provider_namespace_customer",
+            "ck_billing_subscription_projection_environment",
         ),
     )
     _ensure_index(op, "idx_billing_subscription_projection_reclaim", "billing_subscription_projection", ["updated_at"])
@@ -1174,12 +1259,23 @@ def ensure_tables(op) -> None:
         sa.Column("seller_account", sa.Text(), nullable=True),
         sa.UniqueConstraint(
             "provider",
+            "environment",
+            "seller_account",
             "provider_event_id",
-            name="uq_billing_webhook_inbox_provider_event",
+            name="uq_billing_webhook_inbox_provider_namespace_event",
+        ),
+        sa.CheckConstraint(
+            "environment IS NULL OR environment IN ('sandbox', 'live')",
+            name="ck_billing_webhook_inbox_environment",
+        ),
+        heal_constraints=(
+            "uq_billing_webhook_inbox_provider_namespace_event",
+            "ck_billing_webhook_inbox_environment",
         ),
     )
     _ensure_index(op, "idx_billing_webhook_inbox_reclaim", "billing_webhook_inbox", ["status", "processed_at"])
     _ensure_index(op, "idx_billing_webhook_inbox_pending", "billing_webhook_inbox", ["status", "next_attempt_at"])
+    _heal_billing_namespace_uniques(op)
 
     # Reclaim key: updated_at. Existing installs gain this table through
     # _ensure_table (create if missing) rather than a greenfield-only revision.
@@ -1416,6 +1512,44 @@ def ensure_tables(op) -> None:
             "ck_billing_reconciliation_item_progress_remote_id",
             "ck_billing_reconciliation_item_progress_fence",
         ),
+    )
+
+    _ensure_table(
+        op,
+        "billing_known_item_lease",
+        sa.Column("provider", sa.Text(), primary_key=True),
+        sa.Column("environment", sa.Text(), primary_key=True),
+        sa.Column("seller_account", sa.Text(), primary_key=True),
+        sa.Column("kind", sa.Text(), primary_key=True),
+        sa.Column("remote_id", sa.Text(), primary_key=True),
+        sa.Column("lease_owner", sa.Text(), nullable=True),
+        sa.Column("lease_until", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("fence", sa.BigInteger(), nullable=False, server_default=sa.text("0")),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("kind IN ('inbox', 'projection')", name="ck_billing_known_item_lease_kind"),
+        sa.CheckConstraint(
+            "environment IN ('sandbox', 'live')",
+            name="ck_billing_known_item_lease_environment",
+        ),
+        sa.CheckConstraint("provider IN ('polar', 'fake')", name="ck_billing_known_item_lease_provider"),
+        sa.CheckConstraint("fence >= 0", name="ck_billing_known_item_lease_fence_nonnegative"),
+        sa.CheckConstraint(
+            "length(remote_id) > 0 AND length(remote_id) <= 128",
+            name="ck_billing_known_item_lease_remote_id",
+        ),
+        heal_constraints=(
+            "ck_billing_known_item_lease_kind",
+            "ck_billing_known_item_lease_environment",
+            "ck_billing_known_item_lease_provider",
+            "ck_billing_known_item_lease_fence_nonnegative",
+            "ck_billing_known_item_lease_remote_id",
+        ),
+    )
+    _ensure_index(
+        op,
+        "idx_billing_known_item_lease_until",
+        "billing_known_item_lease",
+        ["lease_until", "kind"],
     )
 
     # Reclaim key: created_at; the API-key history retention job purges old rotation records.
@@ -3941,6 +4075,7 @@ def downgrade() -> None:
     op.drop_index("idx_tenant_key_idempotency_reclaim", table_name="tenant_key_idempotency")
     op.drop_index("idx_api_key_rotation_history_reclaim", table_name="api_key_rotation_history")
     op.drop_index("idx_api_key_rotation_history_tenant_created", table_name="api_key_rotation_history")
+    op.drop_index("idx_billing_known_item_lease_until", table_name="billing_known_item_lease")
     op.drop_index("idx_billing_webhook_inbox_reclaim", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_webhook_inbox_pending", table_name="billing_webhook_inbox")
     op.drop_index("idx_billing_reconciliation_quarantine_retry", table_name="billing_reconciliation_quarantine")

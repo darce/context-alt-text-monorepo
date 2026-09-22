@@ -5,14 +5,17 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import BillingSubscriptionProjection, BillingWebhookInbox
+from db.models.portal_billing import BillingKnownItemLease
 from db.tenant_context import (
     clear_tenant_context,
     disable_rls_bypass,
@@ -20,8 +23,20 @@ from db.tenant_context import (
     set_tenant_context,
 )
 from recognition.application.scan.retry_backoff import compute_retry_backoff
-from recognition.domain.portal_contracts import BillingSubscriptionStatus, WebhookInboxStatus
-from recognition.shared.db.dialect import is_sqlite
+from recognition.domain.billing_work_lease import (
+    BillingNamespaceConflictError,
+    BillingNamespaceRequiredError,
+    BillingWorkKind,
+    BillingWorkLease,
+    BillingWorkLeaseConflictError,
+)
+from recognition.domain.portal_contracts import (
+    RECONCILIATION_MAX_OWNER_LENGTH,
+    RECONCILIATION_MAX_REMOTE_ID_LENGTH,
+    BillingSubscriptionStatus,
+    WebhookInboxStatus,
+)
+from recognition.shared.db.dialect import is_postgres, is_sqlite
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +57,8 @@ class BillingRepository:
         self,
         session: AsyncSession,
         *,
+        environment: str | None = None,
+        seller_account: str | None = None,
         max_attempts: int = DEFAULT_WEBHOOK_MAX_ATTEMPTS,
         retry_backoff_base_s: float = DEFAULT_WEBHOOK_RETRY_BACKOFF_BASE_SECONDS,
         retry_backoff_max_s: float = DEFAULT_WEBHOOK_RETRY_BACKOFF_MAX_SECONDS,
@@ -52,10 +69,30 @@ class BillingRepository:
             raise ValueError("retry backoff values must be non-negative")
         if retry_backoff_base_s > retry_backoff_max_s:
             raise ValueError("retry_backoff_base_s must not exceed retry_backoff_max_s")
+        if environment is not None:
+            if not isinstance(environment, str) or environment.strip() not in {"sandbox", "live"}:
+                raise ValueError("environment must be sandbox or live")
+            environment = environment.strip()
+        if seller_account is not None:
+            if not isinstance(seller_account, str) or not seller_account.strip():
+                raise ValueError("seller_account must be a non-empty string")
+            seller_account = seller_account.strip()
         self._session = session
+        self._environment = environment
+        self._seller_account = seller_account
         self._max_attempts = max_attempts
         self._retry_backoff_base_s = retry_backoff_base_s
         self._retry_backoff_max_s = retry_backoff_max_s
+
+    def _is_bound(self) -> bool:
+        return self._environment is not None and self._seller_account is not None
+
+    def _require_namespace(self) -> tuple[str, str]:
+        if not self._is_bound() or self._environment is None or self._seller_account is None:
+            raise BillingNamespaceRequiredError(
+                "bound billing operations require explicit environment and seller_account"
+            )
+        return self._environment, self._seller_account
 
     @property
     def session(self) -> AsyncSession:
@@ -76,6 +113,11 @@ class BillingRepository:
         )
         if provider is not None:
             statement = statement.where(BillingSubscriptionProjection.provider == provider)
+        if self._is_bound():
+            statement = statement.where(
+                BillingSubscriptionProjection.environment == self._environment,
+                BillingSubscriptionProjection.seller_account == self._seller_account,
+            )
         # tenant_id is unique, but keep the result bounded for defense in depth.
         statement = statement.limit(1)
         # WHY: projection rows are tenant-scoped FORCE-RLS data, so every read
@@ -100,6 +142,11 @@ class BillingRepository:
             )
             .limit(1)
         )
+        if self._is_bound():
+            statement = statement.where(
+                BillingWebhookInbox.environment == self._environment,
+                BillingWebhookInbox.seller_account == self._seller_account,
+            )
         result = await self._session.execute(statement)
         return result.scalar_one_or_none()
 
@@ -125,6 +172,9 @@ class BillingRepository:
         if not isinstance(payload, Mapping):
             raise ValueError("payload must be a mapping")
 
+        existing = await self.get_webhook(provider=provider, provider_event_id=provider_event_id)
+        if existing is not None:
+            return False
         row = BillingWebhookInbox(
             provider=provider,
             provider_event_id=provider_event_id,
@@ -132,6 +182,8 @@ class BillingRepository:
             signature_verified=True,
             payload=dict(payload),
             status=WebhookInboxStatus.RECEIVED.value,
+            environment=self._environment,
+            seller_account=self._seller_account,
         )
         try:
             async with self._session.begin_nested():
@@ -186,6 +238,10 @@ class BillingRepository:
                         event_position=normalized_position,
                     )
             except IntegrityError:
+                if self._is_bound():
+                    raise BillingNamespaceConflictError(
+                        "projection customer is already bound in this billing namespace"
+                    ) from None
                 return False
 
     async def _upsert_projection(
@@ -215,6 +271,13 @@ class BillingRepository:
         if projection is not None:
             if projection.provider != provider:
                 raise ValueError("tenant projection is owned by another provider")
+            if self._is_bound():
+                existing_env = projection.environment
+                existing_seller = projection.seller_account
+                if existing_env is None or existing_seller is None:
+                    raise BillingNamespaceConflictError("tenant projection has unmapped legacy namespace")
+                if existing_env != self._environment or existing_seller != self._seller_account:
+                    raise BillingNamespaceConflictError("tenant projection is owned by another billing namespace")
             if projection.last_event_id == provider_event_id:
                 return False
             stored_position = _coerce_position(projection.updated_at, "projection.updated_at")
@@ -230,6 +293,8 @@ class BillingRepository:
             # ``updated_at`` is the model's stored event position.  It is set
             # explicitly because the foundation model has no separate cursor.
             projection.updated_at = event_position
+            projection.environment = self._environment
+            projection.seller_account = self._seller_account
             await self._session.flush()
             return True
 
@@ -243,6 +308,8 @@ class BillingRepository:
             past_due_since=past_due_since,
             last_event_id=provider_event_id,
             updated_at=event_position,
+            environment=self._environment,
+            seller_account=self._seller_account,
         )
         self._session.add(projection)
         await self._session.flush()
@@ -350,12 +417,264 @@ class BillingRepository:
             .order_by(BillingWebhookInbox.received_at, BillingWebhookInbox.id)
             .limit(limit)
         )
+        if self._is_bound():
+            statement = statement.where(
+                BillingWebhookInbox.environment == self._environment,
+                BillingWebhookInbox.seller_account == self._seller_account,
+            )
         # WHY: the worker scan intentionally spans tenants because inbox rows
         # have no tenant key; use the approved maintenance bypass only around
         # this bounded read and always release it on success or failure.
         async with self._maintenance_rls_bypass():
             result = await self._session.execute(statement)
             return list(result.scalars().all())
+
+    async def list_known_projections(
+        self,
+        *,
+        provider: str,
+        limit: int,
+        after_tenant_id: UUID | None = None,
+    ) -> list[BillingSubscriptionProjection]:
+        """Return a bounded, namespace-bound page of known projections in UUID order.
+
+        NULL-legacy rows are not current authority and are never returned.
+        """
+        environment, seller_account = self._require_namespace()
+        _validate_non_empty("provider", provider)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 < limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        if after_tenant_id is not None:
+            _validate_uuid("after_tenant_id", after_tenant_id)
+        statement = (
+            select(BillingSubscriptionProjection)
+            .where(
+                BillingSubscriptionProjection.provider == provider,
+                BillingSubscriptionProjection.environment == environment,
+                BillingSubscriptionProjection.seller_account == seller_account,
+            )
+            .order_by(BillingSubscriptionProjection.tenant_id)
+            .limit(limit)
+        )
+        if after_tenant_id is not None:
+            statement = statement.where(BillingSubscriptionProjection.tenant_id > after_tenant_id)
+        async with self._maintenance_rls_bypass():
+            result = await self._session.execute(statement)
+            return list(result.scalars().all())
+
+    async def claim_reconcile_item(
+        self,
+        *,
+        provider: str,
+        kind: str,
+        remote_id: str,
+        owner: str,
+        lease_ttl: timedelta,
+        now: datetime,
+    ) -> BillingWorkLease | None:
+        """Acquire a fenced item lease. Caller must COMMIT before any provider GET."""
+        environment, seller_account = self._require_namespace()
+        _validate_non_empty("provider", provider)
+        kind_value = _coerce_work_kind(kind)
+        remote_id = _bounded_text("remote_id", remote_id, RECONCILIATION_MAX_REMOTE_ID_LENGTH)
+        owner = _bounded_text("owner", owner, RECONCILIATION_MAX_OWNER_LENGTH)
+        now = _require_aware(now)
+        until = now + _require_ttl(lease_ttl)
+        await self._operator_scope()
+        await self._ensure_known_item_row(
+            provider=provider,
+            environment=environment,
+            seller_account=seller_account,
+            kind=kind_value,
+            remote_id=remote_id,
+            now=now,
+        )
+        row = await self._claim_known_item_row(
+            provider=provider,
+            environment=environment,
+            seller_account=seller_account,
+            kind=kind_value,
+            remote_id=remote_id,
+            owner=owner,
+            until=until,
+            now=now,
+        )
+        if row is None:
+            return None
+        return _lease_from_row(row)
+
+    async def lock_reconcile_item(self, lease: object, *, now: datetime) -> None:
+        """Lock the leased row and reject stale/stolen/expired fences.
+
+        The row lock is held through later projection/entitlement/inbox writes
+        in the same database transaction. Does not mark the inbox processed.
+        """
+        await self._operator_scope()
+        now = _require_aware(now)
+        bound = _coerce_lease(lease)
+        environment, seller_account = self._require_namespace()
+        if bound.environment != environment or bound.seller_account != seller_account:
+            raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
+        statement = (
+            select(BillingKnownItemLease)
+            .where(*_lease_identity(bound))
+            .where(
+                BillingKnownItemLease.lease_owner == bound.owner,
+                BillingKnownItemLease.fence == bound.fence,
+                BillingKnownItemLease.lease_until.is_not(None),
+                BillingKnownItemLease.lease_until > now,
+            )
+            .limit(1)
+            .with_for_update()
+        )
+        result = await self._session.execute(statement)
+        if result.scalar_one_or_none() is None:
+            raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
+
+    async def finish_reconcile_item(self, lease: object, *, now: datetime) -> None:
+        """Release a live fenced lease. Never marks inbox processed."""
+        await self._operator_scope()
+        now = _require_aware(now)
+        bound = _coerce_lease(lease)
+        environment, seller_account = self._require_namespace()
+        if bound.environment != environment or bound.seller_account != seller_account:
+            raise BillingWorkLeaseConflictError("lease namespace does not match the bound repository")
+        stmt = (
+            update(BillingKnownItemLease)
+            .where(*_lease_identity(bound))
+            .where(
+                BillingKnownItemLease.lease_owner == bound.owner,
+                BillingKnownItemLease.fence == bound.fence,
+                BillingKnownItemLease.lease_until.is_not(None),
+                BillingKnownItemLease.lease_until > now,
+            )
+            .values(lease_owner=None, lease_until=None, updated_at=now)
+            .returning(BillingKnownItemLease)
+        )
+        result = await self._session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise BillingWorkLeaseConflictError("billing work lease is expired, stolen, or stale")
+
+    async def _operator_scope(self) -> None:
+        await enable_rls_bypass(self._session)
+
+    async def _ensure_known_item_row(
+        self,
+        *,
+        provider: str,
+        environment: str,
+        seller_account: str,
+        kind: str,
+        remote_id: str,
+        now: datetime,
+    ) -> None:
+        inserter = pg_insert if is_postgres(self._session) else sqlite_insert
+        stmt = inserter(BillingKnownItemLease).values(
+            provider=provider,
+            environment=environment,
+            seller_account=seller_account,
+            kind=kind,
+            remote_id=remote_id,
+            fence=0,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["provider", "environment", "seller_account", "kind", "remote_id"]
+        )
+        await self._session.execute(stmt)
+
+    async def _claim_known_item_row(
+        self,
+        *,
+        provider: str,
+        environment: str,
+        seller_account: str,
+        kind: str,
+        remote_id: str,
+        owner: str,
+        until: datetime,
+        now: datetime,
+    ) -> BillingKnownItemLease | None:
+        if is_postgres(self._session) and not is_sqlite(self._session):
+            from sqlalchemy import text as sql_text
+
+            result = await self._session.execute(
+                sql_text(
+                    """
+                    WITH claimed AS (
+                      SELECT provider, environment, seller_account, kind, remote_id
+                      FROM billing_known_item_lease
+                      WHERE provider = :provider
+                        AND environment = :environment
+                        AND seller_account = :seller_account
+                        AND kind = :kind
+                        AND remote_id = :remote_id
+                        AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until <= :now)
+                      FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE billing_known_item_lease AS c
+                    SET lease_owner = :owner,
+                        lease_until = :until,
+                        fence = c.fence + 1,
+                        updated_at = :now
+                    FROM claimed
+                    WHERE c.provider = claimed.provider
+                      AND c.environment = claimed.environment
+                      AND c.seller_account = claimed.seller_account
+                      AND c.kind = claimed.kind
+                      AND c.remote_id = claimed.remote_id
+                    RETURNING c.provider, c.environment, c.seller_account, c.kind, c.remote_id,
+                              c.lease_owner, c.lease_until, c.fence
+                    """
+                ),
+                {
+                    "provider": provider,
+                    "environment": environment,
+                    "seller_account": seller_account,
+                    "kind": kind,
+                    "remote_id": remote_id,
+                    "owner": owner,
+                    "until": until,
+                    "now": now,
+                },
+            )
+            mapping = result.mappings().first()
+            if mapping is None:
+                return None
+            loaded = await self._session.execute(
+                select(BillingKnownItemLease).where(
+                    BillingKnownItemLease.provider == provider,
+                    BillingKnownItemLease.environment == environment,
+                    BillingKnownItemLease.seller_account == seller_account,
+                    BillingKnownItemLease.kind == kind,
+                    BillingKnownItemLease.remote_id == remote_id,
+                )
+            )
+            return loaded.scalar_one_or_none()
+        stmt = (
+            update(BillingKnownItemLease)
+            .where(
+                BillingKnownItemLease.provider == provider,
+                BillingKnownItemLease.environment == environment,
+                BillingKnownItemLease.seller_account == seller_account,
+                BillingKnownItemLease.kind == kind,
+                BillingKnownItemLease.remote_id == remote_id,
+                or_(
+                    BillingKnownItemLease.lease_owner.is_(None),
+                    BillingKnownItemLease.lease_until.is_(None),
+                    BillingKnownItemLease.lease_until <= now,
+                ),
+            )
+            .values(
+                lease_owner=owner,
+                lease_until=until,
+                fence=BillingKnownItemLease.fence + 1,
+                updated_at=now,
+            )
+            .returning(BillingKnownItemLease)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
 
     @contextlib.asynccontextmanager
     async def _tenant_context(self, tenant_id: UUID) -> AsyncIterator[None]:
@@ -452,6 +771,84 @@ def _is_sqlite_session(session: AsyncSession) -> bool:
         return True
     wrapped = getattr(session, "_session", None)
     return wrapped is not None and is_sqlite(wrapped)
+
+
+def _coerce_work_kind(value: str) -> str:
+    if isinstance(value, BillingWorkKind):
+        return value.value
+    try:
+        return BillingWorkKind(value).value
+    except (TypeError, ValueError) as exc:
+        raise ValueError("kind must be inbox or projection") from exc
+
+
+def _bounded_text(name: str, value: str, limit: int) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required")
+    stripped = value.strip()
+    if len(stripped) > limit:
+        raise ValueError(f"{name} exceeds the bounded length")
+    return stripped
+
+
+def _require_aware(value: datetime) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise ValueError("now must be a timezone-aware datetime")
+    return value.astimezone(UTC)
+
+
+def _require_ttl(value: timedelta) -> timedelta:
+    if not isinstance(value, timedelta) or value <= timedelta(0):
+        raise ValueError("lease_ttl must be a positive duration")
+    return value
+
+
+def _coerce_lease(lease: object) -> BillingWorkLease:
+    if isinstance(lease, BillingWorkLease):
+        return lease
+    try:
+        return BillingWorkLease(
+            provider=lease.provider,
+            environment=lease.environment,
+            seller_account=lease.seller_account,
+            kind=lease.kind,
+            remote_id=lease.remote_id,
+            owner=lease.owner,
+            fence=lease.fence,
+            lease_until=lease.lease_until,
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("lease is required") from exc
+
+
+def _lease_identity(lease: BillingWorkLease) -> tuple[object, object, object, object, object]:
+    return (
+        BillingKnownItemLease.provider == lease.provider,
+        BillingKnownItemLease.environment == lease.environment,
+        BillingKnownItemLease.seller_account == lease.seller_account,
+        BillingKnownItemLease.kind == lease.kind,
+        BillingKnownItemLease.remote_id == lease.remote_id,
+    )
+
+
+def _lease_from_row(row: BillingKnownItemLease) -> BillingWorkLease:
+    if row.lease_owner is None or row.lease_until is None:
+        raise BillingWorkLeaseConflictError("billing work lease is missing owner or expiry")
+    lease_until = row.lease_until
+    if lease_until.tzinfo is None:
+        lease_until = lease_until.replace(tzinfo=UTC)
+    else:
+        lease_until = lease_until.astimezone(UTC)
+    return BillingWorkLease(
+        provider=row.provider,
+        environment=row.environment,
+        seller_account=row.seller_account,
+        kind=row.kind,
+        remote_id=row.remote_id,
+        owner=row.lease_owner,
+        fence=int(row.fence),
+        lease_until=lease_until,
+    )
 
 
 __all__ = [

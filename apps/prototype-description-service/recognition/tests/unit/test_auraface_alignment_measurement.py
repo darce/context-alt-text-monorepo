@@ -405,6 +405,71 @@ def test_independent_arcface_dst_is_float32_literal_not_production_import() -> N
     assert "ARCFACE_CANONICAL_LANDMARKS_112" not in source
 
 
+def test_production_arcface_umeyama_matches_independent_reference_float32_and_float64() -> None:
+    """Production ArcFace Umeyama must match the independent formula, not the SFace port.
+
+    Saved aligner landmarks are float64; YuNet-like synthetic landmarks are float32.
+    Each dtype is compared against generate_goldens.reference_* (not a production import).
+    """
+    np = pytest.importorskip("numpy")
+    gen = _load_generate_goldens()
+    from recognition.infrastructure.face_pipeline.aligner import (
+        FivePointAligner,
+        arcface_similarity_transform_matrix,
+        similarity_transform_matrix,
+    )
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    image = np.load(_FIXTURE_DIR / "aligner_source_image.npy", allow_pickle=False)
+    saved_f64 = np.load(_FIXTURE_DIR / "aligner_landmarks.npy", allow_pickle=False)
+    assert saved_f64.dtype == np.float64
+    synthetic_f32 = np.array(
+        [
+            [40.5, 50.25],
+            [80.75, 49.5],
+            [60.0, 70.125],
+            [45.25, 90.5],
+            [75.0, 91.75],
+        ],
+        dtype=np.float32,
+    )
+    aligner = FivePointAligner(space=ModelSpace.AURAFACE)
+    for landmarks in (saved_f64, synthetic_f32):
+        expected = gen.reference_arcface_similarity_matrix(landmarks)
+        actual = arcface_similarity_transform_matrix(landmarks)
+        np.testing.assert_array_equal(actual, expected)
+        assert actual.dtype == np.float64
+        result = aligner.align(image, landmarks)
+        np.testing.assert_array_equal(result.affine, expected)
+        np.testing.assert_array_equal(result.crop, gen.reference_arcface_align(image, landmarks))
+        sface_port = similarity_transform_matrix(landmarks)
+        assert not np.array_equal(sface_port, actual)
+
+    from recognition.infrastructure.face_pipeline import aligner as aligner_mod
+
+    source = Path(aligner_mod.__file__).read_text(encoding="utf-8")
+    assert "generate_goldens" not in source
+    assert "from recognition.tests" not in source
+
+
+def test_sface_aligner_still_uses_opencv_similarity_port() -> None:
+    np = pytest.importorskip("numpy")
+    from recognition.infrastructure.face_pipeline.aligner import (
+        FivePointAligner,
+        similarity_transform_matrix,
+    )
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    image = np.load(_FIXTURE_DIR / "aligner_source_image.npy", allow_pickle=False)
+    landmarks = np.load(_FIXTURE_DIR / "aligner_landmarks.npy", allow_pickle=False)
+    expected_affine = np.load(_FIXTURE_DIR / "aligner_affine.npy", allow_pickle=False)
+    expected_crop = np.load(_FIXTURE_DIR / "aligner_crop.npy", allow_pickle=False)
+    result = FivePointAligner(space=ModelSpace.FACE_PIPELINE).align(image, landmarks)
+    np.testing.assert_array_equal(result.affine, expected_affine)
+    np.testing.assert_array_equal(result.affine, similarity_transform_matrix(landmarks))
+    np.testing.assert_array_equal(result.crop, expected_crop)
+
+
 def test_independent_umeyama_includes_reflection_singular_sign_in_scale() -> None:
     np = pytest.importorskip("numpy")
     gen = _load_generate_goldens()

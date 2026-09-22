@@ -106,6 +106,78 @@ def _as_landmarks5(landmarks: np.ndarray) -> np.ndarray:
     return arr
 
 
+def _as_landmarks5_native(landmarks: np.ndarray) -> np.ndarray:
+    """Validate five landmarks without promoting dtype (InsightFace estimate_norm)."""
+    arr = np.asarray(landmarks)
+    if arr.shape == (10,):
+        arr = arr.reshape(5, 2)
+    if arr.shape != (5, 2):
+        raise AlignmentError(
+            f"expected 5 landmarks as (5, 2) or (10,), got shape {tuple(arr.shape)}; "
+            f"order must be {YUNET_LANDMARK_NAMES}"
+        )
+    if not np.isfinite(arr).all():
+        raise AlignmentError("landmarks contain non-finite values")
+    return arr
+
+
+def _umeyama_similarity_homogeneous(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+    """Faithful port of scikit-image ``transform._geometric._umeyama``.
+
+    Do not pre-cast src/dst; float32 ``arcface_dst`` must keep float32 means.
+    Scale uses ``S @ d`` so a reflection sign on the last singular value is
+    included (Umeyama 1991 eq. 41–42). Not the OpenCV SFace port.
+    """
+    src = np.asarray(src)
+    dst = np.asarray(dst)
+    if src.shape != dst.shape or src.ndim != 2:
+        raise AlignmentError(
+            f"src/dst must be (M, N) with matching shape, got {src.shape} vs {dst.shape}"
+        )
+    num = src.shape[0]
+    dim = src.shape[1]
+    src_mean = src.mean(axis=0)
+    dst_mean = dst.mean(axis=0)
+    src_demean = src - src_mean
+    dst_demean = dst - dst_mean
+    covariance = dst_demean.T @ src_demean / num
+    d = np.ones((dim,), dtype=np.float64)
+    if np.linalg.det(covariance) < 0:
+        d[dim - 1] = -1
+    transform = np.eye(dim + 1, dtype=np.float64)
+    u, singular, vt = np.linalg.svd(covariance)
+    rank = np.linalg.matrix_rank(covariance)
+    if rank == 0:
+        return np.nan * transform
+    if rank == dim - 1:
+        if np.linalg.det(u) * np.linalg.det(vt) > 0:
+            transform[:dim, :dim] = u @ vt
+        else:
+            saved = d[dim - 1]
+            d[dim - 1] = -1
+            transform[:dim, :dim] = u @ np.diag(d) @ vt
+            d[dim - 1] = saved
+    else:
+        transform[:dim, :dim] = u @ np.diag(d) @ vt
+    scale = 1.0 / src_demean.var(axis=0).sum() * (singular @ d)
+    transform[:dim, dim] = dst_mean - scale * (transform[:dim, :dim] @ src_mean.T)
+    transform[:dim, :dim] *= scale
+    return transform
+
+
+def arcface_similarity_transform_matrix(src_landmarks: np.ndarray) -> np.ndarray:
+    """Umeyama similarity matching InsightFace ``estimate_norm`` (ArcFace 112).
+
+    Preserves input landmark dtype and the float32 ArcFace dest means. Returns
+    a float64 2×3 affine. Production copy — does not import test goldens.
+    """
+    src = _as_landmarks5_native(src_landmarks)
+    homogeneous = _umeyama_similarity_homogeneous(src, ARCFACE_CANONICAL_LANDMARKS_112)
+    if not np.isfinite(homogeneous).all():
+        raise AlignmentError("degenerate landmarks; Umeyama is ill-conditioned")
+    return np.asarray(homogeneous[0:2, :], dtype=np.float64)
+
+
 def similarity_transform_matrix(
     src_landmarks: np.ndarray,
     *,
@@ -231,12 +303,12 @@ class FivePointAligner:
         except FacePipelineInputError as exc:
             raise AlignmentError(str(exc)) from exc
 
-        # SFace keeps OpenCV's hardcoded dst mean (dst_landmarks=None). ArcFace
-        # 112 uses the same coordinates via dst.mean() (InsightFace estimate_norm).
+        # SFace keeps OpenCV's hardcoded dst mean. ArcFace 112 uses the
+        # dtype-preserving skimage/InsightFace Umeyama, not the SFace port.
         if self.template_id == _SFACE_TEMPLATE_ID:
             affine = similarity_transform_matrix(landmarks)
         else:
-            affine = similarity_transform_matrix(landmarks, dst_landmarks=self.dst_landmarks)
+            affine = arcface_similarity_transform_matrix(landmarks)
         crop = cv2.warpAffine(
             img,
             affine,
@@ -257,5 +329,6 @@ __all__ = [
     "FivePointAligner",
     "SFACE_CANONICAL_LANDMARKS_112",
     "YUNET_LANDMARK_NAMES",
+    "arcface_similarity_transform_matrix",
     "similarity_transform_matrix",
 ]

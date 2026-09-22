@@ -27,6 +27,18 @@ APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* 
 
 The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. Its S0 route inventory and E16-7 disposition matrix exist but retain pre-implementation claims. Refresh them; do not redo the entire original discovery program.
 
+## Wind-down addendum — 2026-09-22
+
+This addendum supersedes the live-handle descriptions in the historical checkpoint below.
+
+- No APP-1 implementation pass remains in progress. The final pretenant-auth pass `app1-pretenant-auth-20260922-v1` ended with 26 focused VM tests passing, then failed WorkBay final verification/reporting. Checkpoint `17a6cf46e` is integrated into the feature branch; its verified bundle is `app1-pretenant-auth-20260922.bundle` and its clean worktree is retired. Billing, storage, composition and evaluator worktrees are also retired.
+- An SSH `/proc` survey found no live APP-1 Grok/Codex/remote-agent processes. This is task-scoped evidence, not a claim that the whole VM is idle. No new work was dispatched during wind-down. Remote sandbox deletion remains unverified; preserved UX-map patches must survive cleanup.
+- Main advanced independently to `cebc972bc1429eb8a8a07bae78993af84de9f3e0`; reconcile the feature against current main before final release checks. Nothing was deployed by this session.
+- Highest priorities: adjudicate evaluator RV01–03 evidence concerns against the exact reviewed delta (CARD-06, Principle 13, GRPH-14); repair remaining usage HIGH findings 15849–15852 (SEC-01, bounded resource admission); verify schema upgrade/RLS evidence and update table inventory fixtures. These are release concerns, not reasons to repeat finished implementation.
+- Evaluator RV04–06 are medium candidates: parametrized JUnit matching, nonexistent evidence-only JUnit references, and a case ledger remaining passed when its required artifact is missing. Confirm once, then include same-file repairs in the one authorized evaluator fix wave; no second review. Reported severities remain provisional until exact-range adjudication.
+- Semantic reinjection selected verified `gte-base-en-v1.5` prior art, including decisions 13281/13294 and finding 15555. Codemap re-found `claim_tenant` and `require_portal_principal`; coverage checks reported no recorded issue for auth, identity service and evaluator paths, which is not proof of completeness or feature-tip freshness.
+- Clerk remains unavailable. Real sign-in rehearsal remains pending Clerk; nothing was deployed.
+
 ## Execution checkpoint — 2026-09-22 06:41 UTC
 
 - Usage checkpoint `205bffd71471f2eedf1d06f9edd5e1523eb61a94` integrated at `1a3f51fe4` after 28 focused VM tests. Findings 15849–15852 still block main: global budget, scene coverage, premature settlement and operation-id reuse. Feature integration is not launch acceptance.

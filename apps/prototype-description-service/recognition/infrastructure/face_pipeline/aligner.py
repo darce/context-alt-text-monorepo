@@ -39,6 +39,20 @@ SFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
     dtype=np.float64,
 )
 
+# InsightFace arcface_dst for 112×112 (python-package/insightface/utils/face_align.py)
+# pinned commit 1480e705287bc5d59f923b46c260ec6e3e4150f6. Same decimal literals as
+# SFace, but float32 as in that file (not a view/import of the SFace float64 array).
+ARCFACE_CANONICAL_LANDMARKS_112: Final[np.ndarray] = np.array(
+    [
+        [38.2946, 51.6963],
+        [73.5318, 51.5014],
+        [56.0252, 71.7366],
+        [41.5493, 92.3655],
+        [70.7299, 92.2041],
+    ],
+    dtype=np.float32,
+)
+
 # Precomputed mean of SFACE_CANONICAL_LANDMARKS_112 (opencv hard-codes this).
 _SFACE_DST_MEAN: Final[tuple[float, float]] = (56.0262, 71.9008)
 
@@ -49,7 +63,12 @@ _SPACE_ARTIFACT: Final[dict[ModelSpace, str]] = {
     ModelSpace.AURAFACE: "auraface",
 }
 _SFACE_TEMPLATE_ID: Final[str] = "sface-5pt-112"
+_ARCFACE_TEMPLATE_ID: Final[str] = "arcface-112"
 _DEFAULT_CHANNEL_ORDER: Final[str] = "BGR"
+_TEMPLATE_LANDMARKS: Final[dict[str, np.ndarray]] = {
+    _SFACE_TEMPLATE_ID: SFACE_CANONICAL_LANDMARKS_112,
+    _ARCFACE_TEMPLATE_ID: ARCFACE_CANONICAL_LANDMARKS_112,
+}
 
 YUNET_LANDMARK_NAMES: Final[tuple[str, ...]] = (
     "right_eye",
@@ -176,11 +195,16 @@ class FivePointAligner:
             )
         self.output_size = output_size
         self.space = ModelSpace(space)
-        self.dst_landmarks = SFACE_CANONICAL_LANDMARKS_112
         entry = MODEL_MANIFEST.get(_SPACE_ARTIFACT.get(self.space, "sface"))
         preprocessing = entry.preprocessing if entry is not None else None
         self.template_id = preprocessing.alignment_template_id if preprocessing else _SFACE_TEMPLATE_ID
         self.channel_order = preprocessing.channel_order if preprocessing else _DEFAULT_CHANNEL_ORDER
+        if self.template_id not in _TEMPLATE_LANDMARKS:
+            supported = ", ".join(sorted(_TEMPLATE_LANDMARKS))
+            raise AlignmentError(
+                f"unknown alignment template {self.template_id!r}; supported templates: {supported}"
+            )
+        self.dst_landmarks = _TEMPLATE_LANDMARKS[self.template_id]
 
     def align(
         self,
@@ -207,7 +231,12 @@ class FivePointAligner:
         except FacePipelineInputError as exc:
             raise AlignmentError(str(exc)) from exc
 
-        affine = similarity_transform_matrix(landmarks)
+        # SFace keeps OpenCV's hardcoded dst mean (dst_landmarks=None). ArcFace
+        # 112 uses the same coordinates via dst.mean() (InsightFace estimate_norm).
+        if self.template_id == _SFACE_TEMPLATE_ID:
+            affine = similarity_transform_matrix(landmarks)
+        else:
+            affine = similarity_transform_matrix(landmarks, dst_landmarks=self.dst_landmarks)
         crop = cv2.warpAffine(
             img,
             affine,
@@ -216,13 +245,13 @@ class FivePointAligner:
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0.0,
         )
-        if self.channel_order == "RGB":
-            crop = np.ascontiguousarray(crop[..., ::-1])
+        # Crops stay BGR. Channel order is blob metadata (InsightFace swapRB).
         return AlignmentResult(crop=crop, affine=affine)
 
 
 __all__ = [
     "ALIGNED_SIZE",
+    "ARCFACE_CANONICAL_LANDMARKS_112",
     "AlignmentError",
     "AlignmentResult",
     "FivePointAligner",

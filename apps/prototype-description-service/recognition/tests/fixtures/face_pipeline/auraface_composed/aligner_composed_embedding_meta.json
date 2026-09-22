@@ -1,0 +1,55 @@
+{
+  "composed_cosine": 0.9999999999990856,
+  "cosine_min": 0.99999999,
+  "description": "Independent ArcFace align+blob+ORT vs in-house FivePointAligner+OrtSFaceEmbedder on the existing aligner source image/landmarks. Not a quality or deployment claim.",
+  "embedding_dim": 512,
+  "embedding_shape": [
+    1,
+    512
+  ],
+  "generator": "recognition/tests/fixtures/face_pipeline/generate_goldens.py",
+  "inhouse_crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
+  "inhouse_pre_norm_magnitude": 9.165495872497559,
+  "kind": "auraface_composed_embedding_golden",
+  "l2_norm": 0.9999999403953552,
+  "model": "glintr100.onnx",
+  "model_sha256": "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+  "models_dir": "/opt/acx-backend/data/dev-models/face_pipeline",
+  "numpy_version": "2.5.2",
+  "onnxruntime_version": "1.29.0",
+  "opencv_version": "5.0.0",
+  "ort_session": {
+    "execution_mode": "ORT_SEQUENTIAL",
+    "graph_optimization_level": "ORT_ENABLE_ALL",
+    "inter_op_num_threads": 1,
+    "intra_op_num_threads": 1,
+    "providers": [
+      "CPUExecutionProvider"
+    ]
+  },
+  "preprocessing": {
+    "alignment_template_id": "arcface-112",
+    "blob_formula": "(rgb_pixel - input_mean) * input_scale",
+    "channel_order": "RGB",
+    "input_mean": 127.5,
+    "input_scale": 0.00784313725490196,
+    "input_size": [
+      112,
+      112
+    ],
+    "output_l2_normalized": false
+  },
+  "reference": {
+    "align_formula": "independent skimage Umeyama (reflection singular-sign scale) onto float32 InsightFace arcface_dst 112 literal",
+    "blob_formula": "RGB (pixel-127.5)/127.5",
+    "cosine_formula": "float64 convert, L2-normalize, then dot",
+    "dst_dtype": "float32",
+    "dst_imported_from_production": false,
+    "insightface_runtime_imported": false,
+    "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6"
+  },
+  "reference_crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
+  "reference_pre_norm_magnitude": 9.165494918823242,
+  "source_image": "aligner_source_image.npy",
+  "source_landmarks": "aligner_landmarks.npy"
+}

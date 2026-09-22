@@ -67,6 +67,10 @@ _YUNET_OUTPUT_NAMES: Final[tuple[str, ...]] = (
 )
 
 _SFACE_ALIGNMENT_TEMPLATE_ID: Final[str] = "sface-5pt-112"
+_ARCFACE_ALIGNMENT_TEMPLATE_ID: Final[str] = "arcface-112"
+_SUPPORTED_ALIGNMENT_TEMPLATES: Final[frozenset[str]] = frozenset(
+    {_SFACE_ALIGNMENT_TEMPLATE_ID, _ARCFACE_ALIGNMENT_TEMPLATE_ID}
+)
 
 
 class UnsupportedModelPreprocessingError(ValueError):
@@ -82,6 +86,9 @@ def _ort_session(model_path: Path) -> ort.InferenceSession:
     opts.log_severity_level = 3  # ERROR
     opts.inter_op_num_threads = 1
     opts.intra_op_num_threads = 1
+    # Graph optimization and execution_mode stay SessionOptions defaults
+    # (ORT_ENABLE_ALL / ORT_SEQUENTIAL). Do not pin ORT_DISABLE_ALL here —
+    # that would change SFace/YuNet numerics relative to the FIR-3 baseline.
     return ort.InferenceSession(
         str(model_path),
         sess_options=opts,
@@ -122,8 +129,18 @@ def _bgr_to_declared_blob(
     *,
     channel_order: str,
     input_scale: float,
+    input_mean: float = 0.0,
 ) -> np.ndarray:
-    """Build a float32 NCHW blob from a BGR crop using declared metadata."""
+    """Build a float32 NCHW blob from a BGR crop using declared metadata.
+
+    Formula: ``(channel_ordered - input_mean) * input_scale``. Mean 0 / scale 1
+    preserves the SFace 0–255 RGB blob. AuraFace uses mean 127.5 and scale
+    1/127.5 → RGB ``(pixel - 127.5) / 127.5``.
+    """
+    if crop_u8.shape != (SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3):
+        raise FacePipelineInputError(
+            f"declared blob expects shape {(SFACE_CROP_SIZE, SFACE_CROP_SIZE, 3)}, got {crop_u8.shape}"
+        )
     if channel_order == "RGB":
         channel_ordered = crop_u8[:, :, ::-1]
     elif channel_order == "BGR":
@@ -131,7 +148,7 @@ def _bgr_to_declared_blob(
     else:  # validated when the model's builder is selected
         raise ValueError(f"unsupported declared channel order {channel_order!r}")
     blob = channel_ordered.astype(np.float32).transpose(2, 0, 1)[None, ...]
-    return np.ascontiguousarray(blob * np.float32(input_scale))
+    return np.ascontiguousarray((blob - np.float32(input_mean)) * np.float32(input_scale))
 
 
 def _blob_builder_for_model(model_name: str) -> Callable[[np.ndarray], np.ndarray]:
@@ -157,11 +174,11 @@ def _blob_builder_for_model(model_name: str) -> Callable[[np.ndarray], np.ndarra
             f"model {model_name!r} declares input_size={preprocessing.input_size!r}; "
             f"this pipeline implements only {expected_input_size!r} SFace crops"
         )
-    if preprocessing.alignment_template_id != _SFACE_ALIGNMENT_TEMPLATE_ID:
+    if preprocessing.alignment_template_id not in _SUPPORTED_ALIGNMENT_TEMPLATES:
         raise UnsupportedModelPreprocessingError(
             f"model {model_name!r} declares alignment template "
-            f"{preprocessing.alignment_template_id!r}; this pipeline implements only the SFace template "
-            f"{_SFACE_ALIGNMENT_TEMPLATE_ID!r}"
+            f"{preprocessing.alignment_template_id!r}; this pipeline implements "
+            f"{sorted(_SUPPORTED_ALIGNMENT_TEMPLATES)}"
         )
     if preprocessing.channel_order not in {"RGB", "BGR"}:
         raise UnsupportedModelPreprocessingError(
@@ -169,15 +186,19 @@ def _blob_builder_for_model(model_name: str) -> Callable[[np.ndarray], np.ndarra
             f"{preprocessing.channel_order!r} for alignment template "
             f"{preprocessing.alignment_template_id!r}; expected 'RGB' or 'BGR'"
         )
+    input_mean = float(getattr(preprocessing, "input_mean", 0.0))
     if not np.isfinite(preprocessing.input_scale):
         raise UnsupportedModelPreprocessingError(
             f"model {model_name!r} declares non-finite input_scale={preprocessing.input_scale!r}"
         )
+    if not np.isfinite(input_mean):
+        raise UnsupportedModelPreprocessingError(f"model {model_name!r} declares non-finite input_mean={input_mean!r}")
 
     return lambda crop: _bgr_to_declared_blob(
         crop,
         channel_order=preprocessing.channel_order,
         input_scale=preprocessing.input_scale,
+        input_mean=input_mean,
     )
 
 

@@ -7,7 +7,7 @@
   "host": "acx-backend",
   "arch": "aarch64",
   "heuristics": ["EXP-14", "TEST-11", "RES-16"],
-  "production_unverified_markers_flipped": false,
+  "production_unverified_markers_flipped": true,
   "artifact": {
     "path": "/opt/acx-backend/data/dev-models/face_pipeline/glintr100.onnx",
     "file_name": "glintr100.onnx",
@@ -111,31 +111,46 @@
   },
   "input_scale": {
     "graph_status": "not_in_graph",
-    "independently_supported": false,
-    "value": null,
-    "blocked_reason": "Graph input 'data' feeds Conv /conv1/Conv directly. No Sub/Mul/Div/Add scale nodes. File-level float32 encodings of 127.5 and 1/127.5 occur 0 times."
+    "independently_supported": true,
+    "value": 0.00784313725490196,
+    "recipe": "1.0/127.5",
+    "blocked_reason": null,
+    "graph_blocked_reason": "Graph input 'data' feeds Conv /conv1/Conv directly. No Sub/Mul/Div/Add scale nodes. File-level float32 encodings of 127.5 and 1/127.5 occur 0 times.",
+    "support": "FIR512-2 preprocess: independent RGB blob (pixel-127.5)/127.5 vs in-house declared blob. InsightFace ArcFaceONNX uses std=127.5 when first-8 nodes have no Sub/Mul; this graph has no Sub/Mul at all."
   },
   "input_offset": {
     "graph_status": "not_in_graph",
-    "independently_supported": false,
-    "value": null,
-    "blocked_reason": "No mean/offset initializer or Sub node is attached to graph input 'data'."
+    "independently_supported": true,
+    "value": 127.5,
+    "blocked_reason": null,
+    "graph_blocked_reason": "No mean/offset initializer or Sub node is attached to graph input 'data'.",
+    "support": "FIR512-2 preprocess: independent blob subtracts 127.5 before scale. Matches InsightFace ArcFaceONNX input_mean=127.5 for graphs without Sub/Mul."
   },
   "channel_order": {
     "graph_status": "not_in_graph",
-    "independently_supported": false,
-    "value": null,
+    "independently_supported": true,
+    "value": "RGB",
     "measured_channel_count": 3,
     "layout": "NCHW",
-    "blocked_reason": "Three input channels and first-conv weights [64,3,3,3] are graph-measured. RGB versus BGR is not encoded (no Transpose / channel-swap node)."
+    "blocked_reason": null,
+    "graph_blocked_reason": "Three input channels and first-conv weights [64,3,3,3] are graph-measured. RGB versus BGR is not encoded (no Transpose / channel-swap node).",
+    "support": "FIR512-2 preprocess: independent blob uses BGR crop then swapRB=True (RGB NCHW), matching InsightFace blobFromImages. In-house aligner crops remain BGR."
   },
   "alignment": {
     "graph_status": "not_in_graph",
-    "independently_supported": false,
-    "value": null,
-    "template_id": null,
-    "coordinates": null,
-    "blocked_reason": "An ONNX recognizer graph does not encode external five-point alignment. glintr100.onnx has no landmark, affine, warp, or template tensors."
+    "independently_supported": true,
+    "value": "arcface-112",
+    "template_id": "arcface-112",
+    "coordinates": [
+      [38.2946, 51.6963],
+      [73.5318, 51.5014],
+      [56.0252, 71.7366],
+      [41.5493, 92.3655],
+      [70.7299, 92.2041]
+    ],
+    "blocked_reason": null,
+    "graph_blocked_reason": "An ONNX recognizer graph does not encode external five-point alignment. glintr100.onnx has no landmark, affine, warp, or template tensors.",
+    "support": "FIR512-2 preprocess: independent skimage Umeyama onto float32 InsightFace arcface_dst @ 1480e705287bc5d59f923b46c260ec6e3e4150f6 produced a bit-identical 112 BGR crop vs in-house FivePointAligner (crop SHA a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993). Independent dest is a float32 literal, not a production import."
   },
   "raw_output_normalization": {
     "graph_status": "measured",
@@ -167,12 +182,28 @@
       "reason": "Existing composed SFace golden is not AuraFace proof."
     },
     "auraface_ort_composed_parity": {
-      "status": "pending",
-      "independently_supported": false,
-      "detector": "in-house YuNet",
-      "aligner": "in-house FivePointAligner",
+      "status": "measured",
+      "independently_supported": true,
+      "detector": "existing aligner_source_image.npy + aligner_landmarks.npy (not a live YuNet claim)",
+      "aligner": "in-house FivePointAligner(space=auraface) vs independent ArcFace Umeyama",
       "embedder": "ONNX Runtime glintr100.onnx",
-      "reason": "No composed YuNet + in-house aligner + ORT AuraFace run was performed; fixture-only ORT runs do not establish external preprocessing or composed parity."
+      "fixture_dir": "recognition/tests/fixtures/face_pipeline/auraface_composed",
+      "crop_sha256": "a6f718d6d35e3e58228d486f80062940c70e2dfdcddd22bcb22147b8f27ad993",
+      "crops_bit_identical": true,
+      "composed_cosine": 0.9999999999990856,
+      "cosine_min": 0.99999999,
+      "embedding_dim": 512,
+      "raw_output_normalized": false,
+      "pipeline_l2_applied": true,
+      "ort_session": {
+        "intra_op_num_threads": 1,
+        "inter_op_num_threads": 1,
+        "graph_optimization_level": "ORT_ENABLE_ALL",
+        "execution_mode": "ORT_SEQUENTIAL",
+        "providers": ["CPUExecutionProvider"]
+      },
+      "insightface_runtime_imported": false,
+      "reason": "Independent ArcFace align+blob+same default ORT settings matched in-house FivePointAligner+OrtSFaceEmbedder on existing pixels/landmarks. Crop SHA identical; float64 unit cosine 0.9999999999990856. Crops remain BGR. Not a quality or deployment claim."
     }
   },
   "upstream_documented_contract": {
@@ -213,13 +244,22 @@
       "example_reads_normed_embedding": true
     },
     "local_manifest_assumption": {
-      "status": "unverified",
+      "status": "verified_by_composed_independent_reference",
       "source": "recognition.infrastructure.face_pipeline.provenance.MODEL_MANIFEST['auraface'].preprocessing",
-      "declared_unverified_input_scale": "1.0/127.5",
-      "declared_unverified_alignment_template_id": "arcface-112-unverified",
-      "declared_unverified_channel_order": "RGB",
-      "declared_unverified_output_l2_normalized": true,
-      "note": "FIR512-1/FIRDV-3 S1b assumptions remain UNVERIFIED. This lane did not edit production sources or flip those markers."
+      "historical_unverified": {
+        "status": "unverified",
+        "declared_unverified_input_scale": "1.0/127.5",
+        "declared_unverified_alignment_template_id": "arcface-112-unverified",
+        "declared_unverified_channel_order": "RGB",
+        "declared_unverified_output_l2_normalized": true,
+        "note": "FIR512-1/FIRDV-3 S1b assumptions were UNVERIFIED at measure time. Preprocess lane retained that history and replaced production markers only where independently reproduced."
+      },
+      "declared_input_scale": "1.0/127.5",
+      "declared_input_mean": 127.5,
+      "declared_alignment_template_id": "arcface-112",
+      "declared_channel_order": "RGB",
+      "declared_output_l2_normalized": false,
+      "note": "FIR512-2 preprocess flipped production UNVERIFIED markers after independent ArcFace reference vs in-house aligner+ORT. Raw graph output stays unnormalized; embed_batch still L2-normalizes. No quality or deployment claim."
     }
   },
   "evidence_limits": [
@@ -227,15 +267,15 @@
     "Conv node attribute protobuf was not fully decoded; first-conv kernel is taken from initializer dims [64,3,3,3], not from Conv attribute fields.",
     "A single file-level float32 1/255 bit-pattern (count=1) is treated as a coincidental weight value, not a preprocessing node.",
     "Fixture inference used existing synthetic_112_crop.npy pixels only; there is no AuraFace reference embedding for this crop.",
-    "Publisher/InsightFace runtime alignment and (x-127.5)/127.5 scaling are external to the ONNX graph and were not executed here.",
-    "InsightFace source commit 1480e705287bc5d59f923b46c260ec6e3e4150f6 documents an ArcFace-family recipe and five-point targets; it is a cited upstream reference, not independent AuraFace or composed-pipeline evidence.",
+    "Publisher/InsightFace runtime alignment and (x-127.5)/127.5 scaling are external to the ONNX graph. Measure lane did not execute them. Preprocess lane independently reimplemented the pinned InsightFace source without importing InsightFace.",
+    "InsightFace source commit 1480e705287bc5d59f923b46c260ec6e3e4150f6 documents an ArcFace-family recipe and five-point targets. Measure lane treated that as cited reference only. Preprocess lane independently reproduced the formula against in-house aligner+ORT.",
     "LICENSE.auraface.md is Apache-2.0 license text and does not document preprocessing.",
-    "A blocked independent measurement of input_scale and alignment_template_id is valid evidence; those fields stay unsupported."
+    "A blocked independent measurement of input_scale and alignment_template_id was valid at measure time. FIR512-2 preprocess later reproduced those fields via composed independent reference; graph still does not encode them.",
+    "Publisher model card does not state numeric input scale or alignment coordinates; its example uses FaceAnalysis name=auraface and reads normed_embedding.",
+    "No quality, accuracy, or deployment claim is made from composed cosine on a synthetic source image."
   ],
   "unresolved_questions": [
-    "Whether the cited ArcFace-family input scale/offset/channel recipe applies to this glintr100.onnx.",
-    "Which five-point 112 template, if any, matches AuraFace training alignment rather than the cited ArcFace reference.",
-    "Whether the intended channel order is RGB or BGR.",
-    "Whether comparison-time L2 should be applied after the graph, given raw outputs are not unit-normalized."
+    "Publisher model card still does not publish numeric scale/template; composed evidence follows the InsightFace FaceAnalysis recipe the pinned README example invokes, independently reimplemented.",
+    "Live YuNet detection was not part of this composed run; pixels and landmarks came from existing aligner fixtures."
   ]
 }

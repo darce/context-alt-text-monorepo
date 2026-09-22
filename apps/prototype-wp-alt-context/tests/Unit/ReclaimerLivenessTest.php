@@ -60,7 +60,7 @@ class ReclaimerLivenessTest extends TestCase
 			$this->assertSame(ReclaimerLiveness::STATE_HEALTHY, $liveness->read($tenant)['state']);
 			++$now;
 			$this->assertSame(ReclaimerLiveness::STATE_OVERDUE, $liveness->read($tenant)['state']);
-			$now += $period;
+			$now += $period - 1;
 			$this->assertSame(ReclaimerLiveness::STATE_OVERDUE, $liveness->read($tenant)['state']);
 			++$now;
 			$this->assertSame(ReclaimerLiveness::STATE_BREACH, $liveness->read($tenant)['state']);

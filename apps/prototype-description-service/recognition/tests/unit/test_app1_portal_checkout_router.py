@@ -36,6 +36,7 @@ EMAIL = "owner@example.test"
 PLAN_CODE = "starter_monthly"
 SELLER_ACCOUNT = "org_sandbox"
 IDEM_KEY = "client-idempotency-key:" + ("a" * 41)
+NEW_IDEM_KEY = "client-idempotency-key:" + ("b" * 41)
 
 
 class _AsyncTransactionFacade:
@@ -214,6 +215,18 @@ def _app(
     application.dependency_overrides[require_portal_principal] = override_principal
     application.dependency_overrides[portal.get_portal_session] = override_session
     return application
+
+
+def _activate_subscription(session: _AsyncSessionFacade, tenant_id: UUID) -> None:
+    session.add(
+        BillingSubscriptionProjection(
+            tenant_id=tenant_id,
+            provider="polar",
+            provider_customer_id=f"cus_{tenant_id}",
+            status="active",
+        )
+    )
+    session._session.commit()
 
 
 def _headers(*, origin: str | None = ALLOWED_ORIGIN, idempotency: str | None = IDEM_KEY) -> dict[str, str]:
@@ -509,6 +522,61 @@ def test_fresh_ambiguity_is_503_retry_after_1_and_existing_is_409(harness: tuple
     assert _code(retry) == "checkout_ambiguous"
     assert retry.json()["detail"]["attempt_id"] == fresh.json()["detail"]["attempt_id"]
     assert len(provider.checkout_calls) == 1
+
+
+def test_active_subscriber_replays_same_key_and_refuses_new_checkout(harness: tuple) -> None:
+    session, tenant, provider, application = harness
+
+    with TestClient(application) as client:
+        first = _post_checkout(client)
+        _activate_subscription(session, tenant.id)
+        replay = _post_checkout(client)
+        refused = _post_checkout(client, headers=_headers(idempotency=NEW_IDEM_KEY))
+        mismatch = _post_checkout(client, body={"plan_code": PLAN_CODE, "return_path": "/billing/other"})
+
+    assert first.status_code == 200
+    assert first.json()["replayed"] is False
+    assert first.json()["status"] == CheckoutAttemptStatus.PENDING.value
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["attempt_id"] == first.json()["attempt_id"]
+    assert replay.json()["checkout_url"] == first.json()["checkout_url"]
+    assert replay.json()["status"] == CheckoutAttemptStatus.PENDING.value
+    assert refused.status_code == 409
+    assert _code(refused) == "already_subscribed"
+    assert mismatch.status_code == 422
+    assert _code(mismatch) == "idempotency_key_reuse"
+    assert len(provider.checkout_calls) == 1
+    assert provider.customer_calls == []
+    assert provider.subscription_calls == []
+
+
+def test_active_subscriber_same_key_does_not_replay_across_tenants() -> None:
+    engine, session = _engine_session()
+    tenant_a = _add_tenant(session, "active-a")
+    tenant_b = _add_tenant(session, "active-b")
+    provider = FakeBillingProvider()
+    app_a = _app(session, _principal(tenant_a.id), provider)
+    app_b = _app(session, _principal(tenant_b.id), provider)
+    try:
+        with TestClient(app_a) as client_a:
+            first = _post_checkout(client_a)
+        _activate_subscription(session, tenant_a.id)
+        with TestClient(app_a) as client_a:
+            replay = _post_checkout(client_a)
+        with TestClient(app_b) as client_b:
+            isolated = _post_checkout(client_b)
+        assert first.status_code == 200
+        assert replay.status_code == 200
+        assert replay.json()["replayed"] is True
+        assert replay.json()["attempt_id"] == first.json()["attempt_id"]
+        assert isolated.status_code == 200
+        assert isolated.json()["attempt_id"] != first.json()["attempt_id"]
+        assert isolated.json()["replayed"] is False
+        assert {call["tenant_id"] for call in provider.checkout_calls} == {tenant_a.id, tenant_b.id}
+        assert len(provider.checkout_calls) == 2
+    finally:
+        engine.dispose()
 
 
 def test_fingerprint_mismatch_is_422_idempotency_key_reuse(harness: tuple) -> None:

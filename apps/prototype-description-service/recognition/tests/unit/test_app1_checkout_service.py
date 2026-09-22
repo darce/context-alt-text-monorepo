@@ -568,6 +568,84 @@ async def test_created_crash_resume_reuses_attempt_owned_provider_key(
     assert row.status == CheckoutAttemptStatus.PENDING.value
 
 
+@pytest.mark.asyncio
+async def test_replay_existing_checkout_returns_none_without_provider_when_missing(
+    checkout_session: _AsyncSessionFacade,
+) -> None:
+    tenant = await _create_tenant(checkout_session, "replay-miss")
+    provider = FakeBillingProvider()
+    service = _service(checkout_session, provider)
+
+    result = await service.replay_existing_checkout(**_create_kwargs(tenant.id))
+
+    assert result is None
+    assert provider.calls == []
+    rows = (await checkout_session.execute(select(BillingCheckoutAttempt))).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_replay_existing_checkout_replays_without_vendor_after_first_success(
+    checkout_session: _AsyncSessionFacade,
+) -> None:
+    tenant = await _create_tenant(checkout_session, "replay-hit")
+    provider = FakeBillingProvider()
+    service = _service(checkout_session, provider)
+    first = await service.create_checkout(**_create_kwargs(tenant.id))
+
+    replayed = await service.replay_existing_checkout(**_create_kwargs(tenant.id))
+
+    assert replayed is not None
+    assert replayed.replayed is True
+    assert replayed.attempt_id == first.attempt_id
+    assert replayed.checkout_url == first.checkout_url
+    assert replayed.status is CheckoutAttemptStatus.PENDING
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_replay_existing_checkout_fingerprint_mismatch_raises_without_provider(
+    checkout_session: _AsyncSessionFacade,
+) -> None:
+    tenant = await _create_tenant(checkout_session, "replay-fp")
+    provider = FakeBillingProvider()
+    service = _service(checkout_session, provider)
+    await service.create_checkout(**_create_kwargs(tenant.id))
+    provider.calls.clear()
+
+    with pytest.raises(CheckoutFingerprintConflictError):
+        await service.replay_existing_checkout(**_create_kwargs(tenant.id, plan_code="starter_monthly"))
+
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_replay_existing_checkout_is_isolated_by_tenant_and_seller(
+    checkout_session: _AsyncSessionFacade,
+) -> None:
+    tenant_a = await _create_tenant(checkout_session, "replay-iso-a")
+    tenant_b = await _create_tenant(checkout_session, "replay-iso-b")
+    sandbox_provider = FakeBillingProvider()
+    sandbox = _service(checkout_session, sandbox_provider)
+    first = await sandbox.create_checkout(**_create_kwargs(tenant_a.id))
+
+    foreign = await sandbox.replay_existing_checkout(**_create_kwargs(tenant_b.id))
+    live = _service(
+        checkout_session,
+        FakeBillingProvider(),
+        seller_account="org_live",
+        environment="live",
+        keys=["live-key-1"],
+    )
+    other_seller = await live.replay_existing_checkout(**_create_kwargs(tenant_a.id))
+
+    assert foreign is None
+    assert other_seller is None
+    assert len(sandbox_provider.calls) == 1
+    row = await _load_attempt(checkout_session, first.attempt_id)
+    assert row.seller_account == "org_sandbox"
+
+
 def test_fingerprint_is_canonical_json_of_tenant_plan_urls_and_seller() -> None:
     tenant_id = uuid4()
     left = CheckoutService.fingerprint(

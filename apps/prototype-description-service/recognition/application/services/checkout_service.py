@@ -186,6 +186,64 @@ class CheckoutService:
         client_idempotency_key: str,
     ) -> CheckoutResult:
         """Create or replay one tenant-scoped checkout without holding a DB lock on I/O."""
+        tenant_id, plan_code, success_url, cancel_url, client_key, fingerprint = self._normalize_checkout_request(
+            tenant_id=tenant_id,
+            plan_code=plan_code,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            client_idempotency_key=client_idempotency_key,
+        )
+        begun = await self._begin_attempt(tenant_id, plan_code, client_key, fingerprint)
+        await self._commit()
+        if begun.replayed:
+            return await self._resume_existing(begun.attempt, plan_code, success_url, cancel_url)
+        return await self._request_provider(
+            begun.attempt,
+            plan_code=plan_code,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            replayed=False,
+        )
+
+    async def replay_existing_checkout(
+        self,
+        *,
+        tenant_id: UUID,
+        plan_code: str,
+        success_url: str,
+        cancel_url: str,
+        client_idempotency_key: str,
+    ) -> CheckoutResult | None:
+        """Replay a matching client-key attempt, or None when no row exists yet."""
+        tenant_id, plan_code, success_url, cancel_url, client_key, fingerprint = self._normalize_checkout_request(
+            tenant_id=tenant_id,
+            plan_code=plan_code,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            client_idempotency_key=client_idempotency_key,
+        )
+        existing = await self._repository.get_by_client_idempotency_key(
+            tenant_id=tenant_id,
+            provider=self._provider_name,
+            environment=self._environment,
+            seller_account=self._seller_account,
+            client_idempotency_key=client_key,
+        )
+        if existing is None:
+            return None
+        if existing.request_fingerprint != fingerprint:
+            raise CheckoutFingerprintConflictError("idempotency key was already used for a different checkout request")
+        return await self._resume_existing(existing, plan_code, success_url, cancel_url)
+
+    def _normalize_checkout_request(
+        self,
+        *,
+        tenant_id: UUID,
+        plan_code: str,
+        success_url: str,
+        cancel_url: str,
+        client_idempotency_key: str,
+    ) -> tuple[UUID, str, str, str, str, str]:
         self._require_payments_enabled()
         tenant_id = _require_uuid("tenant_id", tenant_id)
         plan_code = _text("plan_code", plan_code)
@@ -200,17 +258,7 @@ class CheckoutService:
             environment=self._environment,
             seller_account=self._seller_account,
         )
-        begun = await self._begin_attempt(tenant_id, plan_code, client_key, fingerprint)
-        await self._commit()
-        if begun.replayed:
-            return await self._resume_existing(begun.attempt, plan_code, success_url, cancel_url)
-        return await self._request_provider(
-            begun.attempt,
-            plan_code=plan_code,
-            success_url=success_url,
-            cancel_url=cancel_url,
-            replayed=False,
-        )
+        return tenant_id, plan_code, success_url, cancel_url, client_key, fingerprint
 
     def _require_payments_enabled(self) -> None:
         if not self._payments_enabled:

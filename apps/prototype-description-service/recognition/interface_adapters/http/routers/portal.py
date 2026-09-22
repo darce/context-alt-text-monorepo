@@ -812,18 +812,27 @@ async def portal_billing_checkout(
         raise _billing_http_error(422, "unknown_plan_code")
     success_url = _absolute_return_url(request, body.return_path or _DEFAULT_SUCCESS_PATH)
     cancel_url = _absolute_return_url(request, _DEFAULT_CANCEL_PATH)
-    projection = await billing_repository.get_projection(principal.tenant_id)
-    if projection is not None and projection.status == BillingSubscriptionStatus.ACTIVE.value:
-        raise _billing_http_error(status.HTTP_409_CONFLICT, "already_subscribed")
     service = await get_checkout_service(request, session)
+    client_key = _client_idempotency_key(request)
     try:
-        result = await service.create_checkout(
+        result = await service.replay_existing_checkout(
             tenant_id=principal.tenant_id,
             plan_code=body.plan_code,
             success_url=success_url,
             cancel_url=cancel_url,
-            client_idempotency_key=_client_idempotency_key(request),
+            client_idempotency_key=client_key,
         )
+        if result is None:
+            projection = await billing_repository.get_projection(principal.tenant_id)
+            if projection is not None and projection.status == BillingSubscriptionStatus.ACTIVE.value:
+                raise _billing_http_error(status.HTTP_409_CONFLICT, "already_subscribed")
+            result = await service.create_checkout(
+                tenant_id=principal.tenant_id,
+                plan_code=body.plan_code,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_idempotency_key=client_key,
+            )
     except HTTPException:
         raise
     except Exception as exc:

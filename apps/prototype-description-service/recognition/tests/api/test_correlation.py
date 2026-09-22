@@ -219,3 +219,119 @@ def test_exception_handler_uses_contextvar_correlation_id() -> None:
     assert body["correlation_id"] == incoming
     assert "trace_id" not in body
     assert resp.headers[CORRELATION_ID_HEADER] == incoming
+
+
+@pytest.mark.asyncio
+async def test_middleware_releases_the_contextvar_on_the_success_path() -> None:
+    sent_messages: list[dict[str, object]] = []
+
+    async def app(scope, receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        sent_messages.append(message)
+
+    middleware = CorrelationIdMiddleware(app)
+    scope = {"type": "http", "method": "GET", "path": "/", "headers": []}
+    outer_token = _correlation_id_var.set(None)
+    try:
+        await middleware(scope, receive, send)
+        assert get_correlation_id() is None
+
+        sentinel_token = _correlation_id_var.set("pre-existing")
+        try:
+            await middleware(scope, receive, send)
+            assert get_correlation_id() == "pre-existing"
+        finally:
+            _correlation_id_var.reset(sentinel_token)
+        assert get_correlation_id() is None
+    finally:
+        _correlation_id_var.reset(outer_token)
+
+
+@pytest.mark.asyncio
+async def test_middleware_keeps_the_contextvar_bound_when_the_app_raises() -> None:
+    request_id = "00000000-0000-4000-8000-0000000000aa"
+
+    async def app(scope, receive, send) -> None:
+        raise RuntimeError("boom")
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, object]) -> None:
+        raise AssertionError("the raising app must not send a response")
+
+    middleware = CorrelationIdMiddleware(app)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/boom",
+        "headers": [(CORRELATION_ID_HEADER.lower().encode("latin-1"), request_id.encode("latin-1"))],
+    }
+    outer_token = _correlation_id_var.set(None)
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            await middleware(scope, receive, send)
+        assert get_correlation_id() == request_id
+    finally:
+        _correlation_id_var.reset(outer_token)
+
+
+@pytest.mark.asyncio
+async def test_two_sequential_requests_in_one_context_do_not_inherit_the_previous_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    request_ids = [
+        "00000000-0000-4000-8000-0000000000ab",
+        "00000000-0000-4000-8000-0000000000ac",
+    ]
+
+    async def app(scope, receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent_messages: list[dict[str, object]] = []
+
+    async def send(message: dict[str, object]) -> None:
+        sent_messages.append(message)
+
+    middleware = CorrelationIdMiddleware(app)
+    outer_token = _correlation_id_var.set("pre-test")
+    try:
+        with caplog.at_level(logging.INFO, logger=ACCESS_LOGGER_NAME):
+            for request_id in request_ids:
+                sent_messages.clear()
+
+                scope = {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/echo",
+                    "headers": [
+                        (CORRELATION_ID_HEADER.lower().encode("latin-1"), request_id.encode("latin-1"))
+                    ],
+                }
+                await middleware(scope, receive, send)
+
+                response_start = next(message for message in sent_messages if message["type"] == "http.response.start")
+                response_headers = response_start["headers"]
+                echoed_ids = [
+                    value
+                    for key, value in response_headers
+                    if key.lower() == CORRELATION_ID_HEADER.lower().encode("latin-1")
+                ]
+                assert echoed_ids == [request_id.encode("latin-1")]
+
+        assert get_correlation_id() == "pre-test"
+    finally:
+        _correlation_id_var.reset(outer_token)
+
+    access_records = [record for record in caplog.records if record.name == ACCESS_LOGGER_NAME]
+    assert [record.correlation_id for record in access_records] == request_ids

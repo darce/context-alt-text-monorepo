@@ -52,6 +52,33 @@ def test_active_embedding_model_id_test_mode(monkeypatch: pytest.MonkeyPatch) ->
         get_settings.cache_clear()
 
 
+def test_active_embedding_model_id_auraface_uses_auraface_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HEALTH-RECOVERY-2: AuraFace space id is the 512D in-house manifest, not buffalo_l."""
+    from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+        auraface_embedding_model_manifest,
+    )
+
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "production")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    from recognition.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        model_id = active_embedding_model_id()
+        expected = auraface_embedding_model_manifest().model_id
+        assert model_id == expected
+        assert "auraface" in model_id.lower()
+        assert "@512d/" in model_id
+        assert "buffalo" not in model_id.lower()
+        assert model_id != incumbent_embedding_model_manifest().model_id
+    finally:
+        get_settings.cache_clear()
+
+
 def test_check_active_embedding_model_ok() -> None:
     result = check_active_embedding_model()
     assert result.name == "embedding_model"

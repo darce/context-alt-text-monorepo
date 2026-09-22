@@ -119,6 +119,12 @@ def active_embedding_model_id() -> str:
         )
 
         model_id = sface_embedding_model_manifest().model_id
+    elif settings.face_pipeline.profile == "auraface":
+        from recognition.infrastructure.embeddings.face_pipeline_adapter import (
+            auraface_embedding_model_manifest,
+        )
+
+        model_id = auraface_embedding_model_manifest().model_id
     elif settings.face_pipeline.profile == "insightface":
         model_id = incumbent_embedding_model_manifest().model_id
     else:

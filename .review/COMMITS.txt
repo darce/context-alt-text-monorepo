@@ -1,2 +1,2 @@
-e162ea0ed602 offload: N1 billing-namespace WIP verified green (109 passed);
-54d0249b2958 APP-1 WIP: preserve remote namespace work at turn limit; unverified
+4427dc4887bd offload: APP-1 browser-shell is committed at d3681ae4 with green vitest,
+04c30a1d2cc4 APP-1 WIP: preserve remote browser-shell work at turn limit; unverified

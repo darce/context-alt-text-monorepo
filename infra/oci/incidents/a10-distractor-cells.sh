@@ -9,7 +9,8 @@ _CONTRACT="$(cd "$(dirname "$0")/../../.." && pwd)/scripts/eval_exit_contract.en
 EVAL_EXIT_PARTIAL="${EVAL_EXIT_PARTIAL:-1}"
 EVAL_EXIT_REFUSED="${EVAL_EXIT_REFUSED:-3}"
 PRIV_IP="${1:-10.0.1.68}"; PORT=8000
-export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$HOME/Development/eval-fixtures}"
+# Primary-checkout image root (images live only there; works from linked worktrees).
+export GOLDEN_IMAGES_DIR="${GOLDEN_IMAGES_DIR:-$(cd "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/benchmarks/images}"
 JUMP=$(grep -h "^REMOTE_GATE_HOST=" "$HOME/Development/context-alt-text-monorepo/.workbay/remote-gate.env" | cut -d= -f2- | tr -d '"'"'"' ' | sed 's/#.*//')
 SVC="$HOME/Development/context-alt-text-monorepo-altq-1/apps/prototype-description-service"
 PY="$HOME/.pyenv/versions/description-service/bin/python"

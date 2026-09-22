@@ -20,10 +20,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
-    PENDING_OPERATOR_FETCH,
     ModelVerifyOutcome,
     verify_face_pipeline_model,
 )
@@ -526,30 +526,6 @@ def expected_embedding_dimension(space: ModelSpace) -> int:
     if entry is None or entry.embedding_dim is None:
         raise ValueError(f"model space {space.value!r} has no embedding dimension")
     return int(entry.embedding_dim)
-
-
-def assert_space_activatable(space: ModelSpace) -> None:
-    """Refuse activation while a space's provenance or preprocessing is unverified."""
-    if space is ModelSpace.INSIGHTFACE:
-        return
-    if space is ModelSpace.FACE_PIPELINE:
-        model_names = ("yunet", "sface")
-    elif space is ModelSpace.AURAFACE:
-        model_names = ("auraface",)
-    else:
-        raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
-
-    for model_name in model_names:
-        entry = MODEL_MANIFEST.get(model_name)
-        if entry is None:
-            raise ValueError(f"model space {space.value!r} is missing manifest entry {model_name!r}")
-        if entry.sha256 == PENDING_OPERATOR_FETCH or entry.license_sha256 == PENDING_OPERATOR_FETCH:
-            raise ValueError(f"model {model_name!r} remains {PENDING_OPERATOR_FETCH}")
-        if space is ModelSpace.AURAFACE:
-            preprocessing = entry.preprocessing
-            template_id = preprocessing.alignment_template_id if preprocessing is not None else "missing"
-            if preprocessing is None or "unverified" in template_id.lower():
-                raise ValueError(f"model {model_name!r} alignment template {template_id!r} is -unverified")
 
 
 def _stat_file_identity(path: Path) -> tuple[int, int] | None:

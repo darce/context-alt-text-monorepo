@@ -27,7 +27,8 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
-from recognition.infrastructure.face_pipeline.model_space import UnhandledModelSpaceError
+from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
@@ -71,9 +72,11 @@ async def build_embedding_runtime(
         )
 
         try:
+            space = ModelSpace(profile)
+            assert_space_activatable(space)
             embedder_models_dir = None
-            if profile == "auraface":
-                embedder_models_dir = getattr(settings, "auraface_models_dir", None)
+            if space is ModelSpace.AURAFACE:
+                embedder_models_dir = settings.auraface_models_dir
             runtime = get_shared_face_pipeline_runtime(
                 profile=profile,
                 models_dir=settings.face_pipeline.resolved_models_dir,

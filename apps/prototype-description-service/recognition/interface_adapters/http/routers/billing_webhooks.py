@@ -55,6 +55,14 @@ _SIGNATURE_HEADERS: Final[tuple[str, ...]] = (
     "x-webhook-signature",
 )
 
+# Standard Webhooks / Polar / Svix delivery-authentication timestamp. This is
+# not payload["timestamp"] (event occurrence time).
+_DELIVERY_TIMESTAMP_HEADERS: Final[tuple[str, ...]] = (
+    "webhook-timestamp",
+    "svix-timestamp",
+    "x-webhook-timestamp",
+)
+
 _EVENT_STATUS: Final[dict[str, BillingSubscriptionStatus]] = {
     "subscription.active": BillingSubscriptionStatus.ACTIVE,
     "subscription.created": BillingSubscriptionStatus.ACTIVE,
@@ -145,7 +153,7 @@ async def receive_polar_webhook(
     payload = cast(Mapping[str, object], parsed)
     event_id = _event_id(payload, raw_body)
     event_type = _required_text(payload, "type")
-    if not _webhook_timestamp_is_current(payload, request):
+    if not _webhook_timestamp_is_current(request):
         logger.warning(
             "Polar webhook rejected: event_id=%s event_type=%s outcome=timestamp_out_of_tolerance",
             event_id,
@@ -568,27 +576,52 @@ def _optional_datetime(value: object) -> datetime | None:
         return None
 
 
-def _webhook_timestamp_is_current(payload: Mapping[str, object], request: Request) -> bool:
-    event_time = _webhook_timestamp(payload.get("timestamp"))
+def _webhook_timestamp_is_current(request: Request) -> bool:
+    """Bound delivery authentication time, never domain event occurrence time.
+
+    Payload `timestamp` is when the billing event happened and can be hours
+    old on replay or reconciliation. Replay protection belongs on the
+    delivery timestamp (Standard Webhooks `webhook-timestamp`). A missing
+    delivery header is not treated as event-age; signature verification
+    already ran. An unparseable delivery header is rejected.
+    """
+    header_value = _delivery_timestamp_header(request)
+    if header_value is None:
+        return True
+    delivery_time = _webhook_timestamp(header_value)
     clock = getattr(request.app.state, "webhook_clock", None)
     if not callable(clock):
         clock = _clock
     try:
         now = clock()
-        if not isinstance(now, datetime) or now.tzinfo is None or event_time is None:
+        if not isinstance(now, datetime) or now.tzinfo is None or delivery_time is None:
             return False
-        return abs((now.astimezone(UTC) - event_time).total_seconds()) <= WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS
+        return abs((now.astimezone(UTC) - delivery_time).total_seconds()) <= WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS
     except (OverflowError, OSError, TypeError, ValueError):
         return False
 
 
+def _delivery_timestamp_header(request: Request) -> str | None:
+    for header_name in _DELIVERY_TIMESTAMP_HEADERS:
+        value = request.headers.get(header_name)
+        if value:
+            return value
+    return None
+
+
 def _webhook_timestamp(value: object) -> datetime | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
         try:
             return datetime.fromtimestamp(float(value), UTC)
         except (OverflowError, OSError, ValueError):
             return None
     if isinstance(value, str) and value:
+        try:
+            return datetime.fromtimestamp(float(value), UTC)
+        except (OverflowError, OSError, ValueError):
+            pass
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:

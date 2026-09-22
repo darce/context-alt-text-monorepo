@@ -35,11 +35,13 @@ from db.models.scene import (
     ImageDescription,
 )
 from db.models.tenant import Tenant
+from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quota
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.description_adapter import AdapterResult
@@ -47,7 +49,7 @@ from scene.domain.description import DescriptionAdapterKind
 from scene.interface_adapters.http.deps import get_description_adapter, get_gpu_description_adapter
 from scene.interface_adapters.http.router import router as scene_router
 from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate, _PreflightMissCacheRepository
-from scene.tests.demo_quota_harness import demo_quota_client as _demo_quota_client
+from scene.tests.demo_quota_harness import demo_quota_client as _raw_demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _recognition_used
 
 TENANT_ID = "00000000-0000-0000-0000-0000000000bb"
@@ -77,6 +79,53 @@ class _Auth:
     def __init__(self, tenant_claim=None):
         self.tenant_claim = tenant_claim
         self.user_id = None
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        tenant_uuid = tenant_id if isinstance(tenant_id, uuid.UUID) else uuid.UUID(str(tenant_id))
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_uuid,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-describe-route",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+
+@contextmanager
+def _demo_quota_client(**kwargs):
+    with _raw_demo_quota_client(**kwargs) as ctx:
+        admission = _PassAdmission()
+        ctx[0].app.state.usage_admission_service = admission
+        ctx[0].app.dependency_overrides[get_usage_admission_service] = lambda: admission
+        yield ctx
 
 
 class _SlowLocalAdapter:
@@ -173,6 +222,9 @@ def _client(auth_tenant=None, adapter=None, naming_agreement_enabled=True, db_ab
     # re-resolved (would 401 under default RECOGNITION_AUTH_ENABLED=1).
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = (lambda: None) if db_absent else _session
+    admission = _PassAdmission()
+    app.state.usage_admission_service = admission
+    app.dependency_overrides[get_usage_admission_service] = lambda: admission
     if adapter is not None:
         app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:

@@ -17,6 +17,7 @@ from pathlib import Path
 from pythonjsonlogger.json import JsonFormatter
 
 from recognition.interface_adapters.http.middleware.correlation import (
+    ACCESS_LOGGER_NAME,
     CORRELATION_ID_LOG_FIELD,
     CORRELATION_ID_PLACEHOLDER,
     CorrelationIdFilter,
@@ -95,6 +96,7 @@ class RecognitionFilter(logging.Filter):
             or name.startswith("recognition.interface_adapters")
             or name.startswith("recognition.worker")
             or name.startswith("db")
+            or name == ACCESS_LOGGER_NAME
         )
         return allowed
 

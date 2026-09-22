@@ -10,13 +10,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+from logging.handlers import MemoryHandler
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from api.logging_config import build_json_formatter
+from api.logging_config import RecognitionFilter, build_json_formatter
 from recognition.interface_adapters.http.middleware.correlation import (
+    ACCESS_LOGGER_NAME,
     CORRELATION_ID_HEADER,
     CorrelationIdFilter,
     CorrelationIdMiddleware,
@@ -90,6 +92,44 @@ def test_correlation_id_injected_into_log_records(caplog: pytest.LogCaptureFixtu
     expected_id = resp.headers[CORRELATION_ID_HEADER]
     ids = {getattr(record, "correlation_id", None) for record in records}
     assert ids == {expected_id}, f"correlation IDs should be stable across records, got {ids}"
+
+
+def test_recognition_filter_keeps_request_access_record() -> None:
+    app, _ = _build_app()
+    access_logger = logging.getLogger(ACCESS_LOGGER_NAME)
+    handler = MemoryHandler(capacity=100, target=None)
+    handler.addFilter(RecognitionFilter())
+    previous_level = access_logger.level
+    access_logger.setLevel(logging.INFO)
+    access_logger.addHandler(handler)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/echo")
+
+        assert response.status_code == 200
+        records = [record for record in handler.buffer if record.name == ACCESS_LOGGER_NAME]
+        assert records, "request-scoped access record should survive RecognitionFilter"
+    finally:
+        access_logger.removeHandler(handler)
+        access_logger.setLevel(previous_level)
+        handler.close()
+
+
+def test_recognition_filter_drops_file_infrastructure_record() -> None:
+    logger = logging.getLogger("recognition.infrastructure.file.test")
+    handler = MemoryHandler(capacity=100, target=None)
+    handler.addFilter(RecognitionFilter())
+    previous_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        logger.info("thumbnail file request")
+
+        assert not handler.buffer
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        handler.close()
 
 
 def test_correlation_id_stable_across_concurrent_requests() -> None:

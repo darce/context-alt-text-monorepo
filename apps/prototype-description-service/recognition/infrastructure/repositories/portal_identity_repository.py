@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import PortalIdentity
+from db.models import PortalIdentity, Tenant
 from db.tenant_context import disable_rls_bypass, enable_rls_bypass
 from recognition.domain.portal_contracts import PortalIdentityStatus
 
@@ -81,6 +81,22 @@ def _as_uuid(value: object, *, code: str) -> UUID:
         return UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         raise PortalIdentityClaimError(code) from None
+
+
+def _optional_uuid(value: object, *, code: str) -> UUID | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return _as_uuid(value, code=code)
+
+
+def _claim_site_url(tenant_id: UUID) -> str:
+    return f"https://portal.invalid/tenants/{tenant_id}"
+
+
+def _canonical_email_clause(invitation_model: type, normalized_email: str):
+    return func.lower(func.trim(invitation_model.invited_email)) == normalized_email
 
 
 def _invitation_model():
@@ -213,7 +229,7 @@ class SqlAlchemyPortalIdentityRepository:
                     invitation_model.token_hash == token_hash,
                     invitation_model.accepted_at.is_(None),
                     invitation_model.expires_at > accepted_at,
-                    invitation_model.invited_email == normalized_email,
+                    _canonical_email_clause(invitation_model, normalized_email),
                 )
                 .values(
                     accepted_at=accepted_at,
@@ -273,101 +289,163 @@ class SqlAlchemyPortalIdentityRepository:
                 raise PortalIdentityClaimError("not_admitted") from None
             if invited_email != normalized_email:
                 raise PortalIdentityClaimError("not_admitted")
-            # WHY: invitation.tenant_id is a NOT NULL FK to tenants.id, so the tenant
-            # already exists at invite time. Inserting another tenant here would fork
-            # one invitation into two tenants (APP-SC-01). Spec §4.2 "create tenant"
-            # cannot be implemented without a C-owned schema change.
-            tenant_id = _as_uuid(getattr(invitation, "tenant_id", None), code="not_admitted")
-
+            invitation_tenant_id = _optional_uuid(getattr(invitation, "tenant_id", None), code="not_admitted")
             claimant = await self._lock_identity_by_issuer_subject(issuer, subject)
-            if (
-                claimant is not None
-                and claimant.issuer == issuer
-                and claimant.subject == subject
-                and _as_uuid(claimant.tenant_id, code="identity_already_bound") != tenant_id
-            ):
-                raise PortalIdentityClaimError("identity_already_bound")
-
-            if getattr(invitation, "accepted_at", None) is not None:
-                return await self._replay_accepted_invitation(
-                    invitation,
-                    issuer=issuer,
-                    subject=subject,
-                    tenant_id=tenant_id,
-                    claimant=claimant,
-                )
-
-            if (
-                claimant is not None
-                and claimant.issuer == issuer
-                and claimant.subject == subject
-                and _as_uuid(claimant.tenant_id, code="not_admitted") == tenant_id
-            ):
-                accepted_at = await self._accept_invitation(
-                    invitation_model,
-                    invitation,
-                    token_hash=token_hash,
-                    normalized_email=normalized_email,
-                    identity_id=claimant.id,
-                )
-                if accepted_at is None:
+            if claimant is not None and claimant.issuer == issuer and claimant.subject == subject:
+                claimant_tenant = _as_uuid(claimant.tenant_id, code="identity_already_bound")
+                if invitation_tenant_id is not None and invitation_tenant_id != claimant_tenant:
+                    raise PortalIdentityClaimError("identity_already_bound")
+                if getattr(invitation, "accepted_at", None) is not None:
                     return await self._replay_accepted_invitation(
                         invitation,
                         issuer=issuer,
                         subject=subject,
-                        tenant_id=tenant_id,
+                        tenant_id=claimant_tenant,
                         claimant=claimant,
                     )
-                invitation.accepted_at = accepted_at
-                invitation.accepted_by_identity_id = claimant.id
-                return PortalIdentityClaimRecord(identity=claimant, replayed=True)
+                return await self._accept_current_for_identity(
+                    invitation_model,
+                    invitation,
+                    token_hash=token_hash,
+                    normalized_email=normalized_email,
+                    identity=claimant,
+                    tenant_id=claimant_tenant,
+                )
 
-            identity = PortalIdentity(
-                id=uuid4(),
-                tenant_id=tenant_id,
-                issuer=issuer,
-                subject=subject,
-                email=normalized_email,
-                status=PortalIdentityStatus.ACTIVE,
-            )
+            if getattr(invitation, "accepted_at", None) is not None:
+                if invitation_tenant_id is None:
+                    raise PortalIdentityClaimError("invitation_consumed")
+                return await self._replay_accepted_invitation(
+                    invitation,
+                    issuer=issuer,
+                    subject=subject,
+                    tenant_id=invitation_tenant_id,
+                    claimant=claimant,
+                )
+
+            tenant_id = invitation_tenant_id
+            identity: PortalIdentity | None = None
             try:
                 begin_nested = getattr(self._session, "begin_nested", None)
                 if callable(begin_nested):
                     async with begin_nested():
-                        self._session.add(identity)
-                        await _with_timeout(self._session.flush(), self._timeout_s)
+                        tenant_id, identity = await self._insert_claim_identity(
+                            tenant_id=tenant_id,
+                            issuer=issuer,
+                            subject=subject,
+                            email=normalized_email,
+                        )
                 else:
-                    self._session.add(identity)
-                    await _with_timeout(self._session.flush(), self._timeout_s)
+                    tenant_id, identity = await self._insert_claim_identity(
+                        tenant_id=tenant_id,
+                        issuer=issuer,
+                        subject=subject,
+                        email=normalized_email,
+                    )
             except IntegrityError:
                 raced = await self._lock_identity_by_issuer_subject(issuer, subject)
                 if raced is not None and raced.issuer == issuer and raced.subject == subject:
-                    if _as_uuid(raced.tenant_id, code="identity_already_bound") != tenant_id:
+                    raced_tenant = _as_uuid(raced.tenant_id, code="identity_already_bound")
+                    if invitation_tenant_id is not None and invitation_tenant_id != raced_tenant:
                         raise PortalIdentityClaimError("identity_already_bound") from None
-                    return PortalIdentityClaimRecord(identity=raced, replayed=True)
-                tenant_owner = await self._lock_identity_by_tenant(tenant_id)
-                if tenant_owner is not None:
-                    if tenant_owner.issuer == issuer and tenant_owner.subject == subject:
-                        return PortalIdentityClaimRecord(identity=tenant_owner, replayed=True)
-                    raise PortalIdentityClaimError("invitation_consumed") from None
+                    return await self._accept_current_for_identity(
+                        invitation_model,
+                        invitation,
+                        token_hash=token_hash,
+                        normalized_email=normalized_email,
+                        identity=raced,
+                        tenant_id=raced_tenant,
+                    )
+                if invitation_tenant_id is not None:
+                    tenant_owner = await self._lock_identity_by_tenant(invitation_tenant_id)
+                    if tenant_owner is not None:
+                        if tenant_owner.issuer == issuer and tenant_owner.subject == subject:
+                            return await self._accept_current_for_identity(
+                                invitation_model,
+                                invitation,
+                                token_hash=token_hash,
+                                normalized_email=normalized_email,
+                                identity=tenant_owner,
+                                tenant_id=invitation_tenant_id,
+                            )
+                        raise PortalIdentityClaimError("invitation_consumed") from None
                 raise PortalIdentityClaimError("not_admitted") from None
             except Exception:
                 await self._rollback_after_failure()
                 raise
 
+            if identity is None or tenant_id is None:
+                await self._rollback_after_failure()
+                raise PortalIdentityClaimError("not_admitted")
             accepted_at = await self._accept_invitation(
                 invitation_model,
                 invitation,
                 token_hash=token_hash,
                 normalized_email=normalized_email,
                 identity_id=identity.id,
+                tenant_id=tenant_id,
             )
             if accepted_at is None:
                 await self._rollback_after_failure()
                 raise PortalIdentityClaimError("invitation_consumed")
             invitation.accepted_at = accepted_at
             invitation.accepted_by_identity_id = identity.id
+            invitation.tenant_id = tenant_id
             return PortalIdentityClaimRecord(identity=identity, replayed=False)
+
+    async def _insert_claim_identity(
+        self,
+        *,
+        tenant_id: UUID | None,
+        issuer: str,
+        subject: str,
+        email: str,
+    ) -> tuple[UUID, PortalIdentity]:
+        if tenant_id is None:
+            tenant_id = uuid4()
+            self._session.add(Tenant(id=tenant_id, site_url=_claim_site_url(tenant_id)))
+        identity = PortalIdentity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            issuer=issuer,
+            subject=subject,
+            email=email,
+            status=PortalIdentityStatus.ACTIVE,
+        )
+        self._session.add(identity)
+        await _with_timeout(self._session.flush(), self._timeout_s)
+        return tenant_id, identity
+
+    async def _accept_current_for_identity(
+        self,
+        invitation_model: type,
+        invitation: object,
+        *,
+        token_hash: str,
+        normalized_email: str,
+        identity: PortalIdentity,
+        tenant_id: UUID,
+    ) -> PortalIdentityClaimRecord:
+        accepted_at = await self._accept_invitation(
+            invitation_model,
+            invitation,
+            token_hash=token_hash,
+            normalized_email=normalized_email,
+            identity_id=identity.id,
+            tenant_id=tenant_id,
+        )
+        if accepted_at is None:
+            return await self._replay_accepted_invitation(
+                invitation,
+                issuer=identity.issuer,
+                subject=identity.subject,
+                tenant_id=tenant_id,
+                claimant=identity,
+            )
+        invitation.accepted_at = accepted_at
+        invitation.accepted_by_identity_id = identity.id
+        invitation.tenant_id = tenant_id
+        return PortalIdentityClaimRecord(identity=identity, replayed=True)
 
     async def _lock_invitation(self, invitation_model: type, token_hash: str) -> object | None:
         statement = select(invitation_model).where(invitation_model.token_hash == token_hash).limit(1).with_for_update()
@@ -427,6 +505,7 @@ class SqlAlchemyPortalIdentityRepository:
         token_hash: str,
         normalized_email: str,
         identity_id: object,
+        tenant_id: UUID,
     ) -> datetime | None:
         accepted_at = datetime.now(UTC)
         acceptance = (
@@ -436,11 +515,12 @@ class SqlAlchemyPortalIdentityRepository:
                 invitation_model.token_hash == token_hash,
                 invitation_model.accepted_at.is_(None),
                 invitation_model.expires_at > accepted_at,
-                invitation_model.invited_email == normalized_email,
+                _canonical_email_clause(invitation_model, normalized_email),
             )
             .values(
                 accepted_at=accepted_at,
                 accepted_by_identity_id=identity_id,
+                tenant_id=tenant_id,
             )
         )
         try:

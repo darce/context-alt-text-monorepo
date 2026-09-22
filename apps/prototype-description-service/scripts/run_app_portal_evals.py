@@ -17,6 +17,7 @@ grow the runner's memory without bound.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,8 @@ COMMAND_NOT_FOUND_EXIT_STATUS = 127
 
 _GROUP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_JUNIT_ROOT_TAGS = frozenset({"testsuite", "testsuites"})
 _REQUIRED_MANIFEST_KEYS = frozenset(
     {
         "version",
@@ -78,6 +81,24 @@ class CaseLedgerStatus(StrEnum):
     SKIPPED = "skipped"
     ERROR = "error"
     NOT_RUN = "not_run"
+    UNVERIFIED = "unverified"
+
+
+class RunDisposition(StrEnum):
+    """Whether this run may be consumed as release evidence."""
+
+    RELEASE = "release"
+    SLICE = "slice"
+
+
+class EvidenceType(StrEnum):
+    """Classification of a declared additional-evidence artifact."""
+
+    NONE = "none"
+    JUNIT = "junit"
+    PROVENANCE_JSON = "provenance_json"
+    UNTYPED = "untyped"
+    MISSING = "missing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +164,18 @@ class JunitCounts:
     report_error: str | None = None
     cases: tuple[JunitCase, ...] = ()
     mtime: float | None = None
+    is_junit_document: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactEvidence:
+    """Presence and typed-proof outcome for one declared artifact."""
+
+    present: bool
+    verified: bool
+    evidence_type: EvidenceType
+    reason: str | None = None
+    digest: str | None = None
 
 
 CommandRunner = Callable[..., Any]
@@ -463,6 +496,7 @@ def _read_junit(path: Path) -> JunitCounts:
     error_count = 0
     failure_element_count = 0
     fail_count = 0
+    is_junit_document = _local_tag(root.tag) in _JUNIT_ROOT_TAGS
     for testcase in root.iter():
         if _local_tag(testcase.tag) != "testcase":
             continue
@@ -505,6 +539,7 @@ def _read_junit(path: Path) -> JunitCounts:
         failure_element_count=failure_element_count,
         cases=tuple(parsed_cases),
         mtime=mtime,
+        is_junit_document=is_junit_document,
     )
 
 
@@ -561,25 +596,173 @@ def _junit_is_stale(junit: JunitCounts, *, started_at: datetime) -> bool:
     return junit.mtime < started_at.timestamp() - 1
 
 
-def _match_junit_case(declared: str, available: list[JunitCase]) -> JunitCase | None:
-    for index, case in enumerate(available):
-        if declared == case.node_id or declared in case.candidates:
-            return available.pop(index)
-    return None
+def _identity_matches_declared(declared: str, identity: str) -> bool:
+    if not declared or not identity:
+        return False
+    if identity == declared:
+        return True
+    return identity.startswith(f"{declared}[")
+
+
+def _junit_case_matches_declared(declared: str, case: JunitCase) -> bool:
+    if _identity_matches_declared(declared, case.node_id):
+        return True
+    if any(_identity_matches_declared(declared, candidate) for candidate in case.candidates):
+        return True
+    declared_name = declared.rsplit("::", 1)[-1]
+    if not declared_name or not (case.name == declared_name or case.name.startswith(f"{declared_name}[")):
+        return False
+    if "::" not in declared:
+        return True
+    file_attr = case.file.replace("\\", "/")
+    return bool(
+        (file_attr and declared.startswith(f"{file_attr}::"))
+        or (case.classname and declared.startswith(f"{case.classname}::"))
+    )
+
+
+def _match_junit_cases(declared: str | None, available: list[JunitCase]) -> list[JunitCase]:
+    if not declared:
+        return []
+    matched: list[JunitCase] = []
+    remaining: list[JunitCase] = []
+    for case in available:
+        if _junit_case_matches_declared(declared, case):
+            matched.append(case)
+        else:
+            remaining.append(case)
+    available[:] = remaining
+    return matched
+
+
+def _aggregate_junit_outcomes(matched: Sequence[JunitCase]) -> CaseLedgerStatus:
+    if not matched:
+        return CaseLedgerStatus.NOT_RUN
+    outcomes = {case.outcome for case in matched}
+    if CaseLedgerStatus.ERROR in outcomes:
+        return CaseLedgerStatus.ERROR
+    if CaseLedgerStatus.FAILED in outcomes:
+        return CaseLedgerStatus.FAILED
+    if CaseLedgerStatus.SKIPPED in outcomes:
+        return CaseLedgerStatus.SKIPPED
+    return CaseLedgerStatus.PASSED
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _unverified_artifact(case_id: str, message: str, *, digest: str | None = None) -> ArtifactEvidence:
+    return ArtifactEvidence(
+        present=True,
+        verified=False,
+        evidence_type=EvidenceType.UNTYPED,
+        reason=f"required case {case_id} {message}",
+        digest=digest,
+    )
+
+
+def _junit_threshold_reasons(
+    case_id: str,
+    junit: JunitCounts,
+    *,
+    threshold: Mapping[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    threshold_failures = int(threshold["max_failures"])
+    threshold_skipped = int(threshold["max_skipped"])
+    if junit.report_error:
+        reasons.append(f"required case {case_id} {junit.report_error}")
+        return reasons
+    if junit.case_count == 0:
+        reasons.append(f"required case {case_id} JUnit evidence produced zero test cases")
+    if junit.fail_count > threshold_failures:
+        reasons.append(
+            f"required case {case_id} JUnit evidence failure/error count {junit.fail_count} exceeds max_failures {threshold_failures}"
+        )
+    if junit.skip_count > threshold_skipped:
+        reasons.append(
+            f"required case {case_id} JUnit evidence skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}"
+        )
+    return reasons
+
+
+def _provenance_json_evidence(
+    case_id: str,
+    payload: Mapping[str, Any],
+    *,
+    head_sha: str,
+    digest: str,
+) -> ArtifactEvidence:
+    version = payload.get("schema_version")
+    git_sha = payload.get("git_sha")
+    typed_shape = (
+        type(version) is int and version >= 1 and isinstance(git_sha, str) and bool(_SHA_RE.fullmatch(git_sha))
+    )
+    if not typed_shape:
+        return _unverified_artifact(
+            case_id,
+            "artifact is untyped/unverified evidence",
+            digest=digest,
+        )
+    has_provenance = isinstance(payload.get("provenance"), Mapping) and bool(payload.get("provenance"))
+    digest_value = payload.get("digest") or payload.get("artifact_digest")
+    has_digest = isinstance(digest_value, str) and bool(_SHA256_RE.fullmatch(digest_value))
+    has_command = isinstance(payload.get("command"), str) and bool(str(payload.get("command")).strip())
+    if not (has_provenance or has_digest or has_command):
+        return _unverified_artifact(
+            case_id,
+            "artifact is untyped/unverified evidence",
+            digest=digest,
+        )
+    if git_sha != head_sha:
+        return ArtifactEvidence(
+            present=True,
+            verified=False,
+            evidence_type=EvidenceType.PROVENANCE_JSON,
+            reason=f"required case {case_id} provenance git_sha does not match run HEAD",
+            digest=digest,
+        )
+    database_identity = payload.get("database_identity") or payload.get("database") or payload.get("engine")
+    claims_postgres = payload.get("postgres") is True or payload.get("claims_postgres") is True
+    if isinstance(database_identity, str) and "postgres" in database_identity.lower():
+        claims_postgres = True
+    if claims_postgres and isinstance(database_identity, str) and "sqlite" in database_identity.lower():
+        return ArtifactEvidence(
+            present=True,
+            verified=False,
+            evidence_type=EvidenceType.PROVENANCE_JSON,
+            reason=f"required case {case_id} SQLite cannot satisfy PostgreSQL evidence",
+            digest=digest,
+        )
+    return ArtifactEvidence(
+        present=True,
+        verified=True,
+        evidence_type=EvidenceType.PROVENANCE_JSON,
+        digest=digest,
+    )
 
 
 def _artifact_evidence(
     case: ManifestCase,
     *,
     repository_root: Path,
-) -> tuple[bool, str | None]:
+    head_sha: str,
+    threshold: Mapping[str, Any],
+) -> ArtifactEvidence:
     needs_artifact = case.additional_evidence_required or case.artifact is not None
     if not needs_artifact:
-        return True, None
+        return ArtifactEvidence(present=True, verified=True, evidence_type=EvidenceType.NONE)
     if case.artifact is None:
-        return (
-            False,
-            f"required case {case.case_id} requires additional evidence but declares no artifact",
+        return ArtifactEvidence(
+            present=False,
+            verified=False,
+            evidence_type=EvidenceType.MISSING,
+            reason=f"required case {case.case_id} requires additional evidence but declares no artifact",
         )
     path = Path(case.artifact).expanduser()
     if not path.is_absolute():
@@ -587,12 +770,55 @@ def _artifact_evidence(
     try:
         resolved = path.resolve()
         if not resolved.is_file():
-            return False, f"required case {case.case_id} missing required artifact {resolved}"
+            return ArtifactEvidence(
+                present=False,
+                verified=False,
+                evidence_type=EvidenceType.MISSING,
+                reason=f"required case {case.case_id} missing required artifact {resolved}",
+            )
         if resolved.stat().st_size == 0:
-            return False, f"required case {case.case_id} required artifact is empty: {resolved}"
+            return ArtifactEvidence(
+                present=False,
+                verified=False,
+                evidence_type=EvidenceType.MISSING,
+                reason=f"required case {case.case_id} required artifact is empty: {resolved}",
+            )
+        digest = _sha256_file(resolved)
+        raw = resolved.read_bytes()
     except OSError as exc:
-        return False, f"required case {case.case_id} missing required artifact {path}: {exc}"
-    return True, None
+        return ArtifactEvidence(
+            present=False,
+            verified=False,
+            evidence_type=EvidenceType.MISSING,
+            reason=f"required case {case.case_id} missing required artifact {path}: {exc}",
+        )
+
+    stripped = raw.lstrip()
+    looks_xml = stripped.startswith(b"<") or resolved.suffix.lower() == ".xml"
+    if looks_xml:
+        junit = _read_junit(resolved)
+        if junit.is_junit_document or junit.report_error:
+            reasons = _junit_threshold_reasons(case.case_id, junit, threshold=threshold)
+            return ArtifactEvidence(
+                present=True,
+                verified=not reasons,
+                evidence_type=EvidenceType.JUNIT,
+                reason="; ".join(reasons) if reasons else None,
+                digest=digest,
+            )
+    if stripped.startswith(b"{"):
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, Mapping):
+            return _provenance_json_evidence(
+                case.case_id,
+                payload,
+                head_sha=head_sha,
+                digest=digest,
+            )
+    return _unverified_artifact(case.case_id, "artifact is untyped/unverified evidence", digest=digest)
 
 
 def _run_group(
@@ -607,6 +833,7 @@ def _run_group(
     started_at: datetime,
     repository_root: Path,
     required_case_ids: set[str],
+    head_sha: str,
 ) -> dict[str, Any]:
     test_nodes = [case.test for case in cases if case.test is not None]
     command = [
@@ -678,25 +905,43 @@ def _run_group(
     for case in cases:
         required = case.case_id in required_case_ids
         label = "required case" if required else "declared case"
-        matched = _match_junit_case(case.test, unmatched) if case.test and usable_junit else None
+        matched = _match_junit_cases(case.test, unmatched) if case.test and usable_junit else []
+        needs_artifact = case.additional_evidence_required or case.artifact is not None
         if case.test is None:
             ledger_status = CaseLedgerStatus.NOT_RUN
-        elif matched is None:
+        elif not matched:
             ledger_status = CaseLedgerStatus.NOT_RUN
             reasons.append(f"{label} {case.case_id} was not executed (declared test {case.test} missing from JUnit)")
         else:
-            ledger_status = matched.outcome
+            ledger_status = _aggregate_junit_outcomes(matched)
             if ledger_status == CaseLedgerStatus.SKIPPED:
                 reasons.append(f"{label} {case.case_id} was skipped")
             elif ledger_status == CaseLedgerStatus.FAILED:
                 reasons.append(f"{label} {case.case_id} failed")
             elif ledger_status == CaseLedgerStatus.ERROR:
                 reasons.append(f"{label} {case.case_id} errored")
-        artifact_ok, artifact_reason = _artifact_evidence(case, repository_root=repository_root)
-        if artifact_reason:
-            reasons.append(artifact_reason)
-        if case.test is None and artifact_ok:
-            ledger_status = CaseLedgerStatus.PASSED
+        artifact = _artifact_evidence(
+            case,
+            repository_root=repository_root,
+            head_sha=head_sha,
+            threshold=manifest.threshold,
+        )
+        if artifact.reason:
+            reasons.append(artifact.reason)
+        if case.test is None:
+            if artifact.verified:
+                ledger_status = CaseLedgerStatus.PASSED
+            elif not artifact.present:
+                ledger_status = CaseLedgerStatus.NOT_RUN
+            elif artifact.evidence_type is EvidenceType.JUNIT:
+                ledger_status = CaseLedgerStatus.FAILED
+            else:
+                ledger_status = CaseLedgerStatus.UNVERIFIED
+        elif ledger_status is CaseLedgerStatus.PASSED and needs_artifact:
+            if not artifact.present:
+                ledger_status = CaseLedgerStatus.FAILED
+            elif not artifact.verified:
+                ledger_status = CaseLedgerStatus.UNVERIFIED
         case_ledger.append(
             {
                 "id": case.case_id,
@@ -705,11 +950,12 @@ def _run_group(
                 "artifact": case.artifact,
                 "required": required,
                 "status": str(ledger_status),
-                "junit_identity": None if matched is None else matched.node_id,
+                "junit_identity": None if not matched else ",".join(item.node_id for item in matched),
                 "additional_evidence_required": case.additional_evidence_required,
-                "additional_evidence_present": artifact_ok
-                if (case.additional_evidence_required or case.artifact is not None)
-                else True,
+                "additional_evidence_present": artifact.present if needs_artifact else True,
+                "additional_evidence_verified": artifact.verified if needs_artifact else True,
+                "evidence_type": str(artifact.evidence_type),
+                "artifact_digest": artifact.digest,
             }
         )
 
@@ -759,6 +1005,15 @@ def _append_evidence(path: Path, record: Mapping[str, Any]) -> None:
         raise EvalRunnerError(f"cannot append evidence to {path}: {exc}") from exc
 
 
+def _parse_disposition(value: str | RunDisposition | None) -> RunDisposition:
+    if value is None:
+        return RunDisposition.RELEASE
+    try:
+        return RunDisposition(str(value))
+    except ValueError as exc:
+        raise EvalRunnerError(f"unknown disposition {value!r}; expected 'release' or 'slice'") from exc
+
+
 def run_evals(
     manifest_path: str | Path,
     *,
@@ -766,11 +1021,13 @@ def run_evals(
     out_dir: str | Path | None = None,
     environment: Mapping[str, str] | None = None,
     command_runner: CommandRunner | None = None,
+    disposition: str | RunDisposition | None = None,
 ) -> int:
     """Run selected manifest groups and return their worst exit status."""
 
     manifest = load_manifest(manifest_path)
     selected = _selected_groups(manifest, groups)
+    effective_disposition = _parse_disposition(disposition)
     effective_environment = dict(os.environ if environment is None else environment)
     runner = subprocess.run if command_runner is None else command_runner
     artifact_dir = (
@@ -809,12 +1066,17 @@ def run_evals(
             started_at=started_at,
             repository_root=REPOSITORY_ROOT,
             required_case_ids=required_case_ids,
+            head_sha=head_sha,
         )
         group_results.append(result)
         worst_status = max(worst_status, int(result["exit_status"]))
 
     finished_at = datetime.now(UTC)
     artifact_paths = [artifact_path for result in group_results for artifact_path in result["artifact_paths"]]
+    run_reasons: list[str] = []
+    if effective_disposition is RunDisposition.RELEASE and not full_suite:
+        run_reasons.append("release-mode partial selection cannot report a release pass")
+        worst_status = max(worst_status, 1)
     evidence = {
         "schema_version": 1,
         "suite_id": manifest.suite_id,
@@ -827,11 +1089,14 @@ def run_evals(
         "finished_at": finished_at.isoformat(),
         "selected_groups": list(selected),
         "full_suite": full_suite,
+        "disposition": str(effective_disposition),
+        "release_evidence": effective_disposition is RunDisposition.RELEASE and full_suite,
         "required_case_ids": sorted(required_case_ids),
         "groups": group_results,
         "artifact_paths": artifact_paths,
         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,
         "runner_exit_status": worst_status,
+        "failure_reasons": run_reasons,
     }
     evidence_path = _evidence_path(manifest, repository_root=REPOSITORY_ROOT)
     _append_evidence(evidence_path, evidence)
@@ -853,6 +1118,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="directory for fresh per-group JUnit and bounded log artifacts",
     )
+    parser.add_argument(
+        "--disposition",
+        choices=tuple(item.value for item in RunDisposition),
+        default=RunDisposition.RELEASE.value,
+        help="release (default) requires the full suite; slice allows scoped groups and cannot be used as release evidence",
+    )
     return parser
 
 
@@ -861,7 +1132,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _build_parser().parse_args(argv)
     try:
-        status = run_evals(args.manifest, groups=args.group, out_dir=args.out)
+        status = run_evals(
+            args.manifest,
+            groups=args.group,
+            out_dir=args.out,
+            disposition=args.disposition,
+        )
     except (ManifestValidationError, EvalRunnerError) as exc:
         print(f"run_app_portal_evals: {exc}", file=sys.stderr)
         return 2

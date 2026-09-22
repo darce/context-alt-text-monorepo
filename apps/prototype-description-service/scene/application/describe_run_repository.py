@@ -751,6 +751,31 @@ class DescribeRunRepository:
             # keep the caller's key: the retry has to be able to buy a live run.
             _release_idempotency_key_if_barren(run)
         await self._session.flush()
+        if runs:
+            from recognition.application.services.usage_settlement_service import (
+                SettlementOutcome,
+                recover_usage_job,
+            )
+
+            surface = {
+                SettlementOutcome.REJECTED,
+                SettlementOutcome.FAIL_CLOSED,
+                SettlementOutcome.SKIPPED_ACTIVE,
+            }
+            failures: list[str] = []
+            for run in runs:
+                result = await recover_usage_job(
+                    self._session,
+                    tenant_id=run.tenant_id,
+                    job_id=str(run.id),
+                )
+                if result.outcome in surface:
+                    failures.append(f"{run.id}:{result.outcome}:{result.detail}")
+            if failures:
+                logger.error("describe-run reclaim usage recovery failed: %s", failures)
+                raise RuntimeError(
+                    "usage recovery FAIL_CLOSED/rejected for reclaimed describe runs: " + "; ".join(failures)
+                )
         return len(runs)
 
     async def _get_item(

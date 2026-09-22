@@ -402,6 +402,159 @@ def test_reclaim_preserves_provisional_visual_facts_as_degraded():
     asyncio.run(body())
 
 
+async def _usage_sessionmaker():
+    import os
+    import tempfile
+
+    from db.models import UsageReservation
+    from db.models.jobs import IdentityScanJob, IdentityScanJobItem
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.tenant import Tenant
+
+    path = os.path.join(tempfile.gettempdir(), f"app1_async_reclaim_{uuid.uuid4().hex}.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=cast(
+                list[Table],
+                [
+                    Tenant.__table__,
+                    TenantEntitlement.__table__,
+                    UsageReservation.__table__,
+                    GlobalUsageAdmissionState.__table__,
+                    DescribeRun.__table__,
+                    DescribeRunItem.__table__,
+                    IdentityScanJob.__table__,
+                    IdentityScanJobItem.__table__,
+                ],
+            ),
+        )
+    return engine, async_sessionmaker(engine, expire_on_commit=False), path
+
+
+async def _seed_usage_tenant(session):
+    from datetime import UTC, datetime, timedelta
+
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.tenant import Tenant
+    from recognition.domain.portal_contracts import (
+        DEFAULT_GLOBAL_CONFIG_VERSION,
+        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        DEFAULT_GLOBAL_FENCE_EPOCH,
+        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_LIMIT,
+        GLOBAL_USAGE_ADMISSION_STATE_ID,
+        EntitlementStatus,
+    )
+
+    tenant = Tenant(id=uuid.uuid4(), site_url=f"https://{uuid.uuid4().hex}.example.test")
+    session.add(tenant)
+    await session.flush()
+    now = datetime.now(tz=UTC)
+    session.add(
+        TenantEntitlement(
+            tenant_id=tenant.id,
+            plan_code="beta",
+            allowance_version="async-reclaim-v1",
+            allowance_jobs=20,
+            period_start=now - timedelta(minutes=1),
+            period_end=now + timedelta(hours=1),
+            status=EntitlementStatus.BETA_ACTIVE,
+            source="unit-test",
+        )
+    )
+    session.add(
+        GlobalUsageAdmissionState(
+            id=GLOBAL_USAGE_ADMISSION_STATE_ID,
+            period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
+            period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
+            daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+            daily_cost_units=0,
+            inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+            inflight_units=0,
+            queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+            queue_depth=0,
+            queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+            queue_bytes=0,
+            stop_requested=False,
+            fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+            config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+    return tenant
+
+
+def test_startup_reclaim_settles_queued_and_running_single_runs():
+    async def body():
+        import os
+        from datetime import UTC, datetime
+
+        from db.models import UsageReservation
+        from recognition.application.services.usage_admission_service import UsageAdmissionService
+        from recognition.domain.portal_contracts import UsageReservationStatus
+
+        engine, sf, path = await _usage_sessionmaker()
+        try:
+            async with sf() as session:
+                tenant = await _seed_usage_tenant(session)
+                repo = DescribeRunRepository(session)
+                queued_id = await repo.create_single_run(
+                    tenant_id=tenant.id,
+                    media_id=21,
+                    image_bytes=b"queued",
+                )
+                running_id = await repo.create_single_run(
+                    tenant_id=tenant.id,
+                    media_id=22,
+                    image_bytes=b"running",
+                )
+                await repo.mark_item(
+                    tenant_id=tenant.id,
+                    run_id=running_id,
+                    media_id=22,
+                    status=DescribeItemStatus.RUNNING,
+                )
+                running = await repo.get_run(tenant_id=tenant.id, run_id=running_id)
+                assert running is not None
+                running.status = DescribeRunStatus.RUNNING
+                running.started_at = datetime.now(tz=UTC)
+                queued_ticket = await UsageAdmissionService(session).reserve(
+                    tenant.id,
+                    idempotency_key="op-async-queued",
+                    job_id=str(queued_id),
+                    cost_units=1,
+                    operation_id="op-async-queued",
+                    request_fingerprint="fp-async-queued",
+                )
+                running_ticket = await UsageAdmissionService(session).reserve(
+                    tenant.id,
+                    idempotency_key="op-async-running",
+                    job_id=str(running_id),
+                    cost_units=1,
+                    operation_id="op-async-running",
+                    request_fingerprint="fp-async-running",
+                )
+                await session.commit()
+
+            reclaimed = await repo_mod.run_startup_reclaim(sf)
+            assert reclaimed == 2
+
+            async with sf() as session:
+                queued_row = await session.get(UsageReservation, queued_ticket.reservation_id)
+                running_row = await session.get(UsageReservation, running_ticket.reservation_id)
+                assert queued_row is not None and queued_row.status == UsageReservationStatus.RELEASED
+                assert running_row is not None and running_row.status == UsageReservationStatus.COMMITTED
+        finally:
+            await engine.dispose()
+            os.unlink(path)
+
+    asyncio.run(body())
+
+
 def test_bulk_create_run_defaults_to_run_kind_bulk():
     async def body():
         engine, sf = await _sessionmaker()

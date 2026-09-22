@@ -333,3 +333,186 @@ def test_reclaim_leaves_terminal_runs_untouched():
         await engine.dispose()
 
     asyncio.run(body())
+
+
+async def _usage_sessionmaker():
+    import os
+    import tempfile
+    from typing import cast
+
+    from sqlalchemy import Table
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from db.models import UsageReservation
+    from db.models.base_imports import Base
+    from db.models.jobs import IdentityScanJob, IdentityScanJobItem
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.scene import DescribeRun, DescribeRunItem
+    from db.models.tenant import Tenant
+
+    path = os.path.join(tempfile.gettempdir(), f"app1_reclaim_usage_{uuid.uuid4().hex}.db")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=cast(
+                list[Table],
+                [
+                    Tenant.__table__,
+                    TenantEntitlement.__table__,
+                    UsageReservation.__table__,
+                    GlobalUsageAdmissionState.__table__,
+                    DescribeRun.__table__,
+                    DescribeRunItem.__table__,
+                    IdentityScanJob.__table__,
+                    IdentityScanJobItem.__table__,
+                ],
+            ),
+        )
+    return engine, async_sessionmaker(engine, expire_on_commit=False), path
+
+
+async def _seed_usage_tenant(session):
+    from datetime import UTC, datetime, timedelta
+
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from db.models.tenant import Tenant
+    from recognition.domain.portal_contracts import (
+        DEFAULT_GLOBAL_CONFIG_VERSION,
+        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        DEFAULT_GLOBAL_FENCE_EPOCH,
+        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_LIMIT,
+        GLOBAL_USAGE_ADMISSION_STATE_ID,
+        EntitlementStatus,
+    )
+
+    tenant = Tenant(id=uuid.uuid4(), site_url=f"https://{uuid.uuid4().hex}.example.test")
+    session.add(tenant)
+    await session.flush()
+    now = datetime.now(tz=UTC)
+    session.add(
+        TenantEntitlement(
+            tenant_id=tenant.id,
+            plan_code="beta",
+            allowance_version="reclaim-v1",
+            allowance_jobs=20,
+            period_start=now - timedelta(minutes=1),
+            period_end=now + timedelta(hours=1),
+            status=EntitlementStatus.BETA_ACTIVE,
+            source="unit-test",
+        )
+    )
+    session.add(
+        GlobalUsageAdmissionState(
+            id=GLOBAL_USAGE_ADMISSION_STATE_ID,
+            period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
+            period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
+            daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+            daily_cost_units=0,
+            inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+            inflight_units=0,
+            queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+            queue_depth=0,
+            queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+            queue_bytes=0,
+            stop_requested=False,
+            fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+            config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+    return tenant
+
+
+def test_startup_reclaim_releases_queued_and_charges_started_run():
+    async def body():
+        from datetime import UTC, datetime
+
+        from db.models import UsageReservation
+        from recognition.application.services.usage_admission_service import UsageAdmissionService
+        from recognition.domain.portal_contracts import UsageReservationStatus
+        from scene.domain.describe_run import DescribeItemStatus
+
+        engine, sf, path = await _usage_sessionmaker()
+        try:
+            async with sf() as session:
+                tenant = await _seed_usage_tenant(session)
+                repo = DescribeRunRepository(session, max_items=2)
+                queued_id = await repo.create_run(tenant_id=tenant.id, media_ids=[1])
+                running_id = await repo.create_run(tenant_id=tenant.id, media_ids=[2])
+                await repo.mark_item(
+                    tenant_id=tenant.id,
+                    run_id=running_id,
+                    media_id=2,
+                    status=DescribeItemStatus.RUNNING,
+                )
+                running = await repo.get_run(tenant_id=tenant.id, run_id=running_id)
+                running.status = DescribeRunStatus.RUNNING
+                running.started_at = datetime.now(tz=UTC)
+                queued_ticket = await UsageAdmissionService(session).reserve(
+                    tenant.id,
+                    idempotency_key="op-queued",
+                    job_id=str(queued_id),
+                    cost_units=1,
+                    operation_id="op-queued",
+                    request_fingerprint="fp-queued",
+                )
+                running_ticket = await UsageAdmissionService(session).reserve(
+                    tenant.id,
+                    idempotency_key="op-running",
+                    job_id=str(running_id),
+                    cost_units=1,
+                    operation_id="op-running",
+                    request_fingerprint="fp-running",
+                )
+                await session.commit()
+
+            reclaimed = await run_startup_reclaim(sf)
+            assert reclaimed == 2
+
+            async with sf() as session:
+                queued_row = await session.get(UsageReservation, queued_ticket.reservation_id)
+                running_row = await session.get(UsageReservation, running_ticket.reservation_id)
+                queued = await DescribeRunRepository(session).get_run(tenant_id=tenant.id, run_id=queued_id)
+                running = await DescribeRunRepository(session).get_run(tenant_id=tenant.id, run_id=running_id)
+                assert queued is not None and queued.status == DescribeRunStatus.COMPLETED_WITH_ERRORS
+                assert running is not None and running.status == DescribeRunStatus.COMPLETED_WITH_ERRORS
+                assert queued_row is not None and queued_row.status == UsageReservationStatus.RELEASED
+                assert running_row is not None and running_row.status == UsageReservationStatus.COMMITTED
+        finally:
+            await engine.dispose()
+            os.unlink(path)
+
+    import os
+
+    asyncio.run(body())
+
+
+def test_startup_reclaim_surfaces_fail_closed_recovery(monkeypatch):
+    async def body():
+        from recognition.application.services import usage_settlement_service as settlement_mod
+        from recognition.application.services.usage_settlement_service import SettlementOutcome, SettlementResult
+
+        async def _fail_closed(*_args, **_kwargs):
+            return SettlementResult(SettlementOutcome.FAIL_CLOSED, detail="forced reclaim fail-closed")
+
+        monkeypatch.setattr(settlement_mod, "recover_usage_job", _fail_closed)
+        engine, sf, path = await _usage_sessionmaker()
+        try:
+            async with sf() as session:
+                tenant = await _seed_usage_tenant(session)
+                repo = DescribeRunRepository(session, max_items=1)
+                await repo.create_run(tenant_id=tenant.id, media_ids=[7])
+                await session.commit()
+            with pytest.raises(RuntimeError, match="FAIL_CLOSED|fail-closed|rejected"):
+                await run_startup_reclaim(sf)
+        finally:
+            await engine.dispose()
+            os.unlink(path)
+
+    import os
+
+    asyncio.run(body())

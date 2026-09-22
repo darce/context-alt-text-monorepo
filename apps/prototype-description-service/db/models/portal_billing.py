@@ -11,6 +11,7 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    BigInteger,
     Boolean,
     CheckConstraint,
     ForeignKey,
@@ -136,7 +137,11 @@ class UsageReservation(Base):
     )
     period_start: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
     job_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fence_token: Mapped[str] = mapped_column(Text, nullable=False)
+    queue_bytes: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'reserved'"))
     reserved_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     settled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -146,13 +151,54 @@ class UsageReservation(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_usage_reservation_tenant_idempotency_key"),
+        UniqueConstraint("tenant_id", "operation_id", name="uq_usage_reservation_tenant_operation_id"),
         Index("idx_usage_reservation_tenant_period_status", "tenant_id", "period_start", "status"),
         Index("idx_usage_reservation_reclaim", "status", "settled_at"),
         CheckConstraint("cost_units > 0", name="ck_usage_reservation_cost_units_positive"),
+        CheckConstraint("queue_bytes >= 0", name="ck_usage_reservation_queue_bytes_nonnegative"),
         CheckConstraint(
             "status IN ('reserved', 'committed', 'released', 'expired')",
             name="ck_usage_reservation_status",
         ),
+        CheckConstraint("length(operation_id) > 0", name="ck_usage_reservation_operation_id_present"),
+        CheckConstraint("length(request_fingerprint) > 0", name="ck_usage_reservation_request_fingerprint_present"),
+        CheckConstraint("length(fence_token) > 0", name="ck_usage_reservation_fence_token_present"),
+    )
+
+
+class GlobalUsageAdmissionState(Base):
+    """Process-wide admission singleton. Not a tenant table; no tenant RLS."""
+
+    __tablename__ = "usage_admission_global_state"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    period_start: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    daily_cost_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    daily_cost_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    inflight_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    inflight_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    queue_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    queue_depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    queue_byte_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    queue_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    stop_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    fence_epoch: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    config_version: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("daily_cost_limit >= 0", name="ck_usage_admission_global_daily_cost_limit"),
+        CheckConstraint("daily_cost_units >= 0", name="ck_usage_admission_global_daily_cost_units"),
+        CheckConstraint("inflight_limit >= 0", name="ck_usage_admission_global_inflight_limit"),
+        CheckConstraint("inflight_units >= 0", name="ck_usage_admission_global_inflight_units"),
+        CheckConstraint("queue_limit >= 0", name="ck_usage_admission_global_queue_limit"),
+        CheckConstraint("queue_depth >= 0", name="ck_usage_admission_global_queue_depth"),
+        CheckConstraint("queue_byte_limit >= 0", name="ck_usage_admission_global_queue_byte_limit"),
+        CheckConstraint("queue_bytes >= 0", name="ck_usage_admission_global_queue_bytes"),
+        CheckConstraint("fence_epoch >= 1", name="ck_usage_admission_global_fence_epoch"),
+        CheckConstraint("length(config_version) > 0", name="ck_usage_admission_global_config_version"),
+        CheckConstraint("period_end > period_start", name="ck_usage_admission_global_period"),
     )
 
 
@@ -378,6 +424,7 @@ __all__ = [
     "CHECKOUT_ATTEMPT_ACTIVE_STATUSES",
     "CheckoutAttemptErrorClass",
     "CheckoutAttemptStatus",
+    "GlobalUsageAdmissionState",
     "PortalIdentity",
     "PortalTenantInvitation",
     "TenantEntitlement",

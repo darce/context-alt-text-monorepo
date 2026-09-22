@@ -13,7 +13,11 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 
-from recognition.application.services.usage_admission_service import AllowanceExceededError
+from recognition.application.services.usage_admission_service import (
+    AllowanceExceededError,
+    UsageAdmissionUnavailableError,
+    UsageFingerprintConflictError,
+)
 from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.domain.portal_contracts import UsageTicket
 from recognition.interface_adapters.http.deps import (
@@ -44,18 +48,40 @@ class _FakeAdmission:
         self.commits: list[UsageTicket] = []
         self.releases: list[UsageTicket] = []
 
-    async def reserve(self, tenant_id, *, idempotency_key, job_id, cost_units):
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
         self.reserves.append(
             {
                 "tenant_id": tenant_id,
                 "idempotency_key": idempotency_key,
                 "job_id": job_id,
                 "cost_units": cost_units,
+                "operation_id": operation_id,
+                "request_fingerprint": request_fingerprint,
+                "queue_bytes": queue_bytes,
             }
         )
         if self.exhausted:
             raise AllowanceExceededError()
-        return UsageTicket(uuid4(), tenant_id, idempotency_key, cost_units)
+        return UsageTicket(
+            uuid4(),
+            tenant_id,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or idempotency_key,
+            job_id=job_id,
+            fence_token="fence-test",
+        )
 
     async def commit(self, ticket: UsageTicket) -> None:
         self.commits.append(ticket)
@@ -112,7 +138,7 @@ def _json_app(admission: _FakeAdmission, monkeypatch: pytest.MonkeyPatch) -> Fas
 
 
 @pytest.mark.asyncio
-async def test_admit_usage_commits_after_normal_body() -> None:
+async def test_admit_usage_keeps_reserved_after_normal_body() -> None:
     admission = _FakeAdmission()
     async with admit_usage(
         admission,
@@ -120,11 +146,12 @@ async def test_admit_usage_commits_after_normal_body() -> None:
         idempotency_key="key",
         job_id="job",
         cost_units=2,
-    ):
-        pass
+    ) as ticket:
+        assert ticket is not None
+        assert ticket.fence_token == "fence-test"
 
     assert len(admission.reserves) == 1
-    assert len(admission.commits) == 1
+    assert admission.commits == []
     assert admission.releases == []
 
 
@@ -188,7 +215,7 @@ async def test_identical_requests_use_the_same_key_and_commit(monkeypatch: pytes
     assert second.status_code == 202
     assert len(admission.reserves) == 2
     assert admission.reserves[0]["idempotency_key"] == admission.reserves[1]["idempotency_key"]
-    assert len(admission.commits) == 2
+    assert admission.commits == []
 
 
 @pytest.mark.asyncio
@@ -293,10 +320,54 @@ async def test_multipart_request_uses_usage_admission(monkeypatch: pytest.Monkey
     assert response.status_code == 202
     assert len(admission.reserves) == 1
     assert admission.reserves[0]["cost_units"] == 1
-    assert len(admission.commits) == 1
+    assert admission.commits == []
 
 
 def test_build_usage_key_is_order_stable() -> None:
     first = build_usage_idempotency_key(TENANT_ID, ["2", "1"], ["source-2", "source-1"])
     second = build_usage_idempotency_key(TENANT_ID, ["1", "2"], ["source-1", "source-2"])
     assert first == second
+
+
+class _ConflictAdmission(_FakeAdmission):
+    async def reserve(self, tenant_id, **kwargs):
+        raise UsageFingerprintConflictError("changed fingerprint")
+
+
+class _UnavailableAdmission(_FakeAdmission):
+    async def reserve(self, tenant_id, **kwargs):
+        raise UsageAdmissionUnavailableError("global state missing")
+
+
+@pytest.mark.asyncio
+async def test_fingerprint_conflict_maps_to_conflict() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            _ConflictAdmission(),
+            tenant_id=TENANT_ID,
+            idempotency_key="key",
+            job_id=None,
+            cost_units=1,
+            operation_id="op-1",
+            request_fingerprint="fp-b",
+        ):
+            pass
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"error": "usage_fingerprint_conflict"}
+
+
+@pytest.mark.asyncio
+async def test_missing_global_state_maps_to_unavailable() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            _UnavailableAdmission(),
+            tenant_id=TENANT_ID,
+            idempotency_key="key",
+            job_id=None,
+            cost_units=1,
+        ):
+            pass
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {"error": "usage_admission_unavailable"}

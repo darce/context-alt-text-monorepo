@@ -5,22 +5,40 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import Session
 
 from db.base import Base
 from db.models import Tenant, TenantEntitlement, UsageReservation
+from db.models.portal_billing import GlobalUsageAdmissionState
 from recognition.application.services.usage_admission_service import (
     AllowanceExceededError,
+    GlobalUsageLimitExceededError,
     InvalidUsageRequestError,
     ReservationNotFoundError,
     UsageAdmissionService,
+    UsageAdmissionStoppedError,
+    UsageAdmissionUnavailableError,
+    UsageFenceMismatchError,
+    UsageFingerprintConflictError,
 )
-from recognition.domain.portal_contracts import EntitlementStatus, UsageReservationStatus, UsageTicket
+from recognition.domain.portal_contracts import (
+    DEFAULT_GLOBAL_CONFIG_VERSION,
+    DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+    DEFAULT_GLOBAL_FENCE_EPOCH,
+    DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+    DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+    DEFAULT_GLOBAL_QUEUE_LIMIT,
+    GLOBAL_USAGE_ADMISSION_STATE_ID,
+    EntitlementStatus,
+    UsageReservationStatus,
+    UsageTicket,
+)
 from recognition.domain.portal_contracts import UsageAdmissionService as UsageAdmissionServiceProtocol
 from recognition.infrastructure.repositories.usage_repository import SqlAlchemyUsageRepository
 
@@ -53,11 +71,40 @@ class _AsyncSessionAdapter:
     async def close(self) -> None:
         self._session.close()
 
+    @asynccontextmanager
+    async def begin_nested(self):
+        with self._session.begin_nested():
+            yield self
+
     async def __aenter__(self) -> _AsyncSessionAdapter:
         return self
 
     async def __aexit__(self, *_exc_info: object) -> None:
         await self.close()
+
+
+def _seed_global_state(session: Session, **overrides: object) -> None:
+    now = datetime.now(tz=UTC)
+    period_start = datetime(now.year, now.month, now.day, tzinfo=UTC)
+    payload = {
+        "id": GLOBAL_USAGE_ADMISSION_STATE_ID,
+        "period_start": period_start,
+        "period_end": period_start + timedelta(days=1),
+        "daily_cost_limit": DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        "daily_cost_units": 0,
+        "inflight_limit": DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        "inflight_units": 0,
+        "queue_limit": DEFAULT_GLOBAL_QUEUE_LIMIT,
+        "queue_depth": 0,
+        "queue_byte_limit": DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        "queue_bytes": 0,
+        "stop_requested": False,
+        "fence_epoch": DEFAULT_GLOBAL_FENCE_EPOCH,
+        "config_version": DEFAULT_GLOBAL_CONFIG_VERSION,
+        "updated_at": now,
+    }
+    payload.update(overrides)
+    session.add(GlobalUsageAdmissionState(**payload))
 
 
 @pytest.fixture
@@ -66,7 +113,12 @@ def database() -> Iterator[tuple[Callable[[], _AsyncSessionAdapter], UUID, datet
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(
         engine,
-        tables=[Tenant.__table__, TenantEntitlement.__table__, UsageReservation.__table__],
+        tables=[
+            Tenant.__table__,
+            TenantEntitlement.__table__,
+            UsageReservation.__table__,
+            GlobalUsageAdmissionState.__table__,
+        ],
     )
 
     tenant_id = uuid4()
@@ -86,6 +138,7 @@ def database() -> Iterator[tuple[Callable[[], _AsyncSessionAdapter], UUID, datet
                 source="unit-test",
             )
         )
+        _seed_global_state(setup_session)
         setup_session.commit()
 
     def session_factory() -> _AsyncSessionAdapter:
@@ -105,12 +158,41 @@ async def _reservation(session: _AsyncSessionAdapter, reservation_id: UUID) -> U
     return row
 
 
+async def _global_state(session: _AsyncSessionAdapter) -> GlobalUsageAdmissionState:
+    result = await session.execute(
+        select(GlobalUsageAdmissionState).where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise AssertionError("global admission state was not persisted")
+    return row
+
+
 def test_service_satisfies_published_runtime_protocol() -> None:
     assert isinstance(UsageAdmissionService.__new__(UsageAdmissionService), UsageAdmissionServiceProtocol)
 
 
-def test_reservation_path_locks_entitlement_before_check_and_insert() -> None:
+def test_g1_public_method_signatures_are_frozen() -> None:
+    reserve = inspect.signature(UsageAdmissionService.reserve)
+    assert list(reserve.parameters) == [
+        "self",
+        "tenant_id",
+        "idempotency_key",
+        "job_id",
+        "cost_units",
+        "operation_id",
+        "request_fingerprint",
+        "queue_bytes",
+    ]
+    commit_fenced = inspect.signature(UsageAdmissionService.commit_fenced)
+    assert list(commit_fenced.parameters) == ["self", "ticket", "fence_token"]
+    release_fenced = inspect.signature(UsageAdmissionService.release_fenced)
+    assert list(release_fenced.parameters) == ["self", "ticket", "fence_token"]
+
+
+def test_reservation_path_locks_global_then_entitlement_before_insert() -> None:
     source = inspect.getsource(SqlAlchemyUsageRepository.reserve)
+    assert source.index("_lock_global_state") < source.index("lock tenant entitlement")
     assert "with_for_update" in source
     assert "UsageReservationStatus.RESERVED" in source
     assert "_CHARGEABLE_RESERVATION_STATUSES" in source
@@ -135,18 +217,212 @@ async def test_reserve_returns_same_ticket_for_retry(database) -> None:
             cost_units=99,
         )
 
-        assert first == second
+        assert first.reservation_id == second.reservation_id
+        assert first.operation_id == "request-1"
+        assert first.request_fingerprint == "request-1"
+        assert first.job_id == "job-1"
+        assert first.fence_token
         assert isinstance(first, UsageTicket)
         await session.commit()
 
     async with session_factory() as session:
         rows = (
-            await session.execute(
-                select(UsageReservation).where(UsageReservation.tenant_id == tenant_id).limit(2)
-            )
-        ).scalars().all()
+            (await session.execute(select(UsageReservation).where(UsageReservation.tenant_id == tenant_id).limit(2)))
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].id == first.reservation_id
+
+
+@pytest.mark.asyncio
+async def test_same_operation_changed_fingerprint_conflicts(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        first = await service.reserve(
+            tenant_id,
+            idempotency_key="op-1",
+            job_id="job-1",
+            cost_units=1,
+            operation_id="op-1",
+            request_fingerprint="fp-a",
+        )
+        with pytest.raises(UsageFingerprintConflictError):
+            await service.reserve(
+                tenant_id,
+                idempotency_key="op-1",
+                job_id="job-2",
+                cost_units=1,
+                operation_id="op-1",
+                request_fingerprint="fp-b",
+            )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows = (
+            (await session.execute(select(UsageReservation).where(UsageReservation.tenant_id == tenant_id)))
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].id == first.reservation_id
+        assert rows[0].request_fingerprint == "fp-a"
+
+
+@pytest.mark.asyncio
+async def test_new_operation_is_independently_chargeable(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        await session.execute(
+            update(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id).values(allowance_jobs=2)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        first = await service.reserve(
+            tenant_id,
+            idempotency_key="op-1",
+            job_id="job-1",
+            cost_units=1,
+            operation_id="op-1",
+            request_fingerprint="fp-same",
+        )
+        second = await service.reserve(
+            tenant_id,
+            idempotency_key="op-2",
+            job_id="job-2",
+            cost_units=1,
+            operation_id="op-2",
+            request_fingerprint="fp-same",
+        )
+        assert first.reservation_id != second.reservation_id
+        await session.commit()
+
+    async with session_factory() as session:
+        rows = (
+            (await session.execute(select(UsageReservation).where(UsageReservation.tenant_id == tenant_id)))
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_released_operation_cannot_authorize_fresh_work(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key="op-1",
+            job_id="job-1",
+            cost_units=1,
+            operation_id="op-1",
+            request_fingerprint="fp-1",
+        )
+        await service.release_fenced(ticket, fence_token=ticket.fence_token)
+        replayed = await service.reserve(
+            tenant_id,
+            idempotency_key="op-1",
+            job_id="job-new",
+            cost_units=1,
+            operation_id="op-1",
+            request_fingerprint="fp-1",
+        )
+        assert replayed.reservation_id == ticket.reservation_id
+        assert replayed.job_id == "job-1"
+        await service.commit_fenced(replayed, fence_token=replayed.fence_token)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.RELEASED
+
+
+@pytest.mark.asyncio
+async def test_stale_fence_cannot_settle_reservation(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(tenant_id, idempotency_key="op-1", job_id="job-1", cost_units=1)
+        with pytest.raises(UsageFenceMismatchError):
+            await service.commit_fenced(ticket, fence_token="stale-fence")
+        await service.commit_fenced(ticket, fence_token=ticket.fence_token)
+        await service.commit_fenced(ticket, fence_token=ticket.fence_token)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_missing_global_state_fails_closed(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        await session.execute(delete(GlobalUsageAdmissionState))
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(UsageAdmissionUnavailableError):
+            await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="closed-global",
+                job_id=None,
+                cost_units=1,
+            )
+
+
+@pytest.mark.asyncio
+async def test_stop_requested_refuses_new_reservation(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        await session.execute(
+            update(GlobalUsageAdmissionState)
+            .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+            .values(stop_requested=True)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(UsageAdmissionStoppedError):
+            await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="stopped",
+                job_id=None,
+                cost_units=1,
+            )
+
+
+@pytest.mark.asyncio
+async def test_global_daily_cost_limit_is_enforced(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        await session.execute(
+            update(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id).values(allowance_jobs=8)
+        )
+        await session.execute(
+            update(GlobalUsageAdmissionState)
+            .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+            .values(daily_cost_limit=1)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        await service.reserve(tenant_id, idempotency_key="first", job_id=None, cost_units=1)
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(GlobalUsageLimitExceededError):
+            await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="second",
+                job_id=None,
+                cost_units=1,
+            )
 
 
 @pytest.mark.asyncio
@@ -203,6 +479,9 @@ async def test_commit_is_idempotent_and_release_cannot_refund_committed_ticket(d
         row = await _reservation(session, ticket.reservation_id)
         assert row.status == UsageReservationStatus.COMMITTED
         assert row.cost_units == ticket.cost_units
+        global_state = await _global_state(session)
+        assert global_state.inflight_units == 0
+        assert global_state.daily_cost_units == 1
 
 
 @pytest.mark.asyncio
@@ -220,6 +499,9 @@ async def test_release_is_idempotent_and_commit_cannot_revive_released_ticket(da
         row = await _reservation(session, ticket.reservation_id)
         assert row.status == UsageReservationStatus.RELEASED
         assert row.cost_units == ticket.cost_units
+        global_state = await _global_state(session)
+        assert global_state.inflight_units == 0
+        assert global_state.daily_cost_units == 0
 
 
 @pytest.mark.asyncio

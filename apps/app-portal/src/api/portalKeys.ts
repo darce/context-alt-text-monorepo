@@ -50,6 +50,7 @@ export type PortalKeyClient = {
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DEFAULT_LIST_LIMIT = 25;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,8 +61,20 @@ function parseUuid(value: unknown): string | null {
   return typeof value === 'string' && UUID_RE.test(value) ? value : null;
 }
 
-function parseRequiredString(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
+function parseIsoDateTime(value: unknown): string | null {
+  if (typeof value !== 'string' || !ISO_DATE_TIME_RE.test(value)) {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? value : null;
+}
+
+function parseNullableIsoDateTime(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  const parsed = parseIsoDateTime(value);
+  return parsed === null ? undefined : parsed;
 }
 
 function parseNullableString(value: unknown): string | null | undefined {
@@ -78,7 +91,7 @@ function parseNullableInt(value: unknown): number | null | undefined {
   if (value === null) {
     return null;
   }
-  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value)) {
+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     return undefined;
   }
   return value;
@@ -172,9 +185,9 @@ function parseMetadata(value: unknown): PortalKeyMetadataResponse | null {
   }
   const id = parseUuid(value.id);
   const tenantId = parseUuid(value.tenant_id);
-  const createdAt = parseRequiredString(value.created_at);
-  const expiresAt = parseNullableString(value.expires_at);
-  const revokedAt = parseNullableString(value.revoked_at);
+  const createdAt = parseIsoDateTime(value.created_at);
+  const expiresAt = parseNullableIsoDateTime(value.expires_at);
+  const revokedAt = parseNullableIsoDateTime(value.revoked_at);
   const rateLimitTier = parseNullableString(value.rate_limit_tier);
   const lifetimeSeconds = parseNullableInt(value.lifetime_seconds);
   if (
@@ -234,14 +247,14 @@ function parsePage(value: unknown): PortalKeyPageResponse | null {
   return { data, next_cursor: nextCursor, cursor, limit, total };
 }
 
-function parseRevoke(value: unknown): RevokeKeyResponse | null {
+function parseRevoke(value: unknown, requestedId: string): RevokeKeyResponse | null {
   if (!isRecord(value)) {
     return null;
   }
   const id = parseUuid(value.id);
   const tenantId = parseUuid(value.tenant_id);
   const revoked = parseBoolean(value.revoked);
-  if (!id || !tenantId || revoked === null) {
+  if (!id || !tenantId || revoked !== true || id !== requestedId) {
     return null;
   }
   return { id, tenant_id: tenantId, revoked };
@@ -318,7 +331,7 @@ export function createPortalKeyClient(request: PortalRequest): PortalKeyClient {
       if (!response.ok) {
         await throwHttpError(response);
       }
-      const parsed = parseRevoke(await readJson(response));
+      const parsed = parseRevoke(await readJson(response), id);
       if (!parsed) {
         throw invalidResponseError(response.status);
       }

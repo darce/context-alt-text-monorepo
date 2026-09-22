@@ -120,7 +120,9 @@ class OutboxMaintenanceService {
 		}
 
 		try {
-			$resolved_scheduler_mode = $scheduler_mode ?? $this->reclaimer_liveness->current_scheduler_mode();
+			$resolved_scheduler_mode = $scheduler_mode ?? $this->reclaimer_liveness->current_scheduler_mode(
+				$this->reclaimer_liveness->booked_scheduler_mode()
+			);
 		} catch ( Throwable $exception ) {
 			$resolved_scheduler_mode = $scheduler_mode ?? ReclaimerLiveness::SCHEDULER_WP_CRON;
 			$this->report_reclaimer_liveness_failure( $normalized_tenant_id, 'scheduler_mode', $exception );
@@ -296,7 +298,7 @@ class OutboxMaintenanceService {
 	 * Schedule the next terminal-row purge: Action Scheduler when available, WP-Cron otherwise
 	 * (same pattern as OutboxDrain::maybe_schedule_drain).
 	 */
-	public static function maybe_schedule_purge(): void {
+	public static function maybe_schedule_purge(): ?string {
 		$hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? (int) HOUR_IN_SECONDS : 3600;
 		$timestamp = time() + $hour_seconds;
 		$group = self::action_scheduler_group();
@@ -305,14 +307,18 @@ class OutboxMaintenanceService {
 			$existing = as_next_scheduled_action( self::PURGE_HOOK, array(), $group );
 			if ( true === $existing || ( is_numeric( $existing ) && (int) $existing > 0 ) ) {
 				wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
-				return;
+				$mode = ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER;
+				( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+				return $mode;
 			}
 
 			try {
 				$action_id = as_schedule_single_action( $timestamp, self::PURGE_HOOK, array(), $group );
 				if ( (int) $action_id > 0 ) {
 					wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
-					return;
+					$mode = ReclaimerLiveness::SCHEDULER_ACTION_SCHEDULER;
+					( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+					return $mode;
 				}
 			} catch ( Throwable $exception ) {
 				do_action( 'acx_outbox_action_scheduler_enqueue_failed', $exception );
@@ -322,6 +328,10 @@ class OutboxMaintenanceService {
 		if ( false === wp_next_scheduled( self::PURGE_HOOK, array() ) ) {
 			wp_schedule_event( $timestamp, 'daily', self::PURGE_HOOK, array() );
 		}
+
+		$mode = ReclaimerLiveness::SCHEDULER_WP_CRON;
+		( new ReclaimerLiveness() )->record_booked_scheduler_mode( $mode );
+		return $mode;
 	}
 
 	private static function action_scheduler_group(): string {

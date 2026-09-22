@@ -52,6 +52,7 @@ class ReclaimerLiveness {
 	public const INLINE_PURGE_BATCH_SIZE = 100;
 
 	private const OPTION_PREFIX = 'acx_reclaimer_liveness_';
+	private const PURGE_SCHEDULER_OPTION = 'acx_reclaimer_purge_scheduler';
 	private const LEASE_OPTION_PREFIX = 'acx_reclaimer_lease_';
 	private const LEASE_SECONDS = 300;
 
@@ -351,6 +352,23 @@ class ReclaimerLiveness {
 		// Capability is not evidence of a successful booking. Callers that have
 		// just scheduled work must pass the mode returned by that booking path.
 		return self::SCHEDULER_WP_CRON;
+	}
+
+	public function record_booked_scheduler_mode( string $scheduler_mode ): void {
+		if ( self::SCHEDULER_ACTION_SCHEDULER !== $scheduler_mode && self::SCHEDULER_WP_CRON !== $scheduler_mode ) {
+			return;
+		}
+
+		update_option( self::PURGE_SCHEDULER_OPTION, $scheduler_mode, false );
+	}
+
+	public function booked_scheduler_mode(): ?string {
+		$scheduler_mode = get_option( self::PURGE_SCHEDULER_OPTION );
+		if ( self::SCHEDULER_ACTION_SCHEDULER === $scheduler_mode || self::SCHEDULER_WP_CRON === $scheduler_mode ) {
+			return $scheduler_mode;
+		}
+
+		return null;
 	}
 
 	public function effective_period_seconds( string $scheduler_mode ): int {

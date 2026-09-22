@@ -338,16 +338,54 @@ def test_auraface_space_verified_artifacts_reach_ok(tmp_path: Path, monkeypatch:
 
 
 def test_real_auraface_entry_blocks_activation_while_artifact_absent(tmp_path: Path) -> None:
-    """The pins are operator-measured now; absent BYTES are what still blocks activation."""
-    from recognition.application.health import ModelSpace, check_model_space
-
-    result = check_model_space(ModelSpace.AURAFACE, tmp_path)
-
-    assert result.status is HealthStatus.UNHEALTHY
-    assert "model file missing" in result.detail
-    assert MODEL_MANIFEST["auraface"].file_name in result.detail
+    """Absent bytes still fail load; readiness must refuse the unverified template first."""
     with pytest.raises(ModelMissingError, match="model file missing"):
         load_verified_model("auraface", models_dir=tmp_path)
+
+
+def _count_onnx_hashes(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count model-file sha256 calls used by load_verified_model / verify_face_pipeline_model."""
+    import recognition.infrastructure.face_pipeline.provenance as prov_mod
+
+    calls = {"n": 0}
+    real = prov_mod._file_sha256
+
+    def _counting(path: Path) -> str:
+        name = Path(path).name
+        if name.endswith(".onnx"):
+            calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(prov_mod, "_file_sha256", _counting)
+    return calls
+
+
+def _forbid_verified_model_io(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Fail the test if readiness reaches model hashing or verified-load."""
+    import recognition.infrastructure.face_pipeline.provenance as prov_mod
+
+    calls = {"sha": 0, "load": 0, "verify": 0}
+    real_sha = prov_mod._file_sha256
+    real_load = prov_mod.load_verified_model
+    real_verify = health_mod.verify_face_pipeline_model
+
+    def _count_sha(path: Path) -> str:
+        calls["sha"] += 1
+        return real_sha(path)
+
+    def _count_load(name: str, *, models_dir: Path | None = None) -> Path:
+        calls["load"] += 1
+        return real_load(name, models_dir=models_dir)
+
+    def _count_verify(name: str, *, models_dir: Path | None = None) -> object:
+        calls["verify"] += 1
+        return real_verify(name, models_dir=models_dir)
+
+    monkeypatch.setattr(prov_mod, "_file_sha256", _count_sha)
+    monkeypatch.setattr(prov_mod, "load_verified_model", _count_load)
+    monkeypatch.setattr(health_mod, "load_verified_model", _count_load, raising=False)
+    monkeypatch.setattr(health_mod, "verify_face_pipeline_model", _count_verify)
+    return calls
 
 
 def test_unverified_preprocessing_entry_is_refused_for_activation() -> None:
@@ -578,3 +616,183 @@ def test_auraface_alignment_crop_is_rgb_relative_to_sface_bgr() -> None:
     assert np.array_equal(aura_result.crop, sface_result.crop[..., ::-1])
     assert sface.channel_order == "BGR"
     assert aura.channel_order == "RGB"
+
+
+def test_unverified_auraface_readiness_refuses_before_model_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace, check_model_space
+
+    entry = MODEL_MANIFEST["auraface"]
+    (tmp_path / entry.file_name).write_bytes(b"unverified-auraface-bytes")
+    (tmp_path / entry.license_file).write_bytes(b"unverified-auraface-license")
+    io_calls = _forbid_verified_model_io(monkeypatch)
+
+    result = check_model_space(ModelSpace.AURAFACE, tmp_path)
+
+    assert result.status is HealthStatus.UNHEALTHY, result.detail
+    assert "alignment template" in result.detail
+    assert "arcface-112-unverified" in result.detail
+    assert io_calls == {"sha": 0, "load": 0, "verify": 0}
+
+
+def test_auraface_repeated_probes_hash_model_bytes_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace, check_model_space
+
+    _install_synthetic_auraface(tmp_path, monkeypatch)
+    _stub_ort_session_classes(monkeypatch)
+    hash_calls = _count_onnx_hashes(monkeypatch)
+
+    first = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert first.status is HealthStatus.OK, first.detail
+    hashes_after_first = hash_calls["n"]
+    assert hashes_after_first >= 1
+
+    second = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert second.status is HealthStatus.OK, second.detail
+    assert hash_calls["n"] == hashes_after_first
+
+
+def test_auraface_license_only_drift_invalidates_cached_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace, check_model_space
+
+    entry = _install_synthetic_auraface(tmp_path, monkeypatch)
+    _stub_ort_session_classes(monkeypatch)
+    hash_calls = _count_onnx_hashes(monkeypatch)
+
+    first = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert first.status is HealthStatus.OK, first.detail
+    hashes_after_first = hash_calls["n"]
+    assert hashes_after_first >= 1
+
+    second = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert second.status is HealthStatus.OK, second.detail
+    assert hash_calls["n"] == hashes_after_first
+
+    model_path = tmp_path / entry.file_name
+    license_path = tmp_path / entry.license_file
+    model_before = model_path.read_bytes()
+    license_path.write_bytes(license_path.read_bytes() + b"\n#tampered-license\n")
+
+    third = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert third.status is HealthStatus.UNHEALTHY, third.detail
+    detail_l = third.detail.lower()
+    assert "license" in detail_l
+    assert model_path.read_bytes() == model_before
+
+
+def test_auraface_model_stat_drift_invalidates_cached_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace, check_model_space
+
+    entry = _install_synthetic_auraface(tmp_path, monkeypatch)
+    _stub_ort_session_classes(monkeypatch)
+
+    first = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert first.status is HealthStatus.OK, first.detail
+
+    model_path = tmp_path / entry.file_name
+    model_path.write_bytes(model_path.read_bytes() + b"\x00")
+    drifted = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert drifted.status is HealthStatus.UNHEALTHY, drifted.detail
+    detail_l = drifted.detail.lower()
+    assert "sha256" in detail_l or "integrity" in detail_l or "size mismatch" in detail_l
+
+
+def test_auraface_missing_artifacts_recover_on_later_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace, check_model_space
+
+    entry = _install_synthetic_auraface(tmp_path, monkeypatch, write_model=False, write_license=False)
+    missing = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert missing.status is HealthStatus.UNHEALTHY, missing.detail
+    assert "missing" in missing.detail.lower()
+    assert entry.file_name in missing.detail
+
+    _install_synthetic_auraface(tmp_path, monkeypatch)
+    _stub_ort_session_classes(monkeypatch)
+    recovered = check_model_space(ModelSpace.AURAFACE, tmp_path)
+    assert recovered.status is HealthStatus.OK, recovered.detail
+
+
+@pytest.mark.asyncio
+async def test_unverified_auraface_ready_returns_503_not_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.application.health import ModelSpace
+
+    entry = MODEL_MANIFEST["auraface"]
+    aura_dir = tmp_path / "auraface"
+    aura_dir.mkdir()
+    (aura_dir / entry.file_name).write_bytes(b"unverified-auraface-bytes")
+    (aura_dir / entry.license_file).write_bytes(b"unverified-auraface-license")
+    io_calls = _forbid_verified_model_io(monkeypatch)
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
+    monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(aura_dir))
+    app = _standalone_ready_app(
+        monkeypatch,
+        model_cache_dir=tmp_path / "insightface",
+        models_dirs={
+            ModelSpace.FACE_PIPELINE: tmp_path / "face-pipeline",
+            ModelSpace.AURAFACE: aura_dir,
+        },
+    )
+    response = await _get_ready(app)
+
+    assert response.status_code == 503, response.text
+    body = response.json()
+    assert body["status"] == "unhealthy"
+    detail = next(check for check in body["checks"] if check["name"] == "model_cache")["detail"]
+    assert "alignment template" in detail
+    assert "arcface-112-unverified" in detail
+    assert io_calls == {"sha": 0, "load": 0, "verify": 0}
+
+
+@pytest.mark.asyncio
+async def test_ready_respects_profile_change_after_registration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import api.main as api_main
+    from recognition.application.health import ModelSpace
+
+    insightface_dir = tmp_path / "insightface"
+    face_pipeline_dir = tmp_path / "face-pipeline"
+    auraface_dir = tmp_path / "auraface"
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "auraface")
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_MODELS_DIR", str(face_pipeline_dir))
+    monkeypatch.setenv("RECOGNITION_AURAFACE_MODELS_DIR", str(auraface_dir))
+
+    cache_calls: list[tuple[Path, str]] = []
+
+    def record_cache(cache_dir: Path, *args: object, **kwargs: object) -> health_mod.CheckResult:
+        cache_calls.append((Path(cache_dir), str(kwargs.get("model_name", args[0] if args else "buffalo_l"))))
+        return health_mod.CheckResult("model_cache", HealthStatus.OK, f"insightface: {cache_dir}")
+
+    monkeypatch.setattr(api_main, "check_model_cache", record_cache)
+    app = _standalone_ready_app(
+        monkeypatch,
+        model_cache_dir=insightface_dir,
+        models_dirs={
+            ModelSpace.FACE_PIPELINE: face_pipeline_dir,
+            ModelSpace.AURAFACE: auraface_dir,
+        },
+    )
+
+    first = await _get_ready(app)
+    assert first.status_code == 503, first.text
+    first_detail = next(check for check in first.json()["checks"] if check["name"] == "model_cache")["detail"]
+    assert "alignment template" in first_detail
+    assert "arcface-112-unverified" in first_detail
+    assert cache_calls == []
+
+    monkeypatch.setenv("RECOGNITION_FACE_PIPELINE_PROFILE", "insightface")
+    second = await _get_ready(app)
+    assert second.status_code == 200, second.text
+    assert cache_calls == [(insightface_dir, "buffalo_l")]

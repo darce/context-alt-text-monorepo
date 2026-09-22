@@ -40,8 +40,12 @@ already belong to another namespace fail closed before a paid grant.
    Default is dry-run and rolls back. Unmapped rows stay unavailable for paid
    authority.
 3. Build a mapping file of **verified row IDs** with operator evidence. Do not
-   guess. Do not map a projection onto a different `tenant_id`. Do not merge
-   two customers that collide in the same namespace.
+   guess. `environment` must be the exact string `sandbox` or `live`.
+   `seller_account` must be a nonempty string of at most 128 characters. JSON
+   `null`, numbers, objects, booleans, and empty/whitespace values are
+   rejected before any database write (they are not stringified to `None`).
+   Do not map a projection onto a different `tenant_id`. Do not merge two
+   customers that collide in the same namespace.
 
    ```json
    {
@@ -56,16 +60,24 @@ already belong to another namespace fail closed before a paid grant.
    }
    ```
 
-   Dry-run the mapping (still no write):
+   Dry-run the mapping (still no write). With `--mapping`, dry-run runs the
+   **same** row existence, namespace, tenant, and collision checks as apply,
+   then rolls back. A missing row, tenant mismatch, or collision fails closed
+   with no mutation. Mapped counts are entries that passed those checks, not
+   a raw list length.
 
    ```bash
    python scripts/billing_namespace_migrate.py --mapping mapping.json
    ```
 
-4. Apply only after review. The apply transaction uses
-   `SET LOCAL app.bypass_rls = 'true'` and restores the prior GUC. Collisions
-   fail closed (SQL / explicit error). Partial NULL unique may coexist with
-   remaining unmapped rows.
+4. Apply only after review, with writers still drained/stopped, an explicit
+   `--apply` flag, and the same audited mapping file. The apply transaction
+   uses `SET LOCAL app.bypass_rls = 'true'` and restores the prior GUC.
+   Every mapping entry is validated before the first `UPDATE`. Collisions
+   fail closed (SQL / explicit error) and the transaction rolls back; there
+   are no durable partial writes. Re-running a successful mapping is
+   idempotent for rows already in the target namespace. Partial NULL unique
+   may coexist with remaining unmapped rows.
 
    ```bash
    python scripts/billing_namespace_migrate.py --mapping mapping.json --apply

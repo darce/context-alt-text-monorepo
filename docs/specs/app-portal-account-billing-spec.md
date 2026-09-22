@@ -248,7 +248,7 @@ Persist intent **before** any vendor mutation (DDIA: durable transaction then id
 
 ### 5.1 Attempt row
 
-Table `billing_checkout_attempt` (add in `001_identity_schema.py`; greenfield — no migration chain).
+Table `billing_checkout_attempt`. Follow the verified repository migration authority and provide an upgrade for existing installations; do not assume deployed databases are greenfield.
 
 | Column | Rules |
 | --- | --- |
@@ -269,7 +269,7 @@ Table `billing_checkout_attempt` (add in `001_identity_schema.py`; greenfield �
 
 **Uniques**
 
-- `(provider, environment, seller_account, client_idempotency_key)` where client key is not null
+- `(tenant_id, provider, environment, seller_account, client_idempotency_key)` where client key is not null
 - `(provider, environment, seller_account, idempotency_key)`
 - Partial: at most one `status IN ('created','provider_requested','pending','ambiguous')` per `(tenant_id, provider, environment, seller_account, plan_code)`
 
@@ -309,7 +309,7 @@ Do **not** hold a row lock across the Polar HTTP call (Release It: timeout + bul
 
 Polar documents `external_customer_id` as the reconciliation handle and disables email edit when set. Current adapter omits it on checkout; C must add it.
 
-`create_checkout_session` remains on `BillingProvider` for the URL, but C’s **service** (`checkout_service.py`) owns attempt lifecycle. Protocol additions in section 7.
+`create_checkout_session` returns a typed checkout ID + URL result; C’s **service** (`checkout_service.py`) owns attempt lifecycle. Protocol additions in section 7.
 
 ---
 
@@ -346,7 +346,7 @@ class BillingProvider(Protocol):
     async def create_checkout_session(
         self, *, tenant_id: UUID, plan_code: str, success_url: str, cancel_url: str,
         idempotency_key: str, attempt_id: UUID,
-    ) -> str: ...
+    ) -> CheckoutSession: ...
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str: ...
     async def retrieve_state(
         self, *, provider_customer_id: str, provider_subscription_id: str | None,
@@ -364,7 +364,9 @@ class BillingProvider(Protocol):
     async def parse_event(self, raw_body: bytes) -> Mapping[str, object]: ...
 ```
 
-`create_checkout_session` **must** take the attempt’s `idempotency_key` (stop hashing URLs inside the adapter). Returning `str` URL preserves today’s HTTP convenience; `provider_checkout_id` is persisted by the service from `retrieve_checkout` or the create JSON (`id` + `url`). If the create response includes `id`, persist it in the same update as `checkout_url`.
+`create_checkout_session` **must** take the attempt’s `idempotency_key` (stop hashing URLs inside the adapter) and return `CheckoutSession` containing both `provider_checkout_id` and `url`. The service persists both atomically. Returning only a URL cannot satisfy the stated persistence contract. Update internal fakes/callers within the adapter lane's owned paths; downstream H consumes the typed contract.
+
+Coordinator amendment 2026-09-22: client idempotency uniqueness is tenant-scoped; identical keys used by different tenants must not collide or disclose another attempt. Existing installations need a verified upgrade path, regardless of historical greenfield planning.
 
 ### 7.1 Enumeration (vendor-supported Polar path)
 

@@ -208,6 +208,7 @@ export const SyncStatusIndicator = ({
     resultsSyncState: projectionState,
     resultsError: projectionError,
     activeSection,
+    reclaimer: data?.reclaimer ?? null,
   });
 
   const pendingChanges = normalizeCount(data?.pending_curation_operations);

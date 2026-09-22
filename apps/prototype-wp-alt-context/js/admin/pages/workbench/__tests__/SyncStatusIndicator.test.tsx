@@ -3,8 +3,23 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { RetentionStatusResponse, SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
+import type { ReclaimerStatus } from '../../../api/recognition/types/sync';
+import { RECLAIMER_VOCABULARY } from '../../../api/recognition/types/sync';
 import { createMockQuery } from '../../../test-utils/mockHooks';
 import { SYNC_VOCABULARY } from '../syncVocabulary';
+
+const healthyReclaimer: ReclaimerStatus = {
+  state: RECLAIMER_VOCABULARY.state.HEALTHY,
+  scheduler_mode: RECLAIMER_VOCABULARY.scheduler_mode.ACTION_SCHEDULER,
+  effective_period_seconds: 3600,
+  last_attempt_at: '2026-09-22T12:00:00Z',
+  last_success_at: '2026-09-22T11:59:00Z',
+  last_outcome: RECLAIMER_VOCABULARY.last_outcome.SUCCESS,
+  last_purged_count: 4,
+  backlog_remaining: 0,
+  backlog_oldest_age_seconds: null,
+  batch_cap_reached: false,
+};
 
 const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatusResponse => ({
   last_snapshot_version: 0,
@@ -12,6 +27,7 @@ const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatu
   is_stale: false,
   sync_health: 'healthy',
   last_sync_result: 'ok',
+  reclaimer: healthyReclaimer,
   ...overrides,
 });
 
@@ -160,6 +176,51 @@ describe('SyncStatusIndicator', () => {
 
     expect(screen.getByText('Fresh')).toBeInTheDocument();
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
+  });
+
+  it('renders overdue reclaimer state with icon, text, backlog age, and cap copy', () => {
+    mockReturn.data = buildSyncStatus({
+      reclaimer: {
+        ...healthyReclaimer,
+        state: RECLAIMER_VOCABULARY.state.OVERDUE,
+        last_success_at: '2026-09-20T12:00:00Z',
+        backlog_remaining: 7,
+        backlog_oldest_age_seconds: 7200,
+        batch_cap_reached: true,
+      },
+    });
+
+    const { container } = render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Background cleanup is overdue.')).toBeInTheDocument();
+    expect(screen.getByText('Overdue')).toBeInTheDocument();
+    expect(screen.getByText(/Cleanup remaining: 7/)).toBeInTheDocument();
+    expect(screen.getByText(/7200/)).toBeInTheDocument();
+    expect(screen.getByText(/more remains/i)).toBeInTheDocument();
+    expect(container.firstChild).toHaveClass('acx-sync-status--warning');
+    expect(container.querySelector('.acx-sync-status__icon')?.textContent).toContain('!');
+  });
+
+  it('renders breach over a green upstream status with recovery copy and an error icon', () => {
+    mockReturn.data = buildSyncStatus({
+      reclaimer: {
+        ...healthyReclaimer,
+        state: RECLAIMER_VOCABULARY.state.BREACH,
+        last_success_at: '2026-09-18T12:00:00Z',
+        backlog_remaining: 9,
+        backlog_oldest_age_seconds: 172800,
+        batch_cap_reached: true,
+      },
+    });
+
+    const { container } = render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Purge is overdue.')).toBeInTheDocument();
+    expect(screen.getByText(/next sync will attempt recovery/i)).toBeInTheDocument();
+    expect(screen.queryByText(/data loss/i)).not.toBeInTheDocument();
+    expect(container.querySelector('[data-sync-status="reclaimer_breach"]')).toBeTruthy();
+    expect(container.querySelector('[data-badge-state="error"]')).toBeTruthy();
+    expect(container.querySelector('.acx-sync-status__icon')?.textContent).toContain('✕');
   });
 
   it('pairs badge ok/attention color with a glyph second channel', () => {

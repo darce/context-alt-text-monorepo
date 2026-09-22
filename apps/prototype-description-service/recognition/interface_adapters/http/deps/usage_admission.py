@@ -19,6 +19,7 @@ from recognition.application.services.usage_admission_service import (
     AllowanceExceededError,
     GlobalUsageLimitExceededError,
     UsageAdmissionStoppedError,
+    UsageAdmissionTimeoutError,
     UsageAdmissionUnavailableError,
     UsageFingerprintConflictError,
 )
@@ -26,6 +27,7 @@ from recognition.domain.portal_contracts import UsageAdmissionService, UsageTick
 from recognition.interface_adapters.http.deps.session import get_optional_session
 
 logger = logging.getLogger(__name__)
+_RESERVATION_TIMEOUT_RETRY_AFTER_S = 5
 
 
 def _is_usage_service(value: object) -> bool:
@@ -120,6 +122,27 @@ def _admission_unavailable(detail: str) -> HTTPException:
     )
 
 
+def _reservation_timeout() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"error": "reservation_timeout"},
+        headers={"Retry-After": str(_RESERVATION_TIMEOUT_RETRY_AFTER_S)},
+    )
+
+
+async def _rollback_usage_transaction(service: object) -> None:
+    repository = getattr(service, "_repository", None)
+    session = getattr(repository, "_session", None) if repository is not None else None
+    if session is None:
+        session = getattr(service, "_session", None)
+    rollback = getattr(session, "rollback", None)
+    if not callable(rollback):
+        return
+    result = rollback()
+    if hasattr(result, "__await__"):
+        await result
+
+
 @asynccontextmanager
 async def admit_usage(
     service: UsageAdmissionService | None,
@@ -168,6 +191,15 @@ async def admit_usage(
         raise _admission_unavailable("usage_admission_limited") from exc
     except UsageAdmissionUnavailableError as exc:
         raise _admission_unavailable("usage_admission_unavailable") from exc
+    except UsageAdmissionTimeoutError as exc:
+        try:
+            await _rollback_usage_transaction(service)
+        except BaseException:
+            logger.exception(
+                "Usage reservation timeout rollback failed",
+                extra={"tenant_id": str(tenant_id)},
+            )
+        raise _reservation_timeout() from exc
 
     try:
         yield ticket

@@ -6,6 +6,7 @@ import asyncio
 import inspect
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -548,3 +549,318 @@ async def test_concurrent_reservers_admit_at_most_remaining_allowance(database) 
 
     tickets = [ticket for ticket in await asyncio.gather(*(attempt(i) for i in range(8))) if ticket]
     assert len(tickets) == 1
+
+
+def _assert_modern_fence(token: str, *, epoch: int) -> UUID:
+    prefix, separator, remainder = token.partition(":")
+    assert separator == ":"
+    assert prefix == str(epoch)
+    assert "legacy" not in token
+    return UUID(remainder)
+
+
+@pytest.mark.asyncio
+async def test_reserve_fence_token_carries_current_positive_epoch(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key="epoch-token",
+            job_id="job-epoch",
+            cost_units=1,
+            operation_id="epoch-token",
+            request_fingerprint="fp-epoch",
+        )
+        token_uuid = _assert_modern_fence(ticket.fence_token, epoch=DEFAULT_GLOBAL_FENCE_EPOCH)
+        assert ticket.fence_token == f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{token_uuid}"
+        replayed = await service.reserve(
+            tenant_id,
+            idempotency_key="epoch-token",
+            job_id="job-epoch",
+            cost_units=1,
+            operation_id="epoch-token",
+            request_fingerprint="fp-epoch",
+        )
+        assert replayed.fence_token == ticket.fence_token
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.fence_token == ticket.fence_token
+
+
+def test_settle_checks_locked_epoch_before_status_or_counter_mutation() -> None:
+    source = inspect.getsource(SqlAlchemyUsageRepository._settle)
+    assert source.index("_lock_global_state") < source.index("_assert_fence_current")
+    assert source.index("_assert_fence_current") < source.index("status=target_status")
+    assert source.index("_assert_fence_current") < source.index("_apply_settle_counters")
+
+
+@pytest.mark.asyncio
+async def test_stale_epoch_is_rejected_before_status_or_counter_mutation(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key="stale-epoch",
+            job_id="job-stale",
+            cost_units=1,
+            operation_id="stale-epoch",
+            request_fingerprint="fp-stale",
+        )
+        stored_token = ticket.fence_token
+        token_uuid = _assert_modern_fence(stored_token, epoch=DEFAULT_GLOBAL_FENCE_EPOCH)
+        await session.commit()
+
+    async with session_factory() as session:
+        await session.execute(
+            update(GlobalUsageAdmissionState)
+            .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+            .values(fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH + 1)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        with pytest.raises(UsageFenceMismatchError):
+            await service.commit_fenced(ticket, fence_token=stored_token)
+        await session.rollback()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        crafted = f"{DEFAULT_GLOBAL_FENCE_EPOCH + 1}:{token_uuid}"
+        with pytest.raises(UsageFenceMismatchError):
+            await service.commit_fenced(ticket, fence_token=crafted)
+        await session.rollback()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.RESERVED
+        assert row.fence_token == stored_token
+        global_state = await _global_state(session)
+        assert global_state.inflight_units == 1
+        assert global_state.daily_cost_units == 1
+        assert global_state.queue_depth == 1
+
+
+@pytest.mark.asyncio
+async def test_settlement_requires_exact_operation_fingerprint_and_job(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key="bind-op",
+            job_id="job-bind",
+            cost_units=1,
+            operation_id="bind-op",
+            request_fingerprint="fp-bind",
+        )
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, operation_id="bind-other"))
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, request_fingerprint="fp-other"))
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, job_id="job-other"))
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, operation_id="", request_fingerprint=""))
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, operation_id=""))
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(replace(ticket, request_fingerprint=""))
+        await service.commit(ticket)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_modern_row_is_not_legacy_just_because_operation_equals_key(database) -> None:
+    session_factory, tenant_id, _period_start = database
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key="same-as-operation",
+            job_id="job-modern",
+            cost_units=1,
+        )
+        _assert_modern_fence(ticket.fence_token, epoch=DEFAULT_GLOBAL_FENCE_EPOCH)
+        assert ticket.operation_id == "same-as-operation"
+        assert ticket.request_fingerprint == "same-as-operation"
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(
+                replace(ticket, operation_id="", request_fingerprint=""),
+            )
+        await session.rollback()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.RESERVED
+
+
+@pytest.mark.asyncio
+async def test_explicit_legacy_marker_allows_blank_identity_when_tuple_matches(database) -> None:
+    session_factory, tenant_id, period_start = database
+    reservation_id = uuid4()
+    key = "legacy-key"
+    fence = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:legacy:{reservation_id}"
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=reservation_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key=key,
+                operation_id=key,
+                request_fingerprint=key,
+                job_id="legacy-job",
+                fence_token=fence,
+                queue_bytes=0,
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+            )
+        )
+        await session.execute(
+            update(GlobalUsageAdmissionState)
+            .where(GlobalUsageAdmissionState.id == GLOBAL_USAGE_ADMISSION_STATE_ID)
+            .values(inflight_units=1, queue_depth=1, daily_cost_units=1)
+        )
+        await session.commit()
+
+    blank = UsageTicket(
+        reservation_id,
+        tenant_id,
+        key,
+        1,
+        operation_id="",
+        request_fingerprint="",
+        job_id="legacy-job",
+        fence_token=fence,
+    )
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        await service.commit(blank)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, reservation_id)
+        assert row.status == UsageReservationStatus.COMMITTED
+        assert row.operation_id == key
+        assert row.request_fingerprint == key
+        assert row.fence_token == fence
+
+
+@pytest.mark.asyncio
+async def test_legacy_blank_identity_requires_matching_tuple(database) -> None:
+    session_factory, tenant_id, period_start = database
+    reservation_id = uuid4()
+    fence = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:legacy:{reservation_id}"
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=reservation_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key="legacy-key",
+                operation_id="not-the-key",
+                request_fingerprint="legacy-key",
+                job_id="legacy-job",
+                fence_token=fence,
+                queue_bytes=0,
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+            )
+        )
+        await session.commit()
+
+    blank = UsageTicket(
+        reservation_id,
+        tenant_id,
+        "legacy-key",
+        1,
+        operation_id="",
+        request_fingerprint="",
+        job_id="legacy-job",
+        fence_token=fence,
+    )
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        with pytest.raises(ReservationNotFoundError):
+            await service.commit(blank)
+        await session.rollback()
+
+    async with session_factory() as session:
+        row = await _reservation(session, reservation_id)
+        assert row.status == UsageReservationStatus.RESERVED
+
+
+@pytest.mark.asyncio
+async def test_malformed_fence_marker_and_epoch_fail_closed(database) -> None:
+    session_factory, tenant_id, period_start = database
+    reservation_id = uuid4()
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=reservation_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key="bad-fence",
+                operation_id="bad-fence",
+                request_fingerprint="bad-fence",
+                job_id="job-bad",
+                fence_token=f"{DEFAULT_GLOBAL_FENCE_EPOCH}:notlegacy:{reservation_id}",
+                queue_bytes=0,
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+            )
+        )
+        await session.commit()
+
+    ticket = UsageTicket(
+        reservation_id,
+        tenant_id,
+        "bad-fence",
+        1,
+        operation_id="bad-fence",
+        request_fingerprint="bad-fence",
+        job_id="job-bad",
+        fence_token=f"{DEFAULT_GLOBAL_FENCE_EPOCH}:notlegacy:{reservation_id}",
+    )
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        with pytest.raises(UsageFenceMismatchError):
+            await service.commit(ticket)
+        await session.rollback()
+
+    zero_epoch = UsageTicket(
+        reservation_id,
+        tenant_id,
+        "bad-fence",
+        1,
+        operation_id="bad-fence",
+        request_fingerprint="bad-fence",
+        job_id="job-bad",
+        fence_token=f"0:{reservation_id}",
+    )
+    async with session_factory() as session:
+        await session.execute(
+            update(UsageReservation)
+            .where(UsageReservation.id == reservation_id)
+            .values(fence_token=f"0:{reservation_id}")
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
+        with pytest.raises(UsageFenceMismatchError):
+            await service.commit(zero_epoch)
+        await session.rollback()
+
+    async with session_factory() as session:
+        row = await _reservation(session, reservation_id)
+        assert row.status == UsageReservationStatus.RESERVED

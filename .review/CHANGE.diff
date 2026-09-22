@@ -1,1766 +1,1333 @@
-diff --git a/apps/app-portal/src/__tests__/billing-journey.test.tsx b/apps/app-portal/src/__tests__/billing-journey.test.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/__tests__/billing-journey.test.tsx
-@@ -0,0 +1,361 @@
-+import { render, screen, waitFor } from '@testing-library/react';
-+import userEvent from '@testing-library/user-event';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
-+import {
-+  createPortalBillingClient,
-+  type PortalBillingApiError,
-+  type PortalBillingClient,
-+  type PortalCheckoutResponse,
-+  type PortalManageResponse,
-+} from '../api/portalBilling';
-+import { BillingScreen, hostedNavigation } from '../screens/BillingScreen';
-+import { BillingReturnScreen } from '../screens/BillingReturnScreen';
+diff --git a/apps/app-portal/.env.example b/apps/app-portal/.env.example
+--- a/apps/app-portal/.env.example
++++ b/apps/app-portal/.env.example
+@@ -7,3 +7,10 @@ VITE_CLERK_FAPI=https://clerk.altcontext.com
+ 
+ # Public build-time portal flag. false/0/off renders the designed unavailable screen.
+ VITE_PORTAL_ENABLED=true
 +
-+const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
-+const PLAN = 'starter_monthly';
-+const CHECKOUT_URL = 'https://pay.example.test/checkout/abc';
-+const PORTAL_URL = 'https://pay.example.test/portal/abc';
++# Public billing flag. Only explicit true/1/on/yes enables checkout and manage.
++# Default is disabled. Do not invent a price, catalog, or product ID here.
++VITE_PAYMENTS_ENABLED=false
 +
-+const PENDING_CHECKOUT: PortalCheckoutResponse = {
-+  attempt_id: ATTEMPT_ID,
-+  checkout_url: CHECKOUT_URL,
-+  status: 'pending',
-+  replayed: false,
-+};
-+
-+const SUCCEEDED_CHECKOUT: PortalCheckoutResponse = {
-+  attempt_id: ATTEMPT_ID,
-+  checkout_url: null,
-+  status: 'succeeded',
-+  replayed: true,
-+};
-+
-+function jsonResponse(status: number, body: unknown, headers?: HeadersInit): Response {
-+  return new Response(JSON.stringify(body), {
-+    status,
-+    headers: { 'Content-Type': 'application/json', ...headers },
-+  });
++# Public plan code accepted by the backend catalog map. Leave blank when payments are disabled.
++VITE_PUBLIC_PLAN_CODE=
+diff --git a/apps/app-portal/src/App.tsx b/apps/app-portal/src/App.tsx
+--- a/apps/app-portal/src/App.tsx
++++ b/apps/app-portal/src/App.tsx
+@@ -1,9 +1,19 @@
+ import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
+-import { useCallback, useEffect, useRef, useState } from 'react';
++import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
++import { createPortalBillingClient } from './api/portalBilling';
++import { createPortalClaimClient } from './api/portalClaim';
++import { createPortalKeyClient } from './api/portalKeys';
+ import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
++import { createPortalRequest } from './api/portalRequest';
++import { createPortalUsageClient } from './api/portalUsage';
++import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
+ import { readPortalConfig, type PortalRuntimeConfig } from './config';
+ import { AccountScreen } from './screens/AccountScreen';
++import { BillingReturnScreen } from './screens/BillingReturnScreen';
++import { BillingScreen } from './screens/BillingScreen';
++import { ClaimScreen } from './screens/ClaimScreen';
++import { KeysScreen } from './screens/KeysScreen';
+ import { LogoutScreen } from './screens/LogoutScreen';
+ import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
+ import { OutageScreen } from './screens/OutageScreen';
+@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
+ import { SignUpScreen } from './screens/SignUpScreen';
+ import { SignedOutScreen } from './screens/SignedOutScreen';
+ import { UnavailableScreen } from './screens/UnavailableScreen';
++import { UsageScreen } from './screens/UsageScreen';
+ 
+ export type AppProps = {
+   config?: PortalRuntimeConfig;
+@@ -37,6 +48,7 @@ type AccountView =
+ type LogoutView = 'idle' | 'loading' | 'error';
+ 
+ const CLERK_LOAD_TIMEOUT_MS = 8_000;
++const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+ 
+ function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
+   const status = user?.primaryEmailAddress?.verification?.status;
+@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
+   return { status: 'loading', owner };
+ }
+ 
++function readAttemptId(value: string | null | undefined): string | null {
++  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
++    return null;
++  }
++  return value;
 +}
 +
-+function apiError(
-+  partial: Partial<PortalBillingApiError> & Pick<PortalBillingApiError, 'status' | 'code'>,
-+): PortalBillingApiError {
++function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
++  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
 +  return {
-+    detail: null,
-+    attemptId: null,
-+    retryAfterSeconds: null,
-+    ...partial,
++    paymentsEnabled: config.paymentsEnabled === true,
++    publicPlanCode: plan.length > 0 ? plan : null,
 +  };
 +}
 +
-+async function confirmCheckout(user: ReturnType<typeof userEvent.setup>) {
-+  await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
-+  expect(screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i })).toBeInTheDocument();
-+  await user.click(screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i }));
++function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
++  return (
++    <div className="acx-session-bar">
++      {userMenu}
++      <button type="button" className="acx-btn" onClick={onSignOut}>
++        Sign out
++      </button>
++    </div>
++  );
 +}
 +
-+afterEach(() => {
-+  hostedNavigation.open = (url: string) => {
-+    window.location.assign(url);
-+  };
-+  window.localStorage.clear();
-+  window.sessionStorage.clear();
-+});
-+
-+describe('createPortalBillingClient [RES-01][DATA-03][HAI-01]', () => {
-+  it('sends a 64-128 character Idempotency-Key and parses checkout/manage JSON', async () => {
-+    const key = 'a'.repeat(64);
-+    const request = vi.fn(async (path: string, init?: RequestInit) => {
-+      if (path === '/portal/billing/checkout') {
-+        expect(init?.method).toBe('POST');
-+        const headers = new Headers(init?.headers);
-+        expect(headers.get('Idempotency-Key')).toBe(key);
-+        expect(headers.has('Origin')).toBe(false);
-+        expect(JSON.parse(String(init?.body))).toEqual({ plan_code: PLAN });
-+        return jsonResponse(200, PENDING_CHECKOUT);
-+      }
-+      expect(path).toBe('/portal/billing/manage');
-+      return jsonResponse(200, { portal_url: PORTAL_URL });
+ function PortalShell({
+   fetchImpl,
+   clerkLoadTimeoutMs,
+   portalMeTimeoutMs,
++  paymentsEnabled,
++  publicPlanCode,
+   onRetryClerk,
+ }: {
+   fetchImpl: typeof fetch;
+   clerkLoadTimeoutMs: number;
+   portalMeTimeoutMs: number;
++  paymentsEnabled: boolean;
++  publicPlanCode: string | null;
+   onRetryClerk: () => void;
+ }) {
+   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
+@@ -101,6 +143,7 @@ function PortalShell({
+   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
+   const [logout, setLogout] = useState<LogoutView>('idle');
+   const [fetchEpoch, setFetchEpoch] = useState(0);
++  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
+   const epochRef = useRef(0);
+   const ownerRef = useRef<AccountOwner | null>(null);
+   const logoutRef = useRef<LogoutView>('idle');
+@@ -109,8 +152,10 @@ function PortalShell({
+   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
+   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
+     setAccount({ status: 'loading', owner: activeOwner });
++    setReturnAttemptId(null);
+   } else if (!isSignedIn && account.status !== 'idle') {
+     setAccount({ status: 'idle' });
++    setReturnAttemptId(null);
+   }
+   const displayAccount = ownedAccount(account, activeOwner);
+ 
+@@ -119,6 +164,27 @@ function PortalShell({
+   logoutRef.current = logout;
+   getTokenRef.current = getToken;
+ 
++  const ownerUserId = activeOwner?.userId ?? '';
++  const ownerSessionId = activeOwner?.sessionId ?? '';
++  const request = useMemo(() => {
++    if (!ownerUserId) {
++      return null;
++    }
++    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
++    return createPortalRequest({
++      getToken: () => getTokenRef.current(),
++      fetchImpl,
++      timeoutMs: portalMeTimeoutMs,
++      owner: captured,
++      currentOwner: () => ownerRef.current,
 +    });
-+    const client = createPortalBillingClient(request);
-+    await expect(client.checkout({ plan_code: PLAN }, key)).resolves.toEqual(PENDING_CHECKOUT);
-+    await expect(client.manage()).resolves.toEqual({ portal_url: PORTAL_URL });
-+  });
++  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
 +
-+  it('rejects UUID-length keys, unsafe URLs, and malformed payloads fail-closed', async () => {
-+    const request = vi.fn(async () => jsonResponse(200, PENDING_CHECKOUT));
-+    const client = createPortalBillingClient(request);
-+    await expect(client.checkout({ plan_code: PLAN }, '123e4567-e89b-12d3-a456-426614174000')).rejects.toMatchObject({
-+      status: 422,
-+      code: 'invalid_idempotency_key',
-+    });
-+    expect(request).not.toHaveBeenCalled();
++  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
++  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
++  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
++  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
 +
-+    const unsafe = createPortalBillingClient(async () =>
-+      jsonResponse(200, { ...PENDING_CHECKOUT, checkout_url: 'javascript:alert(1)' }),
+   useEffect(() => {
+     if (isLoaded) {
+       setClerkTimedOut(false);
+@@ -185,6 +251,7 @@ function PortalShell({
+   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
+ 
+   const handleSignOut = useCallback(async () => {
++    setReturnAttemptId(null);
+     setAccount({ status: 'idle' });
+     setLogout('loading');
+     setFetchEpoch((value) => value + 1);
+@@ -201,8 +268,25 @@ function PortalShell({
+     setFetchEpoch((value) => value + 1);
+   }, []);
+ 
++  const handleClaimed = useCallback(() => {
++    if (!ownersMatch(activeOwner, ownerRef.current)) {
++      return;
++    }
++    if (logoutRef.current !== 'idle') {
++      return;
++    }
++    setFetchEpoch((value) => value + 1);
++  }, [activeOwner]);
++
++  const signOutNow = () => void handleSignOut();
+   const userMenu = <UserButton />;
+   const path = location.pathname;
++  const wrapPrivate = (node: ReactNode) => (
++    <div className="acx-private-shell">
++      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
++      {node}
++    </div>
++  );
+ 
+   if (clerkTimedOut && !isLoaded) {
+     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
+@@ -237,21 +321,30 @@ function PortalShell({
+     return <Navigate to="/" replace />;
+   }
+   if (displayAccount.status === 'email_unverified') {
+-    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
++    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
+   }
+   if (displayAccount.status === 'not_admitted') {
+-    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
+-  }
+-  if (displayAccount.status === 'outage') {
++    if (path.startsWith('/claim') && claimClient) {
++      return wrapPrivate(
++        <ClaimScreen
++          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
++          client={claimClient}
++          onClaimed={handleClaimed}
++        />,
++      );
++    }
+     return (
+-      <OutageScreen
+-        kind="backend"
+-        onRetry={handleRetryFetch}
++      <NotAdmittedScreen
++        reason="not_admitted"
+         userMenu={userMenu}
+-        onSignOut={() => void handleSignOut()}
++        onSignOut={signOutNow}
++        onClaimAccess={() => navigate('/claim')}
+       />
+     );
+   }
++  if (displayAccount.status === 'outage') {
++    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
++  }
+   if (displayAccount.status === 'unauthorized') {
+     return (
+       <AccountScreen
+@@ -259,18 +352,89 @@ function PortalShell({
+         tenantId={null}
+         mode="error"
+         userMenu={userMenu}
+-        onSignOut={() => void handleSignOut()}
++        onSignOut={signOutNow}
+         onRetry={handleRetryFetch}
+       />
+     );
+   }
++  if (displayAccount.status !== 'ok') {
++    return (
++      <AccountScreen
++        personName={personName(user)}
++        tenantId={null}
++        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
++        userMenu={userMenu}
++        onSignOut={signOutNow}
++      />
 +    );
-+    await expect(unsafe.checkout({ plan_code: PLAN }, 'b'.repeat(64))).rejects.toMatchObject({
-+      code: 'malformed_response',
-+    });
++  }
 +
-+    const httpUrl = createPortalBillingClient(async () =>
-+      jsonResponse(200, { ...PENDING_CHECKOUT, checkout_url: 'http://pay.example.test/c' }),
++  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
++  if (path.startsWith('/claim')) {
++    return <Navigate to="/" replace />;
++  }
++  if (path.startsWith('/keys/wordpress')) {
++    return wrapPrivate(
++      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
 +    );
-+    await expect(httpUrl.checkout({ plan_code: PLAN }, 'c'.repeat(64))).rejects.toMatchObject({
-+      code: 'malformed_response',
-+    });
-+
-+    const dataUrl = createPortalBillingClient(async () => jsonResponse(200, { portal_url: 'data:text/html,hi' }));
-+    await expect(dataUrl.manage()).rejects.toMatchObject({ code: 'malformed_response' });
-+  });
-+
-+  it('preserves checkout_ambiguous attempt_id and Retry-After without inventing a poll route', async () => {
-+    const client = createPortalBillingClient(async () =>
-+      jsonResponse(503, { detail: { code: 'checkout_ambiguous', attempt_id: ATTEMPT_ID } }, { 'Retry-After': '1' }),
-+    );
-+    await expect(client.checkout({ plan_code: PLAN }, 'd'.repeat(64))).rejects.toMatchObject({
-+      status: 503,
-+      code: 'checkout_ambiguous',
-+      attemptId: ATTEMPT_ID,
-+      retryAfterSeconds: 1,
-+    });
-+  });
-+});
-+
-+describe('BillingScreen checkout and manage [RLSE-04][NAV-11][CARD-15]', () => {
-+  it('does not request checkout or manage when payments are off or plan is absent', async () => {
-+    const user = userEvent.setup();
-+    const checkout = vi.fn();
-+    const manage = vi.fn();
-+    const client = { checkout, manage };
-+
-+    const { rerender } = render(
-+      <BillingScreen
-+        client={client}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled={false}
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
++  }
++  if (path.startsWith('/keys') && keyClient) {
++    return wrapPrivate(
++      <KeysScreen
++        client={keyClient}
++        sessionKey={featureKey}
++        onNavigateToUsage={() => navigate('/usage')}
++        onNavigateToBilling={() => navigate('/billing')}
++        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
 +      />,
 +    );
-+    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
-+    expect(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i })).toBeDisabled();
-+    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
-+    await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
-+    await user.click(screen.getByRole('button', { name: /manage billing/i }));
-+    expect(checkout).not.toHaveBeenCalled();
-+    expect(manage).not.toHaveBeenCalled();
-+
-+    rerender(
-+      <BillingScreen
-+        client={client}
-+        publicPlanCode={null}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
++  }
++  if (path.startsWith('/usage') && usageClient) {
++    return wrapPrivate(
++      <UsageScreen
++        client={usageClient}
++        sessionKey={featureKey}
++        onNavigateToKeys={() => navigate('/keys')}
++        onNavigateToBilling={() => navigate('/billing')}
 +      />,
 +    );
-+    expect(screen.getByRole('status')).toHaveTextContent(/no billing plan/i);
-+    expect(checkout).not.toHaveBeenCalled();
-+    expect(manage).not.toHaveBeenCalled();
-+    expect(screen.queryByText(/\$|usd|price|allowance/i)).not.toBeInTheDocument();
-+  });
-+
-+  it('reuses a 64-hex idempotency key on retry and mints a new key when the plan changes', async () => {
-+    const user = userEvent.setup();
-+    const keys: string[] = [];
-+    const checkout = vi.fn(async (_input: { plan_code: string }, key: string) => {
-+      keys.push(key);
-+      throw apiError({ status: 503, code: 'checkout_unavailable' });
-+    });
-+    const client = { checkout, manage: vi.fn() };
-+    const { rerender } = render(
-+      <BillingScreen
-+        client={client}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+
-+    await confirmCheckout(user);
-+    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
-+    await user.click(screen.getByRole('button', { name: /try billing again|try again/i }));
-+    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
-+
-+    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
-+    expect(keys[0]?.length).toBe(64);
-+    expect(keys[0]).toBe(keys[1]);
-+    expect(keys[0]).not.toHaveLength(36);
-+
-+    rerender(
-+      <BillingScreen
-+        client={client}
-+        publicPlanCode="pro_monthly"
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await confirmCheckout(user);
-+    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(3));
-+    expect(keys[2]).toMatch(/^[0-9a-f]{64}$/);
-+    expect(keys[2]).not.toBe(keys[0]);
-+    expect(checkout.mock.calls[0]?.[0]).toEqual({ plan_code: PLAN });
-+    expect(checkout.mock.calls[2]?.[0]).toEqual({ plan_code: 'pro_monthly' });
-+  });
-+
-+  it('does not duplicate create, preserves ambiguous attempts, and never grants paid from a URL', async () => {
-+    const user = userEvent.setup();
-+    hostedNavigation.open = vi.fn();
-+    const checkout = vi.fn(async () => PENDING_CHECKOUT);
-+    const onNavigateToReturn = vi.fn();
-+    render(
-+      <BillingScreen
-+        client={{ checkout, manage: vi.fn() }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={onNavigateToReturn}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+
-+    await user.click(screen.getByRole('button', { name: /continue to checkout|open hosted checkout/i }));
-+    const confirm = screen.getByRole('button', { name: /confirm hosted checkout|confirm checkout/i });
-+    await user.click(confirm);
-+    await user.click(confirm);
-+    await waitFor(() => expect(checkout).toHaveBeenCalledTimes(1));
-+    expect(hostedNavigation.open).toHaveBeenCalledWith(CHECKOUT_URL);
-+    expect(onNavigateToReturn).toHaveBeenCalledWith(ATTEMPT_ID);
-+    expect(screen.queryByText(/paid_active|payment granted|you are paid/i)).not.toBeInTheDocument();
-+  });
-+
-+  it('shows typed ambiguity and does not start a second checkout automatically', async () => {
-+    const user = userEvent.setup();
-+    const checkout = vi.fn(async () => {
-+      throw apiError({
-+        status: 409,
-+        code: 'checkout_ambiguous',
-+        attemptId: ATTEMPT_ID,
-+      });
-+    });
-+    render(
-+      <BillingScreen
-+        client={{ checkout, manage: vi.fn() }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await confirmCheckout(user);
-+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/still being confirmed/i));
-+    expect(screen.getByRole('status')).toHaveTextContent(ATTEMPT_ID);
-+    expect(checkout).toHaveBeenCalledTimes(1);
-+  });
-+
-+  it('does not treat succeeded null checkout_url as a payment grant', async () => {
-+    const user = userEvent.setup();
-+    hostedNavigation.open = vi.fn();
-+    const onNavigateToReturn = vi.fn();
-+    render(
-+      <BillingScreen
-+        client={{ checkout: vi.fn(async () => SUCCEEDED_CHECKOUT), manage: vi.fn() }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={onNavigateToReturn}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await confirmCheckout(user);
-+    await waitFor(() => expect(onNavigateToReturn).toHaveBeenCalledWith(ATTEMPT_ID));
-+    expect(hostedNavigation.open).not.toHaveBeenCalled();
-+    expect(screen.getByRole('status')).toHaveTextContent(/backend confirmation/i);
-+    expect(screen.queryByText(/paid access granted/i)).not.toBeInTheDocument();
-+  });
-+
-+  it('recovers missing customer and provider outage on manage without constructing a vendor URL', async () => {
-+    const user = userEvent.setup();
-+    hostedNavigation.open = vi.fn();
-+    const manage = vi.fn<PortalBillingClient['manage']>(async () => {
-+      throw apiError({ status: 409, code: 'billing_customer_missing' });
-+    });
-+    const { rerender } = render(
-+      <BillingScreen
-+        client={{ checkout: vi.fn(), manage }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await user.click(screen.getByRole('button', { name: /manage billing/i }));
-+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/customer .*not ready|not ready yet/i));
-+    expect(hostedNavigation.open).not.toHaveBeenCalled();
-+
-+    manage.mockImplementationOnce(async () => {
-+      throw apiError({ status: 503, code: 'billing_portal_unavailable' });
-+    });
-+    rerender(
-+      <BillingScreen
-+        client={{ checkout: vi.fn(), manage }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await user.click(screen.getByRole('button', { name: /manage billing/i }));
-+    await waitFor(() =>
-+      expect(screen.getByRole('status')).toHaveTextContent(/billing portal is temporarily unavailable/i),
-+    );
-+
-+    manage.mockImplementationOnce(async (): Promise<PortalManageResponse> => ({ portal_url: PORTAL_URL }));
-+    rerender(
-+      <BillingScreen
-+        client={{ checkout: vi.fn(), manage }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        onNavigateToReturn={vi.fn()}
-+        onNavigateToUsage={vi.fn()}
-+      />,
-+    );
-+    await user.click(screen.getByRole('button', { name: /manage billing/i }));
-+    await waitFor(() => expect(hostedNavigation.open).toHaveBeenCalledWith(PORTAL_URL));
-+  });
-+});
-+
-+describe('BillingReturnScreen untrusted return [HAI-01][NAV-11]', () => {
-+  it('never grants paid from a return signal and does not POST checkout on load', async () => {
-+    const user = userEvent.setup();
-+    const checkout = vi.fn();
-+    const manage = vi.fn();
-+    const onNavigateToBilling = vi.fn();
-+    const onNavigateToUsage = vi.fn();
-+    window.history.replaceState({}, '', '/billing/return?checkout=success');
-+
-+    render(
++  }
++  if (path.startsWith('/billing/return') && billingClient) {
++    return wrapPrivate(
 +      <BillingReturnScreen
-+        client={{ checkout, manage }}
-+        publicPlanCode={PLAN}
-+        paymentsEnabled
-+        attemptId={ATTEMPT_ID}
-+        onNavigateToBilling={onNavigateToBilling}
-+        onNavigateToUsage={onNavigateToUsage}
++        client={billingClient}
++        publicPlanCode={publicPlanCode}
++        paymentsEnabled={paymentsEnabled}
++        attemptId={returnAttemptId}
++        onNavigateToBilling={() => navigate('/billing')}
++        onNavigateToUsage={() => navigate('/usage')}
 +      />,
 +    );
-+
-+    expect(checkout).not.toHaveBeenCalled();
-+    expect(manage).not.toHaveBeenCalled();
-+    expect(screen.getByRole('status')).toHaveTextContent(/backend confirmation/i);
-+    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation/i);
-+    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
-+    expect(screen.getByText(ATTEMPT_ID)).toBeInTheDocument();
-+
-+    await user.click(screen.getByRole('button', { name: /return to billing/i }));
-+    expect(onNavigateToBilling).toHaveBeenCalledTimes(1);
-+    await user.click(screen.getByRole('button', { name: /view usage|open usage/i }));
-+    expect(onNavigateToUsage).toHaveBeenCalledTimes(1);
-+  });
-+});
-diff --git a/apps/app-portal/src/__tests__/claim-journey.test.tsx b/apps/app-portal/src/__tests__/claim-journey.test.tsx
++  }
++  if (path.startsWith('/billing') && billingClient) {
++    return wrapPrivate(
++      <BillingScreen
++        client={billingClient}
++        publicPlanCode={publicPlanCode}
++        paymentsEnabled={paymentsEnabled}
++        onNavigateToReturn={(attemptId) => {
++          setReturnAttemptId(readAttemptId(attemptId));
++          navigate('/billing/return');
++        }}
++        onNavigateToUsage={() => navigate('/usage')}
++      />,
++    );
++  }
+   return (
+     <AccountScreen
+       personName={personName(user)}
+-      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
+-      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
++      tenantId={displayAccount.tenantId}
++      mode="default"
+       userMenu={userMenu}
+-      onSignOut={() => void handleSignOut()}
++      onSignOut={signOutNow}
++      onNavigateToKeys={() => navigate('/keys')}
++      onNavigateToUsage={() => navigate('/usage')}
++      onNavigateToBilling={() => navigate('/billing')}
+     />
+   );
+ }
+@@ -283,6 +447,7 @@ export function App({
+ }: AppProps = {}) {
+   const navigate = useNavigate();
+   const [providerEpoch, setProviderEpoch] = useState(0);
++  const payments = paymentsFromConfig(config);
+ 
+   if (!config.portalEnabled) {
+     return <UnavailableScreen mode="degraded" />;
+@@ -315,6 +480,8 @@ export function App({
+               fetchImpl={fetchImpl}
+               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
+               portalMeTimeoutMs={portalMeTimeoutMs}
++              paymentsEnabled={payments.paymentsEnabled}
++              publicPlanCode={payments.publicPlanCode}
+               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
+             />
+           }
+diff --git a/apps/app-portal/src/__tests__/account-navigation.test.tsx b/apps/app-portal/src/__tests__/account-navigation.test.tsx
 new file mode 100644
 --- /dev/null
-+++ b/apps/app-portal/src/__tests__/claim-journey.test.tsx
-@@ -0,0 +1,262 @@
-+import { act, render, screen, waitFor } from '@testing-library/react';
++++ b/apps/app-portal/src/__tests__/account-navigation.test.tsx
+@@ -0,0 +1,422 @@
++import { screen, waitFor } from '@testing-library/react';
 +import userEvent from '@testing-library/user-event';
++import { flushSync } from 'react-dom';
 +import { afterEach, describe, expect, it, vi } from 'vitest';
-+import {
-+  createPortalClaimClient,
-+  type PortalClaimApiError,
-+  type PortalClaimClient,
-+  type PortalClaimResponse,
-+} from '../api/portalClaim';
-+import { ClaimScreen } from '../screens/ClaimScreen';
++import { parsePortalConfig } from '../config';
++import { clerkDouble } from './clerkDouble';
++import { renderPortal } from './renderPortal';
 +
-+const TENANT_ID = '11111111-1111-4111-8111-111111111111';
++vi.mock('@clerk/react', async () => {
++  const doubles = await import('./clerkDouble');
++  return {
++    ClerkProvider: doubles.ClerkProviderStub,
++    SignIn: doubles.SignInStub,
++    SignUp: doubles.SignUpStub,
++    UserButton: doubles.UserButtonStub,
++    useAuth: doubles.useAuthStub,
++    useUser: doubles.useUserStub,
++  };
++});
++
++const TENANT = '11111111-1111-4111-8111-111111111111';
++const KEY_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
++const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 +const INVITATION = 'raw-invitation-token-once';
 +
-+const FIRST_CLAIM: PortalClaimResponse = {
-+  tenant_id: TENANT_ID,
-+  issuer: 'https://clerk.altcontext.com',
-+  subject: 'user_1',
-+  email: 'ada@example.test',
-+  replayed: false,
-+};
-+
-+const REPLAY_CLAIM: PortalClaimResponse = {
-+  ...FIRST_CLAIM,
-+  replayed: true,
-+};
-+
-+function jsonResponse(status: number, body: unknown, headers?: HeadersInit): Response {
++function jsonResponse(status: number, body: unknown): Response {
 +  return new Response(JSON.stringify(body), {
 +    status,
-+    headers: { 'Content-Type': 'application/json', ...headers },
++    headers: { 'Content-Type': 'application/json' },
 +  });
 +}
 +
-+function apiError(
-+  partial: Partial<PortalClaimApiError> & Pick<PortalClaimApiError, 'status' | 'code'>,
-+): PortalClaimApiError {
++function meBody(tenantId = TENANT) {
 +  return {
-+    detail: null,
-+    attemptId: null,
-+    retryAfterSeconds: null,
-+    ...partial,
++    tenant_id: tenantId,
++    issuer: 'https://clerk.altcontext.com',
++    subject: 'user_1',
++    email: 'ada@example.test',
 +  };
 +}
 +
-+async function confirmClaim(user: ReturnType<typeof userEvent.setup>, token = INVITATION) {
-+  await user.type(screen.getByLabelText(/invitation token/i), token);
-+  await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+  expect(screen.getByRole('button', { name: /confirm claim access/i })).toBeInTheDocument();
++function keysPage() {
++  return {
++    data: [
++      {
++        id: KEY_ID,
++        tenant_id: TENANT,
++        created_at: '2026-09-01T00:00:00Z',
++        expires_at: '2026-12-01T00:00:00Z',
++        revoked_at: null,
++        rate_limit_tier: 'standard',
++        lifetime_seconds: 3600,
++      },
++    ],
++    next_cursor: null,
++    cursor: null,
++    limit: 25,
++    total: 1,
++  };
 +}
 +
-+afterEach(() => {
-+  window.localStorage.clear();
-+  window.sessionStorage.clear();
-+});
++function usageBody() {
++  return {
++    tenant_id: TENANT,
++    used: 1,
++    reserved: 0,
++    remaining: 9,
++    allowance: 10,
++    period_start: '2026-09-01T00:00:00Z',
++    period_end: '2026-10-01T00:00:00Z',
++    period: { start: '2026-09-01T00:00:00Z', end: '2026-10-01T00:00:00Z' },
++    as_of: '2026-09-22T12:00:00Z',
++    status: 'beta_active',
++    data_source: 'authoritative',
++  };
++}
 +
-+describe('createPortalClaimClient [HAI-01][DATA-03]', () => {
-+  it('POSTs invitation_token only and accepts 201 then 200 replay', async () => {
-+    const request = vi.fn(async (path: string, init?: RequestInit) => {
-+      expect(path).toBe('/portal/onboarding/claim');
-+      expect(init?.method).toBe('POST');
-+      const headers = new Headers(init?.headers);
-+      expect(headers.get('content-type')).toMatch(/application\/json/i);
-+      expect(headers.has('Origin')).toBe(false);
-+      expect(headers.has('X-Tenant-ID')).toBe(false);
-+      expect(headers.has('X-Tenant-Id')).toBe(false);
-+      expect(JSON.parse(String(init?.body))).toEqual({ invitation_token: INVITATION });
-+      return jsonResponse(201, FIRST_CLAIM);
-+    });
-+
-+    const client = createPortalClaimClient(request);
-+    await expect(client.claim(INVITATION)).resolves.toEqual(FIRST_CLAIM);
-+    expect(request).toHaveBeenCalledTimes(1);
-+
-+    request.mockImplementationOnce(async () => jsonResponse(200, REPLAY_CLAIM));
-+    await expect(client.claim(INVITATION)).resolves.toEqual(REPLAY_CLAIM);
++function signInVerified(sessionId = 'sess_1') {
++  clerkDouble.setState({
++    isLoaded: true,
++    isSignedIn: true,
++    userId: 'user_1',
++    sessionId,
++    user: {
++      fullName: 'Ada Lovelace',
++      primaryEmailAddress: {
++        emailAddress: 'ada@example.test',
++        verification: { status: 'verified' },
++      },
++    },
++    getToken: async () => 'session-jwt',
 +  });
++}
 +
-+  it('maps typed claim errors and rejects malformed success JSON fail-closed', async () => {
-+    const client = createPortalClaimClient(async () => jsonResponse(403, { detail: { code: 'not_admitted' } }));
-+    await expect(client.claim(INVITATION)).rejects.toMatchObject({
-+      status: 403,
-+      code: 'not_admitted',
-+      detail: null,
-+    });
-+
-+    const malformed = createPortalClaimClient(async () =>
-+      jsonResponse(201, {
++function portalFetch(options: { me?: () => Response | Promise<Response>; claimAdmitted?: { current: boolean } } = {}) {
++  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
++    const url = String(input);
++    const path = url.split('?')[0];
++    if (path === '/portal/me') {
++      if (options.me) {
++        return options.me();
++      }
++      if (options.claimAdmitted?.current) {
++        return jsonResponse(200, meBody());
++      }
++      return jsonResponse(200, meBody());
++    }
++    if (path === '/portal/keys') {
++      return jsonResponse(200, keysPage());
++    }
++    if (path === '/portal/usage') {
++      return jsonResponse(200, usageBody());
++    }
++    if (path === '/portal/onboarding/claim') {
++      if (options.claimAdmitted) {
++        options.claimAdmitted.current = true;
++      }
++      return jsonResponse(201, {
++        tenant_id: TENANT,
 +        issuer: 'https://clerk.altcontext.com',
 +        subject: 'user_1',
 +        email: 'ada@example.test',
 +        replayed: false,
-+      }),
-+    );
-+    await expect(malformed.claim(INVITATION)).rejects.toMatchObject({
-+      status: 201,
-+      code: 'malformed_response',
-+    });
++      });
++    }
++    if (path === '/portal/billing/checkout' || path === '/portal/billing/manage') {
++      throw new Error(`billing call must be absent when payments are disabled: ${path}`);
++    }
++    return jsonResponse(404, { detail: 'missing fixture' });
 +  });
++}
 +
-+  it('does not forge Origin and does not send a tenant selector', async () => {
-+    const request = vi.fn(async (_path: string, init?: RequestInit) => {
-+      const headers = new Headers(init?.headers);
-+      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
-+      expect(String(init?.body)).not.toMatch(/tenant/i);
-+      return jsonResponse(201, FIRST_CLAIM);
++afterEach(() => {
++  clerkDouble.reset();
++});
++
++describe('public payments config [HAI-01]', () => {
++  it('defaults payments disabled and empty plan, enabling only explicit recognized true', () => {
++    expect(
++      parsePortalConfig({
++        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
++        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
++        VITE_PORTAL_ENABLED: 'true',
++        VITE_PAYMENTS_ENABLED: '',
++        VITE_PUBLIC_PLAN_CODE: '',
++      }),
++    ).toEqual({
++      publishableKey: 'pk_test',
++      fapiOrigin: 'https://clerk.altcontext.com',
++      portalEnabled: true,
++      paymentsEnabled: false,
++      publicPlanCode: null,
 +    });
-+    await createPortalClaimClient(request).claim(INVITATION);
-+    expect(request).toHaveBeenCalledTimes(1);
++
++    expect(
++      parsePortalConfig({
++        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
++        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
++        VITE_PORTAL_ENABLED: 'true',
++        VITE_PAYMENTS_ENABLED: 'maybe',
++        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
++      }).paymentsEnabled,
++    ).toBe(false);
++
++    expect(
++      parsePortalConfig({
++        VITE_CLERK_PUBLISHABLE_KEY: 'pk_test',
++        VITE_CLERK_FAPI: 'https://clerk.altcontext.com',
++        VITE_PORTAL_ENABLED: 'true',
++        VITE_PAYMENTS_ENABLED: 'TRUE',
++        VITE_PUBLIC_PLAN_CODE: '  starter_monthly  ',
++      }),
++    ).toMatchObject({
++      paymentsEnabled: true,
++      publicPlanCode: 'starter_monthly',
++    });
 +  });
 +});
 +
-+describe('ClaimScreen invitation claim [NAV-11][RLSE-04][HAI-01]', () => {
-+  it('requires preview confirmation before POST and calls onClaimed once on 201', async () => {
++describe('admitted shell navigation [NAV-08][NAV-11]', () => {
++  it('wires keys, usage, billing, billing return, and WordPress guidance with sign-out', async () => {
++    signInVerified();
++    const fetchImpl = portalFetch();
 +    const user = userEvent.setup();
-+    const claim = vi.fn(async (token: string) => {
-+      expect(token).toBe(INVITATION);
-+      return FIRST_CLAIM;
-+    });
-+    const onClaimed = vi.fn();
-+    render(<ClaimScreen client={{ claim }} onClaimed={onClaimed} />);
++    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
 +
-+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-+    expect(screen.queryByLabelText(/tenant/i)).not.toBeInTheDocument();
-+    expect(screen.queryByLabelText(/email_verified/i)).not.toBeInTheDocument();
++    await waitFor(() => {
++      expect(screen.getByText(TENANT)).toBeInTheDocument();
++    });
++    expect(screen.getByRole('navigation', { name: /account/i })).toBeInTheDocument();
++
++    await user.click(screen.getByRole('button', { name: /api keys/i }));
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
++    });
++    expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
++    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
++
++    await user.click(screen.getByRole('button', { name: /wordpress test connection guidance/i }));
++    expect(screen.getByRole('heading', { name: /wordpress test connection/i })).toBeInTheDocument();
++    expect(screen.queryByText(/acx_live|raw_key/i)).not.toBeInTheDocument();
++    expect(window.location.href).not.toMatch(/acx_live|raw_key|secret=/i);
++
++    await user.click(screen.getByRole('button', { name: /back to api keys/i }));
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /api keys/i })).toBeInTheDocument();
++    });
++
++    await user.click(screen.getByRole('button', { name: /^usage$/i }));
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /^usage$/i })).toBeInTheDocument();
++    });
++
++    await user.click(screen.getByRole('button', { name: /^billing$/i }));
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /^billing$/i })).toBeInTheDocument();
++    });
++    expect(screen.getByRole('status')).toHaveTextContent(/payments are disabled/i);
++    expect(screen.getByRole('button', { name: /continue to checkout/i })).toBeDisabled();
++    expect(screen.getByRole('button', { name: /manage billing/i })).toBeDisabled();
++  });
++
++  it('keeps billing return pending and never grants entitlement or posts checkout [HAI-01]', async () => {
++    signInVerified();
++    const fetchImpl = portalFetch();
++    renderPortal({
++      path: '/billing/return?checkout=success',
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++    });
++
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
++    });
++    expect(screen.getByRole('status')).toHaveTextContent(/pending reconciliation|backend confirmation/i);
++    expect(screen.queryByText(/paid_active|you are now paid|subscription is active/i)).not.toBeInTheDocument();
++    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/billing'))).toBe(false);
++  });
++});
++
++describe('claim admission boundary [HAI-01][DOM-03]', () => {
++  it('lets a verified not-admitted identity claim and refetches /portal/me before admission', async () => {
++    signInVerified();
++    const admitted = { current: false };
++    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
++      const path = String(input).split('?')[0];
++      if (path === '/portal/me') {
++        if (admitted.current) {
++          return jsonResponse(200, meBody());
++        }
++        return jsonResponse(403, { detail: 'portal access denied' });
++      }
++      if (path === '/portal/onboarding/claim') {
++        return jsonResponse(201, {
++          tenant_id: TENANT,
++          issuer: 'https://clerk.altcontext.com',
++          subject: 'user_1',
++          email: 'ada@example.test',
++          replayed: false,
++        });
++      }
++      throw new Error(`unexpected path ${path}`);
++    });
++    const user = userEvent.setup();
++    renderPortal({ fetchImpl: fetchImpl as unknown as typeof fetch });
++
++    await waitFor(() => {
++      expect(screen.getByRole('status')).toHaveTextContent(/not ready for access/i);
++    });
++    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
++    await user.click(screen.getByRole('button', { name: /claim access/i }));
++    expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
 +
 +    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
 +    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
-+    expect(claim).not.toHaveBeenCalled();
-+    expect(screen.getByRole('status')).toHaveTextContent(/once/i);
-+
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+    await waitFor(() => expect(onClaimed).toHaveBeenCalledTimes(1));
-+    expect(onClaimed).toHaveBeenCalledWith(FIRST_CLAIM);
-+    expect(claim).toHaveBeenCalledTimes(1);
-+    expect(window.localStorage.length).toBe(0);
-+    expect(window.sessionStorage.length).toBe(0);
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
-+  });
-+
-+  it('treats 200 replayed as a valid claim and still calls onClaimed once', async () => {
-+    const user = userEvent.setup();
-+    const onClaimed = vi.fn();
-+    render(<ClaimScreen client={{ claim: vi.fn(async () => REPLAY_CLAIM) }} onClaimed={onClaimed} />);
-+    await confirmClaim(user);
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+    await waitFor(() => expect(onClaimed).toHaveBeenCalledTimes(1));
-+    expect(onClaimed).toHaveBeenCalledWith(REPLAY_CLAIM);
-+  });
-+
-+  it('keeps expired or unknown invitations non-enumerating', async () => {
-+    const user = userEvent.setup();
-+    const claim = vi.fn(async () => {
-+      throw apiError({ status: 403, code: 'not_admitted' });
-+    });
-+    render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
-+    await confirmClaim(user);
 +    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
 +
 +    await waitFor(() => {
-+      expect(screen.getByRole('status')).toHaveTextContent(/not ready/i);
++      expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/portal/onboarding/claim'))).toBe(true);
++      expect(
++        fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
++      ).toBeGreaterThan(1);
 +    });
-+    expect(screen.getByRole('status')).not.toHaveTextContent(/expired/i);
-+    expect(screen.getByRole('status')).not.toHaveTextContent(/unknown/i);
-+    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
++    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
++    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
++    expect(window.location.href).not.toContain(INVITATION);
++    expect(window.location.hash).not.toContain(INVITATION);
++    admitted.current = true;
++    expect(screen.queryByText(TENANT)).not.toBeInTheDocument();
 +  });
 +
-+  it('maps email_unverified, consumed, bound, invalid, and 503 recovery copy', async () => {
-+    const user = userEvent.setup();
-+    const claim = vi.fn<PortalClaimClient['claim']>();
-+    const { rerender } = render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
-+
-+    const cases: Array<{ code: string; status: number; copy: RegExp; retry: boolean }> = [
-+      { code: 'email_unverified', status: 403, copy: /verify your email/i, retry: false },
-+      { code: 'invitation_consumed', status: 409, copy: /no longer available/i, retry: false },
-+      { code: 'identity_already_bound', status: 409, copy: /already linked/i, retry: false },
-+      { code: 'invalid_claim_request', status: 422, copy: /valid invitation/i, retry: true },
-+      { code: 'portal_identity_unavailable', status: 503, copy: /temporarily unavailable/i, retry: true },
-+    ];
-+
-+    for (const example of cases) {
-+      claim.mockImplementationOnce(async () => {
-+        throw apiError({ status: example.status, code: example.code });
-+      });
-+      rerender(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
-+      await user.clear(screen.getByLabelText(/invitation token/i));
-+      await confirmClaim(user);
-+      await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(example.copy));
-+      if (example.retry && example.status === 503) {
-+        expect(screen.getByRole('button', { name: /try claim again|try again/i })).toBeEnabled();
++  it('admits only after a post-claim /portal/me tenant, never from the claim body [HAI-01]', async () => {
++    signInVerified();
++    const admitted = { current: false };
++    const fetchImpl = portalFetch({ claimAdmitted: admitted });
++    fetchImpl.mockImplementation(async (input: RequestInfo | URL) => {
++      const path = String(input).split('?')[0];
++      if (path === '/portal/me') {
++        return admitted.current ? jsonResponse(200, meBody()) : jsonResponse(403, { detail: 'portal access denied' });
 +      }
-+      if (!example.retry && example.status === 409) {
-+        expect(screen.queryByRole('button', { name: /try claim again/i })).not.toBeInTheDocument();
++      if (path === '/portal/onboarding/claim') {
++        admitted.current = true;
++        return jsonResponse(201, {
++          tenant_id: TENANT,
++          issuer: 'https://clerk.altcontext.com',
++          subject: 'user_1',
++          email: 'ada@example.test',
++          replayed: false,
++        });
 +      }
-+    }
++      if (path === '/portal/keys') {
++        return jsonResponse(200, keysPage());
++      }
++      return jsonResponse(404, {});
++    });
++    const user = userEvent.setup();
++    renderPortal({ path: '/claim', fetchImpl: fetchImpl as unknown as typeof fetch });
++
++    await waitFor(() => {
++      expect(screen.getByLabelText(/invitation token/i)).toBeInTheDocument();
++    });
++    await user.type(screen.getByLabelText(/invitation token/i), INVITATION);
++    await user.click(screen.getByRole('button', { name: /^claim access$/i }));
++    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
++
++    await waitFor(() => {
++      expect(screen.getByText(TENANT)).toBeInTheDocument();
++    });
++    expect(
++      fetchImpl.mock.calls.filter((call) => String(call[0]).split('?')[0] === '/portal/me').length,
++    ).toBeGreaterThan(1);
 +  });
 +
-+  it('clears the in-memory token on cancel and does not call onClaimed after unmount', async () => {
-+    const user = userEvent.setup();
-+    let finish!: (value: PortalClaimResponse) => void;
-+    const claim = vi.fn(
-+      () =>
-+        new Promise<PortalClaimResponse>((resolve) => {
-+          finish = resolve;
-+        }),
-+    );
-+    const onClaimed = vi.fn();
-+    const { unmount } = render(<ClaimScreen client={{ claim }} onClaimed={onClaimed} />);
-+
-+    await confirmClaim(user);
-+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
-+    expect(screen.getByLabelText(/invitation token/i)).toHaveValue('');
-+    expect(claim).not.toHaveBeenCalled();
-+
-+    await confirmClaim(user);
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+    expect(screen.getByRole('form', { name: /claim invitation/i })).toHaveAttribute('aria-busy', 'true');
-+
-+    unmount();
-+    await act(async () => {
-+      finish(FIRST_CLAIM);
++  it('does not offer claim to an unverified identity', async () => {
++    clerkDouble.setState({
++      isLoaded: true,
++      isSignedIn: true,
++      userId: 'user_1',
++      sessionId: 'sess_1',
++      user: {
++        fullName: 'Ada Lovelace',
++        primaryEmailAddress: {
++          emailAddress: 'ada@example.test',
++          verification: { status: 'unverified' },
++        },
++      },
++      getToken: async () => 'session-jwt',
 +    });
-+    expect(onClaimed).not.toHaveBeenCalled();
-+
-+    let finishReplacement!: (value: PortalClaimResponse) => void;
-+    const firstClient = {
-+      claim: vi.fn(
-+        () =>
-+          new Promise<PortalClaimResponse>((resolve) => {
-+            finishReplacement = resolve;
-+          }),
-+      ),
-+    };
-+    const secondClient = { claim: vi.fn(async () => REPLAY_CLAIM) };
-+    const { rerender: rerenderClaim } = render(<ClaimScreen client={firstClient} onClaimed={onClaimed} />);
-+    await confirmClaim(user);
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+    rerenderClaim(<ClaimScreen client={secondClient} onClaimed={onClaimed} />);
-+    await act(async () => {
-+      finishReplacement(FIRST_CLAIM);
++    renderPortal({
++      path: '/claim',
++      fetchImpl: vi.fn(async () =>
++        jsonResponse(403, { detail: { code: 'email_unverified' } }),
++      ) as unknown as typeof fetch,
 +    });
-+    expect(onClaimed).not.toHaveBeenCalled();
-+  });
 +
-+  it('keeps token field focus after 422 and does not render raw exception bodies', async () => {
-+    const user = userEvent.setup();
-+    const claim = vi.fn(async () => {
-+      throw apiError({
-+        status: 422,
-+        code: 'invalid_claim_request',
-+        detail: 'super-secret-stack-trace',
-+      });
++    await waitFor(() => {
++      expect(screen.getByRole('status')).toHaveTextContent(/verify your email/i);
 +    });
-+    render(<ClaimScreen client={{ claim }} onClaimed={vi.fn()} />);
-+    await confirmClaim(user);
-+    await user.click(screen.getByRole('button', { name: /confirm claim access/i }));
-+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/valid invitation/i));
-+    expect(screen.getByLabelText(/invitation token/i)).toHaveFocus();
-+    expect(screen.queryByText(/super-secret-stack-trace/i)).not.toBeInTheDocument();
++    expect(screen.queryByLabelText(/invitation token/i)).not.toBeInTheDocument();
++    expect(screen.queryByRole('button', { name: /claim access/i })).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
 +  });
 +});
-diff --git a/apps/app-portal/src/api/portalBilling.ts b/apps/app-portal/src/api/portalBilling.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalBilling.ts
-@@ -0,0 +1,229 @@
-+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
 +
-+export type PortalCheckoutRequest = {
-+  plan_code: string;
-+  return_path?: string | null;
-+};
++describe('private subtree ownership [DATA-03][CARD-15]', () => {
++  it('clears keys metadata synchronously when the same user gets a new session', async () => {
++    signInVerified('sess_a');
++    const fetchImpl = portalFetch();
++    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
 +
-+export type PortalCheckoutResponse = {
-+  attempt_id: string;
-+  checkout_url: string | null;
-+  status: string;
-+  replayed: boolean;
-+};
-+
-+export type PortalManageRequest = { return_path?: string | null };
-+
-+export type PortalManageResponse = { portal_url: string };
-+
-+export type PortalBillingApiError = {
-+  status: number;
-+  code: string | null;
-+  detail: string | null;
-+  attemptId: string | null;
-+  retryAfterSeconds: number | null;
-+};
-+
-+export type PortalBillingClient = {
-+  checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse>;
-+  manage(input?: PortalManageRequest): Promise<PortalManageResponse>;
-+};
-+
-+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{64,128}$/;
-+const CHECKOUT_PATH = '/portal/billing/checkout';
-+const MANAGE_PATH = '/portal/billing/manage';
-+
-+function raiseBillingError(error: PortalBillingApiError): never {
-+  throw Object.assign(new Error(error.code ?? 'portal_billing_error'), error);
-+}
-+
-+function retryAfterSeconds(response: Response): number | null {
-+  const raw = response.headers.get('Retry-After');
-+  if (raw == null || raw === '') {
-+    return null;
-+  }
-+  const parsed = Number.parseInt(raw, 10);
-+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-+}
-+
-+function parseError(status: number, body: unknown, response: Response): PortalBillingApiError {
-+  let code: string | null = null;
-+  let attemptId: string | null = null;
-+  if (body && typeof body === 'object' && 'detail' in body) {
-+    const detail = (body as { detail: unknown }).detail;
-+    if (typeof detail === 'string') {
-+      code = detail;
-+    } else if (detail && typeof detail === 'object') {
-+      const rec = detail as { code?: unknown; attempt_id?: unknown };
-+      if (typeof rec.code === 'string') {
-+        code = rec.code;
-+      }
-+      if (typeof rec.attempt_id === 'string' && UUID_RE.test(rec.attempt_id)) {
-+        attemptId = rec.attempt_id;
-+      }
-+    }
-+  }
-+  return {
-+    status,
-+    code,
-+    detail: null,
-+    attemptId,
-+    retryAfterSeconds: retryAfterSeconds(response),
-+  };
-+}
-+
-+async function readJson(response: Response): Promise<unknown> {
-+  try {
-+    return await response.json();
-+  } catch {
-+    return null;
-+  }
-+}
-+
-+export function isSafeHttpsUrl(value: string): boolean {
-+  try {
-+    const url = new URL(value);
-+    if (url.protocol !== 'https:') {
-+      return false;
-+    }
-+    if (!url.hostname) {
-+      return false;
-+    }
-+    if (url.username || url.password) {
-+      return false;
-+    }
-+    return true;
-+  } catch {
-+    return false;
-+  }
-+}
-+
-+function parseCheckoutResponse(body: unknown): PortalCheckoutResponse | null {
-+  if (!body || typeof body !== 'object') {
-+    return null;
-+  }
-+  const rec = body as Record<string, unknown>;
-+  if (typeof rec.attempt_id !== 'string' || !UUID_RE.test(rec.attempt_id)) {
-+    return null;
-+  }
-+  if (typeof rec.status !== 'string' || rec.status.length === 0) {
-+    return null;
-+  }
-+  if (typeof rec.replayed !== 'boolean') {
-+    return null;
-+  }
-+  if (rec.checkout_url !== null && typeof rec.checkout_url !== 'string') {
-+    return null;
-+  }
-+  if (typeof rec.checkout_url === 'string' && !isSafeHttpsUrl(rec.checkout_url)) {
-+    return null;
-+  }
-+  return {
-+    attempt_id: rec.attempt_id,
-+    checkout_url: rec.checkout_url,
-+    status: rec.status,
-+    replayed: rec.replayed,
-+  };
-+}
-+
-+function parseManageResponse(body: unknown): PortalManageResponse | null {
-+  if (!body || typeof body !== 'object') {
-+    return null;
-+  }
-+  const rec = body as Record<string, unknown>;
-+  if (typeof rec.portal_url !== 'string' || !isSafeHttpsUrl(rec.portal_url)) {
-+    return null;
-+  }
-+  return { portal_url: rec.portal_url };
-+}
-+
-+function unavailable(code: string): PortalBillingApiError {
-+  return {
-+    status: 503,
-+    code,
-+    detail: null,
-+    attemptId: null,
-+    retryAfterSeconds: null,
-+  };
-+}
-+
-+export function createPortalBillingClient(request: PortalRequest): PortalBillingClient {
-+  return {
-+    async checkout(input: PortalCheckoutRequest, idempotencyKey: string): Promise<PortalCheckoutResponse> {
-+      if (!IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
-+        raiseBillingError({
-+          status: 422,
-+          code: 'invalid_idempotency_key',
-+          detail: null,
-+          attemptId: null,
-+          retryAfterSeconds: null,
-+        });
-+      }
-+      const bodyPayload: PortalCheckoutRequest = { plan_code: input.plan_code };
-+      if (input.return_path != null) {
-+        bodyPayload.return_path = input.return_path;
-+      }
-+      let response: Response;
-+      try {
-+        response = await request(CHECKOUT_PATH, {
-+          method: 'POST',
-+          headers: {
-+            'Content-Type': 'application/json',
-+            'Idempotency-Key': idempotencyKey,
-+          },
-+          body: JSON.stringify(bodyPayload),
-+        });
-+      } catch {
-+        raiseBillingError(unavailable('checkout_unavailable'));
-+      }
-+      const body = await readJson(response);
-+      if (response.status === 200) {
-+        const parsed = parseCheckoutResponse(body);
-+        if (parsed) {
-+          return parsed;
-+        }
-+        raiseBillingError({
-+          status: response.status,
-+          code: 'malformed_response',
-+          detail: null,
-+          attemptId: null,
-+          retryAfterSeconds: retryAfterSeconds(response),
-+        });
-+      }
-+      raiseBillingError(parseError(response.status, body, response));
-+    },
-+
-+    async manage(input?: PortalManageRequest): Promise<PortalManageResponse> {
-+      const payload: PortalManageRequest = {};
-+      if (input?.return_path != null) {
-+        payload.return_path = input.return_path;
-+      }
-+      let response: Response;
-+      try {
-+        response = await request(MANAGE_PATH, {
-+          method: 'POST',
-+          headers: { 'Content-Type': 'application/json' },
-+          body: JSON.stringify(payload),
-+        });
-+      } catch {
-+        raiseBillingError(unavailable('billing_portal_unavailable'));
-+      }
-+      const body = await readJson(response);
-+      if (response.status === 200) {
-+        const parsed = parseManageResponse(body);
-+        if (parsed) {
-+          return parsed;
-+        }
-+        raiseBillingError({
-+          status: response.status,
-+          code: 'malformed_response',
-+          detail: null,
-+          attemptId: null,
-+          retryAfterSeconds: retryAfterSeconds(response),
-+        });
-+      }
-+      raiseBillingError(parseError(response.status, body, response));
-+    },
-+  };
-+}
-diff --git a/apps/app-portal/src/api/portalClaim.ts b/apps/app-portal/src/api/portalClaim.ts
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/api/portalClaim.ts
-@@ -0,0 +1,138 @@
-+type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
-+
-+export type PortalClaimResponse = {
-+  tenant_id: string;
-+  issuer: string;
-+  subject: string;
-+  email: string | null;
-+  replayed: boolean;
-+};
-+
-+export type PortalClaimApiError = {
-+  status: number;
-+  code: string | null;
-+  detail: string | null;
-+  attemptId: string | null;
-+  retryAfterSeconds: number | null;
-+};
-+
-+export type PortalClaimClient = {
-+  claim(invitationToken: string): Promise<PortalClaimResponse>;
-+};
-+
-+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-+const CLAIM_PATH = '/portal/onboarding/claim';
-+
-+function raiseClaimError(error: PortalClaimApiError): never {
-+  throw Object.assign(new Error(error.code ?? 'portal_claim_error'), error);
-+}
-+
-+function retryAfterSeconds(response: Response): number | null {
-+  const raw = response.headers.get('Retry-After');
-+  if (raw == null || raw === '') {
-+    return null;
-+  }
-+  const parsed = Number.parseInt(raw, 10);
-+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-+}
-+
-+function parseError(status: number, body: unknown, response: Response): PortalClaimApiError {
-+  let code: string | null = null;
-+  let attemptId: string | null = null;
-+  if (body && typeof body === 'object' && 'detail' in body) {
-+    const detail = (body as { detail: unknown }).detail;
-+    if (typeof detail === 'string') {
-+      code = detail;
-+    } else if (detail && typeof detail === 'object') {
-+      const rec = detail as { code?: unknown; attempt_id?: unknown };
-+      if (typeof rec.code === 'string') {
-+        code = rec.code;
-+      }
-+      if (typeof rec.attempt_id === 'string' && UUID_RE.test(rec.attempt_id)) {
-+        attemptId = rec.attempt_id;
-+      }
-+    }
-+  }
-+  return {
-+    status,
-+    code,
-+    detail: null,
-+    attemptId,
-+    retryAfterSeconds: retryAfterSeconds(response),
-+  };
-+}
-+
-+async function readJson(response: Response): Promise<unknown> {
-+  try {
-+    return await response.json();
-+  } catch {
-+    return null;
-+  }
-+}
-+
-+function parseClaimResponse(body: unknown): PortalClaimResponse | null {
-+  if (!body || typeof body !== 'object') {
-+    return null;
-+  }
-+  const rec = body as Record<string, unknown>;
-+  if (typeof rec.tenant_id !== 'string' || !UUID_RE.test(rec.tenant_id)) {
-+    return null;
-+  }
-+  if (typeof rec.issuer !== 'string' || rec.issuer.length === 0) {
-+    return null;
-+  }
-+  if (typeof rec.subject !== 'string' || rec.subject.length === 0) {
-+    return null;
-+  }
-+  if (!('email' in rec) || (rec.email !== null && typeof rec.email !== 'string')) {
-+    return null;
-+  }
-+  if (typeof rec.replayed !== 'boolean') {
-+    return null;
-+  }
-+  return {
-+    tenant_id: rec.tenant_id,
-+    issuer: rec.issuer,
-+    subject: rec.subject,
-+    email: rec.email,
-+    replayed: rec.replayed,
-+  };
-+}
-+
-+export function createPortalClaimClient(request: PortalRequest): PortalClaimClient {
-+  return {
-+    async claim(invitationToken: string): Promise<PortalClaimResponse> {
-+      let response: Response;
-+      try {
-+        response = await request(CLAIM_PATH, {
-+          method: 'POST',
-+          headers: { 'Content-Type': 'application/json' },
-+          body: JSON.stringify({ invitation_token: invitationToken }),
-+        });
-+      } catch {
-+        raiseClaimError({
-+          status: 503,
-+          code: 'portal_identity_unavailable',
-+          detail: null,
-+          attemptId: null,
-+          retryAfterSeconds: null,
-+        });
-+      }
-+      const body = await readJson(response);
-+      if (response.status === 200 || response.status === 201) {
-+        const parsed = parseClaimResponse(body);
-+        if (parsed) {
-+          return parsed;
-+        }
-+        raiseClaimError({
-+          status: response.status,
-+          code: 'malformed_response',
-+          detail: null,
-+          attemptId: null,
-+          retryAfterSeconds: retryAfterSeconds(response),
-+        });
-+      }
-+      raiseClaimError(parseError(response.status, body, response));
-+    },
-+  };
-+}
-diff --git a/apps/app-portal/src/screens/BillingReturnScreen.tsx b/apps/app-portal/src/screens/BillingReturnScreen.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/screens/BillingReturnScreen.tsx
-@@ -0,0 +1,52 @@
-+import { useEffect } from 'react';
-+import type { PortalBillingClient } from '../api/portalBilling';
-+import { StatusMessage } from '../components/StatusMessage';
-+
-+export type BillingReturnScreenProps = {
-+  client: PortalBillingClient;
-+  publicPlanCode: string | null;
-+  paymentsEnabled: boolean;
-+  attemptId: string | null;
-+  onNavigateToBilling: () => void;
-+  onNavigateToUsage: () => void;
-+};
-+
-+export function BillingReturnScreen({
-+  client,
-+  publicPlanCode,
-+  paymentsEnabled,
-+  attemptId,
-+  onNavigateToBilling,
-+  onNavigateToUsage,
-+}: BillingReturnScreenProps) {
-+  useEffect(() => {
-+    void client;
-+  }, [client]);
-+
-+  const pendingCopy = 'We received the return. Access changes only after backend confirmation. Pending reconciliation.';
-+
-+  return (
-+    <main className="acx-portal">
-+      <header>
-+        <p className="acx-lede">Account</p>
-+        <h1>Billing return</h1>
-+      </header>
-+      {publicPlanCode ? <p>Plan: {publicPlanCode}</p> : null}
-+      {!paymentsEnabled ? <p>Payments are disabled.</p> : null}
-+      <StatusMessage tone="info">{pendingCopy}</StatusMessage>
-+      {attemptId ? (
-+        <p>
-+          Attempt <span>{attemptId}</span>
-+        </p>
-+      ) : null}
-+      <div className="acx-portal-actions">
-+        <button type="button" className="acx-btn acx-btn-primary" onClick={onNavigateToBilling}>
-+          Return to billing
-+        </button>
-+        <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+          View usage
-+        </button>
-+      </div>
-+    </main>
-+  );
-+}
-diff --git a/apps/app-portal/src/screens/BillingScreen.tsx b/apps/app-portal/src/screens/BillingScreen.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/screens/BillingScreen.tsx
-@@ -0,0 +1,405 @@
-+import { useEffect, useRef, useState } from 'react';
-+import type { PortalBillingApiError, PortalBillingClient } from '../api/portalBilling';
-+import { StatusMessage, type StatusTone } from '../components/StatusMessage';
-+
-+export type BillingScreenProps = {
-+  client: PortalBillingClient;
-+  publicPlanCode: string | null;
-+  paymentsEnabled: boolean;
-+  onNavigateToReturn: (attemptId: string) => void;
-+  onNavigateToUsage: () => void;
-+};
-+
-+export const hostedNavigation = {
-+  open(url: string): void {
-+    window.location.assign(url);
-+  },
-+};
-+
-+type BillingCopy = {
-+  message: string;
-+  tone: StatusTone;
-+  retry: boolean;
-+  attemptId: string | null;
-+};
-+
-+function createCheckoutIdempotencyKey(): string {
-+  const bytes = new Uint8Array(32);
-+  crypto.getRandomValues(bytes);
-+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-+}
-+
-+function asBillingError(error: unknown): PortalBillingApiError {
-+  if (
-+    error &&
-+    typeof error === 'object' &&
-+    'status' in error &&
-+    typeof (error as { status: unknown }).status === 'number'
-+  ) {
-+    const rec = error as PortalBillingApiError;
-+    return {
-+      status: rec.status,
-+      code: typeof rec.code === 'string' ? rec.code : null,
-+      detail: null,
-+      attemptId: typeof rec.attemptId === 'string' ? rec.attemptId : null,
-+      retryAfterSeconds: typeof rec.retryAfterSeconds === 'number' ? rec.retryAfterSeconds : null,
-+    };
-+  }
-+  return {
-+    status: 503,
-+    code: 'checkout_unavailable',
-+    detail: null,
-+    attemptId: null,
-+    retryAfterSeconds: null,
-+  };
-+}
-+
-+function billingCopy(error: PortalBillingApiError): BillingCopy {
-+  const attemptId = error.attemptId;
-+  switch (error.code) {
-+    case 'payments_disabled':
-+      return {
-+        message: 'Payments are disabled.',
-+        tone: 'error',
-+        retry: false,
-+        attemptId,
-+      };
-+    case 'csrf_origin_denied':
-+      return {
-+        message: 'This request could not be verified. Reload the page and try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'unknown_plan_code':
-+      return {
-+        message: 'This plan is not available.',
-+        tone: 'error',
-+        retry: false,
-+        attemptId,
-+      };
-+    case 'invalid_return_path':
-+      return {
-+        message: 'Billing return could not be prepared. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'invalid_idempotency_key':
-+      return {
-+        message: 'This billing request could not be sent. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'idempotency_key_reuse':
-+      return {
-+        message: 'This billing request does not match a previous attempt. Start a new checkout.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'checkout_ambiguous':
-+      return {
-+        message: attemptId
-+          ? `A checkout is still being confirmed. Do not start another payment. Attempt ${attemptId}.`
-+          : 'A checkout is still being confirmed. Do not start another payment.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'already_subscribed':
-+      return {
-+        message: 'This account already has an active subscription. Check usage for current access.',
-+        tone: 'info',
-+        retry: false,
-+        attemptId,
-+      };
-+    case 'invalid_checkout_request':
-+      return {
-+        message: 'This checkout request is not valid. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'billing_customer_missing':
-+      return {
-+        message: 'Billing customer details are not ready yet. Complete checkout first, or try again later.',
-+        tone: 'error',
-+        retry: false,
-+        attemptId,
-+      };
-+    case 'billing_portal_unavailable':
-+      return {
-+        message: 'The billing portal is temporarily unavailable. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    case 'checkout_unavailable':
-+      return {
-+        message: 'Checkout is temporarily unavailable. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+    default:
-+      return {
-+        message: 'Billing is temporarily unavailable. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        attemptId,
-+      };
-+  }
-+}
-+
-+export function BillingScreen({
-+  client,
-+  publicPlanCode,
-+  paymentsEnabled,
-+  onNavigateToReturn,
-+  onNavigateToUsage,
-+}: BillingScreenProps) {
-+  const checkoutEnabled = paymentsEnabled && Boolean(publicPlanCode);
-+  const [preview, setPreview] = useState(false);
-+  const [busy, setBusy] = useState(false);
-+  const [retry, setRetry] = useState(false);
-+  const [retryKind, setRetryKind] = useState<'checkout' | 'manage' | null>(null);
-+  const [status, setStatus] = useState<{ tone: StatusTone; message: string }>(() =>
-+    !paymentsEnabled
-+      ? { tone: 'info', message: 'Payments are disabled.' }
-+      : !publicPlanCode
-+        ? { tone: 'info', message: 'No billing plan is available.' }
-+        : { tone: 'ok', message: 'Ready' },
-+  );
-+  const epochRef = useRef(0);
-+  const inFlightRef = useRef(false);
-+  const completedRef = useRef(false);
-+  const idempotencyRef = useRef<{ planCode: string; key: string } | null>(null);
-+  const confirmRef = useRef<HTMLButtonElement>(null);
-+  const statusRef = useRef<HTMLDivElement>(null);
-+
-+  useEffect(() => {
-+    epochRef.current += 1;
-+    inFlightRef.current = false;
-+    completedRef.current = false;
-+    setPreview(false);
-+    setBusy(false);
-+    setRetry(false);
-+    setRetryKind(null);
-+    setStatus(
-+      !paymentsEnabled
-+        ? { tone: 'info', message: 'Payments are disabled.' }
-+        : !publicPlanCode
-+          ? { tone: 'info', message: 'No billing plan is available.' }
-+          : { tone: 'ok', message: 'Ready' },
-+    );
-+  }, [client, publicPlanCode, paymentsEnabled]);
-+
-+  useEffect(() => {
-+    return () => {
-+      epochRef.current += 1;
-+    };
-+  }, []);
-+
-+  const keyFor = (planCode: string): string => {
-+    if (idempotencyRef.current?.planCode === planCode) {
-+      return idempotencyRef.current.key;
-+    }
-+    const key = createCheckoutIdempotencyKey();
-+    idempotencyRef.current = { planCode, key };
-+    return key;
-+  };
-+
-+  const rotateKey = (planCode: string): void => {
-+    idempotencyRef.current = { planCode, key: createCheckoutIdempotencyKey() };
-+  };
-+
-+  const startCheckout = async () => {
-+    if (!checkoutEnabled || !publicPlanCode || inFlightRef.current || completedRef.current) {
-+      return;
-+    }
-+    const epoch = epochRef.current;
-+    inFlightRef.current = true;
-+    setPreview(false);
-+    setBusy(true);
-+    setRetry(false);
-+    setStatus({ tone: 'info', message: 'Starting hosted checkout…' });
-+    statusRef.current?.focus();
-+    try {
-+      const result = await client.checkout({ plan_code: publicPlanCode }, keyFor(publicPlanCode));
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      if (result.status === 'pending' || result.status === 'provider_requested') {
-+        completedRef.current = true;
-+        if (result.checkout_url) {
-+          hostedNavigation.open(result.checkout_url);
-+        }
-+        onNavigateToReturn(result.attempt_id);
-+        setBusy(false);
-+        setStatus({
-+          tone: 'info',
-+          message: `Checkout pending. Access changes only after backend confirmation. Attempt ${result.attempt_id}.`,
-+        });
-+        return;
-+      }
-+      if (result.status === 'succeeded') {
-+        completedRef.current = true;
-+        inFlightRef.current = false;
-+        setBusy(false);
-+        setStatus({
-+          tone: 'info',
-+          message: 'Checkout already completed. Access changes only after backend confirmation.',
-+        });
-+        onNavigateToReturn(result.attempt_id);
-+        return;
-+      }
-+      if (result.status === 'ambiguous') {
-+        inFlightRef.current = false;
-+        setBusy(false);
-+        setRetry(true);
-+        setRetryKind('checkout');
-+        setStatus({
-+          tone: 'error',
-+          message: `A checkout is still being confirmed. Do not start another payment. Attempt ${result.attempt_id}.`,
-+        });
-+        return;
-+      }
-+      rotateKey(publicPlanCode);
-+      inFlightRef.current = false;
-+      setBusy(false);
-+      setStatus({
-+        tone: 'error',
-+        message:
-+          result.status === 'expired' || result.status === 'canceled'
-+            ? 'That checkout ended without a charge. Start a new checkout when you are ready.'
-+            : 'Checkout did not complete. Start a new checkout when you are ready.',
-+      });
-+    } catch (error) {
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      const parsed = asBillingError(error);
-+      if (parsed.code === 'idempotency_key_reuse' && publicPlanCode) {
-+        rotateKey(publicPlanCode);
-+      }
-+      const copy = billingCopy(parsed);
-+      inFlightRef.current = false;
-+      setBusy(false);
-+      setRetry(copy.retry);
-+      setRetryKind(copy.retry ? 'checkout' : null);
-+      setStatus({ tone: copy.tone, message: copy.message });
-+      statusRef.current?.focus();
-+    }
-+  };
-+
-+  const startManage = async () => {
-+    if (!checkoutEnabled || inFlightRef.current) {
-+      return;
-+    }
-+    const epoch = epochRef.current;
-+    inFlightRef.current = true;
-+    setBusy(true);
-+    setRetry(false);
-+    setStatus({ tone: 'info', message: 'Opening billing portal…' });
-+    try {
-+      const result = await client.manage();
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      hostedNavigation.open(result.portal_url);
-+      inFlightRef.current = false;
-+      setBusy(false);
-+    } catch (error) {
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      const copy = billingCopy(asBillingError(error));
-+      inFlightRef.current = false;
-+      setBusy(false);
-+      setRetry(copy.retry);
-+      setRetryKind(copy.retry ? 'manage' : null);
-+      setStatus({ tone: copy.tone, message: copy.message });
-+      statusRef.current?.focus();
-+    }
-+  };
-+
-+  const onContinue = () => {
-+    if (!checkoutEnabled || busy || completedRef.current) {
-+      return;
-+    }
-+    setPreview(true);
-+    setStatus({
-+      tone: 'info',
-+      message: 'This opens an external payment page. Access changes only after backend confirmation.',
++    await waitFor(() => {
++      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
 +    });
-+    window.setTimeout(() => confirmRef.current?.focus(), 0);
-+  };
 +
-+  return (
-+    <main className="acx-portal">
-+      <header>
-+        <p className="acx-lede">Account</p>
-+        <h1>Billing</h1>
-+      </header>
-+      {publicPlanCode ? <p>Plan: {publicPlanCode}</p> : <p>Plan: not configured</p>}
-+      <div ref={statusRef} tabIndex={-1}>
-+        <StatusMessage tone={status.tone}>{status.message}</StatusMessage>
-+      </div>
-+      <div className="acx-portal-actions">
-+        {preview ? (
-+          <button
-+            ref={confirmRef}
-+            type="button"
-+            className="acx-btn acx-btn-primary"
-+            disabled={busy || !checkoutEnabled}
-+            onClick={() => {
-+              void startCheckout();
-+            }}
-+          >
-+            Confirm hosted checkout
-+          </button>
-+        ) : (
-+          <button
-+            type="button"
-+            className="acx-btn acx-btn-primary"
-+            disabled={busy || !checkoutEnabled}
-+            onClick={onContinue}
-+          >
-+            Continue to checkout
-+          </button>
-+        )}
-+        <button
-+          type="button"
-+          className="acx-btn"
-+          disabled={busy || !checkoutEnabled}
-+          onClick={() => {
-+            void startManage();
-+          }}
-+        >
-+          Manage billing
-+        </button>
-+        {retry ? (
-+          <button
-+            type="button"
-+            className="acx-btn"
-+            disabled={busy}
-+            onClick={() => {
-+              if (retryKind === 'manage') {
-+                void startManage();
-+              } else {
-+                void startCheckout();
-+              }
-+            }}
-+          >
-+            Try billing again
-+          </button>
-+        ) : null}
-+        <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
-+          View usage
-+        </button>
-+      </div>
-+    </main>
-+  );
-+}
-diff --git a/apps/app-portal/src/screens/ClaimScreen.tsx b/apps/app-portal/src/screens/ClaimScreen.tsx
-new file mode 100644
---- /dev/null
-+++ b/apps/app-portal/src/screens/ClaimScreen.tsx
-@@ -0,0 +1,284 @@
-+import { useEffect, useRef, useState, type FormEvent } from 'react';
-+import type { PortalClaimApiError, PortalClaimClient, PortalClaimResponse } from '../api/portalClaim';
-+import { StatusMessage, type StatusTone } from '../components/StatusMessage';
++    flushSync(() => {
++      clerkDouble.setState({ sessionId: 'sess_a_replaced' });
++    });
 +
-+export type ClaimScreenProps = {
-+  client: PortalClaimClient;
-+  onClaimed: (response: PortalClaimResponse) => void;
-+};
-+
-+type ClaimCopy = {
-+  message: string;
-+  tone: StatusTone;
-+  retry: boolean;
-+  fieldFocus: boolean;
-+};
-+
-+function asClaimError(error: unknown): PortalClaimApiError {
-+  if (
-+    error &&
-+    typeof error === 'object' &&
-+    'status' in error &&
-+    typeof (error as { status: unknown }).status === 'number'
-+  ) {
-+    const rec = error as PortalClaimApiError;
-+    return {
-+      status: rec.status,
-+      code: typeof rec.code === 'string' ? rec.code : null,
-+      detail: null,
-+      attemptId: typeof rec.attemptId === 'string' ? rec.attemptId : null,
-+      retryAfterSeconds: typeof rec.retryAfterSeconds === 'number' ? rec.retryAfterSeconds : null,
-+    };
-+  }
-+  return {
-+    status: 503,
-+    code: 'portal_identity_unavailable',
-+    detail: null,
-+    attemptId: null,
-+    retryAfterSeconds: null,
-+  };
-+}
-+
-+function claimCopy(error: PortalClaimApiError): ClaimCopy {
-+  switch (error.code) {
-+    case 'email_unverified':
-+      return {
-+        message: 'Verify your email to continue. Account access is not ready yet.',
-+        tone: 'error',
-+        retry: false,
-+        fieldFocus: false,
-+      };
-+    case 'not_admitted':
-+      return {
-+        message: 'Your account is not ready for access yet.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: false,
-+      };
-+    case 'invitation_consumed':
-+      return {
-+        message: 'This invitation is no longer available. Contact support if you need access.',
-+        tone: 'error',
-+        retry: false,
-+        fieldFocus: false,
-+      };
-+    case 'identity_already_bound':
-+      return {
-+        message: 'This account is already linked. Contact support if you need help.',
-+        tone: 'error',
-+        retry: false,
-+        fieldFocus: false,
-+      };
-+    case 'invalid_claim_request':
-+      return {
-+        message: 'Enter a valid invitation token.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: true,
-+      };
-+    case 'csrf_origin_denied':
-+    case 'tenant_header_forbidden':
-+      return {
-+        message: 'This request could not be verified. Reload the page and try again.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: false,
-+      };
-+    case 'invalid_portal_authorization':
-+      return {
-+        message: 'Your sign-in session could not be verified.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: false,
-+      };
-+    case 'portal_identity_unavailable':
-+      return {
-+        message: 'Account access is temporarily unavailable. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: false,
-+      };
-+    default:
-+      if (error.status === 401) {
-+        return {
-+          message: 'Your sign-in session could not be verified.',
-+          tone: 'error',
-+          retry: true,
-+          fieldFocus: false,
-+        };
-+      }
-+      if (error.status === 403) {
-+        return {
-+          message: 'Your account is not ready for access yet.',
-+          tone: 'error',
-+          retry: true,
-+          fieldFocus: false,
-+        };
-+      }
-+      if (error.status === 422) {
-+        return {
-+          message: 'Enter a valid invitation token.',
-+          tone: 'error',
-+          retry: true,
-+          fieldFocus: true,
-+        };
-+      }
-+      return {
-+        message: 'Account access is temporarily unavailable. Try again.',
-+        tone: 'error',
-+        retry: true,
-+        fieldFocus: false,
-+      };
-+  }
-+}
-+
-+export function ClaimScreen({ client, onClaimed }: ClaimScreenProps) {
-+  const [token, setToken] = useState('');
-+  const [preview, setPreview] = useState(false);
-+  const [busy, setBusy] = useState(false);
-+  const [status, setStatus] = useState<{ tone: StatusTone; message: string }>({
-+    tone: 'ok',
-+    message: 'Ready to claim',
++    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
++    expect(screen.getByRole('status')).toHaveTextContent(/checking account/i);
++    await waitFor(() => {
++      expect(screen.getByRole('button', { name: /sign out/i })).toBeEnabled();
++    });
 +  });
-+  const [retry, setRetry] = useState(false);
-+  const epochRef = useRef(0);
-+  const tokenRef = useRef<HTMLInputElement>(null);
-+  const confirmRef = useRef<HTMLButtonElement>(null);
-+  const statusRef = useRef<HTMLDivElement>(null);
 +
-+  useEffect(() => {
-+    epochRef.current += 1;
-+    setToken('');
-+    setPreview(false);
-+    setBusy(false);
-+    setRetry(false);
-+    setStatus({ tone: 'ok', message: 'Ready to claim' });
-+  }, [client]);
-+
-+  useEffect(() => {
-+    return () => {
-+      epochRef.current += 1;
-+    };
-+  }, []);
-+
-+  const submitClaim = async () => {
-+    const epoch = epochRef.current;
-+    setPreview(false);
-+    setBusy(true);
-+    setRetry(false);
-+    setStatus({ tone: 'info', message: 'Claiming access…' });
-+    statusRef.current?.focus();
-+    try {
-+      const response = await client.claim(token);
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      setToken('');
-+      setBusy(false);
-+      setStatus({ tone: 'ok', message: response.replayed ? 'Invitation already claimed.' : 'Invitation claimed.' });
-+      onClaimed(response);
-+    } catch (error) {
-+      if (epoch !== epochRef.current) {
-+        return;
-+      }
-+      const copy = claimCopy(asClaimError(error));
-+      setBusy(false);
-+      setRetry(copy.retry);
-+      setStatus({ tone: copy.tone, message: copy.message });
-+      if (copy.fieldFocus) {
-+        tokenRef.current?.focus();
-+      } else {
-+        statusRef.current?.focus();
-+      }
-+    }
-+  };
-+
-+  const onPreview = (event: FormEvent) => {
-+    event.preventDefault();
-+    if (busy || !token.trim()) {
-+      return;
-+    }
-+    setPreview(true);
-+    setStatus({
-+      tone: 'info',
-+      message: 'This invitation can be used only once. Confirm to claim access.',
++  it('hides private modules immediately when sign-out fails [RLSE-04]', async () => {
++    signInVerified();
++    clerkDouble.state.signOut = vi.fn(async () => {
++      throw new Error('network');
 +    });
-+    window.setTimeout(() => confirmRef.current?.focus(), 0);
-+  };
++    const fetchImpl = portalFetch();
++    const user = userEvent.setup();
++    renderPortal({ path: '/keys', fetchImpl: fetchImpl as unknown as typeof fetch });
 +
-+  const onCancel = () => {
-+    if (busy) {
-+      return;
++    await waitFor(() => {
++      expect(screen.getByRole('main')).toHaveTextContent(KEY_ID);
++    });
++
++    await user.click(screen.getByRole('button', { name: /sign out/i }));
++
++    expect(screen.getByRole('main')).not.toHaveTextContent(KEY_ID);
++    expect(screen.queryByRole('heading', { name: /api keys/i })).not.toBeInTheDocument();
++    expect(screen.getByRole('status')).toHaveTextContent(/sign out failed|could not sign out/i);
++    expect(screen.getByRole('button', { name: /try again/i })).toBeEnabled();
++  });
++});
++
++describe('opaque attempt id [HAI-01]', () => {
++  it('does not put attempt, invite, or raw key material in search or hash', async () => {
++    signInVerified();
++    renderPortal({
++      path: `/billing/return?attempt_id=${ATTEMPT_ID}&invitation=${INVITATION}`,
++      fetchImpl: portalFetch() as unknown as typeof fetch,
++    });
++
++    await waitFor(() => {
++      expect(screen.getByRole('heading', { name: /billing return/i })).toBeInTheDocument();
++    });
++    expect(screen.queryByText(INVITATION)).not.toBeInTheDocument();
++    expect(screen.queryByText(ATTEMPT_ID)).not.toBeInTheDocument();
++  });
++});
+diff --git a/apps/app-portal/src/__tests__/portal-request.test.ts b/apps/app-portal/src/__tests__/portal-request.test.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/app-portal/src/__tests__/portal-request.test.ts
+@@ -0,0 +1,188 @@
++import { afterEach, describe, expect, it, vi } from 'vitest';
++import { createPortalRequest } from '../api/portalRequest';
++
++const OWNER_A = { userId: 'user_a', sessionId: 'sess_a' };
++const OWNER_B = { userId: 'user_b', sessionId: 'sess_b' };
++
++function jsonResponse(status: number, body: unknown): Response {
++  return new Response(JSON.stringify(body), {
++    status,
++    headers: { 'Content-Type': 'application/json' },
++  });
++}
++
++afterEach(() => {
++  vi.useRealTimers();
++});
++
++describe('createPortalRequest bounded bearer transport [RES-02][RLSE-04][DATA-03]', () => {
++  it('bounds a hanging getToken with the total deadline and never calls fetch [RES-02]', async () => {
++    vi.useFakeTimers();
++    const fetchImpl = vi.fn();
++    const request = createPortalRequest({
++      getToken: () => new Promise<string | null>(() => undefined),
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      timeoutMs: 40,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
++    await vi.advanceTimersByTimeAsync(40);
++    await pending;
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
++
++  it('bounds a hanging fetch with the same total deadline [RES-02]', async () => {
++    vi.useFakeTimers();
++    const fetchImpl = vi.fn(() => new Promise<Response>(() => undefined));
++    const request = createPortalRequest({
++      getToken: async () => 'session-jwt',
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      timeoutMs: 40,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    const pending = expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
++    await vi.advanceTimersByTimeAsync(40);
++    await pending;
++    expect(fetchImpl).toHaveBeenCalledTimes(1);
++  });
++
++  it('aborts during getToken without sending a bearer request [RES-02]', async () => {
++    const controller = new AbortController();
++    const fetchImpl = vi.fn();
++    const request = createPortalRequest({
++      getToken: () => new Promise<string | null>(() => undefined),
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      timeoutMs: 8_000,
++      signal: controller.signal,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    const pending = expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
++    controller.abort();
++    await pending;
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
++
++  it('does not fetch when getToken rejects [RLSE-04]', async () => {
++    const fetchImpl = vi.fn();
++    const request = createPortalRequest({
++      getToken: async () => {
++        throw new Error('token refresh failed');
++      },
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      timeoutMs: 1_000,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    await expect(request('/portal/me')).rejects.toThrow(/token refresh failed|portal identity/i);
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
++
++  it('forces cache no-store, omits credentials, and never sets Origin [DATA-03]', async () => {
++    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++      expect(String(input)).toBe('/portal/usage');
++      expect(init?.cache).toBe('no-store');
++      expect(init?.credentials).toBe('omit');
++      const headers = new Headers(init?.headers);
++      expect(headers.get('Authorization')).toBe('Bearer session-jwt');
++      expect([...headers.keys()].some((key) => key.toLowerCase() === 'origin')).toBe(false);
++      return jsonResponse(200, { ok: true });
++    });
++
++    const request = createPortalRequest({
++      getToken: async () => 'session-jwt',
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    await expect(
++      request('/portal/usage', { method: 'GET', headers: { Origin: 'https://evil.example' } }),
++    ).resolves.toBeInstanceOf(Response);
++    expect(fetchImpl).toHaveBeenCalledTimes(1);
++  });
++
++  it('rejects external, protocol-relative, and non-allowlisted paths before getToken [DATA-03]', async () => {
++    const getToken = vi.fn(async () => 'session-jwt');
++    const fetchImpl = vi.fn();
++    const request = createPortalRequest({
++      getToken,
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    const rejected = [
++      'https://evil.example/portal/me',
++      'http://app.altcontext.com/portal/me',
++      '//evil.example/portal/me',
++      '/api/portal/me',
++      '/portal',
++      'portal/me',
++      '/portal/../keys',
++      '/portal/%2e%2e/keys',
++      'https://app.altcontext.com/portal/me',
++    ];
++
++    for (const path of rejected) {
++      await expect(request(path)).rejects.toThrow(/not allowed|portal request/i);
 +    }
-+    setToken('');
-+    setPreview(false);
-+    setRetry(false);
-+    setStatus({ tone: 'ok', message: 'Ready to claim' });
-+    tokenRef.current?.focus();
-+  };
++    expect(getToken).not.toHaveBeenCalled();
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
 +
-+  return (
-+    <main className="acx-portal">
-+      <header>
-+        <p className="acx-lede">AltContext onboarding</p>
-+        <h1>Claim your invited account</h1>
-+      </header>
-+      <form
-+        aria-label="Claim invitation"
-+        aria-busy={busy}
-+        onSubmit={preview ? (event) => event.preventDefault() : onPreview}
-+      >
-+        <div>
-+          <label htmlFor="acx-invitation-token">Invitation token</label>
-+          <input
-+            id="acx-invitation-token"
-+            ref={tokenRef}
-+            type="text"
-+            autoComplete="off"
-+            spellCheck={false}
-+            value={token}
-+            readOnly={busy || preview}
-+            onChange={(event) => setToken(event.target.value)}
-+          />
-+        </div>
-+        <div ref={statusRef} tabIndex={-1}>
-+          <StatusMessage tone={status.tone}>{status.message}</StatusMessage>
-+        </div>
-+        <div className="acx-portal-actions">
-+          {preview ? (
-+            <button
-+              ref={confirmRef}
-+              type="button"
-+              className="acx-btn acx-btn-primary"
-+              disabled={busy}
-+              onClick={() => {
-+                void submitClaim();
-+              }}
-+            >
-+              Confirm claim access
-+            </button>
-+          ) : (
-+            <button type="submit" className="acx-btn acx-btn-primary" disabled={busy || !token.trim()}>
-+              Claim access
-+            </button>
-+          )}
-+          <button type="button" className="acx-btn" disabled={busy} onClick={onCancel}>
-+            Cancel
++  it('allows same-origin relative /portal/ paths including key list query [DATA-03]', async () => {
++    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
++      expect(String(input)).toBe('/portal/keys?limit=25');
++      expect(String(input)).not.toMatch(/^https?:/i);
++      return jsonResponse(200, { data: [] });
++    });
++    const request = createPortalRequest({
++      getToken: async () => 'session-jwt',
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_A,
++    });
++
++    await request('/portal/keys?limit=25');
++    expect(fetchImpl).toHaveBeenCalledTimes(1);
++  });
++
++  it('does not send when the captured owner is no longer current [DDIA][DATA-03]', async () => {
++    const getToken = vi.fn(async () => 'session-jwt');
++    const fetchImpl = vi.fn();
++    const request = createPortalRequest({
++      getToken,
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      owner: OWNER_A,
++      currentOwner: () => OWNER_B,
++    });
++
++    await expect(request('/portal/usage')).rejects.toMatchObject({ name: 'AbortError' });
++    expect(getToken).not.toHaveBeenCalled();
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
++
++  it('drops a completed response after a session replacement [DDIA][DATA-03]', async () => {
++    let current = OWNER_A;
++    const fetchImpl = vi.fn(async () => {
++      current = OWNER_B;
++      return jsonResponse(200, { tenant_id: '11111111-1111-4111-8111-111111111111' });
++    });
++    const request = createPortalRequest({
++      getToken: async () => 'session-jwt',
++      fetchImpl: fetchImpl as unknown as typeof fetch,
++      owner: OWNER_A,
++      currentOwner: () => current,
++    });
++
++    await expect(request('/portal/me')).rejects.toMatchObject({ name: 'AbortError' });
++    expect(fetchImpl).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/apps/app-portal/src/api/portalRequest.ts b/apps/app-portal/src/api/portalRequest.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/app-portal/src/api/portalRequest.ts
+@@ -0,0 +1,157 @@
++export type PortalRequest = (path: string, init?: RequestInit) => Promise<Response>;
++
++export type PortalRequestOwner = {
++  userId: string;
++  sessionId: string;
++};
++
++export type CreatePortalRequestOptions = {
++  getToken: () => Promise<string | null>;
++  fetchImpl?: typeof fetch;
++  timeoutMs?: number;
++  signal?: AbortSignal;
++  owner: PortalRequestOwner;
++  currentOwner: () => PortalRequestOwner | null;
++};
++
++const DEFAULT_TIMEOUT_MS = 8_000;
++const PORTAL_PATH_RE = /^\/portal\/[A-Za-z0-9/_-]+$/;
++
++function abortError(): DOMException {
++  return new DOMException('The operation was aborted.', 'AbortError');
++}
++
++function ownersMatch(
++  left: PortalRequestOwner | null | undefined,
++  right: PortalRequestOwner | null | undefined,
++): boolean {
++  return Boolean(left && right && left.userId === right.userId && left.sessionId === right.sessionId);
++}
++
++export function resolvePortalPath(path: string): string | null {
++  if (typeof path !== 'string' || path.length === 0) {
++    return null;
++  }
++  if (!path.startsWith('/portal/')) {
++    return null;
++  }
++  if (path.startsWith('//') || path.includes('://') || path.includes('\\')) {
++    return null;
++  }
++  if (path.includes('..') || /%2e/i.test(path)) {
++    return null;
++  }
++  let url: URL;
++  try {
++    url = new URL(path, 'https://app.altcontext.com');
++  } catch {
++    return null;
++  }
++  if (url.origin !== 'https://app.altcontext.com') {
++    return null;
++  }
++  if (url.username || url.password) {
++    return null;
++  }
++  if (url.protocol !== 'https:') {
++    return null;
++  }
++  if (!PORTAL_PATH_RE.test(url.pathname)) {
++    return null;
++  }
++  return `${url.pathname}${url.search}`;
++}
++
++function assertCurrentOwner(owner: PortalRequestOwner, currentOwner: () => PortalRequestOwner | null): void {
++  if (!ownersMatch(owner, currentOwner())) {
++    throw abortError();
++  }
++}
++
++export function createPortalRequest(options: CreatePortalRequestOptions): PortalRequest {
++  const fetchImpl = options.fetchImpl ?? fetch;
++  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
++
++  return async (path, init) => {
++    const resolved = resolvePortalPath(path);
++    if (!resolved) {
++      throw new TypeError('portal request path is not allowed');
++    }
++    assertCurrentOwner(options.owner, options.currentOwner);
++    if (options.signal?.aborted || init?.signal?.aborted) {
++      throw abortError();
++    }
++
++    const controller = new AbortController();
++    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
++    const onAbort = () => controller.abort();
++    if (options.signal) {
++      if (options.signal.aborted) {
++        controller.abort();
++      } else {
++        options.signal.addEventListener('abort', onAbort, { once: true });
++      }
++    }
++    if (init?.signal) {
++      if (init.signal.aborted) {
++        controller.abort();
++      } else {
++        init.signal.addEventListener('abort', onAbort, { once: true });
++      }
++    }
++
++    const abortGate = new Promise<void>((resolve) => {
++      if (controller.signal.aborted) {
++        resolve();
++        return;
++      }
++      controller.signal.addEventListener('abort', () => resolve(), { once: true });
++    });
++
++    try {
++      assertCurrentOwner(options.owner, options.currentOwner);
++      const tokenResult = await Promise.race([
++        Promise.resolve()
++          .then(() => options.getToken())
++          .then((token) => ({ token })),
++        abortGate.then(() => ({ aborted: true as const })),
++      ]);
++      if ('aborted' in tokenResult || controller.signal.aborted) {
++        throw abortError();
++      }
++      assertCurrentOwner(options.owner, options.currentOwner);
++      if (!tokenResult.token) {
++        throw new Error('portal identity unavailable');
++      }
++
++      const headers = new Headers(init?.headers);
++      headers.delete('Origin');
++      headers.delete('Authorization');
++      headers.set('Authorization', `Bearer ${tokenResult.token}`);
++
++      const fetchResult = await Promise.race([
++        fetchImpl(resolved, {
++          ...init,
++          headers,
++          cache: 'no-store',
++          credentials: 'omit',
++          redirect: 'error',
++          signal: controller.signal,
++        }).then((response) => ({ response })),
++        abortGate.then(() => ({ aborted: true as const })),
++      ]);
++      if ('aborted' in fetchResult || controller.signal.aborted) {
++        throw abortError();
++      }
++      assertCurrentOwner(options.owner, options.currentOwner);
++      if (options.signal?.aborted || init?.signal?.aborted) {
++        throw abortError();
++      }
++      return fetchResult.response;
++    } finally {
++      window.clearTimeout(timer);
++      options.signal?.removeEventListener('abort', onAbort);
++      init?.signal?.removeEventListener('abort', onAbort);
++    }
++  };
++}
+diff --git a/apps/app-portal/src/config.ts b/apps/app-portal/src/config.ts
+--- a/apps/app-portal/src/config.ts
++++ b/apps/app-portal/src/config.ts
+@@ -2,6 +2,8 @@ export type PortalRuntimeConfig = {
+   publishableKey: string | null;
+   fapiOrigin: string | null;
+   portalEnabled: boolean;
++  paymentsEnabled?: boolean;
++  publicPlanCode?: string | null;
+ };
+ 
+ function trimEnv(value: string | undefined): string {
+@@ -36,19 +38,39 @@ export function parseFapiOrigin(value: string | undefined): string | null {
+   }
+ }
+ 
++function parsePaymentsEnabled(value: string | undefined): boolean {
++  const normalized = trimEnv(value).toLowerCase();
++  return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes';
++}
++
++function parsePublicPlanCode(value: string | undefined): string | null {
++  const raw = trimEnv(value);
++  return raw.length > 0 ? raw : null;
++}
++
+ export function parsePortalConfig(env: Record<string, string | undefined>): PortalRuntimeConfig {
+   const publishableKey = trimEnv(env.VITE_CLERK_PUBLISHABLE_KEY);
+-  return {
++  const config: PortalRuntimeConfig = {
+     publishableKey: publishableKey.length > 0 ? publishableKey : null,
+     fapiOrigin: parseFapiOrigin(env.VITE_CLERK_FAPI),
+     portalEnabled: parseEnabledFlag(env.VITE_PORTAL_ENABLED),
+   };
++  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PAYMENTS_ENABLED')) {
++    config.paymentsEnabled = parsePaymentsEnabled(env.VITE_PAYMENTS_ENABLED);
++  }
++  if (Object.prototype.hasOwnProperty.call(env, 'VITE_PUBLIC_PLAN_CODE')) {
++    config.publicPlanCode = parsePublicPlanCode(env.VITE_PUBLIC_PLAN_CODE);
++  }
++  return config;
+ }
+ 
+ export function readPortalConfig(): PortalRuntimeConfig {
++  const env = import.meta.env as Record<string, string | undefined>;
+   return parsePortalConfig({
+-    VITE_CLERK_PUBLISHABLE_KEY: import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
+-    VITE_CLERK_FAPI: import.meta.env.VITE_CLERK_FAPI,
+-    VITE_PORTAL_ENABLED: import.meta.env.VITE_PORTAL_ENABLED,
++    VITE_CLERK_PUBLISHABLE_KEY: env.VITE_CLERK_PUBLISHABLE_KEY,
++    VITE_CLERK_FAPI: env.VITE_CLERK_FAPI,
++    VITE_PORTAL_ENABLED: env.VITE_PORTAL_ENABLED,
++    VITE_PAYMENTS_ENABLED: env.VITE_PAYMENTS_ENABLED,
++    VITE_PUBLIC_PLAN_CODE: env.VITE_PUBLIC_PLAN_CODE,
+   });
+ }
+diff --git a/apps/app-portal/src/screens/AccountScreen.tsx b/apps/app-portal/src/screens/AccountScreen.tsx
+--- a/apps/app-portal/src/screens/AccountScreen.tsx
++++ b/apps/app-portal/src/screens/AccountScreen.tsx
+@@ -8,6 +8,9 @@ export function AccountScreen({
+   userMenu,
+   onSignOut,
+   onRetry,
++  onNavigateToKeys,
++  onNavigateToUsage,
++  onNavigateToBilling,
+ }: {
+   personName: string | null;
+   tenantId: string | null;
+@@ -15,6 +18,9 @@ export function AccountScreen({
+   userMenu: ReactNode;
+   onSignOut: () => void;
+   onRetry?: () => void;
++  onNavigateToKeys?: () => void;
++  onNavigateToUsage?: () => void;
++  onNavigateToBilling?: () => void;
+ }) {
+   const status =
+     mode === 'loading'
+@@ -46,6 +52,19 @@ export function AccountScreen({
+       ) : (
+         <p>Account access: Waiting for account</p>
+       )}
++      {mode === 'default' && onNavigateToKeys && onNavigateToUsage && onNavigateToBilling ? (
++        <nav className="acx-account-nav" aria-label="Account">
++          <button type="button" className="acx-btn" onClick={onNavigateToKeys}>
++            API keys
 +          </button>
-+          {retry ? (
-+            <button
-+              type="button"
-+              className="acx-btn"
-+              disabled={busy || !token.trim()}
-+              onClick={() => {
-+                void submitClaim();
-+              }}
-+            >
-+              Try claim again
-+            </button>
-+          ) : null}
-+        </div>
-+      </form>
-+    </main>
-+  );
++          <button type="button" className="acx-btn" onClick={onNavigateToUsage}>
++            Usage
++          </button>
++          <button type="button" className="acx-btn" onClick={onNavigateToBilling}>
++            Billing
++          </button>
++        </nav>
++      ) : null}
+       <StatusMessage tone={mode === 'error' ? 'error' : mode === 'default' ? 'ok' : 'info'}>{status}</StatusMessage>
+       {mode === 'error' && onRetry ? (
+         <button type="button" className="acx-btn acx-btn-primary" onClick={onRetry}>
+diff --git a/apps/app-portal/src/screens/NotAdmittedScreen.tsx b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
+--- a/apps/app-portal/src/screens/NotAdmittedScreen.tsx
++++ b/apps/app-portal/src/screens/NotAdmittedScreen.tsx
+@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
+   reason,
+   userMenu,
+   onSignOut,
++  onClaimAccess,
+ }: {
+   reason: 'email_unverified' | 'not_admitted';
+   userMenu: ReactNode;
+   onSignOut: () => void;
++  onClaimAccess?: () => void;
+ }) {
+   const copy =
+     reason === 'email_unverified'
+@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
+         </div>
+       </header>
+       <StatusMessage tone="error">{copy}</StatusMessage>
++      {reason === 'not_admitted' && onClaimAccess ? (
++        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
++          Claim access
++        </button>
++      ) : null}
+     </main>
+   );
+ }
+diff --git a/apps/app-portal/src/styles.css b/apps/app-portal/src/styles.css
+--- a/apps/app-portal/src/styles.css
++++ b/apps/app-portal/src/styles.css
+@@ -141,10 +141,61 @@ body {
+   margin-top: var(--acx-space-lg);
+ }
+ 
++.acx-private-shell {
++  min-height: 100%;
++}
++
++.acx-session-bar {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: flex-end;
++  align-items: center;
++  gap: var(--acx-space-sm);
++  padding: var(--acx-space-md) var(--acx-space-lg);
++}
++
++.acx-account-nav {
++  display: flex;
++  flex-wrap: wrap;
++  gap: var(--acx-space-sm);
++  margin: var(--acx-space-md) 0;
++}
++
++label {
++  display: block;
++  font-weight: var(--acx-font-weight-medium);
++  margin: var(--acx-space-sm) 0;
++}
++
++input,
++select,
++textarea {
++  min-height: 2.75rem;
++  width: 100%;
++  max-width: 100%;
++  padding: 0.5rem 0.75rem;
++  border: 1px solid var(--acx-color-border);
++  border-radius: var(--acx-radius-md);
++  background: var(--acx-color-surface-alt);
++  color: var(--acx-color-text);
++  font: inherit;
++}
++
++[role='dialog'] {
++  background: var(--acx-color-surface-alt);
++  border: 1px solid var(--acx-color-border);
++  border-radius: var(--acx-radius-md);
++  box-shadow: var(--acx-shadow-1);
++  padding: var(--acx-space-lg);
++  margin-top: var(--acx-space-md);
++}
++
+ @media (max-width: 40rem) {
+   .acx-portal-header,
+   .acx-portal-actions,
+-  .acx-escape {
++  .acx-escape,
++  .acx-session-bar,
++  .acx-account-nav {
+     flex-direction: column;
+     align-items: stretch;
+   }
+@@ -153,3 +204,26 @@ body {
+     width: 100%;
+   }
+ }
++
++@media (max-width: 360px) {
++  .acx-portal,
++  .acx-session-bar {
++    padding: var(--acx-space-md);
++  }
++
++  .acx-portal-header,
++  .acx-portal-actions,
++  .acx-escape,
++  .acx-session-bar,
++  .acx-account-nav {
++    flex-direction: column;
++    align-items: stretch;
++  }
++
++  .acx-btn,
++  input,
++  select,
++  textarea {
++    width: 100%;
++  }
 +}

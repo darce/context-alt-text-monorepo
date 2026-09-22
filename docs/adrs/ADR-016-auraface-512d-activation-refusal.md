@@ -41,7 +41,7 @@ This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, siz
 | `MODEL_MANIFEST["auraface"]` | Declarable 512D pin: artifact name, license id, embedding_dim/normalization/metric, UNVERIFIED preprocessing comments | Pins exist; preprocessing is explicitly unverified |
 | `assert_space_activatable` | Raises while AuraFace preprocessing/provenance is unverified | Called by AuraFace `check_model_space` and API readiness before model I/O |
 | `check_face_pipeline_models` | Eager YuNet+SFace verify + three-way dim + shared ORT runtime | **SFace 128D base only.** Does not consult AuraFace or `assert_space_activatable` |
-| `check_model_space(AURAFACE)` | Refusal, cached file/hash verification, dimension guard, runtime construct | Unverified AuraFace fails closed before I/O; full serving/model-ID and detector-directory support remain pending |
+| `check_model_space(AURAFACE)` | Refusal, cached file/hash verification, dimension guard, runtime construct | Unverified AuraFace fails closed before I/O; model-ID and separate detector-directory routing are implemented; shared serving refusal and real-artifact parity remain under review |
 | `ort_adapters._blob_builder_for_model` | Declared-preprocessing blob path, currently SFace-template gated | AuraFace composed ORT parity is **pending** (FIR512-2) |
 | `FacePipelineSettings.profile` | `RECOGNITION_FACE_PIPELINE_PROFILE` in `{insightface, face_pipeline, auraface}` | Selecting `auraface` is not an activation grant |
 | `RecognitionSettings.auraface_models_dir` | `RECOGNITION_AURAFACE_MODELS_DIR` or package `DEFAULT_MODELS_DIR` | Store path only |
@@ -50,7 +50,7 @@ This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, siz
 
 ### Downstream surfaces that must migrate together
 
-- Ready/serve: readiness refusal is integrated and has 20 passing VM tests. Complete active embedding-model resolution and detector-directory routing before claiming that a verified profile can serve.
+- Ready/serve: readiness refusal is integrated and has 20 passing VM tests. Active embedding-model resolution and separate detector-directory routing are implemented; verify the shared serving guard and real-artifact composed path before declaring functional activation.
 - ORT composed path: YuNet + in-house aligner + AuraFace session must match **measured** preprocessing before enrollment.
 - Store: isolated 512D database/centroids; fresh pixel enrollment; no cross-space import.
 - Comparator: keep the 128D `.env.fir.example` stack explicitly selectable; rollback is a stack switch, not a mixed-space fallback.
@@ -66,7 +66,7 @@ This ADR freezes the **refusal rule**, not the numeric pins. Current hashes, siz
 2. **Do not freeze soon-superseded constants in this ADR.** Cite `provenance.py` / `settings.py` / `.env.fir.example` / `health.py`. Hashes, byte sizes, template ids, and scale comments are source-owned and will change when measurement replaces UNVERIFIED assumptions.
 3. **Spaces stay disjoint.** SFace 128D is unchanged. AuraFace 512D is a different model/preprocessing/normalization identity even though both use in-house YuNet/aligner. Equal length never licenses cosine across spaces. No SFace, buffalo, or InsightFace vector reuse; no implicit fallback.
 4. **Runtime is in-house ORT, not InsightFace.** The manifest `framework` field names pack family metadata; it is not permission to load InsightFace runtime or buffalo weights.
-5. **Readiness enforcement is still missing at base.** `assert_space_activatable` is policy code without a production caller. Planned closure is FIR512-2 fail-closed readiness plus ORT composed parity. Do not describe that closure as done.
+5. **Enforce the same policy on ready and serve.** AuraFace readiness calls `assert_space_activatable` before model I/O. The shared serving-path guard and composed ORT parity remain under review in FIR512-2; readiness refusal alone is not full activation.
 6. **128D rollback is explicit.** Return the comparator to the committed `.env.fir.example` 128D SFace stack. Do not mix 128D and 512D in one database.
 
 ### Target outcome

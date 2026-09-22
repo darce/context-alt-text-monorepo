@@ -1,5 +1,21 @@
 # E16. SaaS Foundation (Epic)
 
+## Active app.altcontext.com launch scope
+
+As of 2026-09-21, APP-1 owns this launch. Its foundation landed at `e2a539107`; the launch is still incomplete. [Plan 0002 — launch continuation](../../plans/0002-app-altcontext-launch-continuation-task-plan.md) consolidates the remaining work and supersedes the historical execution architecture below. Status: remaining-work plan under review; no new remote dispatch authorized.
+
+- Clerk owns human identity/session/recovery; existing local tenant and API-key authority remains authoritative.
+- Complete invitation onboarding, key management, WordPress connection, accurate usage/admission and bounded cost.
+- Complete Polar checkout, hosted billing management, durable webhook/reconciliation and sandbox lifecycle before free-beta admission.
+- Deliver the app host/browser journey, tenant isolation, reset containment, restore, privacy-safe telemetry and release evidence.
+- Activate live paid conversion only after the separate commercial/canary gate; beta has no card requirement, automatic charge or arrears.
+
+E16-7 and GTM AP-3/AP-4/AP-5 are inherited requirements, not parallel implementations. E20-7 supplies plugin-side usage prior art. The proposed dependency order is contracts → checkout/provider/schema → reconciliation and portal HTTP → browser integration → complete beta rehearsal, with admission/cost and host preparation parallel where ownership allows. Recover the existing keys/hooks checkpoint before requesting another implementation.
+
+## Historical E16 design (superseded for APP-1)
+
+The separate business database, new credential authority, auth-vendor bake-off, webhook-minted key and Phase-2-only billing/limits below are historical alternatives. They are not APP-1 requirements. Historical unchecked criteria and “no implementation started” status must not be read as the current APP-1 ledger.
+
 > **2026-09-19 recommended beta sequence:** [APP-1 Plan 0001](../../plans/0001-app-altcontext-beta-clerk-polar-task-plan.md) is the proposed integration owner for Clerk identity, existing local tenant/API-key authority, capped free self-service and Polar sandbox-complete billing before beta. The separate business database, new credential service and deferred quota/billing sequence below are historical design, not prerequisites for APP-1. The existing repository now has create/list/revoke operations as recorded in APP-1's evidence. Keep E16-7 findings/cases as inherited work; no parallel implementation or shipped-status claim is implied.
 
 > **Epic Short ID**: E16

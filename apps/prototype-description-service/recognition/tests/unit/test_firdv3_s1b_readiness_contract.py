@@ -643,7 +643,7 @@ def test_aligner_template_is_injected_per_space() -> None:
     assert "sface" not in aura.template_id.lower()
 
 
-def test_auraface_alignment_crop_is_rgb_relative_to_sface_bgr() -> None:
+def test_auraface_alignment_crop_is_bgr_for_both_spaces() -> None:
     from recognition.application.health import ModelSpace
     from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
 
@@ -661,9 +661,111 @@ def test_auraface_alignment_crop_is_rgb_relative_to_sface_bgr() -> None:
     sface_result = sface.align(image, landmarks)
     aura_result = aura.align(image, landmarks)
 
-    assert np.array_equal(aura_result.crop, sface_result.crop[..., ::-1])
+    expected_bgr = np.array([17, 83, 191], dtype=np.uint8)
+    assert np.array_equal(sface_result.crop[56, 56], expected_bgr)
+    assert np.array_equal(aura_result.crop[56, 56], expected_bgr)
     assert sface.channel_order == "BGR"
+    # Channel order is blob metadata; the shared aligner output remains BGR.
     assert aura.channel_order == "RGB"
+
+
+def test_auraface_aligner_embedder_and_quality_share_bgr_crop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AuraFace's RGB blob declaration must consume a BGR aligned crop exactly once."""
+    import cv2
+
+    from recognition.application.health import ModelSpace
+    from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
+    from recognition.infrastructure.embeddings.face_quality_factors import compute_face_quality_factors
+    from recognition.infrastructure.face_pipeline import ort_adapters
+    from recognition.infrastructure.face_pipeline._common import RawDetection
+    from recognition.infrastructure.face_pipeline.aligner import FivePointAligner
+
+    _pin_auraface_ok_dimensions(monkeypatch)
+
+    height, width = 180, 180
+    yy, xx = np.indices((height, width))
+    image = np.empty((height, width, 3), dtype=np.uint8)
+    image[..., 0] = (3 * xx + 2 * yy) % 256
+    image[..., 1] = (5 * xx + 7 * yy) % 256
+    image[..., 2] = (11 * xx + 13 * yy) % 256
+    landmarks = np.array(
+        [[50.0, 55.0], [120.0, 55.0], [85.0, 85.0], [60.0, 125.0], [110.0, 125.0]],
+        dtype=np.float64,
+    )
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+
+    captured_blobs: list[np.ndarray] = []
+
+    class _Input:
+        name = "input"
+
+    class _Session:
+        def get_inputs(self) -> list[_Input]:
+            return [_Input()]
+
+        def run(self, _outputs: object, inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+            captured_blobs.append(np.array(inputs["input"], copy=True))
+            return [np.ones((1, 512), dtype=np.float32)]
+
+    monkeypatch.setattr(ort_adapters, "load_verified_model", lambda *args, **kwargs: tmp_path / "glintr100.onnx")
+    monkeypatch.setattr(ort_adapters, "_ort_session", lambda _path: _Session())
+
+    from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder
+
+    aligner = FivePointAligner(space=ModelSpace.AURAFACE)
+    embedder = OrtSFaceEmbedder(model_name="auraface", models_dir=tmp_path)
+    detector = MagicMock()
+    detector.detect.return_value = [
+        [
+            RawDetection(
+                bbox=np.array([10.0, 10.0, 160.0, 160.0], dtype=np.float32),
+                landmarks=landmarks.astype(np.float32),
+                score=0.99,
+            )
+        ]
+    ]
+    runtime = fpa.FacePipelineRuntime(
+        detector=detector,
+        aligner=aligner,
+        embedder=embedder,
+        manifest=fpa.auraface_embedding_model_manifest(),
+        models_dir=tmp_path,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+    )
+    pipeline_detector = fpa.FacePipelineFaceDetector(runtime, timeout=1.0)
+
+    decoded = fpa.decode_image_bytes(encoded.tobytes())
+    aligned = aligner.align(decoded, landmarks)
+    expected_bgr_crop = cv2.warpAffine(
+        decoded,
+        aligned.affine,
+        (112, 112),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0.0,
+    )
+    expected_factors = compute_face_quality_factors(
+        crop_bgr=expected_bgr_crop,
+        embedding_norm=float(np.sqrt(512)),
+        landmarks=landmarks,
+    )
+
+    faces = pipeline_detector._detect_sync(encoded.tobytes(), "bgr-regression")
+
+    assert len(captured_blobs) == 1
+    expected_blob_center = (
+        expected_bgr_crop[56, 56, ::-1].astype(np.float32) - np.float32(127.5)
+    ) / np.float32(127.5)
+    assert np.allclose(captured_blobs[0][0, :, 56, 56], expected_blob_center)
+    assert len(faces) == 1
+    assert faces[0].sharpness == pytest.approx(expected_factors.sharpness)
+    assert faces[0].occlusion_severity == pytest.approx(expected_factors.occlusion_severity)
 
 
 def test_unverified_auraface_readiness_refuses_before_model_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

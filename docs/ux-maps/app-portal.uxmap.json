@@ -1,0 +1,435 @@
+{
+  "map_ref": "app-portal",
+  "product": "AltContext customer account portal (APP-1) — standalone React/Vite SPA at apps/app-portal",
+  "source_fixture": "apps/app-portal",
+  "goals": [
+    "PROPOSED inventory for account UI before screen code: visible sign-in, sign-up, signed-in user chrome, and sign-out. Clerk hosted or @clerk/react prebuilt components own the credential forms; this app does not invent a password field (NAV-08, NAV-12, CARD-06).",
+    "Disabled/unavailable configuration is a designed screen, not a blank shell: missing VITE_CLERK_PUBLISHABLE_KEY, portal flag off, or Clerk session load failure each have copy and no primary auth action (RLSE-04, CARD-03, FORM-09).",
+    "No fake tenant claims: Clerk user id/email is identity only. Tenant UUID, admission, and API keys remain existing backend authority. Never render Clerk OrganizationSwitcher or a guessed tenant name (DOM-03, CARD-12, HAI-05).",
+    "Never put CLERK_SECRET_KEY in the browser. Publishable key only. Wrap Clerk behind the SPA auth chrome so the rest of the product can swap identity later (REF-15, CARD-16).",
+    "Logout is a first-class exit back to signed-out chrome. Signed-in-but-not-admitted is a distinct error, not a tenant dashboard (NAV-07, CARD-15)."
+  ],
+  "jobs": [
+    {
+      "id": "authenticate-session",
+      "label": "Sign in or sign up with Clerk and return to the account origin"
+    },
+    {
+      "id": "manage-session",
+      "label": "See the signed-in Clerk user and sign out"
+    },
+    {
+      "id": "recover-unavailable",
+      "label": "Understand when the portal cannot run and what to do next"
+    }
+  ],
+  "screens": [
+    {
+      "id": "portal-signed-out",
+      "kind": "screen",
+      "title": "Account › Signed out",
+      "purpose": "PROPOSED job entry. Clerk session loaded and signed-out. Two plain-language doors (NAV-08): Sign in (primary) and Create account. No tenant name, no key list, no billing. first_time is first visit with no in-tab Clerk session residue. loading is ClerkProvider still resolving; open-sign-in and open-sign-up stay disabled until the provider is ready. In default and first_time, both doors are enabled. Serves authenticate-session.",
+      "route": "/",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "open-sign-in",
+      "states": ["default", "loading", "first_time"],
+      "zones": [
+        {
+          "id": "z-signed-out-brand",
+          "label": "PROPOSED AltContext account heading and one-sentence purpose. Does not name a tenant.",
+          "role": "content",
+          "states": ["default", "first_time"]
+        },
+        {
+          "id": "z-signed-out-auth",
+          "label": "PROPOSED signed-out chrome: Sign in (primary) and Create account. Both doors are enabled in default and first_time after Clerk is ready, and disabled while the provider is loading. Implement with @clerk/react SignInButton / SignUpButton or equivalent signed-out rendering. No custom password form.",
+          "role": "nav",
+          "states": ["default", "loading", "first_time"]
+        },
+        {
+          "id": "z-signed-out-status",
+          "label": "PROPOSED polite status: loading session; ready to sign in. Icon plus token color, not color alone.",
+          "role": "status",
+          "states": ["default", "loading", "first_time"]
+        }
+      ]
+    },
+    {
+      "id": "clerk-sign-in",
+      "kind": "overlay",
+      "title": "Account › Sign in",
+      "purpose": "PROPOSED account sign-in surface opened from signed-out chrome. Prefer @clerk/react <SignIn /> on /sign-in or SignInButton hosted Account Portal. Credential fields, MFA, and recovery are Clerk-owned. Escape returns to portal-signed-out (NAV-07). error is provider failure, not a tenant error. Serves authenticate-session.",
+      "route": "/sign-in",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["redirect_url"],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "submit-sign-in",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-sign-in-clerk",
+          "label": "PROPOSED secure account sign-in surface. App chrome may frame it; app does not collect passwords.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-sign-in-escape",
+          "label": "PROPOSED Back to account / no active session. Link to Create account. Does not claim a tenant.",
+          "role": "nav",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "clerk-sign-up",
+      "kind": "overlay",
+      "title": "Account › Create account",
+      "purpose": "PROPOSED account setup surface. @clerk/react <SignUp /> on /sign-up or SignUpButton hosted Account Portal. Creating a Clerk user is not tenant admission and must not say an AltContext workspace is ready (DOM-03). Serves authenticate-session.",
+      "route": "/sign-up",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["redirect_url"],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "submit-sign-up",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        {
+          "id": "z-sign-up-clerk",
+          "label": "PROPOSED secure account setup surface. Account setup remains separate from backend access admission.",
+          "role": "form",
+          "states": ["default", "loading", "error"]
+        },
+        {
+          "id": "z-sign-up-escape",
+          "label": "PROPOSED Back to account. Link to Sign in.",
+          "role": "nav",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "portal-account",
+      "kind": "screen",
+      "title": "Account › Signed in",
+      "purpose": "PROPOSED signed-in chrome after Clerk session exists. UserButton shows the signed-in person and Sign out is visible. open-user-menu is available in signed-in default/loading chrome; sign-out remains the session exit. Tenant/key/billing regions stay empty or 'Waiting for account' until backend /portal/me succeeds; never invent a tenant label from Clerk org or email local-part (DOM-03, CARD-12). loading is the Clerk plus backend identity check. error with backend 403 not_admitted routes to portal-not-admitted, not this screen's success grid. Serves manage-session.",
+      "route": "/",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "open-user-menu",
+      "states": ["default", "loading", "empty"],
+      "zones": [
+        {
+          "id": "z-account-user",
+          "label": "PROPOSED signed-in chrome: @clerk/react UserButton (profile) and visible Sign out. Show when signed-in. open-user-menu is available while identity is loading or ready; no OrganizationSwitcher.",
+          "role": "nav",
+          "states": ["default", "loading"]
+        },
+        {
+          "id": "z-account-identity",
+          "label": "PROPOSED identity strip: signed-in person presentation name/email from useUser. Tenant UUID only if backend returned it. Empty = signed in, tenant unknown — not a fake workspace name.",
+          "role": "content",
+          "states": ["default", "loading", "empty"]
+        },
+        {
+          "id": "z-account-status",
+          "label": "PROPOSED status: session ready; checking account; account access not linked yet. Icon plus token color.",
+          "role": "status",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty"]
+        }
+      ]
+    },
+    {
+      "id": "portal-unavailable",
+      "kind": "screen",
+      "title": "Account › Unavailable",
+      "purpose": "PROPOSED designed unavailable. Missing or empty publishable key, or server portal flag off, is not a crash blank (RLSE-04). Sign in / Sign up / User / Sign out are absent or disabled (FORM-09). Copy distinguishes configuration missing (error) from portal closed (degraded). No Clerk widget. Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": null,
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-unavailable-status",
+          "label": "PROPOSED substitute status. error: This account page is not configured. degraded: Account access is turned off. Contact support. No Sign in control.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "portal-not-admitted",
+      "kind": "screen",
+      "title": "Account › Not admitted",
+      "purpose": "PROPOSED signed-in Clerk user whose backend identity link is missing, unverified, or ineligible. UserButton and Sign out remain so the person can leave (NAV-07). Do not show keys, tenant UUID, or an invented workspace. Backend reason codes stay non-enumerating (tenant_not_eligible / email_unverified / claim_missing as generic account-not-ready copy). Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "sign-out",
+      "states": ["error"],
+      "zones": [
+        {
+          "id": "z-not-admitted-status",
+          "label": "PROPOSED: Account access is not ready yet. Sign out stays available. No tenant or key claims.",
+          "role": "status",
+          "states": ["error"]
+        },
+        {
+          "id": "z-not-admitted-user",
+          "label": "PROPOSED UserButton + Sign out still visible so the session can be ended.",
+          "role": "nav",
+          "states": ["error"]
+        }
+      ]
+    },
+    {
+      "id": "portal-clerk-outage",
+      "kind": "screen",
+      "title": "Account › Sign-in unavailable",
+      "purpose": "PROPOSED provider/session endpoint failure after a publishable key exists. Bounded wait then this error (INT-08, RES-13). Retry reloads the SPA. Do not fall back to a homemade login. Existing WordPress API keys are not this screen's concern and must not be described as broken here. Serves recover-unavailable.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "retry-clerk",
+      "states": ["error", "degraded"],
+      "zones": [
+        {
+          "id": "z-outage-status",
+          "label": "PROPOSED: Sign-in is temporarily unavailable. Try again. Icon plus token color. No tenant claims.",
+          "role": "status",
+          "states": ["error", "degraded"]
+        }
+      ]
+    },
+    {
+      "id": "logout-complete",
+      "kind": "exit",
+      "title": "Sign out",
+      "purpose": "PROPOSED session signOut then return to portal-signed-out. Clears the sign-in session on this origin. Does not revoke tenant API keys (backend authority). Serves manage-session.",
+      "route": "/",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/app-portal/src/App.tsx",
+      "primary_action_id": "sign-out",
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "z-logout-consequence",
+          "label": "PROPOSED: Session ended. Browser returns to signed-out chrome. Existing API keys are unchanged.",
+          "role": "status",
+          "states": ["default"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open-sign-in",
+      "verb": "Sign in",
+      "target": "/sign-in or Clerk SignInButton",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-signed-out"
+    },
+    {
+      "id": "open-sign-up",
+      "verb": "Create account",
+      "target": "/sign-up or Clerk SignUpButton",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-signed-out"
+    },
+    {
+      "id": "submit-sign-in",
+      "verb": "Continue sign in",
+      "target": "Clerk SignIn widget",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "clerk-sign-in"
+    },
+    {
+      "id": "submit-sign-up",
+      "verb": "Create account",
+      "target": "Clerk SignUp widget",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "clerk-sign-up"
+    },
+    {
+      "id": "open-user-menu",
+      "verb": "Open account menu",
+      "target": "@clerk/react UserButton",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "sign-out",
+      "verb": "Sign out",
+      "target": "Clerk signOut / SignOutButton",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-account"
+    },
+    {
+      "id": "retry-clerk",
+      "verb": "Try again",
+      "target": "reload SPA / remount ClerkProvider",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "portal-clerk-outage"
+    }
+  ],
+  "flows": [
+    {
+      "id": "proposed-sign-in-happy",
+      "job": "authenticate-session",
+      "label": "PROPOSED: signed-out chrome → account sign-in → signed-in account chrome",
+      "steps": [
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Clerk loaded, signed-out; Sign in enabled"
+        },
+        {
+          "screen_id": "clerk-sign-in",
+          "branch_label": "Account sign-in completes"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Show signed-in chrome: account menu + Sign out; tenant strip empty until backend says otherwise"
+        }
+      ]
+    },
+    {
+      "id": "proposed-sign-up-happy",
+      "job": "authenticate-session",
+      "label": "PROPOSED: Create account → account setup → signed-in chrome without tenant claim",
+      "steps": [
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Create account secondary CTA"
+        },
+        {
+          "screen_id": "clerk-sign-up",
+          "branch_label": "Account created; copy does not say workspace is ready"
+        },
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Signed-in; identity strip empty or waiting if backend has no link"
+        }
+      ]
+    },
+    {
+      "id": "proposed-sign-out",
+      "job": "manage-session",
+      "label": "PROPOSED: account menu/Sign out → session ended → signed-out chrome",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "Sign out visible in signed-in chrome"
+        },
+        {
+          "screen_id": "logout-complete",
+          "branch_label": "Session ends; existing API keys are unchanged"
+        },
+        {
+          "screen_id": "portal-signed-out",
+          "branch_label": "Sign in / Create account restored"
+        }
+      ]
+    },
+    {
+      "id": "proposed-missing-config",
+      "job": "recover-unavailable",
+      "label": "PROPOSED: missing publishable key → unavailable error, controls disabled",
+      "steps": [
+        {
+          "screen_id": "portal-unavailable",
+          "branch_label": "No ClerkProvider; Sign in disabled/absent; configuration copy"
+        }
+      ]
+    },
+    {
+      "id": "proposed-portal-disabled",
+      "job": "recover-unavailable",
+      "label": "PROPOSED: portal flag off → unavailable degraded, no auth CTAs",
+      "steps": [
+        {
+          "screen_id": "portal-unavailable",
+          "branch_label": "Account access turned off; not a sign-in outage"
+        }
+      ]
+    },
+    {
+      "id": "proposed-clerk-outage",
+      "job": "recover-unavailable",
+      "label": "PROPOSED: publishable key present but sign-in session fails → retry",
+      "steps": [
+        {
+          "screen_id": "portal-clerk-outage",
+          "branch_label": "Bounded wait then Try again; no homemade login"
+        }
+      ]
+    },
+    {
+      "id": "proposed-not-admitted",
+      "job": "recover-unavailable",
+      "label": "PROPOSED: sign-in session ok, backend not admitted → sign out still works",
+      "steps": [
+        {
+          "screen_id": "portal-account",
+          "branch_label": "identity_loading against backend /portal/me"
+        },
+        {
+          "screen_id": "portal-not-admitted",
+          "branch_label": "Generic account-not-ready; UserButton + Sign out remain; no tenant/key UI"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Embedded <SignIn/> / <SignUp/> on SPA routes vs hosted Account Portal via SignInButton: S1 pins the supported @clerk/react pattern when provider setup is ready. Either way, visible Sign in / Create account / User / Sign out stay in app chrome.",
+    "How the SPA learns portal-disabled vs missing-key vs sign-in outage without reading secret env files in the client: publishable key absence is client-detectable; portal flag must come from a non-secret public config or build-time define, never CLERK_SECRET_KEY.",
+    "Invitation-only admission copy vs open signup: Plan 0001 uses hashed invitations. This map does not invent an invite field on the account widget; admission remains backend."
+  ],
+  "not_doing": [
+    "Do not scaffold Clerk over the monorepo root or the WordPress plugin. SPA lives only in apps/app-portal.",
+    "Do not use Next.js Clerk APIs (@clerk/nextjs, auth(), clerkMiddleware). Package is @clerk/react.",
+    "Do not use legacy @clerk/clerk-react.",
+    "Do not put CLERK_SECRET_KEY, webhook secrets, or login material in the SPA, commits, or this map.",
+    "Do not render OrganizationSwitcher, fake tenant names, or treat Clerk email as tenant UUID (DOM-03).",
+    "Do not mint, rotate, or display API keys on these account screens; keys stay existing backend authority.",
+    "Do not add invitation/claim, usage, or billing journeys here. B1 later extends this SSOT after those contracts exist.",
+    "Do not claim OBSERVED-UI: apps/app-portal does not exist until browser code is implemented.",
+    "Do not replace local API-key recognition when sign-in is down; this SPA failure is portal-only (CARD-16, REF-15).",
+    "Do not run CLI init, accountless setup, login, provisioning, or credential-file access for this offline slice. Use manual @clerk/react integration with offline mocks; do not hardcode a rescued app ID as proof of the production application."
+  ]
+}

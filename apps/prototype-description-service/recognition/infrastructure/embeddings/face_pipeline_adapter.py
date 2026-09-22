@@ -51,6 +51,7 @@ from recognition.infrastructure.face_pipeline._common import (
     RawDetection,
     ZeroNormEmbeddingError,
 )
+from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError, FivePointAligner
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace
 from recognition.infrastructure.face_pipeline.ort_adapters import OrtSFaceEmbedder, OrtYuNetDetector
@@ -315,13 +316,24 @@ def sface_embedding_model_manifest() -> EmbeddingModelManifest:
 
 
 def auraface_embedding_model_manifest() -> EmbeddingModelManifest:
-    """Map the AuraFace provenance entry to its embedding-space manifest."""
+    """Map MODEL_MANIFEST['auraface'] provenance → EmbeddingModelManifest (rg-015).
+
+    Embedding-space identity includes the numeric-relevant runtime token
+    (OpenCV full version + onnxruntime major.minor; see
+    ``NumericRuntimeFingerprint.space_token``) so aligner-numeric bumps and
+    ORT minor bumps cannot share a ``model_id`` string while ORT patch bumps
+    do not orphan rows (FIR23-01 / CVUP1-GR-03). AuraFace uses the same
+    ``FivePointAligner`` warp as SFace.
+    """
+    from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
     entry = MODEL_MANIFEST["auraface"]
     if entry.embedding_dim is None or entry.normalization is None or entry.metric is None:
         raise ValueError("MODEL_MANIFEST['auraface'] missing embedding contract fields")
+    space = numeric_runtime_fingerprint().space_token
     return EmbeddingModelManifest(
         framework=entry.framework,
-        name="auraface",
+        name=f"auraface+{space}",
         dimensions=int(entry.embedding_dim),
         normalization=entry.normalization,
         metric=entry.metric,
@@ -485,6 +497,7 @@ def _load_face_pipeline_runtime(
     embedder_models_dir: Path | None = None,
 ) -> FacePipelineRuntime:
     """Load YuNet + embedder as one atomic unit; any failure raises (caller decides cache)."""
+    assert_space_activatable(space)
     assert_embedding_pgvector_pair()
     if space is ModelSpace.AURAFACE:
         manifest = auraface_embedding_model_manifest()
@@ -549,6 +562,7 @@ def get_shared_face_pipeline_runtime(
     global _SHARED
 
     space = ModelSpace(profile)
+    assert_space_activatable(space)
     root = Path(models_dir) if models_dir is not None else DEFAULT_MODELS_DIR
     embedder_root = Path(embedder_models_dir) if embedder_models_dir is not None else root
     pg_dim = int(get_database_settings().pgvector_dimension)

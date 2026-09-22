@@ -111,7 +111,7 @@ def _pin_verified_auraface_preprocessing(monkeypatch: pytest.MonkeyPatch) -> Non
         channel_order="RGB",
         input_scale=1.0 / 127.5,
         alignment_template_id="arcface-112",
-        output_l2_normalized=True,
+        output_l2_normalized=False,
     )
     monkeypatch.setitem(MODEL_MANIFEST, "auraface", replace(entry, preprocessing=preprocessing))
 

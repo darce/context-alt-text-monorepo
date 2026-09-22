@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-09-04, v11)</title>
+<title>FIR — Decision, Task &amp; Benchmark Registers + Research Q&amp;A (2026-09-22, v12)</title>
 <style>
 :root{--bg:#fff;--fg:#1a1d21;--mut:#5c6570;--line:#d8dde3;--card:#f6f8fa;--acc:#0b6bcb;--warn:#9a3412;--ok:#166534;--bad:#b91c1c;}
 @media (prefers-color-scheme:dark){:root{--bg:#14171a;--fg:#e6e9ec;--mut:#9aa4af;--line:#333a42;--card:#1d2126;--acc:#5aa2e8;--warn:#f59e0b;--ok:#4ade80;--bad:#f87171;}}
@@ -30,17 +30,24 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
 </style>
 </head>
 <body><main>
-<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class="tag wr">v11</span></h1>
-<div class="sub"><b>Start at <a href="#v11">the current v11 plan</a> (2026-09-04).</b> The July register below is retained as history. §§1–19 are the research warrant; §0a–0e are the working surface for task decomposition and benchmarking. · 2026-07-23, revised 2026-07-28 (v5 added §19 detector training corpus; v6 reflows into registers and applies heuristics canon to the open findings — <b>rule IDs only, never a canon version</b>) · FIR wave (fir-unblock) · sources: four grok web-research lanes (URL-graded JSON: <code>fir-dims-research-20260723.json</code>, <code>fir-gtm-legal-research-20260723.json</code>, <code>fir-licensing-research-20260723.json</code>, <code>fir-projects-eval-20260723.json</code>, <code>fir-umap-dcface-econ-20260723.json</code>), coordinator-verified primary pages, Golden-150 head-to-head (decision <code>fir1_buffalo_head_to_head_measured</code>), heuristics canon + <code>distilled/</code> (handbook-face-recognition, adaface, sface-synthetic-data, video-to-video-face-surveillance, bruch-vector-retrieval, zezula-similarity-search, model-cards, gender-shades, nist-frvt-demographics). <span class="tag ok">VERIFIED</span> = coordinator re-checked against the primary source. Legal sections are research summaries, <b>not legal advice</b> — counsel review before GTM.</div>
+<h1>FIR — decision, task &amp; benchmark registers, over the operator Q&amp;A <span class="tag wr">v12</span></h1>
+<div class="sub"><b>Start at <a href="#v12">the current v12 AuraFace-v1 512D status</a> (2026-09-22).</b> v12 does <b>not</b> claim the space is usable, deployed, or quality-qualified. The <a href="#v11">2026-09-04 v11 plan</a> and the July register below are retained as history. §§1–19 are the research warrant; §0a–0e are the working surface for task decomposition and benchmarking. · 2026-07-23, revised 2026-07-28 (v5 added §19 detector training corpus; v6 reflows into registers and applies heuristics canon to the open findings — <b>rule IDs only, never a canon version</b>) · 2026-09-22 v12 adds the in-house AuraFace 512D candidate path and corrects “retrain is the only 512D route.” · FIR wave (fir-unblock) · sources: four grok web-research lanes (URL-graded JSON: <code>fir-dims-research-20260723.json</code>, <code>fir-gtm-legal-research-20260723.json</code>, <code>fir-licensing-research-20260723.json</code>, <code>fir-projects-eval-20260723.json</code>, <code>fir-umap-dcface-econ-20260723.json</code>), coordinator-verified primary pages, Golden-150 head-to-head (decision <code>fir1_buffalo_head_to_head_measured</code>), heuristics canon + <code>distilled/</code> (handbook-face-recognition, adaface, sface-synthetic-data, video-to-video-face-surveillance, bruch-vector-retrieval, zezula-similarity-search, model-cards, gender-shades, nist-frvt-demographics). <span class="tag ok">VERIFIED</span> = coordinator re-checked against the primary source. Legal sections are research summaries, <b>not legal advice</b> — counsel review before GTM.</div>
 
 <nav>
-<a href="#v11">Current plan · v11 reconciliation</a>
-<a href="#v11-state">Current service codemap</a>
+<a href="#v12">Current plan · v12 AuraFace-v1 512D</a>
+<a href="#v12-status">Activation status (not deployed)</a>
+<a href="#v12-space">Separate 128D SFace / 512D AuraFace spaces</a>
+<a href="#v12-config">Operator configuration (source-backed)</a>
+<a href="#v12-gates">Ordered activation checklist</a>
+<a href="#v12-rollback">Rollback to explicit 128D comparator</a>
+
+<a href="#v11">Historical · v11 reconciliation</a>
+<a href="#v11-state">v11 service codemap</a>
 <a href="#v11-mining">Reuse descriptions · measured shortlist</a>
 <a href="#v11-corpus">Golden corpus · required changes</a>
 <a href="#v11-methods">Periocular / head / COCO / S³POT</a>
 <a href="#v11-clustering">Adaptive clustering experiments</a>
-<a href="#v11-work">Current work register</a>
+<a href="#v11-work">v11 work register</a>
 <a href="#v11-cull">Ideas culled and narrowed</a>
 <a href="#v11-canon">Canon application and knowledge gaps</a>
 
@@ -75,12 +82,77 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
 <a href="#feasibility" style="font-weight:600">0f · Cluster structure &amp; feasibility <b>NEW</b></a>
 <a href="#downstream" style="font-weight:600">0g · Downstream impact <b>NEW</b></a>
 </nav>
+<!-- BEGIN FIR V12 AURAFACE 512D STATUS 2026-09-22 -->
+<h2 id="v12">Current plan · AuraFace-v1 512D activation status <span class="tag wr">v12 · 2026-09-22</span></h2>
+<div class="card">
+<p><b>Current 512D candidate:</b> pinned <b>AuraFace-v1</b> (<code>glintr100.onnx</code>, publisher Apache-2.0) through the <b>in-house</b> YuNet detector, in-house five-point aligner, and <b>ONNX Runtime</b> embedder. L2-normalized cosine vectors. Isolated fresh 512D database and fresh enrollment from pixels. This is <b>not</b> InsightFace runtime, <b>not</b> buffalo weights, and <b>not</b> a projection of SFace 128D.</p>
+<p><b>Not usable, not deployed, not quality-qualified.</b> FIR512-1 merged dimension/provenance plumbing at <code>dd2f1e5b64dbe14a5fa6797d2450f14df9de3838</code>. FIR512-2 still owes preprocessing measurement, fail-closed readiness on the actual ready/serve path, and ORT composed parity. Hash presence is not permission to enroll. [EXP-14] [OBS-08]</p>
+<p><b>Own-weight retraining is conditional research, not the only 512D path.</b> Historical §§1/8/12/T-17 remain the warrant for a later AdaFace-style train-or-stop decision (FIRDV-3 S3–S5). They must not be read as “512D requires a retrain.” Dimension alone does not improve recognition. Withdrawn detector comparisons (R 0.504 vs 0.995; FIRTRAIN-05 as a detector margin) stay withdrawn.</p>
+</div>
+
+<h3 id="v12-status">What is true at this checkout</h3>
+<div class="wrap"><table>
+<tr><th>Claim</th><th>Status</th><th>Do not infer</th></tr>
+<tr><td>SFace 128D FIR stack</td><td>Unchanged comparator. Operator template: <a href="../../apps/prototype-description-service/.env.fir.example"><code>.env.fir.example</code></a>.</td><td>That 128D is being replaced, or that 128D vectors can be padded to 512D.</td></tr>
+<tr><td>AuraFace-v1 512D space</td><td>Declarable in <a href="../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py"><code>provenance.py</code></a>. Artifact + license pins are operator-fetched; preprocessing fields are still marked <b>UNVERIFIED</b>.</td><td>That the space is serving, that pins equal measured preprocessing, or that InsightFace is on the path.</td></tr>
+<tr><td>FIR512-1 plumbing</td><td>Merged: per-space dimension, manifest, isolated store hooks.</td><td>Activation, enrollment, or a quality win.</td></tr>
+<tr><td>FIR512-2</td><td><b>Pending:</b> measure preprocessing; fail-closed readiness; ORT composed parity (YuNet + aligner + ORT AuraFace).</td><td>That those gates already run in production <code>/ready</code>.</td></tr>
+<tr><td>Policy</td><td><a href="../../docs/adrs/ADR-016-auraface-512d-activation-refusal.md">ADR-016</a> refuses activation while provenance/preprocessing is unverified. The helper exists; the base ready path does not call it.</td><td>That enforcement is done because a unit test raises.</td></tr>
+</table></div>
+
+<h3 id="v12-space">Two model spaces, not one 128→512 knob</h3>
+<p>A model space is exact weights + preprocessing/alignment + normalization + metric + store, not a vector length. <code>PGVECTOR_DIM</code> is the sole dimension root (<a href="../../apps/prototype-description-service/recognition/config/settings.py"><code>settings.py</code></a>, <a href="../../apps/prototype-description-service/db/settings.py"><code>db/settings.py</code></a>) and must agree with the loaded space. Changing only the integer while still loading SFace is invalid.</p>
+<div class="wrap"><table>
+<tr><th></th><th>SFace 128D (unchanged)</th><th>AuraFace-v1 512D (candidate)</th></tr>
+<tr><td>Profile</td><td><code>RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline</code></td><td><code>RECOGNITION_FACE_PIPELINE_PROFILE=auraface</code></td></tr>
+<tr><td>Detector / aligner</td><td>In-house YuNet + five-point aligner</td><td>Same in-house YuNet + aligner (not buffalo/RetinaFace)</td></tr>
+<tr><td>Embedder runtime</td><td>ORT SFace</td><td>ORT AuraFace <code>glintr100.onnx</code> — <b>no InsightFace runtime</b></td></tr>
+<tr><td>Vectors</td><td>128D L2 / cosine</td><td>512D L2 / cosine, <b>fresh from pixels</b></td></tr>
+<tr><td>Store</td><td>Existing isolated 128D FIR DB</td><td><b>Separate fresh 512D DB</b> — no SFace/buffalo vector reuse, no centroid import, no implicit fallback</td></tr>
+</table></div>
+<p>The AuraFace manifest <code>framework</code> field names pack-family metadata. It is not a license to load InsightFace or buffalo. Production default profile remains <code>insightface</code> (buffalo-era incumbent); that is a third space and is not this candidate.</p>
+
+<h3 id="v12-config">Operator configuration — read from source, not from this table’s memory</h3>
+<p>Values below are the committed checkout. If source drifts, source wins. Do not invent a 512D compose project, DSN, or models path beyond the env knobs named here.</p>
+<div class="wrap"><table>
+<tr><th>Knob</th><th>Committed value / rule</th><th>Source</th></tr>
+<tr><td><code>RECOGNITION_FACE_PIPELINE_PROFILE</code></td><td>Allowed: <code>insightface</code>, <code>face_pipeline</code>, <code>auraface</code>. Default: <code>insightface</code>. Unknown values fail closed. AuraFace activation still requires the FIR512-2 gates — selecting the string is not a grant.</td><td><a href="../../apps/prototype-description-service/recognition/config/settings.py"><code>recognition/config/settings.py</code></a> <code>_FACE_PIPELINE_PROFILES</code> / <code>_resolve_face_pipeline_profile</code></td></tr>
+<tr><td><code>RECOGNITION_AURAFACE_MODELS_DIR</code></td><td>Operator-provisioned AuraFace ONNX directory. Empty → package <code>DEFAULT_MODELS_DIR</code>.</td><td><code>settings.py</code> <code>_resolve_auraface_models_dir</code> / <code>RecognitionSettings.auraface_models_dir</code></td></tr>
+<tr><td><code>RECOGNITION_FACE_PIPELINE_MODELS_DIR</code></td><td>YuNet/SFace store override. 128D comparator sets <code>/data/cache/face_pipeline</code>.</td><td><code>settings.py</code>; 128D template <a href="../../apps/prototype-description-service/.env.fir.example"><code>.env.fir.example</code></a></td></tr>
+<tr><td><code>PGVECTOR_DIM</code></td><td>Sole embedding-dimension root. 128D comparator: <code>128</code>. AuraFace store must match the AuraFace manifest width (512) on a <b>separate</b> database. Incumbent default <code>512</code> is the InsightFace space, not an AuraFace grant. <code>RECOGNITION_EMBEDDING_DIMENSION</code> is ignored.</td><td><a href="../../apps/prototype-description-service/db/settings.py"><code>db/settings.py</code></a>; <code>settings.py</code> <code>_resolve_embedding_dimension</code></td></tr>
+<tr><td>128D comparator env (rollback target)</td><td><code>COMPOSE_PROJECT_NAME=acx-dev-fir</code>; <code>RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline</code>; <code>PGVECTOR_DIM=128</code>; <code>RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline</code>. That file does <b>not</b> define an AuraFace 512D stack.</td><td><a href="../../apps/prototype-description-service/.env.fir.example"><code>.env.fir.example</code></a></td></tr>
+<tr><td>AuraFace artifact (this checkout)</td><td><code>glintr100.onnx</code> from <code>https://huggingface.co/fal/AuraFace-v1</code> at revision <code>af6d057c9b0ec4071d4c49c80e3539258798b609</code>; license <code>Apache-2.0</code> / <code>LICENSE.auraface.md</code>; embedding 512 / <code>l2</code> / <code>cosine</code>. Pins copied from <code>MODEL_MANIFEST["auraface"]</code> on this pass: model sha256 <code>a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60</code>, license sha256 <code>609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338</code>, <code>size_bytes=260694151</code>. Canonical source remains that file if a later measurement commit moves the pins.</td><td><a href="../../apps/prototype-description-service/recognition/infrastructure/face_pipeline/provenance.py"><code>provenance.py</code></a></td></tr>
+<tr><td>Preprocessing</td><td>Declared but <b>UNVERIFIED</b> (input scale, alignment template id, output L2). FIR512-2 measures these. Do not freeze the commented-out assumptions from the source as if they were proven.</td><td><code>provenance.py</code> <code>InputPreprocessing</code> on the auraface entry</td></tr>
+</table></div>
+
+<h3 id="v12-gates">Ordered activation checklist</h3>
+<p>Stop at the first unmet gate. Completing FIR512-1 plumbing is gate 0, already merged, and does not skip the rest. [EXP-14]</p>
+<ol>
+<li><b>Keep 128D intact.</b> The <code>.env.fir.example</code> SFace stack remains the explicit comparator. Do not retarget its database to 512.</li>
+<li><b>Isolated 512D store.</b> New DB/role/volume; <code>PGVECTOR_DIM</code> agrees with AuraFace width on that store only; inspect actual embedding/centroid schema.</li>
+<li><b>Verified artifact bytes.</b> Operator-provisioned <code>glintr100.onnx</code> + <code>LICENSE.auraface.md</code> match <code>provenance.py</code> pins. Missing or mismatched files fail closed.</li>
+<li><b>Measure preprocessing (FIR512-2, pending).</b> Replace UNVERIFIED scale / alignment template / output-L2 with full-file/ORT observations. Until then, refuse activation (<a href="../../docs/adrs/ADR-016-auraface-512d-activation-refusal.md">ADR-016</a>).</li>
+<li><b>Fail-closed readiness (FIR512-2, pending).</b> Wire the unverified-preprocessing refusal into the profile that would actually serve AuraFace. Today <a href="../../apps/prototype-description-service/recognition/application/health.py"><code>health.py</code></a> <code>assert_space_activatable</code> is test-only; <code>check_face_pipeline_models</code> still verifies YuNet+SFace only. That is the enforcement gap, not a completed gate.</li>
+<li><b>ORT composed parity (FIR512-2, pending).</b> In-house YuNet + aligner + ORT AuraFace must match the measured preprocessing. Current ORT blob construction is still SFace-template gated.</li>
+<li><b>Fresh enrollment from pixels.</b> Re-extract gallery/probes. No SFace 128D import, no buffalo 512D import, no cluster-id reuse, no implicit fallback to InsightFace or the 128D endpoint.</li>
+<li><b>Quality is a later measurement.</b> FIRDV-3 S2 comparison (controlled faces + end-to-end, frozen calibration) is not this checklist. Do not advertise a recognition improvement from dimension or from pinning the ONNX file.</li>
+</ol>
+
+<h3 id="v12-rollback">Rollback: explicit separate 128D comparator</h3>
+<p>Rollback is a <b>stack switch</b> back to the committed 128D FIR env, not a mixed-space read and not an automatic fallback.</p>
+<ol>
+<li>Point the LocalWP/dev endpoint at the existing 128D service defined by <a href="../../apps/prototype-description-service/.env.fir.example"><code>.env.fir.example</code></a>: <code>RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline</code>, <code>PGVECTOR_DIM=128</code>, <code>RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline</code>.</li>
+<li>Leave any 512D database untouched (do not shrink vectors in place).</li>
+<li>Do not route AuraFace failures to InsightFace/buffalo or to SFace by catching errors. Absence of the 512D stack is a hard miss.</li>
+</ol>
+<p><b>Plans and roadmap (relative from this report):</b> <a href="../../docs/roadmaps/fir-localwp-512d-implementation-roadmap-2026-09-19.md">512D LocalWP implementation roadmap</a> · <a href="../../docs/tasks/firdv/FIRDV-3-embedder-capacity-and-training-feasibility-task-plan.md">FIRDV-3</a> (artifact/adapter, comparison, conditional train, S6 512D delivery) · <a href="../../docs/tasks/firdv/FIRDV-1-isolated-development-install-task-plan.md">FIRDV-1</a> (128D isolated install) · <a href="../../docs/tasks/firdv/FIRDV-2-comparative-harness-and-bakeoff-task-plan.md">FIRDV-2</a> (harness/detection) · <a href="../../docs/scopes/fir-development-and-measurement-wave.md">wave scope</a> · <a href="../../docs/adrs/ADR-016-auraface-512d-activation-refusal.md">ADR-016</a>.</p>
+
 <!-- BEGIN FIR V11 OCCLUSION RECONCILIATION 2026-09-04 -->
-<h2 id="v11">Current plan · Occlusion research and code reconciliation <span class="tag wr">v11 · 2026-09-04</span></h2>
+<h2 id="v11">Historical plan · Occlusion research and code reconciliation <span class="tag wr">v11 · 2026-09-04</span></h2>
 <div class="card">
 <p><b>Improve the evidence available for a match, then measure recall at a controlled false-identification rate.</b> Surgical masks and sunglasses remove different facial regions. The first useful change is a face-level corpus and stage-by-stage evaluation; a larger vector, a more permissive threshold, or a different clustering library cannot supply missing identity evidence.</p>
 <p><b>New measured shortcut:</b> the saved 646-image description run already has <b>640 successful descriptions</b>. Mine it before commissioning more captions. It yields <b>39 sunglasses candidates</b> (25 previously untriaged personal images) and <b>15 mask/scarf/veil candidates</b> (7 untriaged). These are review candidates, not verified occluded faces. <a href="#v11-mining">Mining evidence and queue</a>.</p>
-<p><b>Reading precedence:</b> this dated reconciliation and its <a href="#v11-work">work register</a> supersede conflicting scheduling, corpus-count and mechanism claims in the historical v8 sections below. They recover relevant v10–v10d semantic decisions without claiming to restore those missing HTML revisions verbatim. No recognition improvement was measured in this document pass, no production settings changed, and no model-training campaign is approved by these recommendations.</p>
+<p><b>Reading precedence:</b> <a href="#v12">v12</a> supersedes 512D-path claims that treat own-weight retraining as the only route, and it is the current activation-status surface. This dated v11 reconciliation and its <a href="#v11-work">work register</a> still supersede conflicting scheduling, corpus-count and mechanism claims in the historical v8 sections below. They recover relevant v10–v10d semantic decisions without claiming to restore those missing HTML revisions verbatim. No recognition improvement was measured in the v11 pass; v12 likewise changes no production settings and does not approve a training campaign or declare AuraFace usable.</p>
 </div>
 <p class="mut">Code snapshot: <code>ee330e96141227bfc8bc4e92de34827514c11211</code>. Graph discovery used indexed project <code>context-alt-text-monorepo</code>; verbose reads switched to the CLI. Coverage metadata returned <code>coverage_unavailable</code>, so anchors and important negative claims were checked in the local source. Scope is the description/recognition service and its evaluation path, not an exhaustive audit of every monorepo package. <a href="../../docs/research/fir-occlusion-pipeline-codemap-2026-09-04.md">Detailed codemap, provenance and change summary</a>.</p>
 
@@ -410,7 +482,8 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
 
 <h2 id="q1">1 · Can the FIR pipeline's embedding dims be increased? (128 → 512)</h2>
 <div class="card">
-<b>Short answer:</b> not on the current model — dims are baked into the trained embedder's final layer, and up-projecting 128→512 adds zero information. A newly trained model can choose a different output dimension, but must justify it on the calibrated operating point. <b>No dimensionality change or GPU retrain is justified by dimension alone</b>; see <a href="#v11-work">R4/R6</a>.
+<b>Short answer (historical, SFace 128D):</b> not on the current SFace model — dims are baked into the trained embedder's final layer, and up-projecting 128→512 adds zero information. A newly trained model can choose a different output dimension, but must justify it on the calibrated operating point. <b>No dimensionality change or GPU retrain is justified by dimension alone</b>; see <a href="#v11-work">R4/R6</a>.
+<p style="margin:.6rem 0 0"><span class="tag wr">v12 · 2026-09-22</span> That short answer still holds for <b>unchanged SFace 128D</b>. It does <b>not</b> mean own-weight retraining is the only 512D path. The current candidate is a <b>separate AuraFace-v1 512D model space</b> (in-house YuNet/aligner + ORT, pinned Apache-2.0 artifact, isolated fresh 512D DB, pixel re-enrollment). It is <b>not activated, not deployed, and not quality-qualified</b>. See <a href="#v12">v12</a> and <a href="../../docs/adrs/ADR-016-auraface-512d-activation-refusal.md">ADR-016</a>.</p>
 </div>
 <ul>
 <li><b>Evidence on dims:</b> FaceNet's controlled same-backbone ablation (CVPR 2015, Table 5): 64/128/256/512D → <b>128D best (87.9%), 512D worst (85.6%), differences statistically insignificant</b>. ArcFace/MagFace/AdaFace standardize on 512D by convention without a 128-vs-512 accuracy table. The principled reason for 512 is <b>class-packing headroom</b> (CosFace bound: separability degrades when identity count ≫ feature dim).</li>
@@ -514,7 +587,7 @@ blockquote{border-left:3px solid var(--acc);margin:.6rem 0;padding:.2rem .9rem;c
 <tr><td>Torso embedding</td><td>own lightweight embedder</td><td>proprietary (later)</td><td>event-scoped association, §2a/§10</td></tr>
 <tr><td>Content search</td><td>SigLIP / DINOv2</td><td>off-shelf Apache</td><td>separate space; own-distill later only if it becomes a moat</td></tr>
 </table></div>
-<p><b>Current disposition:</b> SCRFD remains a detector candidate, conditional on an independently measured localization deficit and admissible artifacts. No current evidence establishes that the detector or embedder should lead. The old +0.012 margin is confounded by alignment and unresolved provenance. Use <a href="#v11-work">R1/R2</a> to establish the bottleneck; use R3 to test cheaper localization rescue before training spend.</p>
+<p><b>Current disposition:</b> SCRFD remains a detector candidate, conditional on an independently measured localization deficit and admissible artifacts. No current evidence establishes that the detector or embedder should lead. The old +0.012 margin is confounded by alignment and unresolved provenance. Use <a href="#v11-work">R1/R2</a> to establish the bottleneck; use R3 to test cheaper localization rescue before training spend. <span class="tag wr">v12</span> The “Face embedding = AdaFace-style 512D own-weights retrain” row is the <b>historical proprietary-stack research path</b>, not the only 512D route and not a current activation. The present 512D candidate is separate AuraFace-v1 via in-house ORT (<a href="#v12">v12</a>); it is not deployed. Retrain remains FIRDV-3 conditional research.</p>
 
 <h2 id="q13">13 · GTM: do in-house proprietary weights change plugin delivery? Free/paid tiers? Local-only?</h2>
 <ul>
@@ -698,7 +771,7 @@ train vs <b>test</b>: deficit gap +0.244 [+0.207, +0.278], attenuation <b>×4.33
 <b>(6)</b> <b>Three §0e verdicts were wrong</b> <span class="tag wr">v8 — and v7's own tally of them did not match its table; corrected in <a href="#canon">§0e</a></span><b>:</b> PR-17 is open, not design-closed; PR-21 is re-opened (the SCRFD branch's calibration caveat <i>does</i> turn on the mechanism); PR-18/PR-20 are partial, not no-help — canon is silent on CC terms but binds substitute path, lineage, capture basis, deletion reach and retention.
 Minor but pervasive: <b>YuNet's threshold is 0.30, not 0.030</b>, and the WIDER density gap is <b>4.5×</b>, not an order of magnitude.</p></div>
 <ol>
-<li><b>Dims:</b> 512D in the retrain, hard ceiling — 768/1024 buy distance concentration and 2× index cost for zero evidence of gain (§8). Capacity budget goes to backbone, data, and loss design.</li>
+<li><b>Dims:</b> 512D remains the capacity ceiling — 768/1024 buy distance concentration and 2× index cost for zero evidence of gain (§8). Capacity budget goes to backbone, data, and loss design. <span class="tag wr">v12</span> “512D in the retrain” was the historical own-weight research path, <b>not the only 512D path</b>. The current candidate is AuraFace-v1 as a separate space (<a href="#v12">v12</a>); retraining stays conditional FIRDV-3 research. Dimension alone is not a quality improvement.</li>
 <li><b>The proprietary stack has exactly two retrained components:</b> SCRFD-architecture occlusion detector + AdaFace-style 512D embedder (§12). Everything else — person cascade (RT-DETR/PicoDet), content search (SigLIP/DINOv2), segmentation (SAM family) — is off-the-shelf Apache.</li>
 <li><b>SAM's job is the training-data factory</b> (occluder compositing per MLDATA-10), offline only; it also unlocks torso crops and later region search (§9). It supplies <i>controlled degradation</i>, not an occlusion <i>stratum definition</i> — that must come from COCO <code>v=0</code> after audit, or hand labels, never from Open Images' train flag (§19c).</li>
 <li><b>Person→face cascade (§11) is cheap and needs no new weights</b>, but it is <b>deferred</b>, not scheduled. <span class="tag wr">v5</span> The earlier instruction — "schedule it alongside the detector A/B, before GPU spend" — is <b>withdrawn</b>: it was motivated by the R 0.504 figure, which is buffalo-labelled (§1, §19e), and it contradicted the gating in item 13. It enters the queue only where the binding sequence below places it.</li>
@@ -751,7 +824,7 @@ Minor but pervasive: <b>YuNet's threshold is 0.30, not 0.030</b>, and the WIDER 
 <h2 id="evidence">Evidence inventory</h2>
 <p><b>Research evidence</b> (grok web-research lanes, URL-graded JSON, all in <code>benchmarks/reports/</code>): <code>fir-dims-research-20260723.json</code> · <code>fir-gtm-legal-research-20260723.json</code> · <code>fir-licensing-research-20260723.json</code> · <code>fir-projects-eval-20260723.json</code> · <code>fir-umap-dcface-econ-20260723.json</code>. Items tagged <span class="tag ok">VERIFIED</span> were re-checked by the coordinator against the primary source; untagged research claims were not.</p>
 <p><b>First-party measurement evidence</b> (§19, and the Golden-150 head-to-head in §1/§5): <code>PROVENANCE.md</code> alongside the Open Images annotation CSVs, plus decision <code>fir1_buffalo_head_to_head_measured</code> in handoff. <b>"First-party" here means author-run, on the author's machine, from the shipped annotation files — it does not mean independently reproduced.</b> No second party has rerun these counts. The §19b self-correction is what a single-author measurement looks like when it catches its own error; treat it as evidence the pass is auditable, not as evidence it is verified. The published claims are reproducible from the CSVs and the awk passes recorded in <code>PROVENANCE.md</code>, and a reader who disputes any figure should rerun them rather than defer to this document.</p>
-<p class="mut">v1–v8 and the recovered v10 semantic decisions are superseded on changed topics by the dated v11 reconciliation above. Historical retractions remain below. Each version's retractions are kept inline rather than deleted, so a reader can see what was believed and why it stopped being believed.</p>
+<p class="mut">v1–v8 and the recovered v10 semantic decisions are superseded on changed topics by the dated v11 reconciliation; 512D-path claims that implied retraining as the only route are superseded by <a href="#v12">v12</a>. Historical retractions remain below. Each version's retractions are kept inline rather than deleted, so a reader can see what was believed and why it stopped being believed.</p>
 <p class="mut"><b>What v8 changed (2026-07-28):</b> no research. A third adversarial round (1 local claude, 1 local codex, 7 remote grok lenses) attacked v7's new material. Load-bearing: <b>(1)</b> "the embedder leads" is withdrawn — unattributable (detector landmarks feed alignment), rank-only, pre-CVUP-1, and <b>no artifact exists for FIRTRAIN-05 anywhere in the repository</b>; the A10 embedder authorisation is withdrawn with it. <b>(2)</b> T-14 was scheduled before its own dependency T-09, and its bound needed four conditions (true-face denominator, matched FPPI, bootstrap UCL, declared-in-advance thresholds) before a kill is honourable. <b>(3)</b> §0f was <b>computed from a superseded manifest</b> and is fully recomputed from <code>corpus-manifest-v3.json</code> (S 130→137, M̃ 13.09→12.925, zero-identity 116→108, clustered 530→538); its power bullets are replaced by a printed SE expression, stated α/power/p_disc, and required-<i>n</i> figures; the deff was being applied to images in no cluster, and the unit was images where D1 counts faces. <b>(3b)</b> §19b's all-image train area row still held the pre-correction 0.02822/1.03 — the exact <code>IsOccluded=-1</code> denominator error that section announces; re-measured to 0.02798/1.04. <b>(4)</b> D2's suspension had never propagated to D-01, §19e, §0g or the fir-7 row. <b>(5)</b> M-06 was recorded "unmeasured" when <code>face_unknown_rejection()</code> has been running; T-05c's anchor was wrong for the same reason. <b>(6)</b> §13's GTM differentiator quoted excluded, unpaired rows. <b>(7)</b> Embedder <i>training</i> rows (T-16, T-17) did not exist even while v7 was authorising embedder training.</p>
 </main></body>
 </html>

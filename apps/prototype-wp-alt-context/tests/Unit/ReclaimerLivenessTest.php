@@ -105,6 +105,45 @@ class ReclaimerLivenessTest extends TestCase
 		);
 	}
 
+	public function testPurgeAllOptionsRemovesRegisteredTenantStateAndLeavesUnrelatedOptions(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenants = array( 'tenant-z', 'tenant/with spaces', 'tenant-a' );
+
+		foreach ( $tenants as $tenant ) {
+			$liveness->record_success(
+				$tenant,
+				1,
+				0,
+				0,
+				false,
+				ReclaimerLiveness::SCHEDULER_WP_CRON
+			);
+			$this->assertIsString( $liveness->claim( $tenant ) );
+			$this->setOption( 'acx_reclaimer_lease_' . str_replace( array( '/', ' ' ), '_', $tenant ), 'owner|1|1700000300' );
+		}
+		$liveness->record_booked_scheduler_mode( ReclaimerLiveness::SCHEDULER_WP_CRON );
+		$this->setOption( 'acx_persons', 'must-survive' );
+		$this->setOption( 'acx_reclaimer_unrelated_thing', 'must-also-survive' );
+
+		$this->assertSame(
+			array( 'tenant-a', 'tenant-z', 'tenant_with_spaces' ),
+			get_option( 'acx_reclaimer_tenant_index' )
+		);
+
+		$this->assertSame( 2 * count( $tenants ) + 2, $liveness->purge_all_options() );
+		foreach ( $tenants as $tenant ) {
+			$safe_key = str_replace( array( '/', ' ' ), '_', $tenant );
+			$this->assertFalse( get_option( 'acx_reclaimer_liveness_' . $safe_key ) );
+			$this->assertFalse( get_option( 'acx_reclaimer_lease_' . $safe_key ) );
+		}
+		$this->assertFalse( get_option( 'acx_reclaimer_purge_scheduler' ) );
+		$this->assertFalse( get_option( 'acx_reclaimer_tenant_index' ) );
+		$this->assertSame( 'must-survive', get_option( 'acx_persons' ) );
+		$this->assertSame( 'must-also-survive', get_option( 'acx_reclaimer_unrelated_thing' ) );
+		$this->assertSame( 0, $liveness->purge_all_options() );
+	}
+
 	public function testClaimUsesOneConditionalOptionsSqlAndReleaseIsOwnerChecked(): void
 	{
 		global $wpdb;

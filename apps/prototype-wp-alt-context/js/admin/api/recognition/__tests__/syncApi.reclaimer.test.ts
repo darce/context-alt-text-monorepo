@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchSyncStatus } from '../syncApi';
-import type { HTTPOptions } from '../../../utils/http';
+import { UnknownBoundaryError, type HTTPOptions } from '../../../utils/http';
 
 const fetchRequiredApiMock = vi.fn();
 
-vi.mock('../../../utils/http', () => ({
+vi.mock('../../../utils/http', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../utils/http')>(),
   fetchRequiredApi: (endpoint: string, options?: HTTPOptions) => fetchRequiredApiMock(endpoint, options),
 }));
 
@@ -46,6 +47,12 @@ describe('fetchSyncStatus reclaimer boundary normalization', () => {
     const result = await fetchSyncStatus();
 
     expect(result.reclaimer).toEqual(validReclaimer);
+  });
+
+  it('rejects a literal null envelope with UnknownBoundaryError', async () => {
+    fetchRequiredApiMock.mockResolvedValue(null);
+
+    await expect(fetchSyncStatus()).rejects.toBeInstanceOf(UnknownBoundaryError);
   });
 
   it.each([

@@ -281,6 +281,33 @@ def _resolve_face_joint_assignment_enabled() -> bool:
     return _env_or_default_bool("RECOGNITION_FACE_JOINT_ASSIGNMENT_ENABLED", True)
 
 
+def _resolve_face_score_threshold() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_SCORE_THRESHOLD", DEFAULT_SCORE_THRESHOLD)
+
+
+def _resolve_face_nms_threshold() -> float:
+    return _env_or_default_unit("RECOGNITION_FACE_NMS_THRESHOLD", DEFAULT_NMS_THRESHOLD)
+
+
+def _resolve_face_top_k() -> int:
+    """Read RECOGNITION_FACE_TOP_K; fail closed on empty/malformed/<=0."""
+    raw = os.environ.get("RECOGNITION_FACE_TOP_K")
+    if raw is None:
+        return DEFAULT_TOP_K
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError("Invalid RECOGNITION_FACE_TOP_K: empty value; must be a positive integer")
+    # Reject floats ("1.5") and non-numeric tokens; only optional sign + digits.
+    if stripped[0] in "+-" and not stripped[1:].isdigit():
+        raise ValueError(f"Invalid RECOGNITION_FACE_TOP_K={raw!r}; must be a positive integer")
+    if stripped[0] not in "+-" and not stripped.isdigit():
+        raise ValueError(f"Invalid RECOGNITION_FACE_TOP_K={raw!r}; must be a positive integer")
+    value = int(stripped)
+    if value <= 0:
+        raise ValueError(f"Invalid RECOGNITION_FACE_TOP_K={value}; must be a positive integer")
+    return value
+
+
 class FacePipelineSettings(BaseModel):
     """Dark-launch settings for the FIR-3 YuNet+SFace runtime (FIR-4 S2 / FIR-6 knobs).
 
@@ -305,16 +332,19 @@ class FacePipelineSettings(BaseModel):
         description="Override for face_pipeline ONNX models dir (None → DEFAULT_MODELS_DIR).",
     )
     score_threshold: float = Field(
-        default=DEFAULT_SCORE_THRESHOLD,
-        description="YuNet score threshold pass-through (FIR-3 default).",
+        default_factory=_resolve_face_score_threshold,
+        validate_default=True,
+        description=("YuNet score threshold pass-through (FIR-3 default). Env: RECOGNITION_FACE_SCORE_THRESHOLD."),
     )
     nms_threshold: float = Field(
-        default=DEFAULT_NMS_THRESHOLD,
-        description="YuNet NMS threshold pass-through (FIR-3 default).",
+        default_factory=_resolve_face_nms_threshold,
+        validate_default=True,
+        description=("YuNet NMS threshold pass-through (FIR-3 default). Env: RECOGNITION_FACE_NMS_THRESHOLD."),
     )
     top_k: int = Field(
-        default=DEFAULT_TOP_K,
-        description="YuNet top-k pass-through (FIR-3 default).",
+        default_factory=_resolve_face_top_k,
+        validate_default=True,
+        description="YuNet top-k pass-through (FIR-3 default). Env: RECOGNITION_FACE_TOP_K.",
     )
     timeout_s: float = Field(
         default_factory=_resolve_face_pipeline_timeout_s,

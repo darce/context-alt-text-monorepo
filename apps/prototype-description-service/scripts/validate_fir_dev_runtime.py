@@ -61,19 +61,46 @@ EXPECTED_VECTOR_COLUMNS = frozenset(
 )
 _VECTOR_SAMPLE_NAMES = ("representative_vector", "centroid")
 
-EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
-    "effective_profile": "face_pipeline",
-    "embedding_dimension": 128,
-    "model_name_prefix": "opencv-sface+",
-    "model_suffix": ("128d", "l2", "cosine"),
-    "preprocessing_id": "sface-5pt-112",
+# preprocessing_id is FivePointAligner().template_id (aligner.py:_SFACE_TEMPLATE_ID).
+# AuraFace shares that SFace warp; do not substitute provenance's alignment_template_id.
+EXPECTED_CONTRACTS: dict[str, dict[str, Any]] = {
+    "baseline128": {
+        "effective_profile": "face_pipeline",
+        "embedding_dimension": 128,
+        "model_name_prefix": "opencv-sface+",
+        "model_suffix": ("128d", "l2", "cosine"),
+        "preprocessing_id": "sface-5pt-112",
+        # Source of truth: provenance.py MODEL_MANIFEST yunet / sface sha256.
+        "asset_hashes": {
+            "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+            "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+        },
+    },
+    "candidate512": {
+        "effective_profile": "auraface",
+        "embedding_dimension": 512,
+        "model_name_prefix": "auraface+",
+        "model_suffix": ("512d", "l2", "cosine"),
+        "preprocessing_id": "sface-5pt-112",
+        # Source of truth: provenance.py MODEL_MANIFEST yunet / auraface sha256.
+        "asset_hashes": {
+            "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
+            "auraface": "sha256:a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60",
+        },
+    },
 }
 
-# Source of truth: recognition/infrastructure/face_pipeline/provenance.py:93 (yunet), :107 (sface).
-EXPECTED_MODEL_ASSET_HASHES = {
-    "yunet": "sha256:ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0",
-    "sface": "sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+EXPECTED_MODEL_CONTRACT: dict[str, Any] = {
+    key: EXPECTED_CONTRACTS["baseline128"][key]
+    for key in (
+        "effective_profile",
+        "embedding_dimension",
+        "model_name_prefix",
+        "model_suffix",
+        "preprocessing_id",
+    )
 }
+EXPECTED_MODEL_ASSET_HASHES = EXPECTED_CONTRACTS["baseline128"]["asset_hashes"]
 
 _SNAPSHOT_FIELDS = frozenset(
     {
@@ -128,9 +155,9 @@ _CREDENTIAL_KEY_PATTERN = (
 )
 _CREDENTIAL_KEY = re.compile(r"^" + _CREDENTIAL_KEY_PATTERN + r"$", re.IGNORECASE)
 _CREDENTIAL_KEY_VALUE = re.compile(
-    r'''(?:^|[\s?&;,{"'])['"]?'''
+    r"""(?:^|[\s?&;,{"'])['"]?"""
     + _CREDENTIAL_KEY_PATTERN
-    + r'''['"]?\s*(?:=|:)\s*(?P<value>"[^"]*"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*(?:=|:))[^\s,;&}]+)''',
+    + r"""['"]?\s*(?:=|:)\s*(?P<value>"[^"]*"|'[^']*'|(?!(?:[A-Za-z_][A-Za-z0-9_-]*)\s*(?:=|:))[^\s,;&}]+)""",
     re.IGNORECASE,
 )
 _BEARER_TOKEN_PREFIX = re.compile(
@@ -333,9 +360,7 @@ def _outcome(
 
 
 def _policy_input_error_detail(freshness_policy: Any, isolation_policy: Any) -> str:
-    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(
-        freshness_policy.get("max_age_seconds")
-    ):
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
         return "freshness_policy.max_age_seconds is invalid"
     if (
         not isinstance(isolation_policy, Mapping)
@@ -437,13 +462,9 @@ def _resource_is_forbidden(
 ) -> bool:
     """Match normalized IDs, including policy-owned Compose prefixes when enabled."""
 
-    normalized_compose_project = (
-        compose_project.strip().casefold() if isinstance(compose_project, str) else None
-    )
+    normalized_compose_project = compose_project.strip().casefold() if isinstance(compose_project, str) else None
     normalized_forbidden_projects = tuple(
-        project.strip().casefold()
-        for project in forbidden_projects
-        if isinstance(project, str) and project.strip()
+        project.strip().casefold() for project in forbidden_projects if isinstance(project, str) and project.strip()
     )
 
     for forbidden in forbidden_values:
@@ -636,10 +657,7 @@ def _validate_schema(
     if any(not _is_wrapper(description_adapter[field_name]) for field_name in description_fields):
         return "malformed_observation_wrapper"
 
-    if (
-        not isinstance(freshness_policy, Mapping)
-        or not _is_positive_number(freshness_policy.get("max_age_seconds"))
-    ):
+    if not isinstance(freshness_policy, Mapping) or not _is_positive_number(freshness_policy.get("max_age_seconds")):
         return "malformed_policy_input"
     if (
         not isinstance(isolation_policy, Mapping)
@@ -711,14 +729,22 @@ def _validate_freshness_and_isolation(
     return None
 
 
-def _model_id_has_unresolved_space_marker(value: str) -> bool:
+def _selected_contract(contract: str) -> Mapping[str, Any]:
+    try:
+        return EXPECTED_CONTRACTS[contract]
+    except KeyError as exc:
+        raise ValueError(f"unknown expected contract: {contract}") from exc
+
+
+def _model_id_has_unresolved_space_marker(value: str, *, expected_prefix: str) -> bool:
     if any(marker in value for marker in _UNRESOLVED_MODEL_MARKERS):
         return True
     parsed = _parse_model_id(value)
-    return parsed is not None and parsed[0] == EXPECTED_MODEL_CONTRACT["model_name_prefix"]
+    return parsed is not None and parsed[0] == expected_prefix
 
 
-def _validate_runtime_contract(snapshot: Mapping[str, Any]) -> str | None:
+def _validate_runtime_contract(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
+    expected = _selected_contract(contract)
     roles = _roles(snapshot)
 
     if any(_field(record, "auth_enabled")["value"] is not True for record in roles):
@@ -745,24 +771,24 @@ def _validate_runtime_contract(snapshot: Mapping[str, Any]) -> str | None:
         return "role_embedding_dimension_mismatch"
     agreed_dimension = dimensions[0]
 
-    expected_profile = EXPECTED_MODEL_CONTRACT["effective_profile"]
+    expected_profile = expected["effective_profile"]
     if any(_field(record, "effective_profile")["value"] != expected_profile for record in roles):
         return "unexpected_face_pipeline_profile"
 
     model_ids = [_field(record, "model_id")["value"] for record in roles]
     preprocessing_ids = [_field(record, "preprocessing_id")["value"] for record in roles]
-    if any(_model_id_has_unresolved_space_marker(value) for value in model_ids):
+    expected_prefix = expected["model_name_prefix"]
+    if any(_model_id_has_unresolved_space_marker(value, expected_prefix=expected_prefix) for value in model_ids):
         return "unresolved_model_space_marker"
     if any(value != model_ids[0] for value in model_ids[1:]) or any(
         value != preprocessing_ids[0] for value in preprocessing_ids[1:]
     ):
         return "model_contract_mismatch"
 
-    if agreed_dimension != EXPECTED_MODEL_CONTRACT["embedding_dimension"]:
+    if agreed_dimension != expected["embedding_dimension"]:
         return "model_space_contract_mismatch"
 
-    expected_suffix = EXPECTED_MODEL_CONTRACT["model_suffix"]
-    expected_prefix = EXPECTED_MODEL_CONTRACT["model_name_prefix"]
+    expected_suffix = expected["model_suffix"]
     for model_id in model_ids:
         parsed = _parse_model_id(model_id)
         if parsed is None:
@@ -770,7 +796,7 @@ def _validate_runtime_contract(snapshot: Mapping[str, Any]) -> str | None:
         name, suffix = parsed
         if not name.startswith(expected_prefix) or suffix != expected_suffix:
             return "model_space_contract_mismatch"
-    if preprocessing_ids[0] != EXPECTED_MODEL_CONTRACT["preprocessing_id"]:
+    if preprocessing_ids[0] != expected["preprocessing_id"]:
         return "model_space_contract_mismatch"
     return None
 
@@ -790,20 +816,21 @@ def _validate_database_inventory(snapshot: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _validate_model_assets(snapshot: Mapping[str, Any]) -> str | None:
+def _validate_model_assets(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
+    expected_hashes = _selected_contract(contract)["asset_hashes"]
     roles = _roles(snapshot)
     hash_values = [_field(record, "loaded_weight_hashes")["value"] for record in roles]
     if any(isinstance(value, Mapping) and not value for value in hash_values):
         return "missing_loaded_weight_hashes"
     for value in hash_values:
-        if not isinstance(value, Mapping) or set(value) != set(EXPECTED_MODEL_ASSET_HASHES):
+        if not isinstance(value, Mapping) or set(value) != set(expected_hashes):
             return "incomplete_loaded_weight_hashes"
         if any(not isinstance(digest, str) or _SHA256_DIGEST.fullmatch(digest) is None for digest in value.values()):
             return "malformed_loaded_weight_hash"
     first_mapping = hash_values[0]
     if any(value != first_mapping for value in hash_values[1:]):
         return "role_loaded_weight_hash_mismatch"
-    if first_mapping != EXPECTED_MODEL_ASSET_HASHES:
+    if first_mapping != expected_hashes:
         return "model_asset_hash_unexpected"
     return None
 
@@ -879,7 +906,7 @@ def _vector_payload_is_populated(value: Any) -> bool:
     return value is not None and (not isinstance(value, (list, tuple)) or bool(value))
 
 
-def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
+def _validate_store_state(snapshot: Mapping[str, Any], contract: str = "baseline128") -> str | None:
     database = snapshot["database"]
     store_state = database.get("store_state")
     if not isinstance(store_state, Mapping) or store_state.get("provenance") != "database_catalog":
@@ -936,7 +963,7 @@ def _validate_store_state(snapshot: Mapping[str, Any]) -> str | None:
     if summary["model_id"] != runtime_model_id or summary["preprocessing_id"] != runtime_preprocessing_id:
         return "persisted_model_stamp_mismatch"
 
-    expected_dimension = EXPECTED_MODEL_CONTRACT["embedding_dimension"]
+    expected_dimension = _selected_contract(contract)["embedding_dimension"]
     for sample_name in _VECTOR_SAMPLE_NAMES:
         if sample_name not in summary:
             return "embedding_provenance_unobserved"
@@ -963,6 +990,7 @@ def validate_snapshot(
     freshness_policy: Mapping[str, Any],
     isolation_policy: Mapping[str, Any],
     now: Any,
+    contract: str = "baseline128",
 ) -> Mapping[str, Any]:
     """Validate a snapshot and return status, reason, and a redacted report."""
 
@@ -990,11 +1018,11 @@ def validate_snapshot(
             isolation_policy=isolation_policy,
             now=now,
         ),
-        lambda: _validate_runtime_contract(snapshot),
+        lambda: _validate_runtime_contract(snapshot, contract),
         lambda: _validate_database_inventory(snapshot),
-        lambda: _validate_model_assets(snapshot),
+        lambda: _validate_model_assets(snapshot, contract),
         lambda: _validate_provenance(snapshot),
-        lambda: _validate_store_state(snapshot),
+        lambda: _validate_store_state(snapshot, contract),
     )
     for check in ordered_checks:
         reason = check()
@@ -1023,6 +1051,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--freshness-policy", type=Path, required=True)
     parser.add_argument("--isolation-policy", type=Path, required=True)
     parser.add_argument("--now", required=True)
+    parser.add_argument(
+        "--expected-contract",
+        choices=tuple(EXPECTED_CONTRACTS),
+        default="baseline128",
+        help="Operator-selected model contract. Never inferred from the snapshot profile.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -1034,6 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
             freshness_policy=freshness_policy,
             isolation_policy=isolation_policy,
             now=args.now,
+            contract=args.expected_contract,
         )
     except (json.JSONDecodeError, OSError):
         result = _error_outcome("snapshot_unreadable", "unable to read or parse JSON input")

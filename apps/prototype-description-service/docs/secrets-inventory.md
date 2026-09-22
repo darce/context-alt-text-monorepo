@@ -104,9 +104,63 @@ verification only — they are not merged into the tenant API-key system.
 | Deployable | Template path | Runtime file (gitignored) |
 |---|---|---|
 | description-service (local) | `apps/prototype-description-service/.env.example` | `apps/prototype-description-service/.env` |
-| description-service (OCI multi-env) | `apps/prototype-description-service/.env.prod.example` | `/opt/acx-backend/<env>/secrets/.env` |
-| OCI demo stack | `infra/oci/demo/.env.example` | `/opt/acx-backend/demo/secrets/.env` |
+| description-service (OCI prod/staging/dev) | `apps/prototype-description-service/.env.prod.example` | `/opt/acx-backend/<env>/.env` |
+| description-service (OCI dev-fir benchmark stack) | `apps/prototype-description-service/.env.fir.example` | `/opt/acx-backend/dev-fir/.env` |
+| OCI demo stack | `infra/oci/demo/.env.example` | `/opt/acx-backend/demo/secrets/.env` (scripts re-link `.env` to it) |
 | WP plugin Playwright | `apps/prototype-wp-alt-context/.env.local.example` | `apps/prototype-wp-alt-context/.env.local` |
+
+## Per-environment runtime files
+
+One file per backend env, edited in place on the VM:
+`/opt/acx-backend/<env>/.env`, owner `ubuntu:ubuntu`, mode `0600`. Compose reads
+it (`env_file: .env`) and `recognition-service.sh` checks and rewrites it
+(`ACX_IMAGE_TAG` guard; atomic `ACX_IMAGE_REPO` upsert). Because that rewrite is
+an `os.replace`, a `.env -> secrets/.env` symlink does not survive it. The
+legacy `<env>/secrets/.env` files still on the VM are stale copies that nothing
+reads, so do not edit them ([REF-09] mirrored state drifts).
+
+| Env | Template | Secret backend | Secrets held in the file |
+|---|---|---|---|
+| `prod` | `.env.prod.example` | `oci_vault` (live) | OCID map only; `POSTGRES_PASSWORD` filled by the `ExecStartPre` fetch |
+| `staging`, `dev` | `.env.prod.example` (change identity block, `RECOGNITION_SECRET_BACKEND=env`) | `env` | `POSTGRES_PASSWORD`, DSNs, `RECOGNITION_ADMIN_TOKEN` if `/admin` is on |
+| `dev-fir` | `.env.fir.example` | `env` (Vault opt-in block in the template) | `POSTGRES_PASSWORD` and the two DSNs (one value, three places) |
+
+Create a new env file from its template:
+
+```bash
+scp apps/prototype-description-service/.env.fir.example ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/env.fir
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'install -d -m 0755 /opt/acx-backend/dev-fir &&
+  install -m 0600 /tmp/env.fir /opt/acx-backend/dev-fir/.env && rm /tmp/env.fir'
+```
+
+Replace every placeholder before the first `deploy dev-fir`. Every env gets its
+own DB password: never copy one between envs ([PG-09] a shared password
+widens the blast radius of one leak to every env; CARD-10).
+
+### Rotation
+
+| What | `env` backend (staging, dev, dev-fir) | `oci_vault` backend (prod) |
+|---|---|---|
+| DB password | `ALTER ROLE <POSTGRES_USER> PASSWORD '<new>'` in the env's postgres container, then set the same value in `POSTGRES_PASSWORD`, `POSTGRES_DSN` and `POSTGRES_SYNC_DSN`, then `systemctl restart acx-<env>` | New Vault secret version, then `ALTER ROLE`, then restart; see `infra/oci/vault-instance-principal-runbook.md` § 5 |
+| `RECOGNITION_ADMIN_TOKEN` | Edit the value (≥32 chars), restart | New Vault secret version, restart |
+| Tenant API keys | Not in any env file: revoke and re-mint through the env's `/admin` console (`docs/runbooks/key-management.md`) | same |
+| `OCIR_AUTH_TOKEN` | — | `make ocir-token-rotate` |
+
+`POSTGRES_PASSWORD` only initializes a **fresh** pgdata directory. Changing it
+in `.env` without `ALTER ROLE` leaves the existing role on the old password and
+the api fails its DB login on restart.
+
+### Moving an env onto OCI Vault
+
+No IAM change is needed. The live `acx-backend-secret-read` policy reads
+secret-family **in tenancy**; see the drift note in the runbook § 2. Create env-specific secrets. Names
+must be unique within the vault, e.g. `dev-fir-pg-password` and
+`dev-fir-admin-token`. Put their OCIDs in that env's
+`RECOGNITION_VAULT_SECRET_MAP` and set `RECOGNITION_SECRET_BACKEND=oci_vault`.
+Boot requires **both** `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` even when
+`/admin` is off (`shared/secrets.py:validate_oci_vault_boot`). Blank the DSNs,
+then enable the `ExecStartPre` fetch with that env's `--secret-name`. Never
+reuse prod's OCIDs.
 
 ## Grep coverage notes (Slice 1 proof)
 

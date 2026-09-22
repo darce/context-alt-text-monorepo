@@ -162,6 +162,16 @@ Boot requires **both** `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` even when
 then enable the `ExecStartPre` fetch with that env's `--secret-name`. Never
 reuse prod's OCIDs.
 
+prod, staging, dev and dev-fir all run on the one acx-backend VM and share
+its instance principal (dynamic group `acx-backend-dg`); the live
+`acx-backend-secret-read` policy reads secret-family in tenancy, so that
+identity can read every env's secrets, prod's included. Env-specific secret
+names therefore give naming separation, not access isolation; Vault on the
+shared VM does not isolate dev-fir from prod. Narrowing the policy is the
+operator-gated follow-up in
+[infra/oci/vault-instance-principal-runbook.md](../../../infra/oci/vault-instance-principal-runbook.md)
+section 2; real per-env isolation needs a separate instance/dynamic group.
+
 ## Grep coverage notes (Slice 1 proof)
 
 Proof command:

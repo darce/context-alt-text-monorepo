@@ -39,6 +39,7 @@ local ``_FROM_RE`` duplicate.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -1062,7 +1063,13 @@ def test_d6_ship_remote_image_repo_env_emits_sudo_upsert(
 def test_d9_clear_remote_image_repo_env_removes_key(
     tmp_path: pathlib.Path,
 ) -> None:
-    """D9 behavioural: clear_remote_image_repo_env runs sed delete over ssh."""
+    """D9 behavioural: captured clear program removes ACX_IMAGE_REPO (TEST-11).
+
+    clear_remote_image_repo_env ships ``sudo python3 -c <program> ... clear``.
+    The ssh stub captures that payload; the test drops the sudo prefix (same
+    technique as D6) and runs the program against a local .env so the
+    resulting file is asserted rather than the payload's spelling.
+    """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
@@ -1073,7 +1080,6 @@ def test_d9_clear_remote_image_repo_env_removes_key(
             #!/bin/sh
             for a in "$@"; do last="$a"; done
             printf '%s\\n' "$last" >> "{ssh_log}"
-            echo 'removed ACX_IMAGE_REPO'
             exit 0
             """
         )
@@ -1098,9 +1104,50 @@ def test_d9_clear_remote_image_repo_env_removes_key(
         timeout=15,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    payload = ssh_log.read_text()
-    assert "ACX_IMAGE_REPO" in payload
-    assert "sed" in payload and ("/^ACX_IMAGE_REPO=/d" in payload or "ACX_IMAGE_REPO=" in payload)
+    payload = ssh_log.read_text().strip()
+    assert payload.startswith("sudo python3 -c "), payload
+    remote_word = "/opt/acx-backend/dev"
+    assert remote_word in payload, payload
+    assert " clear " in f" {payload} ", payload
+
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    env_path = remote_dir / ".env"
+    env_path.write_text(
+        "ACX_IMAGE_REPO=iad.ocir.io/idu2kqqe2jxy/acx-backend\nKEY=1\n",
+        encoding="ascii",
+    )
+    env_path.chmod(0o640)
+    before_mode = env_path.stat().st_mode
+
+    # Drop sudo, then let bash parse the %q / $'...' quoting (D6's exec path).
+    body = payload[len("sudo ") :].replace(
+        remote_word, shlex.quote(str(remote_dir)), 1
+    )
+    exec_env = os.environ.copy()
+    exec_env["PATH"] = f"{pathlib.Path(sys.executable).parent}:{exec_env['PATH']}"
+    ran = subprocess.run(
+        ["bash", "-c", body],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=exec_env,
+        timeout=15,
+    )
+    assert ran.returncode == 0, f"stdout={ran.stdout!r} stderr={ran.stderr!r}"
+    content = env_path.read_text(encoding="ascii")
+    lines = content.splitlines()
+    assert not any(line.startswith("ACX_IMAGE_REPO=") for line in lines), content
+    assert "KEY=1" in lines, content
+    owner_lines = [
+        line for line in lines if line.startswith("# ACX_IMAGE_REPO_OWNER=")
+    ]
+    assert len(owner_lines) == 1, content
+    state = json.loads(owner_lines[0].split("=", 1)[1])
+    assert state["phase"] == "cleared", state
+    assert state["current"] == "", state
+    assert env_path.stat().st_mode == before_mode
+
     # Subcommand dispatch exists (help / case arm).
     help_proc = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT), "help"],

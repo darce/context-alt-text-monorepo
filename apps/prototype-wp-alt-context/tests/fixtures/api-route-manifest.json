@@ -1,0 +1,378 @@
+{
+  "routes": [
+    {
+      "method": "DELETE",
+      "path": "/recognition/clusters/{param_0}/dismiss"
+    },
+    {
+      "method": "DELETE",
+      "path": "/scene/describe/run/{param_0}"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/tenants"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/tenants/{param_0}/keys"
+    },
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "GET",
+      "path": "/health/detailed"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/portal/keys"
+    },
+    {
+      "method": "GET",
+      "path": "/portal/keys/{param_0}"
+    },
+    {
+      "method": "GET",
+      "path": "/portal/me"
+    },
+    {
+      "method": "GET",
+      "path": "/portal/usage"
+    },
+    {
+      "method": "GET",
+      "path": "/ready"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/blobs/{param_0}/{param_1}"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters/centroid-health"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters/events"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters/top-unlabeled"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters/{param_0}/members"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/clusters/{param_0}/roster-candidates"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/diagnostics/decisions"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/face-thumbs/{param_0}/{param_1}"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/identities/suggestions"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/identities/{param_0}/suggestions"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/jobs/{param_0}"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/jobs/{param_0}/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/media/identities"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/retention/audit"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/retention/export/{param_0}/data"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/retention/export/{param_0}/status"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/retention/policy"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/suggestions"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/suggestions/merge"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/suggestions/name"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/tenant/naming-agreement"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/tenant/whoami"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/tenants/{param_0}/clusters/delta"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/tenants/{param_0}/clusters/snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/recognition/tenants/{param_0}/clusters/targeted-snapshot"
+    },
+    {
+      "method": "GET",
+      "path": "/scene/describe/jobs/{param_0}"
+    },
+    {
+      "method": "GET",
+      "path": "/scene/describe/run/{param_0}"
+    },
+    {
+      "method": "GET",
+      "path": "/scene/describe/run/{param_0}/items"
+    },
+    {
+      "method": "GET",
+      "path": "/scene/gpu/status"
+    },
+    {
+      "method": "GET",
+      "path": "/version"
+    },
+    {
+      "method": "GET",
+      "path": "/x/{param_0}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/recognition/clusters/{param_0}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/recognition/clusters/{param_0}/representatives/{param_1}/pin"
+    },
+    {
+      "method": "PATCH",
+      "path": "/recognition/retention/policy"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/keys/{param_0}/revoke"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/tenants"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/tenants/{param_0}/keys"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/ui/keys"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/ui/keys/{param_0}/revoke"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/ui/tenants"
+    },
+    {
+      "method": "POST",
+      "path": "/billing/webhooks/polar"
+    },
+    {
+      "method": "POST",
+      "path": "/portal/keys"
+    },
+    {
+      "method": "POST",
+      "path": "/portal/keys/{param_0}/revoke"
+    },
+    {
+      "method": "POST",
+      "path": "/portal/keys/{param_0}/rotate"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/analyze"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/analyze/multipart"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clustering/jobs"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/create-for-identity"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/maintenance/refresh-centroids"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/reassign"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/recover-orphans"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/revert-merge"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/{param_0}/assign"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/{param_0}/dismiss"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/{param_0}/merge"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/{param_0}/split"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/jobs/{param_0}/acknowledge-projection"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/jobs/{param_0}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/retention/export"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/retention/import"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/retention/policy/preset"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/retention/purge"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/bulk-accept"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/merge/{param_0}/accept"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/merge/{param_0}/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/name/{param_0}/accept"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/name/{param_0}/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/{param_0}/accept"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/suggestions/{param_0}/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/topology-commands/split"
+    },
+    {
+      "method": "POST",
+      "path": "/roster/curation/sync"
+    },
+    {
+      "method": "POST",
+      "path": "/scene/describe/async"
+    },
+    {
+      "method": "POST",
+      "path": "/scene/describe/multipart"
+    },
+    {
+      "method": "POST",
+      "path": "/scene/describe/run"
+    },
+    {
+      "method": "POST",
+      "path": "/scene/gpu/intent"
+    },
+    {
+      "method": "POST",
+      "path": "/x/provision"
+    },
+    {
+      "method": "POST",
+      "path": "/x/{param_0}/session"
+    },
+    {
+      "method": "PUT",
+      "path": "/recognition/tenant/naming-agreement"
+    }
+  ],
+  "settings_posture": {
+    "admin": "enabled",
+    "billing_webhooks": "enabled",
+    "portal": "enabled",
+    "runtime_mode": "test"
+  }
+}

@@ -169,7 +169,7 @@ Bounded wait before this state (`INT-08`). WordPress API-key recognition is a di
 +----------------------------------------------------------------------------+
 ```
 
-`loading`: Signing out… Tenant/account fetch data already cleared. `error`: Sign out failed. Try again. Account data stays cleared; Sign in doors are not restored until sign-out succeeds (`RLSE-04`).
+`loading`: Signing out… Existing API keys are unchanged. Tenant/account fetch data already cleared. `error`: Sign out failed. Your account data on this page is cleared. Try again. Sign in doors are not restored until sign-out succeeds (`RLSE-04`).
 
 Ending the person session does not revoke backend API keys (`CARD-15`); that engineering invariant is not customer-facing copy.
 
@@ -185,7 +185,8 @@ Ending the person session does not revoke backend API keys (`CARD-15`); that eng
 | Sign up success | `portal-account` empty tenant strip | User + Sign out |
 | Backend 403 not admitted | `portal-not-admitted` | User + Sign out |
 | Clerk.js/session fail | `portal-clerk-outage` | Try again |
-| Sign out | `logout-complete` → signed-out | Sign in restored |
+| Sign out | `logout-complete` loading → default → signed-out | Sign in restored only after success |
+| Sign out fails | `logout-complete` error | Try again retries sign-out; data stays cleared; Sign in not restored (`RLSE-04`) |
 | User | account profile surface | account-owned; no tenant editor |
 
 Primary actions stay reachable from zero selection (`rg-003`). Status uses icon plus color (`sr-004` when CSS lands).

@@ -1,9 +1,19 @@
 import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from '@clerk/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { createPortalBillingClient } from './api/portalBilling';
+import { createPortalClaimClient } from './api/portalClaim';
+import { createPortalKeyClient } from './api/portalKeys';
 import { fetchPortalMe, PortalMeOutcome, type PortalMeResult } from './api/portalMe';
+import { createPortalRequest } from './api/portalRequest';
+import { createPortalUsageClient } from './api/portalUsage';
+import { WordPressTestConnectionGuidance } from './components/WordPressTestConnectionGuidance';
 import { readPortalConfig, type PortalRuntimeConfig } from './config';
 import { AccountScreen } from './screens/AccountScreen';
+import { BillingReturnScreen } from './screens/BillingReturnScreen';
+import { BillingScreen } from './screens/BillingScreen';
+import { ClaimScreen } from './screens/ClaimScreen';
+import { KeysScreen } from './screens/KeysScreen';
 import { LogoutScreen } from './screens/LogoutScreen';
 import { NotAdmittedScreen } from './screens/NotAdmittedScreen';
 import { OutageScreen } from './screens/OutageScreen';
@@ -11,6 +21,7 @@ import { SignInScreen } from './screens/SignInScreen';
 import { SignUpScreen } from './screens/SignUpScreen';
 import { SignedOutScreen } from './screens/SignedOutScreen';
 import { UnavailableScreen } from './screens/UnavailableScreen';
+import { UsageScreen } from './screens/UsageScreen';
 
 export type AppProps = {
   config?: PortalRuntimeConfig;
@@ -37,6 +48,7 @@ type AccountView =
 type LogoutView = 'idle' | 'loading' | 'error';
 
 const CLERK_LOAD_TIMEOUT_MS = 8_000;
+const PORTAL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isEmailVerified(user: ReturnType<typeof useUser>['user']): boolean {
   const status = user?.primaryEmailAddress?.verification?.status;
@@ -82,15 +94,45 @@ function ownedAccount(account: AccountView, owner: AccountOwner | null): Account
   return { status: 'loading', owner };
 }
 
+function readAttemptId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string' || !PORTAL_UUID_RE.test(value)) {
+    return null;
+  }
+  return value;
+}
+
+function paymentsFromConfig(config: PortalRuntimeConfig): { paymentsEnabled: boolean; publicPlanCode: string | null } {
+  const plan = typeof config.publicPlanCode === 'string' ? config.publicPlanCode.trim() : '';
+  return {
+    paymentsEnabled: config.paymentsEnabled === true,
+    publicPlanCode: plan.length > 0 ? plan : null,
+  };
+}
+
+function SessionEscape({ userMenu, onSignOut }: { userMenu: ReactNode; onSignOut: () => void }) {
+  return (
+    <div className="acx-session-bar">
+      {userMenu}
+      <button type="button" className="acx-btn" onClick={onSignOut}>
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 function PortalShell({
   fetchImpl,
   clerkLoadTimeoutMs,
   portalMeTimeoutMs,
+  paymentsEnabled,
+  publicPlanCode,
   onRetryClerk,
 }: {
   fetchImpl: typeof fetch;
   clerkLoadTimeoutMs: number;
   portalMeTimeoutMs: number;
+  paymentsEnabled: boolean;
+  publicPlanCode: string | null;
   onRetryClerk: () => void;
 }) {
   const { isLoaded, isSignedIn, userId, sessionId, getToken, signOut } = useAuth();
@@ -101,6 +143,7 @@ function PortalShell({
   const [account, setAccount] = useState<AccountView>({ status: 'idle' });
   const [logout, setLogout] = useState<LogoutView>('idle');
   const [fetchEpoch, setFetchEpoch] = useState(0);
+  const [returnAttemptId, setReturnAttemptId] = useState<string | null>(null);
   const epochRef = useRef(0);
   const ownerRef = useRef<AccountOwner | null>(null);
   const logoutRef = useRef<LogoutView>('idle');
@@ -109,8 +152,10 @@ function PortalShell({
   const activeOwner = isSignedIn ? readOwner(userId, sessionId) : null;
   if (activeOwner && account.status !== 'idle' && !ownersMatch(account.owner, activeOwner)) {
     setAccount({ status: 'loading', owner: activeOwner });
+    setReturnAttemptId(null);
   } else if (!isSignedIn && account.status !== 'idle') {
     setAccount({ status: 'idle' });
+    setReturnAttemptId(null);
   }
   const displayAccount = ownedAccount(account, activeOwner);
 
@@ -118,6 +163,27 @@ function PortalShell({
   ownerRef.current = activeOwner;
   logoutRef.current = logout;
   getTokenRef.current = getToken;
+
+  const ownerUserId = activeOwner?.userId ?? '';
+  const ownerSessionId = activeOwner?.sessionId ?? '';
+  const request = useMemo(() => {
+    if (!ownerUserId) {
+      return null;
+    }
+    const captured = { userId: ownerUserId, sessionId: ownerSessionId };
+    return createPortalRequest({
+      getToken: () => getTokenRef.current(),
+      fetchImpl,
+      timeoutMs: portalMeTimeoutMs,
+      owner: captured,
+      currentOwner: () => ownerRef.current,
+    });
+  }, [fetchImpl, ownerSessionId, ownerUserId, portalMeTimeoutMs]);
+
+  const keyClient = useMemo(() => (request ? createPortalKeyClient(request) : null), [request]);
+  const usageClient = useMemo(() => (request ? createPortalUsageClient(request) : null), [request]);
+  const claimClient = useMemo(() => (request ? createPortalClaimClient(request) : null), [request]);
+  const billingClient = useMemo(() => (request ? createPortalBillingClient(request) : null), [request]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -185,6 +251,7 @@ function PortalShell({
   }, [fetchEpoch, fetchImpl, isLoaded, isSignedIn, logout, portalMeTimeoutMs, sessionId, user, userId]);
 
   const handleSignOut = useCallback(async () => {
+    setReturnAttemptId(null);
     setAccount({ status: 'idle' });
     setLogout('loading');
     setFetchEpoch((value) => value + 1);
@@ -201,8 +268,25 @@ function PortalShell({
     setFetchEpoch((value) => value + 1);
   }, []);
 
+  const handleClaimed = useCallback(() => {
+    if (!ownersMatch(activeOwner, ownerRef.current)) {
+      return;
+    }
+    if (logoutRef.current !== 'idle') {
+      return;
+    }
+    setFetchEpoch((value) => value + 1);
+  }, [activeOwner]);
+
+  const signOutNow = () => void handleSignOut();
   const userMenu = <UserButton />;
   const path = location.pathname;
+  const wrapPrivate = (node: ReactNode) => (
+    <div className="acx-private-shell">
+      <SessionEscape userMenu={userMenu} onSignOut={signOutNow} />
+      {node}
+    </div>
+  );
 
   if (clerkTimedOut && !isLoaded) {
     return <OutageScreen kind="clerk" onRetry={onRetryClerk} />;
@@ -237,20 +321,29 @@ function PortalShell({
     return <Navigate to="/" replace />;
   }
   if (displayAccount.status === 'email_unverified') {
-    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
+    return <NotAdmittedScreen reason="email_unverified" userMenu={userMenu} onSignOut={signOutNow} />;
   }
   if (displayAccount.status === 'not_admitted') {
-    return <NotAdmittedScreen reason="not_admitted" userMenu={userMenu} onSignOut={() => void handleSignOut()} />;
-  }
-  if (displayAccount.status === 'outage') {
+    if (path.startsWith('/claim') && claimClient) {
+      return wrapPrivate(
+        <ClaimScreen
+          key={`${displayAccount.owner.userId}:${displayAccount.owner.sessionId}`}
+          client={claimClient}
+          onClaimed={handleClaimed}
+        />,
+      );
+    }
     return (
-      <OutageScreen
-        kind="backend"
-        onRetry={handleRetryFetch}
+      <NotAdmittedScreen
+        reason="not_admitted"
         userMenu={userMenu}
-        onSignOut={() => void handleSignOut()}
+        onSignOut={signOutNow}
+        onClaimAccess={() => navigate('/claim')}
       />
     );
+  }
+  if (displayAccount.status === 'outage') {
+    return <OutageScreen kind="backend" onRetry={handleRetryFetch} userMenu={userMenu} onSignOut={signOutNow} />;
   }
   if (displayAccount.status === 'unauthorized') {
     return (
@@ -259,18 +352,89 @@ function PortalShell({
         tenantId={null}
         mode="error"
         userMenu={userMenu}
-        onSignOut={() => void handleSignOut()}
+        onSignOut={signOutNow}
         onRetry={handleRetryFetch}
       />
+    );
+  }
+  if (displayAccount.status !== 'ok') {
+    return (
+      <AccountScreen
+        personName={personName(user)}
+        tenantId={null}
+        mode={displayAccount.status === 'empty' ? 'empty' : 'loading'}
+        userMenu={userMenu}
+        onSignOut={signOutNow}
+      />
+    );
+  }
+
+  const featureKey = `${displayAccount.owner.userId}:${displayAccount.owner.sessionId}:${displayAccount.tenantId}`;
+  if (path.startsWith('/claim')) {
+    return <Navigate to="/" replace />;
+  }
+  if (path.startsWith('/keys/wordpress')) {
+    return wrapPrivate(
+      <WordPressTestConnectionGuidance onClose={() => navigate('/keys')} onReturnToKeys={() => navigate('/keys')} />,
+    );
+  }
+  if (path.startsWith('/keys') && keyClient) {
+    return wrapPrivate(
+      <KeysScreen
+        client={keyClient}
+        sessionKey={featureKey}
+        onNavigateToUsage={() => navigate('/usage')}
+        onNavigateToBilling={() => navigate('/billing')}
+        onOpenWordPressGuidance={() => navigate('/keys/wordpress')}
+      />,
+    );
+  }
+  if (path.startsWith('/usage') && usageClient) {
+    return wrapPrivate(
+      <UsageScreen
+        client={usageClient}
+        sessionKey={featureKey}
+        onNavigateToKeys={() => navigate('/keys')}
+        onNavigateToBilling={() => navigate('/billing')}
+      />,
+    );
+  }
+  if (path.startsWith('/billing/return') && billingClient) {
+    return wrapPrivate(
+      <BillingReturnScreen
+        client={billingClient}
+        publicPlanCode={publicPlanCode}
+        paymentsEnabled={paymentsEnabled}
+        attemptId={returnAttemptId}
+        onNavigateToBilling={() => navigate('/billing')}
+        onNavigateToUsage={() => navigate('/usage')}
+      />,
+    );
+  }
+  if (path.startsWith('/billing') && billingClient) {
+    return wrapPrivate(
+      <BillingScreen
+        client={billingClient}
+        publicPlanCode={publicPlanCode}
+        paymentsEnabled={paymentsEnabled}
+        onNavigateToReturn={(attemptId) => {
+          setReturnAttemptId(readAttemptId(attemptId));
+          navigate('/billing/return');
+        }}
+        onNavigateToUsage={() => navigate('/usage')}
+      />,
     );
   }
   return (
     <AccountScreen
       personName={personName(user)}
-      tenantId={displayAccount.status === 'ok' ? displayAccount.tenantId : null}
-      mode={displayAccount.status === 'ok' ? 'default' : displayAccount.status === 'empty' ? 'empty' : 'loading'}
+      tenantId={displayAccount.tenantId}
+      mode="default"
       userMenu={userMenu}
-      onSignOut={() => void handleSignOut()}
+      onSignOut={signOutNow}
+      onNavigateToKeys={() => navigate('/keys')}
+      onNavigateToUsage={() => navigate('/usage')}
+      onNavigateToBilling={() => navigate('/billing')}
     />
   );
 }
@@ -283,6 +447,7 @@ export function App({
 }: AppProps = {}) {
   const navigate = useNavigate();
   const [providerEpoch, setProviderEpoch] = useState(0);
+  const payments = paymentsFromConfig(config);
 
   if (!config.portalEnabled) {
     return <UnavailableScreen mode="degraded" />;
@@ -315,6 +480,8 @@ export function App({
               fetchImpl={fetchImpl}
               clerkLoadTimeoutMs={clerkLoadTimeoutMs}
               portalMeTimeoutMs={portalMeTimeoutMs}
+              paymentsEnabled={payments.paymentsEnabled}
+              publicPlanCode={payments.publicPlanCode}
               onRetryClerk={() => setProviderEpoch((value) => value + 1)}
             />
           }

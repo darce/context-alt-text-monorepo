@@ -5,10 +5,12 @@ export function NotAdmittedScreen({
   reason,
   userMenu,
   onSignOut,
+  onClaimAccess,
 }: {
   reason: 'email_unverified' | 'not_admitted';
   userMenu: ReactNode;
   onSignOut: () => void;
+  onClaimAccess?: () => void;
 }) {
   const copy =
     reason === 'email_unverified'
@@ -29,6 +31,11 @@ export function NotAdmittedScreen({
         </div>
       </header>
       <StatusMessage tone="error">{copy}</StatusMessage>
+      {reason === 'not_admitted' && onClaimAccess ? (
+        <button type="button" className="acx-btn acx-btn-primary" onClick={onClaimAccess}>
+          Claim access
+        </button>
+      ) : null}
     </main>
   );
 }

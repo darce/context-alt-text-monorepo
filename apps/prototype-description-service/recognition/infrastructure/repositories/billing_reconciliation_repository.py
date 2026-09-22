@@ -6,9 +6,11 @@ This repository never holds a row lock across a network call.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, func, or_, select, text, update
+from sqlalchemy import Select, and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -19,7 +21,6 @@ from db.models.portal_billing import (
     BillingReconciliationItemProgress,
     BillingReconciliationQuarantine,
 )
-from db.tenant_context import enable_rls_bypass
 from recognition.domain.portal_contracts import (
     RECONCILIATION_MAX_CURSOR_LENGTH,
     RECONCILIATION_MAX_FAILURE_CLASS_LENGTH,
@@ -59,16 +60,16 @@ class BillingReconciliationRepository:
         lease_ttl: timedelta,
         now: datetime,
     ) -> ReconciliationLease | None:
-        await self._operator_scope()
-        key = _validate_key(key)
-        owner = _bounded_text("owner", owner, RECONCILIATION_MAX_OWNER_LENGTH)
-        now = _require_aware(now)
-        until = now + _require_ttl(lease_ttl)
-        await self._ensure_cursor_row(key, now)
-        row = await self._claim_cursor(key, owner=owner, until=until, now=now)
-        if row is None:
-            return None
-        return _lease_from_cursor(row)
+        async with self._operator_scope():
+            key = _validate_key(key)
+            owner = _bounded_text("owner", owner, RECONCILIATION_MAX_OWNER_LENGTH)
+            now = _require_aware(now)
+            until = now + _require_ttl(lease_ttl)
+            await self._ensure_cursor_row(key, now)
+            row = await self._claim_cursor(key, owner=owner, until=until, now=now)
+            if row is None:
+                return None
+            return _lease_from_cursor(row)
 
     async def heartbeat(
         self,
@@ -77,11 +78,11 @@ class BillingReconciliationRepository:
         now: datetime,
         lease_ttl: timedelta,
     ) -> ReconciliationLease:
-        await self._operator_scope()
-        now = _require_aware(now)
-        until = now + _require_ttl(lease_ttl)
-        row = await self._require_live_cursor(lease, now, lease_until=until)
-        return _lease_from_cursor(row)
+        async with self._operator_scope():
+            now = _require_aware(now)
+            until = now + _require_ttl(lease_ttl)
+            row = await self._require_live_cursor(lease, now, lease_until=until)
+            return _lease_from_cursor(row)
 
     async def complete_item(
         self,
@@ -90,11 +91,12 @@ class BillingReconciliationRepository:
         remote_id: str,
         now: datetime,
     ) -> None:
-        await self._operator_scope()
-        now = _require_aware(now)
-        remote_id = _validate_remote_id(remote_id)
-        await self._require_live_cursor(lease, now, last_progress_at=now)
-        await self._upsert_progress(lease, remote_id=remote_id, status="completed", now=now)
+        async with self._operator_scope():
+            now = _require_aware(now)
+            remote_id = _validate_remote_id(remote_id)
+            await self._require_live_cursor(lease, now, last_progress_at=now)
+            await self._upsert_progress(lease, remote_id=remote_id, status="completed", now=now)
+            await self._resolve_retry_quarantine(lease, remote_id=remote_id, now=now)
 
     async def quarantine_item(
         self,
@@ -103,39 +105,39 @@ class BillingReconciliationRepository:
         observation: EnumerationObservation,
         now: datetime,
     ) -> QuarantineRecord:
-        await self._operator_scope()
-        now = _require_aware(now)
-        if not isinstance(observation, EnumerationObservation):
-            raise ValueError("observation must be EnumerationObservation")
-        remote_id = _validate_remote_id(observation.remote_id)
-        await self._require_live_cursor(lease, now, last_progress_at=now)
-        existing = await self._get_quarantine_row(lease.key, remote_id)
-        if existing is None:
-            row = _QUARANTINE(
-                provider=lease.key.provider,
-                environment=lease.key.environment,
-                seller_account=lease.key.seller_account,
-                kind=lease.key.kind.value,
-                remote_id=remote_id,
-                reason=observation.reason.value,
-                status=QuarantineStatus.OPEN.value,
-                attempt_count=1,
-                fence=lease.fence,
-                details=dict(observation.details),
-                created_at=now,
-                updated_at=now,
-            )
-            try:
-                async with self._session.begin_nested():
-                    self._session.add(row)
-                    await self._session.flush()
-                    existing = row
-            except IntegrityError:
-                existing = await self._get_quarantine_row(lease.key, remote_id)
-                if existing is None:
-                    raise
-        await self._upsert_progress(lease, remote_id=remote_id, status="quarantined", now=now)
-        return _quarantine_from_row(existing)
+        async with self._operator_scope():
+            now = _require_aware(now)
+            if not isinstance(observation, EnumerationObservation):
+                raise ValueError("observation must be EnumerationObservation")
+            remote_id = _validate_remote_id(observation.remote_id)
+            await self._require_live_cursor(lease, now, last_progress_at=now)
+            existing = await self._get_quarantine_row(lease.key, remote_id)
+            if existing is None:
+                row = _QUARANTINE(
+                    provider=lease.key.provider,
+                    environment=lease.key.environment,
+                    seller_account=lease.key.seller_account,
+                    kind=lease.key.kind.value,
+                    remote_id=remote_id,
+                    reason=observation.reason.value,
+                    status=QuarantineStatus.OPEN.value,
+                    attempt_count=1,
+                    fence=lease.fence,
+                    details=dict(observation.details),
+                    created_at=now,
+                    updated_at=now,
+                )
+                try:
+                    async with self._session.begin_nested():
+                        self._session.add(row)
+                        await self._session.flush()
+                        existing = row
+                except IntegrityError:
+                    existing = await self._get_quarantine_row(lease.key, remote_id)
+                    if existing is None:
+                        raise
+            await self._upsert_progress(lease, remote_id=remote_id, status="quarantined", now=now)
+            return _quarantine_from_row(existing)
 
     async def advance_cursor(
         self,
@@ -146,28 +148,30 @@ class BillingReconciliationRepository:
         page_remote_ids: tuple[str, ...],
         now: datetime,
     ) -> ReconciliationLease:
-        await self._operator_scope()
-        now = _require_aware(now)
-        if not isinstance(exhausted, bool):
-            raise ValueError("exhausted must be a boolean")
-        cursor_value = _validate_optional_cursor(next_cursor)
-        unique_ids = tuple(dict.fromkeys(_validate_remote_id(item) for item in page_remote_ids))
-        if unique_ids:
-            progressed = await self._session.execute(
-                select(func.count())
-                .select_from(_PROGRESS)
-                .where(*_progress_namespace(lease.key), _PROGRESS.remote_id.in_(unique_ids))
+        async with self._operator_scope():
+            now = _require_aware(now)
+            if not isinstance(exhausted, bool):
+                raise ValueError("exhausted must be a boolean")
+            cursor_value = _validate_optional_cursor(next_cursor)
+            unique_ids = tuple(dict.fromkeys(_validate_remote_id(item) for item in page_remote_ids))
+            if unique_ids:
+                progressed = await self._session.execute(
+                    select(func.count())
+                    .select_from(_PROGRESS)
+                    .where(*_progress_namespace(lease.key), _PROGRESS.remote_id.in_(unique_ids))
+                )
+                if int(progressed.scalar_one()) != len(unique_ids):
+                    raise ReconciliationCursorAdvanceError(
+                        "cursor advance refused: page contains unprocessed remote ids"
+                    )
+            row = await self._require_live_cursor(
+                lease,
+                now,
+                last_progress_at=now,
+                cursor=cursor_value,
+                exhausted=exhausted,
             )
-            if int(progressed.scalar_one()) != len(unique_ids):
-                raise ReconciliationCursorAdvanceError("cursor advance refused: page contains unprocessed remote ids")
-        row = await self._require_live_cursor(
-            lease,
-            now,
-            last_progress_at=now,
-            cursor=cursor_value,
-            exhausted=exhausted,
-        )
-        return _lease_from_cursor(row)
+            return _lease_from_cursor(row)
 
     async def record_page_failure(
         self,
@@ -176,16 +180,16 @@ class BillingReconciliationRepository:
         failure_class: str,
         now: datetime,
     ) -> ReconciliationLease:
-        await self._operator_scope()
-        now = _require_aware(now)
-        failure_class = _bounded_text("failure_class", failure_class, RECONCILIATION_MAX_FAILURE_CLASS_LENGTH)
-        row = await self._require_live_cursor(
-            lease,
-            now,
-            failure_class=failure_class,
-            failure_at=now,
-        )
-        return _lease_from_cursor(row)
+        async with self._operator_scope():
+            now = _require_aware(now)
+            failure_class = _bounded_text("failure_class", failure_class, RECONCILIATION_MAX_FAILURE_CLASS_LENGTH)
+            row = await self._require_live_cursor(
+                lease,
+                now,
+                failure_class=failure_class,
+                failure_at=now,
+            )
+            return _lease_from_cursor(row)
 
     async def audited_retry(
         self,
@@ -196,43 +200,71 @@ class BillingReconciliationRepository:
         operator_reason: str,
         now: datetime,
     ) -> QuarantineRecord:
-        await self._operator_scope()
-        now = _require_aware(now)
-        remote_id = _validate_remote_id(remote_id)
-        operator_identity = _bounded_text("operator_identity", operator_identity, RECONCILIATION_MAX_OWNER_LENGTH)
-        operator_reason = _bounded_text("operator_reason", operator_reason, RECONCILIATION_MAX_OPERATOR_REASON_LENGTH)
-        await self._require_live_cursor(lease, now)
-        stmt = (
-            update(_QUARANTINE)
-            .where(*_quarantine_namespace(lease.key), _QUARANTINE.remote_id == remote_id)
-            .values(
-                status=QuarantineStatus.RETRY_PENDING.value,
-                attempt_count=_QUARANTINE.attempt_count + 1,
-                operator_identity=operator_identity,
-                operator_reason=operator_reason,
-                next_retry_at=now,
-                fence=lease.fence,
-                updated_at=now,
+        async with self._operator_scope():
+            now = _require_aware(now)
+            remote_id = _validate_remote_id(remote_id)
+            operator_identity = _bounded_text("operator_identity", operator_identity, RECONCILIATION_MAX_OWNER_LENGTH)
+            operator_reason = _bounded_text(
+                "operator_reason", operator_reason, RECONCILIATION_MAX_OPERATOR_REASON_LENGTH
             )
-            .returning(_QUARANTINE)
-        )
-        result = await self._session.execute(stmt)
-        row = result.scalar_one_or_none()
-        if row is None:
-            raise ReconciliationQuarantineConflictError("quarantine item was not found for audited retry")
-        return _quarantine_from_row(row)
+            await self._require_live_cursor(lease, now)
+            stmt = (
+                update(_QUARANTINE)
+                .where(
+                    *_quarantine_namespace(lease.key),
+                    _QUARANTINE.remote_id == remote_id,
+                    _QUARANTINE.status == QuarantineStatus.OPEN.value,
+                )
+                .values(
+                    status=QuarantineStatus.RETRY_PENDING.value,
+                    attempt_count=_QUARANTINE.attempt_count + 1,
+                    operator_identity=operator_identity,
+                    operator_reason=operator_reason,
+                    next_retry_at=now,
+                    fence=lease.fence,
+                    updated_at=now,
+                )
+                .returning(_QUARANTINE)
+            )
+            result = await self._session.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row is None:
+                existing = await self._get_quarantine_row(lease.key, remote_id)
+                if existing is None:
+                    raise ReconciliationQuarantineConflictError("quarantine item was not found for audited retry")
+                raise ReconciliationQuarantineConflictError(
+                    f"quarantine item status {existing.status} does not allow audited retry"
+                )
+            return _quarantine_from_row(row)
 
     async def get_quarantine(
         self,
         key: ReconciliationCursorKey,
         remote_id: str,
     ) -> QuarantineRecord | None:
-        await self._operator_scope()
-        row = await self._get_quarantine_row(_validate_key(key), _validate_remote_id(remote_id))
-        return None if row is None else _quarantine_from_row(row)
+        async with self._operator_scope():
+            row = await self._get_quarantine_row(_validate_key(key), _validate_remote_id(remote_id))
+            return None if row is None else _quarantine_from_row(row)
 
-    async def _operator_scope(self) -> None:
-        await enable_rls_bypass(self._session)
+    @asynccontextmanager
+    async def _operator_scope(self) -> AsyncIterator[None]:
+        # WHY: SET LOCAL bypass must not outlive this method or mix with tenant-bound work.
+        if is_sqlite(self._session):
+            yield
+            return
+        tenant = await _session_setting(self._session, "app.current_tenant")
+        if tenant.strip():
+            raise ValueError("billing reconciliation cannot run on a tenant-bound session")
+        previous = await _session_setting(self._session, "app.bypass_rls")
+        await self._session.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        try:
+            async with self._session.begin_nested():
+                yield
+        finally:
+            await self._session.execute(
+                text("SELECT set_config('app.bypass_rls', :value, true)"),
+                {"value": previous},
+            )
 
     async def _ensure_cursor_row(self, key: ReconciliationCursorKey, now: datetime) -> None:
         inserter = pg_insert if is_postgres(self._session) else sqlite_insert
@@ -298,8 +330,11 @@ class BillingReconciliationRepository:
             mapping = result.mappings().first()
             if mapping is None:
                 return None
-            loaded = await self._session.execute(_cursor_select(key))
-            return loaded.scalar_one_or_none()
+            loaded = await self._session.execute(_cursor_select(key).execution_options(populate_existing=True))
+            row = loaded.scalar_one_or_none()
+            if row is None:
+                return None
+            return _apply_cursor_returning(row, mapping)
         stmt = (
             update(_CURSOR)
             .where(
@@ -386,8 +421,42 @@ class BillingReconciliationRepository:
             status=status,
             processed_at=now,
         )
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["provider", "environment", "seller_account", "kind", "remote_id"]
+        # WHY: current fence may complete a quarantined item after audited retry; other conflicts stay no-op.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["provider", "environment", "seller_account", "kind", "remote_id"],
+            set_={
+                "status": stmt.excluded.status,
+                "fence": stmt.excluded.fence,
+                "processed_at": stmt.excluded.processed_at,
+            },
+            where=and_(
+                _PROGRESS.status == "quarantined",
+                stmt.excluded.status == "completed",
+            ),
+        )
+        await self._session.execute(stmt)
+
+    async def _resolve_retry_quarantine(
+        self,
+        lease: ReconciliationLease,
+        *,
+        remote_id: str,
+        now: datetime,
+    ) -> None:
+        stmt = (
+            update(_QUARANTINE)
+            .where(
+                *_quarantine_namespace(lease.key),
+                _QUARANTINE.remote_id == remote_id,
+                _QUARANTINE.status == QuarantineStatus.RETRY_PENDING.value,
+            )
+            .values(
+                status=QuarantineStatus.RESOLVED.value,
+                fence=lease.fence,
+                updated_at=now,
+            )
+            .returning(_QUARANTINE)
+            .execution_options(populate_existing=True)
         )
         await self._session.execute(stmt)
 
@@ -397,13 +466,36 @@ class BillingReconciliationRepository:
         remote_id: str,
     ) -> BillingReconciliationQuarantine | None:
         result = await self._session.execute(
-            select(_QUARANTINE).where(*_quarantine_namespace(key), _QUARANTINE.remote_id == remote_id).limit(1)
+            select(_QUARANTINE)
+            .where(*_quarantine_namespace(key), _QUARANTINE.remote_id == remote_id)
+            .limit(1)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
 
 def _cursor_select(key: ReconciliationCursorKey) -> Select[tuple[BillingReconciliationCursor]]:
     return select(_CURSOR).where(*_cursor_namespace(key)).limit(1)
+
+
+def _apply_cursor_returning(
+    row: BillingReconciliationCursor,
+    mapping: Mapping[str, object],
+) -> BillingReconciliationCursor:
+    # WHY: raw UPDATE RETURNING is the fresh owner/fence; identity-map rows can lag.
+    row.cursor = mapping["cursor"]  # type: ignore[assignment]
+    row.lease_owner = mapping["lease_owner"]  # type: ignore[assignment]
+    row.lease_until = mapping["lease_until"]  # type: ignore[assignment]
+    row.fence = int(mapping["fence"])  # type: ignore[arg-type]
+    row.last_progress_at = mapping["last_progress_at"]  # type: ignore[assignment]
+    row.exhausted = bool(mapping["exhausted"])
+    return row
+
+
+async def _session_setting(session: AsyncSession, name: str) -> str:
+    result = await session.execute(text("SELECT current_setting(:name, true)"), {"name": name})
+    value = result.scalar()
+    return "" if value is None else str(value)
 
 
 def _cursor_namespace(key: ReconciliationCursorKey) -> tuple[object, object, object, object]:

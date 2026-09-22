@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Table, text
+from sqlalchemy import Table, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import scene.interface_adapters.http.routers.describe as describe_mod
@@ -50,8 +50,10 @@ from scene.interface_adapters.http.routers.describe import AsyncAdmissionGate
 TENANT_ID = UUID("00000000-0000-0000-0000-0000000000cc")
 OP_A = "scene-usage-op-aaaaaaaa"
 OP_B = "scene-usage-op-bbbbbbbb"
+IDEMP_K = "scene-idem-key-aaaaaa"
 PNG = b"\x89PNG\r\n\x1a\nFIRST"
 PNG_B = b"\x89PNG\r\n\x1a\nSECOND"
+_UNSET = object()
 
 COMPUTE_POSTS = (
     "/scene/describe/multipart",
@@ -139,7 +141,7 @@ class _FakeAdmission:
 
 
 @contextmanager
-def _census_client(admission: _FakeAdmission, monkeypatch):
+def _census_client(admission: _FakeAdmission | None, monkeypatch, *, install_admission: bool = True, adapter=None):
     path = os.path.join(tempfile.gettempdir(), f"app1_usage_scene_{uuid.uuid4().hex}.db")
     url = f"sqlite+aiosqlite:///{path}"
 
@@ -198,12 +200,17 @@ def _census_client(admission: _FakeAdmission, monkeypatch):
 
     app = FastAPI()
     app.state.session_factory = sf
-    app.state.usage_admission_service = admission
     app.include_router(scene_router, prefix="/scene")
     app.dependency_overrides[require_write_access] = lambda: _Auth()
     app.dependency_overrides[enforce_demo_quota] = lambda: None
     app.dependency_overrides[get_optional_session] = _session
-    app.dependency_overrides[get_usage_admission_service] = lambda: admission
+    if install_admission and admission is not None:
+        app.state.usage_admission_service = admission
+        app.dependency_overrides[get_usage_admission_service] = lambda: admission
+    if adapter is not None:
+        from scene.interface_adapters.http.deps import get_description_adapter
+
+        app.dependency_overrides[get_description_adapter] = lambda: adapter
     try:
         with TestClient(app) as client:
             yield client, sf
@@ -234,7 +241,14 @@ def _post_async(client, *, operation_id: str | None = OP_A, body: bytes = PNG, m
     return client.post("/scene/describe/async", data=data, files=files)
 
 
-def _post_run(client, *, operation_id: str | None = OP_A, body: bytes = PNG, media_ids: list[int] | None = None):
+def _post_run(
+    client,
+    *,
+    operation_id: str | None = OP_A,
+    idempotency_key=_UNSET,
+    body: bytes = PNG,
+    media_ids: list[int] | None = None,
+):
     media_ids = media_ids or [70]
     data = {
         "tenant_id": str(TENANT_ID),
@@ -243,7 +257,9 @@ def _post_run(client, *, operation_id: str | None = OP_A, body: bytes = PNG, med
     }
     if operation_id is not None:
         data["operation_id"] = operation_id
-        data["idempotency_key"] = operation_id
+    key = operation_id if idempotency_key is _UNSET else idempotency_key
+    if key is not None:
+        data["idempotency_key"] = key
     files = [(f"image_{media_id}", (f"{media_id}.png", body, "image/png")) for media_id in media_ids]
     return client.post("/scene/describe/run", data=data, files=files)
 
@@ -335,6 +351,7 @@ def test_three_compute_posts_reserve_before_dispatch(monkeypatch):
         assert ticket_fields.fence_token == "fence-scene-g2"
     assert len(admission.commits) == 1
     assert admission.commits[0].job_id == admission.reserves[0]["job_id"]
+    assert admission.releases == []
 
 
 def test_get_polling_status_and_results_stay_free(monkeypatch):
@@ -458,3 +475,286 @@ def test_decorative_and_cache_paths_stay_free(monkeypatch):
     assert cached.json()["cached"] is True
     assert len(admission.reserves) == 1
     assert len(admission.commits) == 1
+    assert admission.releases == []
+
+
+def test_multipart_precompute_failure_releases_without_commit(monkeypatch):
+    from fastapi import HTTPException
+
+    async def _boom(*_args, **_kwargs):
+        raise HTTPException(status_code=429, detail={"code": "demo_quota_exceeded"})
+
+    monkeypatch.setattr(describe_mod, "maybe_consume_demo_quota", _boom)
+    admission = _FakeAdmission()
+    with _census_client(admission, monkeypatch) as (client, _sf):
+        response = _post_multipart(client)
+
+    assert response.status_code == 429, response.text
+    assert len(admission.reserves) == 1
+    assert len(admission.releases) == 1
+    assert admission.commits == []
+
+
+class _BoomAdapter:
+    kind = describe_mod.DescriptionAdapterKind.SEEDED
+    model_id = "boom-seeded"
+    model_version = "1"
+    prompt_or_task_version = "1"
+    calls = 0
+
+    def describe(self, *, image_bytes, context):
+        del image_bytes, context
+        type(self).calls += 1
+        raise RuntimeError("adapter exploded after dispatch")
+
+
+def test_multipart_postcompute_failure_commits_without_release(monkeypatch):
+    _BoomAdapter.calls = 0
+    admission = _FakeAdmission()
+    with _census_client(admission, monkeypatch, adapter=_BoomAdapter()) as (client, _sf):
+        response = _post_multipart(client)
+
+    assert response.status_code == 502, response.text
+    assert _BoomAdapter.calls == 1
+    assert len(admission.reserves) == 1
+    assert len(admission.commits) == 1
+    assert admission.releases == []
+
+
+def test_idempotency_key_without_caller_operation_replays_one_reservation(monkeypatch):
+    admission = _FakeAdmission()
+    with _census_client(admission, monkeypatch) as (client, _sf):
+        first = _post_run(client, operation_id=OP_A, idempotency_key=IDEMP_K, media_ids=[70])
+        replay = _post_run(client, operation_id=None, idempotency_key=IDEMP_K, media_ids=[70])
+        changed = _post_run(client, operation_id=None, idempotency_key=IDEMP_K, body=PNG_B, media_ids=[70])
+        independent = _post_run(client, operation_id=OP_B, idempotency_key=OP_B, media_ids=[70])
+
+    assert first.status_code == 202, first.text
+    assert replay.status_code == 202, replay.text
+    assert first.json()["run_id"] == replay.json()["run_id"]
+    assert changed.status_code == 409, changed.text
+    assert independent.status_code == 202, independent.text
+    assert independent.json()["run_id"] != first.json()["run_id"]
+    assert len(admission.reserves) == 2
+    assert {reserve["idempotency_key"] for reserve in admission.reserves} == {IDEMP_K, OP_B}
+    assert all(reserve["idempotency_key"] == reserve["operation_id"] for reserve in admission.reserves)
+
+
+def test_metered_posts_fail_closed_when_admission_service_missing(monkeypatch):
+    _BoomAdapter.calls = 0
+    with _census_client(None, monkeypatch, install_admission=False, adapter=_BoomAdapter()) as (client, _sf):
+        multipart = _post_multipart(client)
+        async_job = _post_async(client, operation_id="missing-async-0000")
+        bulk = _post_run(client, operation_id="missing-bulk-00000")
+
+    assert multipart.status_code == 503, multipart.text
+    assert async_job.status_code == 503, async_job.text
+    assert bulk.status_code == 503, bulk.text
+    assert multipart.json()["detail"] == {"error": "usage_admission_unavailable"}
+    assert _BoomAdapter.calls == 0
+
+
+@contextmanager
+def _ledger_client(monkeypatch, *, adapter=None):
+    from datetime import UTC, datetime, timedelta
+
+    from db.models import UsageReservation
+    from db.models.portal_billing import GlobalUsageAdmissionState, TenantEntitlement
+    from recognition.domain.portal_contracts import (
+        DEFAULT_GLOBAL_CONFIG_VERSION,
+        DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        DEFAULT_GLOBAL_FENCE_EPOCH,
+        DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        DEFAULT_GLOBAL_QUEUE_LIMIT,
+        GLOBAL_USAGE_ADMISSION_STATE_ID,
+        EntitlementStatus,
+    )
+    from recognition.interface_adapters.http.deps.portal_composition import UsageAdmissionServiceFactory
+
+    path = os.path.join(tempfile.gettempdir(), f"app1_usage_ledger_{uuid.uuid4().hex}.db")
+    url = f"sqlite+aiosqlite:///{path}"
+
+    async def _init():
+        engine = create_async_engine(url)
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=cast(
+                    list[Table],
+                    [
+                        Tenant.__table__,
+                        TenantEntitlement.__table__,
+                        UsageReservation.__table__,
+                        GlobalUsageAdmissionState.__table__,
+                        ImageDescription.__table__,
+                        AuditEvent.__table__,
+                        MediaIdentity.__table__,
+                        IdentityCluster.__table__,
+                        IdentityMember.__table__,
+                        IdentityNameSuppression.__table__,
+                        DescribeRun.__table__,
+                        DescribeRunItem.__table__,
+                        DescribeStartup.__table__,
+                        DescribeOperation.__table__,
+                        DescribeDemandLease.__table__,
+                    ],
+                ),
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE describe_load_snapshot_revisions ("
+                    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+                    "revision INTEGER NOT NULL)"
+                )
+            )
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(tz=UTC)
+        async with sf() as session:
+            session.add(Tenant(id=TENANT_ID, site_url="http://ledger.test.local"))
+            session.add(
+                TenantEntitlement(
+                    tenant_id=TENANT_ID,
+                    plan_code="beta",
+                    allowance_version="scene-g2",
+                    allowance_jobs=20,
+                    period_start=now - timedelta(minutes=1),
+                    period_end=now + timedelta(hours=1),
+                    status=EntitlementStatus.BETA_ACTIVE,
+                    source="unit-test",
+                )
+            )
+            session.add(
+                GlobalUsageAdmissionState(
+                    id=GLOBAL_USAGE_ADMISSION_STATE_ID,
+                    period_start=datetime(now.year, now.month, now.day, tzinfo=UTC),
+                    period_end=datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1),
+                    daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+                    daily_cost_units=0,
+                    inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+                    inflight_units=0,
+                    queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+                    queue_depth=0,
+                    queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+                    queue_bytes=0,
+                    stop_requested=False,
+                    fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+                    config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_init())
+    engine = create_async_engine(url)
+    sf = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _session():
+        from fastapi import HTTPException
+
+        async with sf() as session:
+            try:
+                yield session
+                await session.commit()
+            except HTTPException:
+                await session.rollback()
+                raise
+            except Exception:
+                await session.rollback()
+                raise
+
+    async def _noop_async(**_kwargs):
+        return None
+
+    async def _noop_run(**_kwargs):
+        return None
+
+    monkeypatch.setattr(describe_mod, "run_async_describe_job", _noop_async)
+    monkeypatch.setattr(describe_run_mod, "run_describe_job", _noop_run)
+
+    app = FastAPI()
+    app.state.session_factory = sf
+    app.state.usage_admission_service = UsageAdmissionServiceFactory()
+    app.include_router(scene_router, prefix="/scene")
+    app.dependency_overrides[require_write_access] = lambda: _Auth()
+    app.dependency_overrides[enforce_demo_quota] = lambda: None
+    app.dependency_overrides[get_optional_session] = _session
+    if adapter is not None:
+        from scene.interface_adapters.http.deps import get_description_adapter
+
+        app.dependency_overrides[get_description_adapter] = lambda: adapter
+    try:
+        with TestClient(app) as client:
+            yield client, sf
+    finally:
+        asyncio.run(engine.dispose())
+        with suppress(OSError):
+            os.unlink(path)
+
+
+def _ledger_counters(sf) -> tuple[int, int, list[str]]:
+    from db.models import UsageReservation
+    from db.models.portal_billing import GlobalUsageAdmissionState
+    from recognition.domain.portal_contracts import GLOBAL_USAGE_ADMISSION_STATE_ID
+
+    async def _read() -> tuple[int, int, list[str]]:
+        async with sf() as session:
+            state = await session.get(GlobalUsageAdmissionState, GLOBAL_USAGE_ADMISSION_STATE_ID)
+            rows = list((await session.execute(select(UsageReservation))).scalars())
+            assert state is not None
+            return int(state.inflight_units), int(state.daily_cost_units), [str(row.status) for row in rows]
+
+    return asyncio.run(_read())
+
+
+def test_multipart_http_200_commits_usage_db_counters(monkeypatch):
+    with _ledger_client(monkeypatch) as (client, sf):
+        response = _post_multipart(client)
+        inflight, daily, statuses = _ledger_counters(sf)
+
+    assert response.status_code == 200, response.text
+    assert statuses == ["committed"]
+    assert inflight == 0
+    assert daily == 1
+
+
+def test_http_202_keeps_usage_reserved_in_db(monkeypatch):
+    with _ledger_client(monkeypatch) as (client, sf):
+        response = _post_run(client, operation_id=OP_A, media_ids=[70, 71])
+        inflight, daily, statuses = _ledger_counters(sf)
+
+    assert response.status_code == 202, response.text
+    assert statuses == ["reserved"]
+    assert inflight == 2
+    assert daily == 2
+
+
+def test_multipart_precompute_failure_does_not_leave_reserved_db_row(monkeypatch):
+    from fastapi import HTTPException
+
+    async def _boom(*_args, **_kwargs):
+        raise HTTPException(status_code=429, detail={"code": "demo_quota_exceeded"})
+
+    monkeypatch.setattr(describe_mod, "maybe_consume_demo_quota", _boom)
+    with _ledger_client(monkeypatch) as (client, sf):
+        response = _post_multipart(client)
+        inflight, daily, statuses = _ledger_counters(sf)
+
+    assert response.status_code == 429, response.text
+    assert "reserved" not in statuses
+    assert inflight == 0
+    assert daily == 0
+
+
+def test_multipart_postcompute_failure_accounts_usage_in_db(monkeypatch):
+    _BoomAdapter.calls = 0
+    with _ledger_client(monkeypatch, adapter=_BoomAdapter()) as (client, sf):
+        response = _post_multipart(client)
+        inflight, daily, statuses = _ledger_counters(sf)
+
+    assert response.status_code == 502, response.text
+    assert _BoomAdapter.calls == 1
+    assert statuses == ["committed"]
+    assert inflight == 0
+    assert daily == 1

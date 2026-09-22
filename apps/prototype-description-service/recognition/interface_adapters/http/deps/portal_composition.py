@@ -485,6 +485,17 @@ async def _resolve_billing_repository(
     return factory(session)
 
 
+def install_usage_admission_factory(app: FastAPI) -> None:
+    """Install usage admission without portal Clerk/Polar configuration."""
+    usage_timeout_value = _environment_value(("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",))
+    usage_timeout_s = _positive_float(
+        usage_timeout_value,
+        setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
+        default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
+    )
+    app.state.usage_admission_service = UsageAdmissionServiceFactory(timeout_s=usage_timeout_s)
+
+
 def install_portal_composition(
     app: FastAPI,
     *,
@@ -526,13 +537,7 @@ def install_portal_composition(
         )
     else:
         app.state.checkout_service = None
-    usage_timeout_value = _environment_value(("RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",))
-    usage_timeout_s = _positive_float(
-        usage_timeout_value,
-        setting_name="RECOGNITION_USAGE_ADMISSION_TIMEOUT_S",
-        default=_DEFAULT_USAGE_ADMISSION_TIMEOUT_S,
-    )
-    app.state.usage_admission_service = UsageAdmissionServiceFactory(timeout_s=usage_timeout_s)
+    install_usage_admission_factory(app)
     app.dependency_overrides[get_billing_repository] = _resolve_billing_repository
 
 
@@ -542,4 +547,5 @@ __all__ = [
     "PortalCompositionConfig",
     "UsageAdmissionServiceFactory",
     "install_portal_composition",
+    "install_usage_admission_factory",
 ]

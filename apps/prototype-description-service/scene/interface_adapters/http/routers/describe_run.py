@@ -23,10 +23,7 @@ from recognition.interface_adapters.http.deps.demo_quota import (
     hash_api_key_for_quota,
     maybe_consume_demo_quota,
 )
-from recognition.interface_adapters.http.deps.usage_admission import (
-    admit_usage,
-    get_usage_admission_service,
-)
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeItemOutcome,
@@ -60,6 +57,7 @@ from scene.interface_adapters.http.routers.describe import (
     _DescriptionAuditSink,
     _DescriptionMetricsSink,
     _generation_timeout_seconds,
+    _maybe_admit_usage,
     _optional_operation_id,
     _parse_recognition_enabled,
     _run_by_usage_operation,
@@ -558,19 +556,26 @@ async def create_describe_run(
         recognition_enabled=recognition_enabled,
         tier=adapter.kind.value,
     )
-    operation_id = _usage_operation_id(caller_operation_id, idempotency_key)
+    operation_id = _usage_operation_id(idempotency_key, caller_operation_id)
     job_id = uuid.uuid4()
     queue_bytes = sum(len(images[media_id][0]) for media_id in unique_media_ids)
 
     await set_tenant_context(session, tenant_id)
     await require_tenant_record(session, tenant_id)
     repo = DescribeRunRepository(session)
-    # [S07] Reject an over-quota demo key BEFORE create_run.
+    if idempotency_key is not None:
+        existing = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+    else:
+        existing = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
+    if existing is not None:
+        return _replay_or_conflict(existing, fingerprint=usage_fingerprint)
+    # [S07] Reject an over-quota demo key BEFORE create_run, after proven replay.
     await _reject_when_demo_quota_is_already_spent(auth, session, units=len(unique_media_ids))
     await set_tenant_context(session, tenant_id)
 
-    async with admit_usage(
+    async with _maybe_admit_usage(
         usage_admission_service,
+        enabled=True,
         tenant_id=tenant_id,
         idempotency_key=operation_id,
         job_id=str(job_id),
@@ -580,11 +585,11 @@ async def create_describe_run(
         queue_bytes=queue_bytes,
     ) as ticket:
         if idempotency_key is not None:
-            existing = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
+            raced = await repo.get_run_by_idempotency_key(tenant_id=tenant_id, idempotency_key=idempotency_key)
         else:
-            existing = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
-        if existing is not None:
-            return _replay_or_conflict(existing, fingerprint=usage_fingerprint)
+            raced = await _run_by_usage_operation(session, tenant_id=tenant_id, operation_id=operation_id)
+        if raced is not None:
+            return _replay_or_conflict(raced, fingerprint=usage_fingerprint)
 
         try:
             run_id = await repo.create_run(

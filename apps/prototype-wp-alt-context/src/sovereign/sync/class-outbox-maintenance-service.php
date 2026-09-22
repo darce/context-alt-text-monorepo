@@ -119,19 +119,54 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$resolved_scheduler_mode = $scheduler_mode ?? $this->reclaimer_liveness->current_scheduler_mode();
+		try {
+			$resolved_scheduler_mode = $scheduler_mode ?? $this->reclaimer_liveness->current_scheduler_mode();
+		} catch ( Throwable $exception ) {
+			$resolved_scheduler_mode = $scheduler_mode ?? ReclaimerLiveness::SCHEDULER_WP_CRON;
+			$this->report_reclaimer_liveness_failure( $normalized_tenant_id, 'scheduler_mode', $exception );
+		}
 		$batch_size = null === $batch_cap ? null : max( 1, $batch_cap );
-		$lease_owner = $this->reclaimer_liveness->claim( $normalized_tenant_id );
+		try {
+			$lease_owner = $this->reclaimer_liveness->claim( $normalized_tenant_id );
+		} catch ( Throwable $exception ) {
+			$this->report_reclaimer_liveness_failure( $normalized_tenant_id, 'claim', $exception );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
+			return false;
+		}
 		if ( false === $lease_owner ) {
-			$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
 			return false;
 		}
 		if ( null === $lease_owner ) {
-			$this->reclaimer_liveness->record_lock_contended( $normalized_tenant_id, $resolved_scheduler_mode );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_lock_contended',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_lock_contended( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
 			return false;
 		}
 
-		$this->reclaimer_liveness->record_attempt( $normalized_tenant_id, $resolved_scheduler_mode );
+		$this->run_reclaimer_liveness_side_effect(
+			$normalized_tenant_id,
+			'record_attempt',
+			function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+				$this->reclaimer_liveness->record_attempt( $normalized_tenant_id, $resolved_scheduler_mode );
+			}
+		);
 		$this->pending_orphan_discard_events = array();
 		$this->purge_batch_cap_reached = false;
 
@@ -167,7 +202,13 @@ class OutboxMaintenanceService {
 
 			if ( is_wp_error( $result ) || ! is_array( $result ) ) {
 				$this->pending_orphan_discard_events = array();
-				$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				$this->run_reclaimer_liveness_side_effect(
+					$normalized_tenant_id,
+					'record_failure',
+					function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+						$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+					}
+				);
 				return false;
 			}
 
@@ -178,13 +219,19 @@ class OutboxMaintenanceService {
 			} catch ( Throwable $exception ) {
 				$backlog = array( 'remaining' => null, 'oldest_age_seconds' => null );
 			}
-			$this->reclaimer_liveness->record_success(
+			$this->run_reclaimer_liveness_side_effect(
 				$normalized_tenant_id,
-				(int) $result['outbox'] + (int) $result['conflicts'],
-				$backlog['remaining'],
-				$backlog['oldest_age_seconds'],
-				$batch_size !== null && $this->purge_batch_cap_reached,
-				$resolved_scheduler_mode
+				'record_success',
+				function () use ( $normalized_tenant_id, $result, $backlog, $batch_size, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_success(
+						$normalized_tenant_id,
+						(int) $result['outbox'] + (int) $result['conflicts'],
+						$backlog['remaining'],
+						$backlog['oldest_age_seconds'],
+						$batch_size !== null && $this->purge_batch_cap_reached,
+						$resolved_scheduler_mode
+					);
+				}
 			);
 
 			$orphan_events = array();
@@ -226,10 +273,22 @@ class OutboxMaintenanceService {
 			return $result;
 		} catch ( Throwable $exception ) {
 			$this->pending_orphan_discard_events = array();
-			$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'record_failure',
+				function () use ( $normalized_tenant_id, $resolved_scheduler_mode ): void {
+					$this->reclaimer_liveness->record_failure( $normalized_tenant_id, $resolved_scheduler_mode );
+				}
+			);
 			throw $exception;
 		} finally {
-			$this->reclaimer_liveness->release( $normalized_tenant_id, $lease_owner );
+			$this->run_reclaimer_liveness_side_effect(
+				$normalized_tenant_id,
+				'release',
+				function () use ( $normalized_tenant_id, $lease_owner ): void {
+					$this->reclaimer_liveness->release( $normalized_tenant_id, $lease_owner );
+				}
+			);
 		}
 	}
 
@@ -1460,8 +1519,19 @@ class OutboxMaintenanceService {
 			return false;
 		}
 
-		$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
-		OutboxDrain::maybe_schedule_drain();
+		// The status CAS above is the operator retry result. Metrics refresh and drain
+		// scheduling are additive follow-up work; a failure in either must not turn a
+		// committed requeue into a reported retry failure.
+		try {
+			$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+		} catch ( Throwable $exception ) {
+			$this->record_retry_additive_failure( $tenant_id, 'metrics_refresh', $exception );
+		}
+		try {
+			OutboxDrain::maybe_schedule_drain();
+		} catch ( Throwable $exception ) {
+			$this->record_retry_additive_failure( $tenant_id, 'drain_schedule', $exception );
+		}
 
 		return true;
 	}
@@ -1770,5 +1840,30 @@ class OutboxMaintenanceService {
 
 	private function fingerprint_nullable_int( mixed $value ): ?int {
 		return null === $value ? null : (int) $value;
+	}
+
+	private function record_retry_additive_failure( string $tenant_id, string $operation, Throwable $exception ): void {
+		try {
+			do_action( 'acx_sync_outbox_retry_additive_failed', $tenant_id, $operation, $exception );
+		} catch ( Throwable $ignored ) {
+			// Observability hooks are additive too; never replace the committed retry
+			// result with a failure from an observer.
+		}
+	}
+
+	private function run_reclaimer_liveness_side_effect( string $tenant_id, string $operation, callable $callback ): void {
+		try {
+			$callback();
+		} catch ( Throwable $exception ) {
+			$this->report_reclaimer_liveness_failure( $tenant_id, $operation, $exception );
+		}
+	}
+
+	private function report_reclaimer_liveness_failure( string $tenant_id, string $operation, Throwable $exception ): void {
+		try {
+			do_action( 'acx_sync_reclaimer_liveness_failed', $tenant_id, $operation, $exception );
+		} catch ( Throwable $ignored ) {
+			// Liveness instrumentation is additive and must never replace purge work.
+		}
 	}
 }

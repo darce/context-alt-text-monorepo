@@ -528,6 +528,7 @@ class OutboxDrainTest extends TestCase
 		// due NOW; a parked backoff anchor must not defer the dispatch by up to ~1.1h.
 		$tenantId = 'tenant-test-123';
 		$this->configureSyncMetricQueries($tenantId, ['pending' => 1]);
+		$this->configureFailedRetryRow($tenantId);
 		as_schedule_single_action(time() + 3900, 'acx_sync_drain_curation_outbox', [], 'acx-sync');
 
 		$drain = new OutboxDrain(new OutboxDispatcher());
@@ -1051,6 +1052,7 @@ class OutboxDrainTest extends TestCase
 			'failed' => 0,
 			'conflicts' => 0,
 		]);
+		$this->configureFailedRetryRow($tenantId);
 
 		$drain = new OutboxDrain(new OutboxDispatcher());
 		$result = $drain->retry_failed_operation(9, $tenantId);
@@ -1300,6 +1302,28 @@ class OutboxDrainTest extends TestCase
 			'next_attempt_at' => null,
 			'created_at' => '2026-03-10 12:00:00',
 		], $overrides);
+	}
+
+	private function configureFailedRetryRow(string $tenantId): void
+	{
+		global $wpdb;
+
+		$wpdb->mockRow = array_merge(
+			$this->pendingOperationRow([
+				'id' => 9,
+				'tenant_id' => $tenantId,
+			]),
+			[
+				'status' => 'failed',
+				'attempts' => 3,
+				'last_error_code' => 'remote_error',
+				'last_error_message' => 'Remote curation replay failed.',
+				'last_error_retryable' => 1,
+				'last_attempted_at' => '2026-03-10 12:01:00',
+				'first_failed_at' => '2026-03-10 12:00:00',
+				'next_attempt_at' => gmdate('Y-m-d H:i:s', time() + 3600),
+			]
+		);
 	}
 
 	/**

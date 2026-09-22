@@ -27,6 +27,58 @@ class OutboxDrainTest extends TestCase
 		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
 	}
 
+	public function testRegisterSchedulesPurgeThroughActionSchedulerWhenAvailable(): void
+	{
+		global $wpdb;
+		$wpdb->mockVar = '0';
+
+		$drain = new OutboxDrain();
+		$drain->register();
+
+		$this->assertNotFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+	}
+
+	public function testRegisterDoesNotDuplicateActionSchedulerPurge(): void
+	{
+		global $wpdb;
+		$wpdb->mockVar = '0';
+
+		$drain = new OutboxDrain();
+		$drain->register();
+		$existing = as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync');
+		$scheduledCount = count($GLOBALS['__ac_action_scheduler']);
+
+		$drain->register();
+
+		$this->assertSame($existing, as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+		$this->assertCount($scheduledCount, $GLOBALS['__ac_action_scheduler']);
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+	}
+
+	public function testClearScheduledPurgeClearsWpCronAndActionSchedulerForResolvedGroup(): void
+	{
+		$group = 'custom-acx-sync';
+		add_filter('acx_outbox_action_scheduler_group', static fn (): string => $group);
+		wp_schedule_event(time() + 300, 'daily', 'acx_sync_purge_terminal_rows', []);
+		as_schedule_single_action(time() + 300, 'acx_sync_purge_terminal_rows', [], $group);
+
+		OutboxDrain::clear_scheduled_purge();
+
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+		$this->assertFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], $group));
+	}
+
+	public function testClearScheduledPurgeWorksWithoutAnActionSchedulerAction(): void
+	{
+		wp_schedule_event(time() + 300, 'daily', 'acx_sync_purge_terminal_rows', []);
+
+		OutboxDrain::clear_scheduled_purge();
+
+		$this->assertFalse(wp_next_scheduled('acx_sync_purge_terminal_rows', []));
+		$this->assertFalse(as_next_scheduled_action('acx_sync_purge_terminal_rows', [], 'acx-sync'));
+	}
+
 	public function testMaybeScheduleDrainFallsBackToWpCronWhenActionSchedulerEnqueueFails(): void
 	{
 		$GLOBALS['__ac_action_scheduler_enqueue_result'] = 0;

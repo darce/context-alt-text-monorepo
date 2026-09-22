@@ -43,7 +43,6 @@ use function trim;
 use function wp_rand;
 use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
-use function wp_schedule_event;
 use function wp_schedule_single_event;
 use function wp_unschedule_event;
 
@@ -112,10 +111,7 @@ class OutboxDrain {
 		add_action( self::DRAIN_HOOK, array( $this, 'drain' ) );
 		add_action( self::PURGE_HOOK, array( $this, 'purge_terminal_rows' ) );
 
-		if ( false === wp_next_scheduled( self::PURGE_HOOK, array() ) ) {
-			$hour_seconds = defined( 'HOUR_IN_SECONDS' ) ? (int) HOUR_IN_SECONDS : 3600;
-			wp_schedule_event( time() + $hour_seconds, 'daily', self::PURGE_HOOK, array() );
-		}
+		OutboxMaintenanceService::maybe_schedule_purge();
 
 		if ( $this->query_repository->has_pending_operations() ) {
 			self::maybe_schedule_drain();
@@ -226,6 +222,10 @@ class OutboxDrain {
 
 	public static function clear_scheduled_purge(): void {
 		wp_clear_scheduled_hook( self::PURGE_HOOK, array() );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::PURGE_HOOK, array(), self::action_scheduler_group() );
+		}
 	}
 
 	public function drain(): void {

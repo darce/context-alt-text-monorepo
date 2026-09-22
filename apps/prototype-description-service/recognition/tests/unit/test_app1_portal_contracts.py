@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, is_dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -14,8 +16,10 @@ from recognition.domain.portal_contracts import (
     BillingProvider,
     BillingState,
     BillingSubscriptionStatus,
+    CheckoutSession,
     EntitlementSnapshot,
     EntitlementStatus,
+    EnumerationPage,
     PortalIdentityService,
     PortalIdentityStatus,
     PortalPrincipal,
@@ -140,8 +144,10 @@ class _BillingProviderStub:
         plan_code: str,
         success_url: str,
         cancel_url: str,
-    ) -> str:
-        return success_url
+        idempotency_key: str,
+        attempt_id: UUID,
+    ) -> CheckoutSession:
+        return CheckoutSession(url=success_url, provider_checkout_id=f"chk-{attempt_id}:{idempotency_key}")
 
     async def create_portal_session(self, *, tenant_id: UUID, return_url: str) -> str:
         return return_url
@@ -159,8 +165,20 @@ class _BillingProviderStub:
             "request_timeout": request_timeout,
         }
 
-    async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
-        return bool(raw_body and signature)
+    async def retrieve_checkout(self, *, provider_checkout_id: str, request_timeout: float) -> Mapping[str, object]:
+        return {"id": provider_checkout_id, "request_timeout": request_timeout}
+
+    async def enumerate_subscriptions(
+        self,
+        *,
+        cursor: str | None,
+        limit: int,
+        request_timeout: float,
+    ) -> EnumerationPage:
+        return EnumerationPage(items=(), next_cursor=cursor, exhausted=True)
+
+    async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        return bool(raw_body and headers)
 
     async def parse_event(self, raw_body: bytes) -> dict[str, object]:
         return {"raw_body": raw_body}
@@ -182,16 +200,47 @@ def test_protocols_are_runtime_checkable(protocol, stub) -> None:
 
 def test_stub_omitting_a_required_method_fails_structural_check() -> None:
     class MissingParseEvent:
-        async def create_checkout_session(self, **kwargs) -> str:
-            return ""
+        async def create_checkout_session(self, **kwargs) -> CheckoutSession:
+            return CheckoutSession(url="", provider_checkout_id="chk-missing")
 
         async def create_portal_session(self, **kwargs) -> str:
             return ""
 
-        async def verify_webhook(self, raw_body: bytes, signature: str) -> bool:
+        async def verify_webhook(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
             return True
 
     assert not isinstance(MissingParseEvent(), BillingProvider)
+
+
+def test_checkout_session_is_frozen_and_carries_provider_id_and_url() -> None:
+    session = CheckoutSession(url="https://pay.example.test/c", provider_checkout_id="chk-1")
+    assert is_dataclass(session)
+    assert session.url == "https://pay.example.test/c"
+    assert session.provider_checkout_id == "chk-1"
+    with pytest.raises(FrozenInstanceError):
+        session.url = "https://evil.example.test"
+
+
+def test_enumeration_page_is_frozen_with_opaque_cursor() -> None:
+    page = EnumerationPage(items=(), next_cursor="2", exhausted=False)
+    assert is_dataclass(page)
+    assert page.next_cursor == "2"
+    assert page.exhausted is False
+    with pytest.raises(FrozenInstanceError):
+        page.exhausted = True
+
+
+def test_billing_provider_requires_attempt_owned_checkout_and_header_verify() -> None:
+    checkout_params = inspect.signature(BillingProvider.create_checkout_session).parameters
+    verify_params = inspect.signature(BillingProvider.verify_webhook).parameters
+    assert "idempotency_key" in checkout_params
+    assert "attempt_id" in checkout_params
+    assert checkout_params["idempotency_key"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert checkout_params["attempt_id"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert "headers" in verify_params
+    assert "signature" not in verify_params
+    assert hasattr(BillingProvider, "retrieve_checkout")
+    assert hasattr(BillingProvider, "enumerate_subscriptions")
 
 
 def test_missing_entitlement_is_fail_safe_zero_allowance() -> None:

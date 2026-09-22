@@ -699,13 +699,20 @@ async def cancel_job(
             await require_tenant_record(session, tenant_uuid)
         job_uuid = uuid.UUID(str(job_id))
         await scan_queue.cancel_scan_job(job_id=job_uuid)
+        await session.flush()
         from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 
         repo = SqlAlchemyJobRepository(session)
         domain_job = await repo.get(job_id)
         if domain_job:
+            from recognition.application.services.usage_settlement_service import settle_usage_job
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
+            await settle_usage_job(
+                session,
+                tenant_id=uuid.UUID(str(domain_job.tenant_id)),
+                job_id=str(job_uuid),
+            )
             scan_repo = SqlAlchemyScanQueueRepository(session)
             return await _job_to_response(domain_job, scan_repo=scan_repo)
 

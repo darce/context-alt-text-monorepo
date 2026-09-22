@@ -13,6 +13,7 @@ DEFAULT_MAX_BATCHES = 100
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_STALE_AFTER_SECONDS = 300.0
 DEFAULT_NO_PROGRESS_LIMIT = 3
+DEFAULT_TIMEOUT_SECONDS = 0.0
 
 
 def _positive_int(value: object, *, name: str) -> int:
@@ -146,6 +147,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_NO_PROGRESS_LIMIT,
         help="consecutive no-progress cycles before a non-zero exit (rg-007)",
     )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="optional wall-clock bound; 0 disables the extra timeout (max-batches still applies)",
+    )
     return parser
 
 
@@ -158,43 +165,62 @@ async def run(
     batch_size: int | None = None,
     stale_after_seconds: float | None = None,
     no_progress_limit: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> int:
-    """Run the CLI or an injected repository-backed sweep."""
+    """Run the CLI through UsageSettlementService.sweep_stale_reservations only."""
     if argv is not None or (repository is None and session is None and max_batches is None):
         args = _build_parser().parse_args(list(argv) if argv is not None else None)
         max_batches = args.max_batches
         batch_size = args.batch_size
         stale_after_seconds = args.stale_after_seconds
         no_progress_limit = args.no_progress_limit
+        timeout_seconds = args.timeout_seconds
     else:
         max_batches = DEFAULT_MAX_BATCHES if max_batches is None else max_batches
         batch_size = DEFAULT_BATCH_SIZE if batch_size is None else batch_size
         stale_after_seconds = DEFAULT_STALE_AFTER_SECONDS if stale_after_seconds is None else stale_after_seconds
         no_progress_limit = DEFAULT_NO_PROGRESS_LIMIT if no_progress_limit is None else no_progress_limit
+        timeout_seconds = DEFAULT_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
 
-    own_session = repository is None and session is None
-    if repository is None:
-        if session is None:
-            from db.session import async_session_factory
+    if session is None and repository is not None:
+        sys.stderr.write(
+            "error: usage reservation sweep requires a DB session; age-only repository release is removed\n"
+        )
+        sys.stderr.flush()
+        return 1
 
-            session = async_session_factory()
-        from db.tenant_context import enable_rls_bypass
+    own_session = session is None
+    if session is None:
+        from db.session import async_session_factory
 
-        await enable_rls_bypass(session)
-        from recognition.infrastructure.repositories.usage_repository import SqlAlchemyUsageRepository
+        session = async_session_factory()
 
-        repository = SqlAlchemyUsageRepository(session)
+    from db.tenant_context import enable_rls_bypass
+    from recognition.application.services.usage_settlement_service import UsageSettlementService
 
-    try:
-        report = await sweep_stale_reservations(
-            repository,
+    await enable_rls_bypass(session)
+    timeout_seconds = _non_negative_float(timeout_seconds, name="timeout_seconds")
+
+    async def _sweep() -> object:
+        return await UsageSettlementService(session).sweep_stale_reservations(
+            stale_after_seconds=stale_after_seconds,
             max_batches=max_batches,
             batch_size=batch_size,
-            stale_after_seconds=stale_after_seconds,
             no_progress_limit=no_progress_limit,
         )
+
+    try:
+        if timeout_seconds > 0:
+            report = await asyncio.wait_for(_sweep(), timeout=timeout_seconds)
+        else:
+            report = await _sweep()
+        await session.commit()
+    except TimeoutError:
         if session is not None:
-            await session.commit()
+            await session.rollback()
+        sys.stderr.write("usage_reservation_sweeper stalled=True fail_closed=0 rejected=0 released=0 timeout=True\n")
+        sys.stderr.flush()
+        return 1
     except Exception as exc:  # noqa: BLE001 - CLI reports operational failures
         if session is not None:
             await session.rollback()
@@ -205,12 +231,17 @@ async def run(
         if own_session and session is not None:
             await session.close()
 
+    failed = int(getattr(report, "fail_closed", 0)) + int(getattr(report, "rejected", 0))
+    stalled = bool(getattr(report, "stalled", False))
     sys.stderr.write(
-        f"usage_reservation_sweeper batches={report.batches} stale={report.stale_seen} "
-        f"released={report.released} failed={report.failed} stalled={report.stalled}\n"
+        "usage_reservation_sweeper "
+        f"batches={report.batches} stale={report.stale_seen} released={report.released} "
+        f"committed={getattr(report, 'committed', 0)} skipped_active={getattr(report, 'skipped_active', 0)} "
+        f"rejected={getattr(report, 'rejected', 0)} fail_closed={getattr(report, 'fail_closed', 0)} "
+        f"failed={failed} stalled={stalled}\n"
     )
     sys.stderr.flush()
-    return report.exit_code
+    return int(getattr(report, "exit_code", 1 if stalled else 0))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -226,6 +257,7 @@ __all__ = [
     "DEFAULT_MAX_BATCHES",
     "DEFAULT_NO_PROGRESS_LIMIT",
     "DEFAULT_STALE_AFTER_SECONDS",
+    "DEFAULT_TIMEOUT_SECONDS",
     "UsageSweepResult",
     "main",
     "run",

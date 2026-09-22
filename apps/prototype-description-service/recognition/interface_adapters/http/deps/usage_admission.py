@@ -1,0 +1,161 @@
+"""HTTP dependencies and transaction boundary for billable analyze work."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import math
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import cast
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.params import Depends as DependsMarker
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from recognition.application.services.usage_admission_service import AllowanceExceededError
+from recognition.domain.portal_contracts import UsageAdmissionService, UsageTicket
+from recognition.interface_adapters.http.deps.session import get_optional_session
+
+logger = logging.getLogger(__name__)
+
+
+def _is_usage_service(value: object) -> bool:
+    return all(callable(getattr(value, method_name, None)) for method_name in ("reserve", "commit", "release"))
+
+
+def get_usage_admission_service(
+    request: Request,
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> UsageAdmissionService | None:
+    """Resolve the optional request-scoped usage service installed by portal composition."""
+    configured = getattr(request.app.state, "usage_admission_service", None)
+    if configured is None:
+        return None
+    if _is_usage_service(configured):
+        return cast(UsageAdmissionService, configured)
+    if isinstance(session, DependsMarker):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    if not callable(configured):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    service = configured(session)
+    if not _is_usage_service(service):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    return cast(UsageAdmissionService, service)
+
+
+def build_usage_idempotency_key(
+    tenant_id: object,
+    media_ids: Sequence[object],
+    media_sources: Sequence[object],
+) -> str:
+    """Build a retry-stable key from the tenant, canonical media IDs, and source digest."""
+    if len(media_ids) != len(media_sources):
+        raise ValueError("media_ids and media_sources must have the same length")
+
+    canonical_items = sorted(
+        (str(media_id), str(media_source)) for media_id, media_source in zip(media_ids, media_sources, strict=True)
+    )
+    source_payload = json.dumps([source for _media_id, source in canonical_items], separators=(",", ":"))
+    source_digest = hashlib.sha256(source_payload.encode("utf-8")).hexdigest()
+    fingerprint = {
+        "tenant_id": str(tenant_id),
+        "media_ids": [media_id for media_id, _source in canonical_items],
+        "media_sources_sha256": source_digest,
+    }
+    return hashlib.sha256(json.dumps(fingerprint, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _retry_after_seconds(period_end: object) -> int | None:
+    if isinstance(period_end, str):
+        try:
+            period_end = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(period_end, datetime):
+        return None
+    if period_end.tzinfo is None:
+        period_end = period_end.replace(tzinfo=UTC)
+    return max(0, math.ceil((period_end - datetime.now(tz=UTC)).total_seconds()))
+
+
+def _allowance_exhausted(exc: AllowanceExceededError) -> HTTPException:
+    headers: dict[str, str] = {}
+    retry_after = _retry_after_seconds(getattr(exc, "period_end", None))
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return HTTPException(
+        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+        detail={"error": "allowance_exhausted"},
+        headers=headers or None,
+    )
+
+
+@asynccontextmanager
+async def admit_usage(
+    service: UsageAdmissionService | None,
+    *,
+    tenant_id,
+    idempotency_key: str,
+    job_id: str | None,
+    cost_units: int,
+) -> AsyncIterator[UsageTicket | None]:
+    """Reserve before dispatch, settle on success, and release failed dispatches."""
+    # Direct unit callers may invoke a FastAPI route without resolving its
+    # Depends default.  The real dependency has already validated the service
+    # shape before this helper runs, so an unresolved default is the disabled
+    # path just like an absent app-state service.
+    if service is None or not _is_usage_service(service):
+        yield None
+        return
+
+    try:
+        ticket = await service.reserve(
+            tenant_id,
+            idempotency_key=idempotency_key,
+            job_id=job_id,
+            cost_units=cost_units,
+        )
+    except AllowanceExceededError as exc:
+        raise _allowance_exhausted(exc) from exc
+
+    try:
+        yield ticket
+    except BaseException:
+        try:
+            await service.release(ticket)
+        except BaseException:
+            logger.exception("Usage reservation release failed", extra={"tenant_id": str(tenant_id)})
+        raise
+    else:
+        try:
+            await service.commit(ticket)
+        except BaseException:
+            try:
+                await service.release(ticket)
+            except BaseException:
+                logger.exception("Usage reservation release after commit failure failed")
+            raise
+
+
+__all__ = [
+    "admit_usage",
+    "build_usage_idempotency_key",
+    "get_usage_admission_service",
+]

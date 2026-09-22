@@ -20,11 +20,13 @@ envelope so it can be tested in isolation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import uuid
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -50,6 +52,11 @@ from recognition.interface_adapters.http.deps.demo_quota import enforce_demo_quo
 from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
+)
+from recognition.interface_adapters.http.deps.usage_admission import (
+    admit_usage,
+    build_usage_idempotency_key,
+    get_usage_admission_service,
 )
 from recognition.interface_adapters.http.middleware.correlation import (
     get_correlation_id,
@@ -277,6 +284,24 @@ def _extract_request_envelope(form_data: FormData) -> dict:
     return envelope
 
 
+def _multipart_usage_inputs(form_data: FormData) -> tuple[list[str], list[str]]:
+    """Read stable upload digests without consuming the streams used by persistence."""
+    media_ids: list[str] = []
+    media_sources: list[str] = []
+    for key, value in form_data.multi_items():
+        if not key.startswith(_IMAGE_KEY_PREFIX) or not isinstance(value, UploadFile):
+            continue
+        position = value.file.tell()
+        data = value.file.read()
+        value.file.seek(position)
+        media_id = key[len(_IMAGE_KEY_PREFIX) :]
+        with suppress(ValueError):
+            media_id = str(int(media_id))
+        media_ids.append(media_id)
+        media_sources.append(hashlib.sha256(data).hexdigest())
+    return media_ids, media_sources
+
+
 @router.post(
     "/analyze/multipart",
     response_model=JobStatusResponse,
@@ -290,6 +315,7 @@ async def analyze_media_multipart(
     scan_queue=Depends(get_scan_queue_service_optional),
     object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
     _demo_quota=Depends(enforce_demo_quota),
+    usage_admission_service=Depends(get_usage_admission_service),
 ) -> JobStatusResponse:
     """Multipart variant of /recognition/analyze for inline image upload.
 
@@ -330,6 +356,7 @@ async def analyze_media_multipart(
             session=session,
             scan_queue=scan_queue,
             object_store_factory=object_store_factory,
+            usage_admission_service=usage_admission_service,
         )
     finally:
         await form_data.close()
@@ -343,6 +370,7 @@ async def _analyze_media_multipart_form(
     session,
     scan_queue,
     object_store_factory: ObjectStoreFactory,
+    usage_admission_service=None,
 ) -> JobStatusResponse:
     """Validate, persist, and dispatch an already-parsed multipart request."""
     pre_generated_job_id = uuid.uuid4()
@@ -384,6 +412,48 @@ async def _analyze_media_multipart_form(
         await require_tenant_record(session, tenant_uuid)
         await require_scan_dispatch_ready(session, inline_processing=inline_processing)
 
+    usage_media_ids, usage_media_sources = _multipart_usage_inputs(form_data)
+    if not usage_media_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=("multipart submission must include at least one image_<media_id> part"),
+        )
+    idempotency_key = build_usage_idempotency_key(tenant_uuid, usage_media_ids, usage_media_sources)
+    async with admit_usage(
+        usage_admission_service,
+        tenant_id=tenant_uuid,
+        idempotency_key=idempotency_key,
+        job_id=str(pre_generated_job_id),
+        cost_units=len(usage_media_ids),
+    ):
+        return await _persist_and_dispatch_multipart(
+            form_data=form_data,
+            background_tasks=background_tasks,
+            auth=auth,
+            session=session,
+            scan_queue=scan_queue,
+            object_store_factory=object_store_factory,
+            tenant_uuid=tenant_uuid,
+            canonical_tenant_id=canonical_tenant_id,
+            pre_generated_job_id=pre_generated_job_id,
+            inline_processing=inline_processing,
+        )
+
+
+async def _persist_and_dispatch_multipart(
+    *,
+    form_data: FormData,
+    background_tasks: BackgroundTasks,
+    auth,
+    session,
+    scan_queue,
+    object_store_factory: ObjectStoreFactory,
+    tenant_uuid: uuid.UUID,
+    canonical_tenant_id: str,
+    pre_generated_job_id: uuid.UUID,
+    inline_processing: bool,
+) -> JobStatusResponse:
+    """Persist uploads and enqueue work inside an already-admitted usage scope."""
     object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(

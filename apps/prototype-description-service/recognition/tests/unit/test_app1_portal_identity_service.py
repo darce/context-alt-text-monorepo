@@ -22,7 +22,7 @@ from recognition.domain.portal_contracts import PortalIdentityService, PortalIde
 @dataclass
 class _Invitation:
     token: str
-    tenant_id: UUID
+    tenant_id: UUID | None
     email: str
 
 
@@ -38,6 +38,11 @@ class _InMemoryPortalIdentityRepository:
     def invite(self, tenant_id: UUID, email: str) -> str:
         token = f"invite-{len(self.invitations)}"
         self.invitations[token] = _Invitation(token=token, tenant_id=tenant_id, email=email)
+        return token
+
+    def invite_pending(self, email: str) -> str:
+        token = f"invite-{len(self.invitations)}"
+        self.invitations[token] = _Invitation(token=token, tenant_id=None, email=email)
         return token
 
     async def get_by_issuer_subject(self, issuer: str, subject: str) -> PortalIdentity | None:
@@ -56,7 +61,7 @@ class _InMemoryPortalIdentityRepository:
         invitation_token: str,
     ) -> PortalIdentity:
         invitation = self.invitations.get(invitation_token)
-        if invitation is None or invitation_token in self.redeemed:
+        if invitation is None or invitation.tenant_id is None or invitation_token in self.redeemed:
             raise PortalIdentityClaimRefused("portal identity claim was refused")
         if email is None or email.strip().lower() != invitation.email:
             raise PortalIdentityClaimRefused("portal identity claim was refused")
@@ -95,20 +100,30 @@ class _InMemoryPortalIdentityRepository:
         existing = next((row for row in self.rows if row.issuer == issuer and row.subject == subject), None)
         if invitation_token in self.redeemed:
             owner = next(
-                (row for row in self.rows if row.tenant_id == invitation.tenant_id),
+                (
+                    row
+                    for row in self.rows
+                    if invitation.tenant_id is not None and row.tenant_id == invitation.tenant_id
+                ),
                 None,
             )
             if existing is not None and existing.tenant_id == invitation.tenant_id and owner is existing:
                 return PortalIdentityClaimRecord(identity=existing, replayed=True)
-            if existing is not None and existing.tenant_id != invitation.tenant_id:
+            if existing is not None and invitation.tenant_id is not None and existing.tenant_id != invitation.tenant_id:
                 raise PortalIdentityClaimError("identity_already_bound")
             raise PortalIdentityClaimError("invitation_consumed")
-        if existing is not None and existing.tenant_id != invitation.tenant_id:
-            raise PortalIdentityClaimError("identity_already_bound")
-        if any(row.tenant_id == invitation.tenant_id for row in self.rows):
+        if existing is not None:
+            if invitation.tenant_id is not None and existing.tenant_id != invitation.tenant_id:
+                raise PortalIdentityClaimError("identity_already_bound")
+            invitation.tenant_id = existing.tenant_id
+            self.redeemed.add(invitation_token)
+            return PortalIdentityClaimRecord(identity=existing, replayed=True)
+        if invitation.tenant_id is not None and any(row.tenant_id == invitation.tenant_id for row in self.rows):
             raise PortalIdentityClaimError("invitation_consumed")
+        tenant_id = invitation.tenant_id or uuid4()
+        invitation.tenant_id = tenant_id
         row = PortalIdentity(
-            tenant_id=invitation.tenant_id,
+            tenant_id=tenant_id,
             issuer=issuer,
             subject=subject,
             email=email,
@@ -485,3 +500,82 @@ async def test_grant_or_audit_failure_rolls_back_first_claim() -> None:
         )
     assert audit_error.value.code == "portal_identity_unavailable"
     assert session.rolled_back is True
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_pending_token_grants_once_and_replays_without_second_tenant() -> None:
+    repository = _InMemoryPortalIdentityRepository()
+    token = repository.invite_pending("person@example.test")
+    grant = _GrantRecorder()
+    audit = _AuditRecorder()
+    service = SqlAlchemyPortalIdentityService(repository, beta_grant=grant.grant_beta, audit_service=audit)
+
+    first = await service.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="person@example.test",
+        invitation_token=token,
+    )
+    replay = await service.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="person@example.test",
+        invitation_token=token,
+    )
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert first.principal.tenant_id == replay.principal.tenant_id
+    assert repository.invitations[token].tenant_id == first.principal.tenant_id
+    assert len(grant.calls) == 1
+    assert len(audit.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_two_pending_tokens_same_identity_consume_both_without_second_grant() -> None:
+    repository = _InMemoryPortalIdentityRepository()
+    first_token = repository.invite_pending("owner@example.test")
+    second_token = repository.invite_pending("owner@example.test")
+    grant = _GrantRecorder()
+    service = SqlAlchemyPortalIdentityService(repository, beta_grant=grant.grant_beta, audit_service=_AuditRecorder())
+
+    first = await service.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        invitation_token=first_token,
+    )
+    second = await service.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        invitation_token=second_token,
+    )
+
+    assert first.replayed is False
+    assert second.replayed is True
+    assert first.principal.tenant_id == second.principal.tenant_id
+    assert {first_token, second_token} <= repository.redeemed
+    assert len(grant.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_grant_failure_rolls_back_without_leaving_service_success() -> None:
+    repository = _InMemoryPortalIdentityRepository()
+    token = repository.invite_pending("person@example.test")
+    session = _SessionWithRollback()
+    repository.session = session
+    grant = _GrantRecorder(error=RuntimeError("grant failed"))
+    service = SqlAlchemyPortalIdentityService(repository, beta_grant=grant.grant_beta, audit_service=_AuditRecorder())
+
+    with pytest.raises(PortalIdentityClaimError) as error:
+        await service.claim_onboarding(
+            issuer="https://issuer.example.test",
+            subject="subject-1",
+            email="person@example.test",
+            invitation_token=token,
+        )
+
+    assert error.value.code == "portal_identity_unavailable"
+    assert session.rolled_back is True
+    assert len(grant.calls) == 1

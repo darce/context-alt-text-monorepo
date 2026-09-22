@@ -10,9 +10,11 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import String
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from db.models import PortalIdentity
+from db.models.tenant import Tenant
 from recognition.application.services.portal_identity_service import (
     PortalIdentityClaimError,
     PortalIdentityClaimRefused,
@@ -34,7 +36,7 @@ class _InvitationModel(_ModelBase):
     __tablename__ = "portal_tenant_invitation"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    tenant_id: Mapped[str] = mapped_column(String, nullable=False)
+    tenant_id: Mapped[str | None] = mapped_column(String, nullable=True)
     invited_email: Mapped[str] = mapped_column(String, nullable=False)
     token_hash: Mapped[str] = mapped_column(String, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -63,19 +65,30 @@ class _Session:
         self.locked_selects: list[bool] = []
         self.execute_error: BaseException | None = None
         self.update_rowcount = 1
+        self.models: list[object] = []
+        self.identity_lookups: list[PortalIdentity | None] = []
 
-    def add(self, value: PortalIdentity) -> None:
+    def add(self, value: object) -> None:
         self.added = value
-        self.identities.append(value)
+        self.models.append(value)
+        if isinstance(value, PortalIdentity):
+            self.identities.append(value)
 
     def begin_nested(self):
         session = self
+        snapshot_identities = list(self.identities)
+        snapshot_models = list(self.models)
+        snapshot_added = self.added
 
         class _Nested:
             async def __aenter__(self) -> _Session:
                 return session
 
             async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+                if exc_type is not None:
+                    session.identities[:] = snapshot_identities
+                    session.models[:] = snapshot_models
+                    session.added = snapshot_added
                 return False
 
         return _Nested()
@@ -92,6 +105,8 @@ class _Session:
             if descriptions:
                 entity = descriptions[0].get("entity")
             if entity is PortalIdentity:
+                if self.identity_lookups:
+                    return _Result(self.identity_lookups.pop(0))
                 if self.identities:
                     issuer = self.identities[-1].issuer
                     subject = self.identities[-1].subject
@@ -103,6 +118,14 @@ class _Session:
                     return _Result(self.value)
                 return _Result(None)
             return _Result(self.value)
+        compiled = ""
+        compile_fn = getattr(statement, "compile", None)
+        if callable(compile_fn):
+            compiled = str(compile_fn()).lower()
+        stored_email = getattr(self.value, "invited_email", None)
+        uses_canonical = "lower(" in compiled and "trim(" in compiled
+        if isinstance(stored_email, str) and not uses_canonical and stored_email != stored_email.strip().lower():
+            return _Result(rowcount=0)
         return _Result(rowcount=self.update_rowcount)
 
     async def flush(self) -> None:
@@ -121,14 +144,23 @@ class _Session:
             raise self.rollback_errors.pop(0)
 
 
-def _invitation(token: str, tenant_id: UUID, *, email: str = "owner@example.test") -> _InvitationModel:
+def _invitation(
+    token: str,
+    tenant_id: UUID | None = None,
+    *,
+    email: str = "owner@example.test",
+) -> _InvitationModel:
     return _InvitationModel(
         id=str(uuid4()),
-        tenant_id=str(tenant_id),
+        tenant_id=str(tenant_id) if tenant_id is not None else None,
         invited_email=email,
         token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
         expires_at=datetime.now(UTC) + timedelta(minutes=10),
     )
+
+
+def _bound_id(value: object) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 def _install_rls_doubles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -569,3 +601,187 @@ async def _noop_grant(tenant_id: UUID, **kwargs: object) -> None:
 class _NoopAudit:
     async def record_event(self, session: object, **payload: object) -> dict[str, object]:
         return payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "email"),
+    [
+        ("missing", "owner@example.test"),
+        ("unverified", None),
+        ("wrongemail", "other@example.test"),
+        ("expired", "owner@example.test"),
+    ],
+)
+async def test_claim_onboarding_missing_unverified_wrong_email_expired_are_not_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    email: str | None,
+) -> None:
+    token = "single-use-secret"
+    invitation = _invitation(token)
+    if state == "expired":
+        invitation.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    session = _Session(None if state == "missing" else invitation)
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    with pytest.raises(PortalIdentityClaimError) as error:
+        await repository.claim_onboarding(
+            issuer="https://issuer.example.test",
+            subject="subject-1",
+            email=email,
+            invitation_token=token,
+        )
+
+    assert error.value.code == "not_admitted"
+    assert invitation.accepted_at is None
+    assert invitation.tenant_id is None
+    assert not any(isinstance(model, Tenant) for model in session.models)
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_pending_invitation_creates_tenant_and_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "pending-secret"
+    invitation = _invitation(token)
+    session = _Session(invitation)
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    outcome = await repository.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email=" OWNER@example.test ",
+        invitation_token=token,
+    )
+
+    tenants = [model for model in session.models if isinstance(model, Tenant)]
+    assert outcome.replayed is False
+    assert len(tenants) == 1
+    assert tenants[0].site_url
+    assert outcome.identity.tenant_id == tenants[0].id
+    assert _bound_id(invitation.tenant_id) == tenants[0].id
+    assert invitation.accepted_at is not None
+    assert str(invitation.accepted_by_identity_id) == str(outcome.identity.id)
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_accepts_mixed_case_invited_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "mixed-case-secret"
+    invitation = _invitation(token, email=" Owner@Example.com ")
+    session = _Session(invitation)
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    outcome = await repository.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.com",
+        invitation_token=token,
+    )
+
+    compiled_parts: list[str] = []
+    for statement in session.executed:
+        compile_fn = getattr(statement, "compile", None)
+        compiled_parts.append(str(compile_fn()) if callable(compile_fn) else str(statement))
+    compiled = " ".join(compiled_parts)
+    assert outcome.replayed is False
+    assert invitation.accepted_at is not None
+    assert "lower(" in compiled.lower()
+    assert "trim(" in compiled.lower()
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_existing_bound_invitation_replays_same_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "bound-secret"
+    tenant_id = uuid4()
+    invitation = _invitation(token, tenant_id)
+    session = _Session(invitation)
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    first = await repository.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        invitation_token=token,
+    )
+    replay = await repository.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        invitation_token=token,
+    )
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert first.identity.tenant_id == tenant_id
+    assert replay.identity.tenant_id == tenant_id
+    assert not any(isinstance(model, Tenant) for model in session.models)
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_two_token_same_identity_race_accepts_current_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "second-secret"
+    tenant_id = uuid4()
+    existing = PortalIdentity(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        status=PortalIdentityStatus.ACTIVE,
+    )
+    invitation = _invitation(token)
+    session = _Session(invitation)
+    session.identity_lookups = [None, existing]
+    session.flush_errors.append(IntegrityError("INSERT", {}, Exception("uq_portal_identity_issuer_subject")))
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    outcome = await repository.claim_onboarding(
+        issuer="https://issuer.example.test",
+        subject="subject-1",
+        email="owner@example.test",
+        invitation_token=token,
+    )
+
+    assert outcome.replayed is True
+    assert outcome.identity is existing
+    assert invitation.accepted_at is not None
+    assert str(invitation.accepted_by_identity_id) == str(existing.id)
+    assert _bound_id(invitation.tenant_id) == tenant_id
+    assert not any(isinstance(model, Tenant) for model in session.models)
+
+
+@pytest.mark.asyncio
+async def test_claim_onboarding_create_failure_rolls_back_orphan_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "pending-secret"
+    invitation = _invitation(token)
+    session = _Session(invitation)
+    session.flush_errors.append(TimeoutError("flush timed out"))
+    _install_rls_doubles(monkeypatch)
+    repository = SqlAlchemyPortalIdentityRepository(session)
+
+    with pytest.raises(TimeoutError, match="flush timed out"):
+        await repository.claim_onboarding(
+            issuer="https://issuer.example.test",
+            subject="subject-1",
+            email="owner@example.test",
+            invitation_token=token,
+        )
+
+    assert session.rolled_back is True
+    assert invitation.accepted_at is None
+    assert invitation.tenant_id is None
+    assert not any(isinstance(model, Tenant) for model in session.models)

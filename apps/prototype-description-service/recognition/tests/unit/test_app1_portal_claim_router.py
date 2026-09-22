@@ -334,6 +334,13 @@ def test_unverified_email_and_missing_bearer_use_pretenant_codes() -> None:
     assert _code(missing) == "invalid_portal_authorization"
 
 
+def test_portal_http_has_claim_but_no_invitation_issuance_route() -> None:
+    paths = {getattr(route, "path", "") for route in portal.router.routes}
+    assert "/portal/onboarding/claim" in paths
+    issuance = [path for path in paths if "invit" in path.lower() and path != "/portal/onboarding/claim"]
+    assert issuance == []
+
+
 def test_onboarding_claim_makes_zero_polar_customer_or_subscription_calls() -> None:
     service = _ClaimService(_outcome(replayed=False))
     application, _session = _app(service)

@@ -1,11 +1,7 @@
-4aacd0ce7662 APP-1: land usage-ledger with scoped VM verification
-4ce1b4ef68a4 offload: G1 usage ledger landed: fenced tickets, global singleton, HTTP
-55b9ebe8f793 APP-1: land checkout-fixwave with scoped VM verification
-f82bc7b9bd10 offload: CheckoutService now keeps Polar HTTP 200 malformed checkout
-ab068bb145cc APP-1: land app-host with scoped VM verification
-a80aab103dae offload: APP-1 app-host artifacts land a dry-run/apply Caddy merge for
-9ca9f1ddba43 APP-1: land claim-http with scoped VM verification
-4c56f47203c6 offload: POST /portal/onboarding/claim lands with locked durable replay;
-d3ac947c5393 APP-1: land recovered evaluator adjudication
-88482eb721f9 offload: Committed the bounded APP-1 evaluator adjudication report.
-89dfea38df4e chore(review): procure governed context payload
+c6c080c78175 APP-1: land scene ingress admission after VM verification
+354d3ccdff82 offload: G2 wired all three scene compute POSTs to G1 usage admission;
+dad9286c426d APP-1: land schema-evidence after scoped VM verification
+e0fb11671875 offload: G5 fixtures match G1 inventory; IDENTITY_PG_REQUIRED=1 recorded
+759beef5bf1f APP-1: land checkout-http after scoped VM verification
+74ecf9ca8cac offload: Claim Polar-isolation test is green after dropping stale
+4130038d0767 offload: Checkout and manage HTTP plus seller-threaded composition are

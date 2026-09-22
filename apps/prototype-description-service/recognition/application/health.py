@@ -137,11 +137,7 @@ def _disk_headroom_result(
     return CheckResult(
         "disk_headroom",
         status,
-        detail
-        or (
-            f"reason={reason}; free_bytes={free_bytes}; min_bytes={min_bytes}; "
-            f"probe_path={probe_path}"
-        ),
+        detail or (f"reason={reason}; free_bytes={free_bytes}; min_bytes={min_bytes}; probe_path={probe_path}"),
         payload=payload,
     )
 
@@ -730,7 +726,8 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         face_pipeline = get_settings().face_pipeline
         get_shared_face_pipeline_runtime(
             profile=space,
-            models_dir=store,
+            models_dir=face_pipeline.resolved_models_dir,
+            embedder_models_dir=store,
             score_threshold=float(face_pipeline.score_threshold),
             nms_threshold=float(face_pipeline.nms_threshold),
             top_k=int(face_pipeline.top_k),

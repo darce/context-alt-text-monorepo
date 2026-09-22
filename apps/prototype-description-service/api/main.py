@@ -917,6 +917,9 @@ def register_health_probes(
             bundle_files = sum(
                 1 for name in ("yunet", "sface") if (cache_dir / MODEL_MANIFEST[name].file_name).is_file()
             )
+        elif profile == "auraface":
+            auraface_artifact = cache_dir / MODEL_MANIFEST["auraface"].file_name
+            bundle_files = 1 if auraface_artifact.is_file() else 0
         else:
             bundle = cache_dir / model_name
             bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0

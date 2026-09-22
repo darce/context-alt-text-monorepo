@@ -33,8 +33,7 @@ from recognition.application.embedding.detector import (
 from recognition.application.embedding.generator import UnavailableEmbeddingGenerator
 from recognition.application.embedding.manifest import EmbeddingModelManifest
 from recognition.infrastructure.embeddings import face_pipeline_adapter as fpa
-from recognition.infrastructure.face_pipeline._common import EmbedBatchResult
-from recognition.infrastructure.face_pipeline._common import RawDetection, ZeroNormEmbeddingError
+from recognition.infrastructure.face_pipeline._common import EmbedBatchResult, RawDetection, ZeroNormEmbeddingError
 from recognition.infrastructure.face_pipeline.aligner import AlignmentError
 from recognition.infrastructure.face_pipeline.provenance import (
     DEFAULT_MODELS_DIR,
@@ -91,6 +90,13 @@ def _align_dims_to_sface(monkeypatch: pytest.MonkeyPatch) -> None:
     """Three-way guard needs manifest==pgvector==identity_detection (all 128)."""
     monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", str(SFACE_EMBEDDING_DIM))
     monkeypatch.setenv("PGVECTOR_DIM", str(SFACE_EMBEDDING_DIM))
+    _clear_settings_caches()
+
+
+def _align_dims_to_auraface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Three-way guard needs manifest==pgvector==identity_detection (all 512)."""
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    monkeypatch.setenv("PGVECTOR_DIM", "512")
     _clear_settings_caches()
 
 
@@ -404,7 +410,9 @@ async def test_detect_populates_phash_and_quality(monkeypatch: pytest.MonkeyPatc
     runtime.aligner.align.return_value = aligned  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(
+        vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32)
+    )  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     img = Image.new("RGB", (64, 64), color=(12, 34, 56))
@@ -695,8 +703,7 @@ def test_sticky_license_integrity_recovers_after_license_only_replace(
     runtime = fpa.get_shared_face_pipeline_runtime(profile="face_pipeline", models_dir=tmp_path)
     assert runtime is not None
     assert load_calls == 2, (
-        "license-only identity change must re-verify/rebuild without test reset; "
-        f"load_calls={load_calls}"
+        f"license-only identity change must re-verify/rebuild without test reset; load_calls={load_calls}"
     )
     fpa.reset_shared_face_pipeline_runtime_for_tests()
 
@@ -1259,9 +1266,7 @@ def test_metrics_registry_exports_face_pipeline_saturation_series() -> None:
     )
 
     names = {sample.name for metric in metrics.registry.collect() for sample in metric.samples}
-    assert "face_pipeline_submit_wait_seconds_count" in names or (
-        "face_pipeline_submit_wait_seconds_bucket" in names
-    )
+    assert "face_pipeline_submit_wait_seconds_count" in names or ("face_pipeline_submit_wait_seconds_bucket" in names)
     assert "face_pipeline_admission_timeouts_total" in names
 
 
@@ -1417,7 +1422,9 @@ async def test_per_face_align_failure_keeps_sibling(monkeypatch: pytest.MonkeyPa
     runtime.aligner.align.side_effect = _align  # type: ignore[attr-defined]
     emb = np.ones(SFACE_EMBEDDING_DIM, dtype=np.float32)
     emb /= float(np.linalg.norm(emb))
-    runtime.embedder.embed.return_value = EmbedBatchResult(vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32))  # type: ignore[attr-defined]
+    runtime.embedder.embed.return_value = EmbedBatchResult(
+        vectors=np.stack([emb], axis=0), norms=np.array([2.5], dtype=np.float32)
+    )  # type: ignore[attr-defined]
 
     det = fpa.FacePipelineFaceDetector(runtime, timeout=5.0)
     faces = await det.detect([_png_bytes(Image.new("RGB", (128, 128), color=(10, 20, 30)))])
@@ -1483,6 +1490,193 @@ def test_shared_is_single_tuple_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     assert isinstance(key, tuple)
     # Dim pair is part of memo key (CR-03/CR-09).
     assert SFACE_EMBEDDING_DIM in key
+
+
+# ---------------------------------------------------------------------------
+# FIR512-2 AuraFace split-dir routing (HEALTH-RECOVERY-3)
+# ---------------------------------------------------------------------------
+
+
+def test_auraface_cache_key_includes_both_dirs_and_profile(tmp_path: Path) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    face_dir = tmp_path / "face-pipeline"
+    aura_dir = tmp_path / "auraface"
+    face_dir.mkdir()
+    aura_dir.mkdir()
+    aura_key = fpa._runtime_cache_key(
+        profile=ModelSpace.AURAFACE,
+        models_dir=face_dir,
+        embedder_models_dir=aura_dir,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+        pgvector_dimension=512,
+        embedding_dimension=512,
+    )
+    sface_key = fpa._runtime_cache_key(
+        profile=ModelSpace.FACE_PIPELINE,
+        models_dir=face_dir,
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+        pgvector_dimension=128,
+        embedding_dimension=128,
+    )
+    assert ModelSpace.AURAFACE in aura_key
+    assert str(face_dir.resolve()) in aura_key
+    assert str(aura_dir.resolve()) in aura_key
+    assert aura_key != sface_key
+
+
+def test_auraface_runtime_uses_split_detector_and_embedder_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    _align_dims_to_auraface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    face_dir = tmp_path / "face-pipeline"
+    aura_dir = tmp_path / "auraface"
+    face_dir.mkdir()
+    aura_dir.mkdir()
+    detector_calls: list[dict[str, object]] = []
+    embedder_calls: list[dict[str, object]] = []
+
+    class _SpyDetector:
+        def __init__(self, **kwargs: object) -> None:
+            detector_calls.append(kwargs)
+
+    class _SpyEmbedder:
+        def __init__(self, **kwargs: object) -> None:
+            embedder_calls.append(kwargs)
+
+    monkeypatch.setattr(fpa, "OrtYuNetDetector", _SpyDetector)
+    monkeypatch.setattr(fpa, "OrtSFaceEmbedder", _SpyEmbedder)
+
+    runtime = fpa.get_shared_face_pipeline_runtime(
+        profile=ModelSpace.AURAFACE,
+        models_dir=face_dir,
+        embedder_models_dir=aura_dir,
+    )
+    assert runtime.manifest.dimensions == 512
+    assert "auraface" in runtime.manifest.model_id.lower()
+    assert "sface" not in runtime.manifest.model_id.lower()
+    assert len(detector_calls) == 1
+    assert Path(str(detector_calls[0]["models_dir"])) == face_dir
+    assert len(embedder_calls) == 1
+    assert embedder_calls[0].get("model_name") == "auraface"
+    assert Path(str(embedder_calls[0]["models_dir"])) == aura_dir
+
+
+def test_missing_yunet_detector_is_named_honestly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    _align_dims_to_auraface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    face_dir = tmp_path / "face-pipeline"
+    aura_dir = tmp_path / "auraface"
+    face_dir.mkdir()
+    aura_dir.mkdir()
+    (aura_dir / MODEL_MANIFEST["auraface"].file_name).write_bytes(b"auraface-present")
+    (aura_dir / MODEL_MANIFEST["auraface"].license_file).write_bytes(b"auraface-license")
+
+    with pytest.raises(fpa.FacePipelineRuntimeUnavailableError) as excinfo:
+        fpa.get_shared_face_pipeline_runtime(
+            profile=ModelSpace.AURAFACE,
+            models_dir=face_dir,
+            embedder_models_dir=aura_dir,
+        )
+    message = str(excinfo.value).lower()
+    assert "detector" in message
+    assert "yunet" in message
+    assert "buffalo" not in message
+
+
+def test_profile_change_does_not_reuse_sface_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    face_dir = tmp_path / "face-pipeline"
+    aura_dir = tmp_path / "auraface"
+    face_dir.mkdir()
+    aura_dir.mkdir()
+    loads: list[str] = []
+
+    def loader(*, space: ModelSpace, **kwargs: object) -> fpa.FacePipelineRuntime:
+        loads.append(space.value)
+        if space is ModelSpace.AURAFACE:
+            _align_dims_to_auraface(monkeypatch)
+            manifest = fpa.auraface_embedding_model_manifest()
+            embedder_dir = kwargs.get("embedder_models_dir") or kwargs.get("models_dir")
+        else:
+            _align_dims_to_sface(monkeypatch)
+            manifest = fpa.sface_embedding_model_manifest()
+            embedder_dir = kwargs.get("models_dir")
+        return fpa.FacePipelineRuntime(
+            detector=MagicMock(),
+            aligner=MagicMock(),
+            embedder=MagicMock(),
+            manifest=manifest,
+            models_dir=Path(str(kwargs["models_dir"])),
+            score_threshold=0.9,
+            nms_threshold=0.3,
+            top_k=5000,
+            embedder_models_dir=Path(str(embedder_dir)),
+        )
+
+    monkeypatch.setattr(fpa, "_load_face_pipeline_runtime", loader)
+    _align_dims_to_sface(monkeypatch)
+    sface_runtime = fpa.get_shared_face_pipeline_runtime(
+        profile=ModelSpace.FACE_PIPELINE,
+        models_dir=face_dir,
+    )
+    _align_dims_to_auraface(monkeypatch)
+    aura_runtime = fpa.get_shared_face_pipeline_runtime(
+        profile=ModelSpace.AURAFACE,
+        models_dir=face_dir,
+        embedder_models_dir=aura_dir,
+    )
+    assert sface_runtime is not aura_runtime
+    assert loads == ["face_pipeline", "auraface"]
+    assert "sface" in sface_runtime.manifest.model_id.lower()
+    assert "auraface" in aura_runtime.manifest.model_id.lower()
+
+
+def test_sface_runtime_still_loads_both_artifacts_from_face_pipeline_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recognition.infrastructure.face_pipeline.model_space import ModelSpace
+
+    _align_dims_to_sface(monkeypatch)
+    fpa.reset_shared_face_pipeline_runtime_for_tests()
+    face_dir = tmp_path / "face-pipeline"
+    face_dir.mkdir()
+    detector_calls: list[dict[str, object]] = []
+    embedder_calls: list[dict[str, object]] = []
+
+    class _SpyDetector:
+        def __init__(self, **kwargs: object) -> None:
+            detector_calls.append(kwargs)
+
+    class _SpyEmbedder:
+        def __init__(self, **kwargs: object) -> None:
+            embedder_calls.append(kwargs)
+
+    monkeypatch.setattr(fpa, "OrtYuNetDetector", _SpyDetector)
+    monkeypatch.setattr(fpa, "OrtSFaceEmbedder", _SpyEmbedder)
+
+    runtime = fpa.get_shared_face_pipeline_runtime(
+        profile=ModelSpace.FACE_PIPELINE,
+        models_dir=face_dir,
+    )
+    assert runtime.manifest.dimensions == SFACE_EMBEDDING_DIM
+    assert runtime.manifest.model_id.startswith("opencv-sface+")
+    assert len(detector_calls) == 1
+    assert Path(str(detector_calls[0]["models_dir"])) == face_dir
+    assert len(embedder_calls) == 1
+    assert embedder_calls[0].get("model_name", "sface") == "sface"
+    assert Path(str(embedder_calls[0]["models_dir"])) == face_dir
 
 
 # ---------------------------------------------------------------------------

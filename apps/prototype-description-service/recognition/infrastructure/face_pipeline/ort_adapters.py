@@ -36,12 +36,12 @@ from recognition.infrastructure.face_pipeline._common import (
     DEFAULT_NMS_THRESHOLD,
     DEFAULT_SCORE_THRESHOLD,
     DEFAULT_TOP_K,
-    SFACE_EMBEDDING_DIM,
     EmbedBatchResult,
     FacePipelineInputError,
     RawDetection,
     _ensure_bgr_u8,
     embed_batch,
+    resolve_embedding_dim,
 )
 from recognition.infrastructure.face_pipeline.provenance import load_verified_model
 
@@ -388,7 +388,7 @@ class OrtSFaceEmbedder:
         self._model_path = model_path
         self._session = _ort_session(model_path)
         self._input_name = self._session.get_inputs()[0].name
-        self.embedding_dim = SFACE_EMBEDDING_DIM
+        self.embedding_dim = resolve_embedding_dim(model_name)
 
     def _feature(self, crop: np.ndarray) -> np.ndarray:
         """Raw model feature for one validated 112×112 BGR crop (hookable in tests)."""

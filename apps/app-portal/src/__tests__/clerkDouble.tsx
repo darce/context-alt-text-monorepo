@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 
 export type ClerkDoubleUser = {
   fullName?: string | null;
@@ -12,26 +12,55 @@ export type ClerkDoubleState = {
   isLoaded: boolean;
   isSignedIn: boolean;
   userId: string | null;
+  sessionId: string | null;
   user: ClerkDoubleUser | null;
   getToken: () => Promise<string | null>;
   signOut: (options?: { redirectUrl?: string }) => Promise<void>;
 };
 
+const listeners = new Set<() => void>();
+
+function emitClerk() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribeClerk(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 const initialState = (): ClerkDoubleState => ({
   isLoaded: true,
   isSignedIn: false,
   userId: null,
+  sessionId: null,
   user: null,
   getToken: async () => null,
   signOut: async () => undefined,
 });
 
-export const clerkDouble: { state: ClerkDoubleState; reset: () => void } = {
+export const clerkDouble: {
+  state: ClerkDoubleState;
+  reset: () => void;
+  setState: (patch: Partial<ClerkDoubleState>) => void;
+} = {
   state: initialState(),
   reset() {
     clerkDouble.state = initialState();
   },
+  setState(patch: Partial<ClerkDoubleState>) {
+    clerkDouble.state = { ...clerkDouble.state, ...patch };
+    emitClerk();
+  },
 };
+
+function getClerkSnapshot() {
+  return clerkDouble.state;
+}
 
 export function ClerkProviderStub({ children }: { children?: ReactNode; publishableKey?: string }) {
   return children;
@@ -70,18 +99,21 @@ function stableSignOut(options?: { redirectUrl?: string }) {
 }
 
 export function useAuthStub() {
+  const state = useSyncExternalStore(subscribeClerk, getClerkSnapshot, getClerkSnapshot);
   return {
-    isLoaded: clerkDouble.state.isLoaded,
-    isSignedIn: clerkDouble.state.isSignedIn,
-    userId: clerkDouble.state.userId,
+    isLoaded: state.isLoaded,
+    isSignedIn: state.isSignedIn,
+    userId: state.userId,
+    sessionId: state.sessionId,
     getToken: stableGetToken,
     signOut: stableSignOut,
   };
 }
 
 export function useUserStub() {
+  const state = useSyncExternalStore(subscribeClerk, getClerkSnapshot, getClerkSnapshot);
   return {
-    isLoaded: clerkDouble.state.isLoaded,
-    user: clerkDouble.state.user,
+    isLoaded: state.isLoaded,
+    user: state.user,
   };
 }

@@ -39,6 +39,7 @@ local ``_FROM_RE`` duplicate.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import pathlib
@@ -1275,6 +1276,104 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
         for a in assignments
     )
     assert "RECOGNITION_SECRET_BACKEND=env" in text
+
+
+def test_dev_fir_mint_recipe_is_paste_safe() -> None:
+    """AUTHPIPE-1: mint recipe in .env.fir.example must paste into bash [rg-006].
+
+    Angle-bracket placeholders (`<uuid>`, `<url>`) are shell redirects. Concrete
+    SITE_URL/T values must match derive_tenant_id_from_site_url, and
+    FIR23-STACK-task-plan.md must not still claim auth-off / no tenant key / a
+    private models dir [SECD-05][REF-09][SEC-01].
+    """
+    env_fir = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / ".env.fir.example"
+    )
+    assert env_fir.is_file(), f"expected {env_fir} to exist"
+    text = env_fir.read_text(encoding="utf-8")
+    recipe_lines = [
+        line for line in text.splitlines() if line.startswith("#   ")
+    ]
+    assert recipe_lines, (
+        "apps/prototype-description-service/.env.fir.example must contain "
+        "indented recipe command lines (rg-006)"
+    )
+    placeholder = re.compile(r"<[A-Za-z][A-Za-z0-9_-]*>")
+    for line in recipe_lines:
+        match = placeholder.search(line)
+        assert match is None, (
+            "apps/prototype-description-service/.env.fir.example recipe line "
+            f"{line!r} contains angle-bracket placeholder {match.group(0)!r} "
+            "(rg-006)"
+        )
+
+    site_url = None
+    tenant_id = None
+    for line in recipe_lines:
+        site_match = re.search(r"SITE_URL=(.+)$", line)
+        if site_match:
+            site_url = site_match.group(1)
+        tenant_match = re.search(r"(?:^|#\s+)T=(.+)$", line)
+        if tenant_match:
+            tenant_id = tenant_match.group(1)
+    assert site_url and tenant_id, (
+        "apps/prototype-description-service/.env.fir.example recipe must pin "
+        "SITE_URL= and T= (rg-006)"
+    )
+    derive_path = REPO_ROOT / "scripts" / "deploy" / "_derive_tenant_id.py"
+    spec = importlib.util.spec_from_file_location(
+        "_derive_tenant_id", derive_path
+    )
+    assert spec is not None and spec.loader is not None, (
+        f"scripts/deploy/_derive_tenant_id.py failed to load (SEC-01): {derive_path}"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    derived = module.derive_tenant_id_from_site_url(site_url)
+    assert derived == tenant_id, (
+        "apps/prototype-description-service/.env.fir.example T= must equal "
+        f"derive_tenant_id_from_site_url({site_url!r})={derived!r} (SEC-01)"
+    )
+
+    assert any(
+        'tenant create --tenant "$T" --site-url "$SITE_URL"' in line
+        for line in recipe_lines
+    ), (
+        "apps/prototype-description-service/.env.fir.example must mint the "
+        'tenant with tenant create --tenant "$T" --site-url "$SITE_URL" '
+        "(SECD-05)"
+    )
+    assert any(
+        'create --tenant "$T" < /dev/null' in line and "tenant create" not in line
+        for line in recipe_lines
+    ), (
+        "apps/prototype-description-service/.env.fir.example must mint a key "
+        'with create --tenant "$T" < /dev/null (SECD-05)'
+    )
+
+    plan = (
+        REPO_ROOT
+        / "docs"
+        / "tasks"
+        / "fir23-stack"
+        / "FIR23-STACK-task-plan.md"
+    )
+    plan_text = plan.read_text(encoding="utf-8")
+    assert "RECOGNITION_AUTH_ENABLED=false" not in plan_text, (
+        "docs/tasks/fir23-stack/FIR23-STACK-task-plan.md must not claim "
+        "RECOGNITION_AUTH_ENABLED=false (SECD-05)"
+    )
+    assert "dev-fir-models" not in plan_text, (
+        "docs/tasks/fir23-stack/FIR23-STACK-task-plan.md must not point at "
+        "dev-fir-models (REF-09)"
+    )
+    assert "no tenant key" not in plan_text.lower(), (
+        "docs/tasks/fir23-stack/FIR23-STACK-task-plan.md must not claim "
+        "no tenant key (SECD-05)"
+    )
 
 
 def _run_with_deadline_stdin_probe(script_text: str, tmp_path: pathlib.Path) -> subprocess.CompletedProcess:

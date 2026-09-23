@@ -168,7 +168,7 @@ Each member task below should be promoted to a full plan in `docs/tasks/15.0/` o
   5. `psql -h 127.0.0.1 -U context -d postgres -c 'DROP DATABASE IF EXISTS context_alt_text_service;'` — kills the legacy DB so no future env drift can re-bind to it locally.
   6. Restart the description service; confirm via `pg_stat_activity` that the only DB it touches is `alt_context_service`.
   7. Tick the local items in the rename doc's Consolidated Triage Checklist. Leave the VM checkbox open and re-target it from a follow-up operator runbook (E16-1a-vm) once the local process is proven.
-- **VM follow-up (E16-1a-vm, deferred):** updates `/opt/acx-backend/<env>/secrets/.env` for prod/staging/dev, restarts the env compose stack, drops the legacy DB on each VM. Runs only after the local pipeline is observed clean end-to-end. No code in this monorepo depends on the VM step landing first.
+- **VM follow-up (E16-1a-vm, deferred):** updates `/opt/acx-backend/<env>/.env` for prod/staging/dev, restarts the env compose stack, drops the legacy DB on each VM. Runs only after the local pipeline is observed clean end-to-end. No code in this monorepo depends on the VM step landing first.
 - **Risk:** Low — greenfield policy applies; no prod data to preserve.
 - **Done when (local):** No local process is connected to `context_alt_text_service`; the legacy DB is dropped locally; the rename doc's local checklist items are ticked. **Done when (VM follow-up):** same conditions verified on each VM; rename tech-debt doc archived.
 
@@ -314,7 +314,7 @@ Run only after the local pipeline is observed clean end-to-end (a 100-item scan 
 ```bash
 # For each VM env (prod | staging | dev):
 #   - SSH to the VM
-#   - Update /opt/acx-backend/<env>/secrets/.env: POSTGRES_DB=alt_context_service (+ DSN strings)
+#   - Update /opt/acx-backend/<env>/.env: POSTGRES_DB=alt_context_service (+ DSN strings)
 #   - docker compose -f docker-compose.env.yml down
 #   - sudo rm -rf /opt/acx-backend/data/<env>-pgdata/*   # discards legacy data — confirm before running
 #   - docker compose -f docker-compose.env.yml up -d

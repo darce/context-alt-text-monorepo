@@ -1228,7 +1228,8 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
 
     Pins an independent :dev-fir image tag (ACX_IMAGE_TAG=dev-fir), promoted
     from :dev, plus PGVECTOR_DIM=128 and face_pipeline models dir so the
-    three-way embedding guard can pass.
+    three-way embedding guard can pass. Auth is pinned ON because the vhost
+    is public (AUTHPIPE-1).
     """
     env_fir = (
         REPO_ROOT
@@ -1252,7 +1253,6 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
     )
     assert "POSTGRES_USER=acx_dev_fir" in text
     assert "POSTGRES_DB=alt_context_dev_fir" in text
-    assert "RECOGNITION_AUTH_ENABLED=false" in text
     assert "RECOGNITION_RUNTIME_MODE=production" in text
     # DEV tier: no vault assignment keys (header may mention vault is unused).
     assignments = [
@@ -1260,6 +1260,15 @@ def test_dev_fir_env_example_pins_sface_128d_contract() -> None:
         for line in text.splitlines()
         if "=" in line.split("#", 1)[0]
     ]
+    # AUTHPIPE-1: fir.dev.api is a public vhost and FIRDV-1 readiness refuses
+    # auth_disabled (validate_fir_dev_runtime.py), so auth must be ON.
+    auth_values = [
+        a.split("=", 1)[1].strip().lower()
+        for a in assignments
+        if a.startswith("RECOGNITION_AUTH_ENABLED=")
+    ]
+    assert auth_values == ["true"], auth_values
+    assert "python -m scripts.manage_api_keys --env prod create --tenant" in text
     assert not any(a.startswith("RECOGNITION_VAULT_SECRET_MAP=") for a in assignments)
     assert not any(
         a.startswith("RECOGNITION_SECRET_BACKEND=") and "oci_vault" in a

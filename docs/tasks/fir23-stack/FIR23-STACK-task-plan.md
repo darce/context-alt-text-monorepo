@@ -7,7 +7,7 @@
 > **Superseded auth choice (AUTHPIPE-1, 2026-09-22):** `fir.dev.api.altcontext.com` is a public
 > vhost, so `acx-dev-fir` runs `RECOGNITION_AUTH_ENABLED=true` and the fir site needs a tenant
 > key minted in the dev-fir stack (commands in `apps/prototype-description-service/.env.fir.example`).
-> The "auth disabled ⇒ no tenant key" lines below are historical.
+> The stack identity and slices below are updated to match (AUTHPIPE-1).
 
 ## Objective
 
@@ -55,7 +55,7 @@ Supersedes the dropped per-request header design (decision #2947).
   per-stack, `external: true`). Caddyfile vhost: `fir.dev.api.altcontext.com { reverse_proxy dev-fir-api:8000 }`
   (alongside existing `dev.api.altcontext.com { reverse_proxy dev-api:8000 }`).
 - `dev` tier secrets: `/opt/acx-backend/dev/.env` uses **inline plaintext** `POSTGRES_DSN`,
-  `RECOGNITION_AUTH_ENABLED=false`, **no vault** (only prod/staging use `oci_vault`).
+  **no vault** (only prod/staging use `oci_vault`). `dev.api.altcontext.com` is public too, so dev's auth must be on (operator follow-up).
 - VM disk: `/` 193G, 72G avail (ample).
 
 ## Canonical stack identity (single source of truth)
@@ -63,9 +63,9 @@ Supersedes the dropped per-request header design (decision #2947).
 - `ACX_ENV=dev-fir` · `COMPOSE_PROJECT_NAME=acx-dev-fir` · `ACX_IMAGE_TAG=dev-fir` (independent tag promoted from `:dev`)
 - containers: `acx-dev-fir-postgres-1`, `acx-dev-fir-api-1`, `acx-dev-fir-worker-1` · api alias `dev-fir-api`
 - network: `acx-dev-fir-net` (OWN network, `external`) · remote dir `/opt/acx-backend/dev-fir`
-- data: `ACX_PGDATA_PATH=/opt/acx-backend/data/dev-fir-pgdata`, `ACX_MODELS_PATH=/opt/acx-backend/data/dev-fir-models`
+- data: `ACX_PGDATA_PATH=/opt/acx-backend/data/dev-fir-pgdata`, `ACX_MODELS_PATH=/opt/acx-backend/data/dev-models` (shared with dev)
 - POSTGRES_USER=`acx_dev_fir` POSTGRES_DB=`alt_context_dev_fir`
-- `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline` · `PGVECTOR_DIM=128` · `RECOGNITION_AUTH_ENABLED=false`
+- `RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline` · `PGVECTOR_DIM=128` · `RECOGNITION_AUTH_ENABLED=true` (public vhost; tenant key minted in the dev-fir stack DB)
 - `RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline` (under the mounted `ACX_MODELS_PATH`)
 - ingress: `fir.dev.api.altcontext.com → dev-fir-api:8000`
 
@@ -89,7 +89,7 @@ Supersedes the dropped per-request header design (decision #2947).
   forward). Previous-digest rollback: `recognition-service.sh rollback dev-fir <id>`.
 - New `apps/prototype-description-service/.env.fir.example` = the "Canonical stack identity" above, incl.
   **`RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline`** (BR-01) and inline dev-style secrets,
-  auth disabled, **no vault, no tenant key** (BR-05).
+  auth **enabled** (public vhost), **no vault**; the fir site's tenant key is minted in the dev-fir stack (recipe in the template; supersedes BR-05).
 - Tests: extend shell/case coverage to include `dev-fir`; unknown env still fails closed.
 
 ### Slice 2 — VM provisioning + deploy (INFRA · operator + orchestrator)
@@ -97,7 +97,7 @@ Supersedes the dropped per-request header design (decision #2947).
 Ordered (gates matter):
 1. Create `/opt/acx-backend/dev-fir/.env` from `.env.fir.example` (inline secrets, fir DB password).
 2. Ensure models land where `RECOGNITION_FACE_PIPELINE_MODELS_DIR=/data/cache/face_pipeline` reads them
-   (BR-01): `fetch_face_pipeline_models.py --dest /opt/acx-backend/data/dev-fir-models/face_pipeline`
+   (BR-01): `fetch_face_pipeline_models.py --dest /opt/acx-backend/data/dev-models/face_pipeline`
    is **mandatory** — `preflight_remote_face_pipeline_models` / boot smoke only verify/probe
    existing weights; neither provisions them.
 3. **Operator adds DNS A/CNAME record `fir.dev.api.altcontext.com → VM`; CONFIRM it resolves** (BR-07)
@@ -120,12 +120,12 @@ Ordered (gates matter):
 ### Slice 3 — fir LocalWP wiring + benchmark (ORCHESTRATION)
 
 - fir site (`/Volumes/Butter/WP/fir`, plugin symlinked): `wp plugin activate alt-context` (LocalWP shell).
-- Set `acx_recognition_url=https://fir.dev.api.altcontext.com`; **auth disabled ⇒ no tenant key** (mirror dev) (BR-05).
+- Set `acx_recognition_url=https://fir.dev.api.altcontext.com` and paste the fir tenant key minted in the dev-fir stack (tenant `fa22a16e-ec19-5e04-a49c-1f884914c945` for `http://localhost:10028`; recipe in `.env.fir.example`).
 - Scan the SAME image set on both stacks → compare curated clusters in the two Workbenches.
 
 ## Open threads
 
 - Edge ownership: deploy driver (`converge_runtime`) owns Caddy/net convergence gated by `ACX_EDGE_APPLY=1`;
   DNS A/CNAME for `fir.dev.api.altcontext.com` remains operator-manual.
-- Model disk: SFace 38.7MB + YuNet ~0.2MB into dev-fir-models.
+- Model disk: SFace 38.7MB + YuNet ~0.2MB into `/opt/acx-backend/data/dev-models/face_pipeline`, with `LICENSE.yunet` / `LICENSE.sface` beside them (the loader pins both).
 - `do_status` cosmetic addition (BR-08) optional but included.

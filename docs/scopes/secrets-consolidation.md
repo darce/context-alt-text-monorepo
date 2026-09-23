@@ -18,6 +18,8 @@ Reign in scattered `.env`/secret authentication across the three services so tha
 
 ## Assessment — the real problem
 
+> **Historical (2026-07-08 intake).** Phases 1–3 shipped: `RECOGNITION_ALLOWED_API_KEYS` was removed (option (a), decision #1882) and tenant keys are DB-only. Current state lives in the [inventory](../../apps/prototype-description-service/docs/secrets-inventory.md).
+
 There is not one secrets problem but **five trust domains** smeared across files with no ownership map. Consolidation ≠ one file (a DB password ≠ a human login ≠ a machine key); it = **one documented owner per secret + one fetch mechanism + one manager for prod**.
 
 | # | Trust domain | Secrets | Canonical source (target) | Scattered today |
@@ -56,7 +58,7 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
 2. **Delete dead root `.env`.**
 3. **One documented `.env.example` per deployable** — each var annotated with domain + source + consumer.
 4. **Load-time validation (rg-008):** each service fails fast with a clear message on a missing *required* secret; no silent empty defaults.
-5. **Decide the fate of `RECOGNITION_ALLOWED_API_KEYS` (a dev-only bypass, not prod drift** — already blocked in prod per `recognition/config/security.py:103,114` and `api/main.py:127-130`**).** Choose: **(a) remove it** — devs/CI must mint a real key via `/admin`; costs local ergonomics but leaves one code path; or **(b) keep it, hard-gated to non-prod, documented as a dev bypass.** If (a): expand→contract — enumerate active DB keys via the `/admin` list / `api_key_repository`, grep the static-list consumers (`recognition/config/security.py:61` `dev_api_keys` default_factory + `api/main.py:127-130`), confirm no prod consumer, then delete the config field. Prod bootstrap is unaffected (`RECOGNITION_ADMIN_TOKEN` mints the first key). **Recommendation: (a)**, adding a `make dev-mint-key` helper to offset the ergonomics loss.
+5. **`RECOGNITION_ALLOWED_API_KEYS` — done, option (a) enacted.** The allowlist is removed (decision #1882); tenant keys are DB-only and devs/CI mint a real key. There is no env-var bypass in any mode.
 6. **One onboarding command** (`make dev-setup`): copies examples, prompts for values, mints a dev key via `/admin` if (a) is chosen.
 7. **Document the other in-scope secret classes (doc-only — not relocated into app auth):** test creds (`ACX_E2E_WP_ADMIN_*`) — confirm `.env.local` is gitignored, ship `.env.local.example`; demo/human accounts (`WP_ADMIN_*`, `acx-demo-admin`) — record ownership (WordPress user store; demo-bootstrap-only) and confirm never committed. A human login ≠ a machine key, so consolidation here = documentation + gitignore verification, not merging them into the key system.
 

@@ -1,11 +1,12 @@
 """Guard: non-demo backend docs must not point at stale secrets/.env paths.
 
 Every non-demo backend stack (prod, staging, dev, dev-fir) reads exactly one
-env file, `/opt/acx-backend/<env>/.env` (regular file, 0600). Deploy rewrites
-that path with os.replace, so a `.env -> secrets/.env` symlink does not
-survive and `/opt/acx-backend/<env>/secrets/.env` is a stale copy nothing
-reads [REF-09]. Operator docs that still name the stale path send people to
-a dead file [CARD-07]. Demo is the exception and stays as
+env file, `/opt/acx-backend/<env>/.env` (regular file, 0600). Deploy opens
+that path with O_NOFOLLOW and refuses a symlink (the deploy aborts; convert
+a legacy `.env -> secrets/.env` link to a regular 0600 file first), so
+`/opt/acx-backend/<env>/secrets/.env` is a stale copy nothing reads
+[REF-09]. Operator docs that still name the stale path send people to a
+dead file [CARD-07]. Demo is the exception and stays as
 `/opt/acx-backend/demo/secrets/.env`.
 """
 
@@ -17,18 +18,15 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-STALE = re.compile(
-    r"/opt/acx-backend/(?:(?:prod|staging|dev|dev-fir|<env>)/)?secrets/\.env"
-)
+STALE = re.compile(r"/opt/acx-backend/(?:(?:prod|staging|dev|dev-fir|<env>)/)?secrets/\.env")
 
 SCAN_ROOTS = (
     "docs/runbooks",
     "infra",
     "apps/prototype-description-service",
-    "docs/tasks/15.0/E15-29-public-demo-go-live-task-plan.md",
+    "docs/tasks",
     ".gitignore",
 )
 
@@ -57,8 +55,6 @@ SKIP_PARTS = {
     ".mypy_cache",
     ".ruff_cache",
 }
-# Guarded by scripts/test_secrets_inventory_doc.py (sibling lane).
-EXCLUDED = frozenset({"apps/prototype-description-service/docs/secrets-inventory.md"})
 
 
 def _is_text_file(path: Path) -> bool:
@@ -113,8 +109,6 @@ def _candidate_relpaths() -> list[str]:
 def _iter_scan_files() -> list[Path]:
     files: list[Path] = []
     for rel in _candidate_relpaths():
-        if rel in EXCLUDED:
-            continue
         path = REPO_ROOT / rel
         if not path.is_file():
             continue
@@ -172,11 +166,14 @@ def test_scan_scope_is_not_vacuous() -> None:
 
 
 def test_prod_admin_token_docs_point_at_vault() -> None:
-    key_mgmt = (REPO_ROOT / "docs/runbooks/key-management.md").read_text(
-        encoding="utf-8", errors="replace"
-    )
-    admin_keys = (REPO_ROOT / "docs/runbooks/admin-tenant-keys.md").read_text(
-        encoding="utf-8", errors="replace"
-    )
+    key_mgmt = (REPO_ROOT / "docs/runbooks/key-management.md").read_text(encoding="utf-8", errors="replace")
+    admin_keys = (REPO_ROOT / "docs/runbooks/admin-tenant-keys.md").read_text(encoding="utf-8", errors="replace")
     assert "oci_vault" in key_mgmt
     assert "oci_vault" in admin_keys
+
+
+def test_guard_runs_in_test_scripts() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    test_scripts = makefile.split("\ntest-scripts:", 1)[1].split("\n\n", 1)[0]
+    assert "scripts/test_backend_env_file_refs.py" in test_scripts
+    assert "scripts/test_secrets_inventory_doc.py" in test_scripts

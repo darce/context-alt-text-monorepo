@@ -35,7 +35,7 @@ The recognition database uses the legacy name `context_alt_text` / `context_alt_
 
 ### VM environments (3 envs × 3 vars)
 
-For each of `prod`, `staging`, `dev` at `/opt/acx-backend/<env>/secrets/.env`:
+For each of `prod`, `staging`, `dev` at `/opt/acx-backend/<env>/.env`:
 
 ```
 POSTGRES_DB=alt_context_service                                              # was context_alt_text_service

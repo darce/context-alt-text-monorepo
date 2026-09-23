@@ -83,8 +83,12 @@ need to browse/list/revoke keys, and `make provision-customer` for a real custom
    ```
 
 2. Browse `http://localhost:8001/admin/` (trailing slash). Basic auth:
-   username anything, password = the **prod** `RECOGNITION_ADMIN_TOKEN` from
-   `/opt/acx-backend/prod/secrets/.env` on the VM. (The token in your laptop's
+   username anything, password = the **prod** `RECOGNITION_ADMIN_TOKEN`. Prod
+   runs `RECOGNITION_SECRET_BACKEND=oci_vault`, so the live value is the OCI
+   Vault secret mapped as `RECOGNITION_ADMIN_TOKEN` in prod's
+   `RECOGNITION_VAULT_SECRET_MAP` (`infra/oci/vault-instance-principal-runbook.md`
+   § 1); a token line in any prod env file is ignored. `make admin-oci-mint`
+   needs no token at all. (The token in your laptop's
    `apps/prototype-description-service/.env` is the *local* console's token —
    it will be rejected here, by design.)
 3. Create the tenant: fresh UUID + the site URL (e.g. `http://localhost:10010`
@@ -227,7 +231,7 @@ selects the DB (`local` default; `prod` for hosted).
 
 | Symptom | Likely cause |
 | --- | --- |
-| Prod `/admin` Basic auth rejects your token | You supplied the **local** `.env` token to the **prod** console (tunnel `:8001`). Fetch the prod token from `/opt/acx-backend/prod/secrets/.env` on the VM. |
+| Prod `/admin` Basic auth rejects your token | You supplied the **local** `.env` token to the **prod** console (tunnel `:8001`). Prod reads its token from OCI Vault (`oci_vault` backend), not from an env file; or skip the console with `make admin-oci-mint`. |
 | Settings "API key rejected", whoami 401/403 | Key minted in a different environment's DB than the service being called — or orphaned by a prod DB reset. Re-mint on the correct track. |
 | Pasting a key in Settings has no effect | `ACX_RECOGNITION_API_KEY` (or `_URL`) constant is defined; constants override options. Clear the defines or manage via constants consistently. |
 | Local console mints fine but remote calls still 403 | Working as designed — local mints are Track 2 fixtures; the remote service has never heard of them. Mint on Track 1. |

@@ -4,6 +4,11 @@
 
 > Rev 2 — incorporates planning-review fixes for findings FIR23-STACK-BR-01..08.
 
+> **Superseded auth choice (AUTHPIPE-1, 2026-09-22):** `fir.dev.api.altcontext.com` is a public
+> vhost, so `acx-dev-fir` runs `RECOGNITION_AUTH_ENABLED=true` and the fir site needs a tenant
+> key minted in the dev-fir stack (commands in `apps/prototype-description-service/.env.fir.example`).
+> The "auth disabled ⇒ no tenant key" lines below are historical.
+
 ## Objective
 
 Stand up `acx-dev-fir`, a profile-pinned recognition backend running the `face_pipeline`

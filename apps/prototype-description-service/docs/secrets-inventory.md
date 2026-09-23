@@ -34,7 +34,7 @@ Columns: **domain** · **owner** · **source-of-truth** · **consumer** · **pro
 | `DB_NAME` | infra | description-service / DB ops | service-dir `.env` | `db/settings.py` (`_resolved_db_name`, canonicalize) | compose `POSTGRES_DB` / Vault |
 | `APP_PGUSER` | infra | description-service / DB ops | service-dir `.env` (alias of `PGUSER` for shell scripts) | `scripts/reset_dev_db.sh`, `scripts/db_shell.sh` fallback | same as `PGUSER` |
 | `APP_PGPASSWORD` | infra | description-service / DB ops | service-dir `.env` (alias of `PGPASSWORD`) | same shell scripts | same as `PGPASSWORD` |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | infra | OCI deploy | `/opt/acx-backend/<env>/.env` (template: `.env.prod.example`) | docker-compose Postgres bootstrap | `POSTGRES_PASSWORD` prod: written by the `ExecStartPre` Vault fetch |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | infra | OCI deploy | `/opt/acx-backend/<env>/.env` (template: `.env.prod.example`) | docker-compose Postgres bootstrap | `POSTGRES_PASSWORD` is init-only (empty pgdata); the `ExecStartPre` Vault fetch ships commented and no env runs it |
 | `POSTGRES_DSN` / `POSTGRES_SYNC_DSN` | infra | description-service / OCI deploy | service `.env` or `/opt/acx-backend/<env>/.env` | `db/settings.py:get_database_settings` | OCI Vault (live; mapped in `RECOGNITION_VAULT_SECRET_MAP`, blank in prod `.env`) |
 | `MARIADB_*` / `WORDPRESS_DB_*` | infra | demo stack ops | `infra/oci/demo` secrets `.env` (template: `infra/oci/demo/.env.example`) | demo compose / WordPress container | VM secrets only (chmod 600); never commit |
 
@@ -84,12 +84,15 @@ landed). Tenant keys are DB-only (`api_keys`, hash stored, raw shown once). Do
 when `RECOGNITION_PORTAL_ENABLED` is truthy (`api/main.py`). Clerk settings are
 config, not secrets (`ACX_CLERK_ISSUER`, `ACX_CLERK_JWKS_URL`,
 `ACX_CLERK_AUTHORIZED_PARTIES`): session JWTs are verified against Clerk's
-public JWKS, no backend Clerk secret. `POLAR_WEBHOOK_SECRET` (required) and
-`POLAR_ACCESS_TOKEN` are read through the secret provider; if missing,
-`create_app` raises `portal and billing composition requires: POLAR_WEBHOOK_SECRET`.
-On prod (`oci_vault`) both must be mapped in `RECOGNITION_VAULT_SECRET_MAP`
-before the flag turns on, or prod does not boot. No `app.altcontext.com` vhost
-exists in the Caddyfile yet. APP-1 keeps local `api_keys` as the key store
+public JWKS, no backend Clerk secret. `POLAR_WEBHOOK_SECRET` and
+`POLAR_ACCESS_TOKEN` are read through the secret provider. Only the webhook
+secret is boot-checked: if it is missing, `create_app` raises `portal and
+billing composition requires: POLAR_WEBHOOK_SECRET`. A missing
+`POLAR_ACCESS_TOKEN` does not stop boot; the first Polar API call fails
+instead (fail-late). On prod (`oci_vault`) map both in
+`RECOGNITION_VAULT_SECRET_MAP` before the flag turns on. No
+`app.altcontext.com` vhost exists in the Caddyfile yet. APP-1 keeps local
+`api_keys` as the key store
 (Clerk-managed keys are out of scope):
 [app-altcontext-beta-clerk-polar-scope.md](../../../docs/scopes/app-altcontext-beta-clerk-polar-scope.md);
 E16-7 [e16-7-tenant-selfserve-key-panel-scope.md](../../../docs/scopes/e16-7-tenant-selfserve-key-panel-scope.md).
@@ -137,7 +140,7 @@ reads, so do not edit them ([REF-09] mirrored state drifts).
 
 | Env | Template | Secret backend | Secrets held in the file |
 |---|---|---|---|
-| `prod` | `.env.prod.example` | `oci_vault` (live) | OCID map only; `POSTGRES_PASSWORD` filled by the `ExecStartPre` fetch |
+| `prod` | `.env.prod.example` | `oci_vault` (live) | OCID map only; `POSTGRES_PASSWORD` is not Vault-fetched (the hook ships commented) and is needed only to init an empty pgdata |
 | `staging`, `dev` | `.env.prod.example` (change identity block, `RECOGNITION_SECRET_BACKEND=env`) | `env` | `POSTGRES_PASSWORD`, DSNs, `RECOGNITION_ADMIN_TOKEN` if `/admin` is on |
 | `dev-fir` | `.env.fir.example` | `env` (Vault opt-in block in the template) | `POSTGRES_PASSWORD` and the two DSNs (one value, three places) |
 
@@ -177,9 +180,11 @@ must be unique within the vault, e.g. `dev-fir-pg-password` and
 `dev-fir-admin-token`. Put their OCIDs in that env's
 `RECOGNITION_VAULT_SECRET_MAP` and set `RECOGNITION_SECRET_BACKEND=oci_vault`.
 Boot requires **both** `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` even when
-`/admin` is off (`shared/secrets.py:validate_oci_vault_boot`). Blank the DSNs,
-then enable the `ExecStartPre` fetch with that env's `--secret-name`. Never
-reuse prod's OCIDs.
+`/admin` is off (`shared/secrets.py:validate_oci_vault_boot`). Blank the DSNs.
+Keep `POSTGRES_PASSWORD` in that env's regular `.env` until its pgdata is
+initialized: the `ExecStartPre` fetch ships commented and every deploy
+re-installs the unit from the template, so uncommenting it on the VM is
+reverted. Never reuse prod's OCIDs.
 
 prod, staging, dev and dev-fir all run on the one acx-backend VM and share
 its instance principal (dynamic group `acx-backend-dg`); the live

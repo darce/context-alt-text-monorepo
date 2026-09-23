@@ -237,7 +237,7 @@ admin-oci:
 # Mint a prod API key for a tenant WITHOUT bringing any secret to the laptop. Runs the
 # canonical CLI inside the prod `api` container over the tailnet, so the container's own
 # DB creds do the write — the /admin HTTP route (and its RECOGNITION_ADMIN_TOKEN) are not
-# involved at all, and the prod token stays in /opt/acx-backend/prod/secrets/.env where it
+# involved at all, and the prod token stays in OCI Vault (prod runs oci_vault) where it
 # belongs [WEB-16: secrets only in a secret store/env; SEC-04: least-privilege; SEC-01: the
 # laptop<->VM SSH is a trust boundary — don't cross it with the token]. The raw key prints
 # exactly once (api_key=…); copy it into the plugin Settings. Automated form of the

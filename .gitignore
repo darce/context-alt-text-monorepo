@@ -62,7 +62,7 @@ literature/process/product-deploy-agents/
 # Env files: never commit populated secrets. No repo-root .env is used or
 # tracked — description-service loads only <service-dir>/.env via
 # db/settings.py:_load_env_file (ENV_FILE = Path(__file__).parents[1] / ".env").
-# Demo/prod secrets live under /opt/acx-backend/<env>/secrets/.env on the VM.
+# Backend env files: /opt/acx-backend/<env>/.env on the VM (demo: /opt/acx-backend/demo/secrets/.env).
 # WP Playwright creds: apps/prototype-wp-alt-context/.env.local (example shipped).
 .env
 .env.*

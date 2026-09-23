@@ -9,7 +9,7 @@
 #
 # Usage (manual / legacy only): docker compose -f docker-compose.prod.yml up -d
 # Requires a .env file in the project directory (same dir as this file).
-# On the VM: ln -s /opt/acx-backend/secrets/.env /opt/acx-backend/.env
+# On the VM: a regular file /opt/acx-backend/<env>/.env (0600), never a symlink to secrets/.env (REF-09).
 # Locally:   copy .env.prod.example to .env and fill in values.
 #
 # Secrets: with RECOGNITION_SECRET_BACKEND=oci_vault (prod), api/worker fetch

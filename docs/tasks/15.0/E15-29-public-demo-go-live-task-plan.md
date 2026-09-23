@@ -132,7 +132,7 @@ Run the merged E15-28 kit end-to-end after producing the clustering seed: Slice 
 
 **Goal**: demo stack live behind Caddy with TLS, plugin active, 100 images imported. (Reuses the E15-28 kit; no re-implementation.)
 
-- **CORS (operator-executed)**: append `https://<demo-host>` to `RECOGNITION_ALLOWED_ORIGINS` in `/opt/acx-backend/prod/secrets/.env` (comma-separated, scheme+host, no trailing slash); restart `acx-prod.service` per `infra/oci/README.md`. **Verify**: `systemctl status acx-prod` active, `curl -fsS -o /dev/null -w '%{http_code}' https://api.altcontext.com/health` == 200, demo-origin preflight returns the allow-origin header. Rollback in Rollback Strategy.
+- **CORS (operator-executed)**: append `https://<demo-host>` to `RECOGNITION_ALLOWED_ORIGINS` in `/opt/acx-backend/prod/.env` (comma-separated, scheme+host, no trailing slash); restart `acx-prod.service` per `infra/oci/README.md`. **Verify**: `systemctl status acx-prod` active, `curl -fsS -o /dev/null -w '%{http_code}' https://api.altcontext.com/health` == 200, demo-origin preflight returns the allow-origin header. Rollback in Rollback Strategy.
 - **Deploy (agent)**: `PLUGIN_ZIP=dist/alt-context-0.0.4.zip make deploy-demo`. This runs `sync-demo.sh`: rsync compose/bootstrap/seed/Caddy → create `acx-demo-net` → demo stack up → `bootstrap-wp.sh` (core install + plugin activate) → `caddy validate` + promote → recreate Caddy onto `acx-demo-net` → four-vhost smoke.
 - **Seed import (agent)**: on the VM, `cd /opt/acx-backend/demo && ./seed/import.sh` → 100 `wp media import`.
 - **Confirm constants in-container**: `docker compose -f docker-compose.demo.yml exec wordpress php -r "require '/var/www/html/wp-config.php'; var_export(ACX_RECOGNITION_URL);"` → `https://api.altcontext.com`.

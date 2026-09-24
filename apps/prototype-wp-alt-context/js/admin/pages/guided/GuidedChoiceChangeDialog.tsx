@@ -14,12 +14,14 @@ export interface GuidedChoiceChangeDialogProps {
   open: boolean;
   onChangeName: () => void;
   onKeepEdits: () => void;
+  onReturnFocus?: () => void;
 }
 
 export const GuidedChoiceChangeDialog = ({
   open,
   onChangeName,
   onKeepEdits,
+  onReturnFocus,
 }: GuidedChoiceChangeDialogProps): React.JSX.Element => {
   const keepEditsRef = useRef<HTMLButtonElement>(null);
 
@@ -40,6 +42,10 @@ export const GuidedChoiceChangeDialog = ({
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             keepEditsRef.current?.focus();
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            onReturnFocus?.();
           }}
         >
           <DialogTitle>{guidedCopy('name_change.title.public')}</DialogTitle>

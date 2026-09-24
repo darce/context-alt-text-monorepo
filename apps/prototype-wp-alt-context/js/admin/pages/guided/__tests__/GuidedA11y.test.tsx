@@ -94,6 +94,9 @@ const controlKey = (element: HTMLElement): string => {
 
 const photoStop = (photoKey: GuidedImageKey, label: string): string => `guided-photo-${photoKey}:${label}`;
 
+const stepButton = (step: 'context' | 'names' | 'draft' | 'apply'): HTMLElement =>
+  within(screen.getByTestId('guided-demo-stepper')).getByRole('button', { name: guidedCopy(`step.${step}`) });
+
 const indexOfStop = (stops: string[], needle: string): number => {
   const index = stops.findIndex((stop) => stop.includes(needle));
   if (index < 0) {
@@ -178,36 +181,26 @@ describe('GuidedA11y (W04)', () => {
     window.location.hash = '';
   });
 
-  it('would prove the page wrong if more than one h1 existed, the h1 were not page.title, or a photo step lacked its heading', () => {
+  it('would prove the admin page wrong if its page, four guide steps, or step headings were missing', () => {
     render(<GuidedPrototypePage />);
 
     const titles = screen.getAllByRole('heading', { level: 1 });
     expect(titles).toHaveLength(1);
     expect(titles[0]).toHaveTextContent(guidedCopy('page.title'));
 
-    const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
-    photoKeys.forEach((photoKey, index) => {
-      const photoStep = screen.getByTestId(`guided-photo-step-${photoKey}`);
-      expect(
-        within(photoStep).getByRole('heading', {
-          level: 3,
-          name: publicGuidedCopy('photo.count.public', { photoNumber: index + 1 }),
-        }),
-      ).toBeInTheDocument();
-      expect(
-        within(screen.getByTestId(`guided-faces-${photoKey}`)).getByRole('heading', {
-          level: 4,
-          name: publicGuidedCopy('names.heading.public'),
-        }),
-      ).toBeInTheDocument();
-      expect(
-        within(screen.getByTestId(`guided-description-step-${photoKey}`)).getByRole('heading', {
-          level: 4,
-          name: publicGuidedCopy('description.heading.public'),
-        }),
-      ).toBeInTheDocument();
-    });
-    expect(screen.queryByRole('heading', { name: guidedCopy('step.context') })).not.toBeInTheDocument();
+    const stepper = screen.getByTestId('guided-demo-stepper');
+    expect(stepper).toHaveTextContent(
+      guidedCopy('guide.current', { stepNumber: 1, stepTitle: guidedCopy('step.context') }),
+    );
+    for (const step of ['context', 'names', 'draft', 'apply'] as const) {
+      expect(stepButton(step)).toBeInTheDocument();
+    }
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.context') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.names') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.draft') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.apply') })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: publicGuidedCopy('photos.title.public') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: publicGuidedCopy('description.heading.public') })).not.toBeInTheDocument();
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
   });
@@ -292,6 +285,21 @@ describe('GuidedA11y (W04)', () => {
     const rightInclude = publicGuidedCopy('names.use.public', { name: 'Katy Perry' });
     const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
     expect(indexOfStop(stops, guidedCopy('page.case_study'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('guide.hide')),
+    );
+    expect(indexOfStop(stops, guidedCopy('guide.hide'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('step.context')),
+    );
+    expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('step.names')),
+    );
+    expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('step.draft')),
+    );
+    expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('step.apply')),
+    );
+    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(
       indexOfStop(stops, guidedCopy('page.reset')),
     );
     for (const photoKey of photoKeys) {
@@ -381,13 +389,19 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const firstNameQuestion = within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
-      name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
-    });
-    const focusFirstNameQuestion = vi.spyOn(firstNameQuestion, 'focus');
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
-    expect(document.activeElement).toBe(firstNameQuestion);
-    expect(focusFirstNameQuestion).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
+
+    await user.click(stepButton('names'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
+    await user.click(stepButton('draft'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.draft'));
+    await user.click(stepButton('apply'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.apply'));
 
     await chooseRadio(user, 'tribeca', 'left', 'include');
     await chooseRadio(user, 'tribeca', 'right', 'include');

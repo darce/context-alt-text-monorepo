@@ -10,6 +10,20 @@ namespace {
         }
     }
 
+    if (!function_exists('_block_template_render_title_tag')) {
+        function _block_template_render_title_tag(): void
+        {
+            echo '<title>ACX Demo</title>';
+        }
+    }
+
+    if (!function_exists('_block_template_viewport_meta_tag')) {
+        function _block_template_viewport_meta_tag(): void
+        {
+            echo '<meta name="viewport" content="width=device-width, initial-scale=1" />';
+        }
+    }
+
     if (!function_exists('wp_styles')) {
         function wp_styles(): object
         {
@@ -222,6 +236,26 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('data-acx-load-timeout="' . PublicGuideRoute::LOAD_TIMEOUT_MS . '"', $html);
         self::assertStringNotContainsString('get_header(', $templateSource);
         self::assertStringNotContainsString('get_footer(', $templateSource);
+    }
+
+    public function testEnabledOptionRemovesBlockThemeTitleAndViewportTags(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $template = $route->template_include('/theme/page.php');
+
+        add_action('wp_head', '_block_template_render_title_tag', 1);
+        add_action('wp_head', '_block_template_viewport_meta_tag', 0);
+        $html = $this->renderTemplate($template);
+
+        self::assertSame(1, substr_count($html, '<title>'));
+        self::assertSame(1, substr_count($html, 'name="viewport"'));
+        self::assertStringContainsString(
+            "<title>Demo: Names change a photo's meaning | AltContext</title>",
+            $html
+        );
     }
 
     public function testRequestWithoutRewriteMatchLeavesIncomingTemplateUntouched(): void

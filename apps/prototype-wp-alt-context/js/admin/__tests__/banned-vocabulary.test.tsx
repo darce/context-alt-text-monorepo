@@ -15,6 +15,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMockMutation, createMockQuery } from '../test-utils/mockHooks';
+import { PUBLIC_GUIDED_COPY } from '../guidedPrototype/publicGuideCopy';
 // Type-only (erased at compile time, so no vi.mock hoisting hazard). Annotating the
 // media stub against the real context type is what stops the next context-shape change
 // from silently rotting this mock the way S1c-2 did.
@@ -675,6 +676,17 @@ describe('banned vocabulary across js/admin pages', () => {
     );
     const text = collectReviewSurfaceText(container);
     expect(text.toLowerCase()).toContain('topology');
+  });
+
+  it('public guide copy avoids banned terms, percentages, and repeated alt-text wording', () => {
+    const values = Object.values(PUBLIC_GUIDED_COPY);
+    const altTextMentions = values.filter((text) => /\balt text\b/i.test(text));
+
+    for (const text of values) {
+      expect(text).not.toMatch(/\b(?:draft|roster|prototype)\b/i);
+      expect(text).not.toMatch(/\b\d+(?:\.\d+)?\s?%/);
+    }
+    expect(altTextMentions).toEqual([PUBLIC_GUIDED_COPY['entry.intro.public']]);
   });
 
   /**

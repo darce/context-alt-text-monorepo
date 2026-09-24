@@ -272,7 +272,7 @@ describe('SuggestionCard BR-41 group accname', () => {
 
     expect(screen.getByText(/3 faces/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show stored faces' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open cluster' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open face group' })).toBeInTheDocument();
   });
 
   it('opens the cluster separately from showing stored faces', async () => {
@@ -289,7 +289,7 @@ describe('SuggestionCard BR-41 group accname', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Open cluster' }));
+    await user.click(screen.getByRole('button', { name: 'Open face group' }));
 
     expect(onReview).toHaveBeenCalledTimes(1);
     expect(onReview).toHaveBeenCalledWith('cluster-1');

@@ -17,9 +17,15 @@ export const GUIDED_STEP = {
 } as const;
 
 export const GUIDED_NAME_CHOICE = {
-  UNDECIDED: 'undecided',
-  INCLUDE: 'include',
-  OMIT: 'omit',
+  UNANSWERED: 'unanswered',
+  USE: 'use',
+  LEAVE_UNNAMED: 'leave_unnamed',
+  /** @deprecated Use UNANSWERED. Kept for callers from the first walkthrough. */
+  UNDECIDED: 'unanswered',
+  /** @deprecated Use USE. Kept for callers from the first walkthrough. */
+  INCLUDE: 'use',
+  /** @deprecated Use LEAVE_UNNAMED. Kept for callers from the first walkthrough. */
+  OMIT: 'leave_unnamed',
 } as const;
 
 export const GUIDED_DRAFT_ORIGIN = {
@@ -43,6 +49,7 @@ export const GUIDED_OUTCOME = {
 export const GUIDED_MATCH_STRENGTH = {
   STRONG: 'strong',
   WEAK: 'weak',
+  SELF_ANCHOR: 'self_anchor',
 } as const;
 
 export type GuidedStep = (typeof GUIDED_STEP)[keyof typeof GUIDED_STEP];
@@ -57,6 +64,8 @@ export type GuidedImageKey = 'tribeca' | 'coachella';
 export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
 export const GUIDED_IMAGE_KEYS: readonly GuidedImageKey[] = ['tribeca', 'coachella'];
 export type GuidedFacePosition = 'left' | 'right';
+export type GuidedPhotoChoices = Record<GuidedFacePosition, GuidedNameChoice>;
+export type GuidedChoicesByImage = Record<GuidedImageKey, GuidedPhotoChoices>;
 export const GUIDED_SAMPLE_KEYS = ['none', 'katy-perry', 'justin-trudeau', 'both'] as const;
 export type GuidedSampleKey = (typeof GUIDED_SAMPLE_KEYS)[number];
 /** Backwards-compatible name for callers that still refer to draft keys. */
@@ -65,8 +74,13 @@ export type GuidedFaceSource = 'saved-run' | 'user-supplied';
 
 const GUIDED_DEFAULT_IMAGE_KEY: GuidedImageKey = 'tribeca';
 
+/**
+ * UX-12: Preserve the 0.6 threshold recorded by the 2026-09-10 production
+ * InsightFace buffalo_l run; match strengths below this value are weak.
+ */
 export const GUIDED_MATCH_THRESHOLD = 0.6;
 
+/** @deprecated Numeric similarity is for admin diagnostics; public guidance uses strength words. */
 export const formatGuidedSimilarity = (value: number): string => `${(value * 100).toFixed(1)}%`;
 
 export interface GuidedFaceBox {
@@ -127,6 +141,19 @@ export interface GuidedFace {
   source: GuidedFaceSource;
 }
 
+export const guidedMatchStrengthFor = (
+  similarity: number | null,
+  clusterAnchor: boolean,
+): GuidedMatchStrength | null => {
+  if (clusterAnchor) {
+    return GUIDED_MATCH_STRENGTH.SELF_ANCHOR;
+  }
+  if (similarity === null) {
+    return null;
+  }
+  return similarity >= GUIDED_MATCH_THRESHOLD ? GUIDED_MATCH_STRENGTH.STRONG : GUIDED_MATCH_STRENGTH.WEAK;
+};
+
 export interface GuidedProvenance {
   service: string;
   model: string;
@@ -178,6 +205,8 @@ export interface GuidedChoices {
 }
 
 export interface GuidedPendingChoiceChange {
+  /** Omitted for a legacy action that changes the same face on both photos. */
+  imageKey?: GuidedImageKey;
   position: GuidedFacePosition;
   choice: GuidedNameChoice;
 }
@@ -207,6 +236,8 @@ export interface GuidedImageDraft {
   draftVersion: number;
   previewedVersion: number | null;
   appliedAltText: string;
+  /** Completion state for this photo; undo history is scoped to this same record. */
+  outcome: GuidedOutcome;
   applicationHistory: GuidedApplicationRecord[];
   draftHistory: GuidedDraftRevision[];
 }
@@ -226,7 +257,10 @@ export interface GuidedNameCoverage {
 
 export interface GuidedDemoState {
   activeStep: GuidedStep;
+  /** Tribeca compatibility mirror. New work should read photoChoices by image. */
   choices: GuidedChoices;
+  /** The independent JT/KP name decisions for each photo. */
+  photoChoices: GuidedChoicesByImage;
   drafts: Record<GuidedImageKey, GuidedImageDraft>;
   draftText: string | null;
   draftOrigin: GuidedDraftOrigin;
@@ -354,7 +388,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       matchedPersonKey: 'justin-trudeau',
       similarity: 0.8938,
       isClusterAnchor: false,
-      strength: 'strong',
+      strength: guidedMatchStrengthFor(0.8938, false),
       source: 'saved-run',
     },
     {
@@ -365,7 +399,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       matchedPersonKey: 'katy-perry',
       similarity: 1,
       isClusterAnchor: true,
-      strength: 'strong',
+      strength: guidedMatchStrengthFor(1, true),
       note: 'Her face is turned a little to the side.',
       source: 'saved-run',
     },
@@ -377,7 +411,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       matchedPersonKey: 'justin-trudeau',
       similarity: 0.7015,
       isClusterAnchor: false,
-      strength: 'strong',
+      strength: guidedMatchStrengthFor(0.7015, false),
       source: 'saved-run',
     },
     {
@@ -388,7 +422,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'pressPhoto'> = {
       matchedPersonKey: 'katy-perry',
       similarity: 0.5666,
       isClusterAnchor: false,
-      strength: 'weak',
+      strength: guidedMatchStrengthFor(0.5666, false),
       source: 'saved-run',
     },
   ],
@@ -478,12 +512,32 @@ export const getGuidedFace = (scenario: GuidedScenario, faceId: string): GuidedF
   return face;
 };
 
+/** True when the saved face is the example used as its own cluster reference. */
+export const isClusterAnchor = (face: Pick<GuidedFace, 'isClusterAnchor'>): boolean => face.isClusterAnchor;
+
 export const createGuidedScenario = (): GuidedScenario => cloneScenario(GUIDED_SCENARIO_SEED);
 
 const cloneChoices = (choices: GuidedChoices): GuidedChoices => ({
   left: choices.left,
   right: choices.right,
 });
+
+const unansweredChoices = (): GuidedPhotoChoices => ({
+  left: GUIDED_NAME_CHOICE.UNANSWERED,
+  right: GUIDED_NAME_CHOICE.UNANSWERED,
+});
+
+const clonePhotoChoices = (choices: GuidedChoicesByImage): GuidedChoicesByImage => ({
+  tribeca: cloneChoices(choices.tribeca),
+  coachella: cloneChoices(choices.coachella),
+});
+
+const cloneChoicesByImageForLegacyState = (
+  state: Pick<GuidedDemoState, 'choices' | 'photoChoices'>,
+): GuidedChoicesByImage =>
+  state.photoChoices === undefined
+    ? { tribeca: cloneChoices(state.choices), coachella: cloneChoices(state.choices) }
+    : clonePhotoChoices(state.photoChoices);
 
 const cloneDraftRevision = (revision: GuidedDraftRevision): GuidedDraftRevision => ({
   ...revision,
@@ -508,6 +562,7 @@ const mirrorTribecaDraft = (state: GuidedDemoState): GuidedDemoState => {
   const tribeca = state.drafts[GUIDED_DEFAULT_IMAGE_KEY];
   return {
     ...state,
+    choices: cloneChoices(state.photoChoices?.[GUIDED_DEFAULT_IMAGE_KEY] ?? state.choices),
     draftText: tribeca.draftText,
     draftOrigin: tribeca.draftOrigin,
     draftStatus: tribeca.draftStatus,
@@ -522,6 +577,7 @@ const mirrorTribecaDraft = (state: GuidedDemoState): GuidedDemoState => {
 const cloneState = (state: GuidedDemoState): GuidedDemoState => ({
   ...state,
   choices: cloneChoices(state.choices),
+  photoChoices: cloneChoicesByImageForLegacyState(state),
   drafts: cloneDrafts(state.drafts),
   draftHistory: state.draftHistory.map(cloneDraftRevision),
   pendingChoiceChange: state.pendingChoiceChange === null ? null : { ...state.pendingChoiceChange },
@@ -529,7 +585,7 @@ const cloneState = (state: GuidedDemoState): GuidedDemoState => ({
   actionHistory: state.actionHistory.map((entry) => ({ ...entry })),
 });
 
-type GuidedImageDraftUpdater = (draft: GuidedImageDraft, imageKey?: GuidedImageKey) => GuidedImageDraft;
+type GuidedImageDraftUpdater = (draft: GuidedImageDraft, imageKey: GuidedImageKey) => GuidedImageDraft;
 type GuidedStateUpdater = (state: GuidedDemoState) => GuidedDemoState;
 
 const withImageDrafts = (
@@ -544,7 +600,9 @@ const withImageDrafts = (
     drafts[imageKey] = updateDraft(drafts[imageKey], imageKey);
   }
   next.drafts = drafts;
-  return mirrorTribecaDraft(updateState(next));
+  const updated = updateState(next);
+  updated.outcome = outcomeForPhotos(updated);
+  return mirrorTribecaDraft(updated);
 };
 
 const withImageDraft = (
@@ -554,10 +612,15 @@ const withImageDraft = (
   updateState: GuidedStateUpdater = (next) => next,
 ): GuidedDemoState => withImageDrafts(state, [imageKey], updateDraft, updateState);
 
-const outcomeFromApplicationState = (state: GuidedDemoState, fallback: GuidedOutcome): GuidedOutcome =>
-  GUIDED_IMAGE_KEYS.some((imageKey) => state.drafts[imageKey].applicationHistory.length > 0)
-    ? GUIDED_OUTCOME.APPLIED
-    : fallback;
+const outcomeForPhotos = (state: Pick<GuidedDemoState, 'drafts'>): GuidedOutcome => {
+  if (GUIDED_IMAGE_KEYS.some((imageKey) => state.drafts[imageKey].outcome === GUIDED_OUTCOME.APPLIED)) {
+    return GUIDED_OUTCOME.APPLIED;
+  }
+  if (GUIDED_IMAGE_KEYS.some((imageKey) => state.drafts[imageKey].outcome === GUIDED_OUTCOME.KEPT)) {
+    return GUIDED_OUTCOME.KEPT;
+  }
+  return GUIDED_OUTCOME.NOT_FINISHED;
+};
 
 const nextSequence = (state: GuidedDemoState): number => {
   const last = state.actionHistory.at(-1);
@@ -582,33 +645,75 @@ const withLocalAction = (
   ],
 });
 
-const personNameForPosition = (scenario: GuidedScenario, position: GuidedFacePosition): string => {
-  const face = scenario.faces.find((candidate) => candidate.position === position);
-  assertPresent(face, `face at ${position}`);
+const personNameForPosition = (
+  scenario: GuidedScenario,
+  position: GuidedFacePosition,
+  imageKey: GuidedImageKey,
+): string => {
+  const face = scenario.faces.find((candidate) => candidate.position === position && candidate.imageKey === imageKey);
+  assertPresent(face, `face at ${position} for ${imageKey}`);
   return getGuidedPerson(scenario, face.matchedPersonKey).name;
 };
 
 const choicesMatch = (left: GuidedChoices, right: GuidedChoices): boolean =>
   left.left === right.left && left.right === right.right;
 
-export const namesDecided = (state: GuidedDemoState): boolean =>
-  state.choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && state.choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
+export const choicesForPhoto = (
+  state: Pick<GuidedDemoState, 'choices' | 'photoChoices'>,
+  imageKey: GuidedImageKey,
+): GuidedPhotoChoices => state.photoChoices?.[imageKey] ?? state.choices;
 
-const canPreviewImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  namesDecided(state) &&
+export const bothNamesAnswered = (
+  state: Pick<GuidedDemoState, 'choices' | 'photoChoices'>,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): boolean => {
+  const choices = choicesForPhoto(state, imageKey);
+  return choices.left !== GUIDED_NAME_CHOICE.UNANSWERED && choices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
+};
+
+/** Backwards-compatible name for callers whose decision card is Tribeca. */
+export const namesDecided = (state: GuidedDemoState): boolean => bothNamesAnswered(state, GUIDED_DEFAULT_IMAGE_KEY);
+
+export const outcomeForPhoto = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedOutcome =>
+  state.drafts[imageKey].outcome;
+
+/** The shared outcome is complete only after each photo has been applied or kept. */
+export const outcomeReady = (state: GuidedDemoState): boolean =>
+  GUIDED_IMAGE_KEYS.every(
+    (imageKey) =>
+      state.drafts[imageKey].outcome === GUIDED_OUTCOME.APPLIED ||
+      state.drafts[imageKey].outcome === GUIDED_OUTCOME.KEPT,
+  );
+
+const canPreviewImageDraft = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): boolean =>
+  bothNamesAnswered(state, imageKey) &&
   draft.draftStatus === GUIDED_DRAFT_STATUS.READY &&
   draft.draftText !== null &&
   draft.draftText.trim().length > 0;
 
-const canApplyImageDraftWithoutPreview = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  canPreviewImageDraft(state, draft) && draft.draftText !== draft.appliedAltText && state.pendingChoiceChange === null;
+const canApplyImageDraftWithoutPreview = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): boolean =>
+  canPreviewImageDraft(state, draft, imageKey) && draft.draftText !== draft.appliedAltText && state.pendingChoiceChange === null;
 
 /** Public guide eligibility keeps the draft visible without requiring an admin preview action. */
-export const canApplyImageDraftPublic = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  canApplyImageDraftWithoutPreview(state, draft);
+export const canApplyImageDraftPublic = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): boolean => canApplyImageDraftWithoutPreview(state, draft, imageKey);
 
-const canApplyImageDraft = (state: GuidedDemoState, draft: GuidedImageDraft): boolean =>
-  canApplyImageDraftPublic(state, draft) && draft.previewedVersion === draft.draftVersion;
+const canApplyImageDraft = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+): boolean => canApplyImageDraftPublic(state, draft, imageKey) && draft.previewedVersion === draft.draftVersion;
 
 export const canPreview = (state: GuidedDemoState): boolean =>
   namesDecided(state) &&
@@ -632,20 +737,25 @@ export const canRestoreRevision = (state: GuidedDemoState, revisionId: string): 
   return choicesMatch(revision.choices, state.choices);
 };
 
-const canRestoreImageRevision = (state: GuidedDemoState, draft: GuidedImageDraft, revisionId: string): boolean => {
+const canRestoreImageRevision = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey,
+  revisionId: string,
+): boolean => {
   const revision = draft.draftHistory.find((entry) => entry.revisionId === revisionId);
   if (revision === undefined) {
     return false;
   }
-  return choicesMatch(revision.choices, state.choices);
+  return choicesMatch(revision.choices, choicesForPhoto(state, imageKey));
 };
 
 export const guidedDraftKeyFor = (choices: GuidedChoices): GuidedSampleKey | null => {
-  if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
+  if (choices.left === GUIDED_NAME_CHOICE.UNANSWERED || choices.right === GUIDED_NAME_CHOICE.UNANSWERED) {
     return null;
   }
-  const leftIncluded = choices.left === GUIDED_NAME_CHOICE.INCLUDE;
-  const rightIncluded = choices.right === GUIDED_NAME_CHOICE.INCLUDE;
+  const leftIncluded = choices.left === GUIDED_NAME_CHOICE.USE;
+  const rightIncluded = choices.right === GUIDED_NAME_CHOICE.USE;
   if (leftIncluded && rightIncluded) {
     return 'both';
   }
@@ -668,6 +778,22 @@ export const guidedSampleFor = (
     return null;
   }
   return scenario.samples[imageKey][key] ?? null;
+};
+
+/** Resolve the visible description using this photo's own two name decisions. */
+export const descriptionForPhoto = (
+  state: GuidedDemoState,
+  scenario: GuidedScenario,
+  imageKey: GuidedImageKey,
+): string | null => {
+  if (!bothNamesAnswered(state, imageKey)) {
+    return null;
+  }
+  const draft = state.drafts[imageKey];
+  if (draft.draftStatus !== GUIDED_DRAFT_STATUS.READY || draft.draftText === null) {
+    return guidedSampleFor(scenario, choicesForPhoto(state, imageKey), imageKey);
+  }
+  return draft.draftText;
 };
 
 export const guidedNameCoverage = (scenario: GuidedScenario): GuidedNameCoverage[] =>
@@ -699,7 +825,7 @@ const resolveSample = (
   choices: GuidedChoices,
   imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): Pick<GuidedDemoState, 'draftText' | 'draftOrigin' | 'draftStatus'> => {
-  if (choices.left === GUIDED_NAME_CHOICE.UNDECIDED || choices.right === GUIDED_NAME_CHOICE.UNDECIDED) {
+  if (choices.left === GUIDED_NAME_CHOICE.UNANSWERED || choices.right === GUIDED_NAME_CHOICE.UNANSWERED) {
     return {
       draftText: null,
       draftOrigin: GUIDED_DRAFT_ORIGIN.NONE,
@@ -721,7 +847,11 @@ const resolveSample = (
   };
 };
 
-const archiveCurrentDraft = (state: GuidedDemoState, draft: GuidedImageDraft): GuidedDraftRevision[] => {
+const archiveCurrentDraft = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey,
+): GuidedDraftRevision[] => {
   if (draft.draftText === null) {
     return draft.draftHistory;
   }
@@ -731,17 +861,21 @@ const archiveCurrentDraft = (state: GuidedDemoState, draft: GuidedImageDraft): G
       revisionId: `rev-${draft.draftHistory.length + 1}`,
       text: draft.draftText,
       origin: draft.draftOrigin,
-      choices: cloneChoices(state.choices),
+      choices: cloneChoices(choicesForPhoto(state, imageKey)),
       draftVersion: draft.draftVersion,
     },
   ];
 };
 
-const archiveManualDraft = (state: GuidedDemoState, draft: GuidedImageDraft): GuidedDraftRevision[] => {
+const archiveManualDraft = (
+  state: GuidedDemoState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey,
+): GuidedDraftRevision[] => {
   if (draft.draftOrigin !== GUIDED_DRAFT_ORIGIN.VISITOR_EDIT) {
     return draft.draftHistory;
   }
-  return archiveCurrentDraft(state, draft);
+  return archiveCurrentDraft(state, draft, imageKey);
 };
 
 const initialAppliedAltTextFor = (imageKey: GuidedImageKey): string => {
@@ -757,6 +891,7 @@ const createGuidedImageDraft = (imageKey: GuidedImageKey): GuidedImageDraft => (
   draftVersion: 0,
   previewedVersion: null,
   appliedAltText: initialAppliedAltTextFor(imageKey),
+  outcome: GUIDED_OUTCOME.NOT_FINISHED,
   applicationHistory: [],
   draftHistory: [],
 });
@@ -768,9 +903,13 @@ export const createGuidedDemoState = (): GuidedDemoState => {
 
   return mirrorTribecaDraft({
     activeStep: GUIDED_STEP.CONTEXT,
+    photoChoices: {
+      tribeca: unansweredChoices(),
+      coachella: unansweredChoices(),
+    },
     choices: {
-      left: GUIDED_NAME_CHOICE.UNDECIDED,
-      right: GUIDED_NAME_CHOICE.UNDECIDED,
+      left: GUIDED_NAME_CHOICE.UNANSWERED,
+      right: GUIDED_NAME_CHOICE.UNANSWERED,
     },
     drafts,
     draftText: null,
@@ -801,51 +940,63 @@ export const chooseGuidedName = (
   scenario: GuidedScenario,
   position: GuidedFacePosition,
   choice: GuidedNameChoice,
-  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+  imageKey?: GuidedImageKey,
 ): GuidedDemoState => {
   if (state.pendingChoiceChange !== null) {
     return state;
   }
-  if (state.choices[position] === choice) {
+  const requestedImageKeys = imageKey === undefined ? GUIDED_IMAGE_KEYS : [imageKey];
+  const imageKeys = requestedImageKeys.filter((key) => choicesForPhoto(state, key)[position] !== choice);
+  if (imageKeys.length === 0) {
     return state;
   }
-  if (GUIDED_IMAGE_KEYS.some((key) => state.drafts[key].draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT)) {
-    // Park the intended change only. Confirm applies it; cancel is a no-op for
-    // outcome, copy, and history of a choice that has not happened yet (T07).
+  if (imageKeys.some((key) => state.drafts[key].draftOrigin === GUIDED_DRAFT_ORIGIN.VISITOR_EDIT)) {
+    // Park the intended change only. Confirm applies it to the affected photo
+    // or photos; cancel leaves their outcome, copy, and history as they were (T07).
     const next = cloneState(state);
-    next.pendingChoiceChange = { position, choice };
+    next.pendingChoiceChange = {
+      imageKey: imageKey ?? (imageKeys.length === 1 ? imageKeys[0] : undefined),
+      position,
+      choice,
+    };
     return mirrorTribecaDraft(next);
   }
 
-  const choices = cloneChoices(state.choices);
-  choices[position] = choice;
-  const namesAreDecided =
-    choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
+  const photoChoices = cloneChoicesByImageForLegacyState(state);
+  for (const key of imageKeys) {
+    photoChoices[key][position] = choice;
+  }
+  const summaryImageKey = imageKey ?? GUIDED_DEFAULT_IMAGE_KEY;
   const summaryKey: GuidedCopyKey =
-    choice === GUIDED_NAME_CHOICE.OMIT
+    choice === GUIDED_NAME_CHOICE.LEAVE_UNNAMED
       ? 'names.omitted'
-      : choice === GUIDED_NAME_CHOICE.INCLUDE
+      : choice === GUIDED_NAME_CHOICE.USE
         ? 'names.included'
         : 'names.pending';
   const summaryValues: Record<string, string | number> =
-    choice === GUIDED_NAME_CHOICE.INCLUDE ? { name: personNameForPosition(scenario, position) } : {};
+    choice === GUIDED_NAME_CHOICE.USE ? { name: personNameForPosition(scenario, position, summaryImageKey) } : {};
 
-  // Draft resolution is global because choices is global; imageKey remains for API compatibility.
-  void imageKey;
   return withImageDrafts(
     state,
-    GUIDED_IMAGE_KEYS,
-    (current, currentImageKey) => ({
-      ...current,
-      ...resolveSample(scenario, choices, currentImageKey),
-      draftVersion: namesAreDecided ? current.draftVersion + 1 : current.draftVersion,
-      previewedVersion: namesAreDecided ? null : current.previewedVersion,
-    }),
+    imageKeys,
+    (current, currentImageKey) => {
+      const currentChoices = photoChoices[currentImageKey];
+      const namesAreDecided =
+        currentChoices.left !== GUIDED_NAME_CHOICE.UNANSWERED &&
+        currentChoices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
+      return {
+        ...current,
+        ...resolveSample(scenario, currentChoices, currentImageKey),
+        draftVersion: namesAreDecided ? current.draftVersion + 1 : current.draftVersion,
+        previewedVersion: namesAreDecided ? null : current.previewedVersion,
+        outcome: GUIDED_OUTCOME.NOT_FINISHED,
+      };
+    },
     (next) =>
       withLocalAction(
         {
           ...next,
-          choices,
+          photoChoices,
           outcome: GUIDED_OUTCOME.NOT_FINISHED,
         },
         'choose_name_option',
@@ -858,31 +1009,36 @@ export const chooseGuidedName = (
 export const confirmGuidedChoiceReplacement = (
   state: GuidedDemoState,
   scenario: GuidedScenario,
-  imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
+  imageKey?: GuidedImageKey,
 ): GuidedDemoState => {
   if (state.pendingChoiceChange === null) {
     return state;
   }
   const pending = state.pendingChoiceChange;
-  const choices = cloneChoices(state.choices);
-  choices[pending.position] = pending.choice;
-  // Draft resolution is global because choices is global; imageKey remains for API compatibility.
-  void imageKey;
+  const imageKeys =
+    pending.imageKey === undefined ? (imageKey === undefined ? GUIDED_IMAGE_KEYS : [imageKey]) : [pending.imageKey];
+  const photoChoices = cloneChoicesByImageForLegacyState(state);
+  for (const changedImageKey of imageKeys) {
+    photoChoices[changedImageKey][pending.position] = pending.choice;
+  }
   return withImageDrafts(
     state,
-    GUIDED_IMAGE_KEYS,
-    (draft, currentImageKey) => ({
-      ...draft,
-      ...resolveSample(scenario, choices, currentImageKey),
-      draftHistory: archiveManualDraft(state, draft),
-      draftVersion: draft.draftVersion + 1,
-      previewedVersion: null,
-    }),
+    imageKeys,
+    (draft, changedImageKey) => {
+      return {
+        ...draft,
+        ...resolveSample(scenario, photoChoices[changedImageKey], changedImageKey),
+        draftHistory: archiveManualDraft(state, draft, changedImageKey),
+        draftVersion: draft.draftVersion + 1,
+        previewedVersion: null,
+        outcome: GUIDED_OUTCOME.NOT_FINISHED,
+      };
+    },
     (next) =>
       withLocalAction(
         {
           ...next,
-          choices,
+          photoChoices,
           pendingChoiceChange: null,
           outcome: GUIDED_OUTCOME.NOT_FINISHED,
         },
@@ -914,7 +1070,7 @@ export const editGuidedDraftForImage = (
   text: string,
 ): GuidedDemoState => {
   const draft = state.drafts[imageKey];
-  if (!namesDecided(state) || draft.draftStatus !== GUIDED_DRAFT_STATUS.READY) {
+  if (!bothNamesAnswered(state, imageKey) || draft.draftStatus !== GUIDED_DRAFT_STATUS.READY) {
     return state;
   }
   return withImageDraft(
@@ -926,14 +1082,15 @@ export const editGuidedDraftForImage = (
       draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
       draftVersion: current.draftVersion + 1,
       previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
     }),
-    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'edit_draft', 'draft.origin_edited'),
+    (next) => withLocalAction(next, 'edit_draft', 'draft.origin_edited'),
   );
 };
 
 export const previewGuidedDraftForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
   const draft = state.drafts[imageKey];
-  if (!canPreviewImageDraft(state, draft)) {
+  if (!canPreviewImageDraft(state, draft, imageKey)) {
     return state;
   }
   return withImageDraft(
@@ -952,13 +1109,13 @@ export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKe
   return withImageDraft(
     state,
     imageKey,
-    (current) => ({ ...current, appliedAltText: originalAlt, applicationHistory: [] }),
-    (next) =>
-      withLocalAction(
-        { ...next, outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.KEPT) },
-        'keep_current_alt_text',
-        'outcome.kept',
-      ),
+    (current) => ({
+      ...current,
+      appliedAltText: originalAlt,
+      applicationHistory: [],
+      outcome: GUIDED_OUTCOME.KEPT,
+    }),
+    (next) => withLocalAction(next, 'keep_current_alt_text', 'outcome.kept'),
   );
 };
 
@@ -972,7 +1129,9 @@ export const applyGuidedDraftForImage = (
   // pass the current field value so validation and application happen together.
   const candidateDraft = visibleText === undefined ? draft : { ...draft, draftText: visibleText };
   const canApply =
-    visibleText === undefined ? canApplyImageDraft(state, draft) : canApplyImageDraftPublic(state, candidateDraft);
+    visibleText === undefined
+      ? canApplyImageDraft(state, draft, imageKey)
+      : canApplyImageDraftPublic(state, candidateDraft, imageKey);
   const draftText = candidateDraft.draftText;
   if (!canApply || draftText === null) {
     return state;
@@ -993,6 +1152,7 @@ export const applyGuidedDraftForImage = (
           }
         : {}),
       appliedAltText: draftText,
+      outcome: GUIDED_OUTCOME.APPLIED,
       applicationHistory: [
         ...current.applicationHistory,
         {
@@ -1004,7 +1164,6 @@ export const applyGuidedDraftForImage = (
     }),
     (next) => ({
       ...next,
-      outcome: outcomeFromApplicationState(next, GUIDED_OUTCOME.APPLIED),
       actionHistory: [
         ...next.actionHistory,
         {
@@ -1031,19 +1190,13 @@ export const undoGuidedApplicationForImage = (state: GuidedDemoState, imageKey: 
   return withImageDraft(
     state,
     imageKey,
-    (current) => ({ ...current, appliedAltText: restored.previousAltText, applicationHistory: stack }),
-    (next) =>
-      withLocalAction(
-        {
-          ...next,
-          outcome: outcomeFromApplicationState(
-            next,
-            stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
-          ),
-        },
-        'undo_application',
-        'apply.undone',
-      ),
+    (current) => ({
+      ...current,
+      appliedAltText: restored.previousAltText,
+      applicationHistory: stack,
+      outcome: stack.length === 0 ? GUIDED_OUTCOME.NOT_FINISHED : GUIDED_OUTCOME.APPLIED,
+    }),
+    (next) => withLocalAction(next, 'undo_application', 'apply.undone'),
   );
 };
 
@@ -1058,7 +1211,7 @@ export const restoreGuidedRevisionForImage = (
   if (revision === undefined) {
     return state;
   }
-  if (mode === 'full' && !canRestoreImageRevision(state, draft, revisionId)) {
+  if (mode === 'full' && !canRestoreImageRevision(state, draft, imageKey, revisionId)) {
     return state;
   }
   const summaryKey = mode === 'copy_only' ? 'draft.copy_revision' : 'draft.restore_revision';
@@ -1067,14 +1220,15 @@ export const restoreGuidedRevisionForImage = (
     imageKey,
     (current) => ({
       ...current,
-      draftHistory: archiveManualDraft(state, current),
+      draftHistory: archiveManualDraft(state, current, imageKey),
       draftText: revision.text,
       draftOrigin: GUIDED_DRAFT_ORIGIN.VISITOR_EDIT,
-      draftStatus: namesDecided(state) ? GUIDED_DRAFT_STATUS.READY : current.draftStatus,
+      draftStatus: bothNamesAnswered(state, imageKey) ? GUIDED_DRAFT_STATUS.READY : current.draftStatus,
       draftVersion: current.draftVersion + 1,
       previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
     }),
-    (next) => withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'restore_draft_revision', summaryKey),
+    (next) => withLocalAction(next, 'restore_draft_revision', summaryKey),
   );
 };
 
@@ -1092,7 +1246,7 @@ export const retryGuidedFixtureForImage = (
   if (draft.draftStatus !== GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }
-  const resolved = resolveSample(scenario, state.choices, imageKey);
+  const resolved = resolveSample(scenario, choicesForPhoto(state, imageKey), imageKey);
   if (resolved.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING) {
     return state;
   }
@@ -1104,9 +1258,9 @@ export const retryGuidedFixtureForImage = (
       ...resolved,
       draftVersion: current.draftVersion + 1,
       previewedVersion: null,
+      outcome: GUIDED_OUTCOME.NOT_FINISHED,
     }),
-    (next) =>
-      withLocalAction({ ...next, outcome: GUIDED_OUTCOME.NOT_FINISHED }, 'retry_fixture', 'draft.fixture_retry'),
+    (next) => withLocalAction(next, 'retry_fixture', 'draft.fixture_retry'),
   );
 };
 

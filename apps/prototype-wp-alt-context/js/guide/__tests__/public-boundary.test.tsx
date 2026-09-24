@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntrance';
+import { GuidedPrototypePage } from '../../admin/pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
 import { createGuidedScenario } from '../../admin/guidedPrototype/state';
@@ -510,7 +511,7 @@ describe('public recorded walkthrough boundary', () => {
   });
 
   it('keeps public-source narration out of admin provenance while retaining recorded attribution', () => {
-    const { container } = render(<RecordedWalkthrough scope="admin" />);
+    const { container } = render(<GuidedPrototypePage />);
     const provenance = container.querySelector('.acx-guided-page__provenance-footer');
     expect(provenance).not.toBeNull();
     expect(provenance).toHaveTextContent(guidedCopy('provenance.recorded'));
@@ -611,6 +612,27 @@ describe('public recorded walkthrough boundary', () => {
     expect(changedNameRadio).toBeChecked();
     expect(document.activeElement).toBe(changedNameRadio);
     expect(focusChangedNameRadio).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('returns focus to the clicked radio when a visitor keeps their edits', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    choose('left', 'include');
+    choose('right', 'include');
+    const editor = publicEditor('tribeca');
+    await user.clear(editor);
+    await user.type(editor, 'A visitor edit kept after changing their mind.');
+
+    const clickedRadio = within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
+      name: publicGuidedCopy('names.omit.public'),
+    });
+    fireEvent.click(clickedRadio);
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('name_change.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('name_change.keep.public') }));
+
+    expect(document.activeElement).toBe(clickedRadio);
+    expect(clickedRadio).not.toBeChecked();
+    expect(editor).toHaveValue('A visitor edit kept after changing their mind.');
   });
 
   it('does not resurrect an unsaved draft or open replacement after reset', async () => {

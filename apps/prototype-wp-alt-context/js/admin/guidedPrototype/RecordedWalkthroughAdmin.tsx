@@ -12,6 +12,7 @@ import { GuidedPrototypeEntrance } from '../pages/GuidedPrototypeEntrance';
 import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
 import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
 import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
+import { GuidedFacesPanel } from '../pages/guided/GuidedFacesPanel';
 import { GuidedPhotoFaces } from '../pages/guided/GuidedPhotoFaces';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
 import { GuidedChoiceChangeDialog } from '../pages/guided/GuidedChoiceChangeDialog';
@@ -264,7 +265,7 @@ const PublicStartOverDialog = ({ onConfirm, onFocusFirstNameQuestion }: PublicSt
 
 PublicStartOverDialog.displayName = 'PublicStartOverDialog';
 
-export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughProps): React.JSX.Element => {
+export const RecordedWalkthroughAdmin = ({ scope, livePanel }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
   const coverage = useMemo(() => guidedNameCoverage(scenario), [scenario]);
   const [demo, setDemo] = useState(createGuidedDemoState);
@@ -335,16 +336,12 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
 
   const handleCancelReplacement = (): void => {
     commit(cancelGuidedChoiceReplacement(demo));
-    if (scope === 'admin') {
-      choiceOriginRef.current?.focus();
-    }
+    choiceOriginRef.current?.focus();
   };
 
   const handleConfirmReplacement = (): void => {
     commit(confirmGuidedChoiceReplacement(flushPendingDraft(demo), scenario));
-    if (scope === 'admin') {
-      choiceOriginRef.current?.focus({ preventScroll: true });
-    }
+    choiceOriginRef.current?.focus({ preventScroll: true });
   };
 
   const handleReturnToChangedChoice = (): void => {
@@ -616,6 +613,18 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           </span>
         </p>
 
+        {scope === 'admin' ? (
+          <GuidedFacesPanel
+            scenario={scenario}
+            state={demo}
+            onChoose={(position, choice, origin) => handleChoose('tribeca', position, choice, origin)}
+            onContinue={() => {
+              handleSelectStep(GUIDED_STEP.DRAFT);
+              focusGuidedSection(GUIDED_STEP.DRAFT);
+            }}
+          />
+        ) : null}
+
         {scope === 'public' ? (
           <GuidedChoiceChangeDialog
             open={demo.pendingChoiceChange !== null}
@@ -688,4 +697,4 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
   );
 };
 
-RecordedWalkthrough.displayName = 'RecordedWalkthrough';
+RecordedWalkthroughAdmin.displayName = 'RecordedWalkthroughAdmin';

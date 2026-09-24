@@ -7,13 +7,14 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntrance';
-import { CASE_STUDY_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
 import { createGuidedScenario } from '../../admin/guidedPrototype/state';
 
 const SEED_ALT_TEXT =
   'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 const PUBLIC_HOME_URL = 'https://altcontext.com/';
+const guidedCopy = publicGuidedCopy;
 
 const PUBLIC_IMAGE_KEYS = ['tribeca', 'coachella'] as const;
 type PublicImageKey = (typeof PUBLIC_IMAGE_KEYS)[number];
@@ -23,9 +24,21 @@ const choose = (position: 'left' | 'right', option: 'include' | 'omit', imageKey
   const fieldset = within(photo).getByTestId(`name-choice-${imageKey}-${position}`);
   const name =
     option === 'include'
-      ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
-      : guidedCopy('names.omit');
+      ? publicGuidedCopy('names.use.public', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
+      : publicGuidedCopy('names.omit.public');
   fireEvent.click(within(fieldset).getByRole('radio', { name }));
+};
+
+const chooseBothImages = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
+  PUBLIC_IMAGE_KEYS.forEach((imageKey) => choose(position, option, imageKey));
+};
+
+const sampleImage = (imageKey: PublicImageKey): HTMLImageElement => {
+  const image = screen.getByTestId(`guided-photo-${imageKey}`).querySelector('img.acx-guided-page__image');
+  if (!(image instanceof HTMLImageElement)) {
+    throw new Error(`Missing sample photo image for ${imageKey}.`);
+  }
+  return image;
 };
 
 const publicEditor = (imageKey: PublicImageKey): HTMLElement =>
@@ -233,55 +246,52 @@ describe('public recorded walkthrough boundary', () => {
     expect(document.activeElement).toBe(firstNameQuestion);
   });
 
-  it('keeps the public flow to two stages and guards image actions in the zero state', async () => {
+  it('keeps each public photo in a zero state until its name questions are answered', async () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" />);
 
-    const stepper = screen.getByTestId('guided-demo-stepper');
-    const chooseNames = within(stepper).getByRole('button', { name: guidedCopy('step.names.public') });
-    const reviewAndApply = within(stepper).getByRole('button', { name: guidedCopy('step.review.public') });
-    expect(within(stepper).getAllByRole('button')).toHaveLength(3);
-    expect(stepper).toHaveTextContent(
-      guidedCopy('guide.current.public', {
-        stepNumber: 1,
-        stepCount: 2,
-        stepTitle: guidedCopy('step.names.public'),
-      }),
-    );
-    expect(chooseNames).toHaveAttribute('aria-controls', 'guided-section-understand');
-    expect(reviewAndApply).toHaveAttribute('aria-controls', 'guided-section-review');
-    expect(chooseNames).toHaveAttribute('aria-current', 'step');
-    expect(stepper.querySelectorAll('[aria-current="step"]')).toHaveLength(1);
-    const reviewDrafts = screen.getByTestId('guided-review-draft');
-    expect(reviewDrafts).toBeDisabled();
+    expect(screen.queryByTestId('guided-demo-stepper')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
+    const firstNameQuestion = within(screen.getByTestId('guided-photo-tribeca')).getByRole('radio', {
+      name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
+    });
+    await user.click(screen.getByRole('button', { name: publicGuidedCopy('entry.start.public') }));
+    expect(document.activeElement).toBe(firstNameQuestion);
 
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
-      expect(screen.getByTestId(`demo-apply-${imageKey}`)).toBeDisabled();
-      expect(screen.getByTestId(`demo-undo-${imageKey}`)).toBeDisabled();
-      expect(screen.getByTestId(`guided-image-status-${imageKey}`)).toHaveAttribute('role', 'status');
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(review).toHaveTextContent(publicGuidedCopy('choices.help.public'));
+      expect(within(review).queryByRole('textbox')).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`demo-apply-${imageKey}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`demo-undo-${imageKey}`)).not.toBeInTheDocument();
+      expect(screen.queryByTestId(`guided-image-status-${imageKey}`)).not.toBeInTheDocument();
     }
-    expect(screen.getByTestId('guided-choices-help')).toHaveTextContent(guidedCopy('choices.help.public'));
 
     choose('left', 'include');
-    expect(reviewDrafts).toBeDisabled();
-    expect(screen.getByTestId('demo-apply-tribeca')).toBeDisabled();
+    expect(within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox')).not.toBeInTheDocument();
     choose('right', 'omit');
-    expect(reviewDrafts).toBeEnabled();
+    expect(publicEditor('tribeca')).toBeInTheDocument();
+    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('demo-apply-coachella')).not.toBeInTheDocument();
+
+    choose('left', 'include', 'coachella');
+    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    choose('right', 'omit', 'coachella');
+    expect(publicEditor('coachella')).toBeInTheDocument();
     expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
     expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();
+  });
 
-    await user.click(reviewDrafts);
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
-    expect(stepper).toHaveTextContent(
-      guidedCopy('guide.current.public', {
-        stepNumber: 2,
-        stepCount: 2,
-        stepTitle: guidedCopy('step.review.public'),
-      }),
-    );
-    expect(reviewAndApply).toHaveAttribute('aria-current', 'step');
-    expect(chooseNames).not.toHaveAttribute('aria-current', 'step');
-    expect(stepper.querySelectorAll('[aria-current="step"]')).toHaveLength(1);
+  it('uses word-only match strength in the public name cards', () => {
+    const { container } = render(<RecordedWalkthrough scope="public" />);
+    const evidence = Array.from(container.querySelectorAll('.acx-guided-face__matches'))
+      .map((match) => match.textContent ?? '')
+      .join(' ');
+
+    expect(evidence).toContain(publicGuidedCopy('names.strong.public'));
+    expect(evidence).toContain(publicGuidedCopy('names.weak.public'));
+    expect(evidence).toContain(publicGuidedCopy('names.no_score.public'));
+    expect(evidence).not.toMatch(/[0-9%]/);
   });
 
   it('keeps public headings and editor labels scoped to both source images', () => {
@@ -289,15 +299,13 @@ describe('public recorded walkthrough boundary', () => {
 
     expect(screen.getByText(guidedCopy('entry.eyebrow.public'))).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.names.public') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('faces.title.public') })).toHaveLength(2);
-    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.altcontext.public') })).toHaveLength(
-      2,
-    );
-    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.alttextai.public') })).toHaveLength(
-      2,
-    );
+    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
+    expect(
+      screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' }),
+    ).toHaveLength(2);
+    expect(screen.queryByRole('heading', { name: publicGuidedCopy('comparison.altcontext.public') })).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: guidedCopy('context.photo.altcontext_title') }),
     ).not.toBeInTheDocument();
@@ -305,8 +313,8 @@ describe('public recorded walkthrough boundary', () => {
       screen.queryByRole('heading', { name: guidedCopy('context.photo.alttextai_title') }),
     ).not.toBeInTheDocument();
 
-    choose('left', 'include');
-    choose('right', 'include');
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
       expect(within(review).getByRole('textbox', { name: guidedCopy('draft.field_label.public') })).toBeInTheDocument();
@@ -353,11 +361,11 @@ describe('public recorded walkthrough boundary', () => {
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByTestId('demo-apply-tribeca'));
 
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', edited);
     expect(editor).toHaveValue(edited);
 
     await user.click(screen.getByTestId('demo-undo-tribeca'));
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(editor).toHaveValue(edited);
 
     const seedAfter = createGuidedScenario();
@@ -370,8 +378,8 @@ describe('public recorded walkthrough boundary', () => {
     const scenario = createGuidedScenario();
     render(<RecordedWalkthrough scope="public" />);
 
-    choose('left', 'include');
-    choose('right', 'include');
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
 
     const tribecaReview = screen.getByTestId('guided-description-review-tribeca');
     const coachellaReview = screen.getByTestId('guided-description-review-coachella');
@@ -392,20 +400,17 @@ describe('public recorded walkthrough boundary', () => {
     await user.type(tribecaEditor, tribecaEdit);
 
     await user.click(screen.getByTestId('demo-apply-tribeca'));
-    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', tribecaEdit);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', tribecaEdit);
     expect(within(tribecaReview).getByTestId('guided-current-alt-tribeca')).toHaveTextContent(tribecaEdit);
     expect(tribecaStatus).toBe(screen.getByTestId('guided-image-status-tribeca'));
     expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.applied_image.public'));
-    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute(
-      'alt',
-      originalCoachellaAlt,
-    );
+    expect(sampleImage('coachella')).toHaveAttribute('alt', originalCoachellaAlt);
     expect(within(coachellaReview).getByTestId('guided-current-alt-coachella')).toHaveTextContent(originalCoachellaAlt);
     expect(coachellaEditor).toHaveValue(coachellaEdit);
     expect(coachellaStatus.textContent).toBe('');
 
     await user.click(screen.getByTestId('demo-undo-tribeca'));
-    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', originalTribecaAlt);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', originalTribecaAlt);
     expect(within(tribecaReview).getByTestId('guided-current-alt-tribeca')).toHaveTextContent(originalTribecaAlt);
     expect(tribecaEditor).toHaveValue(tribecaEdit);
     expect(tribecaStatus).toBe(screen.getByTestId('guided-image-status-tribeca'));
@@ -413,16 +418,13 @@ describe('public recorded walkthrough boundary', () => {
     expect(coachellaStatus.textContent).toBe('');
 
     await user.click(screen.getByTestId('demo-apply-coachella'));
-    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute('alt', coachellaEdit);
+    expect(sampleImage('coachella')).toHaveAttribute('alt', coachellaEdit);
     expect(coachellaStatus).toHaveTextContent(guidedCopy('outcome.applied_image.public'));
-    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', originalTribecaAlt);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', originalTribecaAlt);
     expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
 
     await user.click(screen.getByTestId('demo-undo-coachella'));
-    expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute(
-      'alt',
-      originalCoachellaAlt,
-    );
+    expect(sampleImage('coachella')).toHaveAttribute('alt', originalCoachellaAlt);
     expect(coachellaEditor).toHaveValue(coachellaEdit);
     expect(coachellaStatus).toBe(screen.getByTestId('guided-image-status-coachella'));
     expect(coachellaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
@@ -435,16 +437,16 @@ describe('public recorded walkthrough boundary', () => {
     const summary = screen.getByTestId('guided-choice-summary');
     expect(summary).toHaveTextContent('Justin Trudeau');
     expect(summary).toHaveTextContent('Katy Perry');
-    expect(summary).toHaveTextContent(guidedCopy('names.pending'));
+    expect(summary).toHaveTextContent(publicGuidedCopy('names.pending'));
     expect(screen.getByTestId('guided-page-feedback-status')).toHaveAttribute('aria-live', 'polite');
 
     choose('left', 'include');
-    expect(summary).toHaveTextContent(guidedCopy('names.include', { name: 'Justin Trudeau' }));
-    expect(summary).toHaveTextContent(guidedCopy('names.pending'));
+    expect(summary).toHaveTextContent(publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }));
+    expect(summary).toHaveTextContent(publicGuidedCopy('names.pending'));
 
     choose('right', 'omit');
-    expect(summary).toHaveTextContent(guidedCopy('names.include', { name: 'Justin Trudeau' }));
-    expect(summary).toHaveTextContent(guidedCopy('names.omit'));
+    expect(summary).toHaveTextContent(publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }));
+    expect(summary).toHaveTextContent(publicGuidedCopy('names.omit.public'));
   });
 
   it('keeps the full before-source attribution inside the provenance disclosure', () => {
@@ -478,38 +480,41 @@ describe('public recorded walkthrough boundary', () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" />);
 
-    choose('left', 'include');
-    choose('right', 'include');
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
     const editor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
       name: guidedCopy('draft.field_label.public'),
     });
     await user.clear(editor);
     await user.type(editor, 'A bounded public demo edit.');
     await user.click(screen.getByTestId('demo-apply-tribeca'));
-    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
-    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
-    expect(screen.getByTestId('demo-outcome')).not.toHaveTextContent(/WordPress media has been updated/i);
+    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: guidedCopy('outcome.return') }));
     await user.click(
-      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
-        name: guidedCopy('draft.keep'),
+      within(screen.getByTestId('guided-description-review-coachella')).getByRole('button', {
+        name: publicGuidedCopy('description.keep.public'),
       }),
     );
-    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.scope.public'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.next_batch.public'));
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(
+      publicGuidedCopy('outcome.applied.public', { photoName: 'Tribeca Festival, New York, June 2026' }),
+    );
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(
+      publicGuidedCopy('outcome.kept.public', { photoName: 'Coachella festival photo, 2026' }),
+    );
+    expect(screen.getByTestId('demo-outcome')).not.toHaveTextContent(/WordPress media has been updated/i);
   });
 
   it('keeps reset local and clears choices, draft state, and outcome', async () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" />);
 
-    choose('left', 'include');
-    choose('right', 'omit');
-    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
-    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
-    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'omit');
+    await user.click(screen.getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('reset.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
 
     expect(
       within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', { name: /^Use / }),
@@ -517,9 +522,11 @@ describe('public recorded walkthrough boundary', () => {
     expect(
       within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', { name: /^Use / }),
     ).not.toBeChecked();
-    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
+    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(publicGuidedCopy('names.pending'));
     expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
-    expect(screen.getByTestId('guided-description-review-tribeca')).toHaveTextContent(guidedCopy('draft.blocked'));
+    expect(screen.getByTestId('guided-description-review-tribeca')).toHaveTextContent(
+      publicGuidedCopy('choices.help.public'),
+    );
   });
 
   it('does not resurrect an unsaved draft or open replacement after reset', async () => {
@@ -535,14 +542,14 @@ describe('public recorded walkthrough boundary', () => {
     const staleDraft = 'Unsaved draft must not return after reset.';
     fireEvent.change(editor, { target: { value: staleDraft } });
 
-    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
-    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
-    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+    await user.click(screen.getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('reset.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
 
     choose('left', 'include');
     choose('right', 'omit');
 
-    expect(screen.queryByRole('dialog', { name: guidedCopy('names.change_title') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: publicGuidedCopy('name_change.title.public') })).not.toBeInTheDocument();
     const resetEditor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
       name: guidedCopy('draft.field_label.public'),
     });
@@ -555,8 +562,8 @@ describe('public recorded walkthrough boundary', () => {
     const scenario = createGuidedScenario();
     render(<RecordedWalkthrough scope="public" />);
 
-    choose('left', 'include');
-    choose('right', 'include');
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
     const tribecaEditor = publicEditor('tribeca');
     const coachellaEditor = publicEditor('coachella');
     const tribecaEdit = 'Stale Tribeca edit must be cleared by reset.';
@@ -568,9 +575,9 @@ describe('public recorded walkthrough boundary', () => {
     await user.click(screen.getByTestId('demo-apply-tribeca'));
     await user.click(screen.getByTestId('demo-apply-coachella'));
 
-    await user.click(screen.getByRole('button', { name: guidedCopy('page.reset') }));
-    const dialog = screen.getByRole('dialog', { name: guidedCopy('reset.title') });
-    await user.click(within(dialog).getByRole('button', { name: guidedCopy('reset.confirm') }));
+    await user.click(screen.getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('reset.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
 
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const photo = screen.getByTestId(`guided-photo-${imageKey}`);
@@ -587,24 +594,24 @@ describe('public recorded walkthrough boundary', () => {
           .every((radio) => !(radio as HTMLInputElement).checked),
       ).toBe(true);
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
-      expect(review).toHaveTextContent(guidedCopy('draft.blocked'));
+      expect(review).toHaveTextContent(publicGuidedCopy('choices.help.public'));
       expect(
         within(review).queryByRole('textbox', { name: guidedCopy('draft.field_label.public') }),
       ).not.toBeInTheDocument();
-      expect(screen.queryByTestId(`demo-applied-image-${imageKey}`)).not.toBeInTheDocument();
-      expect(screen.getByTestId(`guided-image-status-${imageKey}`).textContent).toBe('');
+      expect(sampleImage(imageKey)).toHaveAttribute('alt', scenario.pressPhotos.find((photo) => photo.key === imageKey)?.altText);
+      expect(screen.queryByTestId(`guided-image-status-${imageKey}`)).not.toBeInTheDocument();
     }
-    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(guidedCopy('names.pending'));
+    expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(publicGuidedCopy('names.pending'));
     expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
 
-    choose('left', 'include');
-    choose('right', 'include');
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
     expect(publicEditor('tribeca')).toHaveValue(scenario.samples.tribeca.both);
     expect(publicEditor('tribeca')).not.toHaveValue(tribecaEdit);
     expect(publicEditor('coachella')).toHaveValue(scenario.samples.coachella.both);
     expect(publicEditor('coachella')).not.toHaveValue(coachellaEdit);
-    expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', scenario.pressPhotos[0].altText);
-    expect(screen.getByTestId('demo-applied-image-coachella')).toHaveAttribute('alt', scenario.pressPhotos[1].altText);
+    expect(sampleImage('tribeca')).toHaveAttribute('alt', scenario.pressPhotos[0].altText);
+    expect(sampleImage('coachella')).toHaveAttribute('alt', scenario.pressPhotos[1].altText);
   });
 
   it('walks the public entry import graph and forbids live/API imports', () => {
@@ -612,7 +619,7 @@ describe('public recorded walkthrough boundary', () => {
     const files = collectImportGraph(resolve(pluginRoot, 'js/guide/main.tsx'));
 
     expect(files.length).toBeLessThanOrEqual(MAX_PUBLIC_GRAPH_FILES);
-    expect(files.some((file) => file.endsWith('GuidedFacesPanel.tsx'))).toBe(true);
+    expect(files.some((file) => file.endsWith('GuidedFacesPanel.tsx'))).toBe(false);
     expect(files.some((file) => file.endsWith('GuidedDescriptionReview.tsx'))).toBe(true);
     expect(files.some((file) => file.endsWith('GuidedFaceMatchCard.tsx'))).toBe(true);
     expect(files.some((file) => file.endsWith('state.ts'))).toBe(true);

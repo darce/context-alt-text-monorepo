@@ -74,7 +74,7 @@ describe('RecordedWalkthrough public scope', () => {
     const context = scenario?.querySelector('.acx-guided-page__context');
     const mediaList = scenario?.querySelector('.acx-guided-page__media-list');
     const footer = scenario?.querySelector('.acx-guided-page__provenance-footer');
-    const review = container.querySelector('.acx-guided-review');
+    const review = container.querySelector('.acx-guided-review__image-card');
 
     expect(scenario).not.toBeNull();
     expect(scenario?.firstElementChild).toBe(context);

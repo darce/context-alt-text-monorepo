@@ -165,6 +165,14 @@ interface GuidedImageReviewCardProps {
   scope: 'public' | 'admin';
 }
 
+export interface GuidedPhotoReviewProps {
+  photo: GuidedScenario['pressPhotos'][number];
+  state: GuidedReviewState;
+  actions: GuidedDescriptionReviewActions;
+  recordedOriginLabel?: string;
+  scope?: 'public' | 'admin';
+}
+
 const GuidedImageReviewCard = ({
   photo,
   state,
@@ -447,9 +455,11 @@ const GuidedImageReviewCard = ({
     return (
       <article
         className="acx-guided-review__image-card"
+        id={`guided-photo-review-${photo.key}`}
         data-testid={`guided-description-review-${photo.key}`}
         data-image-key={photo.key}
         aria-labelledby={`${editorId}-title`}
+        tabIndex={-1}
       >
         <h3 id={`${editorId}-title`}>{photo.event}</h3>
         <p>{guidedCopy('choices.help.public')}</p>
@@ -460,9 +470,11 @@ const GuidedImageReviewCard = ({
   return (
     <article
       className="acx-guided-review__image-card"
+      id={`guided-photo-review-${photo.key}`}
       data-testid={`guided-description-review-${photo.key}`}
       data-image-key={photo.key}
       aria-labelledby={`${editorId}-title`}
+      tabIndex={-1}
     >
       <h3 id={`${editorId}-title`}>{photo.event}</h3>
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
@@ -792,6 +804,32 @@ const GuidedImageReviewCard = ({
   );
 };
 
+export const GuidedPhotoReview = ({
+  photo,
+  state,
+  actions,
+  recordedOriginLabel,
+  scope = 'admin',
+}: GuidedPhotoReviewProps): React.JSX.Element | null => {
+  const draft = guidedReviewDraftFor(state, photo.key);
+  if (draft === null) {
+    return null;
+  }
+
+  return (
+    <GuidedImageReviewCard
+      photo={photo}
+      state={state}
+      draft={draft}
+      actions={actions}
+      scope={scope}
+      {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}
+    />
+  );
+};
+
+GuidedPhotoReview.displayName = 'GuidedPhotoReview';
+
 export const GuidedDescriptionReview = ({
   scenario,
   state: reviewState,
@@ -821,16 +859,11 @@ export const GuidedDescriptionReview = ({
       >
         {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
         {scenario.pressPhotos.map((photo) => {
-          const draft = guidedReviewDraftFor(reviewState, photo.key);
-          if (draft === null) {
-            return null;
-          }
           return (
-            <GuidedImageReviewCard
+            <GuidedPhotoReview
               key={photo.key}
               photo={photo}
               state={reviewState}
-              draft={draft}
               actions={actions}
               scope={scope}
               {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}

@@ -313,6 +313,9 @@ describe('public recorded walkthrough boundary', () => {
       expect(screen.queryByTestId(`guided-description-step-${imageKey}`)).not.toBeInTheDocument();
     }
 
+    const renderedIds = Array.from(document.querySelectorAll('[id]'), (element) => element.id);
+    expect(new Set(renderedIds).size).toBe(renderedIds.length);
+
     expect(mediaList?.compareDocumentPosition(footer as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

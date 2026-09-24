@@ -14,48 +14,105 @@ export const PUBLIC_GUIDE_FALLBACK =
 export const PUBLIC_GUIDE_LOADING = 'Loading the walkthrough.';
 
 export const PUBLIC_GUIDED_COPY = {
-  'entry.title.public': "Who's in the photo belongs in the alt text.",
+  'entry.title.public': 'You decide who is named in each photo description.',
   'entry.intro.public':
-    'Compare descriptions of two photos, choose which names to include, then edit and apply each draft.',
-  'entry.eyebrow.public': 'Guided prototype',
-  'entry.start.public': 'Choose names',
+    'See how AltContext suggests image descriptions (alt text) and possible names, ' +
+    'and how you decide which names to use.',
+  'entry.eyebrow.public': 'DEMO',
+  'entry.start.public': 'Start the demo',
+  'nav.leave.public': 'Page links',
   'scope.public':
-    'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.',
-  'step.names.public': 'Choose names',
-  'step.review.public': 'Review and apply',
+    'The names and descriptions were suggested by AI in advance. ' +
+    'Your changes stay on this page and clear when you reload.',
+  'step.names.public': 'Check the suggested names',
+  'step.review.public': 'Check and use the suggested description',
   'guide.current.public': 'Step {stepNumber} of {stepCount}: {stepTitle}',
   'names.scope.public':
-    'Choose inclusion or omission for each saved suggestion. The recorded draft loads after both choices are made.',
-  'feedback.choices.public': 'Current name choices: {leftName}: {leftChoice}; {rightName}: {rightChoice}.',
+    'Use a name only if you agree. Not sure? Leave the person unnamed.',
+  'feedback.choices.public': 'Name choices: {leftName}: {leftChoice}; {rightName}: {rightChoice}.',
   'context.source.summary.public':
-    'Two recorded examples, not a benchmark. AltText.ai was run without names or keywords.',
+    'AltText.ai was given no names or keywords. This comparison is for reference only, ' +
+    'not a test of which tool is better.',
   'context.source.comparison_boundary.public':
-    'These comparisons include both roster names. Your choices affect only the editable drafts.',
+    'For comparison only. This is not a benchmark.',
   'context.source.face_recency.public':
-    'Face matches recorded 10 September 2026; recognition is not running here.',
-  'comparison.altcontext.public': 'AltContext — with people roster',
-  'comparison.alttextai.public': 'AltText.ai — no names or keywords',
-  'faces.title.public': 'Names suggested by AltContext',
-  'context.next.public': 'Review drafts',
-  'choices.help.public': 'Choose an option for each name to continue. Either name can be left out.',
+    'Names were suggested on 10 September 2026. Face matching is not running on this page.',
+  'comparison.altcontext.public': 'AltContext description with suggested names',
+  'comparison.alttextai.public': 'How another tool describes this photo',
+  'faces.title.public': 'Suggested names',
+  'context.next.public': 'Check the suggested names',
+  'choices.help.public': 'Choose an option for both people above to see the suggested description.',
   'draft.origin.public':
-    'Recorded altcontext.com draft from 9 September 2026, using the supplied page context and your selected names. This is not a new request.',
+    'Written by AI in advance from the photo, the page it appears on, and the names you chose.',
   'draft.context.public':
-    'These recorded samples use the supplied page title and context shown above; editing here changes only this tab.',
-  'draft.field_label.public': 'Alt text to apply',
-  'draft.current_alt_label.public': 'Current alt text',
-  'draft.apply_scope.public': 'Applies only to this demo image.',
+    'This description was written by AI in advance from the photo, its page, and the names you chose.',
+  'draft.field_label.public': 'Suggested description',
+  'draft.current_alt_label.public': 'Current description',
+  'draft.apply_scope.public': 'Only the demo image on this page changes.',
   'outcome.scope.public':
-    'This result applies only to the demo copy in this tab. It does not update WordPress media, a server roster, or a saved library.',
+    'Nothing was saved or published. Your changes clear when you reload.',
   'outcome.next_batch.public':
-    'A next batch would use another supplied image and page context; this example does not save your choices or roster data.',
+    'In real use, you would review each new photo the same way.',
   'outcome.kept_body.public':
-    'You kept the current alt text, so the demo copy is unchanged. Return to the draft if you want to try another local edit.',
-  'outcome.applied_image.public': 'Applied to this demo image.',
-  'outcome.undone_image.public': 'Previous alt text restored.',
-  'error.empty_draft.public': 'Enter alt text before applying.',
-  'error.unchanged_draft.public': 'This demo image already uses this text.',
-  'error.no_recorded_draft.public': 'No recorded draft is available for these choices.',
+    'You kept the current description.',
+  'outcome.applied_image.public': 'The demo image now uses this description.',
+  'outcome.undone_image.public': 'The previous description is back.',
+  'error.empty_draft.public': 'Enter a description before you use it.',
+  'error.unchanged_draft.public': 'The current and suggested descriptions are the same.',
+  'error.no_recorded_draft.public': 'No suggested description is ready for these names. Try again.',
+  'steps.title.public': "What you'll do",
+  'steps.names.public': '1. Check the names suggested for each photo.',
+  'steps.description.public': '2. Read and edit the suggested description.',
+  'steps.use.public': '3. Use it on the demo image, or keep the current one.',
+  'photos.title.public': 'Two photos to check',
+  'photo.count.public': 'Photo {photoNumber} of 2',
+  'names.heading.public': '1. Check the suggested names',
+  'names.guidance.public':
+    'Naming people helps readers when you are sure who they are. ' +
+    'Leaving someone unnamed is always a valid choice.',
+  'names.compare.public': 'Compare photos',
+  'names.use.public': 'Use {name}',
+  'names.omit.public': 'Leave unnamed',
+  'names.strong.public': 'Strong match',
+  'names.weak.public': 'Weak match. Compare the photos before you use this name.',
+  'names.no_score.public': 'No score: the saved group for this name started from this face.',
+  'description.heading.public': '2. Check the suggested description',
+  'description.written.public':
+    'Written by AI in advance from the photo, the page it appears on, ' +
+    'and the names you chose.',
+  'description.current.public': 'Current description',
+  'description.suggested.public': 'Suggested description',
+  'description.edit_help.public': 'Edit anything that is wrong or that you would not publish.',
+  'description.help.public': 'Choose an option for both people above to see the suggested description.',
+  'description.scope.public': 'Only the demo image on this page changes.',
+  'description.use.public': 'Use this description',
+  'description.keep.public': 'Keep the current description',
+  'description.undo.public': 'Undo this change',
+  'description.applied.public': 'The demo image now uses this description.',
+  'description.kept.public': 'You kept the current description.',
+  'reset.title.public': 'Start over?',
+  'reset.body.public': 'This clears your name choices and edits, and puts back the original descriptions.',
+  'reset.keep.public': 'Keep my work',
+  'reset.confirm.public': 'Start over',
+  'reset.success.public': 'Started over. The original descriptions are back.',
+  'name_change.title.public': 'Replace your edits?',
+  'name_change.body.public':
+    'Changing a name loads a new suggested description for this photo. ' +
+    'Your edits to it will be replaced.',
+  'name_change.keep.public': 'Keep my edits',
+  'name_change.confirm.public': 'Change the name',
+  'outcome.title.public': 'You checked both photos',
+  'outcome.applied.public': '{photoName}: uses the new description.',
+  'outcome.kept.public': '{photoName}: kept the current description.',
+  'outcome.provenance.public':
+    'AltContext suggested these names and descriptions on 9–10 September 2026. ' +
+    'Nothing on this page compares faces.',
+  'comparison.title.public': 'How another tool describes this photo',
+  'comparison.note.public': 'For comparison only, not a benchmark. AltText.ai was given no names or keywords.',
+  'lightbox.title.public': 'Compare with photos of {name}',
+  'lightbox.close.public': 'Close',
+  'lightbox.current.public': 'In this photo',
+  'lightbox.references.public': 'Reference photos of {name}',
 } as const;
 
 export type PublicGuidedCopyKey = keyof typeof PUBLIC_GUIDED_COPY;

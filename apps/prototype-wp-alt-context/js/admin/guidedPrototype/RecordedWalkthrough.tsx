@@ -456,6 +456,17 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
             </div>
             <div className="acx-guided-page__media-list">
               {scenario.pressPhotos.map((photo, index) => {
+                const photoReview =
+                  scope === 'public' ? (
+                    <GuidedPhotoReview
+                      photo={photo}
+                      state={demo}
+                      scope="public"
+                      recordedOriginLabel={publicGuidedCopy('draft.origin.public')}
+                      actions={reviewActions}
+                    />
+                  ) : null;
+
                 const photoContent = (
                   <GuidedSamplePhoto
                     key={photo.key}
@@ -530,15 +541,6 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                             </React.Fragment>
                           );
                         })}
-                      {scope === 'public' ? (
-                        <GuidedPhotoReview
-                          photo={photo}
-                          state={demo}
-                          scope="public"
-                          recordedOriginLabel={publicGuidedCopy('draft.origin.public')}
-                          actions={reviewActions}
-                        />
-                      ) : null}
                     </GuidedPhotoFaces>
                   </GuidedSamplePhoto>
                 );
@@ -554,6 +556,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                       {publicGuidedCopy('photo.count.public', { photoNumber: index + 1 })}
                     </h3>
                     {photoContent}
+                    {photoReview}
                   </section>
                 ) : (
                   photoContent

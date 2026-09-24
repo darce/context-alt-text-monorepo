@@ -438,6 +438,32 @@ if (!function_exists('add_action')) {
     }
 }
 
+if (!function_exists('remove_action')) {
+    function remove_action($hook, $callback, $priority = 10): bool
+    {
+        if (empty($GLOBALS['__ac_actions'][$hook][$priority])) {
+            return false;
+        }
+
+        $removed = false;
+        foreach ($GLOBALS['__ac_actions'][$hook][$priority] as $index => $data) {
+            if ($data['callback'] === $callback) {
+                unset($GLOBALS['__ac_actions'][$hook][$priority][$index]);
+                $removed = true;
+            }
+        }
+
+        if (empty($GLOBALS['__ac_actions'][$hook][$priority])) {
+            unset($GLOBALS['__ac_actions'][$hook][$priority]);
+        }
+        if (empty($GLOBALS['__ac_actions'][$hook])) {
+            unset($GLOBALS['__ac_actions'][$hook]);
+        }
+
+        return $removed;
+    }
+}
+
 if (!function_exists('add_shortcode')) {
     function add_shortcode($tag, $callback): void
     {

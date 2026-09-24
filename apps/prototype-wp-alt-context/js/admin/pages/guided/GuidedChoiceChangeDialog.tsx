@@ -45,12 +45,7 @@ export const GuidedChoiceChangeDialog = ({
           <DialogTitle>{guidedCopy('name_change.title.public')}</DialogTitle>
           <DialogDescription>{guidedCopy('name_change.body.public')}</DialogDescription>
           <div className="acx-dialog__actions">
-            <button
-              ref={keepEditsRef}
-              type="button"
-              className="acx-button acx-button--primary"
-              onClick={onKeepEdits}
-            >
+            <button ref={keepEditsRef} type="button" className="acx-button acx-button--primary" onClick={onKeepEdits}>
               {guidedCopy('name_change.keep.public')}
             </button>
             <button type="button" className="acx-button acx-button--secondary" onClick={onChangeName}>

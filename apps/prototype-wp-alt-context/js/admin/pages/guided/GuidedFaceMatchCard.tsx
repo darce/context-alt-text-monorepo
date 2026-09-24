@@ -126,17 +126,11 @@ export const GuidedFaceMatchCard = ({
   const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
     <p
       className={
-        isWeakMatch(match)
-          ? 'acx-guided-face__match-line acx-guided-face__weak-match'
-          : 'acx-guided-face__match-line'
+        isWeakMatch(match) ? 'acx-guided-face__match-line acx-guided-face__weak-match' : 'acx-guided-face__match-line'
       }
     >
       {isWeakMatch(match) ? (
-        <span
-          className="acx-guided-face__warning-icon"
-          role="img"
-          aria-label={guidedCopy('names.match.weak_icon')}
-        >
+        <span className="acx-guided-face__warning-icon" role="img" aria-label={guidedCopy('names.match.weak_icon')}>
           <AlertTriangle aria-hidden="true" size={16} />
         </span>
       ) : null}
@@ -145,11 +139,7 @@ export const GuidedFaceMatchCard = ({
   );
 
   return (
-    <section
-      aria-labelledby={titleId}
-      className="acx-guided-face__card"
-      data-image-key={representative.imageKey}
-    >
+    <section aria-labelledby={titleId} className="acx-guided-face__card" data-image-key={representative.imageKey}>
       <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
         <ul className="acx-guided-face__match-list">
           {matches.map((match) => (
@@ -212,7 +202,6 @@ export const GuidedFaceMatchCard = ({
             </label>
           </div>
         </fieldset>
-
       </div>
 
       <DialogRoot open={comparisonOpen} onOpenChange={setComparisonOpen}>

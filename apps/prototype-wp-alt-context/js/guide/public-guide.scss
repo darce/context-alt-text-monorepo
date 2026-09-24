@@ -218,6 +218,16 @@
           2
       )
     );
+
+    .acx-guided-face__lightbox-reference {
+      flex: 0 0 var(--acx-guide-lightbox-tile-size);
+      width: var(--acx-guide-lightbox-tile-size);
+      min-width: 0;
+    }
+
+    .acx-guided-face__gallery-credit {
+      overflow-wrap: anywhere;
+    }
   }
 
   @media (min-width: 60rem) {
@@ -301,7 +311,7 @@
       }
     }
 
-    .acx-guided-entrance__eyebrow {
+    .acx-guided-entrance__content > .acx-guided-entrance__eyebrow {
       line-height: 1.2;
     }
 

@@ -6,6 +6,7 @@ const PRODUCT_HOME_URL = 'https://altcontext.com/';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
+  onFocusFirstNameQuestion?: () => void;
   scope?: 'public' | 'admin';
 }
 
@@ -28,6 +29,7 @@ const ExternalGuideLink = ({
 
 export const GuidedPrototypeEntrance = ({
   onBegin,
+  onFocusFirstNameQuestion,
   scope = 'admin',
 }: GuidedPrototypeEntranceProps): React.JSX.Element => {
   if (scope === 'public') {
@@ -35,21 +37,47 @@ export const GuidedPrototypeEntrance = ({
       <section className="acx-guided-entrance" aria-labelledby="acx-guided-entrance-title">
         <nav className="acx-guided-entrance__escape" aria-label={guidedCopy('nav.leave')}>
           <ExternalGuideLink href={PRODUCT_HOME_URL}>{guidedCopy('nav.home')}</ExternalGuideLink>
-          <ExternalGuideLink href={CASE_STUDY_URL}>{guidedCopy('nav.case_study')}</ExternalGuideLink>
-        </nav>
-        <p className="acx-guided-entrance__eyebrow">{guidedCopy('entry.eyebrow.public')}</p>
-        <h1 id="acx-guided-entrance-title">{guidedCopy('entry.title.public')}</h1>
-        <p className="acx-guided-entrance__intro">{guidedCopy('entry.intro.public')}</p>
-        <p className="acx-guided-entrance__scope" data-testid="guided-scope">
-          {guidedCopy('scope.public')}
-        </p>
-        <div className="acx-guided-entrance__actions">
-          <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
-            {guidedCopy('page.start')}
-          </button>
-          <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
-            {guidedCopy('entry.read_case_study')}
+          <ExternalGuideLink href={CASE_STUDY_URL}>
+            {guidedCopy('nav.case_study')}
+            <span aria-hidden="true">↗</span>
           </ExternalGuideLink>
+        </nav>
+        <div className="acx-guided-entrance__content">
+          <p className="acx-guided-entrance__eyebrow">{guidedCopy('entry.eyebrow.public')}</p>
+          <h1 className="acx-guided-entrance__title" id="acx-guided-entrance-title">
+            {guidedCopy('entry.title.public')}
+          </h1>
+          <p className="acx-guided-entrance__intro">{guidedCopy('entry.intro.public')}</p>
+          <p
+            className="acx-guided-entrance__scope acx-guided-entrance__provenance"
+            data-testid="guided-scope"
+          >
+            {guidedCopy('scope.public')}
+          </p>
+          <div className="acx-guided-entrance__actions">
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              onClick={() => {
+                onBegin();
+                onFocusFirstNameQuestion?.();
+              }}
+            >
+              {guidedCopy('entry.start.public')}
+            </button>
+            <ExternalGuideLink className="acx-button acx-button--secondary" href={CASE_STUDY_URL}>
+              {guidedCopy('entry.read_case_study')}
+              <span aria-hidden="true">↗</span>
+            </ExternalGuideLink>
+          </div>
+        </div>
+        <div className="acx-guided-entrance__plan" aria-labelledby="acx-guided-entrance-plan-title">
+          <h2 id="acx-guided-entrance-plan-title">{guidedCopy('steps.title.public')}</h2>
+          <ol className="acx-guided-entrance__plan-list">
+            <li>{guidedCopy('steps.names.public').replace(/^\d+\.\s*/, '')}</li>
+            <li>{guidedCopy('steps.description.public').replace(/^\d+\.\s*/, '')}</li>
+            <li>{guidedCopy('steps.use.public').replace(/^\d+\.\s*/, '')}</li>
+          </ol>
         </div>
       </section>
     );

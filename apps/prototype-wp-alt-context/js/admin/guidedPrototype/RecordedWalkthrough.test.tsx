@@ -6,8 +6,8 @@ import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
 
-const START_WALKTHROUGH = 'Start the walkthrough';
-const READ_CASE_STUDY = 'Read the case study';
+const START_DEMO = guidedCopy('entry.start.public');
+const READ_CASE_STUDY = guidedCopy('entry.read_case_study');
 const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 const opensInNewWindow = (label: string): string => `${label} (opens in a new window)`;
 
@@ -104,7 +104,7 @@ describe('RecordedWalkthrough public scope', () => {
     expect(escape.querySelector('a[href="https://altcontext.com/"]')).not.toBeNull();
     expect(escape.querySelector(`a[href="${CASE_STUDY_URL}"]`)).not.toBeNull();
 
-    expect(screen.getByRole('button', { name: START_WALKTHROUGH })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: START_DEMO })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) })).toHaveAttribute(
       'href',
       CASE_STUDY_URL,
@@ -116,7 +116,7 @@ describe('RecordedWalkthrough public scope', () => {
 
     const read = screen.getByRole('link', { name: opensInNewWindow(READ_CASE_STUDY) });
     const caseStudyNav = screen.getByRole('link', { name: opensInNewWindow(guidedCopy('nav.case_study')) });
-    const start = screen.getByRole('button', { name: START_WALKTHROUGH });
+    const start = screen.getByRole('button', { name: START_DEMO });
 
     const actionLinks = Array.from(document.querySelectorAll('.acx-guided-entrance__actions a'));
     const actionHrefs = actionLinks.map((link) => link.getAttribute('href'));
@@ -154,7 +154,7 @@ describe('RecordedWalkthrough public scope', () => {
     const user = userEvent.setup();
     render(<RecordedWalkthrough scope="public" />);
 
-    const start = screen.getByRole('button', { name: START_WALKTHROUGH });
+    const start = screen.getByRole('button', { name: START_DEMO });
     start.focus();
     expect(document.activeElement).toBe(start);
 

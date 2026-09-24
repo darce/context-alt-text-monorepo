@@ -6,6 +6,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntrance';
 import { CASE_STUDY_URL, guidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
 import { createGuidedScenario } from '../../admin/guidedPrototype/state';
@@ -168,10 +169,23 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByTestId('guided-scope')).toHaveTextContent(guidedCopy('scope.public'));
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
     expect(screen.getByText(guidedCopy('entry.intro.public'))).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: guidedCopy('page.start') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: guidedCopy('entry.start.public') })).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: `${guidedCopy('entry.read_case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
+
+    const hero = screen.getByRole('region', { name: guidedCopy('entry.title.public') });
+    const action = within(hero).getByRole('button', { name: guidedCopy('entry.start.public') });
+    const planTitle = within(hero).getByRole('heading', { level: 2, name: guidedCopy('steps.title.public') });
+    const plan = within(hero).getByRole('list');
+    expect(action.compareDocumentPosition(planTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(plan).toHaveClass('acx-guided-entrance__plan-list');
+    expect(within(plan).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(plan).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      guidedCopy('steps.names.public').replace(/^\d+\.\s*/, ''),
+      guidedCopy('steps.description.public').replace(/^\d+\.\s*/, ''),
+      guidedCopy('steps.use.public').replace(/^\d+\.\s*/, ''),
+    ]);
 
     const escape = screen.getByRole('navigation', { name: guidedCopy('nav.leave') });
     const home = within(escape).getByRole('link', {
@@ -192,6 +206,35 @@ describe('public recorded walkthrough boundary', () => {
       within(escape).getByRole('link', { name: `${guidedCopy('nav.case_study')} (opens in a new window)` }),
     ).toHaveAttribute('href', CASE_STUDY_URL);
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
+  });
+
+  it('lets the public start action focus the first name question', async () => {
+    const user = userEvent.setup();
+    const onBegin = vi.fn();
+    let firstNameQuestion: HTMLInputElement | null = null;
+    const onFocusFirstNameQuestion = vi.fn(() => firstNameQuestion?.focus());
+
+    render(
+      <>
+        <GuidedPrototypeEntrance
+          onBegin={onBegin}
+          onFocusFirstNameQuestion={onFocusFirstNameQuestion}
+          scope="public"
+        />
+        <input
+          ref={(element) => {
+            firstNameQuestion = element;
+          }}
+          aria-label="First name question"
+        />
+      </>,
+    );
+
+    await user.click(screen.getByRole('button', { name: guidedCopy('entry.start.public') }));
+
+    expect(onBegin).toHaveBeenCalledOnce();
+    expect(onFocusFirstNameQuestion).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(firstNameQuestion);
   });
 
   it('keeps the public flow to two stages and guards image actions in the zero state', async () => {

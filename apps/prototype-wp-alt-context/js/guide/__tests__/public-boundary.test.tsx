@@ -18,11 +18,7 @@ const PUBLIC_HOME_URL = 'https://altcontext.com/';
 const PUBLIC_IMAGE_KEYS = ['tribeca', 'coachella'] as const;
 type PublicImageKey = (typeof PUBLIC_IMAGE_KEYS)[number];
 
-const choose = (
-  position: 'left' | 'right',
-  option: 'include' | 'omit',
-  imageKey: PublicImageKey = 'tribeca',
-): void => {
+const choose = (position: 'left' | 'right', option: 'include' | 'omit', imageKey: PublicImageKey = 'tribeca'): void => {
   const photo = screen.getByTestId(`guided-photo-${imageKey}`);
   const fieldset = within(photo).getByTestId(`name-choice-${imageKey}-${position}`);
   const name =
@@ -181,7 +177,11 @@ describe('public recorded walkthrough boundary', () => {
     expect(action.compareDocumentPosition(planTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(plan).toHaveClass('acx-guided-entrance__plan-list');
     expect(within(plan).getAllByRole('listitem')).toHaveLength(3);
-    expect(within(plan).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    expect(
+      within(plan)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
       guidedCopy('steps.names.public').replace(/^\d+\.\s*/, ''),
       guidedCopy('steps.description.public').replace(/^\d+\.\s*/, ''),
       guidedCopy('steps.use.public').replace(/^\d+\.\s*/, ''),
@@ -216,11 +216,7 @@ describe('public recorded walkthrough boundary', () => {
 
     render(
       <>
-        <GuidedPrototypeEntrance
-          onBegin={onBegin}
-          onFocusFirstNameQuestion={onFocusFirstNameQuestion}
-          scope="public"
-        />
+        <GuidedPrototypeEntrance onBegin={onBegin} onFocusFirstNameQuestion={onFocusFirstNameQuestion} scope="public" />
         <input
           ref={(element) => {
             firstNameQuestion = element;
@@ -296,12 +292,12 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.names.public') })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('faces.title.public') })).toHaveLength(2);
-    expect(
-      screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.altcontext.public') }),
-    ).toHaveLength(2);
-    expect(
-      screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.alttextai.public') }),
-    ).toHaveLength(2);
+    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.altcontext.public') })).toHaveLength(
+      2,
+    );
+    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('comparison.alttextai.public') })).toHaveLength(
+      2,
+    );
     expect(
       screen.queryByRole('heading', { name: guidedCopy('context.photo.altcontext_title') }),
     ).not.toBeInTheDocument();
@@ -313,9 +309,7 @@ describe('public recorded walkthrough boundary', () => {
     choose('right', 'include');
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
-      expect(
-        within(review).getByRole('textbox', { name: guidedCopy('draft.field_label.public') }),
-      ).toBeInTheDocument();
+      expect(within(review).getByRole('textbox', { name: guidedCopy('draft.field_label.public') })).toBeInTheDocument();
       expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
       expect(
         within(review).getByRole('heading', {
@@ -411,10 +405,7 @@ describe('public recorded walkthrough boundary', () => {
     expect(coachellaStatus.textContent).toBe('');
 
     await user.click(screen.getByTestId('demo-undo-tribeca'));
-    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute(
-      'alt',
-      originalTribecaAlt,
-    );
+    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', originalTribecaAlt);
     expect(within(tribecaReview).getByTestId('guided-current-alt-tribeca')).toHaveTextContent(originalTribecaAlt);
     expect(tribecaEditor).toHaveValue(tribecaEdit);
     expect(tribecaStatus).toBe(screen.getByTestId('guided-image-status-tribeca'));
@@ -424,10 +415,7 @@ describe('public recorded walkthrough boundary', () => {
     await user.click(screen.getByTestId('demo-apply-coachella'));
     expect(within(coachellaReview).getByTestId('demo-applied-image-coachella')).toHaveAttribute('alt', coachellaEdit);
     expect(coachellaStatus).toHaveTextContent(guidedCopy('outcome.applied_image.public'));
-    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute(
-      'alt',
-      originalTribecaAlt,
-    );
+    expect(within(tribecaReview).getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', originalTribecaAlt);
     expect(tribecaStatus).toHaveTextContent(guidedCopy('outcome.undone_image.public'));
 
     await user.click(screen.getByTestId('demo-undo-coachella'));
@@ -589,10 +577,14 @@ describe('public recorded walkthrough boundary', () => {
       const fieldsetLeft = within(photo).getByTestId(`name-choice-${imageKey}-left`);
       const fieldsetRight = within(photo).getByTestId(`name-choice-${imageKey}-right`);
       expect(
-        within(fieldsetLeft).getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked),
+        within(fieldsetLeft)
+          .getAllByRole('radio')
+          .every((radio) => !(radio as HTMLInputElement).checked),
       ).toBe(true);
       expect(
-        within(fieldsetRight).getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked),
+        within(fieldsetRight)
+          .getAllByRole('radio')
+          .every((radio) => !(radio as HTMLInputElement).checked),
       ).toBe(true);
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
       expect(review).toHaveTextContent(guidedCopy('draft.blocked'));

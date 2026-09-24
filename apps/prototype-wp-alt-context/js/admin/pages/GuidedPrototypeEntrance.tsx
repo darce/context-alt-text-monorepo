@@ -48,10 +48,7 @@ export const GuidedPrototypeEntrance = ({
             {guidedCopy('entry.title.public')}
           </h1>
           <p className="acx-guided-entrance__intro">{guidedCopy('entry.intro.public')}</p>
-          <p
-            className="acx-guided-entrance__scope acx-guided-entrance__provenance"
-            data-testid="guided-scope"
-          >
+          <p className="acx-guided-entrance__scope acx-guided-entrance__provenance" data-testid="guided-scope">
             {guidedCopy('scope.public')}
           </p>
           <div className="acx-guided-entrance__actions">

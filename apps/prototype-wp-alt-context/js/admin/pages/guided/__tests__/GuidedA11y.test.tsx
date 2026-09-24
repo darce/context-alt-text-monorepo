@@ -6,7 +6,7 @@
  * accessibility observation would prove the shipped page wrong (P2).
  */
 import React from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
@@ -562,7 +562,8 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
-    const leftCompare = within(tribecaPhoto).getByRole('button', { name: publicGuidedCopy('names.compare.public') });
+    const leftCard = within(tribecaPhoto).getByRole('region', { name: 'Justin Trudeau' });
+    const leftCompare = within(leftCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') });
     leftCompare.focus();
     await user.keyboard('{Enter}');
     const leftComparison = screen.getByRole('dialog', {
@@ -594,6 +595,7 @@ describe('GuidedA11y (W04)', () => {
       image: publicGuidedCopy('names.photo.tribeca'),
     });
     const leftCrop = within(tribecaPhoto).getByRole('img', { name: leftCropAlt });
+    fireEvent.load(leftCrop);
     expect(leftCrop).toBeVisible();
 
     const leftCard = within(tribecaPhoto).getByRole('region', {
@@ -606,7 +608,9 @@ describe('GuidedA11y (W04)', () => {
       name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }),
     });
     expect(comparison).toHaveAttribute('aria-modal', 'true');
-    expect(within(comparison).getByRole('img', { name: leftCropAlt })).toBeVisible();
+    const enlargedCrop = within(comparison).getByRole('img', { name: leftCropAlt });
+    fireEvent.load(enlargedCrop);
+    expect(enlargedCrop).toBeVisible();
     expect(
       within(comparison).getByRole('region', {
         name: publicGuidedCopy('lightbox.references.public', { name: 'Justin Trudeau' }),

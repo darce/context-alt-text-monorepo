@@ -145,22 +145,24 @@ describe('GuidedPrototypePage shell', () => {
   it('keeps the current sample-photo description separate from the applied preview', () => {
     render(<GuidedPrototypePage />);
 
-    const sampleImage = within(screen.getByTestId('guided-photo-tribeca')).getByRole('img', {
+    const photo = screen.getByTestId('guided-photo-tribeca');
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    const sampleImage = within(photo).getByRole('img', {
       name: SEED_ALT_TEXT,
     });
     expect(sampleImage).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
     choose('left', 'omit');
     choose('right', 'omit');
-    const appliedPreview = screen.getByTestId('demo-applied-image-tribeca');
+    const appliedPreview = within(review).getByTestId('demo-applied-image-tribeca');
     expect(appliedPreview).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(appliedPreview).not.toBe(sampleImage);
     expect(
-      within(screen.getByTestId('guided-photo-tribeca')).getByText(
+      within(photo).getByText(
         `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
       ),
     ).toBeInTheDocument();
     fireEvent.error(sampleImage);
-    expect(screen.getByRole('img', { name: SEED_ALT_TEXT })).toBeInTheDocument();
+    expect(within(photo).getByRole('img', { name: SEED_ALT_TEXT })).toBeInTheDocument();
   });
 });
 
@@ -405,23 +407,27 @@ describe('GuidedPrototypePage journey', () => {
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
     const coachellaPhoto = screen.getByTestId('guided-photo-coachella');
+    const tribecaJustin = within(tribecaPhoto).getByRole('region', { name: 'Justin Trudeau' });
+    const tribecaKaty = within(tribecaPhoto).getByRole('region', { name: 'Katy Perry' });
+    const coachellaJustin = within(coachellaPhoto).getByRole('region', { name: 'Justin Trudeau' });
+    const coachellaKaty = within(coachellaPhoto).getByRole('region', { name: 'Katy Perry' });
     expect(
-      within(tribecaPhoto)
+      within(tribecaJustin)
         .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
         .closest('details'),
     ).toHaveAttribute('open', '');
     expect(
-      within(tribecaPhoto)
+      within(tribecaKaty)
         .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
         .closest('details'),
     ).toHaveAttribute('open', '');
     expect(
-      within(coachellaPhoto)
+      within(coachellaJustin)
         .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
         .closest('details'),
     ).toHaveAttribute('open', '');
     expect(
-      within(coachellaPhoto)
+      within(coachellaKaty)
         .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
         .closest('details'),
     ).toHaveAttribute('open', '');

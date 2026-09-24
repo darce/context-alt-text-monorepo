@@ -34,6 +34,7 @@ import {
   formatGuidedSimilarity,
   getGuidedPerson,
   GUIDED_MATCH_THRESHOLD,
+  bothNamesAnswered,
   guidedNameCoverage,
   keepGuidedCurrentAltTextForImage,
   outcomeForPhoto,
@@ -283,12 +284,15 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     setFeedback(message ?? lastSummary(next));
   };
 
-  const handleBegin = (): void => {
-    commit(flushPendingDraft(demo));
-  };
-
   const handleFocusFirstNameQuestion = (): void => {
     document.querySelector<HTMLInputElement>('#guided-name-tribeca-left-include')?.focus({ preventScroll: true });
+  };
+
+  const handleBegin = (): void => {
+    commit(flushPendingDraft(demo));
+    if (scope === 'admin') {
+      handleFocusFirstNameQuestion();
+    }
   };
 
   const handleChoose = (
@@ -364,77 +368,100 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
             </div>
             <div className="acx-guided-page__media-list">
               {scenario.pressPhotos.map((photo, index) => (
-                <GuidedSamplePhoto
+                <section
                   key={photo.key}
-                  photo={photo}
-                  headingId={`guided-photo-${photo.key}-title`}
-                  currentAltText={demo.drafts[photo.key].appliedAltText}
-                  showCurrentAltText={index === 0}
-                  scope={scope}
+                  className="acx-guided-page__photo-step"
+                  data-testid={`guided-photo-step-${photo.key}`}
+                  aria-labelledby={`guided-photo-step-${photo.key}-title`}
                 >
-                  <GuidedPhotoFaces
-                    photoKey={photo.key}
-                    title={scope === 'public' ? guidedCopy('faces.title.public') : guidedCopy('faces.group_title')}
+                  <h3 id={`guided-photo-step-${photo.key}-title`}>
+                    {guidedCopy('photo.count.public', { photoNumber: index + 1 })}
+                  </h3>
+                  <GuidedSamplePhoto
+                    photo={photo}
+                    headingId={`guided-photo-${photo.key}-title`}
+                    currentAltText={demo.drafts[photo.key].appliedAltText}
+                    showCurrentAltText={index === 0}
+                    scope={scope}
                   >
-                    {scenario.faces
-                      .filter((face) => face.imageKey === photo.key)
-                      .map((face) => {
-                        const person = getGuidedPerson(scenario, face.matchedPersonKey);
-                        const personCoverage = coverage.find((entry) => entry.key === person.key);
-                        if (personCoverage === undefined) {
-                          throw new Error(`Missing guided name coverage for ${person.key}.`);
-                        }
+                    <GuidedPhotoFaces
+                      photoKey={photo.key}
+                      title={guidedCopy('names.heading.public')}
+                    >
+                      {scenario.faces
+                        .filter((face) => face.imageKey === photo.key)
+                        .map((face) => {
+                          const person = getGuidedPerson(scenario, face.matchedPersonKey);
+                          const personCoverage = coverage.find((entry) => entry.key === person.key);
+                          if (personCoverage === undefined) {
+                            throw new Error(`Missing guided name coverage for ${person.key}.`);
+                          }
 
-                        return (
-                          <React.Fragment key={face.id}>
-                            <GuidedFaceMatchCard
-                              idScope={photo.key}
-                              matches={scenario.faces
-                                .filter(
-                                  (candidate) =>
-                                    candidate.imageKey === photo.key &&
-                                    candidate.matchedPersonKey === face.matchedPersonKey,
-                                )
-                                .map((match) => {
-                                  const matchPhoto = scenario.pressPhotos.find(
-                                    (candidate) => candidate.key === match.imageKey,
-                                  );
-                                  if (matchPhoto === undefined) {
-                                    throw new Error(`Missing guided press photo for ${match.imageKey}.`);
-                                  }
-                                  return { face: match, mediaUrl: matchPhoto.src };
-                                })}
-                              person={person}
-                              coverage={personCoverage}
-                              choice={choicesForPhoto(demo, photo.key)[face.position]}
-                              disabled={demo.pendingChoiceChange !== null}
-                              onChoose={(choice, origin, imageKey) =>
-                                handleChoose(imageKey, face.position, choice, origin)
-                              }
-                            />
-                            {scope === 'admin' && face.similarity !== null ? (
-                              <p className="acx-guided-face__match-line">
-                                {guidedCopy('names.match.line', {
-                                  name: person.name,
-                                  similarity: formatGuidedSimilarity(face.similarity),
-                                })}
-                              </p>
-                            ) : null}
-                            {scope === 'admin' &&
-                            !face.isClusterAnchor &&
-                            face.similarity !== null &&
-                            face.similarity < GUIDED_MATCH_THRESHOLD ? (
-                              <p>
-                                {guidedCopy('names.match.below_threshold', {
-                                  threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
-                                })}
-                              </p>
-                            ) : null}
-                          </React.Fragment>
-                        );
-                      })}
-                  </GuidedPhotoFaces>
-                </GuidedSamplePhoto>
+                          return (
+                            <React.Fragment key={face.id}>
+                              <GuidedFaceMatchCard
+                                idScope={photo.key}
+                                matches={scenario.faces
+                                  .filter(
+                                    (candidate) =>
+                                      candidate.imageKey === photo.key &&
+                                      candidate.matchedPersonKey === face.matchedPersonKey,
+                                  )
+                                  .map((match) => {
+                                    const matchPhoto = scenario.pressPhotos.find(
+                                      (candidate) => candidate.key === match.imageKey,
+                                    );
+                                    if (matchPhoto === undefined) {
+                                      throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+                                    }
+                                    return { face: match, mediaUrl: matchPhoto.src };
+                                  })}
+                                person={person}
+                                coverage={personCoverage}
+                                choice={choicesForPhoto(demo, photo.key)[face.position]}
+                                disabled={demo.pendingChoiceChange !== null}
+                                onChoose={(choice, origin, imageKey) =>
+                                  handleChoose(imageKey, face.position, choice, origin)
+                                }
+                              />
+                              {scope === 'admin' && face.similarity !== null ? (
+                                <p className="acx-guided-face__match-line">
+                                  {guidedCopy('names.match.line', {
+                                    name: person.name,
+                                    similarity: formatGuidedSimilarity(face.similarity),
+                                  })}
+                                </p>
+                              ) : null}
+                              {scope === 'admin' &&
+                              !face.isClusterAnchor &&
+                              face.similarity !== null &&
+                              face.similarity < GUIDED_MATCH_THRESHOLD ? (
+                                <p>
+                                  {guidedCopy('names.match.below_threshold', {
+                                    threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
+                                  })}
+                                </p>
+                              ) : null}
+                            </React.Fragment>
+                          );
+                        })}
+                      <section
+                        className="acx-guided-page__description-step"
+                        data-testid={`guided-description-step-${photo.key}`}
+                        aria-labelledby={`guided-description-step-${photo.key}-title`}
+                      >
+                        <h4 id={`guided-description-step-${photo.key}-title`}>
+                          {guidedCopy('description.heading.public')}
+                        </h4>
+                        <p>
+                          {bothNamesAnswered(demo, photo.key)
+                            ? guidedCopy('description.written.public')
+                            : guidedCopy('description.help.public')}
+                        </p>
+                      </section>
+                    </GuidedPhotoFaces>
+                  </GuidedSamplePhoto>
+                </section>
               ))}
             </div>
             <div className="acx-guided-page__provenance-footer">

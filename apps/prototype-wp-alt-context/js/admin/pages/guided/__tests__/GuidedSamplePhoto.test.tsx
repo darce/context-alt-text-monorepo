@@ -49,9 +49,8 @@ describe('GuidedSamplePhoto image geometry', () => {
     const anchorFace = scenario.faces.find((face) => face.imageKey === photo.key && face.isClusterAnchor);
     expect(anchorFace).toBeDefined();
     const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
-    expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
-    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/100%/);
-    expect(anchorButton?.textContent).not.toMatch(/100%/);
+    expect(anchorButton?.getAttribute('aria-label')).toContain(formatGuidedSimilarity(anchorFace!.similarity!));
+    expect(anchorButton?.getAttribute('aria-label')).not.toContain(guidedCopy('names.no_score.public'));
   });
 
   it('marks a loaded portrait image as portrait', () => {

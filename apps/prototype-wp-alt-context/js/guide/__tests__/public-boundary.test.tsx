@@ -290,6 +290,31 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();
   });
 
+  it('places each public description review directly after its photo name choices', () => {
+    render(<RecordedWalkthrough scope="public" />);
+    chooseBothImages('left', 'include');
+    chooseBothImages('right', 'include');
+
+    const mediaList = document.querySelector('.acx-guided-page__media-list');
+    const footer = document.querySelector('.acx-guided-page__provenance-footer');
+    expect(mediaList).not.toBeNull();
+    expect(footer).not.toBeNull();
+
+    for (const imageKey of PUBLIC_IMAGE_KEYS) {
+      const photoStep = screen.getByTestId(`guided-photo-step-${imageKey}`);
+      const faces = screen.getByTestId(`guided-faces-${imageKey}`);
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(photoStep).toContainElement(review);
+      expect(faces).toContainElement(review);
+      expect(review.parentElement).toBe(faces.querySelector('.acx-guided-page__faces-list'));
+      expect(review.previousElementSibling).toHaveClass('acx-guided-face__card');
+      expect(review).toContainElement(publicEditor(imageKey));
+      expect(screen.queryByTestId(`guided-description-step-${imageKey}`)).not.toBeInTheDocument();
+    }
+
+    expect(mediaList?.compareDocumentPosition(footer as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('uses word-only match strength in the public name cards', () => {
     const { container } = render(<RecordedWalkthrough scope="public" />);
     const evidence = Array.from(container.querySelectorAll('.acx-guided-face__matches'))
@@ -310,8 +335,16 @@ describe('public recorded walkthrough boundary', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toHaveLength(2);
     expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
+    for (const [index, imageKey] of PUBLIC_IMAGE_KEYS.entries()) {
+      expect(
+        within(screen.getByTestId(`guided-photo-step-${imageKey}`)).getByRole('heading', {
+          level: 3,
+          name: guidedCopy('photo.count.public', { photoNumber: index + 1 }),
+        }),
+      ).toBeInTheDocument();
+    }
     expect(screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' })).toHaveLength(
       2,
     );
@@ -352,6 +385,7 @@ describe('public recorded walkthrough boundary', () => {
     });
     fireEvent.change(editor, { target: { value: edited } });
     await user.click(screen.getByTestId('demo-apply-tribeca'));
+    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
     await user.click(screen.getByTestId('demo-undo-tribeca'));
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -539,6 +573,44 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByTestId('guided-description-review-tribeca')).toHaveTextContent(
       publicGuidedCopy('choices.help.public'),
     );
+  });
+
+  it('returns focus to the first name question after Start over is confirmed', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+
+    const firstNameQuestion = within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
+      name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
+    });
+    const focusFirstNameQuestion = vi.spyOn(firstNameQuestion, 'focus');
+    await user.click(screen.getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('reset.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('reset.confirm.public') }));
+
+    expect(document.activeElement).toBe(firstNameQuestion);
+    expect(focusFirstNameQuestion).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('returns focus to the changed name radio after confirming a name change', async () => {
+    const user = userEvent.setup();
+    render(<RecordedWalkthrough scope="public" />);
+    choose('left', 'include');
+    choose('right', 'include');
+    const editor = publicEditor('tribeca');
+    await user.clear(editor);
+    await user.type(editor, 'A visitor edit that needs a focus return.');
+
+    const changedNameRadio = within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
+      name: publicGuidedCopy('names.omit.public'),
+    });
+    const focusChangedNameRadio = vi.spyOn(changedNameRadio, 'focus');
+    fireEvent.click(changedNameRadio);
+    const dialog = screen.getByRole('dialog', { name: publicGuidedCopy('name_change.title.public') });
+    await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('name_change.confirm.public') }));
+
+    expect(changedNameRadio).toBeChecked();
+    expect(document.activeElement).toBe(changedNameRadio);
+    expect(focusChangedNameRadio).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   it('does not resurrect an unsaved draft or open replacement after reset', async () => {

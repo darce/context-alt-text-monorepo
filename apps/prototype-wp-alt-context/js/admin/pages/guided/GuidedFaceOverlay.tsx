@@ -10,7 +10,7 @@ export interface GuidedFaceOverlayFace {
   id: string;
   box: BoundingBox;
   label: string;
-  /** @deprecated Numeric similarity is retained for old callers but never shown to visitors. */
+  /** Copy prepared by the caller so the chip and accessible name stay in sync. */
   similarityText: string;
   strength: GuidedMatchStrength;
   isClusterAnchor?: boolean;
@@ -50,13 +50,7 @@ const matchWords = (face: GuidedFaceOverlayFace): string => {
   if (face.isClusterAnchor === true || face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
     return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
   }
-  if (face.strength === GUIDED_MATCH_STRENGTH.WEAK) {
-    return guidedCopy('names.weak.public');
-  }
-  if (face.strength === GUIDED_MATCH_STRENGTH.STRONG) {
-    return guidedCopy('names.strong.public');
-  }
-  return 'Match strength unavailable.';
+  return face.similarityText || guidedCopy('names.match.unavailable');
 };
 
 const faceChipText = (face: GuidedFaceOverlayFace): string => `${face.label} · ${matchWords(face)}`;

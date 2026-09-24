@@ -55,17 +55,16 @@ Purpose: Signed-out public entrance. Public title and introduction explain the s
 
 ### Recorded walkthrough (`walkthrough`)
 
-Purpose: RecordedWalkthrough scope=public: understand the supplied page context, then a context sentence above both bundled press photos; figures are stacked in one column inside .acx-guided-page__media-list. Each figure has a 1 / 1 image frame (1:1 crop), visible Photo credit, and two caption disclosures beneath the image on the left, plus one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs sits below the figures before Continue. Review the cached AltText.ai and AltContext captions and the example roster; choose inclusion or omission, edit each recorded per-image sample, preview, apply, keep, undo, or reset. Bundled examples plus in-tab state. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: a photo's sample draft unavailable. Keyboard completes choose → edit → preview.
+Purpose: RecordedWalkthrough scope=public: understand the supplied page context, then review the two bundled press photos stacked in .acx-guided-page__media-list. Each figure has a 1 / 1 image frame, visible Photo credit, one collapsed AltText.ai comparison disclosure, and its own current description in the sample image alt. One "People recognised in this photo" article sits in the .acx-guided-page__faces column on the right with both people's name choices; this column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer sits below the figures. After name choices, the public editor shows the current description and one editable draft for each photo; the sample image is the demo image and there is no second applied-preview image. Changes stay in the tab. Recognition and GPU generation are cached and never run per visitor. No import path from js/guide/** may reach js/admin/api/** or GuidedLiveDescriptionPanel. edge_input: a name choice is still undecided. error: a photo's sample draft unavailable. Keyboard completes choose → edit → use.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `guided-demo-root` | Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab. | content | default, edge_input, error |
-| `guided-section-understand` | Understand the page and provenance. The .acx-guided-page__context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked in one column. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, and one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue. Review current demo alt text, cached captions, credits, and recorded source details. | content | default |
+| `guided-section-understand` | Understand the page and provenance. The context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked. Each figure has one 1 / 1 sample image whose alt is the current description, a visible Photo credit, one collapsed AltText.ai comparison disclosure, and a right-hand "People recognised in this photo" article with both name choices. The faces column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer follows the figures. Review the current image descriptions, comparison captions, credits, and recorded source details. | content | default |
 | `name-choice-tribeca-left` | Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible. | form | default, edge_input |
 | `name-choice-tribeca-right` | Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible. | form | default, edge_input |
 | `name-choice-coachella-left` | Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible. | form | default, edge_input |
 | `name-choice-coachella-right` | Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer. | form | default, edge_input |
-| `guided-candidate` | Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change. | form | default, error |
 
 ```
 +------------------------------------------------------------+
@@ -74,12 +73,11 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Public mount. data-scope=public. Supplied roster and … |
-|   - Understand the page and provenance. The .acx-guided-p… |
+|   - Understand the page and provenance. The context parag… |
 |   - Justin Trudeau roster entry for the Tribeca figure's … |
 |   - Katy Perry roster entry for the Tribeca figure's "Peo… |
 |   - Justin Trudeau roster entry for the Coachella figure'… |
 |   - Katy Perry roster entry for the Coachella figure's "P… |
-|   - Edit the alt text for each photo. Tribeca and Coachel… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Review name suggestions -> apply               |
@@ -93,23 +91,23 @@ Purpose: RecordedWalkthrough scope=public: understand the supplied page context,
 
 ### Apply and undo (`apply`)
 
-Purpose: Compare current alt text with each per-image draft. Apply to demo copy changes only that photo's in-tab demo image. Undo last application restores the previous alt text for that photo. empty: there is no application to undo yet, or no differing preview. error: stale preview — The draft changed. Preview it again before applying.
+Purpose: For each photo, review the current description beside its editable recorded draft. Use this description updates that sample photo's alt in this tab; Undo this change restores its previous description. The public editor has no separate applied-preview image. empty: there is no change to undo. error: the draft is empty or unchanged, or its recorded sample is unavailable.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `guided-section-apply` | Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches. | content | default, empty, error |
-| `demo-applied-image-tribeca` | Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready. | ai_review | default |
-| `demo-applied-image-coachella` | Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready. | ai_review | default |
+| `guided-section-apply` | Review and edit the current description for each photo. Use this description changes only that sample photo's alt text in this tab. Undo restores that photo's previous description. The full-size sample photo above is the demo image; the public editor does not render a second preview image. | content | default, empty, error |
+| `guided-photo-tribeca` | Tribeca sample photo. Its alt text is the current Tribeca description. This is the public demo image and the same image changes when the visitor uses or undoes a description. | content | default |
+| `guided-photo-coachella` | Coachella sample photo. Its alt text is the current Coachella description. This is the public demo image and the same image changes when the visitor uses or undoes a description. | content | default |
 
 ```
 +------------------------------------------------------------+
 | Apply and undo  [screen]  /guide/                          |
-| Compare current alt text with each per-image draft. Apply… |
+| For each photo, review the current description beside its… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Apply and undo each per-image draft. For Tribeca and … |
-|   - Tribeca demo image preview. Distinct applied-preview … |
-|   - Coachella demo image preview. Distinct applied-previe… |
+|   - Review and edit the current description for each phot… |
+|   - Tribeca sample photo. Its alt text is the current Tri… |
+|   - Coachella sample photo. Its alt text is the current C… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to demo copy -> outcome (preview)        |
@@ -304,7 +302,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
 hand-edit one side.
 
-Zone ids: public-escape guided-scope entry-cta guided-demo-root guided-section-understand name-choice-tribeca-left name-choice-tribeca-right name-choice-coachella-left name-choice-coachella-right guided-candidate guided-section-apply demo-applied-image-tribeca demo-applied-image-coachella demo-outcome public-guide-fallback escape-home escape-case-study
+Zone ids: public-escape guided-scope entry-cta guided-demo-root guided-section-understand name-choice-tribeca-left name-choice-tribeca-right name-choice-coachella-left name-choice-coachella-right guided-section-apply guided-photo-tribeca guided-photo-coachella demo-outcome public-guide-fallback escape-home escape-case-study
 
 Action ids: start-walkthrough read-case-study continue-walkthrough preview-draft keep-current-alt-text reset-demo demo-apply demo-undo return-to-draft reload-guide go-home go-case-study
 
@@ -314,15 +312,14 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Supplied example roster with recorded drafts. Choices affect only the demo copy in this tab; no WordPress or server roster update.
 - Start the walkthrough (primary). Read the case study.
 - Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab.
-- Understand the page and provenance. The .acx-guided-page__context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked in one column. Each figure is a two-column layout: a 1 / 1 image frame (1:1 crop) with visible Photo credit and two AltText.ai/AltContext caption disclosures beneath the image on the left, and one "People recognised in this photo" article in the .acx-guided-page__faces column on the right with both persons' roster entries and include/omit radios; the faces column collapses under the image below 56.25rem. Face outlines pin on click. A plain .acx-guided-page__provenance-footer with three paragraphs follows the figures before Continue. Review current demo alt text, cached captions, credits, and recorded source details.
+- Understand the page and provenance. The context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked. Each figure has one 1 / 1 sample image whose alt is the current description, a visible Photo credit, one collapsed AltText.ai comparison disclosure, and a right-hand "People recognised in this photo" article with both name choices. The faces column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer follows the figures. Review the current image descriptions, comparison captions, credits, and recorded source details.
 - Justin Trudeau roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible.
 - Katy Perry roster entry for the Tribeca figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible.
 - Justin Trudeau roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible.
 - Katy Perry roster entry for the Coachella figure's "People recognised in this photo" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer.
-- Edit the alt text for each photo. Tribeca and Coachella each have an Alt text draft textarea with a recorded sample or a local visitor edit. Edits stay in this tab. Nothing is applied until you choose Apply to demo copy for that photo. blocked: Choose a name option for both people to load both sample drafts. fixture_missing: The sample draft for this photo and these choices is unavailable; the other photo's draft and both demo copies are unchanged. preview_invalid: Enter alt text before reviewing the change.
-- Apply and undo each per-image draft. For Tribeca and Coachella, compare Current alt text beside Will be applied. Applying changes only that photo's demo copy. The draft changed: preview it again before applying. The demo copy already uses this text when it matches.
-- Tribeca demo image preview. Distinct applied-preview image whose alternative is the current Tribeca demo copy. This zone is rendered only while the Tribeca draft status is ready.
-- Coachella demo image preview. Distinct applied-preview image whose alternative is the current Coachella demo copy. This zone is rendered only while the Coachella draft status is ready.
+- Review and edit the current description for each photo. Use this description changes only that sample photo's alt text in this tab. Undo restores that photo's previous description. The full-size sample photo above is the demo image; the public editor does not render a second preview image.
+- Tribeca sample photo. Its alt text is the current Tribeca description. This is the public demo image and the same image changes when the visitor uses or undoes a description.
+- Coachella sample photo. Its alt text is the current Coachella description. This is the public demo image and the same image changes when the visitor uses or undoes a description.
 - Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.
 - The walkthrough could not load. Reload the page and try again.
 - Home

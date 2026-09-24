@@ -85,8 +85,8 @@ export const GuidedFaceMatchCard = ({
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [lightboxCropSizePx, setLightboxCropSizePx] = useState(ENLARGED_CROP_PX);
+  const [lightboxReferenceTile, setLightboxReferenceTile] = useState<HTMLImageElement | null>(null);
   const enlargeRef = useRef<HTMLButtonElement>(null);
-  const lightboxReferenceTileRef = useRef<HTMLImageElement>(null);
   const wasComparisonOpenRef = useRef(false);
   const representative = matches[0]?.face;
   if (representative === undefined) {
@@ -115,12 +115,8 @@ export const GuidedFaceMatchCard = ({
   }, [comparisonOpen]);
 
   useEffect(() => {
-    if (!comparisonOpen) {
-      return;
-    }
-    setLightboxCropSizePx(ENLARGED_CROP_PX);
-    const referenceTile = lightboxReferenceTileRef.current;
-    if (referenceTile === null) {
+    if (!comparisonOpen || lightboxReferenceTile === null) {
+      setLightboxCropSizePx(ENLARGED_CROP_PX);
       return;
     }
 
@@ -129,20 +125,20 @@ export const GuidedFaceMatchCard = ({
         setLightboxCropSizePx(Math.round(width));
       }
     };
-    updateCropSize(referenceTile.getBoundingClientRect().width);
+    updateCropSize(lightboxReferenceTile.getBoundingClientRect().width);
 
     if (typeof ResizeObserver === 'undefined') {
       return;
     }
     const resizeObserver = new ResizeObserver((entries) => {
-      const tileEntry = entries.find((entry) => entry.target === referenceTile);
+      const tileEntry = entries.find((entry) => entry.target === lightboxReferenceTile);
       if (tileEntry !== undefined) {
         updateCropSize(tileEntry.contentRect.width);
       }
     });
-    resizeObserver.observe(referenceTile);
+    resizeObserver.observe(lightboxReferenceTile);
     return () => resizeObserver.disconnect();
-  }, [comparisonOpen]);
+  }, [comparisonOpen, lightboxReferenceTile]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>, nextChoice: GuidedNameChoice): void => {
     onChoose(nextChoice, event.currentTarget, representative.imageKey);
@@ -275,7 +271,7 @@ export const GuidedFaceMatchCard = ({
                     data-testid="guided-lightbox-reference-photo"
                   >
                     <img
-                      ref={index === 0 ? lightboxReferenceTileRef : undefined}
+                      ref={index === 0 ? setLightboxReferenceTile : undefined}
                       src={photo.src}
                       alt={photo.altText}
                     />

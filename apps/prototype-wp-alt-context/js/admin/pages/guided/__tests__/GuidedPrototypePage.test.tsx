@@ -402,45 +402,42 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText(guidedCopy('notes.title'))).toBeInTheDocument();
   });
 
-  it('shows honest reference coverage inside each face comparison', () => {
+  it('shows honest reference coverage inside each face comparison', async () => {
+    const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
     const coachellaPhoto = screen.getByTestId('guided-photo-coachella');
-    const tribecaJustin = within(tribecaPhoto).getByRole('region', { name: 'Justin Trudeau' });
-    const tribecaKaty = within(tribecaPhoto).getByRole('region', { name: 'Katy Perry' });
-    const coachellaJustin = within(coachellaPhoto).getByRole('region', { name: 'Justin Trudeau' });
-    const coachellaKaty = within(coachellaPhoto).getByRole('region', { name: 'Katy Perry' });
-    expect(
-      within(tribecaJustin)
-        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
-        .closest('details'),
-    ).toHaveAttribute('open', '');
-    expect(
-      within(tribecaKaty)
-        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
-        .closest('details'),
-    ).toHaveAttribute('open', '');
-    expect(
-      within(coachellaJustin)
-        .getByText(guidedCopy('names.evidence_open', { position: 'left' }))
-        .closest('details'),
-    ).toHaveAttribute('open', '');
-    expect(
-      within(coachellaKaty)
-        .getByText(guidedCopy('names.evidence_open', { position: 'right' }))
-        .closest('details'),
-    ).toHaveAttribute('open', '');
-    expect(within(tribecaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
-    expect(
-      within(tribecaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
-    ).toBeInTheDocument();
-    expect(within(coachellaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
-    expect(
-      within(coachellaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
-    expect(screen.getAllByText('© European Union, 2025, EU reuse licence, resized').length).toBeGreaterThan(0);
+    const comparisons = [
+      { photo: tribecaPhoto, name: 'Justin Trudeau', position: 'left', shown: 3, total: 3 },
+      { photo: tribecaPhoto, name: 'Katy Perry', position: 'right', shown: 3, total: 5 },
+      { photo: coachellaPhoto, name: 'Justin Trudeau', position: 'left', shown: 3, total: 3 },
+      { photo: coachellaPhoto, name: 'Katy Perry', position: 'right', shown: 3, total: 5 },
+    ] as const;
+
+    for (const { photo, name, position, shown, total } of comparisons) {
+      const region = within(photo).getByRole('region', { name });
+      await user.click(within(region).getByRole('button', { name: publicGuidedCopy('names.compare.public') }));
+
+      const dialog = screen.getByRole('dialog', {
+        name: publicGuidedCopy('lightbox.title.public', { name }),
+      });
+      expect(within(dialog).getByText(guidedCopy('names.evidence_open', { position }))).toBeInTheDocument();
+      expect(
+        within(dialog).getByText(
+          total === 3
+            ? guidedCopy('names.coverage_all', { total })
+            : guidedCopy('names.coverage_partial', { shown, total }),
+        ),
+      ).toBeInTheDocument();
+      expect(within(dialog).queryByText(/Show all 5/)).not.toBeInTheDocument();
+      expect(
+        within(dialog).getAllByText('© European Union, 2025, EU reuse licence, resized').length,
+      ).toBeGreaterThan(0);
+
+      await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }
   });
 
   it('loads the katy-only sample when the right face is included and the left is omitted', () => {

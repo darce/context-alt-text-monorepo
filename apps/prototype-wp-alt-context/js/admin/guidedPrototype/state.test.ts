@@ -14,6 +14,7 @@ import {
   canRestoreRevision,
   canUndo,
   bothNamesAnswered,
+  canKeepCurrentForImage,
   cancelGuidedChoiceReplacement,
   chooseGuidedName,
   confirmGuidedChoiceReplacement,
@@ -473,8 +474,27 @@ describe('per-photo name answers and outcomes', () => {
 
   it('tracks applied and kept status per photo, and undo clears only that photo', () => {
     const scenario = createGuidedScenario();
+    const unanswered = createGuidedDemoState();
+    expect(canKeepCurrentForImage(unanswered, TRIBECA)).toBe(false);
+    expect(keepGuidedCurrentAltTextForImage(unanswered, TRIBECA)).toBe(unanswered);
+    expect(outcomeForPhoto(unanswered, TRIBECA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(unanswered)).toBe(false);
+
+    const tribecaAnswered = chooseBoth(
+      unanswered,
+      scenario,
+      GUIDED_NAME_CHOICE.USE,
+      GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
+      TRIBECA,
+    );
+    expect(canKeepCurrentForImage(tribecaAnswered, TRIBECA)).toBe(true);
+    const tribecaKept = keepGuidedCurrentAltTextForImage(tribecaAnswered, TRIBECA);
+    expect(outcomeForPhoto(tribecaKept, TRIBECA)).toBe(GUIDED_OUTCOME.KEPT);
+    expect(outcomeForPhoto(tribecaKept, COACHELLA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(tribecaKept)).toBe(false);
+
     const ready = chooseBoth(
-      chooseBoth(createGuidedDemoState(), scenario, GUIDED_NAME_CHOICE.USE, GUIDED_NAME_CHOICE.LEAVE_UNNAMED, TRIBECA),
+      tribecaAnswered,
       scenario,
       GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
       GUIDED_NAME_CHOICE.USE,
@@ -1100,13 +1120,14 @@ describe('undoGuidedApplication', () => {
 });
 
 describe('keepGuidedCurrentAltText', () => {
-  it('is allowed while names are blocked and leaves applied text and draft unchanged', () => {
+  it('is a no-op while names are unanswered', () => {
     const start = createGuidedDemoState();
     const kept = keepGuidedCurrentAltText(start);
-    expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expect(kept).toEqual(start);
+    expect(kept.outcome).not.toBe(GUIDED_OUTCOME.KEPT);
     expect(kept.appliedAltText).toBe(ORIGINAL_ALT);
-    expect(kept.draftText).toBeNull();
-    expect(kept.actionHistory.at(-1)?.summary).toBe(guidedCopy('outcome.kept'));
+    expect(kept.draftText).toBe(start.draftText);
+    expect(kept.actionHistory).toEqual(start.actionHistory);
   });
 
   it('remains available when the matching sample is missing (T04)', () => {

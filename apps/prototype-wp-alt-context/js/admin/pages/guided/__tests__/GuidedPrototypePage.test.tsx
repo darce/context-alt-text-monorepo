@@ -51,9 +51,7 @@ describe('GuidedPrototypePage shell', () => {
     expect(stepper).toHaveTextContent(
       guidedCopy('guide.current', { stepNumber: 1, stepTitle: guidedCopy('step.context') }),
     );
-    expect(
-      screen.getByRole('heading', { level: 2, name: guidedCopy('step.context') }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.context') })).toBeInTheDocument();
     for (const step of ['context', 'names', 'draft', 'apply'] as const) {
       expect(stepButton(step)).toBeInTheDocument();
     }

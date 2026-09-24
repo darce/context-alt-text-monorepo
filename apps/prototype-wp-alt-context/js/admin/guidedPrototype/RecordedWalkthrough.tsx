@@ -188,7 +188,10 @@ interface PublicStartOverDialogProps {
   onFocusFirstNameQuestion: () => void;
 }
 
-const PublicStartOverDialog = ({ onConfirm, onFocusFirstNameQuestion }: PublicStartOverDialogProps): React.JSX.Element => {
+const PublicStartOverDialog = ({
+  onConfirm,
+  onFocusFirstNameQuestion,
+}: PublicStartOverDialogProps): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const focusScenarioAfterConfirmRef = useRef(false);
@@ -312,10 +315,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
 
   const handleBegin = (): void => {
     if (scope === 'admin') {
-      commit(
-        selectGuidedStep(flushPendingDraft(demo), GUIDED_STEP.CONTEXT),
-        guideProgressMessage(GUIDED_STEP.CONTEXT),
-      );
+      commit(selectGuidedStep(flushPendingDraft(demo), GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
       setGuideOpen(true);
       focusGuidedSection(GUIDED_STEP.CONTEXT);
       return;
@@ -371,10 +371,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
 
   const handleKeep = (imageKey: GuidedImageKey): void => {
     const current = flushPendingDraft(demo);
-    if (
-      !canKeepCurrentForImage(current, imageKey) ||
-      current.drafts[imageKey].outcome === GUIDED_OUTCOME.APPLIED
-    ) {
+    if (!canKeepCurrentForImage(current, imageKey) || current.drafts[imageKey].outcome === GUIDED_OUTCOME.APPLIED) {
       return;
     }
     commit(keepGuidedCurrentAltTextForImage(current, imageKey));
@@ -385,11 +382,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     choiceOriginRef.current = null;
     setDemo(resetGuidedDemoState(demo));
     setResetVersion((current) => current + 1);
-    setFeedback(
-      scope === 'public'
-        ? publicGuidedCopy('reset.success.public')
-        : adminGuidedCopy('reset.status'),
-    );
+    setFeedback(scope === 'public' ? publicGuidedCopy('reset.success.public') : adminGuidedCopy('reset.status'));
   };
 
   const reviewActions = {
@@ -452,10 +445,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                 : guidedStepLabelForScope(GUIDED_STEP.CONTEXT, scope)}
             </h2>
             {scope === 'public' ? (
-              <PublicStartOverDialog
-                onConfirm={handleReset}
-                onFocusFirstNameQuestion={handleFocusFirstNameQuestion}
-              />
+              <PublicStartOverDialog onConfirm={handleReset} onFocusFirstNameQuestion={handleFocusFirstNameQuestion} />
             ) : (
               <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} scope="admin" />
             )}

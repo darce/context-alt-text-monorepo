@@ -200,7 +200,9 @@ describe('GuidedA11y (W04)', () => {
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.draft') })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.apply') })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: publicGuidedCopy('photos.title.public') })).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: publicGuidedCopy('description.heading.public') })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: publicGuidedCopy('description.heading.public') }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
   });
@@ -287,21 +289,11 @@ describe('GuidedA11y (W04)', () => {
     expect(indexOfStop(stops, guidedCopy('page.case_study'))).toBeLessThan(
       indexOfStop(stops, guidedCopy('guide.hide')),
     );
-    expect(indexOfStop(stops, guidedCopy('guide.hide'))).toBeLessThan(
-      indexOfStop(stops, guidedCopy('step.context')),
-    );
-    expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(
-      indexOfStop(stops, guidedCopy('step.names')),
-    );
-    expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(
-      indexOfStop(stops, guidedCopy('step.draft')),
-    );
-    expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(
-      indexOfStop(stops, guidedCopy('step.apply')),
-    );
-    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(
-      indexOfStop(stops, guidedCopy('page.reset')),
-    );
+    expect(indexOfStop(stops, guidedCopy('guide.hide'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.context')));
+    expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.names')));
+    expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.draft')));
+    expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.apply')));
+    expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, guidedCopy('page.reset')));
     for (const photoKey of photoKeys) {
       const leftStop = photoStop(photoKey, leftInclude);
       const rightStop = photoStop(photoKey, rightInclude);

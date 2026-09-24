@@ -133,9 +133,7 @@ describe('GuidedDescriptionReview per-image drafts', () => {
       <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={reviewActions} scope="public" />,
     );
 
-    expect(
-      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('step.review.public') }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('step.review.public') })).toBeInTheDocument();
     for (const imageKey of ['tribeca', 'coachella'] as const) {
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
       expect(

@@ -3,10 +3,7 @@ import React, { useContext } from 'react';
 import { getGuidedLiveMediaId } from '../../api/config';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import { guidedCopy } from '../../guidedPrototype/copy';
-import {
-  RecordedWalkthroughAdmin,
-  RecordedWalkthroughLiveSlot,
-} from '../../guidedPrototype/RecordedWalkthroughAdmin';
+import { RecordedWalkthroughAdmin, RecordedWalkthroughLiveSlot } from '../../guidedPrototype/RecordedWalkthroughAdmin';
 import { GuidedLiveDescriptionPanel } from './GuidedLiveDescriptionPanel';
 
 const AdminLivePanel = (): React.JSX.Element => {

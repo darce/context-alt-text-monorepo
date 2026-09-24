@@ -125,40 +125,37 @@ describe('GuidedFaceOverlay', () => {
     });
   });
 
-  it(
-    'pins a face on click, keeps it highlighted after pointer-leave and blur, and unpins on a second click',
-    async () => {
-      const user = userEvent.setup();
-      const onHighlightChange = vi.fn();
-      render(
-        <GuidedFaceOverlay
-          faces={[faces[0]]}
-          naturalSize={naturalSize}
-          visible
-          idPrefix="guided-tribeca"
-          onHighlightChange={onHighlightChange}
-        />,
-      );
+  it('pins a face on click, keeps it highlighted after pointer-leave and blur, and unpins on a second click', async () => {
+    const user = userEvent.setup();
+    const onHighlightChange = vi.fn();
+    render(
+      <GuidedFaceOverlay
+        faces={[faces[0]]}
+        naturalSize={naturalSize}
+        visible
+        idPrefix="guided-tribeca"
+        onHighlightChange={onHighlightChange}
+      />,
+    );
 
-      const button = screen.getByRole('button', { name: accessibleName(faces[0]) });
-      await user.click(button);
-      expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
-      expect(button).toHaveAttribute('aria-pressed', 'true');
-      expect(button).toHaveAttribute('data-pinned', 'true');
-      expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
+    const button = screen.getByRole('button', { name: accessibleName(faces[0]) });
+    await user.click(button);
+    expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
+    expect(button).toHaveAttribute('aria-pressed', 'true');
+    expect(button).toHaveAttribute('data-pinned', 'true');
+    expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
 
-      fireEvent.pointerLeave(button);
-      fireEvent.blur(button);
-      expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
-      expect(button).toHaveAttribute('data-pinned', 'true');
-      expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
+    fireEvent.pointerLeave(button);
+    fireEvent.blur(button);
+    expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
+    expect(button).toHaveAttribute('data-pinned', 'true');
+    expect(button).toHaveClass('acx-guided-face-overlay__outline--pinned');
 
-      await user.click(button);
-      expect(button).toHaveAttribute('aria-pressed', 'false');
-      expect(button).toHaveAttribute('data-pinned', 'false');
-      expect(button).not.toHaveClass('acx-guided-face-overlay__outline--pinned');
-    },
-  );
+    await user.click(button);
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(button).toHaveAttribute('data-pinned', 'false');
+    expect(button).not.toHaveClass('acx-guided-face-overlay__outline--pinned');
+  });
 
   it('clears a pinned face and the interaction highlight on Escape', async () => {
     const user = userEvent.setup();

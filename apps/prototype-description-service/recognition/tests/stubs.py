@@ -216,6 +216,16 @@ class NullClusterRepository(ClusterRepository):
         clusters.sort(key=lambda cluster: cluster.identity_count, reverse=True)
         return clusters[:limit]
 
+    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+        return sum(
+            1
+            for cluster in self._clusters_by_id.values()
+            if cluster.tenant_id == tenant_id
+            and cluster.id not in self._dismissed_cluster_ids
+            and cluster.identity_count >= min_identity_count
+            and (cluster.label is None or cluster.label.startswith("cluster-"))
+        )
+
     async def dismiss_cluster(self, cluster_id: str) -> bool:
         if cluster_id not in self._clusters_by_id:
             return False

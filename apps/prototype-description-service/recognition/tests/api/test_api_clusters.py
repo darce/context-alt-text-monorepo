@@ -1042,7 +1042,7 @@ def test_top_unlabeled_omits_invalid_representative_bbox_and_thumb_url(
     )
 
     assert resp.status_code == 200
-    returned_cluster = next(item for item in resp.json() if item["id"] == cluster.id)
+    returned_cluster = next(item for item in resp.json()["clusters"] if item["id"] == cluster.id)
     representative = returned_cluster["representatives"][0]
     assert representative["bbox"] is None
     assert representative["thumb_url"] is None

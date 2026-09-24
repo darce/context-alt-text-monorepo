@@ -51,7 +51,13 @@ def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
     )
 
 
-def _make_labeled_cluster_repo(tenant_id: str, cluster_id: str, representative_similarity: float):
+def _make_labeled_cluster_repo(
+    tenant_id: str,
+    cluster_id: str,
+    representative_similarity: float,
+    *,
+    member_identity_ids: list[str] | None = None,
+):
     """Return a repo stub with one labeled cluster and one representative vector."""
     rep_vec = np.array(
         [representative_similarity, np.sqrt(1 - representative_similarity**2)],
@@ -66,6 +72,9 @@ def _make_labeled_cluster_repo(tenant_id: str, cluster_id: str, representative_s
     class _ClusterRepoStub:
         async def get_labeled_with_representatives(self, *_args, **_kwargs):
             return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
+
+        async def get_members(self, _cluster_id):
+            return [MagicMock(identity_id=identity_id) for identity_id in member_identity_ids or []]
 
     return _ClusterRepoStub()
 
@@ -166,6 +175,47 @@ class TestRefreshForCluster:
             member_similarity=pytest.approx(1.0),
             confidence_score=pytest.approx(1.0),
         )
+
+    @pytest.mark.asyncio
+    async def test_refresh_after_curation_expires_pending_suggestion_for_existing_member(self) -> None:
+        tenant_id = str(uuid.uuid4())
+        cluster_id = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
+
+        suggestion = AssignmentSuggestion(
+            id="s-owned",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            representative_similarity=0.9,
+            member_similarity=0.9,
+            status=SuggestionStatus.PENDING,
+            created_at=None,
+        )
+        suggestion_repo = AsyncMock()
+        suggestion_repo.get_by_cluster.return_value = [suggestion]
+        cluster_repo = AsyncMock()
+        cluster_repo.get_by_id.return_value = MagicMock(id=cluster_id)
+        cluster_repo.get_members.return_value = [MagicMock(identity_id=identity_id)]
+
+        service = SuggestionRefreshService(
+            repository=suggestion_repo,
+            tenant_id=tenant_id,
+            cluster_repository=cluster_repo,
+            session=AsyncMock(),
+        )
+
+        refreshed = await service.refresh_after_curation(
+            cluster_id=cluster_id,
+            reason=SuggestionRefreshReason.MANUAL_ASSIGN,
+        )
+
+        assert refreshed == 1
+        suggestion_repo.update_status.assert_awaited_once_with(
+            tenant_id,
+            "s-owned",
+            SuggestionStatus.EXPIRED,
+        )
+        cluster_repo.get_top_unlabeled.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_refresh_skips_non_pending(
@@ -348,7 +398,12 @@ class TestRefreshForIdentity:
         service = SuggestionRefreshService(
             suggestion_repo,
             tenant_id=tenant_id,
-            cluster_repository=_make_labeled_cluster_repo(tenant_id, cluster_id, representative_similarity=0.75),
+            cluster_repository=_make_labeled_cluster_repo(
+                tenant_id,
+                cluster_id,
+                representative_similarity=0.75,
+                member_identity_ids=[str(uuid.uuid4())],
+            ),
             session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
             settings=settings,
         )
@@ -360,6 +415,62 @@ class TestRefreshForIdentity:
 
         assert len(suggestions) == 1
         suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_skips_candidate_already_in_target_cluster(self) -> None:
+        tenant_id = str(uuid.uuid4())
+        cluster_id = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
+
+        suggestion_repo = AsyncMock()
+        service = SuggestionRefreshService(
+            suggestion_repo,
+            tenant_id=tenant_id,
+            cluster_repository=_make_labeled_cluster_repo(
+                tenant_id,
+                cluster_id,
+                representative_similarity=0.75,
+                member_identity_ids=[identity_id],
+            ),
+            session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
+            settings=ClusteringSettings(
+                similarity_threshold=0.8,
+                suggestion_floor=0.7,
+                suggestion_ceiling=0.8,
+            ),
+        )
+
+        suggestions = await service.refresh_for_identity(
+            identity_id=identity_id,
+            reason=SuggestionRefreshReason.MANUAL_SPLIT,
+        )
+
+        assert suggestions == []
+        suggestion_repo.upsert_by_identity_cluster.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_write_boundary_skips_candidate_already_in_target_cluster(self) -> None:
+        tenant_id = str(uuid.uuid4())
+        cluster_id = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
+        suggestion_repo = AsyncMock()
+        cluster_repo = AsyncMock()
+        cluster_repo.get_members.return_value = [MagicMock(identity_id=identity_id)]
+        service = SuggestionRefreshService(
+            suggestion_repo,
+            tenant_id=tenant_id,
+            cluster_repository=cluster_repo,
+        )
+
+        suggestion = await service._create_or_update_suggestion(
+            identity_id,
+            cluster_id,
+            0.9,
+            SuggestionRefreshReason.MANUAL_ASSIGN,
+        )
+
+        assert suggestion is None
+        suggestion_repo.upsert_by_identity_cluster.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -569,7 +680,7 @@ async def test_backfill_surfaces_for_confirmed_clusters(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_backfill_bootstraps_self_referential_suggestions_without_confirmed_labels() -> None:
+async def test_backfill_skips_self_referential_suggestions_without_confirmed_labels() -> None:
     tenant_id = "tenant-1"
     repo = AsyncMock()
     cluster_repo = AsyncMock()
@@ -592,18 +703,5 @@ async def test_backfill_bootstraps_self_referential_suggestions_without_confirme
         fallback_window_minutes=30,
     )
 
-    assert created == 2
-    assert repo.upsert_by_identity_cluster.await_count == 2
-    first_call = repo.upsert_by_identity_cluster.await_args_list[0]
-    second_call = repo.upsert_by_identity_cluster.await_args_list[1]
-    first_payload = first_call.args[1]
-    second_payload = second_call.args[1]
-    assert {first_payload.cluster_id, second_payload.cluster_id} == {"c-created", "c-fallback"}
-    assert {first_payload.identity_id, second_payload.identity_id} == {
-        "c-created-identity",
-        "c-fallback-identity",
-    }
-    assert first_payload.source == SuggestionRefreshReason.BOOTSTRAP.value
-    assert second_payload.source == SuggestionRefreshReason.BOOTSTRAP.value
-    assert first_payload.confidence_score == 1.0
-    assert second_payload.confidence_score == 1.0
+    assert created == 0
+    repo.upsert_by_identity_cluster.assert_not_awaited()

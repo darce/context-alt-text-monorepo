@@ -23,7 +23,7 @@
 #   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
 #                                       restore compose/unit/edge .bak topology, restart, and verify.
 #                                       prod requires CONFIRM=PROMOTE.
-#   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
+#   verify         <env>              Compare commit_sha to DEPLOY_SHA (GIT_REF resolved once at start; default HEAD).
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
 #                                       standalone verify of a VLM deploy works without re-exporting
@@ -58,7 +58,7 @@
 #   OCIR_REGISTRY            default iad.ocir.io
 #   OCIR_NAMESPACE           default idu2kqqe2jxy
 #   IMAGE_NAME               default acx-backend
-#   GIT_REF                  default HEAD
+#   GIT_REF                  resolved once to DEPLOY_SHA at start; default HEAD
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
@@ -148,6 +148,8 @@ OCI_USER="${OCI_USER:-ubuntu}"
 OCIR_REGISTRY="${OCIR_REGISTRY:-iad.ocir.io}"
 OCIR_NAMESPACE="${OCIR_NAMESPACE:-idu2kqqe2jxy}"
 IMAGE_NAME="${IMAGE_NAME:-acx-backend}"
+GIT_REF_EXPLICIT=0
+if [[ -n "${GIT_REF:-}" ]]; then GIT_REF_EXPLICIT=1; fi
 GIT_REF="${GIT_REF:-HEAD}"
 PLATFORM="${ACX_DEPLOY_PLATFORM:-linux/arm64}"
 REMOTE_BUILD="${REMOTE_BUILD:-${ACX_REMOTE_BUILD:-0}}"
@@ -792,12 +794,51 @@ preflight_branch_synced() {
   # dev + dev-fir are developed from feature branches; skip origin/main sync.
   [[ "$env" == "dev" || "$env" == "dev-fir" ]] && return 0
   local head upstream
-  head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   git -C "${REPO_ROOT}" fetch origin main >/dev/null 2>&1 || warn "git fetch failed; skew check may be stale"
-  upstream="$(git -C "${REPO_ROOT}" rev-parse origin/main 2>/dev/null || echo unknown)"
-  if [[ "$head" != "$upstream" ]]; then
-    fail "HEAD (${head:0:8}) != origin/main (${upstream:0:8}). Pull/push first."
+  head="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null)" || fail "Could not resolve HEAD in ${REPO_ROOT}"
+  upstream="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet origin/main 2>/dev/null || echo unknown)"
+  if [[ -z "$upstream" || "$upstream" == "unknown" ]]; then
+    fail "Could not resolve origin/main; refusing production deploy with unknown upstream."
   fi
+  if [[ "$head" != "$DEPLOY_SHA" ]]; then
+    fail "HEAD (${head:0:8}) != DEPLOY_SHA (${DEPLOY_SHA:0:8}). Run from a checkout or detached worktree at that SHA."
+  fi
+  if [[ "$GIT_REF_EXPLICIT" == "0" ]]; then
+    if [[ "$DEPLOY_SHA" != "$upstream" ]]; then
+      fail "DEPLOY_SHA (${DEPLOY_SHA:0:8}) != origin/main (${upstream:0:8}). Pull/push first."
+    fi
+  else
+    if ! git -C "${REPO_ROOT}" merge-base --is-ancestor "$DEPLOY_SHA" origin/main; then
+      fail "DEPLOY_SHA (${DEPLOY_SHA:0:8}) is not an ancestor of origin/main (${upstream:0:8}); refusing historical deploy."
+    fi
+    if [[ "$DEPLOY_SHA" != "$upstream" ]]; then
+      warn "deploying historical ${DEPLOY_SHA:0:8}; origin/main is ${upstream:0:8}"
+    fi
+  fi
+}
+
+pin_deploy_sha() {
+  local resolved
+  if [[ ${DEPLOY_SHA+x} == x ]]; then
+    if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+      fail "DEPLOY_SHA must be a full lowercase 40-character commit SHA (got: ${DEPLOY_SHA:-empty})"
+    fi
+    if ! resolved="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet "${DEPLOY_SHA}^{commit}" 2>/dev/null)"; then
+      fail "Could not resolve pre-set DEPLOY_SHA=${DEPLOY_SHA} as a commit"
+    fi
+    if [[ "$resolved" != "$DEPLOY_SHA" ]]; then
+      fail "Pre-set DEPLOY_SHA=${DEPLOY_SHA} did not resolve exactly (got: ${resolved:-empty})"
+    fi
+  else
+    if ! resolved="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet "${GIT_REF}^{commit}" 2>/dev/null)"; then
+      fail "Could not resolve GIT_REF=${GIT_REF} to a commit for DEPLOY_SHA"
+    fi
+    if [[ ! "$resolved" =~ ^[0-9a-f]{40}$ ]]; then
+      fail "GIT_REF=${GIT_REF} did not resolve to a full commit SHA for DEPLOY_SHA (got: ${resolved:-empty})"
+    fi
+    DEPLOY_SHA="$resolved"
+  fi
+  readonly DEPLOY_SHA
 }
 
 # FIR stack volume-mounts YuNet+SFace ONNX (not baked
@@ -996,7 +1037,8 @@ remote_build_cleanup_generation() {
 do_build() {
   preflight_docker
   local sha tag target_args
-  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
   tag="${1:-dev}"
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
@@ -1022,7 +1064,8 @@ do_build_remote() {
   local remote_build_started remote_build_timeout
   local free_space_timeout mkdir_timeout rsync_timeout remaining
   local remote_program remote_command remote_arg
-  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
   tag="${1:-dev}"
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
@@ -1322,7 +1365,9 @@ registry_tag_digest_ref() {
 # Push the SHA-named tag, then capture its content digest.  The tag remains
 # mutable; only ACX_CANDIDATE_DIGEST_REF is used by smoke and promotion.
 do_push_sha() {
-  local sha; sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  local sha
+  pin_deploy_sha
+  sha="${DEPLOY_SHA}"
   if [[ "${REMOTE_BUILD}" == "1" ]]; then preflight_remote_ocir_auth; else preflight_ocir_auth; fi
   log "Pushing ${IMAGE_BASE}:${sha:0:8}"
   _push_ref "${IMAGE_BASE}:${sha}"
@@ -3179,6 +3224,7 @@ probe_cutover_api_health() {
   program="$(health_probe_program)"
   expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   expected_sha="${3:-}"
+  pin_deploy_sha
   remote_dir="$(env_to_remote_dir "$env")"
   next_project="acx-${env}-next"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -3187,7 +3233,7 @@ probe_cutover_api_health() {
     return 1
   fi
   if [[ -z "${expected_sha}" ]]; then
-    expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}" 2>/dev/null || true)"
+    expected_sha="${DEPLOY_SHA}"
   fi
   if [[ ! "${expected_sha}" =~ ^[a-f0-9]{40}$ ]]; then
     warn "cutover candidate health probe requires a valid expected commit"
@@ -3260,7 +3306,8 @@ do_restart() {
   unit="$(env_to_unit "$env")"
   next_unit="$(env_to_next_unit "$env")"
   remote_dir="$(env_to_remote_dir "$env")"
-  expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}" 2>/dev/null || true)"
+  pin_deploy_sha
+  expected_sha="${DEPLOY_SHA}"
   expected_repo="${expected_digest%@sha256:*}"
   env_tag="$(env_to_tag "${env}")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -3996,10 +4043,12 @@ _ship_selected_env() {
     *) fail "internal: _ship_selected_env completion must be aggregate or scoped (got: ${completion:-empty})" ;;
   esac
 
+  pin_deploy_sha
+
   init_deploy_ocir_docker_config
 
   tag="$(env_to_tag "$env")"
-  sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  sha="${DEPLOY_SHA}"
 
   if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     if [[ "${completion}" == "scoped" ]]; then
@@ -4523,9 +4572,8 @@ do_verify() {
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   url="$(env_to_health_url "$env")"
   ready_url="$(env_to_ready_url "$env")"
-  # Use GIT_REF (defaults to HEAD) so verify after `GIT_REF=v0.4.1 deploy ...`
-  # checks against the same ref the build/push paths used.
-  expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
+  pin_deploy_sha
+  expected_sha="${DEPLOY_SHA}"
 
   # Bounded retry so post-restart warm-up (typically <30s) does not flap
   # verification, while a genuinely missing/skewed SHA still fails closed.
@@ -4638,7 +4686,7 @@ do_verify() {
         emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
-      log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF}${actual_variant:+, image_variant=${actual_variant}})"
+      log "Verified: ${env} runs ${actual_sha:0:8} (matches DEPLOY_SHA=${DEPLOY_SHA} (GIT_REF=${GIT_REF})${actual_variant:+, image_variant=${actual_variant}})"
       return 0
     else
       warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
@@ -4917,6 +4965,10 @@ do_prepare_producer() {
 # functions), run it only on direct execution.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   cmd="${1:-}"; shift || true
+  if [[ "$cmd" == "build" || "$cmd" == "build-remote" || "$cmd" == "deploy" \
+     || "$cmd" == "promote" || "$cmd" == "prepare-producer" || "$cmd" == "verify" ]]; then
+    pin_deploy_sha
+  fi
   case "$cmd" in
     build)        do_build "${1:-dev}" ;;
     build-remote) do_build_remote "${1:-dev}" ;;

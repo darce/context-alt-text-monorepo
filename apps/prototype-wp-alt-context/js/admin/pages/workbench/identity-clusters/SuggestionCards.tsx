@@ -404,7 +404,7 @@ export const SuggestionCard = ({
             className="button button-link acx-suggestion-card__review"
             onClick={() => onReview(suggestion.clusterId)}
           >
-            {__('Open cluster', 'alt-context')}
+            {__('Open face group', 'alt-context')}
           </button>
         ) : null}
       </div>

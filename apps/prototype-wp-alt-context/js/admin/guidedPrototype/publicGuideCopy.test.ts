@@ -22,6 +22,7 @@ const PUBLIC_KEYS = [
   'entry.intro.public',
   'entry.eyebrow.public',
   'entry.start.public',
+  'nav.leave.public',
   'scope.public',
   'step.names.public',
   'step.review.public',
@@ -49,10 +50,56 @@ const PUBLIC_KEYS = [
   'error.empty_draft.public',
   'error.unchanged_draft.public',
   'error.no_recorded_draft.public',
+  'steps.title.public',
+  'steps.names.public',
+  'steps.description.public',
+  'steps.use.public',
+  'photos.title.public',
+  'photo.count.public',
+  'names.heading.public',
+  'names.guidance.public',
+  'names.compare.public',
+  'names.use.public',
+  'names.omit.public',
+  'names.strong.public',
+  'names.weak.public',
+  'names.no_score.public',
+  'description.heading.public',
+  'description.written.public',
+  'description.current.public',
+  'description.suggested.public',
+  'description.edit_help.public',
+  'description.help.public',
+  'description.scope.public',
+  'description.use.public',
+  'description.keep.public',
+  'description.undo.public',
+  'description.applied.public',
+  'description.kept.public',
+  'reset.title.public',
+  'reset.body.public',
+  'reset.keep.public',
+  'reset.confirm.public',
+  'reset.success.public',
+  'name_change.title.public',
+  'name_change.body.public',
+  'name_change.keep.public',
+  'name_change.confirm.public',
+  'outcome.title.public',
+  'outcome.applied.public',
+  'outcome.kept.public',
+  'outcome.provenance.public',
+  'comparison.title.public',
+  'comparison.note.public',
+  'lightbox.title.public',
+  'lightbox.close.public',
+  'lightbox.current.public',
+  'lightbox.references.public',
 ] as const;
 
 const PUBLIC_SCOPE =
-  'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.';
+  'The names and descriptions were suggested by AI in advance. ' +
+  'Your changes stay on this page and clear when you reload.';
 
 describe('public guide copy overlay', () => {
   it('keeps public keys and CASE_STUDY_URL out of the generated catalog file', () => {
@@ -75,9 +122,31 @@ describe('public guide copy overlay', () => {
 
   it('exports the documented case-study URL and public scope copy', () => {
     expect(CASE_STUDY_URL).toBe('https://darce.xyz/projects/altcontext/');
-    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe("Who's in the photo belongs in the alt text.");
-    expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toContain('Compare descriptions of two photos');
+    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe('You decide who is named in each photo description.');
+    expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toBe(
+      'See how AltContext suggests image descriptions (alt text) and possible names, ' +
+        'and how you decide which names to use.',
+    );
+    expect(PUBLIC_GUIDED_COPY['entry.eyebrow.public']).toBe('DEMO');
+    expect(guidedCopy('entry.start.public')).toBe('Start the demo');
+    expect(guidedCopy('nav.leave.public')).toBe('Page links');
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
+    expect(guidedCopy('steps.title.public')).toBe("What you'll do");
+    expect(guidedCopy('photo.count.public', { photoNumber: 1 })).toBe('Photo 1 of 2');
+    expect(guidedCopy('names.strong.public')).toBe('Strong match');
+    expect(guidedCopy('names.weak.public')).toBe('Weak match. Compare the photos before you use this name.');
+    expect(guidedCopy('names.no_score.public')).toBe(
+      'No score: the saved group for this name started from this face.',
+    );
+    expect(guidedCopy('description.use.public')).toBe('Use this description');
+    expect(guidedCopy('description.keep.public')).toBe('Keep the current description');
+    expect(guidedCopy('description.undo.public')).toBe('Undo this change');
+    expect(guidedCopy('reset.keep.public')).toBe('Keep my work');
+    expect(guidedCopy('reset.confirm.public')).toBe('Start over');
+    expect(guidedCopy('name_change.keep.public')).toBe('Keep my edits');
+    expect(guidedCopy('name_change.confirm.public')).toBe('Change the name');
+    expect(guidedCopy('lightbox.title.public', { name: 'Ada' })).toBe('Compare with photos of Ada');
+    expect(guidedCopy('lightbox.close.public')).toBe('Close');
     expect(guidedCopy('entry.read_case_study')).toBe('Read the case study');
     expect(guidedCopy('notes.recorded_public')).not.toMatch(/Live generation/);
     expect(guidedCopy('nav.leave')).toBe('Leave the walkthrough');
@@ -85,6 +154,23 @@ describe('public guide copy overlay', () => {
     expect(PUBLIC_GUIDE_FALLBACK).toBe('The walkthrough could not load. Reload the page and try again.');
     expect(PUBLIC_GUIDE_LOADING).toBe('Loading the walkthrough.');
     expect(guidedCopy('page.start')).toBe('Start the walkthrough');
+  });
+
+  it('uses image description throughout and reserves alt text for the hero explanation', () => {
+    const publicStrings = Object.values(PUBLIC_GUIDED_COPY);
+    const altTextStrings = publicStrings.filter((value) => /\balt text\b/i.test(value));
+
+    expect(altTextStrings).toEqual([PUBLIC_GUIDED_COPY['entry.intro.public']]);
+    for (const value of publicStrings) {
+      expect(value).not.toMatch(/\b(?:draft|roster|prototype)\b/i);
+      expect(value).not.toMatch(/\b\d+(?:\.\d+)?\s?%/);
+    }
+    expect(guidedCopy('comparison.title.public')).toBe('How another tool describes this photo');
+    expect(guidedCopy('comparison.note.public')).toContain('For comparison only');
+    expect(guidedCopy('outcome.provenance.public')).toContain('Nothing on this page compares faces.');
+    expect(guidedCopy('error.unchanged_draft.public')).toBe(
+      'The current and suggested descriptions are the same.',
+    );
   });
 
   it('uses the catalog interpolator and a single overlay copy helper', () => {

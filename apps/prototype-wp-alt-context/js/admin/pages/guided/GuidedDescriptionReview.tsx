@@ -612,6 +612,7 @@ const GuidedImageReviewCard = ({
                   <button
                     type="button"
                     className="acx-button acx-button--tertiary"
+                    data-testid={`guided-keep-current-${photo.key}`}
                     onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
                     disabled={!keepEnabled}
                   >
@@ -725,6 +726,7 @@ const GuidedImageReviewCard = ({
           <button
             type="button"
             className="acx-button acx-button--tertiary"
+            data-testid={`guided-keep-current-${photo.key}`}
             onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
             disabled={!keepEnabled}
           >

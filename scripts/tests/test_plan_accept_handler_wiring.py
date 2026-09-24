@@ -11,6 +11,15 @@ LIFECYCLE_MK = REPO_ROOT / "mk" / "lane-lifecycle.mk"
 TRACKED_HANDLER = "scripts/workstate/lifecycle/handlers/plan_baseline.py"
 
 
+def _overlay_ignore_probe(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), "check-ignore", "-v", "Makefile.d"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _recipe_for(path: Path, target: str) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = next((index for index, line in enumerate(lines) if line.startswith(f"{target}:")), None)
@@ -73,14 +82,56 @@ def test_plugin_managed_overlay_dir_stays_untracked_and_ignored() -> None:
         "no Makefile.d/ path may be un-ignored; the whole directory is plugin-managed"
     )
 
-    check_ignore = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "check-ignore", "-v", "Makefile.d/lifecycle.mk"],
+    check_ignore = _overlay_ignore_probe(REPO_ROOT)
+    assert check_ignore.returncode == 0, check_ignore.stdout or check_ignore.stderr
+    assert "/Makefile.d" in check_ignore.stdout
+
+
+def test_overlay_ignore_probe_holds_when_overlay_is_a_symlink(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], capture_output=True, text=True, check=True)
+
+    ignore_rule = next(
+        line for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line == "/Makefile.d"
+    )
+    (repo / ".gitignore").write_text(f"{ignore_rule}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], capture_output=True, text=True, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "add overlay ignore rule",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / "lifecycle.mk").write_text("# plugin overlay\n", encoding="utf-8")
+    (repo / "Makefile.d").symlink_to(overlay, target_is_directory=True)
+
+    check_ignore = _overlay_ignore_probe(repo)
+    assert check_ignore.returncode == 0, check_ignore.stdout or check_ignore.stderr
+    assert "/Makefile.d" in check_ignore.stdout
+
+    old_probe = subprocess.run(
+        ["git", "-C", str(repo), "check-ignore", "-v", "Makefile.d/lifecycle.mk"],
         capture_output=True,
         text=True,
         check=False,
     )
-    assert check_ignore.returncode == 0, check_ignore.stdout or check_ignore.stderr
-    assert "/Makefile.d" in check_ignore.stdout
+    assert old_probe.returncode != 0
 
 
 def test_no_tracked_overlay_fragment_defines_plan_accept() -> None:

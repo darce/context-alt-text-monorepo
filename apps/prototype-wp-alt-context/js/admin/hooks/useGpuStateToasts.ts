@@ -153,6 +153,13 @@ export const useGpuStateToasts = (): void => {
     }
 
     if (nextKind === ACTIVITY_KIND.FAILED) {
+      if (
+        status.reason === ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE &&
+        status.runId === null
+      ) {
+        return;
+      }
+
       const onRetry = status.retryable ? actions.onRetry : null;
       emit(GPU_TOAST_EDGE.FAILED, () => {
         error(failedToastMessage(status.reason), {

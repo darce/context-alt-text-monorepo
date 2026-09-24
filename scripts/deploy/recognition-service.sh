@@ -23,7 +23,7 @@
 #   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
 #                                       restore compose/unit/edge .bak topology, restart, and verify.
 #                                       prod requires CONFIRM=PROMOTE.
-#   verify         <env>              Compare commit_sha to DEPLOY_SHA (GIT_REF resolved once at start; default HEAD).
+#   verify         <env>              Compare /health and the running image to the VM release receipt.
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
 #                                       standalone verify of a VLM deploy works without re-exporting
@@ -1405,6 +1405,22 @@ remote_image_id_for_digest() {
     return 1
   fi
   printf '%s\n' "${image_id}"
+}
+
+remote_image_commit_sha() {
+  local digest_ref="$1" timeout output commit_sha rc=0
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  output="$(run_with_deadline "${timeout}" "remote image commit SHA inspection for ${digest_ref}" \
+    remote_docker_with_config image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${digest_ref}")" || rc=$?
+  (( rc == 0 )) || return 1
+  commit_sha="$(printf '%s\n' "${output}" | awk 'index($0, "APP_GIT_COMMIT_SHA=") == 1 { value = substr($0, 20) } END { print value }')"
+  if [[ ! "${commit_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "${commit_sha}"
 }
 
 # A local RepoDigests entry describes a cached image object, not necessarily the
@@ -3500,6 +3516,9 @@ do_restart() {
     return 1
   fi
   ACX_LIVE_DISRUPTED=0
+  if ! write_deployed_release_receipt "$env" "${DEPLOY_SHA}" "${expected_digest}"; then
+    warn "RELEASE RECEIPT WRITE FAILED for ${env}; standalone verify will fail closed until the next successful deploy"
+  fi
   return 0
 }
 
@@ -3732,7 +3751,7 @@ restore_registry_env_tag() {
 }
 
 restore_runtime_and_edge() {
-  local env="$1" restart_runtime="${2:-0}" unit inspect_timeout
+  local env="$1" restart_runtime="${2:-0}" unit inspect_timeout rollback_sha
   inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   # Check ownership at the sticky resource before any runtime compensation.
   # This also keeps sticky cleanup independent of downstream topology failures.
@@ -3776,7 +3795,15 @@ restore_runtime_and_edge() {
       warn "rollback restart completed but healthy serving state was not observed"
       return 1
     fi
+    if rollback_sha="$(remote_image_commit_sha "${ACX_ROLLBACK_DIGEST_REF}")"; then
+      if ! write_deployed_release_receipt "${env}" "${rollback_sha}" "${ACX_ROLLBACK_DIGEST_REF}"; then
+        warn "RELEASE RECEIPT WRITE FAILED for ${env}; standalone verify will fail closed until the next successful deploy"
+      fi
+    else
+      warn "ROLLBACK RELEASE SHA UNKNOWN for ${env}; skipping release receipt write for ${ACX_ROLLBACK_DIGEST_REF}"
+    fi
   fi
+  return 0
 }
 
 # Restore both the registry env tag and the VM's cached tag to the digest that
@@ -4326,6 +4353,53 @@ read_running_api_image() {
        [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null
 }
 
+write_deployed_release_receipt() {
+  local env="$1" sha="${2:-}" digest_ref="${3:-}" remote_dir timeout transaction remote_script remote_command
+  if [[ ! "${sha}" =~ ^[a-f0-9]{40}$ \
+    || ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+  case "${env}" in
+    dev|dev-fir|staging|prod) ;;
+    *) return 1 ;;
+  esac
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  transaction="${ACX_DEPLOY_TRANSACTION_ID:-}"
+  remote_script='set -eu
+dir=$1
+env=$2
+sha=$3
+digest_ref=$4
+transaction=$5
+tmp=$(mktemp "$dir/.deployed-release.XXXXXX")
+trap '\''rm -f -- "$tmp"'\'' EXIT
+python3 -c '\''import datetime,json,sys; env,sha,digest_ref,transaction=sys.argv[1:]; deployed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"); print(json.dumps({"env":env,"sha":sha,"digest_ref":digest_ref,"deployed_at":deployed_at,"transaction":transaction},separators=(",",":")))'\'' "$env" "$sha" "$digest_ref" "$transaction" >"$tmp"
+chmod 600 "$tmp"
+mv -f -- "$tmp" "$dir/deployed-release.json"
+trap - EXIT'
+  remote_command="sudo sh -c $(remote_quote "${remote_script}") sh $(remote_quote "${remote_dir}") $(remote_quote "${env}") $(remote_quote "${sha}") $(remote_quote "${digest_ref}") $(remote_quote "${transaction}")"
+  run_with_deadline "${timeout}" "deployed release receipt write for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${remote_command}"
+}
+
+read_deployed_release_receipt() {
+  local env="$1" remote_dir receipt_path timeout raw receipt_fields rc=0
+  case "${env}" in
+    dev|dev-fir|staging|prod) ;;
+    *) return 1 ;;
+  esac
+  remote_dir="$(env_to_remote_dir "${env}")" || return 1
+  receipt_path="${remote_dir}/deployed-release.json"
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  raw="$(run_with_deadline "${timeout}" "deployed release receipt read for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo cat -- $(remote_quote "${receipt_path}")" 2>/dev/null)" || rc=$?
+  (( rc == 0 )) || return 1
+  [[ -n "${raw}" ]] || return 1
+  receipt_fields="$(printf '%s' "${raw}" | python3 -c 'import json,re,sys; d=json.load(sys.stdin); keys={"env","sha","digest_ref","deployed_at","transaction"}; sha=d.get("sha"); digest_ref=d.get("digest_ref"); valid=isinstance(d,dict) and set(d)==keys and d.get("env")==sys.argv[1] and isinstance(sha,str) and re.fullmatch(r"[a-f0-9]{40}",sha) and isinstance(digest_ref,str) and re.fullmatch(r"[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}",digest_ref); sys.exit(1) if not valid else None; print(sha); print(digest_ref)' "${env}")" || return 1
+  printf '%s\n' "${receipt_fields}"
+}
+
 # Read remote .env ACX_IMAGE_REPO (empty if unset). Charset-validated when present.
 # S2-A-05: never call fail() inside this function when used from command
 # substitution — fail() would only kill the subshell and the caller’s `|| true`
@@ -4649,10 +4723,23 @@ do_verify() {
   local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   local running_image_id candidate_image_id running_image_rc candidate_image_rc
+  local receipt_output receipt_digest_ref receipt_path image_mismatch
   url="$(env_to_health_url "$env")"
   ready_url="$(env_to_ready_url "$env")"
   pin_deploy_sha
   expected_sha="${DEPLOY_SHA}"
+  if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" != "1" ]]; then
+    receipt_path="$(env_to_remote_dir "$env")/deployed-release.json"
+    if receipt_output="$(read_deployed_release_receipt "$env")"; then
+      expected_sha="${receipt_output%%$'\n'*}"
+      receipt_digest_ref="${receipt_output#*$'\n'}"
+      log "Expected release from VM receipt: ${expected_sha:0:8} ${receipt_digest_ref}"
+    else
+      warn "VERIFY: no valid release receipt at ${receipt_path} on ${env}; deploy with current tooling first (standalone verify fails closed)"
+      emit_verify_ready_diagnostic "$ready_url"
+      return 1
+    fi
+  fi
 
   # Bounded retry so post-restart warm-up (typically <30s) does not flap
   # verification, while a genuinely missing/skewed SHA still fails closed.
@@ -4745,7 +4832,14 @@ do_verify() {
       fi
       # Also compare the running container image (read from runtime — rg-015)
       # against expected repo. Must return (not fail/exit) so ACX_VERIFY_OPTIONAL works.
+      image_mismatch=0
       if ! verify_running_image_matches_deployed "$env"; then
+        image_mismatch=1
+      elif [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" != "1" ]] \
+        && ! verify_running_image_digest "$env" "${receipt_digest_ref}"; then
+        image_mismatch=1
+      fi
+      if (( image_mismatch )); then
         # Image mismatch is not a warm-up flake — still retry once more in case
         # compose is mid-pull, but do not call fail() here.
         if (( attempt < max_attempts )); then
@@ -4765,7 +4859,11 @@ do_verify() {
         emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
-      log "Verified: ${env} runs ${actual_sha:0:8} (matches DEPLOY_SHA=${DEPLOY_SHA} (GIT_REF=${GIT_REF})${actual_variant:+, image_variant=${actual_variant}})"
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then
+        log "Verified: ${env} runs ${actual_sha:0:8} (matches DEPLOY_SHA=${DEPLOY_SHA} (GIT_REF=${GIT_REF})${actual_variant:+, image_variant=${actual_variant}})"
+      else
+        log "Verified: ${env} runs ${actual_sha:0:8} (matches VM release receipt${actual_variant:+, image_variant=${actual_variant}})"
+      fi
       return 0
     else
       if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then

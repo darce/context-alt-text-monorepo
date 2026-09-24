@@ -162,12 +162,7 @@ describe('GuidedSamplePhoto figure content', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[0];
     render(
-      <GuidedSamplePhoto
-        photo={photo}
-        currentAltText={photo.altText}
-        showCurrentAltText={false}
-        scope="public"
-      />,
+      <GuidedSamplePhoto photo={photo} currentAltText={photo.altText} showCurrentAltText={false} scope="public" />,
     );
 
     const image = screen.getByRole('img', { name: photo.altText });

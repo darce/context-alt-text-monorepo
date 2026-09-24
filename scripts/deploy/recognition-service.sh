@@ -68,8 +68,12 @@
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
-#   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
-#   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
+#   ACX_CUTOVER_HEALTH_ATTEMPTS default 5; ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (candidate admission)
+#   ACX_CANONICAL_HEALTH_ATTEMPTS default 5; ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (restart readiness)
+#   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy public verify only)
+#   ACX_VERIFY_SLEEP         default 5  (seconds between post-deploy public verify attempts)
+#   ACX_ROLLBACK_VERIFY_ATTEMPTS default 5; ACX_ROLLBACK_VERIFY_SLEEP default 5 seconds (rollback verify)
+#   ACX_GPU_SNAPSHOT_GATE_ATTEMPTS default 3; ACX_GPU_SNAPSHOT_GATE_SLEEP default 5 seconds (GPU snapshot gate)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
 #   ACX_DEPLOY_GPU_LIFECYCLE default 0: explicit gpu-lifecycle exits 2 unless set to 1
 #   ACX_GPU_READY_URL        required when ACX_DEPLOY_GPU_LIFECYCLE=1; no production default
@@ -205,6 +209,7 @@ source "${SCRIPT_DIR}/lib/ocir-auth.sh"
 source "${SCRIPT_DIR}/lib/bounded-remote-build.sh"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
 DEPLOY_SNAPSHOT_DIR=""
+DEPLOY_ASSETS_DIR="${SCRIPT_DIR}"
 # Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
 # so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
 SSH_TARGET="${OCI_USER}@${OCI_HOST}"
@@ -293,6 +298,7 @@ _purge_deploy_snapshot() {
     "${TMPDIR:-/tmp}"/acx-deploy-src.*) rm -rf -- "${snapshot_dir}" ;;
   esac
   DEPLOY_SNAPSHOT_DIR=""
+  DEPLOY_ASSETS_DIR="${SCRIPT_DIR}"
 }
 
 cleanup_deploy_ocir_docker_config() {
@@ -659,7 +665,7 @@ sanitize_deploy_diagnostic() {
   LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
-        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[\[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[\[{][ \t]*$"; return (t ~ pat) }
+        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[[{][ \t]*$"; return (t ~ pat) }
         function pem_begin_end(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/ && s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function pem_has_begin(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function redact_pem_oneline(s,    pre, rest) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); pre=substr(s, 1, RSTART+RLENGTH-1); rest=substr(s, RSTART+RLENGTH); match(rest, /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/); return pre " [REDACTED] " substr(rest, RSTART) }
@@ -808,10 +814,21 @@ preflight_branch_synced() {
   local env="$1"
   # dev + dev-fir are developed from feature branches; skip origin/main sync.
   [[ "$env" == "dev" || "$env" == "dev-fir" ]] && return 0
-  local head upstream
-  git -C "${REPO_ROOT}" fetch origin main >/dev/null 2>&1 || warn "git fetch failed; skew check may be stale"
+  local head upstream fetch_err fetch_rc fetch_first_line
+  if fetch_err="$(git -C "${REPO_ROOT}" fetch origin main 2>&1 >/dev/null)"; then
+    fetch_rc=0
+  else
+    fetch_rc=$?
+  fi
+  if [[ "$fetch_rc" -ne 0 && "$GIT_REF_EXPLICIT" == "0" ]]; then
+    fetch_first_line="${fetch_err%%$'\n'*}"
+    fail "git fetch origin main failed (${fetch_first_line}); cannot prove DEPLOY_SHA is the latest main for ${env}. Restore access to origin, or deploy an explicit reviewed ref with GIT_REF=<sha>."
+  fi
   head="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null)" || fail "Could not resolve HEAD in ${REPO_ROOT}"
   upstream="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet origin/main 2>/dev/null || echo unknown)"
+  if [[ "$fetch_rc" -ne 0 ]]; then
+    warn "git fetch origin main failed; checking ancestry against cached origin/main (${upstream:0:8})"
+  fi
   if [[ -z "$upstream" || "$upstream" == "unknown" ]]; then
     fail "Could not resolve origin/main; refusing production deploy with unknown upstream."
   fi
@@ -881,7 +898,10 @@ materialize_deploy_snapshot() {
   if ! snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/acx-deploy-src.XXXXXX")"; then
     fail "Could not create a private DEPLOY_SHA build snapshot"
   fi
-  if ! git -C "${REPO_ROOT}" archive --format=tar "${DEPLOY_SHA}" -- apps/prototype-description-service | tar -x -C "${snapshot_dir}"; then
+  if ! git -C "${REPO_ROOT}" archive --format=tar "${DEPLOY_SHA}" -- \
+    apps/prototype-description-service \
+    scripts/deploy/gpu-snapshot-deployments.conf \
+    scripts/deploy/check-gpu-snapshots.sh | tar -x -C "${snapshot_dir}"; then
     rm -rf -- "${snapshot_dir}"
     fail "Could not extract DEPLOY_SHA=${DEPLOY_SHA} into a private build snapshot"
   fi
@@ -889,8 +909,17 @@ materialize_deploy_snapshot() {
     rm -rf -- "${snapshot_dir}"
     fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing apps/prototype-description-service/Dockerfile"
   fi
+  if [[ ! -f "${snapshot_dir}/scripts/deploy/gpu-snapshot-deployments.conf" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing scripts/deploy/gpu-snapshot-deployments.conf"
+  fi
+  if [[ ! -f "${snapshot_dir}/scripts/deploy/check-gpu-snapshots.sh" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing scripts/deploy/check-gpu-snapshots.sh"
+  fi
   SERVICE_DIR="${snapshot_dir}/apps/prototype-description-service"
   DEPLOY_SNAPSHOT_DIR="${snapshot_dir}"
+  DEPLOY_ASSETS_DIR="${snapshot_dir}/scripts/deploy"
   log "Build context: DEPLOY_SHA=${DEPLOY_SHA:0:8} snapshot ${snapshot_dir}"
   trap deploy_interrupt_cleanup EXIT
   trap 'deploy_interrupt_cleanup 129' HUP
@@ -2785,12 +2814,13 @@ verify_running_image_digest() {
 }
 
 verify_restored_runtime() {
-  local env="$1" expected_digest="$2" url attempt max_attempts sleep_s body
+  local env="$1" expected_digest="$2" url attempt max_attempts sleep_s body budget
   url="$(env_to_health_url "${env}")"
-  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
-  sleep_s="${ACX_VERIFY_SLEEP:-5}"
-  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
-  [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
+  if ! budget="$(probe_budget ACX_ROLLBACK_VERIFY 5 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Rollback verify budget: ${max_attempts}x${sleep_s}s (ACX_ROLLBACK_VERIFY_*)"
   for attempt in $(seq 1 "${max_attempts}"); do
     if body="$(curl --fail --silent --show-error --max-time 10 "${url}" 2>&1)" \
       && verify_running_image_digest "${env}" "${expected_digest}"; then
@@ -3002,7 +3032,7 @@ verify_edge_networks() {
   [ -n "\$cid" ] || { echo 'caddy container is absent after edge topology restore' >&2; return 1; }
   networks="\$(docker inspect -f '{{json .NetworkSettings.Networks}}' "\$cid")"
   for network in acx-prod-net acx-staging-net acx-dev-net acx-dev-fir-net acx-demo-net; do
-    printf '%s' "\$networks" | grep -q "\\\"\$network\\\"" || {
+    printf '%s' "\$networks" | grep -Fq -- "\"\$network\"" || {
       echo "caddy container is missing restored network \$network" >&2
       return 1
     }
@@ -3059,14 +3089,20 @@ abort_cutover_candidate() {
   if ! run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
-     if sudo systemctl stop $(remote_quote "${next_unit}"); then
-       :
+     if stop_out=\"\$(sudo systemctl stop $(remote_quote "${next_unit}") 2>&1)\"; then
+       [ -z \"\${stop_out}\" ] || printf '%s\n' \"\${stop_out}\" >&2
      else
        stop_rc=\$?
        # Failed stop is not confirmed absence (MCP10415). Query explicit
        # unit state; only LoadState=not-found ActiveState=inactive
        # SubState=dead licenses cleanup. TEST-15 / RLSE-03 / RES-03.
-       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || exit \$?
+       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || {
+         show_rc=\$?
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${show_rc}\"
+       }
+       parse_rc=0
+       (
        load_state=
        active_state=
        sub_state=
@@ -3091,6 +3127,11 @@ abort_cutover_candidate() {
          esac
        done <<< \"\${show_out}\"
        [ \"\${load_state}\" = not-found ] && [ \"\${active_state}\" = inactive ] && [ \"\${sub_state}\" = dead ] || exit \"\${stop_rc}\"
+       ) || parse_rc=\$?
+       if [ \"\${parse_rc}\" -ne 0 ]; then
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${parse_rc}\"
+       fi
      fi
      if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
        sudo systemctl disable $(remote_quote "${next_unit}")
@@ -3342,7 +3383,7 @@ PYPROBE
 }
 
 probe_cutover_api_health() {
-  local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s
+  local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s budget
   local expected_image_id cause rc program
   program="$(health_probe_program)"
   expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
@@ -3362,15 +3403,16 @@ probe_cutover_api_health() {
     warn "cutover candidate health probe requires a valid expected commit"
     return 1
   fi
+  if ! budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Cutover candidate health budget: ${max_attempts}x${sleep_s}s (ACX_CUTOVER_HEALTH_*)"
   expected_image_id="$(remote_image_id_for_digest "${expected_digest}" || true)"
   if [[ ! "${expected_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
     warn "cutover candidate image identity could not be resolved for ${expected_digest}"
     return 1
   fi
-  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
-  sleep_s="${ACX_VERIFY_SLEEP:-5}"
-  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
-  [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
   for attempt in $(seq 1 "${max_attempts}"); do
     if cause="$(run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
@@ -3390,15 +3432,16 @@ probe_cutover_api_health() {
 }
 
 probe_canonical_api_health() {
-  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s cause rc program
+  local env="$1" remote_dir compose_files timeout attempt max_attempts sleep_s cause rc program budget
   program="$(health_probe_program)"
   remote_dir="$(env_to_remote_dir "$env")"
   compose_files="$(env_to_compose_files "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
-  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
-  sleep_s="${ACX_VERIFY_SLEEP:-5}"
-  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || return 1
-  [[ "${sleep_s}" =~ ^[0-9]+$ ]] || return 1
+  if ! budget="$(probe_budget ACX_CANONICAL_HEALTH 5 5)"; then
+    return 1
+  fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Canonical api health budget: ${max_attempts}x${sleep_s}s (ACX_CANONICAL_HEALTH_*)"
   for attempt in $(seq 1 "${max_attempts}"); do
     # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
     if cause="$(run_with_deadline "${timeout}" "canonical health probe ${env} attempt ${attempt}" \
@@ -4573,6 +4616,21 @@ verify_running_image_matches_deployed() {
   return 0
 }
 
+probe_budget() {
+  local prefix="$1" default_attempts="$2" default_sleep="$3"
+  local attempts_var="${prefix}_ATTEMPTS" sleep_var="${prefix}_SLEEP"
+  local max_attempts="${!attempts_var:-$default_attempts}" sleep_s="${!sleep_var:-$default_sleep}"
+  if [[ ! "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "${attempts_var} must be a positive integer (got: ${max_attempts})"
+    return 1
+  fi
+  if [[ ! "${sleep_s}" =~ ^[0-9]+$ ]]; then
+    warn "${sleep_var} must be a non-negative integer (got: ${sleep_s})"
+    return 1
+  fi
+  printf '%s %s\n' "${max_attempts}" "${sleep_s}"
+}
+
 verify_retry_sleep() {
   local attempt="$1" max_attempts="$2" base="$3" jitter delay
   (( attempt < max_attempts )) || return 0
@@ -4587,7 +4645,7 @@ verify_retry_sleep() {
 sibling_gpu_snapshots_complete() {
   local env="$1" other timeout conf
   env_to_unit "$env" >/dev/null
-  conf="${SCRIPT_DIR}/gpu-snapshot-deployments.conf"
+  conf="${DEPLOY_ASSETS_DIR}/gpu-snapshot-deployments.conf"
   if [[ ! -r "$conf" ]]; then
     warn "GPU snapshot deployment registry is missing or unreadable: ${conf}"
     return 1
@@ -4705,8 +4763,8 @@ verify_live_gpu_snapshots() {
   log "Verifying live GPU snapshot contract on ${SSH_TARGET} (${env})"
   payload="$(mktemp)"
   if ! {
-    paste -sd, "${SCRIPT_DIR}/gpu-snapshot-deployments.conf"
-    cat "${SCRIPT_DIR}/check-gpu-snapshots.sh"
+    paste -sd, "${DEPLOY_ASSETS_DIR}/gpu-snapshot-deployments.conf"
+    cat "${DEPLOY_ASSETS_DIR}/check-gpu-snapshots.sh"
   } >"${payload}"; then
     rm -f "${payload}"
     fail "could not build GPU snapshot checker payload"
@@ -4773,10 +4831,10 @@ emit_verify_ready_diagnostic() {
 
 do_verify() {
   local env="$1"
-  local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
+  local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response budget
   local actual_variant expected_variant remote_for_variant remote_repo_rc
   local running_image_id candidate_image_id running_image_rc candidate_image_rc
-  local receipt_output receipt_digest_ref receipt_path image_mismatch
+  local receipt_output receipt_digest_ref receipt_path image_mismatch gpu_budget gpu_max_attempts gpu_sleep_s gpu_attempt gpu_pass
   url="$(env_to_health_url "$env")"
   ready_url="$(env_to_ready_url "$env")"
   pin_deploy_sha
@@ -4796,14 +4854,16 @@ do_verify() {
 
   # Bounded retry so post-restart warm-up (typically <30s) does not flap
   # verification, while a genuinely missing/skewed SHA still fails closed.
-  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
-  sleep_s="${ACX_VERIFY_SLEEP:-5}"
-  if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
-    fail "ACX_VERIFY_ATTEMPTS must be a positive integer (got: ${max_attempts})"
-  fi
-  if ! [[ "${sleep_s}" =~ ^[0-9]+$ ]]; then
+  if ! budget="$(probe_budget ACX_VERIFY 5 5)"; then
+    max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
+    sleep_s="${ACX_VERIFY_SLEEP:-5}"
+    if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+      fail "ACX_VERIFY_ATTEMPTS must be a positive integer (got: ${max_attempts})"
+    fi
     fail "ACX_VERIFY_SLEEP must be a non-negative integer (got: ${sleep_s})"
   fi
+  read -r max_attempts sleep_s <<<"${budget}"
+  log "Post-deploy public verify budget: ${max_attempts}x${sleep_s}s (ACX_VERIFY_*)"
 
   for attempt in $(seq 1 "$max_attempts"); do
     log "GET ${url} (attempt ${attempt}/${max_attempts})"
@@ -4903,12 +4963,22 @@ do_verify() {
         emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi
-      if ! verify_live_gpu_snapshots "$env"; then
-        warn "GPU snapshot verification failed on ${env}"
-        if (( attempt < max_attempts )); then
-          sleep "$sleep_s"
-          continue
+      if ! gpu_budget="$(probe_budget ACX_GPU_SNAPSHOT_GATE 3 5)"; then
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      read -r gpu_max_attempts gpu_sleep_s <<<"${gpu_budget}"
+      log "GPU snapshot gate budget: ${gpu_max_attempts}x${gpu_sleep_s}s (ACX_GPU_SNAPSHOT_GATE_*)"
+      gpu_pass=0
+      for gpu_attempt in $(seq 1 "${gpu_max_attempts}"); do
+        if verify_live_gpu_snapshots "$env"; then
+          gpu_pass=1
+          break
         fi
+        warn "GPU snapshot verification failed on ${env} (attempt ${gpu_attempt}/${gpu_max_attempts})"
+        verify_retry_sleep "${gpu_attempt}" "${gpu_max_attempts}" "${gpu_sleep_s}"
+      done
+      if (( ! gpu_pass )); then
         emit_verify_ready_diagnostic "$ready_url"
         return 1
       fi

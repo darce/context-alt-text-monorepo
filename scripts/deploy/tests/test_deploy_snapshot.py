@@ -25,13 +25,17 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
     repo = tmp_path / "repo"
     service = repo / "apps/prototype-description-service"
     service.mkdir(parents=True)
+    deploy = repo / "scripts/deploy"
+    deploy.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
     _git(repo, "config", "user.name", "Deploy snapshot test")
     _git(repo, "config", "user.email", "deploy-snapshot@example.invalid")
     (repo / ".gitignore").write_text("out/\n*.onnx.partial\n")
     (service / "Dockerfile").write_text("FROM scratch\n")
     (service / "app.txt").write_text("A\n")
-    _git(repo, "add", ".gitignore", "apps/prototype-description-service")
+    (deploy / "gpu-snapshot-deployments.conf").write_text("dev\n")
+    (deploy / "check-gpu-snapshots.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    _git(repo, "add", ".gitignore", "apps/prototype-description-service", "scripts/deploy")
     _git(repo, "commit", "-qm", "snapshot A")
     return repo, _git(repo, "rev-parse", "HEAD")
 
@@ -242,3 +246,32 @@ def test_dispatch_materializes_only_shipping_commands_after_sha_pin() -> None:
     for command in ("build", "build-remote", "deploy", "promote", "prepare-producer"):
         assert command in condition
     assert "verify" not in condition
+
+
+def test_gpu_gate_inputs_come_from_snapshot(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path)
+    deploy_dir = repo / "scripts/deploy"
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+    conf = deploy_dir / "gpu-snapshot-deployments.conf"
+    checker = deploy_dir / "check-gpu-snapshots.sh"
+    committed_conf = "dev\nstaging\n"
+    conf.write_text(committed_conf)
+    checker.write_text("#!/usr/bin/env bash\nprintf checker\n")
+    _git(repo, "add", "scripts/deploy/gpu-snapshot-deployments.conf", "scripts/deploy/check-gpu-snapshots.sh")
+    _git(repo, "commit", "-qm", "snapshot GPU gate inputs")
+    tmpdir = _private_tmp(tmp_path)
+
+    result = _run_shell(
+        _source(repo)
+        + "pin_deploy_sha\nmaterialize_deploy_snapshot build\n"
+        + "printf 'prod\\n' > \"$REPO_ROOT/scripts/deploy/gpu-snapshot-deployments.conf\"\n"
+        + 'printf "SNAPSHOT_CONF=%s\\n" "$(paste -sd, "$DEPLOY_ASSETS_DIR/gpu-snapshot-deployments.conf")"\n',
+        TMPDIR=str(tmpdir),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"SNAPSHOT_CONF={committed_conf.replace(chr(10), ',').rstrip(',')}" in result.stdout
+
+    source = SCRIPT.read_text()
+    assert '${SCRIPT_DIR}/gpu-snapshot-deployments.conf' not in source
+    assert '${SCRIPT_DIR}/check-gpu-snapshots.sh' not in source

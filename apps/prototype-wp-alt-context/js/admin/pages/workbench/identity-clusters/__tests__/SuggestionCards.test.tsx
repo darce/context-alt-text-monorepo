@@ -546,7 +546,7 @@ describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
     );
 
     const approve = screen.getByRole('button', { name: 'Yes' });
-    const reason = screen.getByText('Review all stored faces before approving.');
+    const reason = screen.getByText('Show stored faces first to approve.');
     expect(reason).toBeVisible();
     expect(approve).toHaveAttribute('aria-disabled', 'true');
     expect(approve).toHaveAttribute('aria-describedby', reason.id);

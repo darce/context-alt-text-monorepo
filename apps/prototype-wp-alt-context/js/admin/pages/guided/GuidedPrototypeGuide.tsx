@@ -54,15 +54,10 @@ export const guidedStepLabel = (step: GuidedStep): string => guidedCopy(STEP_TIT
 
 export const guidedStepLabelForScope = (step: GuidedStep, scope: GuidedPrototypeGuideScope): string => {
   const publicStepTitle = PUBLIC_STEP_TITLE[step];
-  return scope === 'public' && publicStepTitle !== null
-    ? publicGuidedCopy(publicStepTitle)
-    : guidedStepLabel(step);
+  return scope === 'public' && publicStepTitle !== null ? publicGuidedCopy(publicStepTitle) : guidedStepLabel(step);
 };
 
-export const resolveGuidedStepForScope = (
-  activeStep: GuidedStep,
-  scope: GuidedPrototypeGuideScope,
-): GuidedStep => {
+export const resolveGuidedStepForScope = (activeStep: GuidedStep, scope: GuidedPrototypeGuideScope): GuidedStep => {
   const steps = guideStepsForScope(scope);
   return steps.includes(activeStep) ? activeStep : PUBLIC_GUIDED_STEP_FALLBACKS[activeStep];
 };

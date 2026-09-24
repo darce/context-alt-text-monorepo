@@ -47,4 +47,18 @@ describe('public guide stylesheet isolation', () => {
     expect(hasUnscopedTypeRule(css, 'body'), 'unscoped body { rule').toBe(false);
     expect(hasUnscopedTypeRule(css, 'button'), 'unscoped button { rule').toBe(false);
   });
+
+  it('keeps gallery tiles independent from spacing tokens and removes card dither edges', () => {
+    const css = compileGuideCss();
+
+    expect(css).toContain('--acx-guide-reference-tile-size: 48px;');
+    expect(css).toContain('--acx-guide-pad-tight: 16px;');
+    expect(css).toContain('var(--acx-guide-reference-tile-size)');
+    expect(css).not.toMatch(/--acx-space-80:\s*24px/);
+    expect(css).not.toMatch(/\.acx-guided-page__workspace\s*>\s*\.acx-guided-review\s*\{/);
+    expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-page__media-card::(?:before|after)/);
+    expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-page__scenario::(?:before|after)/);
+    expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-page__faces::(?:before|after)/);
+    expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-face__card::(?:before|after)/);
+  });
 });

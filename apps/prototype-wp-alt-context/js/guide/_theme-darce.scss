@@ -75,6 +75,7 @@
   --acx-guide-measure: 68ch;
   --acx-guide-max-width: 1200px;
   --acx-guide-column-width: 640px;
+  --acx-guide-reference-tile-size: 48px;
   --acx-guide-pad: 48px;
   --acx-guide-pad-tight: 24px;
   --acx-guide-dither-size: 4px;
@@ -98,9 +99,9 @@
 
   @media (max-width: 768px) {
     --acx-guide-pad: 24px;
+    --acx-guide-pad-tight: 16px;
     --acx-space-40: 24px;
     --acx-space-48: 24px;
-    --acx-space-80: 24px;
   }
 
   @media (prefers-reduced-motion: reduce) {

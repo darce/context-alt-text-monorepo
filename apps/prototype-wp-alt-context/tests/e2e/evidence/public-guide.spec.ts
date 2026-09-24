@@ -147,6 +147,15 @@ const assertResponsiveLayout = async (page: Page, viewportName: string): Promise
   }
 
   expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(16, 0);
+  const firstPhotoFrame = await page
+    .getByTestId('guided-photo-tribeca')
+    .locator('.acx-guided-page__image-wrap')
+    .boundingBox();
+  if (firstPhotoFrame === null) {
+    throw new Error('The first sample photo image frame is missing');
+  }
+  expect(firstPhotoFrame.y).toBeLessThan(844 - 120);
+
   await page.getByTestId('guided-photo-tribeca').getByRole('button', { name: 'Compare photos' }).first().click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();

@@ -109,7 +109,8 @@ class LifecycleManager {
 	/**
 	 * Run when the plugin is activated.
 	 *
-	 * Stores install metadata and ensures rewrite rules are refreshed.
+	 * Activation can run before the public route's init hook, so register it here
+	 * and leave the version unset for the normal init request to flush again.
 	 */
 	public function activate(): void {
 		if ( defined( 'ACX_VERSION' ) ) {
@@ -125,16 +126,16 @@ class LifecycleManager {
 		}
 		$this->maybe_heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
+		( new PublicGuideRoute() )->register_rewrite();
 		flush_rewrite_rules( false );
-		update_option( self::OPTION_REWRITE_VERSION, self::REWRITE_VERSION );
+		delete_option( self::OPTION_REWRITE_VERSION );
 	}
 
 	/**
 	 * Flush rewrites once when an already-active install picks up a new rule set.
-	 *
-	 * Activation already flushes; this covers plugin updates that skip the
-	 * activation hook. Runs on init priority 20 so PublicGuideRoute has
-	 * registered ^guide/?$ first.
+ *
+	 * Activation may flush before init registers ^guide/?$; the version stays
+	 * unset so this init-priority-20 flush persists the registered guide rule.
 	 */
 	public function maybe_flush_rewrites(): void {
 		$stored = get_option( self::OPTION_REWRITE_VERSION, '' );

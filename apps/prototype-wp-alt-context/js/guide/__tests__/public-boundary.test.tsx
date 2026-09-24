@@ -10,11 +10,7 @@ import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntran
 import { GuidedPrototypePage } from '../../admin/pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
-import {
-  createGuidedScenario,
-  GUIDED_MATCH_STRENGTH,
-  formatGuidedSimilarity,
-} from '../../admin/guidedPrototype/state';
+import { createGuidedScenario, GUIDED_MATCH_STRENGTH, formatGuidedSimilarity } from '../../admin/guidedPrototype/state';
 
 const SEED_ALT_TEXT =
   'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';

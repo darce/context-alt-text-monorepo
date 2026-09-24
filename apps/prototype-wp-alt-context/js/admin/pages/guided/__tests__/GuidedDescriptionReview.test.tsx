@@ -162,9 +162,7 @@ describe('GuidedDescriptionReview per-image drafts', () => {
   });
 
   it('renders current and suggested descriptions as sibling blocks before the apply group', () => {
-    render(
-      <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={actions()} scope="public" />,
-    );
+    render(<GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={actions()} scope="public" />);
 
     const layout = screen.getByTestId('guided-editor-layout-tribeca');
     const current = screen.getByTestId('guided-current-alt-tribeca');

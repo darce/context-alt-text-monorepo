@@ -20,6 +20,7 @@ def _run_verify(
     *,
     attempts: int = 5,
     local_expectation: bool = True,
+    receipt: bool = True,
     running_image_id: str = CANDIDATE_ID,
     candidate_image_id: str = CANDIDATE_ID,
 ) -> subprocess.CompletedProcess[str]:
@@ -38,6 +39,13 @@ verify_live_gpu_snapshots() {{ return 0; }}
 read_running_api_image_id() {{ printf '%s\\n' '{running_image_id}'; }}
 remote_image_id_for_digest() {{ printf '%s\\n' '{candidate_image_id}'; }}
 sleep() {{ :; }}
+if [[ "{int(local_expectation)}" == "0" ]]; then
+  if [[ "{int(receipt)}" == "1" ]]; then
+    read_deployed_release_receipt() {{ printf '%s\\n%s\\n' "$DEPLOY_SHA" '{CANDIDATE_REF}'; }}
+  else
+    read_deployed_release_receipt() {{ return 1; }}
+  fi
+fi
 if [[ "{int(local_expectation)}" == "1" ]]; then
   ACX_VERIFY_EXPECT_LOCAL=1
   ACX_CANDIDATE_DIGEST_REF="{CANDIDATE_REF}"
@@ -103,8 +111,19 @@ def test_standalone_skew_is_terminal_not_warmup(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     curl_log = (tmp_path / "curl.log").read_text()
     assert result.returncode == 1, combined
+    assert "Expected release from VM receipt" in combined
     assert curl_log.count("/health") == 1
     assert "warm-up" not in combined
+
+
+def test_standalone_without_receipt_fails_closed_before_health(tmp_path: Path) -> None:
+    result = _run_verify(tmp_path, local_expectation=False, receipt=False)
+    combined = result.stdout + result.stderr
+    curl_log = (tmp_path / "curl.log").read_text()
+    assert result.returncode == 1, combined
+    assert "no valid release receipt" in combined
+    assert curl_log.count("/health") == 0
+    assert curl_log.count("/ready") == 1
 
 
 def _run_ship(tmp_path: Path, *, verify_status: int, verify_optional: str = "0") -> subprocess.CompletedProcess[str]:

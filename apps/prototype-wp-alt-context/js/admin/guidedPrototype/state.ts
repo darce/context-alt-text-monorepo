@@ -671,6 +671,11 @@ export const bothNamesAnswered = (
   return choices.left !== GUIDED_NAME_CHOICE.UNANSWERED && choices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
 };
 
+export const canKeepCurrentForImage = (
+  state: Pick<GuidedDemoState, 'choices' | 'photoChoices'>,
+  imageKey: GuidedImageKey,
+): boolean => bothNamesAnswered(state, imageKey);
+
 /** Backwards-compatible name for callers whose decision card is Tribeca. */
 export const namesDecided = (state: GuidedDemoState): boolean => bothNamesAnswered(state, GUIDED_DEFAULT_IMAGE_KEY);
 
@@ -1103,6 +1108,10 @@ export const previewGuidedDraftForImage = (state: GuidedDemoState, imageKey: Gui
 };
 
 export const keepGuidedCurrentAltTextForImage = (state: GuidedDemoState, imageKey: GuidedImageKey): GuidedDemoState => {
+  if (!canKeepCurrentForImage(state, imageKey)) {
+    return state;
+  }
+
   // KEPT means "the demo copy is unchanged". After apply, the current alt is
   // the draft; restore the original so the outcome and the copy agree.
   const draft = state.drafts[imageKey];

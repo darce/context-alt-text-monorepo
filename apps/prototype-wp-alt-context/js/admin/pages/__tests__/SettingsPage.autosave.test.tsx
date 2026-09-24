@@ -100,7 +100,7 @@ beforeEach(() => {
   capturedSaveOptions = undefined;
   mockUseMutation.mockImplementation((options) => {
     mutationCallIndex += 1;
-    if (mutationCallIndex === 1) {
+    if (mutationCallIndex % 2 === 1) {
       capturedSaveOptions = options;
       return createMockMutation({ mutate: saveMutate });
     }

@@ -266,7 +266,6 @@ describe('useGpuStateToasts edge policy', () => {
 
   it.each([
     [ACTIVITY_REASON.DESCRIBE_POLL_ERROR, GPU_STATE_VOCABULARY.failedToastDescribePoll, true],
-    [ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE, GPU_STATE_VOCABULARY.failedToastGpuUnavailable, true],
     [ACTIVITY_REASON.SCAN_FAILED, GPU_STATE_VOCABULARY.failedToastScanFailed, true],
     [ACTIVITY_REASON.FAILED, GPU_STATE_VOCABULARY.failedToastFailed, false],
     [ACTIVITY_REASON.CANCELLED, GPU_STATE_VOCABULARY.failedToastCancelled, false],
@@ -289,6 +288,37 @@ describe('useGpuStateToasts edge policy', () => {
     } else {
       expect(options.action).toBeUndefined();
     }
+  });
+
+  it('does not toast a GPU status poll failure with no active run', () => {
+    observeSequence([
+      hookResult({ status: idleStatus() }),
+      hookResult({
+        status: idleStatus({
+          kind: ACTIVITY_KIND.FAILED,
+          reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
+          runId: null,
+          retryable: true,
+        }),
+      }),
+    ]);
+
+    expectNoToasts();
+  });
+
+  it('toasts a GPU status poll failure when an active run has failed', () => {
+    observeSequence([
+      hookResult({ status: runStatus(ACTIVITY_KIND.DESCRIBING, { canCancel: true }) }),
+      hookResult({
+        status: runStatus(ACTIVITY_KIND.FAILED, {
+          reason: ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE,
+          retryable: true,
+        }),
+      }),
+    ]);
+
+    const options = expectOnlyErrorToast(GPU_STATE_VOCABULARY.failedToastGpuUnavailable);
+    expect(options.durationMs).toBeNull();
   });
 
   it('toasts unknown failed reasons with generic copy and no Retry', () => {

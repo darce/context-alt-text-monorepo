@@ -122,7 +122,7 @@ describe('public guide copy overlay', () => {
 
   it('exports the documented case-study URL and public scope copy', () => {
     expect(CASE_STUDY_URL).toBe('https://darce.xyz/projects/altcontext/');
-    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe('You decide who is named in each photo description.');
+    expect(PUBLIC_GUIDED_COPY['entry.title.public']).toBe("Names change a photo's meaning");
     expect(PUBLIC_GUIDED_COPY['entry.intro.public']).toBe(
       'See how AltContext suggests image descriptions (alt text) and possible names, ' +
         'and how you decide which names to use.',

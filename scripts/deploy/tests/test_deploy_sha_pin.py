@@ -154,6 +154,30 @@ def test_unknown_origin_main_fails_closed(tmp_path: Path) -> None:
     assert "unknown upstream" in result.stderr
 
 
+def test_default_deploy_fails_closed_when_fetch_fails(tmp_path: Path) -> None:
+    repo, _, commit_b = _repo(tmp_path)
+    _git(repo, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    _git(repo, "checkout", "--quiet", "--detach", commit_b)
+    result = _run_shell(_source(repo) + "pin_deploy_sha\npreflight_branch_synced prod\n")
+
+    assert result.returncode != 0
+    assert "git fetch origin main failed" in result.stderr
+    assert "GIT_REF=" in result.stderr
+
+
+def test_explicit_ref_with_failed_fetch_checks_cached_ancestry(tmp_path: Path) -> None:
+    repo, commit_a, _ = _repo(tmp_path)
+    _git(repo, "checkout", "--quiet", "--detach", commit_a)
+    _git(repo, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    result = _run_shell(
+        _source(repo) + "pin_deploy_sha\npreflight_branch_synced prod\n",
+        GIT_REF=commit_a,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "checking ancestry against cached origin/main" in result.stderr
+
+
 def test_preset_deploy_sha_that_is_not_a_commit_fails(tmp_path: Path) -> None:
     repo, _, _ = _repo(tmp_path)
     missing_sha = "f" * 40

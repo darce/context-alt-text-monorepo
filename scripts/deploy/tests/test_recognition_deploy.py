@@ -821,7 +821,11 @@ def test_rollback_success_requires_post_restart_health_evidence() -> None:
     assert "abort_cutover_candidate" in body
     assert body.index("restore_prior_image_repo_env") < body.index("restore_topology_backups")
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
-    assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
+    assert body.index("cutover_inflight_present") < body.index("staged_rollback_runtime")
+    restart_at = body.index('"rollback systemctl restart')
+    canonical_probe_at = body.index("probe_canonical_api_health", restart_at)
+    edge_restore_at = body.index("restore_edge_backups", canonical_probe_at)
+    assert restart_at < canonical_probe_at < edge_restore_at
     assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
     assert body.index("verify_restored_runtime") > body.index("abort_cutover_candidate")
     assert 'log "Restored' in orchestrator

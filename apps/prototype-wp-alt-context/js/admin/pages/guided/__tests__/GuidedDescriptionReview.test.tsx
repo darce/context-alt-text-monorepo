@@ -133,7 +133,18 @@ describe('GuidedDescriptionReview per-image drafts', () => {
       <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={reviewActions} scope="public" />,
     );
 
-    expect(screen.getByRole('heading', { name: publicGuidedCopy('step.review.public') })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('step.review.public') }),
+    ).toBeInTheDocument();
+    for (const imageKey of ['tribeca', 'coachella'] as const) {
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(
+        within(review).getAllByRole('heading', {
+          level: 4,
+          name: publicGuidedCopy('step.review.public'),
+        }),
+      ).toHaveLength(1);
+    }
     expect(screen.queryByRole('heading', { name: 'Edit the alt text' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Apply and undo' })).not.toBeInTheDocument();
 

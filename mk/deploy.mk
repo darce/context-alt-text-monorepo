@@ -113,7 +113,7 @@ deploy-help:
 	@echo "                      REMOTE_BUILD (default 1; set 0 for local), ACX_REMOTE_BUILD (env equivalent)"
 	@echo "                      ACX_BUILD_TARGET (e.g. runtime-vlm; charset [A-Za-z0-9_.-]+ only)"
 	@echo "                      ACX_IMAGE_VARIANT (recognition|vlm; vlm requires *vlm* build target)"
-	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_BOOT_SMOKE"
+	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_CUTOVER_HEALTH_ATTEMPTS ACX_CUTOVER_HEALTH_SLEEP ACX_CANONICAL_HEALTH_ATTEMPTS ACX_CANONICAL_HEALTH_SLEEP ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_ROLLBACK_VERIFY_ATTEMPTS ACX_ROLLBACK_VERIFY_SLEEP ACX_GPU_SNAPSHOT_GATE_ATTEMPTS ACX_GPU_SNAPSHOT_GATE_SLEEP ACX_BOOT_SMOKE"
 
 # Build only (no push). Override the tag with TAG=staging.
 # ACX_BUILD_TARGET / ACX_IMAGE_VARIANT are passed through the environment.

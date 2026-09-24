@@ -370,6 +370,8 @@ describe('GuidedPrototypePage journey', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
+    choose('left', 'include');
+    choose('right', 'include');
     await user.click(
       within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
         name: guidedCopy('draft.keep'),

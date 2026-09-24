@@ -1120,13 +1120,14 @@ describe('undoGuidedApplication', () => {
 });
 
 describe('keepGuidedCurrentAltText', () => {
-  it('is allowed while names are blocked and leaves applied text and draft unchanged', () => {
+  it('is a no-op while names are unanswered', () => {
     const start = createGuidedDemoState();
     const kept = keepGuidedCurrentAltText(start);
-    expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expect(kept).toEqual(start);
+    expect(kept.outcome).not.toBe(GUIDED_OUTCOME.KEPT);
     expect(kept.appliedAltText).toBe(ORIGINAL_ALT);
-    expect(kept.draftText).toBeNull();
-    expect(kept.actionHistory.at(-1)?.summary).toBe(guidedCopy('outcome.kept'));
+    expect(kept.draftText).toBe(start.draftText);
+    expect(kept.actionHistory).toEqual(start.actionHistory);
   });
 
   it('remains available when the matching sample is missing (T04)', () => {

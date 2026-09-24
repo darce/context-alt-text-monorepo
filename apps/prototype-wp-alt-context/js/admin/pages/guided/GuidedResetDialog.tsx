@@ -18,7 +18,11 @@ export interface GuidedResetDialogProps {
   scope?: 'public' | 'admin';
 }
 
-export const GuidedResetDialog = ({ liveWaiting, onConfirm, scope = 'admin' }: GuidedResetDialogProps): React.JSX.Element => {
+export const GuidedResetDialog = ({
+  liveWaiting,
+  onConfirm,
+  scope = 'admin',
+}: GuidedResetDialogProps): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const focusScenarioAfterConfirmRef = useRef(false);

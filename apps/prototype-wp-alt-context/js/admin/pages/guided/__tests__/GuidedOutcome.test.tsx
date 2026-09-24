@@ -92,7 +92,9 @@ describe('GuidedResetDialog public copy', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset demo' }));
     const dialog = screen.getByRole('dialog', { name: 'Start over?' });
-    expect(dialog).toHaveTextContent('This clears your name choices and edits, and puts back the original descriptions.');
+    expect(dialog).toHaveTextContent(
+      'This clears your name choices and edits, and puts back the original descriptions.',
+    );
 
     const keepButton = within(dialog).getByRole('button', { name: 'Keep my work' });
     expect(within(dialog).getByRole('button', { name: 'Start over' })).toBeInTheDocument();

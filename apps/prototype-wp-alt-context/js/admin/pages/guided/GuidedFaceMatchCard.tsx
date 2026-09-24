@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 import {
   DialogContent,
@@ -11,10 +12,9 @@ import {
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
-  formatGuidedSimilarity,
   GUIDED_MATCH_STRENGTH,
-  GUIDED_MATCH_THRESHOLD,
   GUIDED_NAME_CHOICE,
+  isClusterAnchor,
   type GuidedFace,
   type GuidedImageKey,
   type GuidedLabeledPerson,
@@ -34,30 +34,15 @@ export interface GuidedFaceMatchCardProps {
   choice: GuidedNameChoice;
   idScope: string;
   disabled: boolean;
-  onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement) => void;
+  onChoose: (choice: GuidedNameChoice, origin: HTMLInputElement, imageKey: GuidedImageKey) => void;
 }
 
 const INLINE_CROP_PX = 80;
-const ENLARGED_CROP_PX = 240;
+const ENLARGED_CROP_PX = 160;
 
 const IMAGE_COPY_KEYS: Record<GuidedImageKey, 'names.photo.tribeca' | 'names.photo.coachella'> = {
   tribeca: 'names.photo.tribeca',
   coachella: 'names.photo.coachella',
-};
-
-const choiceStatus = (choice: GuidedNameChoice, personName: string): string => {
-  switch (choice) {
-    case GUIDED_NAME_CHOICE.INCLUDE:
-      return guidedCopy('names.included', { name: personName });
-    case GUIDED_NAME_CHOICE.OMIT:
-      return guidedCopy('names.omitted');
-    case GUIDED_NAME_CHOICE.UNDECIDED:
-      return guidedCopy('names.pending');
-    default: {
-      const exhaustive: never = choice;
-      return exhaustive;
-    }
-  }
 };
 
 const coverageCopy = (coverage: GuidedNameCoverage): string =>
@@ -70,9 +55,20 @@ const imageLabel = (imageKey: GuidedImageKey): string => guidedCopy(IMAGE_COPY_K
 const cropAlt = (match: GuidedFaceMatch): string =>
   guidedCopy('names.crop_alt_image', { position: match.face.position, image: imageLabel(match.face.imageKey) });
 
-const isWeakMatch = (match: GuidedFaceMatch): boolean =>
-  match.face.strength === GUIDED_MATCH_STRENGTH.WEAK ||
-  (match.face.similarity !== null && match.face.similarity < GUIDED_MATCH_THRESHOLD);
+const isWeakMatch = (match: GuidedFaceMatch): boolean => match.face.strength === GUIDED_MATCH_STRENGTH.WEAK;
+
+const matchEvidenceCopy = (match: GuidedFaceMatch): string => {
+  if (isClusterAnchor(match.face) || match.face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
+    return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
+  }
+  if (match.face.strength === GUIDED_MATCH_STRENGTH.WEAK) {
+    return guidedCopy('names.weak.public');
+  }
+  if (match.face.strength === GUIDED_MATCH_STRENGTH.STRONG) {
+    return guidedCopy('names.strong.public');
+  }
+  return 'Match strength unavailable.';
+};
 
 export const GuidedFaceMatchCard = ({
   matches,
@@ -90,6 +86,10 @@ export const GuidedFaceMatchCard = ({
   if (representative === undefined) {
     throw new Error(`Missing guided face matches for ${person.key}.`);
   }
+  if (matches.some((match) => match.face.imageKey !== representative.imageKey)) {
+    throw new Error(`Guided face match cards must contain matches from one photo (${representative.imageKey}).`);
+  }
+  const currentPhotoMatch = matches[0];
   const titleId = `guided-face-${idScope}-${person.key}-title`;
   const groupName = `guided-name-${idScope}-${representative.position}`;
   const includeId = `${groupName}-include`;
@@ -109,7 +109,7 @@ export const GuidedFaceMatchCard = ({
   }, [comparisonOpen]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>, nextChoice: GuidedNameChoice): void => {
-    onChoose(nextChoice, event.currentTarget);
+    onChoose(nextChoice, event.currentTarget, representative.imageKey);
   };
 
   const thumbnail = (match: GuidedFaceMatch, sizePx = INLINE_CROP_PX): React.JSX.Element => (
@@ -123,36 +123,37 @@ export const GuidedFaceMatchCard = ({
     />
   );
 
-  const matchLine = (match: GuidedFaceMatch): string =>
-    match.face.similarity !== null
-      ? guidedCopy('names.match.line', {
-          name: person.name,
-          similarity: formatGuidedSimilarity(match.face.similarity),
-        })
-      : guidedCopy('names.match.line_unavailable', { name: person.name });
-
   const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
-    <>
-      <p className="acx-guided-face__match-line">{matchLine(match)}</p>
+    <p
+      className={
+        isWeakMatch(match)
+          ? 'acx-guided-face__match-line acx-guided-face__weak-match'
+          : 'acx-guided-face__match-line'
+      }
+    >
       {isWeakMatch(match) ? (
-        <p className="acx-guided-face__weak-match">
-          <span role="img" aria-label={guidedCopy('names.match.weak_icon')}>
-            ⚠
-          </span>{' '}
-          {guidedCopy('names.match.below_threshold', {
-            threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
-          })}
-        </p>
+        <span
+          className="acx-guided-face__warning-icon"
+          role="img"
+          aria-label={guidedCopy('names.match.weak_icon')}
+        >
+          <AlertTriangle aria-hidden="true" size={16} />
+        </span>
       ) : null}
-    </>
+      <span>{matchEvidenceCopy(match)}</span>
+    </p>
   );
 
   return (
-    <section aria-labelledby={titleId} className="acx-guided-face__card">
+    <section
+      aria-labelledby={titleId}
+      className="acx-guided-face__card"
+      data-image-key={representative.imageKey}
+    >
       <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
         <ul className="acx-guided-face__match-list">
           {matches.map((match) => (
-            <li key={match.face.id} className="acx-guided-face__match">
+            <li key={match.face.id} className="acx-guided-face__match" style={{ minHeight: 64 }}>
               {thumbnail(match)}
               {matchEvidence(match)}
             </li>
@@ -164,25 +165,13 @@ export const GuidedFaceMatchCard = ({
           type="button"
           className="acx-button acx-button--tertiary acx-guided-face__enlarge"
           onClick={() => setComparisonOpen(true)}
+          style={{ minHeight: 44 }}
         >
-          {guidedCopy('names.enlarge')}
+          {guidedCopy('names.compare.public')}
         </button>
       </div>
       <div className="acx-guided-face__content">
-        <h5 id={titleId}>{guidedCopy('names.suggestion', { name: person.name })}</h5>
-
-        <details className="acx-guided-face__evidence" open>
-          <summary>{guidedCopy('names.evidence_open', { position: representative.position })}</summary>
-          <ul className="acx-guided-face__gallery" aria-label={person.name}>
-            {person.galleryPhotos.map((photo) => (
-              <li key={photo.src}>
-                <img src={photo.src} alt={photo.altText} loading="lazy" />
-                <span className="screen-reader-text">{photo.credit}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
-        </details>
+        <h5 id={titleId}>{person.name}</h5>
 
         <fieldset
           data-testid={`name-choice-${idScope}-${representative.position}`}
@@ -191,32 +180,39 @@ export const GuidedFaceMatchCard = ({
         >
           <legend>{guidedCopy('names.legend', { position: representative.position })}</legend>
           <div className="acx-guided-face__choice-options">
-            <label htmlFor={includeId}>
+            <label
+              htmlFor={includeId}
+              className="acx-guided-face__choice-option"
+              style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}
+            >
               <input
                 id={includeId}
                 type="radio"
                 name={groupName}
-                value={GUIDED_NAME_CHOICE.INCLUDE}
-                checked={choice === GUIDED_NAME_CHOICE.INCLUDE}
-                onChange={(event) => handleChange(event, GUIDED_NAME_CHOICE.INCLUDE)}
+                value={GUIDED_NAME_CHOICE.USE}
+                checked={choice === GUIDED_NAME_CHOICE.USE}
+                onChange={(event) => handleChange(event, GUIDED_NAME_CHOICE.USE)}
               />
-              {guidedCopy('names.include', { name: person.name })}
+              {guidedCopy('names.use.public', { name: person.name })}
             </label>
-            <label htmlFor={omitId}>
+            <label
+              htmlFor={omitId}
+              className="acx-guided-face__choice-option"
+              style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}
+            >
               <input
                 id={omitId}
                 type="radio"
                 name={groupName}
-                value={GUIDED_NAME_CHOICE.OMIT}
-                checked={choice === GUIDED_NAME_CHOICE.OMIT}
-                onChange={(event) => handleChange(event, GUIDED_NAME_CHOICE.OMIT)}
+                value={GUIDED_NAME_CHOICE.LEAVE_UNNAMED}
+                checked={choice === GUIDED_NAME_CHOICE.LEAVE_UNNAMED}
+                onChange={(event) => handleChange(event, GUIDED_NAME_CHOICE.LEAVE_UNNAMED)}
               />
-              {guidedCopy('names.omit')}
+              {guidedCopy('names.omit.public')}
             </label>
           </div>
         </fieldset>
 
-        <p className="acx-guided-face__decision">{choiceStatus(choice, person.name)}</p>
       </div>
 
       <DialogRoot open={comparisonOpen} onOpenChange={setComparisonOpen}>
@@ -230,34 +226,44 @@ export const GuidedFaceMatchCard = ({
               enlargeRef.current?.focus();
             }}
           >
-            <DialogTitle>{guidedCopy('names.enlarge_title')}</DialogTitle>
+            <DialogTitle>{guidedCopy('lightbox.title.public', { name: person.name })}</DialogTitle>
             <DialogDescription>
               {guidedCopy('names.evidence_open', { position: representative.position })}
             </DialogDescription>
-            <ul className="acx-guided-face__lightbox-matches">
-              {matches.map((match) => (
-                <li key={`enlarged-${match.face.id}`}>
-                  {thumbnail(match, ENLARGED_CROP_PX)}
-                  {matchEvidence(match)}
-                </li>
-              ))}
-            </ul>
-            <ul className="acx-guided-face__lightbox-gallery" aria-label={person.name}>
-              {person.galleryPhotos.map((photo) => (
-                <li key={`gallery-${photo.src}`}>
-                  <img src={photo.src} alt={photo.altText} />
-                  <span className="screen-reader-text">{photo.credit}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
+            <section className="acx-guided-face__lightbox-crop" aria-labelledby={`${groupName}-lightbox-current`}>
+              <h3 id={`${groupName}-lightbox-current`}>{guidedCopy('lightbox.current.public')}</h3>
+              {thumbnail(currentPhotoMatch, ENLARGED_CROP_PX)}
+              {matchEvidence(currentPhotoMatch)}
+            </section>
+            <section aria-labelledby={`${groupName}-lightbox-references`}>
+              <h3 id={`${groupName}-lightbox-references`}>
+                {guidedCopy('lightbox.references.public', { name: person.name })}
+              </h3>
+              <ul
+                className="acx-guided-face__lightbox-gallery"
+                aria-label={guidedCopy('lightbox.references.public', { name: person.name })}
+              >
+                {person.galleryPhotos.map((photo) => (
+                  <li
+                    key={`gallery-${photo.src}`}
+                    className="acx-guided-face__lightbox-reference"
+                    data-testid="guided-lightbox-reference-photo"
+                  >
+                    <img src={photo.src} alt={photo.altText} />
+                    <p className="acx-guided-face__gallery-credit">{photo.credit}</p>
+                  </li>
+                ))}
+              </ul>
+              <p className="acx-guided-face__gallery-caption">{coverageCopy(coverage)}</p>
+            </section>
             <div className="acx-dialog__actions">
               <button
                 type="button"
                 className="acx-button acx-button--secondary"
                 onClick={() => setComparisonOpen(false)}
+                style={{ minHeight: 44, minWidth: 44 }}
               >
-                {guidedCopy('names.evidence_close')}
+                {guidedCopy('lightbox.close.public')}
               </button>
             </div>
           </DialogContent>

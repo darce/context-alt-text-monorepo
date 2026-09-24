@@ -13,9 +13,11 @@ import { AlertTriangle, ImageOff } from 'lucide-react';
 
 import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import {
+  FINDINGS_READ_ONLY_REASON,
   CLUSTER_EVIDENCE,
   NEXT_ACTION_KIND,
   useWorkbenchFindings,
+  type FindingsReadOnlyReason,
   type WorkbenchFindingPreview,
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
@@ -80,6 +82,15 @@ const nextActionHint = (action: WorkbenchNextAction): string | null => {
       return __('Name the largest unlabeled group', 'alt-context');
     default:
       return null;
+  }
+};
+
+const readOnlyReasonCopy = (reason: FindingsReadOnlyReason): string => {
+  switch (reason) {
+    case FINDINGS_READ_ONLY_REASON.PROJECTION_BOOTSTRAPPING:
+      return __('Findings are read-only while the projection catches up.', 'alt-context');
+    case FINDINGS_READ_ONLY_REASON.PROJECTION_UNAVAILABLE:
+      return __('Findings are read-only because projected results are unavailable.', 'alt-context');
   }
 };
 
@@ -197,6 +208,7 @@ export const WorkbenchFindingsPanel = ({
     isAssignmentError,
     isUnavailable,
     isReadOnly,
+    readOnlyReason,
     nextAction,
   } = findings;
 
@@ -375,15 +387,6 @@ export const WorkbenchFindingsPanel = ({
     <div className="acx-findings-panel" data-findings-state={findingsState}>
       <FindingsRegionHeading ref={headingRef} />
 
-      {isReadOnly && (
-        <p className="acx-findings-panel__notice">
-          {__(
-            'Findings are visible while local sync catches up. Curation stays disabled until projected results are available locally.',
-            'alt-context',
-          )}
-        </p>
-      )}
-
       {/* One live region for counts + repair copy. Hidden on true empty so only
           the empty-state region announces the zero state. Resync stays outside. */}
       {(hasFindings || repairPending) && (
@@ -520,12 +523,18 @@ export const WorkbenchFindingsPanel = ({
       )}
 
       <div className="acx-findings-panel__actions">
+        {isReadOnly && readOnlyReason && (
+          <p id="acx-workbench-findings-read-only-reason" className="acx-findings-panel__notice">
+            {readOnlyReasonCopy(readOnlyReason)}
+          </p>
+        )}
         <button
           ref={reviewNextRef}
           type="button"
           className="acx-button acx-button--primary"
           onClick={handleReviewNext}
           disabled={primaryDisabled}
+          aria-describedby={isReadOnly && readOnlyReason ? 'acx-workbench-findings-read-only-reason' : undefined}
         >
           {__('Review next', 'alt-context')}
           {hint && <span className="acx-findings-panel__next-hint"> {hint}</span>}

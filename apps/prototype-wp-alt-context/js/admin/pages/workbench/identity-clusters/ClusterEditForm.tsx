@@ -77,6 +77,7 @@ export const ClusterEditForm = ({
 }: ClusterEditFormProps): React.JSX.Element => {
   const prefillRef = React.useRef(labelInput);
   const selectedSuggestionRef = React.useRef<ComboboxOption | null>(null);
+  const [commitFeedback, setCommitFeedback] = React.useState('');
   const inputId = `acx-identity-cluster-name-${React.useId()}`;
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving name…', 'alt-context') : __('Save name', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
@@ -115,8 +116,10 @@ export const ClusterEditForm = ({
       ) {
         selectedSuggestionRef.current = null;
         if (commitSelectedSuggestion(selected)) {
+          setCommitFeedback('');
           return;
         }
+        setCommitFeedback('');
         onSave(selected.label);
         return;
       }
@@ -131,8 +134,10 @@ export const ClusterEditForm = ({
         // Prefill no-op stays for a single exact match (R1-13). Same-fold
         // confirm passes the chosen rosterEntryId with the label (R3-12).
         if (sameFoldCount <= 1 && folded === normalizeNameFaceLabel(prefillRef.current)) {
+          setCommitFeedback(__('No changes to save.', 'alt-context'));
           return;
         }
+        setCommitFeedback('');
         if (onPersonSelect) {
           onPersonSelect(resolution.name, resolution.rosterEntryId);
         } else {
@@ -141,8 +146,10 @@ export const ClusterEditForm = ({
         return;
       }
       if (normalizeNameFaceLabel(resolution.name) === normalizeNameFaceLabel(prefillRef.current)) {
+        setCommitFeedback(__('No changes to save.', 'alt-context'));
         return;
       }
+      setCommitFeedback('');
       onSave(resolution.name);
     },
     [commitSelectedSuggestion, onPersonSelect, onSave, options],
@@ -152,6 +159,7 @@ export const ClusterEditForm = ({
   const handleOptionConfirm = React.useCallback(
     (option: ComboboxOption) => {
       selectedSuggestionRef.current = option;
+      setCommitFeedback('');
       onLabelChange(option.label);
     },
     [onLabelChange],
@@ -166,47 +174,56 @@ export const ClusterEditForm = ({
       ) {
         selectedSuggestionRef.current = null;
       }
+      setCommitFeedback('');
       onLabelChange(value);
     },
     [onLabelChange],
   );
 
   return (
-    <NameFaceControl
-      options={options}
-      value={labelInput}
-      onValueChange={handleValueChange}
-      onCommit={handleCommit}
-      onOptionConfirm={handleOptionConfirm}
-      onRejectSuggestion={onRejectSuggestion}
-      onCancel={onCancel}
-      isPending={isPending}
-      isLoading={isLoading}
-      searchPlaceholder={__('Enter a name…', 'alt-context')}
-      commitLabel={saveButtonLabel}
-      pendingLabel={saveButtonLabel}
-      placeholder={__('Enter a name…', 'alt-context')}
-      suggestionsHeader={__('People', 'alt-context')}
-      visibleLabel={__('Person name', 'alt-context')}
-      inputId={inputId}
-      className="acx-identity-cluster__edit"
-      classPrefix="acx-identity-cluster"
-      hintId={showAtRestTruncationHint ? atRestHintId : undefined}
-      hint={
-        showAtRestTruncationHint ? (
-          <p
-            id={atRestHintId}
-            className="acx-identity-cluster__at-rest-hint"
-          >
-            {sprintf(
-              /* translators: 1: number of labels currently shown, 2: total labelled clusters */
-              __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
-              displayedCount,
-              atRestTotal,
-            )}
-          </p>
-        ) : null
-      }
-    />
+    <>
+      <NameFaceControl
+        options={options}
+        value={labelInput}
+        onValueChange={handleValueChange}
+        onCommit={handleCommit}
+        onOptionConfirm={handleOptionConfirm}
+        onRejectSuggestion={onRejectSuggestion}
+        onCancel={onCancel}
+        isPending={isPending}
+        isLoading={isLoading}
+        searchPlaceholder={__('Enter a name…', 'alt-context')}
+        commitLabel={saveButtonLabel}
+        pendingLabel={saveButtonLabel}
+        placeholder={__('Enter a name…', 'alt-context')}
+        suggestionsHeader={__('People', 'alt-context')}
+        visibleLabel={__('Person name', 'alt-context')}
+        inputId={inputId}
+        className="acx-identity-cluster__edit"
+        classPrefix="acx-identity-cluster"
+        hideStatusAnnouncement={Boolean(commitFeedback)}
+        hintId={showAtRestTruncationHint ? atRestHintId : undefined}
+        hint={
+          showAtRestTruncationHint ? (
+            <p
+              id={atRestHintId}
+              className="acx-identity-cluster__at-rest-hint"
+            >
+              {sprintf(
+                /* translators: 1: number of labels currently shown, 2: total labelled clusters */
+                __('Showing %1$d of %2$d labels — type to search for more', 'alt-context'),
+                displayedCount,
+                atRestTotal,
+              )}
+            </p>
+          ) : null
+        }
+      />
+      {commitFeedback ? (
+        <p className="acx-identity-cluster__result-count" role="status" aria-live="polite">
+          {commitFeedback}
+        </p>
+      ) : null}
+    </>
   );
 };

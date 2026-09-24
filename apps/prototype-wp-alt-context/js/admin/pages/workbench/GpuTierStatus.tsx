@@ -211,7 +211,7 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
   if (poll.isError && !run.isRunPending) {
     return {
       displayedState: GPU_STATE.UNKNOWN,
-      headline: __('Description Service status unavailable', 'alt-context'),
+      headline: __('Description Service idle — status not checked', 'alt-context'),
       detail: null,
       action: GPU_IDLE_STATUS_ACTION.RETRY,
     };
@@ -222,7 +222,7 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
       displayedState: GPU_STATE.UNKNOWN,
       headline: poll.isLoading
         ? __('Description Service: checking status…', 'alt-context')
-        : __('Description Service status unavailable', 'alt-context'),
+        : __('Description Service idle — status not checked', 'alt-context'),
       detail: null,
       action: poll.isLoading ? GPU_IDLE_STATUS_ACTION.NONE : GPU_IDLE_STATUS_ACTION.RETRY,
     };
@@ -331,7 +331,7 @@ export const GpuTierStatus = ({
 
   const actionLabel =
     view.action === GPU_IDLE_STATUS_ACTION.RETRY
-      ? __('Retry', 'alt-context')
+      ? __('Check status', 'alt-context')
       : view.action === GPU_IDLE_STATUS_ACTION.REFRESH
         ? __('Refresh', 'alt-context')
         : null;

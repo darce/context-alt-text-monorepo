@@ -1,8 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { AuthExpiredError } from '../../utils/http';
-import { SPA_SESSION_EXPIRED_COPY } from '../../utils/userFacingError';
+import { AuthExpiredError, HTTPError } from '../../utils/http';
 import { RetentionSection } from '../RetentionPage';
 import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
@@ -360,7 +359,7 @@ describe('RetentionSection', () => {
     });
   });
 
-  it('shows graceful fallback when retention status is unavailable', () => {
+  it('names the recognition service and reported cause when status is unavailable without an envelope', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({
         data: {
@@ -368,34 +367,118 @@ describe('RetentionSection', () => {
           policy: null,
           recent_audit_events: [],
         },
+        dataUpdatedAt: Date.parse('2026-09-18T14:03:22Z'),
         refetch,
       }),
     );
 
     render(<RetentionSection />);
 
-    expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Cause: The service reported it is unavailable.')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-retention-unavailable-icon')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the missing policy cause when status is available without a policy', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: { available: true, policy: null, recent_audit_events: [] },
+        dataUpdatedAt: Date.parse('2026-09-18T14:03:22Z'),
+        refetch,
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Cause: The service returned no retention policy.')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+  });
+
+  it('shows HTTP status and the error timestamp for a query failure without an envelope', () => {
+    const error = new HTTPError({
+      status: 503,
+      retryAfterSeconds: undefined,
+      endpoint: '/retention',
+      bodyPreview: '',
+      message: 'Service error',
+    });
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        isError: true,
+        error,
+        errorUpdatedAt: Date.parse('2026-09-18T14:03:22Z'),
+        refetch,
+      }),
+    );
+
+    render(<RetentionSection />);
+
+    expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Cause: HTTP 503')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+  });
+
+  it('updates the untyped error timestamp after Retry rechecks and fails again', () => {
+    const error = new HTTPError({
+      status: 503,
+      retryAfterSeconds: undefined,
+      endpoint: '/retention',
+      bodyPreview: '',
+      message: 'Service error',
+    });
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        isError: true,
+        error,
+        errorUpdatedAt: Date.parse('2026-09-18T14:03:22Z'),
+        refetch,
+      }),
+    );
+    const { rerender } = render(<RetentionSection />);
+
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        isError: true,
+        error,
+        errorUpdatedAt: Date.parse('2026-09-18T14:04:05Z'),
+        refetch,
+      }),
+    );
+    rerender(<RetentionSection />);
+
+    expect(screen.getByText('Last checked 14:04:05')).toBeInTheDocument();
+    expect(screen.queryByText('Last checked 14:03:22')).not.toBeInTheDocument();
   });
 
   it.each([
     {
       error: new AuthExpiredError({ endpoint: '/retention', status: 401 }),
-      expected: SPA_SESSION_EXPIRED_COPY.sessionExpired,
+      expected: 'Cause: HTTP 401',
     },
     {
       error: new Error('Request to /retention failed: private response body'),
-      expected: 'Unable to load retention status. Please try again.',
+      expected: 'Cause: Unable to load retention status. Please try again.',
     },
     {
       error: null,
-      expected: 'Unable to load retention status. Please try again.',
+      expected: 'Cause: Unable to load retention status. Please try again.',
+    },
+    {
+      error: Object.assign(new Error('Request failed'), { code: 'ECONNRESET' }),
+      expected: 'Cause: error code ECONNRESET',
     },
   ])('shows safe query error copy with Retry: $expected', ({ error, expected }) => {
     mockedUseRetentionStatus.mockReturnValue(createMockQuery({ isError: true, error, refetch }));
     const { container } = render(<RetentionSection />);
-    expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recognition service unavailable' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(expected);
     expect(container).not.toHaveTextContent(/private response body|\/retention/);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

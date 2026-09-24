@@ -700,7 +700,9 @@ const canApplyImageDraftWithoutPreview = (
   draft: GuidedImageDraft,
   imageKey: GuidedImageKey = GUIDED_DEFAULT_IMAGE_KEY,
 ): boolean =>
-  canPreviewImageDraft(state, draft, imageKey) && draft.draftText !== draft.appliedAltText && state.pendingChoiceChange === null;
+  canPreviewImageDraft(state, draft, imageKey) &&
+  draft.draftText !== draft.appliedAltText &&
+  state.pendingChoiceChange === null;
 
 /** Public guide eligibility keeps the draft visible without requiring an admin preview action. */
 export const canApplyImageDraftPublic = (
@@ -982,8 +984,7 @@ export const chooseGuidedName = (
     (current, currentImageKey) => {
       const currentChoices = photoChoices[currentImageKey];
       const namesAreDecided =
-        currentChoices.left !== GUIDED_NAME_CHOICE.UNANSWERED &&
-        currentChoices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
+        currentChoices.left !== GUIDED_NAME_CHOICE.UNANSWERED && currentChoices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
       return {
         ...current,
         ...resolveSample(scenario, currentChoices, currentImageKey),

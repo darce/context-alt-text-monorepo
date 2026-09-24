@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Tracked plan-accept handler.
-
-mk/lane-lifecycle.mk must invoke this file through ACX_LIFECYCLE_HANDLERS.
-The external workbay_lifecycle package is not the source of truth here.
+"""Tracked fallback for `make plan-accept`, used only when `Makefile.d/plans.mk` is not installed.
+When the overlay is installed, its recipe runs instead and owns review gating and landing.
+This fallback validates `TASK`/`PLAN` inputs only; it never commits or lands anything.
+`mk/lane-lifecycle.mk` invokes this file through `ACX_LIFECYCLE_HANDLERS`.
 """
 
 from __future__ import annotations
@@ -43,9 +43,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, sort_keys=True))
         print(f"plan file not found: {plan}", file=sys.stderr)
         return 1
-    payload["status"] = "accepted"
+    payload["status"] = "validated_only"
     payload["plan"] = str(plan.resolve())
     print(json.dumps(payload, sort_keys=True))
+    print(
+        "plan-accept fallback: inputs validated; nothing was landed "
+        "(install the workbay plugin overlay for the gated plan-accept)",
+        file=sys.stderr,
+    )
     return 0
 
 

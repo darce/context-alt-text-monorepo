@@ -12,6 +12,7 @@ import {
   type SaveSettingsPayload,
   type SaveSettingsResponse,
   type SettingsResponse,
+  type TestConnectionResponse,
 } from '../api/settingsApi';
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
@@ -46,6 +47,8 @@ export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const location = useLocation();
   const automaticHealthCheckStarted = useRef(false);
+  const healthProbeGeneration = useRef(0);
+  const healthProbeMetadata = useRef(new WeakMap<object, { generation: number; afterRoutingSave: boolean }>());
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
 
@@ -77,12 +80,42 @@ export const SettingsPage = (): React.JSX.Element => {
     resetConfigCache();
   };
 
+  const applyHealthProbeSuccess = (data: TestConnectionResponse, generation: number): void => {
+    if (generation !== healthProbeGeneration.current) {
+      return;
+    }
+    dispatch({ type: 'setTestResult', value: data });
+    // A reachable probe (or an adopted tenant) means the service is back;
+    // refetch sync health so the offline banner clears immediately.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+  };
+
+  const applyHealthProbeError = (generation: number): void => {
+    if (generation !== healthProbeGeneration.current) {
+      return;
+    }
+    dispatch({
+      type: 'setTestResult',
+      value: { outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: 'service_auth' },
+    });
+  };
+
+  const clearRoutingCheckFeedback = (): void => {
+    if (routingSaveFeedback.current) {
+      routingSaveFeedback.current = false;
+      dispatch({ type: 'clearSaveMessage' });
+    }
+  };
+
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
+        if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
+          healthProbeGeneration.current += 1;
+        }
       }
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
@@ -143,42 +176,44 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const testMutation = useMutation({
     mutationFn: testConnection,
-    onSuccess: (data) => {
-      dispatch({ type: 'setTestResult', value: data });
-      // A reachable probe (or an adopted tenant) means the service is back;
-      // refetch sync health so the offline banner clears immediately.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+    // Keep mutation-level handlers for callers that invoke the captured hook
+    // callbacks directly; real mutation results use the generation captured
+    // by each call below.
+    onSuccess: (data, variables?: Parameters<typeof testConnection>[0]) => {
+      const metadata = variables && healthProbeMetadata.current.get(variables);
+      const generation = metadata?.generation ?? healthProbeGeneration.current;
+      applyHealthProbeSuccess(data, generation);
+      if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
+        clearRoutingCheckFeedback();
+      }
     },
     // Outcome enum maps to fixed banner copy; it cannot carry a free-form server
     // message without a new enum member ([sr-007]). Leave NETWORK_ERROR as the
     // transport-failure stand-in — see REPORT.md.
-    onError: () => {
-      dispatch({
-        type: 'setTestResult',
-        value: { outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: 'service_auth' },
-      });
+    onError: (_error, variables?: Parameters<typeof testConnection>[0]) => {
+      const metadata = variables && healthProbeMetadata.current.get(variables);
+      const generation = metadata?.generation ?? healthProbeGeneration.current;
+      applyHealthProbeError(generation);
+      if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
+        clearRoutingCheckFeedback();
+      }
     },
   });
 
-  const clearRoutingCheckFeedback = (): void => {
-    if (routingSaveFeedback.current) {
-      routingSaveFeedback.current = false;
-      dispatch({ type: 'clearSaveMessage' });
-    }
+  const runHealthCheck = (
+    variables: NonNullable<Parameters<typeof testConnection>[0]>,
+    afterRoutingSave = false,
+  ): void => {
+    const generation = ++healthProbeGeneration.current;
+    const probeVariables = { ...variables };
+    healthProbeMetadata.current.set(probeVariables, { generation, afterRoutingSave });
+    testMutation.mutate(probeVariables);
   };
 
   const startHealthCheck = (afterRoutingSave = false): void => {
     automaticHealthCheckStarted.current = true;
     dispatch({ type: 'clearTestResult' });
-    testMutation.mutate(
-      {},
-      afterRoutingSave
-        ? {
-            onSuccess: clearRoutingCheckFeedback,
-            onError: clearRoutingCheckFeedback,
-          }
-        : undefined,
-    );
+    runHealthCheck({}, afterRoutingSave);
   };
 
   useEffect(() => {
@@ -191,14 +226,13 @@ export const SettingsPage = (): React.JSX.Element => {
     ) {
       return;
     }
-    automaticHealthCheckStarted.current = true;
-    testMutation.mutate({});
+    startHealthCheck();
   }, [
     settingsQuery.data?.effective_target_url,
     settingsQuery.isLoading,
     settingsQuery.isLoadingError,
     state.testResult,
-    testMutation.mutate,
+    startHealthCheck,
   ]);
 
   const handleSave = (e: React.FormEvent) => {
@@ -290,7 +324,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const handleConfirmTenantPairing = () => {
     automaticHealthCheckStarted.current = true;
-    testMutation.mutate({ confirm_tenant_pairing: true });
+    runHealthCheck({ confirm_tenant_pairing: true });
   };
 
   const settingsErrorMessage = settingsQuery.isLoadingError

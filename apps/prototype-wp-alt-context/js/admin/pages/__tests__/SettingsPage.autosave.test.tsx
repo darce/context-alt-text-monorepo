@@ -152,6 +152,80 @@ describe('SettingsPage routing autosave', () => {
     expect(saveMutate).toHaveBeenNthCalledWith(2, { description_budget: { max_attempts: 4 } });
   });
 
+  it('re-probes after a queued URL change and ignores the earlier probe result', async () => {
+    const urlA = 'https://first-api.example.com';
+    const urlB = 'https://second-api.example.com';
+    const settingsA = { ...configuredSettings, url: urlA, effective_target_url: urlA };
+    const settingsB = { ...configuredSettings, url: urlB, effective_target_url: urlB };
+    mockFetchQuery.mockResolvedValueOnce(settingsA).mockResolvedValueOnce(settingsB);
+    const resolveProbe = new Map<object, (data: unknown) => void>();
+    testMutate.mockImplementation((variables) => {
+      const options = capturedTestOptions;
+      resolveProbe.set(variables as object, (data) => options?.onSuccess?.(data, variables));
+    });
+    renderSettings();
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: urlA } });
+    fireEvent.blur(url);
+    expect(saveMutate).toHaveBeenNthCalledWith(1, { url: urlA });
+
+    fireEvent.change(url, { target: { value: urlB } });
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '4' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: 'Saving…' }).closest('form') as HTMLFormElement);
+
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+    const probeFromA = testMutate.mock.calls[1]?.[0] as object;
+
+    expect(saveMutate).toHaveBeenNthCalledWith(2, {
+      url: urlB,
+      description_budget: { max_attempts: 4 },
+    });
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url', 'description_budget'], result: 'ok' });
+    });
+
+    expect(testMutate).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('acx-settings-save-message')).toHaveTextContent('Settings saved.');
+    const currentProbe = testMutate.mock.calls[2]?.[0] as object;
+    await act(async () => {
+      resolveProbe.get(currentProbe)?.({ outcome: 'network_error' });
+    });
+    await act(async () => {
+      resolveProbe.get(probeFromA)?.({ outcome: 'connected' });
+    });
+
+    expect(screen.getByTestId('acx-test-connection-banner')).toHaveAttribute(
+      'data-outcome',
+      'network_error',
+    );
+  });
+
+  it('does not resend an API key saved by the in-flight autosave', async () => {
+    renderSettings();
+
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'new-secret' } });
+    fireEvent.blur(screen.getByLabelText('API Key'));
+    expect(saveMutate).toHaveBeenNthCalledWith(1, { api_key: 'new-secret' });
+
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '4' },
+    });
+    fireEvent.submit(screen.getByRole('button', { name: 'Saving…' }).closest('form') as HTMLFormElement);
+
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['api_key'], result: 'ok' });
+    });
+
+    expect(saveMutate).toHaveBeenNthCalledWith(2, { description_budget: { max_attempts: 4 } });
+  });
+
   it('runs a queued settings submit after a routing save rejects', async () => {
     renderSettings();
 

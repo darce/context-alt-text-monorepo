@@ -59,6 +59,8 @@ export const SettingsPage = (): React.JSX.Element => {
   const healthProbeMetadata = useRef(new WeakMap<object, { generation: number; afterRoutingSave: boolean }>());
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
+  const routingSaveIncludesOtherSettings = useRef(false);
+  const inFlightRoutingApiKey = useRef<string | null>(null);
   const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
@@ -171,11 +173,20 @@ export const SettingsPage = (): React.JSX.Element => {
     }
     if (queued) {
       dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
+      const hasRoutingChanges = 'url' in payload || 'api_key' in payload;
+      routingSavePending.current = hasRoutingChanges;
+      routingSaveIncludesOtherSettings.current = hasRoutingChanges && Object.keys(payload).some(
+        (field) => field !== 'url' && field !== 'api_key',
+      );
+      routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
     }
     saveMutation.mutate(payload);
   };
 
-  const drainQueuedSave = (refreshedSettings?: SettingsResponse): void => {
+  const drainQueuedSave = (
+    refreshedSettings?: SettingsResponse,
+    alreadySavedApiKey: string | null = null,
+  ): void => {
     const snapshot = queuedSaveSnapshot.current;
     if (!snapshot) {
       return;
@@ -189,21 +200,32 @@ export const SettingsPage = (): React.JSX.Element => {
     }
     routingSaveFeedback.current = false;
     routingSavePending.current = false;
+    routingSaveIncludesOtherSettings.current = false;
     dispatch({ type: 'clearSaveMessage' });
     dispatch({ type: 'clearTestResult' });
-    submitSnapshot(snapshot, data, true);
+    const snapshotForSave = alreadySavedApiKey !== null && snapshot.apiKey === alreadySavedApiKey
+      ? { ...snapshot, apiKey: '' }
+      : snapshot;
+    submitSnapshot(snapshotForSave, data, true);
   };
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
+      const settledApiKey = inFlightRoutingApiKey.current;
+      inFlightRoutingApiKey.current = null;
+      const alreadySavedApiKey = settledApiKey !== null && data.saved.includes('api_key')
+        ? settledApiKey
+        : null;
       const isRoutingAutosave = routingSavePending.current;
+      const includesOtherSettings = routingSaveIncludesOtherSettings.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
         if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
           healthProbeGeneration.current += 1;
         }
       }
+      routingSaveIncludesOtherSettings.current = false;
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
       // a corrected backend that still paints success on the frontend has
@@ -224,16 +246,16 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
-        drainQueuedSave(refreshedOnFail);
+        drainQueuedSave(refreshedOnFail, alreadySavedApiKey);
         return;
       }
 
       dispatch({
         type: 'setSaveMessage',
-        message: isRoutingAutosave
+        message: isRoutingAutosave && !includesOtherSettings
           ? __('Saved — checking health…', 'alt-context')
           : __('Settings saved.', 'alt-context'),
-        tone: isRoutingAutosave ? 'info' : 'success',
+        tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
       });
       dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
@@ -248,13 +270,15 @@ export const SettingsPage = (): React.JSX.Element => {
       if (isRoutingAutosave) {
         startHealthCheck(true);
       }
-      drainQueuedSave(refreshed);
+      drainQueuedSave(refreshed, alreadySavedApiKey);
     },
     onError: (error) => {
+      inFlightRoutingApiKey.current = null;
       const isRoutingAutosave = routingSavePending.current;
       if (isRoutingAutosave) {
         routingSavePending.current = false;
       }
+      routingSaveIncludesOtherSettings.current = false;
       dispatch({
         type: 'setSaveMessage',
         message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
@@ -371,6 +395,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
     routingSavePending.current = true;
     routingSaveFeedback.current = true;
+    inFlightRoutingApiKey.current = payload.api_key ?? null;
     dispatch({ type: 'clearTestResult' });
     dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);

@@ -3,14 +3,17 @@ import { AlertTriangle } from 'lucide-react';
 
 import type { BoundingBox } from '../../api/recognition/types/identity';
 import { isUsableNaturalSize, overlayRectFor } from '../../../components/ui/faceGeometry';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import { GUIDED_MATCH_STRENGTH, type GuidedMatchStrength } from '../../guidedPrototype/state';
 
 export interface GuidedFaceOverlayFace {
   id: string;
   box: BoundingBox;
   label: string;
+  /** @deprecated Numeric similarity is retained for old callers but never shown to visitors. */
   similarityText: string;
   strength: GuidedMatchStrength;
+  isClusterAnchor?: boolean;
 }
 
 export interface GuidedFaceOverlayProps {
@@ -43,9 +46,22 @@ const outlineStyle = (box: BoundingBox, naturalSize: GuidedFaceOverlayProps['nat
 const faceButtonId = (idPrefix: string, faceId: string): string =>
   `${idPrefix}-${GUIDED_FACE_BUTTON_ID_SUFFIX}-${faceId}`;
 
-const faceChipText = (face: GuidedFaceOverlayFace): string => `${face.label} · ${face.similarityText}`;
+const matchWords = (face: GuidedFaceOverlayFace): string => {
+  if (face.isClusterAnchor === true || face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
+    return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
+  }
+  if (face.strength === GUIDED_MATCH_STRENGTH.WEAK) {
+    return guidedCopy('names.weak.public');
+  }
+  if (face.strength === GUIDED_MATCH_STRENGTH.STRONG) {
+    return guidedCopy('names.strong.public');
+  }
+  return 'Match strength unavailable.';
+};
 
-const faceAccessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${face.similarityText}`;
+const faceChipText = (face: GuidedFaceOverlayFace): string => `${face.label} · ${matchWords(face)}`;
+
+const faceAccessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${matchWords(face)}`;
 
 export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
   faces,
@@ -126,7 +142,7 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
       data-natural-size-valid={usableNaturalSize ? 'true' : 'false'}
     >
       {faces.map((face) => {
-        const isWeak = face.strength === GUIDED_MATCH_STRENGTH.WEAK;
+        const isWeak = face.strength === GUIDED_MATCH_STRENGTH.WEAK && face.isClusterAnchor !== true;
         const isPinned = pinnedFaceId === face.id;
         const isHighlighted = highlightedFaceId === face.id || interactionFaceId === face.id || isPinned;
         const chipText = faceChipText(face);

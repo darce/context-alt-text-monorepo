@@ -2,9 +2,8 @@ import React from 'react';
 
 import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
-  formatGuidedSimilarity,
-  GUIDED_MATCH_THRESHOLD,
-  namesDecided,
+  bothNamesAnswered,
+  GUIDED_IMAGE_KEYS,
   type GuidedDemoState,
   type GuidedFacePosition,
   type GuidedNameChoice,
@@ -17,14 +16,10 @@ export interface GuidedFacesPanelProps {
   state: GuidedDemoState;
   onChoose: (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) => void;
   onContinue: () => void;
-  /** @deprecated The replacement dialog is owned by RecordedWalkthrough. */
-  onConfirmReplacement?: () => void;
-  /** @deprecated The replacement dialog is owned by RecordedWalkthrough. */
-  onCancelReplacement?: () => void;
 }
 
 export const GuidedFacesPanel = ({ state, onContinue }: GuidedFacesPanelProps): React.JSX.Element => {
-  const decided = namesDecided(state);
+  const decided = GUIDED_IMAGE_KEYS.every((imageKey) => bothNamesAnswered(state, imageKey));
 
   return (
     <section id={GUIDED_FACE_SECTION_ID} className="acx-guided-face" aria-labelledby="guided-faces-title" tabIndex={-1}>
@@ -32,7 +27,6 @@ export const GuidedFacesPanel = ({ state, onContinue }: GuidedFacesPanelProps): 
         <h2 id="guided-faces-title">{guidedCopy('step.names')}</h2>
         <p>{guidedCopy('names.intro')}</p>
         <p>{guidedCopy('names.assisted')}</p>
-        <p>{guidedCopy('names.threshold', { threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD) })}</p>
       </header>
 
       <div id="guided-section-identity" tabIndex={-1}>

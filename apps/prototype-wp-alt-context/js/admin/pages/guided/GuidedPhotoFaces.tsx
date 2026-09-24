@@ -12,7 +12,12 @@ export const GuidedPhotoFaces: React.FC<GuidedPhotoFacesProps> = ({ photoKey, ti
   const titleId = `guided-faces-${photoKey}-title`;
 
   return (
-    <article className="acx-guided-page__faces" aria-labelledby={titleId} data-testid={`guided-faces-${photoKey}`}>
+    <article
+      className="acx-guided-page__faces"
+      aria-labelledby={titleId}
+      data-testid={`guided-faces-${photoKey}`}
+      data-image-key={photoKey}
+    >
       <h4 id={titleId}>{title}</h4>
       <div className="acx-guided-page__faces-list">{children}</div>
     </article>

@@ -760,7 +760,7 @@ def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -
     assert failed.returncode != 0, failed.stdout + failed.stderr
     curl_log = (fail_dir / "curl.log").read_text()
     assert curl_log.count("/ready") == 1
-    assert curl_log.count("/health") == 3
+    assert curl_log.count("/health") == 1
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
@@ -1430,6 +1430,8 @@ def _run_do_verify(
     attempts: int,
     health_sha: str,
     health_code: str = "200",
+    running_image_id: str = "sha256:" + "1" * 64,
+    candidate_image_id: str = "sha256:" + "1" * 64,
 ) -> subprocess.CompletedProcess[str]:
     curl_log = tmp_path / "curl.log"
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -1442,8 +1444,11 @@ GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS={attempts}
 ACX_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
+ACX_CANDIDATE_DIGEST_REF="iad.ocir.io/test/acx-backend@sha256:{'a' * 64}"
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
+read_running_api_image_id() {{ printf '%s\\n' '{running_image_id}'; }}
+remote_image_id_for_digest() {{ printf '%s\\n' '{candidate_image_id}'; }}
 curl() {{
   printf '%s\\n' "$*" >>"{curl_log}"
   url="${{@: -1}}"
@@ -1489,7 +1494,7 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
     assert result.returncode != 0, combined
     curl_log = (tmp_path / "curl.log").read_text()
     assert curl_log.count("/ready") == 1
-    assert curl_log.count("/health") == 3
+    assert curl_log.count("/health") == 1
     assert "non-gating" in combined
 
 

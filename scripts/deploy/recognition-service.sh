@@ -4083,6 +4083,13 @@ handle_failed_verification() {
   fi
 }
 
+report_verify_expectation_error() {
+  local env="$1" label="$2"
+  capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing without rollback"
+  printf '%s\n' "VERIFY EXPECTATION ERROR: ${label} left the healthy candidate serving on ${env}; no rollback was performed. Check the image's GIT_COMMIT_SHA build-arg against DEPLOY_SHA=${DEPLOY_SHA}. Manual rollback if needed: $(rollback_command_hint "$env")" >&2
+  exit 2
+}
+
 #---------------------------------------------------------------- deploy
 # Shared selected-env ship. Completion is a required positional
 # (aggregate|scoped), never an inherited variable and never a public
@@ -4090,7 +4097,7 @@ handle_failed_verification() {
 _ship_selected_env() {
   local env="$1"
   local completion="$2"
-  local tag sha restart_runtime
+  local tag sha restart_runtime verify_status
 
   case "${completion}" in
     aggregate|scoped) ;;
@@ -4173,9 +4180,17 @@ _ship_selected_env() {
     log "Deploy submitted. Verifying..."
     # S2-A-04: deploy path uses local resolve as authority (not the remote .env
     # we just wrote — that comparison would be tautological).
-    if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
-      handle_failed_verification "$env" "Deploy"
+    verify_status=0
+    if ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+      verify_status=0
+    else
+      verify_status=$?
     fi
+    case "$verify_status" in
+      0) ;;
+      2) report_verify_expectation_error "$env" "Deploy" ;;
+      *) handle_failed_verification "$env" "Deploy" ;;
+    esac
   fi
 }
 
@@ -4200,6 +4215,7 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
+  local verify_status
   init_deploy_ocir_docker_config
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
@@ -4276,9 +4292,17 @@ do_promote() {
   fi
 
   log "Promotion submitted. Verifying..."
-  if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
-    handle_failed_verification "$to_env" "Promotion"
+  verify_status=0
+  if ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
+    verify_status=0
+  else
+    verify_status=$?
   fi
+  case "$verify_status" in
+    0) ;;
+    2) report_verify_expectation_error "$to_env" "Promotion" ;;
+    *) handle_failed_verification "$to_env" "Promotion" ;;
+  esac
 }
 
 #---------------------------------------------------------------- verify
@@ -4624,6 +4648,7 @@ do_verify() {
   local env="$1"
   local url ready_url expected_sha actual_sha body attempt max_attempts sleep_s http_code curl_rc health_response
   local actual_variant expected_variant remote_for_variant remote_repo_rc
+  local running_image_id candidate_image_id running_image_rc candidate_image_rc
   url="$(env_to_health_url "$env")"
   ready_url="$(env_to_ready_url "$env")"
   pin_deploy_sha
@@ -4743,8 +4768,35 @@ do_verify() {
       log "Verified: ${env} runs ${actual_sha:0:8} (matches DEPLOY_SHA=${DEPLOY_SHA} (GIT_REF=${GIT_REF})${actual_variant:+, image_variant=${actual_variant}})"
       return 0
     else
-      warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
-      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+      if [[ "${ACX_VERIFY_EXPECT_LOCAL:-0}" == "1" ]]; then
+        if [[ ! "${ACX_CANDIDATE_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+          warn "VERIFY IDENTITY UNKNOWN: ${env} has no valid smoke-fenced candidate digest; retrying SHA mismatch observation"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        running_image_rc=0
+        candidate_image_rc=0
+        running_image_id="$(read_running_api_image_id "$env")" || running_image_rc=$?
+        candidate_image_id="$(remote_image_id_for_digest "$ACX_CANDIDATE_DIGEST_REF")" || candidate_image_rc=$?
+        if (( running_image_rc != 0 || candidate_image_rc != 0 )) \
+          || [[ ! "${running_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]] \
+          || [[ ! "${candidate_image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+          warn "VERIFY IDENTITY UNKNOWN: ${env} could not resolve readable running/candidate image IDs (running=${running_image_id:-unknown}, candidate=${candidate_image_id:-unknown}); retrying SHA mismatch observation"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
+          continue
+        fi
+        if [[ "${running_image_id}" == "${candidate_image_id}" ]]; then
+          warn "VERIFY EXPECTATION ERROR: ${env} serves the smoke-fenced candidate ${ACX_CANDIDATE_DIGEST_REF} (HTTP ${http_code}) reporting ${actual_sha:0:8}, expected DEPLOY_SHA ${expected_sha:0:8}; not rolling back a healthy candidate"
+          emit_verify_ready_diagnostic "$ready_url"
+          return 2
+        fi
+        warn "ARTIFACT MISMATCH: ${env} /health reports ${actual_sha:0:8} (expected ${expected_sha:0:8}) but running image ID ${running_image_id} differs from smoke-fenced candidate image ID ${candidate_image_id} (${ACX_CANDIDATE_DIGEST_REF})"
+        emit_verify_ready_diagnostic "$ready_url"
+        return 1
+      fi
+      warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (terminal: a running image cannot change its baked SHA by waiting)"
+      emit_verify_ready_diagnostic "$ready_url"
+      return 1
     fi
   done
 

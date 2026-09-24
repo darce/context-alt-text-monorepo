@@ -33,38 +33,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": "start-walkthrough",
-      "states": [
-        "default",
-        "first_time",
-        "error"
-      ],
+      "states": ["default", "first_time", "error"],
       "zones": [
         {
           "id": "public-escape",
           "label": "Leave the walkthrough. Home. Case study.",
           "role": "nav",
-          "states": [
-            "default",
-            "first_time"
-          ]
+          "states": ["default", "first_time"]
         },
         {
           "id": "guided-scope",
           "label": "Supplied example roster with recorded drafts. Choices affect only the demo copy in this tab; no WordPress or server roster update.",
           "role": "content",
-          "states": [
-            "default",
-            "first_time"
-          ]
+          "states": ["default", "first_time"]
         },
         {
           "id": "entry-cta",
           "label": "Start the walkthrough (primary). Read the case study.",
           "role": "nav",
-          "states": [
-            "default",
-            "first_time"
-          ]
+          "states": ["default", "first_time"]
         }
       ]
     },
@@ -80,69 +67,47 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx",
       "primary_action_id": "continue-walkthrough",
-      "states": [
-        "default",
-        "edge_input",
-        "error"
-      ],
+      "states": ["default", "edge_input", "error"],
       "zones": [
         {
           "id": "guided-demo-root",
           "label": "Public mount. data-scope=public. Supplied roster and recorded drafts only; changes stay in this tab.",
           "role": "content",
-          "states": [
-            "default",
-            "edge_input",
-            "error"
-          ]
+          "states": ["default", "edge_input", "error"]
         },
         {
           "id": "guided-section-understand",
           "label": "Understand the page and provenance. The context paragraph appears above .acx-guided-page__media-list, where Tribeca and Coachella are stacked. Each figure has one 1 / 1 sample image whose alt is the current description, a visible Photo credit, one collapsed AltText.ai comparison disclosure, and a right-hand \"People recognised in this photo\" article with both name choices. The faces column moves below the photo below 56.25rem. Face outlines pin on click. The three-paragraph provenance footer follows the figures. Review the current image descriptions, comparison captions, credits, and recorded source details.",
           "role": "content",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "name-choice-tribeca-left",
           "label": "Justin Trudeau roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 89.4% strong crop is visible.",
           "role": "form",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "edge_input"
-          ]
+          "states": ["default", "edge_input"]
         },
         {
           "id": "name-choice-tribeca-right",
           "label": "Katy Perry roster entry for the Tribeca figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Tribeca 100.0% strong cluster-anchor crop is visible.",
           "role": "form",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "edge_input"
-          ]
+          "states": ["default", "edge_input"]
         },
         {
           "id": "name-choice-coachella-left",
           "label": "Justin Trudeau roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Justin Trudeau. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 70.2% strong crop is visible.",
           "role": "form",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "edge_input"
-          ]
+          "states": ["default", "edge_input"]
         },
         {
           "id": "name-choice-coachella-right",
           "label": "Katy Perry roster entry for the Coachella figure's \"People recognised in this photo\" article in the right-hand .acx-guided-page__faces column. Use Katy Perry. Leave this person unnamed. No preselection. edge_input: Choose an option for this person. One Coachella 56.7% weak crop is below the 60.0% displayed threshold and is still grouped by the production clusterer.",
           "role": "form",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "edge_input"
-          ]
+          "states": ["default", "edge_input"]
         }
       ]
     },
@@ -158,39 +123,27 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "demo-apply",
-      "states": [
-        "default",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "empty", "error"],
       "zones": [
         {
           "id": "guided-section-apply",
           "label": "Review and edit the current description for each photo. Use this description changes only that sample photo's alt text in this tab. Undo restores that photo's previous description. The full-size sample photo above is the demo image; the public editor does not render a second preview image.",
           "role": "content",
-          "states": [
-            "default",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "empty", "error"]
         },
         {
           "id": "guided-photo-tribeca",
           "label": "Tribeca sample photo. Its alt text is the current Tribeca description. This is the public demo image and the same image changes when the visitor uses or undoes a description.",
           "role": "content",
           "evidence_linked": true,
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "guided-photo-coachella",
           "label": "Coachella sample photo. Its alt text is the current Coachella description. This is the public demo image and the same image changes when the visitor uses or undoes a description.",
           "role": "content",
           "evidence_linked": true,
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     },
@@ -206,19 +159,13 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedOutcome.tsx",
       "primary_action_id": "return-to-draft",
-      "states": [
-        "default",
-        "empty"
-      ],
+      "states": ["default", "empty"],
       "zones": [
         {
           "id": "demo-outcome",
           "label": "Your demo copy is updated or unchanged after Keep. Result applies only in this tab; no WordPress media, server roster, or saved library update. A next batch would use another supplied image and page context.",
           "role": "status",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         }
       ]
     },
@@ -234,17 +181,13 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/guide/main.tsx",
       "primary_action_id": "reload-guide",
-      "states": [
-        "error"
-      ],
+      "states": ["error"],
       "zones": [
         {
           "id": "public-guide-fallback",
           "label": "The walkthrough could not load. Reload the page and try again.",
           "role": "status",
-          "states": [
-            "error"
-          ]
+          "states": ["error"]
         }
       ]
     },
@@ -260,25 +203,19 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/guidedPrototype/publicGuideCopy.ts",
       "primary_action_id": "go-home",
-      "states": [
-        "default"
-      ],
+      "states": ["default"],
       "zones": [
         {
           "id": "escape-home",
           "label": "Home",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "escape-case-study",
           "label": "Case study",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     }

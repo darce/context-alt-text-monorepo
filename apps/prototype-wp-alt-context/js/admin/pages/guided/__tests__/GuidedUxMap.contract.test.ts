@@ -197,9 +197,7 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
 
         const apply = map.screens.find((screen) => screen.id === 'apply');
         const photoZonePrefix = fixture.scope === 'public' ? 'guided-photo-' : 'demo-applied-image-';
-        const photoZoneIds = (apply?.zones ?? [])
-          .map((zone) => zone.id)
-          .filter((id) => id.startsWith(photoZonePrefix));
+        const photoZoneIds = (apply?.zones ?? []).map((zone) => zone.id).filter((id) => id.startsWith(photoZonePrefix));
         expect(photoZoneIds).toEqual(PHOTO_KEYS.map((photoKey) => `${photoZonePrefix}${photoKey}`));
 
         if (fixture.scope === 'public') {

@@ -291,5 +291,12 @@
       "from_spec": "git+https://github.com/darce/workbay.git@v0.1.69#subdirectory=packages/mcp-workbay-orchestrator"
     }
   ],
-  "codemap_mode": "available"
+  "codemap_mode": "available",
+  "embeddings_operator_policy": {
+    "embeddings_policy": "preferred",
+    "reinjection_policy": "on",
+    "policy_revision": 1,
+    "origin": "migrated",
+    "intent": "known"
+  }
 }

@@ -1059,6 +1059,8 @@ export interface DescribeRunResponse {
   fallback_reason?: string | null;
 }
 
+export type DescribeRunSubmitResponse = DescribeRunResponse & { unreadable_media_ids?: number[] };
+
 export const DESCRIBE_RUN_TERMINAL_CODE = {
   GPU_WARMUP_TIMEOUT: 'gpu_warmup_timeout',
 } as const;
@@ -1429,19 +1431,41 @@ export const parseDescribeRunResponse = (payload: unknown): DescribeRunResponse 
   return payload;
 };
 
-export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunResponse> =>
-  parseDescribeRunResponse(
-    await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
-      method: 'POST',
-      body: { media_ids: mediaIds },
-      restNonce: getConfig().nonce,
-      // WP loads attachment bytes and forwards a multipart body under the proxy's
-      // 180s 'description' budget; the browser timeout must exceed it so a slow
-      // bulk upload cannot abort client-side after the run was already created
-      // (which would orphan an untracked run — CLI-01).
-      signal: createRecognitionTimeoutSignal(185_000),
-    }),
-  );
+export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunSubmitResponse> => {
+  const payload = await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
+    method: 'POST',
+    body: { media_ids: mediaIds },
+    restNonce: getConfig().nonce,
+    // WP loads attachment bytes and forwards a multipart body under the proxy's
+    // 180s 'description' budget; the browser timeout must exceed it so a slow
+    // bulk upload cannot abort client-side after the run was already created
+    // (which would orphan an untracked run — CLI-01).
+    signal: createRecognitionTimeoutSignal(185_000),
+  });
+
+  if (!isRecord(payload) || !hasOwn(payload, 'unreadable_media_ids')) {
+    return parseDescribeRunResponse(payload);
+  }
+
+  const unreadableMediaIdsValue = payload.unreadable_media_ids;
+  if (!Array.isArray(unreadableMediaIdsValue)) {
+    throw new MalformedDescribeRunResponseError('response.unreadable_media_ids');
+  }
+  const unreadableMediaIds: number[] = [];
+  for (const mediaId of unreadableMediaIdsValue as unknown[]) {
+    if (typeof mediaId !== 'number' || !Number.isSafeInteger(mediaId) || mediaId <= 0) {
+      throw new MalformedDescribeRunResponseError('response.unreadable_media_ids');
+    }
+    unreadableMediaIds.push(mediaId);
+  }
+
+  const runPayload = { ...payload };
+  delete runPayload.unreadable_media_ids;
+  return {
+    ...parseDescribeRunResponse(runPayload),
+    unreadable_media_ids: unreadableMediaIds,
+  };
+};
 
 export const fetchBulkDescribeRun = async (runId: string): Promise<DescribeRunResponse> =>
   parseDescribeRunResponse(

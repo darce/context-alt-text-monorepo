@@ -50,13 +50,6 @@ const publicOverlaySimilarityText = (
     : guidedCopy('names.strong.public', values);
 };
 
-const adminOverlaySimilarityText = (similarity: number | null, anchor: boolean): string => {
-  if (anchor) {
-    return guidedCopy('names.no_score.public');
-  }
-  return similarity === null ? guidedCopy('names.match.unavailable') : `${formatGuidedSimilarity(similarity)} match`;
-};
-
 const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
   <span>
     {isExternalUrl(photo.credit) ? (
@@ -201,7 +194,9 @@ const overlayFacesForPhoto = (photo: GuidedPressPhoto, scope: GuidedSamplePhotoS
       const publicStrength = face.strength ?? strength;
       const similarityText =
         scope === 'admin'
-          ? adminOverlaySimilarityText(face.similarity, anchor)
+          ? face.similarity === null
+            ? guidedCopy('names.match.unavailable')
+            : formatGuidedSimilarity(face.similarity)
           : publicOverlaySimilarityText(face.similarity, publicStrength, anchor);
 
       return {

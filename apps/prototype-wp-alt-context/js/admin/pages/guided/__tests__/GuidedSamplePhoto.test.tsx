@@ -40,7 +40,7 @@ describe('GuidedSamplePhoto image geometry', () => {
     expect((wrap as HTMLElement).style.aspectRatio).toBe('');
 
     const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
-    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4% match/ });
+    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4%/ });
     expect(outline).toHaveStyle({
       left: `${(justinFace.box.x / 1000) * 100}%`,
       top: `${(justinFace.box.y / 800) * 100}%`,
@@ -49,9 +49,8 @@ describe('GuidedSamplePhoto image geometry', () => {
     const anchorFace = scenario.faces.find((face) => face.imageKey === photo.key && face.isClusterAnchor);
     expect(anchorFace).toBeDefined();
     const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
-    expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
-    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/100%/);
-    expect(anchorButton?.textContent).not.toMatch(/100%/);
+    expect(anchorButton?.getAttribute('aria-label')).toContain(formatGuidedSimilarity(anchorFace!.similarity!));
+    expect(anchorButton?.getAttribute('aria-label')).not.toContain(guidedCopy('names.no_score.public'));
   });
 
   it('marks a loaded portrait image as portrait', () => {
@@ -74,6 +73,24 @@ describe('GuidedSamplePhoto image geometry', () => {
 });
 
 describe('GuidedSamplePhoto figure content', () => {
+  it('keeps the admin overlay chip similarity as a bare percentage', () => {
+    const scenario = createGuidedScenario();
+    const photo = scenario.pressPhotos[0];
+    render(<GuidedSamplePhoto photo={photo} currentAltText={photo.altText} showCurrentAltText={false} scope="admin" />);
+
+    const image = screen.getByRole('img', { name: photo.altText });
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 800 });
+    fireEvent.load(image);
+
+    const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
+    const overlay = screen.getByTestId('guided-face-overlay');
+    const chip = overlay.querySelector(`[data-face-id="${justinFace.id}"] .acx-guided-face-overlay__chip-label`);
+
+    expect(chip).toHaveTextContent('89.4%');
+    expect(chip).not.toHaveTextContent('89.4% match');
+  });
+
   it('shows both public descriptions and their provenance in an open comparison caption', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[1];

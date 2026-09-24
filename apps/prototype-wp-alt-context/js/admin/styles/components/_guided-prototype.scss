@@ -452,10 +452,10 @@
 
     img {
       display: block;
-      width: var(--acx-guide-lightbox-tile-size);
-      height: var(--acx-guide-lightbox-tile-size);
-      max-width: var(--acx-guide-lightbox-tile-size);
-      max-height: var(--acx-guide-lightbox-tile-size);
+      width: var(--acx-guide-lightbox-tile-size, 10rem);
+      height: var(--acx-guide-lightbox-tile-size, 10rem);
+      max-width: var(--acx-guide-lightbox-tile-size, 10rem);
+      max-height: var(--acx-guide-lightbox-tile-size, 10rem);
       object-fit: cover;
       border-radius: var(--acx-radius-md);
       background: var(--acx-color-data-placeholder);

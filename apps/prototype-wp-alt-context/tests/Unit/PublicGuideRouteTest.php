@@ -193,7 +193,7 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
         self::assertStringContainsString(
-            '<title>Demo: names change a photo&#039;s meaning | AltContext</title>',
+            "<title>Demo: names change a photo's meaning | AltContext</title>",
             $html
         );
         self::assertStringContainsString(

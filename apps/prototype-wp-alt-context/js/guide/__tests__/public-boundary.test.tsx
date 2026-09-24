@@ -251,7 +251,9 @@ describe('public recorded walkthrough boundary', () => {
     render(<RecordedWalkthrough scope="public" />);
 
     expect(screen.queryByTestId('guided-demo-stepper')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
+    ).toBeInTheDocument();
     const firstNameQuestion = within(screen.getByTestId('guided-photo-tribeca')).getByRole('radio', {
       name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
     });
@@ -268,14 +270,20 @@ describe('public recorded walkthrough boundary', () => {
     }
 
     choose('left', 'include');
-    expect(within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
     choose('right', 'omit');
     expect(publicEditor('tribeca')).toBeInTheDocument();
-    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId('demo-apply-coachella')).not.toBeInTheDocument();
 
     choose('left', 'include', 'coachella');
-    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
     choose('right', 'omit', 'coachella');
     expect(publicEditor('coachella')).toBeInTheDocument();
     expect(screen.getByTestId('demo-apply-tribeca')).toBeEnabled();
@@ -299,13 +307,17 @@ describe('public recorded walkthrough boundary', () => {
 
     expect(screen.getByText(guidedCopy('entry.eyebrow.public'))).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
+    expect(screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' })).toHaveLength(
+      2,
+    );
     expect(
-      screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' }),
-    ).toHaveLength(2);
-    expect(screen.queryByRole('heading', { name: publicGuidedCopy('comparison.altcontext.public') })).not.toBeInTheDocument();
+      screen.queryByRole('heading', { name: publicGuidedCopy('comparison.altcontext.public') }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: guidedCopy('context.photo.altcontext_title') }),
     ).not.toBeInTheDocument();
@@ -549,7 +561,9 @@ describe('public recorded walkthrough boundary', () => {
     choose('left', 'include');
     choose('right', 'omit');
 
-    expect(screen.queryByRole('dialog', { name: publicGuidedCopy('name_change.title.public') })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('dialog', { name: publicGuidedCopy('name_change.title.public') }),
+    ).not.toBeInTheDocument();
     const resetEditor = within(screen.getByTestId('guided-draft-field-tribeca')).getByRole('textbox', {
       name: guidedCopy('draft.field_label.public'),
     });
@@ -598,7 +612,10 @@ describe('public recorded walkthrough boundary', () => {
       expect(
         within(review).queryByRole('textbox', { name: guidedCopy('draft.field_label.public') }),
       ).not.toBeInTheDocument();
-      expect(sampleImage(imageKey)).toHaveAttribute('alt', scenario.pressPhotos.find((photo) => photo.key === imageKey)?.altText);
+      expect(sampleImage(imageKey)).toHaveAttribute(
+        'alt',
+        scenario.pressPhotos.find((photo) => photo.key === imageKey)?.altText,
+      );
       expect(screen.queryByTestId(`guided-image-status-${imageKey}`)).not.toBeInTheDocument();
     }
     expect(screen.getByTestId('guided-choice-summary')).toHaveTextContent(publicGuidedCopy('names.pending'));

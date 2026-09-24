@@ -384,10 +384,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                     showCurrentAltText={index === 0}
                     scope={scope}
                   >
-                    <GuidedPhotoFaces
-                      photoKey={photo.key}
-                      title={guidedCopy('names.heading.public')}
-                    >
+                    <GuidedPhotoFaces photoKey={photo.key} title={guidedCopy('names.heading.public')}>
                       {scenario.faces
                         .filter((face) => face.imageKey === photo.key)
                         .map((face) => {
@@ -519,14 +516,12 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           scope={scope}
           {...(scope === 'public' ? { recordedOriginLabel: guidedCopy('draft.origin.public') } : {})}
           actions={{
-            onEdit: (imageKey, text) =>
-              commit(editGuidedDraftForImage(flushPendingDraft(demo), imageKey, text)),
+            onEdit: (imageKey, text) => commit(editGuidedDraftForImage(flushPendingDraft(demo), imageKey, text)),
             onDraftInput: (imageKey, text) => {
               pendingDraftsByImageRef.current[imageKey] = text;
             },
             onPreview: handlePreview,
-            onKeep: (imageKey) =>
-              commit(keepGuidedCurrentAltTextForImage(flushPendingDraft(demo), imageKey)),
+            onKeep: (imageKey) => commit(keepGuidedCurrentAltTextForImage(flushPendingDraft(demo), imageKey)),
             onRetryFixture: (imageKey) =>
               commit(retryGuidedFixtureForImage(flushPendingDraft(demo), imageKey, scenario)),
             onRestore: (imageKey, revisionId: string, mode: GuidedRestoreMode) =>
@@ -536,16 +531,9 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
               if (visibleText !== (next.drafts[imageKey].draftText ?? '')) {
                 next = editGuidedDraftForImage(next, imageKey, visibleText);
               }
-              commit(
-                applyGuidedDraftForImage(
-                  next,
-                  imageKey,
-                  scope === 'public' ? visibleText : undefined,
-                ),
-              );
+              commit(applyGuidedDraftForImage(next, imageKey, scope === 'public' ? visibleText : undefined));
             },
-            onUndo: (imageKey) =>
-              commit(undoGuidedApplicationForImage(flushPendingDraft(demo), imageKey)),
+            onUndo: (imageKey) => commit(undoGuidedApplicationForImage(flushPendingDraft(demo), imageKey)),
           }}
         />
 

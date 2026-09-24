@@ -129,10 +129,6 @@
   max-height: var(--acx-guide-reference-tile-size);
 }
 
-.acx-guided-face__lightbox-gallery {
-  --acx-guide-lightbox-tile-size: min(16rem, calc((100vw - 78px) / 2));
-}
-
 .acx-guided-face__lightbox-gallery img {
   width: var(--acx-guide-lightbox-tile-size);
   height: var(--acx-guide-lightbox-tile-size);

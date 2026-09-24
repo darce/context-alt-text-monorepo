@@ -44,7 +44,10 @@ const publicOverlaySimilarityText = (
   if (similarity === null) {
     return guidedCopy('names.match.unavailable');
   }
-  return strength === GUIDED_MATCH_STRENGTH.WEAK ? guidedCopy('names.weak.public') : guidedCopy('names.strong.public');
+  const values = { similarity: formatGuidedSimilarity(similarity) };
+  return strength === GUIDED_MATCH_STRENGTH.WEAK
+    ? guidedCopy('names.weak.public', values)
+    : guidedCopy('names.strong.public', values);
 };
 
 const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
@@ -59,22 +62,53 @@ const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
   </span>
 );
 
-const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
+const PublicPhotoCaptions = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
+  const generatedSentence = guidedCopy('context.photo.generated', {
+    date: photo.altContextDescription.generatedOn,
+    system: '__system__',
+  });
+  const [generatedBeforeSystem, generatedAfterSystem = ''] = generatedSentence.split('__system__');
   const caption = photo.altTextAiCaption;
 
   return (
-    <details className="acx-guided-page__caption">
-      <summary>{guidedCopy('comparison.alttextai.public')}</summary>
-      <p>{guidedCopy('comparison.note.public')}</p>
-      {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
-      <p className="acx-guided-page__caption-provenance">
-        <a href={caption.providerUrl} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(caption.provider)}>
-          {caption.provider}
-        </a>
-        {caption.capturedOn === null
-          ? null
-          : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
-      </p>
+    <details className="acx-guided-page__caption" open>
+      <summary>{guidedCopy('comparison.title.public')}</summary>
+      <div className="acx-guided-page__caption-compare">
+        <section className="acx-guided-page__caption">
+          <h4>{guidedCopy('comparison.altcontext.public')}</h4>
+          <p>{photo.altContextDescription.text}</p>
+          <p className="acx-guided-page__caption-provenance">
+            {generatedBeforeSystem}
+            <a
+              href={photo.altContextDescription.systemUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={externalLinkLabel(photo.altContextDescription.system)}
+            >
+              {photo.altContextDescription.system}
+            </a>
+            {generatedAfterSystem}
+          </p>
+        </section>
+        <section className="acx-guided-page__caption">
+          <h4>{guidedCopy('comparison.alttextai.public')}</h4>
+          {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
+          <p className="acx-guided-page__caption-provenance">
+            <a
+              href={caption.providerUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={externalLinkLabel(caption.provider)}
+            >
+              {caption.provider}
+            </a>
+            {caption.capturedOn === null
+              ? null
+              : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
+          </p>
+          <p>{guidedCopy('comparison.note.public')}</p>
+        </section>
+      </div>
     </details>
   );
 };
@@ -254,7 +288,7 @@ export const GuidedSamplePhoto = ({
       </p>
       {scope === 'public' ? (
         <figcaption>
-          <AltTextAiCaption photo={photo} />
+          <PublicPhotoCaptions photo={photo} />
         </figcaption>
       ) : (
         <AdminPhotoCaptions photo={photo} currentAltText={currentAltText} showCurrentAltText={showCurrentAltText} />

@@ -503,83 +503,81 @@ const GuidedImageReviewCard = ({
             className="acx-guided-review__comparison acx-guided-review__editor-layout"
             data-testid={`guided-editor-layout-${photo.key}`}
           >
-            <div data-testid={`guided-editor-column-${photo.key}`}>
-              <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
-              <div data-testid={`guided-current-alt-${photo.key}`}>
-                <h5>{guidedCopy('draft.current_alt_label.public')}</h5>
-                <p data-applied-text>{draft.appliedAltText}</p>
-              </div>
-              <div data-testid={`guided-draft-field-${photo.key}`}>
-                <label htmlFor={editorId}>{guidedCopy('draft.field_label.public')}</label>
-                <textarea
-                  ref={editorRef}
-                  id={editorId}
-                  aria-invalid={emptyError ? 'true' : undefined}
-                  aria-describedby={emptyError ? errorId : undefined}
-                  value={editValue}
-                  rows={8}
-                  onInput={resizeEditor}
-                  onPointerDown={beginEditorPointerInteraction}
-                  onPointerUp={rememberManualEditorSize}
-                  onPointerCancel={cancelEditorPointerInteraction}
-                  onMouseDown={beginEditorPointerInteraction}
-                  onMouseUp={rememberManualEditorSize}
-                  onTouchStart={beginEditorPointerInteraction}
-                  onTouchEnd={rememberManualEditorSize}
-                  onTouchCancel={cancelEditorPointerInteraction}
-                  onChange={(event) => {
-                    const text = event.target.value;
-                    setEditValue(text);
-                    setEmptyError(false);
-                    callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text);
-                  }}
-                />
-                {emptyError ? (
-                  <p id={errorId} className="acx-guided-review__field-error" role="alert">
-                    {guidedCopy('error.empty_draft.public')}
-                  </p>
-                ) : null}
-              </div>
-              <p>{guidedCopy('draft.apply_scope.public')}</p>
-              <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
-                <button
-                  type="button"
-                  className="acx-button acx-button--primary"
-                  data-testid={`demo-apply-${photo.key}`}
-                  onClick={handlePublicApply}
-                  disabled={!applyEnabled}
-                  aria-describedby={showApplyReason ? applyReasonId : undefined}
-                >
-                  {applyLabel}
-                </button>
-                <button
-                  type="button"
-                  className="acx-button acx-button--tertiary"
-                  data-testid={`guided-keep-current-${photo.key}`}
-                  onClick={handlePublicKeep}
-                  disabled={!keepEnabled}
-                >
-                  {keepLabel}
-                </button>
-                <button
-                  type="button"
-                  className="acx-button acx-button--tertiary"
-                  data-testid={`demo-undo-${photo.key}`}
-                  onClick={handlePublicUndo}
-                  disabled={!undoEnabled}
-                  ref={publicUndoButtonRef}
-                >
-                  {undoLabel}
-                </button>
-                {showApplyReason ? (
-                  <p id={applyReasonId} className="acx-guided-review__apply-reason">
-                    {reason}
-                  </p>
-                ) : null}
-                <p role="status" data-testid={`guided-image-status-${photo.key}`}>
-                  {publicStatus}
+            <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
+            <div data-testid={`guided-current-alt-${photo.key}`}>
+              <h5>{guidedCopy('draft.current_alt_label.public')}</h5>
+              <p data-applied-text>{draft.appliedAltText}</p>
+            </div>
+            <div data-testid={`guided-draft-field-${photo.key}`}>
+              <label htmlFor={editorId}>{guidedCopy('draft.field_label.public')}</label>
+              <textarea
+                ref={editorRef}
+                id={editorId}
+                aria-invalid={emptyError ? 'true' : undefined}
+                aria-describedby={emptyError ? errorId : undefined}
+                value={editValue}
+                rows={8}
+                onInput={resizeEditor}
+                onPointerDown={beginEditorPointerInteraction}
+                onPointerUp={rememberManualEditorSize}
+                onPointerCancel={cancelEditorPointerInteraction}
+                onMouseDown={beginEditorPointerInteraction}
+                onMouseUp={rememberManualEditorSize}
+                onTouchStart={beginEditorPointerInteraction}
+                onTouchEnd={rememberManualEditorSize}
+                onTouchCancel={cancelEditorPointerInteraction}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  setEditValue(text);
+                  setEmptyError(false);
+                  callTextImageAction(actions.onDraftInputForImage, actions.onDraftInput, photo.key, text);
+                }}
+              />
+              {emptyError ? (
+                <p id={errorId} className="acx-guided-review__field-error" role="alert">
+                  {guidedCopy('error.empty_draft.public')}
                 </p>
-              </div>
+              ) : null}
+            </div>
+            <p className="acx-guided-review__scope-note">{guidedCopy('draft.apply_scope.public')}</p>
+            <div className="acx-guided-review__apply" data-testid={`guided-apply-${photo.key}`}>
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                data-testid={`demo-apply-${photo.key}`}
+                onClick={handlePublicApply}
+                disabled={!applyEnabled}
+                aria-describedby={showApplyReason ? applyReasonId : undefined}
+              >
+                {applyLabel}
+              </button>
+              <button
+                type="button"
+                className="acx-button acx-button--tertiary"
+                data-testid={`guided-keep-current-${photo.key}`}
+                onClick={handlePublicKeep}
+                disabled={!keepEnabled}
+              >
+                {keepLabel}
+              </button>
+              <button
+                type="button"
+                className="acx-button acx-button--tertiary"
+                data-testid={`demo-undo-${photo.key}`}
+                onClick={handlePublicUndo}
+                disabled={!undoEnabled}
+                ref={publicUndoButtonRef}
+              >
+                {undoLabel}
+              </button>
+              {showApplyReason ? (
+                <p id={applyReasonId} className="acx-guided-review__apply-reason">
+                  {reason}
+                </p>
+              ) : null}
+              <p role="status" data-testid={`guided-image-status-${photo.key}`}>
+                {publicStatus}
+              </p>
             </div>
           </div>
         ) : (

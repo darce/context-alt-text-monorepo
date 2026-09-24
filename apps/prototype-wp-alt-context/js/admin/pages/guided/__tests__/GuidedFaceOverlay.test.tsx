@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { overlayRectFor } from '../../../../components/ui/faceGeometry';
 import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
+import { formatGuidedSimilarity } from '../../../guidedPrototype/state';
 import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from '../GuidedFaceOverlay';
 
 const naturalSize = { width: 1000, height: 800 };
@@ -13,25 +14,24 @@ const faces: GuidedFaceOverlayFace[] = [
     id: 'katy',
     box: { x: 100, y: 80, width: 220, height: 300 },
     label: 'Katy Perry',
-    similarityText: '56.7% (weak)',
+    similarityText: guidedCopy('names.weak.public', { similarity: formatGuidedSimilarity(0.567) }),
     strength: 'weak',
   },
   {
     id: 'justin',
     box: { x: 500, y: 120, width: 180, height: 260 },
     label: 'Justin Trudeau',
-    similarityText: '91.2% (strong)',
+    similarityText: guidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(0.912) }),
     strength: 'strong',
   },
 ];
 
-const matchWords = (face: GuidedFaceOverlayFace): string =>
-  face.strength === 'weak' ? guidedCopy('names.weak.public') : guidedCopy('names.strong.public');
+const matchWords = (face: GuidedFaceOverlayFace): string => face.similarityText;
 
 const accessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${matchWords(face)}`;
 
 describe('GuidedFaceOverlay', () => {
-  it('renders one positioned outline button per face with strength words instead of similarity values', () => {
+  it('renders percentage match copy in outline labels and accessible names', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
     const buttons = screen.getAllByRole('button');
@@ -52,7 +52,7 @@ describe('GuidedFaceOverlay', () => {
         height: `${rect.height}%`,
       });
       expect(button).toHaveTextContent(`${face.label} · ${matchWords(face)}`);
-      expect(button.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
+      expect(button.textContent).toMatch(/\d+(?:\.\d+)?% match/);
     });
   });
 
@@ -74,6 +74,7 @@ describe('GuidedFaceOverlay', () => {
     const anchor: GuidedFaceOverlayFace = {
       ...faces[1],
       id: 'anchor',
+      similarityText: guidedCopy('names.strong.public', { similarity: '100.0%' }),
       strength: 'self_anchor',
       isClusterAnchor: true,
     };
@@ -82,7 +83,7 @@ describe('GuidedFaceOverlay', () => {
     const noScoreCopy = `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
     const button = screen.getByRole('button', { name: `${anchor.label}, ${noScoreCopy}` });
     expect(button).toHaveTextContent(noScoreCopy);
-    expect(button).not.toHaveTextContent(/\d+(?:\.\d+)?%/);
+    expect(button).not.toHaveTextContent(/100%/);
     expect(button.querySelector('.acx-guided-face-overlay__warning-icon')).toBeNull();
   });
 

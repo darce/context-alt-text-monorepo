@@ -175,9 +175,7 @@ describe('GuidedFaceMatchCard', () => {
     const justinCard = screen.getByRole('region', { name: 'Justin Trudeau' });
     const katyCard = screen.getByRole('region', { name: 'Katy Perry' });
     expect(
-      within(justinCard).getByText(
-        guidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(0.8938) }),
-      ),
+      within(justinCard).getByText(guidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(0.8938) })),
     ).toBeInTheDocument();
     expect(
       within(katyCard).getByText(/No score: the saved group for this name started from this face\./),

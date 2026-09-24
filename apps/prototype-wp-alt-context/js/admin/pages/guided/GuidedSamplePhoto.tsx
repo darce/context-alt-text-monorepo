@@ -13,16 +13,14 @@ import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from './GuidedFaceOverl
 
 export type GuidedSamplePhotoScope = 'public' | 'admin';
 
-const GUIDED_SAMPLE_PHOTO_SCOPE = {
-  PUBLIC: 'public',
-  ADMIN: 'admin',
-} as const;
-
 export interface GuidedSamplePhotoProps {
   photo: GuidedPressPhoto;
+  /** Accepted for existing callers; the image alt always comes from currentAltText. */
   evidenceAlt?: string;
   currentAltText: string;
+  /** Accepted for existing callers; the current description is no longer repeated below the photo. */
   showCurrentAltText: boolean;
+  /** Accepted for existing callers that share this component between the admin and public guide. */
   scope: GuidedSamplePhotoScope;
   headingId?: string;
   children?: React.ReactNode;
@@ -44,45 +42,13 @@ const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
   </span>
 );
 
-const GeneratedAttribution = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
-  const caption = photo.altContextDescription;
-  const generatedText = guidedCopy('context.photo.generated', {
-    date: caption.generatedOn,
-    system: caption.system,
-  });
-  const systemStart = generatedText.indexOf(caption.system);
-
-  if (systemStart < 0) {
-    return <>{generatedText}</>;
-  }
-
-  return (
-    <>
-      {generatedText.slice(0, systemStart)}
-      <a href={caption.systemUrl} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(caption.system)}>
-        {caption.system}
-      </a>
-      {generatedText.slice(systemStart + caption.system.length)}
-    </>
-  );
-};
-
-const AltTextAiCaption = ({
-  photo,
-  scope,
-}: {
-  photo: GuidedPressPhoto;
-  scope: GuidedSamplePhotoScope;
-}): React.JSX.Element => {
+const AltTextAiCaption = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => {
   const caption = photo.altTextAiCaption;
-  const title =
-    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
-      ? guidedCopy('comparison.alttextai.public')
-      : guidedCopy('context.photo.alttextai_title');
 
   return (
-    <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-alttextai`}>
-      <h4 id={`guided-caption-${photo.key}-alttextai`}>{title}</h4>
+    <details className="acx-guided-page__caption">
+      <summary>{guidedCopy('comparison.alttextai.public')}</summary>
+      <p>{guidedCopy('comparison.note.public')}</p>
       {caption.text === null ? <p>{guidedCopy('context.photo.no_caption')}</p> : <p>{caption.text}</p>}
       <p className="acx-guided-page__caption-provenance">
         <a href={caption.providerUrl} target="_blank" rel="noreferrer" aria-label={externalLinkLabel(caption.provider)}>
@@ -92,31 +58,7 @@ const AltTextAiCaption = ({
           ? null
           : ` · ${guidedCopy('context.photo.captured', { date: caption.capturedOn })}`}
       </p>
-    </section>
-  );
-};
-
-const AltContextCaption = ({
-  photo,
-  scope,
-}: {
-  photo: GuidedPressPhoto;
-  scope: GuidedSamplePhotoScope;
-}): React.JSX.Element => {
-  const caption = photo.altContextDescription;
-  const title =
-    scope === GUIDED_SAMPLE_PHOTO_SCOPE.PUBLIC
-      ? guidedCopy('comparison.altcontext.public')
-      : guidedCopy('context.photo.altcontext_title');
-
-  return (
-    <section className="acx-guided-page__caption" aria-labelledby={`guided-caption-${photo.key}-altcontext`}>
-      <h4 id={`guided-caption-${photo.key}-altcontext`}>{title}</h4>
-      <p>{caption.text}</p>
-      <p className="acx-guided-page__caption-provenance">
-        <GeneratedAttribution photo={photo} />
-      </p>
-    </section>
+    </details>
   );
 };
 
@@ -145,10 +87,7 @@ const overlayFacesForPhoto = (photo: GuidedPressPhoto): GuidedFaceOverlayFace[] 
 
 export const GuidedSamplePhoto = ({
   photo,
-  evidenceAlt,
   currentAltText,
-  showCurrentAltText,
-  scope,
   headingId,
   children,
 }: GuidedSamplePhotoProps): React.JSX.Element => {
@@ -156,7 +95,7 @@ export const GuidedSamplePhoto = ({
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [pointerInside, setPointerInside] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
-  const accessibleAlt = evidenceAlt ?? photo.altText;
+  const accessibleAlt = currentAltText;
   const overlayFaces = useMemo(() => overlayFacesForPhoto(photo), [photo]);
   const overlayVisible = pointerInside || focusWithin;
   const imageLoaded = isUsableNaturalSize(naturalSize);
@@ -221,15 +160,7 @@ export const GuidedSamplePhoto = ({
         {guidedCopy('context.photo.credit_label')}: <Credit photo={photo} />
       </p>
       <figcaption>
-        {scope === GUIDED_SAMPLE_PHOTO_SCOPE.ADMIN && showCurrentAltText ? (
-          <span>
-            {guidedCopy('context.current_label')}: {currentAltText}
-          </span>
-        ) : null}
-        <div className="acx-guided-page__caption-compare">
-          <AltContextCaption photo={photo} scope={scope} />
-          <AltTextAiCaption photo={photo} scope={scope} />
-        </div>
+        <AltTextAiCaption photo={photo} />
       </figcaption>
       {children}
     </figure>

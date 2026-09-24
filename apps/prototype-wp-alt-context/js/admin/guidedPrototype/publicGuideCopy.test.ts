@@ -135,9 +135,7 @@ describe('public guide copy overlay', () => {
     expect(guidedCopy('photo.count.public', { photoNumber: 1 })).toBe('Photo 1 of 2');
     expect(guidedCopy('names.strong.public')).toBe('Strong match');
     expect(guidedCopy('names.weak.public')).toBe('Weak match. Compare the photos before you use this name.');
-    expect(guidedCopy('names.no_score.public')).toBe(
-      'No score: the saved group for this name started from this face.',
-    );
+    expect(guidedCopy('names.no_score.public')).toBe('No score: the saved group for this name started from this face.');
     expect(guidedCopy('description.use.public')).toBe('Use this description');
     expect(guidedCopy('description.keep.public')).toBe('Keep the current description');
     expect(guidedCopy('description.undo.public')).toBe('Undo this change');
@@ -168,9 +166,7 @@ describe('public guide copy overlay', () => {
     expect(guidedCopy('comparison.title.public')).toBe('How another tool describes this photo');
     expect(guidedCopy('comparison.note.public')).toContain('For comparison only');
     expect(guidedCopy('outcome.provenance.public')).toContain('Nothing on this page compares faces.');
-    expect(guidedCopy('error.unchanged_draft.public')).toBe(
-      'The current and suggested descriptions are the same.',
-    );
+    expect(guidedCopy('error.unchanged_draft.public')).toBe('The current and suggested descriptions are the same.');
   });
 
   it('uses the catalog interpolator and a single overlay copy helper', () => {

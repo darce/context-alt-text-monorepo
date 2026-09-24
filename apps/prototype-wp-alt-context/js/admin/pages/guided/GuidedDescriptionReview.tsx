@@ -364,8 +364,7 @@ const GuidedImageReviewCard = ({
         canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft, photo.key)
       : guidedReviewCanApply(state, draft, photo.key) && localMatches;
   const namesAnswered = guidedReviewNamesDecided(state, photo.key);
-  const keepEnabled =
-    canKeepCurrentForImage(state, photo.key) && draft.outcome !== GUIDED_OUTCOME.APPLIED;
+  const keepEnabled = canKeepCurrentForImage(state, photo.key) && draft.outcome !== GUIDED_OUTCOME.APPLIED;
   const publicReviewWaitingForNames = scope === 'public' && !namesAnswered;
   const undoEnabled = guidedReviewCanUndo(draft);
   const reason =

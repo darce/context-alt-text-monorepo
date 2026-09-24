@@ -302,7 +302,9 @@ describe('GuidedDescriptionReview per-image drafts', () => {
         },
       },
     };
-    rerender(<GuidedDescriptionReview scenario={scenario} state={undoneState} actions={reviewActions} scope="public" />);
+    rerender(
+      <GuidedDescriptionReview scenario={scenario} state={undoneState} actions={reviewActions} scope="public" />,
+    );
 
     expect(within(card).getByTestId('guided-keep-current-tribeca')).toBeEnabled();
     expect(within(card).getByTestId('demo-undo-tribeca')).toBeDisabled();

@@ -1,0 +1,28 @@
+# GUIDEV4-1 wave-1 review
+
+Scope requested: `git diff 6fff87f68..f1872586e -- apps/` (l1b state and l2f styles).
+
+**Review limit:** this lane contains only the history-stripped `ade30aa` sandbox base. Neither requested commit exists here, so the range diff could not be reproduced. Findings below are from the checked-out source and current importer grep; exact attribution to that range remains unverified.
+
+## Findings
+
+- **RV-W1-01 — HIGH —** `apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:940-950`. `chooseGuidedName` leaves `imageKey` optional and treats an omitted key as every photo. The current `RecordedWalkthrough` handler omits the key, so answering the Tribeca card also answers Coachella and can silently make both cards share a name choice. This breaks the per-photo decision invariant. **Suggested fix:** require the image key for this action; retain a separately named broadcast action only if an admin flow needs one.
+- **RV-W1-02 — HIGH —** `apps/prototype-wp-alt-context/js/admin/guidedPrototype/state.ts:1105-1120`. `keepGuidedCurrentAltTextForImage` marks a photo complete without checking that either name question was answered. The current public review shows Keep on an empty draft card, so a visitor can mark both photos kept without checking their names and reach completion. **Suggested fix:** gate the public Keep action on both answers for that photo before setting its outcome.
+- **RV-W1-03 — HIGH —** `apps/prototype-wp-alt-context/js/admin/guidedPrototype/RecordedWalkthrough.tsx:488-495`. The hub passes the aggregate `demo.outcome` to `GuidedOutcome`; that aggregate becomes `APPLIED` or `KEPT` after either photo is done, and the scalar prop renders the outcome immediately. The screen requires the summary only after both photos are done. **Suggested fix:** in the hub, gate the outcome on `outcomeReady(demo)` and pass both per-photo outcomes/summaries.
+- **RV-W1-04 — MEDIUM —** `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx:90-110,348-355`. Each photo card calls `guidedReviewNamesDecided` and `canApplyImageDraftPublic` without its image key, so both checks default to Tribeca. If a visitor completes Coachella first, its Use action remains disabled until Tribeca is answered. **Suggested fix:** pass `photo.key` through the per-photo eligibility and reason checks.
+- **RV-W1-05 — MEDIUM —** `apps/prototype-wp-alt-context/js/guide/_theme-darce-components.scss:125-130`. The new 48px reference-tile token sizes both compact row thumbnails and the lightbox reference photos. At 390px, the lightbox therefore shows 48px references instead of the proposed roughly 159px two-up tiles, making the comparison hard to inspect. **Suggested fix:** keep the 48px size on `.acx-guided-face__gallery img` and give `.acx-guided-face__lightbox-gallery img` a separate responsive tile size in this stylesheet.
+
+## Downstream migration exports
+
+The following current imports/usages were confirmed with `rg`. These are compatibility surfaces and current callers that downstream lanes must finish migrating; the unavailable commit range means their before/after status cannot be established here.
+
+- **Per-photo answers (l2b, l4):** migrate `GUIDED_NAME_CHOICE.INCLUDE/OMIT/UNDECIDED`, `GuidedDemoState.choices`, `namesDecided`, and calls to `chooseGuidedName` that omit `imageKey` to `USE/LEAVE_UNNAMED/UNANSWERED`, `photoChoices`/`choicesForPhoto`, `bothNamesAnswered`, and explicit image keys. Current callers: `GuidedFaceMatchCard.tsx:50-54,199-212`, `GuidedFacesPanel.tsx:27`, and `RecordedWalkthrough.tsx:83-87,110-112,237-240,344-347,367-379`.
+- **Strength wording (l2b, l2d):** stop rendering `formatGuidedSimilarity` and numeric `GUIDED_MATCH_THRESHOLD` values; use `GuidedFace.strength`, `GUIDED_MATCH_STRENGTH`, and `isClusterAnchor` for user-facing labels. Current callers: `GuidedFaceMatchCard.tsx:126-144`, `GuidedFacesPanel.tsx:35`, and `GuidedSamplePhoto.tsx:130-141`.
+- **Per-photo descriptions (l2c, l2d, l4):** migrate the Tribeca mirror fields `draftText`, `draftOrigin`, `draftStatus`, `draftVersion`, `previewedVersion`, `draftHistory`, `appliedAltText`, and `applicationUndoStack`, plus `editGuidedDraft`, `previewGuidedDraft`, `keepGuidedCurrentAltText`, `applyGuidedDraft`, `undoGuidedApplication`, `restoreGuidedRevision`, and `retryGuidedFixture`, to `drafts[imageKey]` and their `...ForImage` counterparts. Current old-path callers are in `RecordedWalkthrough.tsx:191-207,247-254,435-452`; the hub also passes the root `appliedAltText` to `GuidedSamplePhoto` at `RecordedWalkthrough.tsx:306`.
+- **Review compatibility bridge (l2c):** migrate from `GuidedReviewState`, the duplicate `GuidedImageDraft` type, `guidedReviewDraftFor`, `guidedReviewLegacyState`, `guidedReviewNamesDecided`, `guidedReviewCanPreview`, `guidedReviewCanApply`, `guidedReviewCanUndo`, and `guidedReviewCanRestore` as the UI moves to the canonical per-photo draft shape. Current importer and use sites: `GuidedDescriptionReview.tsx:14-20,90-110,350-355,689,768`.
+- **Completion (l2e, l4):** use `outcomeForPhoto` and `outcomeReady` instead of the aggregate root `outcome` when deciding which photo summary to show. The current hub passes only `demo.outcome` at `RecordedWalkthrough.tsx:488-495`; `GuidedOutcome` accepts that scalar at `GuidedOutcome.tsx:18-24,61-64`.
+
+## Verification
+
+- `git diff 6fff87f68..f1872586e -- apps/` could not run: neither commit is present in this history-stripped lane.
+- Requested scoped test command could not run: `npx` attempted to fetch Vitest and failed with `EAI_AGAIN` resolving `registry.npmjs.org`.

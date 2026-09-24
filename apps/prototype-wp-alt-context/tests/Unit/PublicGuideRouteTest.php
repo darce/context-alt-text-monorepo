@@ -3,6 +3,13 @@
 declare(strict_types=1);
 
 namespace {
+    if (!function_exists('_wp_render_title_tag')) {
+        function _wp_render_title_tag(): void
+        {
+            echo '<title>ACX Demo</title>';
+        }
+    }
+
     if (!function_exists('wp_styles')) {
         function wp_styles(): object
         {
@@ -187,13 +194,15 @@ final class PublicGuideRouteTest extends TestCase
         self::assertSame(200, $GLOBALS['__ac_status_header']);
         self::assertSame($this->expectedTemplatePath(), $result);
 
+        add_action('wp_head', '_wp_render_title_tag', 1);
         $html = $this->renderTemplate($result);
         $templateSource = (string) file_get_contents($result);
 
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
+        self::assertSame(1, substr_count($html, '<title>'));
         self::assertStringContainsString(
-            "<title>Demo: names change a photo's meaning | AltContext</title>",
+            "<title>Demo: Names change a photo's meaning | AltContext</title>",
             $html
         );
         self::assertStringContainsString(
@@ -414,6 +423,57 @@ final class PublicGuideRouteTest extends TestCase
             $GLOBALS['__ac_persisted_rewrite_rules']
         );
         self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
+    }
+
+    public function testActivateRegistersEnabledGuideRewriteAndPersistsIt(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $wpRewrite = new stdClass();
+        // The WordPress stub logs add_rewrite_rule() calls separately instead
+        // of updating extra_rules_top like core does.
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        (new LifecycleManager())->activate();
+
+        self::assertContains(
+            [
+                'regex' => PublicGuideRoute::REWRITE_REGEX,
+                'query' => 'index.php?acx_public_guide=1',
+                'after' => 'top',
+            ],
+            $GLOBALS['__ac_rewrite_rules']
+        );
+        self::assertArrayHasKey(
+            PublicGuideRoute::REWRITE_REGEX,
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+    }
+
+    public function testActivationDefersRewriteVersionStampUntilInitFlush(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $manager = new class() extends LifecycleManager {
+            public int $flushCount = 0;
+
+            protected function flush_rewrites(): void
+            {
+                ++$this->flushCount;
+            }
+        };
+
+        $manager->activate();
+
+        self::assertNotSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
+        self::assertSame(0, $manager->flushCount);
+
+        $manager->maybe_flush_rewrites();
+
+        self::assertSame(1, $manager->flushCount);
+        self::assertSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
     }
 
     public function testBundleFailureStillRendersFallbackAndEnqueuesNothing(): void

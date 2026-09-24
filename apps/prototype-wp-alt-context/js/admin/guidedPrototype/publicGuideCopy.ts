@@ -13,7 +13,7 @@ export const PUBLIC_GUIDE_FALLBACK = 'The walkthrough could not load. Reload the
 export const PUBLIC_GUIDE_LOADING = 'Loading the walkthrough.';
 
 export const PUBLIC_GUIDED_COPY = {
-  'entry.title.public': 'You decide who is named in each photo description.',
+  'entry.title.public': "Names change a photo's meaning",
   'entry.intro.public':
     'See how AltContext suggests image descriptions (alt text) and possible names, ' +
     'and how you decide which names to use.',

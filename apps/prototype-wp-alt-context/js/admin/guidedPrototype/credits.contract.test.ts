@@ -79,7 +79,8 @@ describe('guided demo CREDITS.md contract', () => {
       if (photo.src.includes('guided-press-coachella-2026.webp')) {
         expect(row!.source).toContain('https://www.instagram.com/katyperry/');
         expect(photo.credit).toBe('https://www.instagram.com/katyperry/');
-        expect(licence).toMatch(/No formal reuse licence recorded/);
+        expect(licence).toMatch(/^Fair use \(/);
+        expect(licence).toMatch(/Instagram/);
         continue;
       }
       if (licence.startsWith('EU reuse licence')) {

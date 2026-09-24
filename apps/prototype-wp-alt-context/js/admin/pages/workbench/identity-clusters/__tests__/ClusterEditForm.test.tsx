@@ -64,6 +64,16 @@ describe('ClusterEditForm', () => {
     expect(onSave).toHaveBeenCalledWith('New Name');
   });
 
+  it('announces when Enter is pressed without changing a free-typed label', () => {
+    const onSave = vi.fn();
+    render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
+
+    fireEvent.keyDown(screen.getByDisplayValue('Test Cluster'), { key: 'Enter', code: 'Enter' });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('No changes to save.');
+  });
+
   it('no-ops Enter when the resolved name matches the prefill (UXW2-3-R1-13)', () => {
     const onSave = vi.fn();
     const onPersonSelect = vi.fn();
@@ -79,6 +89,32 @@ describe('ClusterEditForm', () => {
     fireEvent.keyDown(screen.getByDisplayValue('Pat Roster'), { key: 'Enter', code: 'Enter' });
     expect(onSave).not.toHaveBeenCalled();
     expect(onPersonSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('No changes to save.');
+  });
+
+  it('announces when an ambiguous name needs a roster choice', () => {
+    const onSave = vi.fn();
+    const onPersonSelect = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Pat Roster"
+        options={[
+          { value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' },
+          { value: 'person:43', label: 'PAT ROSTER', source: 'person', group: 'All Labels' },
+        ]}
+        onSave={onSave}
+        onPersonSelect={onPersonSelect}
+      />,
+    );
+    const input = screen.getByDisplayValue('Pat Roster');
+
+    fireEvent.change(input, { target: { value: 'Pat Roster' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onPersonSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('Multiple people match. Choose one.');
   });
 
   it('calls onCancel when Escape is pressed', () => {

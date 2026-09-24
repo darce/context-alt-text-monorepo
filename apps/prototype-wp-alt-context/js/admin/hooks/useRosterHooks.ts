@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import { listRosterEntries, createPerson, updatePerson, deletePerson, type RosterEntry } from '../api/rosterApi';
+import { invalidateLabelSurfaces } from '../utils/invalidateLabelSurfaces';
 
 const rosterEntriesKey = queryKeys.roster.entries();
 
@@ -113,7 +114,7 @@ export const useUpdatePerson = () => {
       );
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.roster.all });
+      invalidateLabelSurfaces(queryClient);
     },
   });
 };

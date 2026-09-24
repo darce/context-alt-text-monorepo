@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse, MergeClusterResponse } from '../../../api/recognition';
+import { invalidateLabelSurfaces } from '../../../utils/invalidateLabelSurfaces';
 import { useClusterActionMutations } from './useClusterActionMutations';
 import { useClusterLabelMutations } from './useClusterLabelMutations';
 
@@ -47,16 +48,7 @@ export const useClusterMutations = ({
   const queryClient = useQueryClient();
 
   const invalidateQueries = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.suggestions.projection.all,
-    });
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.suggestions.mergePending(),
-    });
+    invalidateLabelSurfaces(queryClient);
   }, [queryClient]);
 
   const cancelIdentityQueries = useCallback(

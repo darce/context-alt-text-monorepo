@@ -142,21 +142,23 @@ const chooseRadio = async (
   return radio;
 };
 
-const stepButton = (step: 'context' | 'names' | 'draft' | 'apply'): HTMLElement =>
-  within(screen.getByTestId('guided-demo-stepper')).getByRole('button', {
-    name: guidedCopy(`step.${step}`),
-  });
-
-const completeCoreDraft = async (user: ReturnType<typeof userEvent.setup>, draft: string): Promise<void> => {
-  await chooseRadio(user, 'tribeca', 'left', 'include');
-  await chooseRadio(user, 'tribeca', 'right', 'include');
-  const review = screen.getByTestId('guided-description-review-tribeca');
+const completePhotoDraft = async (
+  user: ReturnType<typeof userEvent.setup>,
+  photoKey: GuidedImageKey,
+  draft: string,
+): Promise<void> => {
+  await chooseRadio(user, photoKey, 'left', 'include');
+  await chooseRadio(user, photoKey, 'right', 'include');
+  const review = screen.getByTestId(`guided-description-review-${photoKey}`);
   const editor = within(review).getByRole('textbox', { name: guidedCopy('draft.label') });
   await user.clear(editor);
   await user.type(editor, draft);
   await user.click(within(review).getByRole('button', { name: guidedCopy('draft.next') }));
-  await user.click(screen.getByTestId('demo-apply-tribeca'));
+  await user.click(screen.getByTestId(`demo-apply-${photoKey}`));
 };
+
+const completeCoreDraft = async (user: ReturnType<typeof userEvent.setup>, draft: string): Promise<void> =>
+  completePhotoDraft(user, 'tribeca', draft);
 
 describe('GuidedA11y (W04)', () => {
   let fetchSpy: Mock;
@@ -176,22 +178,36 @@ describe('GuidedA11y (W04)', () => {
     window.location.hash = '';
   });
 
-  it('would prove the page wrong if more than one h1 existed, the h1 were not page.title, or a step lacked an h2', () => {
+  it('would prove the page wrong if more than one h1 existed, the h1 were not page.title, or a photo step lacked its heading', () => {
     render(<GuidedPrototypePage />);
 
     const titles = screen.getAllByRole('heading', { level: 1 });
     expect(titles).toHaveLength(1);
     expect(titles[0]).toHaveTextContent(guidedCopy('page.title'));
 
-    const stepTitles = [
-      guidedCopy('step.context'),
-      guidedCopy('step.names'),
-      guidedCopy('step.draft'),
-      guidedCopy('step.apply'),
-    ];
-    stepTitles.forEach((title) => {
-      expect(screen.getByRole('heading', { level: 2, name: title })).toBeInTheDocument();
+    const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
+    photoKeys.forEach((photoKey, index) => {
+      const photoStep = screen.getByTestId(`guided-photo-step-${photoKey}`);
+      expect(
+        within(photoStep).getByRole('heading', {
+          level: 3,
+          name: publicGuidedCopy('photo.count.public', { photoNumber: index + 1 }),
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId(`guided-faces-${photoKey}`)).getByRole('heading', {
+          level: 4,
+          name: publicGuidedCopy('names.heading.public'),
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId(`guided-description-step-${photoKey}`)).getByRole('heading', {
+          level: 4,
+          name: publicGuidedCopy('description.heading.public'),
+        }),
+      ).toBeInTheDocument();
     });
+    expect(screen.queryByRole('heading', { name: guidedCopy('step.context') })).not.toBeInTheDocument();
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
   });
@@ -272,20 +288,24 @@ describe('GuidedA11y (W04)', () => {
     expect(indexOfStop(stops, guidedCopy('page.start'))).toBeLessThan(
       indexOfStop(stops, guidedCopy('page.case_study')),
     );
-    expect(indexOfStop(stops, guidedCopy('guide.hide'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.context')));
-    expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.names')));
-    expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.draft')));
-    expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.apply')));
     const leftInclude = publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' });
     const rightInclude = publicGuidedCopy('names.use.public', { name: 'Katy Perry' });
     const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
+    expect(indexOfStop(stops, guidedCopy('page.case_study'))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('page.reset')),
+    );
     for (const photoKey of photoKeys) {
       const leftStop = photoStop(photoKey, leftInclude);
       const rightStop = photoStop(photoKey, rightInclude);
-      expect(indexOfStop(stops, guidedCopy('step.apply'))).toBeLessThan(indexOfStop(stops, leftStop));
+      expect(indexOfStop(stops, guidedCopy('page.reset'))).toBeLessThan(indexOfStop(stops, leftStop));
       expect(indexOfStop(stops, leftStop)).toBeLessThan(indexOfStop(stops, rightStop));
-      expect(indexOfStop(stops, rightStop)).toBeLessThan(indexOfStop(stops, guidedCopy('live.submit')));
+      if (photoKey === 'tribeca') {
+        expect(indexOfStop(stops, rightStop)).toBeLessThan(indexOfStop(stops, photoStop('coachella', leftInclude)));
+      }
     }
+    expect(indexOfStop(stops, photoStop('coachella', rightInclude))).toBeLessThan(
+      indexOfStop(stops, guidedCopy('live.submit')),
+    );
 
     const resetButton = screen.getByRole('button', { name: guidedCopy('page.reset') });
     await user.click(resetButton);
@@ -357,32 +377,20 @@ describe('GuidedA11y (W04)', () => {
     expect(document.activeElement).toBe(undo);
   });
 
-  it('would prove the page wrong if a guide or next-step control failed to move focus to its section target', async () => {
+  it('would prove the page wrong if Start or a remaining next-step control failed to move focus to its target', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
-    const contextSection = document.getElementById('guided-section-understand');
-    assertHtmlElement(contextSection, 'context section');
-    const focusContextSection = vi.spyOn(contextSection, 'focus');
+    const firstNameQuestion = within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
+      name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
+    });
+    const focusFirstNameQuestion = vi.spyOn(firstNameQuestion, 'focus');
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
-    expect(focusContextSection).toHaveBeenCalledWith({ preventScroll: true });
-
-    await user.click(stepButton('names'));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
-
-    await user.click(screen.getByRole('button', { name: guidedCopy('context.next') }));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
+    expect(document.activeElement).toBe(firstNameQuestion);
+    expect(focusFirstNameQuestion).toHaveBeenCalledWith({ preventScroll: true });
 
     await chooseRadio(user, 'tribeca', 'left', 'include');
     await chooseRadio(user, 'tribeca', 'right', 'include');
-    await user.click(screen.getByRole('button', { name: guidedCopy('names.next') }));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.draft'));
-
     await user.click(
       within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
         name: guidedCopy('draft.next'),
@@ -516,17 +524,22 @@ describe('GuidedA11y (W04)', () => {
     expect(applied.getAttribute('src')).not.toBe(evidence.getAttribute('src'));
   });
 
-  it('would prove the page wrong if step navigation replaced #/guided-prototype with a section hash', async () => {
+  it('would prove the page wrong if walkthrough actions replaced #/guided-prototype with a section hash', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
     expect(window.location.hash).toBe('#/guided-prototype');
-    await user.click(stepButton('names'));
+    await chooseRadio(user, 'tribeca', 'left', 'include');
     expect(window.location.hash).toBe('#/guided-prototype');
-    await user.click(stepButton('draft'));
+    await chooseRadio(user, 'tribeca', 'right', 'include');
+    await user.click(
+      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('button', {
+        name: guidedCopy('draft.next'),
+      }),
+    );
     expect(window.location.hash).toBe('#/guided-prototype');
-    await user.click(stepButton('apply'));
+    await user.click(screen.getByTestId('demo-apply-tribeca'));
     expect(window.location.hash).toBe('#/guided-prototype');
     expect(window.location.hash).not.toMatch(/guided-section-/);
   });
@@ -537,7 +550,12 @@ describe('GuidedA11y (W04)', () => {
     const edited = 'Core path with rejecting live stub.';
 
     await completeCoreDraft(user, edited);
+    await completePhotoDraft(user, 'coachella', 'Coachella photo description applied locally.');
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
+    expect(screen.getByTestId('demo-applied-image-coachella')).toHaveAttribute(
+      'alt',
+      'Coachella photo description applied locally.',
+    );
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
     expect(fetchSpy).not.toHaveBeenCalled();
 

@@ -66,8 +66,9 @@ describe('RecordedWalkthrough behavior', () => {
 
     const review = screen.getByTestId('guided-description-review-coachella');
     expect(within(review).getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(
-      createGuidedScenario().samples.coachella['justin-trudeau'],
+      createGuidedScenario().samples.coachella['katy-perry'],
     );
+    expect(review).toHaveTextContent(guidedCopy('draft.history'));
     expect(review).toHaveTextContent(edited);
   });
 });

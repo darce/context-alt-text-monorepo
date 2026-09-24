@@ -301,7 +301,7 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByRole('heading', { level: 1, name: guidedCopy('entry.title.public') })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('faces.title.public') })).toHaveLength(2);
+    expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
     expect(
       screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' }),
     ).toHaveLength(2);

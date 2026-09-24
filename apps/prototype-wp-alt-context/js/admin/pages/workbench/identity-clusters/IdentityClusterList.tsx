@@ -44,6 +44,7 @@ interface IdentityClusterListProps {
   /** Detected identities to display */
   identities: DetectedIdentity[];
   dataSource?: DataSource;
+  isLoading?: boolean;
   onRetry?: () => void;
 }
 
@@ -400,6 +401,7 @@ const UngroupedResidueSection = ({
 export const IdentityClusterList = ({
   identities,
   dataSource,
+  isLoading,
   onRetry,
 }: IdentityClusterListProps): React.JSX.Element => {
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
@@ -426,6 +428,14 @@ export const IdentityClusterList = ({
   }, [clusters, canMutate]);
 
   const { getMatch } = useInlineSuggestionBatch(batchIdentityIds);
+
+  if (clusters.length === 0 && isLoading) {
+    return (
+      <p className="acx-identity-clusters__empty" aria-busy="true">
+        {__('Loading faces…', 'alt-context')}
+      </p>
+    );
+  }
 
   if (clusters.length === 0) {
     if (dataSource === DATA_SOURCE.UNAVAILABLE) {

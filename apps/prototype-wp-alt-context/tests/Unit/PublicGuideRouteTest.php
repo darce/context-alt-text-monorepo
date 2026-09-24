@@ -416,6 +416,57 @@ final class PublicGuideRouteTest extends TestCase
         self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
     }
 
+    public function testActivateRegistersEnabledGuideRewriteAndPersistsIt(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $wpRewrite = new stdClass();
+        // The WordPress stub logs add_rewrite_rule() calls separately instead
+        // of updating extra_rules_top like core does.
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        (new LifecycleManager())->activate();
+
+        self::assertContains(
+            [
+                'regex' => PublicGuideRoute::REWRITE_REGEX,
+                'query' => 'index.php?acx_public_guide=1',
+                'after' => 'top',
+            ],
+            $GLOBALS['__ac_rewrite_rules']
+        );
+        self::assertArrayHasKey(
+            PublicGuideRoute::REWRITE_REGEX,
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+    }
+
+    public function testActivationDefersRewriteVersionStampUntilInitFlush(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $manager = new class() extends LifecycleManager {
+            public int $flushCount = 0;
+
+            protected function flush_rewrites(): void
+            {
+                ++$this->flushCount;
+            }
+        };
+
+        $manager->activate();
+
+        self::assertNotSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
+        self::assertSame(0, $manager->flushCount);
+
+        $manager->maybe_flush_rewrites();
+
+        self::assertSame(1, $manager->flushCount);
+        self::assertSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
+    }
+
     public function testBundleFailureStillRendersFallbackAndEnqueuesNothing(): void
     {
         $this->setOption('acx_public_guide_enabled', true);

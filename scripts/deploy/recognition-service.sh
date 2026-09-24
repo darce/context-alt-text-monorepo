@@ -24,7 +24,7 @@
 #                                       restore compose/unit/edge .bak topology, restart, and verify.
 #                                       prod requires CONFIRM=PROMOTE.
 #   verify         <env>              Compare /health and the running image to the VM release receipt.
-#                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
+#                                       Retries transient probe failures up to ACX_VERIFY_ATTEMPTS; a SHA mismatch is terminal.
 #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
 #                                       standalone verify of a VLM deploy works without re-exporting
 #                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1

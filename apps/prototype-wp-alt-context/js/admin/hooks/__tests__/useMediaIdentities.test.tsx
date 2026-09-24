@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RECOVERY_DELAY_FLOOR_MS, useMediaIdentities } from '../useMediaIdentities';
 import * as recognitionApi from '../../api/recognition';
+import { HTTPError } from '../../utils/errorTaxonomy';
 import {
   _resetCooldownForTests,
   DEFAULT_COOLDOWN_SECONDS,
@@ -24,6 +25,17 @@ const createDeferred = <T,>() => {
   });
   return { promise, resolve, reject };
 };
+
+const identityHttpError = (status: number): HTTPError =>
+  new HTTPError({
+    status,
+    retryAfterSeconds: undefined,
+    endpoint: '/media/identities',
+    bodyPreview: '',
+    message: `Request failed (${status})`,
+  });
+
+const identitySuccess: recognitionApi.MediaIdentitiesResponse = { identities_by_media: {} };
 
 describe('useMediaIdentities', () => {
   const createWrapper = () => {
@@ -77,23 +89,101 @@ describe('useMediaIdentities', () => {
     queryClient.clear();
   });
 
-  it('does not React Query-retry on failure (retry:false pin; fails if hook default is removed)', async () => {
-    // Wrapper deliberately enables client-level retries so a missing hook-level
-    // `retry: false` would produce multiple attempts before the recovery floor.
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: 3, retryDelay: 1 } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+  it('retries a 503 before exposing an error and waits out the shared cooldown', async () => {
+    vi.useFakeTimers();
+    openCooldown(5);
+    const { wrapper, queryClient } = createWrapper();
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
-    fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
+    fetchMediaIdentitiesMock
+      .mockRejectedValueOnce(identityHttpError(503))
+      .mockResolvedValueOnce(identitySuccess);
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([99], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isError).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isError).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(2);
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it('exhausts two retries for repeated 429s before entering the error state', async () => {
+    vi.useFakeTimers();
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(identityHttpError(429));
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([98], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isError).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(3);
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it('does not retry a 403 auth error', async () => {
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(identityHttpError(403));
 
     const { result, unmount } = renderHook(() => useMediaIdentities([99], true), { wrapper });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    // Exactly one attempt before any recovery-floor deferred refetch.
     expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it.each([
+    ['network', new TypeError('Failed to fetch')],
+    ['timeout', Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })],
+  ])('retries a transient %s failure', async (_kind, transientError) => {
+    vi.useFakeTimers();
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock
+      .mockRejectedValueOnce(transientError)
+      .mockResolvedValueOnce(identitySuccess);
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([100], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isError).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(2);
 
     unmount();
     queryClient.clear();

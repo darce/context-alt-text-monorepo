@@ -10,7 +10,9 @@ import {
   type GuidedDraftOrigin,
   type GuidedDraftRevision,
   type GuidedDraftStatus,
+  type GuidedChoicesByImage,
   type GuidedImageKey,
+  type GuidedOutcome,
   type GuidedPendingChoiceChange,
   type GuidedRestoreMode,
 } from './state';
@@ -30,6 +32,7 @@ export interface GuidedImageDraft {
   draftVersion?: number;
   previewedVersion?: number | null;
   appliedAltText: string;
+  outcome?: GuidedOutcome;
   applicationHistory: GuidedApplicationRecord[];
   draftHistory: GuidedDraftRevision[];
 }
@@ -40,7 +43,9 @@ export interface GuidedImageDraft {
  * with the pre-migration `GuidedDemoState` while the reducer is being wired.
  */
 export interface GuidedReviewState {
+  /** Tribeca compatibility mirror for callers from the first walkthrough. */
   choices: GuidedChoices;
+  photoChoices?: GuidedChoicesByImage;
   pendingChoiceChange: GuidedPendingChoiceChange | null;
   drafts?: Partial<Record<GuidedImageKey, GuidedImageDraft>>;
   draftText?: string | null;
@@ -93,12 +98,14 @@ const emptyDraft = (): GuidedImageDraft => ({
   draftVersion: 0,
   previewedVersion: null,
   appliedAltText: '',
+  outcome: GUIDED_OUTCOME.NOT_FINISHED,
   applicationHistory: [],
   draftHistory: [],
 });
 
 const normalizedDraft = (draft: GuidedImageDraft): GuidedImageDraft => ({
   ...draft,
+  outcome: draft.outcome ?? GUIDED_OUTCOME.NOT_FINISHED,
   draftVersion: draft.draftVersion ?? 0,
   previewedVersion: draft.previewedVersion ?? null,
   applicationHistory: [...draft.applicationHistory],
@@ -138,6 +145,7 @@ const toGuidedDemoDraft = (draft: GuidedImageDraft): GuidedDemoState['drafts'][G
   draftVersion: draft.draftVersion ?? 0,
   previewedVersion: draft.previewedVersion ?? null,
   appliedAltText: draft.appliedAltText,
+  outcome: draft.outcome ?? GUIDED_OUTCOME.NOT_FINISHED,
   applicationHistory: [...draft.applicationHistory],
   draftHistory: [...draft.draftHistory],
 });
@@ -152,6 +160,10 @@ export const guidedReviewLegacyState = (state: GuidedReviewState): GuidedDemoSta
   return {
     activeStep: GUIDED_STEP.APPLY,
     choices: state.choices,
+    photoChoices: state.photoChoices ?? {
+      tribeca: { ...state.choices },
+      coachella: { ...state.choices },
+    },
     drafts: {
       tribeca: toGuidedDemoDraft(tribeca),
       coachella: toGuidedDemoDraft(coachella),
@@ -170,17 +182,33 @@ export const guidedReviewLegacyState = (state: GuidedReviewState): GuidedDemoSta
   };
 };
 
-export const guidedReviewNamesDecided = (state: GuidedReviewState): boolean =>
-  state.choices.left !== GUIDED_NAME_CHOICE.UNDECIDED && state.choices.right !== GUIDED_NAME_CHOICE.UNDECIDED;
+const guidedReviewChoicesFor = (state: GuidedReviewState, imageKey: GuidedImageKey): GuidedChoices =>
+  state.photoChoices?.[imageKey] ?? state.choices;
 
-export const guidedReviewCanPreview = (state: GuidedReviewState, draft: GuidedImageDraft): boolean =>
-  guidedReviewNamesDecided(state) &&
+export const guidedReviewNamesDecided = (
+  state: GuidedReviewState,
+  imageKey: GuidedImageKey = GUIDED_REVIEW_TRIBECA_KEY,
+): boolean => {
+  const choices = guidedReviewChoicesFor(state, imageKey);
+  return choices.left !== GUIDED_NAME_CHOICE.UNANSWERED && choices.right !== GUIDED_NAME_CHOICE.UNANSWERED;
+};
+
+export const guidedReviewCanPreview = (
+  state: GuidedReviewState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_REVIEW_TRIBECA_KEY,
+): boolean =>
+  guidedReviewNamesDecided(state, imageKey) &&
   draft.draftStatus === GUIDED_DRAFT_STATUS.READY &&
   draft.draftText !== null &&
   draft.draftText.trim().length > 0;
 
-export const guidedReviewCanApply = (state: GuidedReviewState, draft: GuidedImageDraft): boolean =>
-  guidedReviewCanPreview(state, draft) &&
+export const guidedReviewCanApply = (
+  state: GuidedReviewState,
+  draft: GuidedImageDraft,
+  imageKey: GuidedImageKey = GUIDED_REVIEW_TRIBECA_KEY,
+): boolean =>
+  guidedReviewCanPreview(state, draft, imageKey) &&
   draft.previewedVersion === draft.draftVersion &&
   draft.draftText !== draft.appliedAltText &&
   state.pendingChoiceChange === null;
@@ -191,12 +219,14 @@ export const guidedReviewCanRestore = (
   state: GuidedReviewState,
   draft: GuidedImageDraft,
   revisionId: string,
+  imageKey: GuidedImageKey = GUIDED_REVIEW_TRIBECA_KEY,
 ): boolean => {
   const revision = draft.draftHistory.find((entry) => entry.revisionId === revisionId);
   if (revision === undefined) {
     return false;
   }
-  return revision.choices.left === state.choices.left && revision.choices.right === state.choices.right;
+  const choices = guidedReviewChoicesFor(state, imageKey);
+  return revision.choices.left === choices.left && revision.choices.right === choices.right;
 };
 
 export const guidedReviewImageKeys = (): readonly GuidedImageKey[] => GUIDED_REVIEW_IMAGE_KEYS;

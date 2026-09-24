@@ -18,7 +18,8 @@ $acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title><?php echo esc_html__( 'Guide', 'alt-context' ); ?></title>
+	<title><?php echo esc_html__( 'Demo: you decide who is named in each photo description | AltContext', 'alt-context' ); ?></title>
+	<meta name="description" content="<?php echo esc_attr( __( 'Try the AltContext demo. Write an image description (alt text) and choose who is named in each photo.', 'alt-context' ) ); ?>">
 	<link rel="canonical" href="<?php echo esc_url( $acx_guide_canonical ); ?>">
 	<?php wp_head(); ?>
 </head>

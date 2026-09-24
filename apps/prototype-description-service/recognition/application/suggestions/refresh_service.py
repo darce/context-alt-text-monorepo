@@ -29,7 +29,10 @@ from recognition.application.assignment.checks import (
 from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
-from recognition.application.suggestions.eligibility import is_eligible_cluster
+from recognition.application.suggestions.eligibility import (
+    is_candidate_already_a_cluster_member,
+    is_eligible_cluster,
+)
 from recognition.application.suggestions.embedding_space import (
     models_are_same_space,
     representative_embedding_model,
@@ -144,6 +147,28 @@ class SuggestionRefreshService:
                 suggestion.id,
             )
 
+    async def _expire_already_owned_suggestion(self, suggestion: AssignmentSuggestion) -> bool:
+        """Expire a pending suggestion after its identity joins the target cluster."""
+        logger.info(
+            "[suggestions] expire_already_owned suggestion_id=%s identity_id=%s cluster_id=%s",
+            suggestion.id,
+            suggestion.identity_id,
+            suggestion.cluster_id,
+        )
+        try:
+            await self._repository.update_status(
+                self._tenant_id,
+                suggestion.id,
+                SuggestionStatus.EXPIRED,
+            )
+            return True
+        except ValueError:
+            logger.warning(
+                "[suggestions] already-owned suggestion disappeared before expiration suggestion_id=%s",
+                suggestion.id,
+            )
+            return False
+
     async def _find_best_cluster_match(
         self,
         identity: MediaIdentity,
@@ -229,6 +254,13 @@ class SuggestionRefreshService:
         members = await self._cluster_repository.get_members(cluster_id)
         return [member.identity_id for member in members]
 
+    async def _candidate_already_owns_cluster(self, identity_id: str, cluster_id: str) -> bool:
+        """Check membership at the write boundary to avoid persisting a solved suggestion."""
+        if self._cluster_repository is None:
+            return False
+        member_ids = await self._get_cluster_member_ids(cluster_id)
+        return is_candidate_already_a_cluster_member(identity_id, member_ids)
+
     async def _passes_fallback_guards(
         self,
         *,
@@ -280,8 +312,16 @@ class SuggestionRefreshService:
         *,
         confidence_score: float | None = None,
         refreshed_at: datetime | None = None,
-    ) -> AssignmentSuggestion:
+    ) -> AssignmentSuggestion | None:
         """Create a new suggestion or update existing one."""
+        if await self._candidate_already_owns_cluster(identity_id, cluster_id):
+            logger.info(
+                "[suggestions] skipping already-owned candidate identity_id=%s cluster_id=%s",
+                identity_id,
+                cluster_id,
+            )
+            return None
+
         if refreshed_at is None:
             refreshed_at = datetime.now(tz=UTC)
         if confidence_score is None:
@@ -345,6 +385,13 @@ class SuggestionRefreshService:
             cluster_id = cluster.id
             if not reps:
                 continue
+            if await self._candidate_already_owns_cluster(identity_id, cluster_id):
+                logger.info(
+                    "[suggestions] skipping already-owned candidate identity_id=%s cluster_id=%s",
+                    identity_id,
+                    cluster_id,
+                )
+                continue
 
             probe_model = identity.embedding_model
             same_space: list[np.ndarray] = []
@@ -405,7 +452,8 @@ class SuggestionRefreshService:
                 reason=reason,
                 refreshed_at=now,
             )
-            suggestions.append(suggestion)
+            if suggestion is not None:
+                suggestions.append(suggestion)
 
         if suggestions:
             logger.info(
@@ -463,7 +511,7 @@ class SuggestionRefreshService:
         return total
 
     async def refresh_for_cluster(self, cluster_id: str) -> int:
-        """Refresh similarity scores for all pending suggestions targeting a cluster."""
+        """Refresh pending scores and expire suggestions for identities already in the cluster."""
         if self._session is None or self._cluster_repository is None:
             return 0
 
@@ -472,19 +520,32 @@ class SuggestionRefreshService:
             logger.warning("[suggestions] refresh_for_cluster: cluster not found cluster_id=%s", cluster_id)
             return 0
 
-        labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
-        if not labeled_reps:
-            logger.info("[suggestions] refresh_for_cluster: no representatives cluster_id=%s", cluster_id)
-            return 0
-
         suggestions = await self._repository.get_by_cluster(self._tenant_id, cluster_id)
         pending = [s for s in suggestions if s.status == SuggestionStatus.PENDING]
 
         if not pending:
             return 0
 
-        refreshed = 0
+        member_ids = await self._get_cluster_member_ids(cluster_id)
+        to_refresh: list[AssignmentSuggestion] = []
+        expired = 0
         for suggestion in pending:
+            if is_candidate_already_a_cluster_member(suggestion.identity_id, member_ids):
+                if await self._expire_already_owned_suggestion(suggestion):
+                    expired += 1
+            else:
+                to_refresh.append(suggestion)
+
+        if not to_refresh:
+            return expired
+
+        labeled_reps = list(await self._cluster_repository.get_all_representatives(cluster_id))
+        if not labeled_reps:
+            logger.info("[suggestions] refresh_for_cluster: no representatives cluster_id=%s", cluster_id)
+            return expired
+
+        refreshed = expired
+        for suggestion in to_refresh:
             try:
                 identity_uuid = uuid.UUID(str(suggestion.identity_id))
             except ValueError:
@@ -890,7 +951,7 @@ class SuggestionRefreshService:
         candidate_ids: set[str],
         fallback_recovered: int,
     ) -> int:
-        """Create one self-referential review suggestion per candidate cluster on greenfield tenants."""
+        """Create bootstrap suggestions only when the candidate is not in its target cluster."""
         cluster_repository = self._cluster_repository
         if cluster_repository is None:
             return 0
@@ -905,14 +966,15 @@ class SuggestionRefreshService:
                 continue
 
             seed_identity_id = str(members[0].identity_id)
-            await self._create_or_update_suggestion(
+            suggestion = await self._create_or_update_suggestion(
                 seed_identity_id,
                 cluster_id,
                 1.0,
                 SuggestionRefreshReason.BOOTSTRAP,
                 confidence_score=1.0,
             )
-            created += 1
+            if suggestion is not None:
+                created += 1
 
         logger.info(
             "[suggestions] bootstrap complete tenant_id=%s candidates=%d "

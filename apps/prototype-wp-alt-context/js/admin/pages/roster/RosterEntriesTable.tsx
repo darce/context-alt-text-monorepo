@@ -182,6 +182,20 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
     setIsEditing(false);
   };
 
+  const handleEditKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!updatePerson.isPending && name.trim()) {
+        handleSave();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      handleCancel();
+    }
+  };
+
   const handleDelete = () => {
     deletePerson.mutate(entry.id, {
       onSuccess: () => setIsDeleteConfirmOpen(false),
@@ -210,6 +224,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
                 setNameError(null);
               }
             }}
+            onKeyDown={handleEditKeyDown}
             disabled={updatePerson.isPending}
             autoFocus
             aria-invalid={nameError ? true : undefined}
@@ -233,6 +248,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             value={tags}
             placeholder={__('family, friend, etc.', 'alt-context')}
             onChange={(e) => setTags(e.target.value)}
+            onKeyDown={handleEditKeyDown}
             disabled={updatePerson.isPending}
           />
         </td>
@@ -242,6 +258,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             type="button"
             className="acx-icon-button"
             onClick={handleSave}
+            aria-label={sprintf(__('Save changes to %s', 'alt-context'), displayName)}
             title={__('Save changes', 'alt-context')}
             disabled={updatePerson.isPending || !name.trim()}
           >
@@ -251,6 +268,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             type="button"
             className="acx-icon-button"
             onClick={handleCancel}
+            aria-label={sprintf(__('Cancel editing %s', 'alt-context'), displayName)}
             title={__('Cancel', 'alt-context')}
             disabled={updatePerson.isPending}
           >

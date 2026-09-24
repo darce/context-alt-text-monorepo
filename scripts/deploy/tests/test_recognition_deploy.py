@@ -4411,6 +4411,9 @@ def test_health_program_connection_refused(expected_sha: str) -> None:
 @pytest.mark.parametrize("probe", ["canonical", "cutover"])
 @pytest.mark.parametrize("rc,cause", [(1, "connection refused"), (124, "deadline exceeded")])
 def test_health_attempt_has_one_warning(probe: str, rc: int, cause: str) -> None:
+    health_budget = (
+        "ACX_CUTOVER_HEALTH" if probe == "cutover" else "ACX_CANONICAL_HEALTH"
+    )
     command = f"""
 source "{SCRIPT}"
 env_to_remote_dir() {{ echo /tmp; }}
@@ -4418,8 +4421,9 @@ env_to_compose_files() {{ echo -f compose.yml; }}
 remote_image_id_for_digest() {{ echo sha256:{'b' * 64}; }}
 run_with_deadline() {{ printf 'connection refused\nextra noise\n' >&2; return {rc}; }}
 warn() {{ echo "$*"; }}
-ACX_VERIFY_ATTEMPTS=2
-ACX_VERIFY_SLEEP=0
+{health_budget}_ATTEMPTS=2
+{health_budget}_SLEEP=0
+ACX_VERIFY_ATTEMPTS=9
 OCI_USER=test
 OCI_HOST=test
 probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
@@ -4428,8 +4432,11 @@ probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
     assert result.returncode == 1
     assert result.stderr == ""
     lines = result.stdout.splitlines()
-    assert len(lines) == 2
-    for attempt, line in enumerate(lines, 1):
+    budget_lines = [line for line in lines if "budget: 2x0s" in line]
+    warning_lines = [line for line in lines if "budget: 2x0s" not in line]
+    assert len(budget_lines) == 1
+    assert len(warning_lines) == 2
+    for attempt, line in enumerate(warning_lines, 1):
         assert f"attempt {attempt}/2: " in line
         assert cause in line
 

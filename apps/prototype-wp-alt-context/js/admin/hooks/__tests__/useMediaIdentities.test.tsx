@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RECOVERY_DELAY_FLOOR_MS, useMediaIdentities } from '../useMediaIdentities';
 import * as recognitionApi from '../../api/recognition';
 import { HTTPError } from '../../utils/errorTaxonomy';
+import { RETRY_AFTER_MAX_MS } from '../../utils/retryAfter';
 import {
   _resetCooldownForTests,
   DEFAULT_COOLDOWN_SECONDS,
@@ -26,10 +27,10 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-const identityHttpError = (status: number): HTTPError =>
+const identityHttpError = (status: number, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
     status,
-    retryAfterSeconds: undefined,
+    retryAfterSeconds,
     endpoint: '/media/identities',
     bodyPreview: '',
     message: `Request failed (${status})`,
@@ -141,6 +142,56 @@ describe('useMediaIdentities', () => {
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(3);
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it('waits for a 120-second Retry-After before retrying', async () => {
+    vi.useFakeTimers();
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock
+      .mockRejectedValueOnce(identityHttpError(429, 120))
+      .mockResolvedValueOnce(identitySuccess);
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([97], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(119_000);
+    });
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(2);
+
+    unmount();
+    queryClient.clear();
+  });
+
+  it('surfaces a 429 without retrying when Retry-After exceeds the shared bound', async () => {
+    vi.useFakeTimers();
+    const { wrapper, queryClient } = createWrapper();
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockRejectedValue(
+      identityHttpError(429, RETRY_AFTER_MAX_MS / 1000 + 1),
+    );
+
+    const { result, unmount } = renderHook(() => useMediaIdentities([96], true), { wrapper });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledTimes(1);
 
     unmount();
     queryClient.clear();

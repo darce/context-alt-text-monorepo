@@ -227,6 +227,42 @@ selects the DB (`local` default; `prod` for hosted).
 
 ---
 
+## Inspecting config without leaking secrets (SEC-07)
+
+Anything a shell command prints goes into the agent transcript and the
+session log. That counts as disclosure, even if nobody reads it.
+Name-based redaction (`sed 's/KEY=.*/***/'`, `grep -v password`) does not
+work here. On 2026-09-24 two values leaked through it:
+
+- `WORDPRESS_CONFIG_EXTRA` embeds
+  `define('ACX_RECOGNITION_API_KEY','<value>')` inside a single env var,
+  so a filter keyed on `KEY=` never matched.
+- `POSTGRES_DSN` / `POSTGRES_SYNC_DSN` carry the password in the URL
+  userinfo (`user:<pw>@host`). The variable name contains no secret-looking
+  word.
+
+Rules:
+
+1. **List names, not values.** Print `NAME` only:
+   `docker inspect <c> --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1`.
+   Use the same pattern for `.env` files (`cut -d= -f1 .env`) and
+   `printenv | cut -d= -f1`.
+2. **Read a value only by exact name, and only if it is non-secret by
+   definition.** Examples: `RECOGNITION_FACE_PIPELINE_PROFILE`,
+   `ACX_IMAGE_TAG`, `ACX_RECOGNITION_URL`. Do not grep by pattern over
+   values. Anything named `*_DSN`, `*_URL` with userinfo, `*CONFIG_EXTRA*`,
+   `*_KEY`, `*_TOKEN`, `*_SECRET` or `*PASSWORD*` is treated as secret.
+3. **Presence checks only for secrets:**
+   `[ -n "$VAR" ] && echo set`, or `wp config has ACX_RECOGNITION_API_KEY`.
+   Never print a prefix or length.
+4. **Never dump whole containers of config:** `wp-config.php`,
+   `WORDPRESS_CONFIG_EXTRA`, `secrets/.env`, `docker inspect` without
+   `--format`, `docker compose config`, or `env` inside a container.
+5. **A leak is a rotation.** If a value reaches a transcript, rotate it the
+   same day: API keys per Track 1 § Key lifecycle, the demo wp-admin
+   password per AUTH-01, and DB passwords via the env's `.env` plus a stack
+   restart. Record a decision naming what was rotated.
+
 ## Failure signature quick reference
 
 | Symptom | Likely cause |

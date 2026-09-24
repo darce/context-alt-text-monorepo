@@ -68,4 +68,13 @@ describe('public guide stylesheet isolation', () => {
     expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-page__faces::(?:before|after)/);
     expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-face__card::(?:before|after)/);
   });
+
+  it('keeps the public review editor within its card and action buttons aligned', () => {
+    const css = compileGuideCss();
+
+    expect(css).toMatch(
+      /\.acx-public-guide\s+\.acx-guided-review__editor-layout textarea\s*\{[^}]*box-sizing: border-box;/,
+    );
+    expect(css).toMatch(/\.acx-public-guide\s+\.acx-guided-review__apply\s*\{[^}]*justify-content: flex-start;/);
+  });
 });

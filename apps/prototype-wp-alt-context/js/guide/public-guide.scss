@@ -44,6 +44,7 @@
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
+    justify-content: flex-start;
     gap: var(--acx-space-8);
 
     > button {
@@ -63,7 +64,18 @@
   }
 
   .acx-guided-review__editor-layout {
+    padding-inline: 0;
     grid-template-columns: minmax(0, 1fr);
+
+    > div > h5 {
+      margin-top: 0;
+    }
+
+    textarea {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 100%;
+    }
 
     > .acx-guided-review__origin,
     > .acx-guided-review__scope-note,
@@ -88,6 +100,16 @@
     .acx-guided-review__preview-grid,
     .acx-guided-face__cards {
       grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 40rem) {
+    .acx-guided-review__apply {
+      padding: var(--acx-space-16);
+
+      > button {
+        flex: 1 1 100%;
+      }
     }
   }
 

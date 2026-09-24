@@ -91,13 +91,20 @@ const completeKeyboardWalkthrough = async (page: Page, viewportName: string): Pr
   if (reviewBox === null) {
     throw new Error('The Tribeca photo review card is missing.');
   }
+  const editorBox = await walkthroughReview
+    .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
+    .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL })
+    .boundingBox();
+  if (editorBox === null) {
+    throw new Error('The Tribeca photo review description field is missing.');
+  }
+
+  expect(editorBox.x).toBeGreaterThanOrEqual(reviewBox.x);
+  expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(reviewBox.x + reviewBox.width);
+
   if (viewportName === 'desktop 1440x900') {
     const imageBox = await walkthroughPhoto.locator('.acx-guided-page__image-wrap').boundingBox();
-    const editorBox = await walkthroughReview
-      .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
-      .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL })
-      .boundingBox();
-    if (imageBox === null || editorBox === null) {
+    if (imageBox === null) {
       throw new Error('The desktop review card or its description fields are missing.');
     }
     expect(reviewBox.width).toBeGreaterThanOrEqual(imageBox.width);
@@ -105,6 +112,14 @@ const completeKeyboardWalkthrough = async (page: Page, viewportName: string): Pr
   } else {
     expect(reviewBox.x).toBeGreaterThanOrEqual(0);
     expect(reviewBox.x + reviewBox.width).toBeLessThanOrEqual(390);
+
+    const applyButtonHeights = await walkthroughReview
+      .locator('.acx-guided-review__apply > button')
+      .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+    expect(applyButtonHeights.length).toBeGreaterThan(0);
+    for (const height of applyButtonHeights) {
+      expect(height).toBeLessThanOrEqual(64);
+    }
   }
 
   const appliedText = walkthroughReview

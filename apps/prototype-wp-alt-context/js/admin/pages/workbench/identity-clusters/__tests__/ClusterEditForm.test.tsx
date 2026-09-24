@@ -114,7 +114,7 @@ describe('ClusterEditForm', () => {
 
     expect(onSave).not.toHaveBeenCalled();
     expect(onPersonSelect).not.toHaveBeenCalled();
-    expect(screen.getByRole('status')).toHaveTextContent('Several people match. Pick one from the list.');
+    expect(screen.getByRole('status')).toHaveTextContent('Multiple people match. Choose one.');
   });
 
   it('calls onCancel when Escape is pressed', () => {

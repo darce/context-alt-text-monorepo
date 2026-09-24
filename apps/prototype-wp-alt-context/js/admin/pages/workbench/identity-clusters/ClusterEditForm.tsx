@@ -13,7 +13,6 @@ import {
   budgetOverlayOptions as budgetRows,
   NameFaceControl,
   normalizeNameFaceLabel,
-  resolveNameFaceInput,
   type NameFaceResolution,
 } from './NameFaceControl';
 
@@ -108,7 +107,6 @@ export const ClusterEditForm = ({
   const handleCommit = React.useCallback(
     (resolution: NameFaceResolution) => {
       if (resolution.kind === 'ambiguous') {
-        setCommitFeedback(__('Several people match. Pick one from the list.', 'alt-context'));
         return;
       }
       const selected = selectedSuggestionRef.current;
@@ -176,15 +174,10 @@ export const ClusterEditForm = ({
       ) {
         selectedSuggestionRef.current = null;
       }
-      const resolution = resolveNameFaceInput(options, value);
-      setCommitFeedback(
-        resolution?.kind === 'ambiguous'
-          ? __('Several people match. Pick one from the list.', 'alt-context')
-          : '',
-      );
+      setCommitFeedback('');
       onLabelChange(value);
     },
-    [onLabelChange, options],
+    [onLabelChange],
   );
 
   return (

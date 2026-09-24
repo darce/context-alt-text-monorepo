@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognition';
+import { classifyError, isCooldown } from '../utils/appError';
 import {
   cooldownRemainingMs,
   DEFAULT_COOLDOWN_SECONDS,
@@ -35,6 +36,19 @@ const hasPendingClustering = (data: MediaIdentitiesResponse | undefined): boolea
 
 const serializeQueryKey = (mediaIds: number[]): string => mediaIds.join(',');
 
+const isTransientIdentityError = (error: unknown): boolean => {
+  if (isCooldown(error)) {
+    return true;
+  }
+
+  const classified = classifyError(error);
+  if (classified._tag === 'http') {
+    return classified.status === 502 || classified.status === 503 || classified.status === 504;
+  }
+
+  return classified._tag === 'timeout' || classified._tag === 'transport';
+};
+
 export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
   const queryKey = queryKeys.media.identitiesByIds(mediaIds);
   const keySerialized = serializeQueryKey(mediaIds);
@@ -51,9 +65,14 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
     queryKey,
     queryFn: () => fetchMediaIdentities(mediaIds),
     enabled: enabled && mediaIds.length > 0,
-    // Deliberate exception to shared retry: conditional query already stops polling on error;
-    // next scheduled poll (recognition cooldown in slice 2) is the retry. [RES-06]
-    retry: false,
+    // Retry transient failures before surfacing an error because cold starts, rate limits, and
+    // network blips are expected to recover. [RES-06]
+    retry: (failureCount, error) => failureCount < 2 && isTransientIdentityError(error),
+    retryDelay: (attempt) =>
+      Math.min(
+        RECOVERY_DELAY_FLOOR_MS,
+        Math.max(cooldownRemainingMs(), 1000 * 2 ** attempt),
+      ),
     staleTime: 15_000,
     placeholderData: (previousData) => previousData,
     // Auto-poll every 3 seconds when there are identities pending cluster assignment.

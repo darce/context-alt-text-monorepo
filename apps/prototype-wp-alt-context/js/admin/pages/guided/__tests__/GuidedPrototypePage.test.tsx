@@ -45,7 +45,9 @@ describe('GuidedPrototypePage shell', () => {
     expect(caseStudy).toHaveAttribute('target', '_blank');
 
     expect(screen.queryByTestId('guided-demo-stepper')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
+    ).toBeInTheDocument();
 
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
@@ -156,11 +158,7 @@ describe('GuidedPrototypePage shell', () => {
     const appliedPreview = within(review).getByTestId('demo-applied-image-tribeca');
     expect(appliedPreview).toHaveAttribute('alt', SEED_ALT_TEXT);
     expect(appliedPreview).not.toBe(sampleImage);
-    expect(
-      within(photo).getByText(
-        `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
-      ),
-    ).toBeInTheDocument();
+    expect(within(photo).getByText(`${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`)).toBeInTheDocument();
     fireEvent.error(sampleImage);
     expect(within(photo).getByRole('img', { name: SEED_ALT_TEXT })).toBeInTheDocument();
   });
@@ -184,9 +182,7 @@ describe('GuidedPrototypePage journey', () => {
     ).toBe(true);
     const review = screen.getByTestId('guided-description-review-tribeca');
     expect(review).toHaveTextContent(guidedCopy('draft.blocked'));
-    expect(
-      within(review).queryByRole('textbox', { name: guidedCopy('draft.label') }),
-    ).not.toBeInTheDocument();
+    expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
 
     choose('left', 'include');
     expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
@@ -385,11 +381,7 @@ describe('GuidedPrototypePage journey', () => {
         root.querySelector('[data-testid="guided-live"]'),
     ).toBe(live);
 
-    const sectionIds = [
-      'guided-section-understand',
-      'guided-section-review',
-      'guided-section-apply',
-    ];
+    const sectionIds = ['guided-section-understand', 'guided-section-review', 'guided-section-apply'];
     for (const id of sectionIds) {
       expect(document.getElementById(id)).not.toBeNull();
     }

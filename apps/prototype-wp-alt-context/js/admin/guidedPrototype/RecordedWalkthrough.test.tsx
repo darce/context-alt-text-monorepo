@@ -55,9 +55,7 @@ describe('RecordedWalkthrough public scope', () => {
       for (const card of cards) {
         const faceCard = card as HTMLElement;
         const name = within(faceCard).getByRole('heading', { level: 5 }).textContent ?? '';
-        await user.click(
-          within(faceCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') }),
-        );
+        await user.click(within(faceCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') }));
         const dialog = screen.getByRole('dialog', {
           name: publicGuidedCopy('lightbox.title.public', { name }),
         });
@@ -65,9 +63,7 @@ describe('RecordedWalkthrough public scope', () => {
           name: publicGuidedCopy('lightbox.references.public', { name }),
         });
         expect(gallery.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
-        await user.click(
-          within(dialog).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }),
-        );
+        await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }));
       }
     }
   });

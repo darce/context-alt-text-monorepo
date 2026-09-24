@@ -33,15 +33,21 @@ describe('RecordedWalkthrough behavior', () => {
     }
 
     choose('left', 'include', 'tribeca');
-    expect(within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
 
     choose('right', 'omit', 'tribeca');
     expect(within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox')).toBeInTheDocument();
-    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId('demo-apply-coachella')).not.toBeInTheDocument();
 
     choose('left', 'include', 'coachella');
-    expect(within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox'),
+    ).not.toBeInTheDocument();
     choose('right', 'omit', 'coachella');
     expect(within(screen.getByTestId('guided-description-review-coachella')).getByRole('textbox')).toBeInTheDocument();
     expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();

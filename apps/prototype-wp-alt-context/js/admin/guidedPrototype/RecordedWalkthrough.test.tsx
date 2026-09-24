@@ -14,19 +14,19 @@ const CANONICAL_CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 const opensInNewWindow = (label: string): string => `${label} (opens in a new window)`;
 
 describe('RecordedWalkthrough extraction', () => {
-  it('renders the recorded walkthrough without a live panel by default', () => {
-    render(<RecordedWalkthrough scope="admin" />);
+  it('renders the admin walkthrough with its stepper', () => {
+    render(<GuidedPrototypePage />);
 
     expect(screen.getByTestId('guided-demo-root')).toBeInTheDocument();
     expect(screen.getByTestId('guided-demo-root').tagName).toBe('MAIN');
     expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
-    expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
+    expect(screen.getByTestId('guided-demo-stepper')).toBeInTheDocument();
   });
 
-  it('renders an optional live panel slot when provided', () => {
-    render(<RecordedWalkthrough scope="admin" livePanel={<div data-testid="guided-live-slot">live</div>} />);
+  it('renders the live panel through the admin composition slot', () => {
+    render(<GuidedPrototypePage />);
 
-    expect(screen.getByTestId('guided-live-slot')).toBeInTheDocument();
+    expect(screen.getByTestId('guided-live')).toBeInTheDocument();
   });
 
   it('keeps GuidedPrototypePage as the admin composition with the live panel', () => {
@@ -180,7 +180,7 @@ describe('RecordedWalkthrough public scope', () => {
   });
 
   it('keeps admin entrance copy and the existing case-study link', () => {
-    render(<RecordedWalkthrough scope="admin" />);
+    render(<GuidedPrototypePage />);
 
     expect(screen.queryByTestId('guided-scope')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: guidedCopy('entry.title.public') })).not.toBeInTheDocument();
@@ -201,7 +201,7 @@ describe('RecordedWalkthrough design notes', () => {
     expect(document.body.textContent ?? '').not.toContain('Live generation');
     unmount();
 
-    render(<RecordedWalkthrough scope="admin" />);
+    render(<GuidedPrototypePage />);
     expect(document.body.textContent ?? '').toContain('Live generation');
   });
 });

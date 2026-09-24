@@ -3,7 +3,10 @@ import React, { useContext } from 'react';
 import { getGuidedLiveMediaId } from '../../api/config';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import { guidedCopy } from '../../guidedPrototype/copy';
-import { RecordedWalkthrough, RecordedWalkthroughLiveSlot } from '../../guidedPrototype/RecordedWalkthrough';
+import {
+  RecordedWalkthroughAdmin,
+  RecordedWalkthroughLiveSlot,
+} from '../../guidedPrototype/RecordedWalkthroughAdmin';
 import { GuidedLiveDescriptionPanel } from './GuidedLiveDescriptionPanel';
 
 const AdminLivePanel = (): React.JSX.Element => {
@@ -23,7 +26,7 @@ const AdminLivePanel = (): React.JSX.Element => {
 };
 
 export const GuidedPrototypePage = (): React.JSX.Element => (
-  <RecordedWalkthrough scope="admin" livePanel={<AdminLivePanel />} />
+  <RecordedWalkthroughAdmin scope="admin" livePanel={<AdminLivePanel />} />
 );
 
 GuidedPrototypePage.displayName = 'GuidedPrototypePage';

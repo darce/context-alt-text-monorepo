@@ -335,11 +335,19 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
 
   const handleCancelReplacement = (): void => {
     commit(cancelGuidedChoiceReplacement(demo));
-    choiceOriginRef.current?.focus();
+    if (scope === 'admin') {
+      choiceOriginRef.current?.focus();
+    }
   };
 
   const handleConfirmReplacement = (): void => {
     commit(confirmGuidedChoiceReplacement(flushPendingDraft(demo), scenario));
+    if (scope === 'admin') {
+      choiceOriginRef.current?.focus({ preventScroll: true });
+    }
+  };
+
+  const handleReturnToChangedChoice = (): void => {
     choiceOriginRef.current?.focus({ preventScroll: true });
   };
 
@@ -608,23 +616,12 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           </span>
         </p>
 
-        {scope === 'admin' ? (
-          <GuidedFacesPanel
-            scenario={scenario}
-            state={demo}
-            onChoose={(position, choice, origin) => handleChoose('tribeca', position, choice, origin)}
-            onContinue={() => {
-              handleSelectStep(GUIDED_STEP.DRAFT);
-              focusGuidedSection(GUIDED_STEP.DRAFT);
-            }}
-          />
-        ) : null}
-
         {scope === 'public' ? (
           <GuidedChoiceChangeDialog
             open={demo.pendingChoiceChange !== null}
             onKeepEdits={handleCancelReplacement}
             onChangeName={handleConfirmReplacement}
+            onReturnFocus={handleReturnToChangedChoice}
           />
         ) : (
           <GuidedChoiceReplacementDialog

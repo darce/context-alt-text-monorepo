@@ -91,12 +91,14 @@ describe('RecordedWalkthrough public scope', () => {
       const faces = container.querySelector(`[data-testid="guided-faces-${photoKey}"]`);
       const photoStep = container.querySelector(`[data-testid="guided-photo-step-${photoKey}"]`);
       const reviewCard = container.querySelector(`[data-testid="guided-description-review-${photoKey}"]`);
+      const photo = container.querySelector(`[data-testid="guided-photo-${photoKey}"]`);
       expect(faces?.querySelectorAll('section.acx-guided-face__card')).toHaveLength(2);
       expect(faces?.querySelectorAll(`input[name="guided-name-${photoKey}-left"]`)).toHaveLength(2);
       expect(faces?.querySelectorAll(`input[name="guided-name-${photoKey}-right"]`)).toHaveLength(2);
       expect(photoStep).toContainElement(reviewCard as HTMLElement);
-      expect(reviewCard?.parentElement).toBe(faces?.querySelector('.acx-guided-page__faces-list'));
-      expect(reviewCard?.previousElementSibling).toHaveClass('acx-guided-face__card');
+      expect(faces).not.toContainElement(reviewCard as HTMLElement);
+      expect(reviewCard?.parentElement).toBe(photoStep);
+      expect(photo?.compareDocumentPosition(reviewCard as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   });
 

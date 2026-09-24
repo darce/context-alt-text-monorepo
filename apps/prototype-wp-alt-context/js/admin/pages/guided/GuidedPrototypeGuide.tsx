@@ -82,12 +82,7 @@ export const focusGuidedSection = (step: GuidedStep): void => {
     return;
   }
 
-  const prefersReducedMotion =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  target.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
-  target.focus();
+  target.focus({ preventScroll: true });
 };
 
 export interface GuidedPrototypeGuideProps {

@@ -339,9 +339,7 @@ describe('public recorded walkthrough boundary', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('heading', { name: guidedCopy('step.review.public') }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: guidedCopy('step.review.public') })).not.toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
     for (const [index, imageKey] of PUBLIC_IMAGE_KEYS.entries()) {
       expect(

@@ -4,14 +4,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
-import type { SettingsResponse } from '../../api/settingsApi';
+import { saveSettings, testConnection, type SettingsResponse } from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type SettingsQueryResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
 type MockMutationResult = ReturnType<typeof createMockMutation>;
 
 interface MutationOptions {
-  onSuccess?: (data: unknown) => void | Promise<void>;
+  mutationFn?: unknown;
+  onSuccess?: (data: unknown, variables?: unknown) => void | Promise<void>;
   onError?: (error: unknown) => void;
 }
 
@@ -81,6 +82,7 @@ const configuredSettings: SettingsResponse = {
 const saveMutate = vi.fn();
 const testMutate = vi.fn();
 let capturedSaveOptions: MutationOptions | undefined;
+let capturedTestOptions: MutationOptions | undefined;
 
 const SettingsPageWithRouter = (): React.JSX.Element => (
   <MemoryRouter initialEntries={['/settings']}>
@@ -96,15 +98,18 @@ const renderSettings = (data: SettingsResponse = configuredSettings) => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockFetchQuery.mockResolvedValue(configuredSettings);
-  let mutationCallIndex = 0;
   capturedSaveOptions = undefined;
+  capturedTestOptions = undefined;
   mockUseMutation.mockImplementation((options) => {
-    mutationCallIndex += 1;
-    if (mutationCallIndex % 2 === 1) {
+    if (options?.mutationFn === saveSettings) {
       capturedSaveOptions = options;
       return createMockMutation({ mutate: saveMutate });
     }
-    return createMockMutation({ mutate: testMutate });
+    if (options?.mutationFn === testConnection) {
+      capturedTestOptions = options;
+      return createMockMutation({ mutate: testMutate });
+    }
+    throw new Error('Unexpected mutation in SettingsPage autosave test.');
   });
 });
 
@@ -200,5 +205,43 @@ describe('SettingsPage routing autosave', () => {
     expect(testMutate).toHaveBeenCalledTimes(1);
     view.rerender(<SettingsPageWithRouter />);
     expect(testMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the newer probe result when the older probe resolves last', async () => {
+    const resolveProbeByVariables = new Map<object, (data: unknown) => void>();
+    testMutate.mockImplementation((variables) => {
+      const mutationOptions = capturedTestOptions;
+      resolveProbeByVariables.set(variables as object, (data) => {
+        mutationOptions?.onSuccess?.(data, variables);
+      });
+    });
+
+    renderSettings();
+    const olderProbeVariables = testMutate.mock.calls[0]?.[0] as object;
+
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'new-secret' } });
+    fireEvent.blur(screen.getByLabelText('API Key'));
+
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['api_key'], result: 'ok' });
+    });
+
+    const newerProbeVariables = testMutate.mock.calls.find(
+      ([variables]) => variables !== olderProbeVariables,
+    )?.[0] as object;
+    expect(resolveProbeByVariables.has(olderProbeVariables)).toBe(true);
+    expect(resolveProbeByVariables.has(newerProbeVariables)).toBe(true);
+
+    await act(async () => {
+      resolveProbeByVariables.get(newerProbeVariables)?.({ outcome: 'network_error' });
+    });
+    await act(async () => {
+      resolveProbeByVariables.get(olderProbeVariables)?.({ outcome: 'connected' });
+    });
+
+    expect(screen.getByTestId('acx-test-connection-banner')).toHaveAttribute(
+      'data-outcome',
+      'network_error',
+    );
   });
 });

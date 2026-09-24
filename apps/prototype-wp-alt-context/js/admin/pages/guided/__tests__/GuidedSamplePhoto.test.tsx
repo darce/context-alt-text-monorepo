@@ -66,13 +66,15 @@ describe('GuidedSamplePhoto image geometry', () => {
 });
 
 describe('GuidedSamplePhoto figure content', () => {
-  it('renders inline credit, trimmed AltText.ai provenance, and children after the figcaption', () => {
+  it('uses the current description as image alt and collapses the comparison caption', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[1];
+    const currentDescription = 'The current description for this photo.';
     const { container } = render(
       <GuidedSamplePhoto
         photo={photo}
-        currentAltText={photo.altText}
+        evidenceAlt={photo.altContextDescription.text}
+        currentAltText={currentDescription}
         showCurrentAltText
         scope="public"
         headingId="guided-photo-coachella-title"
@@ -85,6 +87,9 @@ describe('GuidedSamplePhoto figure content', () => {
     const heading = screen.getByRole('heading', { level: 3, name: photo.event });
     expect(heading).toHaveAttribute('id', 'guided-photo-coachella-title');
     expect(figure).toHaveAttribute('aria-labelledby', 'guided-photo-coachella-title');
+    const image = screen.getByRole('img', { name: currentDescription });
+    expect(image).toHaveAttribute('alt', currentDescription);
+    expect(screen.queryByRole('img', { name: photo.altContextDescription.text })).not.toBeInTheDocument();
 
     const wrap = figure.querySelector('.acx-guided-page__image-wrap');
     const credit = figure.querySelector('p.acx-guided-page__credit');
@@ -98,16 +103,23 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(credit?.closest('details')).toBeNull();
     expect(credit?.querySelector('a')).toHaveAttribute('href', photo.credit);
 
-    const altTextAiCaption = within(screen.getByRole('region', { name: /AltText\.ai/ }));
-    const captionProvenance = altTextAiCaption.getByText(/Captured 10 September 2026\./, {
+    const altTextAiDetails = figure.querySelector('details.acx-guided-page__caption');
+    expect(altTextAiDetails).toBeInstanceOf(HTMLDetailsElement);
+    expect(altTextAiDetails).not.toHaveAttribute('open');
+    expect(altTextAiDetails).toContainElement(
+      within(altTextAiDetails as HTMLDetailsElement).getByText('How another tool describes this photo'),
+    );
+    expect(altTextAiDetails).toHaveTextContent('For comparison only, not a benchmark.');
+    expect(altTextAiDetails).not.toHaveTextContent(photo.altContextDescription.text);
+    const captionProvenance = within(altTextAiDetails as HTMLDetailsElement).getByText(/Captured 10 September 2026\./, {
       selector: 'p.acx-guided-page__caption-provenance',
     });
     expect(captionProvenance.textContent).toBe('AltText.ai · Captured 10 September 2026.');
     expect(captionProvenance).not.toHaveTextContent(photo.altTextAiCaption.note);
-    expect(figure.querySelector('details.acx-guided-page__provenance')).toBeNull();
 
     expect(figcaption).not.toContainElement(slot);
     expect(figure.lastElementChild).toBe(slot);
-    expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(2);
+    expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(0);
+    expect(figcaption).not.toHaveTextContent('Current alt text in the demo copy:');
   });
 });

@@ -6,6 +6,7 @@ import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
   GUIDED_NAME_CHOICE,
+  GUIDED_OUTCOME,
 } from '../../../guidedPrototype/state';
 import { guidedCopy as publicGuidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { GuidedDescriptionReview, type GuidedDescriptionReviewActions } from '../GuidedDescriptionReview';
@@ -73,13 +74,75 @@ describe('GuidedDescriptionReview per-image drafts', () => {
     expect(screen.getByTestId('demo-undo-coachella')).toBeDisabled();
   });
 
+  it('keeps admin apply and Keep eligibility tied to the photo whose names were answered', () => {
+    const reviewActions = actions();
+    const state = perImageState();
+    state.photoChoices = {
+      tribeca: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+      coachella: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.UNANSWERED,
+      },
+    };
+
+    render(<GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} />);
+
+    const tribeca = screen.getByTestId('guided-description-review-tribeca');
+    const coachella = screen.getByTestId('guided-description-review-coachella');
+    expect(within(tribeca).getByTestId('demo-apply-tribeca')).toBeEnabled();
+    expect(within(tribeca).getByTestId('guided-keep-current-tribeca')).toBeEnabled();
+    expect(within(tribeca).queryByText(publicGuidedCopy('draft.blocked'))).not.toBeInTheDocument();
+    expect(within(coachella).getByTestId('demo-apply-coachella')).toBeDisabled();
+    expect(within(coachella).getByTestId('guided-keep-current-coachella')).toBeDisabled();
+    expect(within(coachella).getAllByText(publicGuidedCopy('draft.blocked')).length).toBeGreaterThan(0);
+  });
+
+  it('shows the public empty state without controls and lets answered Coachella apply independently', () => {
+    const reviewActions = actions();
+    const state = perImageState();
+    state.photoChoices = {
+      tribeca: {
+        left: GUIDED_NAME_CHOICE.UNANSWERED,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+      coachella: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
+      },
+    };
+
+    render(<GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />);
+
+    const tribeca = screen.getByTestId('guided-description-review-tribeca');
+    const coachella = screen.getByTestId('guided-description-review-coachella');
+    expect(within(tribeca).getByText(publicGuidedCopy('choices.help.public'))).toBeInTheDocument();
+    expect(within(tribeca).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(tribeca).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(within(tribeca).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(coachella).getByTestId('demo-apply-coachella')).toBeEnabled();
+    expect(within(coachella).getByTestId('guided-keep-current-coachella')).toBeEnabled();
+    expect(within(coachella).queryByText(publicGuidedCopy('error.no_recorded_draft.public'))).not.toBeInTheDocument();
+  });
+
   it('uses the public review heading and gives the apply target real labelled section semantics', () => {
     const reviewActions = actions();
     render(
       <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={reviewActions} scope="public" />,
     );
 
-    expect(screen.getByRole('heading', { name: publicGuidedCopy('step.review.public') })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('step.review.public') })).toBeInTheDocument();
+    for (const imageKey of ['tribeca', 'coachella'] as const) {
+      const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(
+        within(review).getAllByRole('heading', {
+          level: 4,
+          name: publicGuidedCopy('step.review.public'),
+        }),
+      ).toHaveLength(1);
+    }
     expect(screen.queryByRole('heading', { name: 'Edit the alt text' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Apply and undo' })).not.toBeInTheDocument();
 
@@ -110,7 +173,9 @@ describe('GuidedDescriptionReview per-image drafts', () => {
       ...state.drafts,
       tribeca: { ...tribecaDraft, previewedVersion: null },
     };
-    render(<GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />);
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />,
+    );
 
     const card = screen.getByTestId('guided-description-review-tribeca');
     const editor = within(card).getByRole('textbox', { name: publicGuidedCopy('draft.field_label.public') });
@@ -125,6 +190,133 @@ describe('GuidedDescriptionReview per-image drafts', () => {
     expect(within(card).getByTestId('guided-image-status-tribeca')).toHaveTextContent(
       publicGuidedCopy('outcome.applied_image.public'),
     );
+
+    const appliedState = perImageState();
+    const appliedDraft = appliedState.drafts?.tribeca;
+    if (appliedDraft === undefined) {
+      throw new Error('Expected an applied Tribeca draft fixture.');
+    }
+    appliedState.drafts = {
+      ...appliedState.drafts,
+      tribeca: {
+        ...appliedDraft,
+        draftText: visibleText,
+        draftVersion: 2,
+        appliedAltText: visibleText,
+        applicationHistory: [
+          {
+            previousAltText: appliedTribeca,
+            appliedDraftVersion: 2,
+            sequence: 1,
+          },
+        ],
+      },
+    };
+    rerender(
+      <GuidedDescriptionReview scenario={scenario} state={appliedState} actions={reviewActions} scope="public" />,
+    );
+    expect(within(card).getByTestId('demo-undo-tribeca')).toHaveFocus();
+    expect(within(card).queryByTestId('demo-applied-image-tribeca')).not.toBeInTheDocument();
+  });
+
+  it('announces when the public reader keeps the current description', () => {
+    const reviewActions = actions();
+    reviewActions.onKeepForImage = vi.fn();
+    render(
+      <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={reviewActions} scope="public" />,
+    );
+
+    const card = screen.getByTestId('guided-description-review-coachella');
+    fireEvent.click(within(card).getByTestId('guided-keep-current-coachella'));
+
+    expect(reviewActions.onKeepForImage).toHaveBeenCalledWith('coachella');
+    expect(within(card).getByTestId('guided-image-status-coachella')).toHaveTextContent(
+      publicGuidedCopy('outcome.kept_body.public'),
+    );
+    expect(within(card).queryByText(publicGuidedCopy('error.unchanged_draft.public'))).not.toBeInTheDocument();
+  });
+
+  it('disables Keep after Use and enables it again after Undo', () => {
+    const reviewActions = actions();
+    reviewActions.onApplyForImage = vi.fn();
+    reviewActions.onUndoForImage = vi.fn();
+    const state = perImageState();
+    state.photoChoices = {
+      tribeca: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+      coachella: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+    };
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />,
+    );
+    const card = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(card).getByRole('textbox', { name: publicGuidedCopy('draft.field_label.public') });
+    const editedDescription = 'An edited description used for this photo.';
+    fireEvent.change(editor, { target: { value: editedDescription } });
+    fireEvent.click(within(card).getByTestId('demo-apply-tribeca'));
+
+    expect(reviewActions.onApplyForImage).toHaveBeenCalledWith('tribeca', editedDescription);
+
+    const appliedState = perImageState();
+    const tribecaDraft = appliedState.drafts?.tribeca;
+    if (tribecaDraft === undefined) {
+      throw new Error('Expected an applied Tribeca draft fixture.');
+    }
+    appliedState.photoChoices = state.photoChoices;
+    appliedState.drafts = {
+      ...appliedState.drafts,
+      tribeca: {
+        ...tribecaDraft,
+        draftText: editedDescription,
+        draftVersion: 2,
+        appliedAltText: editedDescription,
+        outcome: GUIDED_OUTCOME.APPLIED,
+        applicationHistory: [
+          {
+            previousAltText: appliedTribeca,
+            appliedDraftVersion: 2,
+            sequence: 1,
+          },
+        ],
+      },
+    };
+    const appliedTribecaDraft = appliedState.drafts.tribeca;
+    if (appliedTribecaDraft === undefined) {
+      throw new Error('Expected the applied Tribeca draft.');
+    }
+    rerender(
+      <GuidedDescriptionReview scenario={scenario} state={appliedState} actions={reviewActions} scope="public" />,
+    );
+
+    expect(within(card).getByTestId('guided-keep-current-tribeca')).toBeDisabled();
+    expect(within(card).getByTestId('demo-undo-tribeca')).toBeEnabled();
+
+    fireEvent.click(within(card).getByTestId('demo-undo-tribeca'));
+    expect(reviewActions.onUndoForImage).toHaveBeenCalledWith('tribeca');
+
+    const undoneState: GuidedReviewState = {
+      ...appliedState,
+      drafts: {
+        ...appliedState.drafts,
+        tribeca: {
+          ...appliedTribecaDraft,
+          appliedAltText: appliedTribeca,
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
+          applicationHistory: [],
+        },
+      },
+    };
+    rerender(
+      <GuidedDescriptionReview scenario={scenario} state={undoneState} actions={reviewActions} scope="public" />,
+    );
+
+    expect(within(card).getByTestId('guided-keep-current-tribeca')).toBeEnabled();
+    expect(within(card).getByTestId('demo-undo-tribeca')).toBeDisabled();
   });
 
   it('clears a public card status when reset replaces its draft state', () => {
@@ -164,7 +356,7 @@ describe('GuidedDescriptionReview per-image drafts', () => {
     };
     rerender(<GuidedDescriptionReview scenario={scenario} state={resetState} actions={reviewActions} scope="public" />);
 
-    expect(screen.getByTestId('guided-image-status-tribeca')).toHaveTextContent(/^$/);
+    expect(screen.queryByTestId('guided-image-status-tribeca')).not.toBeInTheDocument();
   });
 
   it('sends image keys with preview and apply actions', () => {

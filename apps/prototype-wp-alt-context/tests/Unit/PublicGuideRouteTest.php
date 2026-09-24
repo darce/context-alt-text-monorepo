@@ -192,6 +192,14 @@ final class PublicGuideRouteTest extends TestCase
 
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
+        self::assertStringContainsString(
+            "<title>Demo: names change a photo's meaning | AltContext</title>",
+            $html
+        );
+        self::assertStringContainsString(
+            '<meta name="description" content="Try the AltContext demo. Write an image description (alt text) and choose who is named in each photo.">',
+            $html
+        );
         self::assertSame(1, $GLOBALS['__ac_wp_head_calls']);
         self::assertSame(1, $GLOBALS['__ac_wp_footer_calls']);
         self::assertSame(0, $GLOBALS['__ac_get_header_calls']);

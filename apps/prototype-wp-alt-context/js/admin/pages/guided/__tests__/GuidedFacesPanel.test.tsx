@@ -48,13 +48,17 @@ describe('GuidedFacesPanel', () => {
 
   it('requires answers for both photos before enabling continuation', () => {
     const tribecaAnswered = answerPhoto('tribeca');
-    renderPanel(tribecaAnswered);
+    const view = render(
+      <GuidedFacesPanel scenario={scenario} state={tribecaAnswered} onChoose={vi.fn()} onContinue={vi.fn()} />,
+    );
     expect(within(identitySection()).getByRole('button', { name: guidedCopy('names.next') })).toBeDisabled();
 
     let bothAnswered = answerPhoto('tribeca');
     bothAnswered = chooseGuidedName(bothAnswered, scenario, 'left', GUIDED_NAME_CHOICE.USE, 'coachella');
     bothAnswered = chooseGuidedName(bothAnswered, scenario, 'right', GUIDED_NAME_CHOICE.LEAVE_UNNAMED, 'coachella');
-    render(<GuidedFacesPanel scenario={scenario} state={bothAnswered} onChoose={vi.fn()} onContinue={vi.fn()} />);
+    view.rerender(
+      <GuidedFacesPanel scenario={scenario} state={bothAnswered} onChoose={vi.fn()} onContinue={vi.fn()} />,
+    );
     expect(within(identitySection()).getByRole('button', { name: guidedCopy('names.next') })).toBeEnabled();
   });
 });

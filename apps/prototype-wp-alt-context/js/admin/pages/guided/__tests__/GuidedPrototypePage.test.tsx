@@ -408,14 +408,49 @@ describe('GuidedPrototypePage journey', () => {
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
     const coachellaPhoto = screen.getByTestId('guided-photo-coachella');
+    const creditsFor = (personKey: 'justin-trudeau' | 'katy-perry'): string[] => {
+      const person = SCENARIO.people.find(({ key }) => key === personKey);
+      if (!person) {
+        throw new Error(`Missing sample person ${personKey}`);
+      }
+      return person.galleryPhotos.map(({ credit }) => credit);
+    };
     const comparisons = [
-      { photo: tribecaPhoto, name: 'Justin Trudeau', position: 'left', shown: 3, total: 3 },
-      { photo: tribecaPhoto, name: 'Katy Perry', position: 'right', shown: 3, total: 5 },
-      { photo: coachellaPhoto, name: 'Justin Trudeau', position: 'left', shown: 3, total: 3 },
-      { photo: coachellaPhoto, name: 'Katy Perry', position: 'right', shown: 3, total: 5 },
+      {
+        photo: tribecaPhoto,
+        name: 'Justin Trudeau',
+        position: 'left',
+        shown: 3,
+        total: 3,
+        credits: creditsFor('justin-trudeau'),
+      },
+      {
+        photo: tribecaPhoto,
+        name: 'Katy Perry',
+        position: 'right',
+        shown: 3,
+        total: 5,
+        credits: creditsFor('katy-perry'),
+      },
+      {
+        photo: coachellaPhoto,
+        name: 'Justin Trudeau',
+        position: 'left',
+        shown: 3,
+        total: 3,
+        credits: creditsFor('justin-trudeau'),
+      },
+      {
+        photo: coachellaPhoto,
+        name: 'Katy Perry',
+        position: 'right',
+        shown: 3,
+        total: 5,
+        credits: creditsFor('katy-perry'),
+      },
     ] as const;
 
-    for (const { photo, name, position, shown, total } of comparisons) {
+    for (const { photo, name, position, shown, total, credits } of comparisons) {
       const region = within(photo).getByRole('region', { name });
       await user.click(within(region).getByRole('button', { name: publicGuidedCopy('names.compare.public') }));
 
@@ -431,9 +466,9 @@ describe('GuidedPrototypePage journey', () => {
         ),
       ).toBeInTheDocument();
       expect(within(dialog).queryByText(/Show all 5/)).not.toBeInTheDocument();
-      expect(
-        within(dialog).getAllByText('© European Union, 2025, EU reuse licence, resized').length,
-      ).toBeGreaterThan(0);
+      credits.forEach((credit) => {
+        expect(within(dialog).getByText(credit)).toBeVisible();
+      });
 
       await user.click(within(dialog).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

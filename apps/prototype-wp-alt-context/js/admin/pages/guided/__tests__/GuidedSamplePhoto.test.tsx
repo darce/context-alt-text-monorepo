@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario, getGuidedFace } from '../../../guidedPrototype/state';
 import { GuidedSamplePhoto } from '../GuidedSamplePhoto';
 
@@ -39,7 +40,7 @@ describe('GuidedSamplePhoto image geometry', () => {
     expect((wrap as HTMLElement).style.aspectRatio).toBe('');
 
     const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
-    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4%/ });
+    const outline = screen.getByRole('button', { name: /Justin Trudeau, Strong match/ });
     expect(outline).toHaveStyle({
       left: `${(justinFace.box.x / 1000) * 100}%`,
       top: `${(justinFace.box.y / 800) * 100}%`,
@@ -121,5 +122,81 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(figure.lastElementChild).toBe(slot);
     expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(0);
     expect(figcaption).not.toHaveTextContent('Current alt text in the demo copy:');
+  });
+
+  it('keeps the current description and comparison captions for the admin scope', () => {
+    const scenario = createGuidedScenario();
+    const photo = scenario.pressPhotos[0];
+    const currentDescription = 'The current admin description for this photo.';
+    const { container } = render(
+      <GuidedSamplePhoto photo={photo} currentAltText={currentDescription} showCurrentAltText scope="admin" />,
+    );
+
+    const figure = container.querySelector('figure');
+    expect(figure).toBeInstanceOf(HTMLElement);
+    expect(
+      within(figure as HTMLElement).getByText(`${guidedCopy('context.current_label')}: ${currentDescription}`),
+    ).toBeInTheDocument();
+    expect(
+      within(figure as HTMLElement).getByRole('heading', {
+        level: 4,
+        name: guidedCopy('context.photo.altcontext_title'),
+      }),
+    ).toBeInTheDocument();
+    expect(within(figure as HTMLElement).getByText(photo.altContextDescription.text)).toBeInTheDocument();
+    expect(
+      within(figure as HTMLElement).getByRole('heading', {
+        level: 4,
+        name: guidedCopy('context.photo.alttextai_title'),
+      }),
+    ).toBeInTheDocument();
+    if (photo.altTextAiCaption.text === null) {
+      expect(within(figure as HTMLElement).getByText(guidedCopy('context.photo.no_caption'))).toBeInTheDocument();
+    } else {
+      expect(within(figure as HTMLElement).getByText(photo.altTextAiCaption.text)).toBeInTheDocument();
+    }
+    expect(figure?.querySelector('details.acx-guided-page__caption')).toBeNull();
+  });
+
+  it('does not expose similarity values in the public overlay chip or accessible names', () => {
+    const scenario = createGuidedScenario();
+    const photo = scenario.pressPhotos[0];
+    render(
+      <GuidedSamplePhoto
+        photo={photo}
+        currentAltText={photo.altText}
+        showCurrentAltText={false}
+        scope="public"
+      />,
+    );
+
+    const image = screen.getByRole('img', { name: photo.altText });
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 800 });
+    fireEvent.load(image);
+
+    const overlay = screen.getByTestId('guided-face-overlay');
+    const buttons = within(overlay).getAllByRole('button');
+    const photoFaces = scenario.faces.filter((face) => face.imageKey === photo.key);
+    expect(buttons).toHaveLength(photoFaces.length);
+
+    for (const button of buttons) {
+      const face = photoFaces.find((candidate) => candidate.id === button.getAttribute('data-face-id'));
+      expect(face).toBeDefined();
+      const chipText = button.querySelector('.acx-guided-face-overlay__chip-label')?.textContent ?? '';
+      const accessibleName = button.getAttribute('aria-label') ?? '';
+      const publicText = `${chipText} ${accessibleName}`;
+      expect(publicText).not.toMatch(/\d+\s*%/);
+      if (face?.similarity !== null && face?.similarity !== undefined) {
+        expect(publicText).not.toContain(String(face.similarity));
+      }
+    }
+
+    const anchor = photoFaces.find((face) => face.isClusterAnchor);
+    if (anchor !== undefined) {
+      const anchorButton = overlay.querySelector(`[data-face-id="${anchor.id}"]`);
+      expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
+      expect(anchorButton?.textContent).not.toMatch(/\d+\s*%/);
+    }
   });
 });

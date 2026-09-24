@@ -135,4 +135,34 @@ describe('bulk describe-run wrapper boundaries', () => {
     await expect(invoke()).rejects.toThrow(/response\.run_id/);
     expect(fetchApiMock).toHaveBeenCalledOnce();
   });
+
+  it('accepts WP unreadable media IDs on submit and returns them with the run', async () => {
+    fetchApiMock.mockResolvedValue({ ...validRun, unreadable_media_ids: [7, 9] });
+
+    await expect(submitBulkDescribeRun([101])).resolves.toEqual({
+      ...validRun,
+      unreadable_media_ids: [7, 9],
+    });
+  });
+
+  it.each([
+    ['non-integer', ['x']],
+    ['negative', [-1]],
+  ] as const)('rejects %s unreadable media IDs', async (_label, unreadableMediaIds) => {
+    fetchApiMock.mockResolvedValue({ ...validRun, unreadable_media_ids: unreadableMediaIds });
+
+    await expect(submitBulkDescribeRun([101])).rejects.toThrow(/response\.unreadable_media_ids/);
+  });
+
+  it('continues rejecting other unknown submit fields', async () => {
+    fetchApiMock.mockResolvedValue({ ...validRun, unexpected: true });
+
+    await expect(submitBulkDescribeRun([101])).rejects.toThrow(/response\.unexpected/);
+  });
+
+  it('continues rejecting WP unreadable media IDs on GET', async () => {
+    fetchApiMock.mockResolvedValue({ ...validRun, unreadable_media_ids: [7, 9] });
+
+    await expect(fetchBulkDescribeRun(RUN_ID)).rejects.toThrow(/response\.unreadable_media_ids/);
+  });
 });

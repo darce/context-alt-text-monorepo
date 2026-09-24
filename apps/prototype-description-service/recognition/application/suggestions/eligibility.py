@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
@@ -47,3 +48,8 @@ def is_eligible_cluster(cluster: EligibleCluster, tenant_id: str) -> bool:
 
     # Must not be an auto-generated "cluster-*" label
     return not str(label).startswith("cluster-")
+
+
+def is_candidate_already_a_cluster_member(candidate_identity_id: str, member_identity_ids: Collection[str]) -> bool:
+    """Return whether this candidate identity already belongs to the target cluster."""
+    return candidate_identity_id in member_identity_ids

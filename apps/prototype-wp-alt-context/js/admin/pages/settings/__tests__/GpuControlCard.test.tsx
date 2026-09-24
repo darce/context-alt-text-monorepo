@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, GPU_STATE, type GpuStatusResponse } from '../../../api/gpuApi';
-import { HTTPError } from '../../../utils/http';
+import { HTTPError, NonceRefreshFailedError } from '../../../utils/http';
 import { GPU_STATE_VOCABULARY } from '../../workbench/gpuStatePresentation';
 import { GpuControlCard } from '../GpuControlCard';
 import * as gpuControl from '../useGpuControl';
@@ -61,6 +61,9 @@ const mockControl = (data: GpuStatusResponse, overrides: Partial<ReturnType<type
     isFetching: false,
     isError: false,
     error: null,
+    errorUpdatedAt: 0,
+    dataUpdatedAt: 0,
+    pollIntervalMs: 15_000,
     refetch: vi.fn(),
     canStart:
       effectiveState !== undefined &&
@@ -383,19 +386,35 @@ describe('GpuControlCard', () => {
     expect(screen.queryByRole('button', { name: /Confirm/ })).not.toBeInTheDocument();
   });
 
-  it('renders an initial fetch error with Refresh and announces it', () => {
+  it('names an untyped HTTP failure, cause, last checked time, and actual retry interval', () => {
     const refetch = vi.fn();
+    const checkedAt = Date.parse('2026-09-18T14:03:22Z');
     mockControl(statusResponse(), {
       data: undefined,
       isError: true,
-      error: new Error('502 Bad Gateway'),
+      error: new HTTPError({
+        status: 502,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/gpu/status',
+        bodyPreview: JSON.stringify({ code: 'rest_no_route', message: 'No route was found.', data: { status: 502 } }),
+        message: 'Request to /acx/v1/gpu/status failed (502)',
+      }),
+      errorUpdatedAt: checkedAt,
       refetch,
     });
     render(<GpuControlCard />);
 
     const chip = screen.getByTestId('z-gpu-state-chip');
     expect(chip).toHaveAttribute('aria-live', 'polite');
-    expect(chip).toHaveTextContent(/Could not reach the description service \(502\)/);
+    expect(screen.getByTestId('gpu-control-error-status')).toHaveTextContent(
+      'Description Service (GPU control) unavailable',
+    );
+    expect(screen.getByTestId('gpu-control-error-status')).toHaveTextContent('Cause: HTTP 502 (rest_no_route)');
+    expect(screen.getByTestId('gpu-control-error-icon')).toBeInTheDocument();
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.getByText('Retrying in 15 s')).toBeInTheDocument();
+    expect(screen.queryByText(/is unavailable because/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Could not reach the description service/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     const refresh = screen.getByRole('button', { name: 'Refresh' });
     expect(refresh).toBeEnabled();
@@ -403,17 +422,55 @@ describe('GpuControlCard', () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
-  it('disables Refresh while refetching after an initial fetch error', () => {
+  it('shows a network cause without claiming a retry when polling is off', () => {
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: new NonceRefreshFailedError({ message: 'REST nonce refresh network error: Failed to fetch.' }),
+      dataUpdatedAt: Date.parse('2026-09-18T14:03:22Z'),
+      pollIntervalMs: false,
+      refetch: vi.fn(),
+    });
+    render(<GpuControlCard />);
+
+    expect(screen.getByTestId('gpu-control-error-status')).toHaveTextContent(
+      'Description Service (GPU control) unavailable',
+    );
+    expect(screen.getByTestId('gpu-control-error-status')).toHaveTextContent(
+      'Cause: Network error — check your connection',
+    );
+    expect(screen.getByText('Last checked 14:03:22')).toBeInTheDocument();
+    expect(screen.queryByText(/Retrying in/)).not.toBeInTheDocument();
+  });
+
+  it('calls Refresh and shows rechecking feedback and busy state while fetching an untyped error', () => {
+    const refetch = vi.fn();
+    mockControl(statusResponse(), {
+      data: undefined,
+      isError: true,
+      error: new Error('502 Bad Gateway'),
+      pollIntervalMs: false,
+      refetch,
+    });
+    const { rerender } = render(<GpuControlCard />);
+
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    fireEvent.click(refresh);
+    expect(refetch).toHaveBeenCalledOnce();
+
     mockControl(statusResponse(), {
       data: undefined,
       isError: true,
       isFetching: true,
       error: new Error('502 Bad Gateway'),
-      refetch: vi.fn(),
+      pollIntervalMs: false,
+      refetch,
     });
-    render(<GpuControlCard />);
+    rerender(<GpuControlCard />);
 
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('gpu-control-error-status')).toHaveTextContent('Checking service status…');
   });
 
   it('clears a start confirmation when start becomes disallowed even if stop remains allowed', () => {

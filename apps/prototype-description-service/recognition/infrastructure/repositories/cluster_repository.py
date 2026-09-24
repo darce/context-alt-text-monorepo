@@ -18,6 +18,7 @@ from sqlalchemy import Select, delete, exists, func, null, or_, select, text, up
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
+from sqlalchemy.sql.elements import ColumnElement
 
 from db.models import IdentityCluster as ClusterModel
 from db.models import IdentityClusterRepresentative, IdentitySuggestion, MediaIdentity
@@ -44,6 +45,35 @@ _DB_SETTINGS = get_database_settings()
 logger = logging.getLogger(__name__)
 _TOP_UNLABELED_FALLBACK_REP_LIMIT = 4
 _SNAPSHOT_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _top_unlabeled_filters(
+    tenant_uuid: uuid.UUID,
+    min_identity_count: int,
+) -> tuple[ColumnElement[bool], ...]:
+    """Return the shared qualifying filter for top-unlabeled reads and counts."""
+    accepted_member_suggestion_exists = (
+        select(1)
+        .select_from(IdentityMemberModel)
+        .join(
+            IdentitySuggestion,
+            IdentitySuggestion.identity_id == IdentityMemberModel.identity_id,
+        )
+        .where(IdentityMemberModel.cluster_id == ClusterModel.id)
+        .where(IdentitySuggestion.tenant_id == tenant_uuid)
+        .where(IdentitySuggestion.resolution == "accepted")
+        .where(IdentitySuggestion.suggested_cluster_id != ClusterModel.id)
+    )
+
+    return (
+        ClusterModel.tenant_id == tenant_uuid,
+        ClusterModel.user_confirmed.is_(False),
+        or_(ClusterModel.label.is_(None), ClusterModel.label.startswith("cluster-")),
+        ClusterModel.identity_count >= min_identity_count,
+        ClusterModel.dismissed_at.is_(None),
+        ~exists(accepted_member_suggestion_exists),
+    )
+
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
@@ -331,33 +361,13 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         across the tenant (not latest-run scoped), so users label the most observations first.
         Dismissed clusters and singletons are excluded.
         """
-        from sqlalchemy import or_
-
         tenant_uuid = _coerce_uuid(tenant_id)
         if tenant_uuid is None:
             return []
 
-        accepted_member_suggestion_exists = (
-            select(1)
-            .select_from(IdentityMemberModel)
-            .join(
-                IdentitySuggestion,
-                IdentitySuggestion.identity_id == IdentityMemberModel.identity_id,
-            )
-            .where(IdentityMemberModel.cluster_id == ClusterModel.id)
-            .where(IdentitySuggestion.tenant_id == tenant_uuid)
-            .where(IdentitySuggestion.resolution == "accepted")
-            .where(IdentitySuggestion.suggested_cluster_id != ClusterModel.id)
-        )
-
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
-            .where(ClusterModel.tenant_id == tenant_uuid)
-            .where(ClusterModel.user_confirmed.is_(False))
-            .where(or_(ClusterModel.label.is_(None), ClusterModel.label.startswith("cluster-")))
-            .where(ClusterModel.identity_count >= min_identity_count)
-            .where(ClusterModel.dismissed_at.is_(None))
-            .where(~exists(accepted_member_suggestion_exists))
+            .where(*_top_unlabeled_filters(tenant_uuid, min_identity_count))
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
             )
@@ -413,6 +423,18 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             topped_up_clusters,
         )
         return results
+
+    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+        """Count all clusters that qualify for the top-unlabeled listing."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return 0
+
+        stmt = select(func.count()).select_from(ClusterModel).where(
+            *_top_unlabeled_filters(tenant_uuid, min_identity_count)
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
     async def _get_member_fallback_representatives(
         self,

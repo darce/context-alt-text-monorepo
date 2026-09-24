@@ -1102,7 +1102,7 @@ describe('SettingsPage', () => {
     expect(routing).toHaveTextContent('not configured');
   });
 
-  it('disables Check health when routing edits are unsaved', () => {
+  it('keeps Check health enabled when routing edits are unsaved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);
 
@@ -1110,8 +1110,8 @@ describe('SettingsPage', () => {
       target: { value: 'https://new-api.example.com' },
     });
 
-    expect(screen.getByRole('button', { name: 'Check health' })).toBeDisabled();
-    expect(screen.getByText(/Save settings before scanning or testing/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check health' })).toBeEnabled();
+    expect(screen.queryByText(/Save settings before scanning or testing/)).not.toBeInTheDocument();
   });
 
   describe('probe outcome banners', () => {

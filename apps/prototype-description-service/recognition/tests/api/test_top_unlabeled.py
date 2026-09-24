@@ -48,13 +48,56 @@ async def test_get_top_unlabeled_returns_clusters(
 
     assert resp.status_code == 200
     body = resp.json()
+    clusters = body["clusters"]
 
-    assert len(body) == 2
-    assert body[0]["id"] == c1.id
-    assert body[0]["identity_count"] == 10
-    assert body[1]["id"] == c3.id
-    assert body[1]["identity_count"] == 5
-    assert not any(c["label"] for c in body)
+    assert body["limit"] == 2
+    assert body["total"] == 2
+    assert body["truncated"] is False
+    assert len(clusters) == 2
+    assert clusters[0]["id"] == c1.id
+    assert clusters[0]["identity_count"] == 10
+    assert clusters[1]["id"] == c3.id
+    assert clusters[1]["identity_count"] == 5
+    assert not any(c["label"] for c in clusters)
+
+
+def test_get_top_unlabeled_empty_tenant_returns_envelope(api_client: TestClient) -> None:
+    empty_tenant_id = str(uuid.uuid4())
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        headers={"X-Tenant-ID": empty_tenant_id},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"clusters": [], "limit": 10, "total": 0, "truncated": False}
+
+
+def test_get_top_unlabeled_reports_truncation(
+    api_client: TestClient,
+    tenant_id: str,
+    fake_cluster_repository,
+) -> None:
+    cluster_ids = [str(uuid.uuid4()) for _ in range(3)]
+    for identity_count, cluster_id in enumerate(cluster_ids, start=3):
+        fake_cluster_repository.seed(
+            cluster_id,
+            tenant_id=tenant_id,
+            label=None,
+            identity_count=identity_count,
+        )
+
+    resp = api_client.get(
+        "/recognition/clusters/top-unlabeled",
+        params={"limit": 2},
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["clusters"]) == 2
+    assert body["limit"] == 2
+    assert body["total"] == 3
+    assert body["truncated"] is True
 
 
 def test_get_top_unlabeled_uses_authenticated_tenant_claim(
@@ -100,7 +143,7 @@ def test_get_top_unlabeled_uses_authenticated_tenant_claim(
 
     assert resp.status_code == 200
     assert captured["tenant_id"] == tenant_id
-    assert [cluster["id"] for cluster in resp.json()] == [cluster_id]
+    assert [cluster["id"] for cluster in resp.json()["clusters"]] == [cluster_id]
 
 
 @pytest.mark.asyncio
@@ -137,8 +180,9 @@ async def test_get_top_unlabeled_includes_representative_crop_fields(
 
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body) == 1
-    rep = body[0]["representatives"][0]
+    clusters = body["clusters"]
+    assert len(clusters) == 1
+    rep = clusters[0]["representatives"][0]
     assert rep["media_url"] == "http://example.test/media/101.jpg"
     assert rep["bbox"] == {"x": 12, "y": 8, "width": 40, "height": 30}
 
@@ -177,8 +221,9 @@ async def test_get_top_unlabeled_includes_face_thumb_url_for_blob_backed_represe
 
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body) == 1
-    rep = body[0]["representatives"][0]
+    clusters = body["clusters"]
+    assert len(clusters) == 1
+    rep = clusters[0]["representatives"][0]
     assert rep["thumb_url"] == "/recognition/face-thumbs/job-42/101?x=12&y=8&width=40&height=30"
 
 
@@ -216,7 +261,7 @@ async def test_get_top_unlabeled_propagates_user_selected_representative_pin(
     )
 
     assert resp.status_code == 200
-    rep = resp.json()[0]["representatives"][0]
+    rep = resp.json()["clusters"][0]["representatives"][0]
     assert rep["id"] == rep_id
     assert rep["is_user_selected"] is True
     assert "is_pinned" not in rep
@@ -255,7 +300,7 @@ async def test_get_top_unlabeled_null_media_id_is_not_fabricated_to_zero(
     )
 
     assert resp.status_code == 200
-    rep = resp.json()[0]["representatives"][0]
+    rep = resp.json()["clusters"][0]["representatives"][0]
     assert rep["media_id"] is None
     assert rep["media_id"] != 0
     assert rep["media_id"] != "0"
@@ -283,11 +328,12 @@ async def test_get_top_unlabeled_includes_suggested_label_fields(
 
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body) == 1
-    assert body[0]["suggested_label"] == "Pewter Hollow"
-    assert body[0]["suggested_label_source"] == "similar_cluster"
-    assert body[0]["suggested_label_confidence"] == 0.93
-    assert body[0]["suggested_target_cluster_id"] == cluster.suggested_target_cluster_id
+    clusters = body["clusters"]
+    assert len(clusters) == 1
+    assert clusters[0]["suggested_label"] == "Pewter Hollow"
+    assert clusters[0]["suggested_label_source"] == "similar_cluster"
+    assert clusters[0]["suggested_label_confidence"] == 0.93
+    assert clusters[0]["suggested_target_cluster_id"] == cluster.suggested_target_cluster_id
 
 
 @pytest.mark.asyncio
@@ -311,7 +357,7 @@ async def test_dismissed_clusters_excluded_from_top_unlabeled(
 
     assert resp.status_code == 200
     body = resp.json()
-    ids = [c["id"] for c in body]
+    ids = [c["id"] for c in body["clusters"]]
     assert "c-big" not in ids
     assert "c-small" in ids
 

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
@@ -12,6 +12,7 @@ import {
   type SaveSettingsPayload,
   type SaveSettingsResponse,
   type SettingsResponse,
+  type TestConnectionResponse,
 } from '../api/settingsApi';
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
@@ -29,6 +30,14 @@ import { useSettingsPageState } from './settings/useSettingsPageState';
 const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
 const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
 
+interface SettingsFormSnapshot {
+  url: string;
+  apiKey: string;
+  descriptionBudgetMaxAttempts: string;
+  recognitionEnabled: boolean;
+  allowPersonNames: boolean | null;
+}
+
 const sectionFromLocation = (search: string, hash: string): string | null => {
   const fromSearch = new URLSearchParams(search).get('section');
   if (fromSearch) {
@@ -45,6 +54,14 @@ const sectionFromLocation = (search: string, hash: string): string | null => {
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const location = useLocation();
+  const automaticHealthCheckStarted = useRef(false);
+  const healthProbeGeneration = useRef(0);
+  const healthProbeMetadata = useRef(new WeakMap<object, { generation: number; afterRoutingSave: boolean }>());
+  const routingSavePending = useRef(false);
+  const routingSaveFeedback = useRef(false);
+  const routingSaveIncludesOtherSettings = useRef(false);
+  const inFlightRoutingApiKey = useRef<string | null>(null);
+  const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: queryKeys.settings.all,
@@ -74,9 +91,141 @@ export const SettingsPage = (): React.JSX.Element => {
     resetConfigCache();
   };
 
+  const applyHealthProbeSuccess = (data: TestConnectionResponse, generation: number): void => {
+    if (generation !== healthProbeGeneration.current) {
+      return;
+    }
+    dispatch({ type: 'setTestResult', value: data });
+    // A reachable probe (or an adopted tenant) means the service is back;
+    // refetch sync health so the offline banner clears immediately.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+  };
+
+  const applyHealthProbeError = (generation: number): void => {
+    if (generation !== healthProbeGeneration.current) {
+      return;
+    }
+    dispatch({
+      type: 'setTestResult',
+      value: { outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: 'service_auth' },
+    });
+  };
+
+  const clearRoutingCheckFeedback = (): void => {
+    if (routingSaveFeedback.current) {
+      routingSaveFeedback.current = false;
+      dispatch({ type: 'clearSaveMessage' });
+    }
+  };
+
+  const captureFormSnapshot = (): SettingsFormSnapshot => ({
+    url: state.url,
+    apiKey: state.apiKey,
+    descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
+    recognitionEnabled: state.recognitionEnabled,
+    allowPersonNames: state.allowPersonNames,
+  });
+
+  const buildSavePayload = (
+    values: SettingsFormSnapshot,
+    data: SettingsResponse,
+  ): SaveSettingsPayload => {
+    const payload: SaveSettingsPayload = {};
+    if (values.url !== (data.url ?? '')) {
+      payload.url = values.url;
+    }
+    if (values.apiKey) {
+      payload.api_key = values.apiKey;
+    }
+    const descriptionBudgetMaxAttempts = Number.parseInt(values.descriptionBudgetMaxAttempts, 10);
+    if (
+      Number.isFinite(descriptionBudgetMaxAttempts) &&
+      descriptionBudgetMaxAttempts !== data.description_budget.max_attempts
+    ) {
+      payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
+    }
+    if (values.recognitionEnabled !== data.recognition_enabled) {
+      payload.recognition_enabled = values.recognitionEnabled;
+    }
+    if (
+      typeof data.allow_person_names === 'boolean' &&
+      values.allowPersonNames !== null &&
+      values.allowPersonNames !== data.allow_person_names
+    ) {
+      payload.allow_person_names = values.allowPersonNames;
+    }
+    return payload;
+  };
+
+  const submitSnapshot = (
+    values: SettingsFormSnapshot,
+    data: SettingsResponse,
+    queued = false,
+  ): void => {
+    const payload = buildSavePayload(values, data);
+    if (Object.keys(payload).length === 0) {
+      dispatch({
+        type: 'setSaveMessage',
+        message: __('No changes to save.', 'alt-context'),
+        tone: 'warning',
+      });
+      return;
+    }
+    if (queued) {
+      dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
+      const hasRoutingChanges = 'url' in payload || 'api_key' in payload;
+      routingSavePending.current = hasRoutingChanges;
+      routingSaveIncludesOtherSettings.current = hasRoutingChanges && Object.keys(payload).some(
+        (field) => field !== 'url' && field !== 'api_key',
+      );
+      routingSaveFeedback.current = hasRoutingChanges && !routingSaveIncludesOtherSettings.current;
+    }
+    saveMutation.mutate(payload);
+  };
+
+  const drainQueuedSave = (
+    refreshedSettings?: SettingsResponse,
+    alreadySavedApiKey: string | null = null,
+  ): void => {
+    const snapshot = queuedSaveSnapshot.current;
+    if (!snapshot) {
+      return;
+    }
+    queuedSaveSnapshot.current = null;
+    const data = refreshedSettings
+      ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
+      ?? settingsQuery.data;
+    if (!data) {
+      return;
+    }
+    routingSaveFeedback.current = false;
+    routingSavePending.current = false;
+    routingSaveIncludesOtherSettings.current = false;
+    dispatch({ type: 'clearSaveMessage' });
+    dispatch({ type: 'clearTestResult' });
+    const snapshotForSave = alreadySavedApiKey !== null && snapshot.apiKey === alreadySavedApiKey
+      ? { ...snapshot, apiKey: '' }
+      : snapshot;
+    submitSnapshot(snapshotForSave, data, true);
+  };
+
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
+      const settledApiKey = inFlightRoutingApiKey.current;
+      inFlightRoutingApiKey.current = null;
+      const alreadySavedApiKey = settledApiKey !== null && data.saved.includes('api_key')
+        ? settledApiKey
+        : null;
+      const isRoutingAutosave = routingSavePending.current;
+      const includesOtherSettings = routingSaveIncludesOtherSettings.current;
+      if (isRoutingAutosave) {
+        routingSavePending.current = false;
+        if (data.saved.some((field) => field === 'url' || field === 'api_key')) {
+          healthProbeGeneration.current += 1;
+        }
+      }
+      routingSaveIncludesOtherSettings.current = false;
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
       // a corrected backend that still paints success on the frontend has
@@ -97,10 +246,17 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
+        drainQueuedSave(refreshedOnFail, alreadySavedApiKey);
         return;
       }
 
-      dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
+      dispatch({
+        type: 'setSaveMessage',
+        message: isRoutingAutosave && !includesOtherSettings
+          ? __('Saved — checking health…', 'alt-context')
+          : __('Settings saved.', 'alt-context'),
+        tone: isRoutingAutosave && !includesOtherSettings ? 'info' : 'success',
+      });
       dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
@@ -111,37 +267,97 @@ export const SettingsPage = (): React.JSX.Element => {
         queryFn: fetchSettings,
       });
       syncLocalizedRouting(refreshed);
+      if (isRoutingAutosave) {
+        startHealthCheck(true);
+      }
+      drainQueuedSave(refreshed, alreadySavedApiKey);
     },
     onError: (error) => {
+      inFlightRoutingApiKey.current = null;
+      const isRoutingAutosave = routingSavePending.current;
+      if (isRoutingAutosave) {
+        routingSavePending.current = false;
+      }
+      routingSaveIncludesOtherSettings.current = false;
       dispatch({
         type: 'setSaveMessage',
         message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
+      drainQueuedSave();
     },
   });
 
   const testMutation = useMutation({
     mutationFn: testConnection,
-    onSuccess: (data) => {
-      dispatch({ type: 'setTestResult', value: data });
-      // A reachable probe (or an adopted tenant) means the service is back;
-      // refetch sync health so the offline banner clears immediately.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sync.health() });
+    // Keep mutation-level handlers for callers that invoke the captured hook
+    // callbacks directly; real mutation results use the generation captured
+    // by each call below.
+    onSuccess: (data, variables?: Parameters<typeof testConnection>[0]) => {
+      const metadata = variables && healthProbeMetadata.current.get(variables);
+      const generation = metadata?.generation ?? healthProbeGeneration.current;
+      applyHealthProbeSuccess(data, generation);
+      if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
+        clearRoutingCheckFeedback();
+      }
     },
     // Outcome enum maps to fixed banner copy; it cannot carry a free-form server
     // message without a new enum member ([sr-007]). Leave NETWORK_ERROR as the
     // transport-failure stand-in — see REPORT.md.
-    onError: () => {
-      dispatch({
-        type: 'setTestResult',
-        value: { outcome: TestConnectionOutcome.NETWORK_ERROR, probe_mode: 'service_auth' },
-      });
+    onError: (_error, variables?: Parameters<typeof testConnection>[0]) => {
+      const metadata = variables && healthProbeMetadata.current.get(variables);
+      const generation = metadata?.generation ?? healthProbeGeneration.current;
+      applyHealthProbeError(generation);
+      if (generation === healthProbeGeneration.current && metadata?.afterRoutingSave) {
+        clearRoutingCheckFeedback();
+      }
     },
   });
 
+  const runHealthCheck = (
+    variables: NonNullable<Parameters<typeof testConnection>[0]>,
+    afterRoutingSave = false,
+  ): void => {
+    const generation = ++healthProbeGeneration.current;
+    const probeVariables = { ...variables };
+    healthProbeMetadata.current.set(probeVariables, { generation, afterRoutingSave });
+    testMutation.mutate(probeVariables);
+  };
+
+  const startHealthCheck = (afterRoutingSave = false): void => {
+    automaticHealthCheckStarted.current = true;
+    dispatch({ type: 'clearTestResult' });
+    runHealthCheck({}, afterRoutingSave);
+  };
+
+  useEffect(() => {
+    if (
+      settingsQuery.isLoading ||
+      settingsQuery.isLoadingError ||
+      !settingsQuery.data?.effective_target_url.trim() ||
+      state.testResult ||
+      automaticHealthCheckStarted.current
+    ) {
+      return;
+    }
+    startHealthCheck();
+  }, [
+    settingsQuery.data?.effective_target_url,
+    settingsQuery.isLoading,
+    settingsQuery.isLoadingError,
+    state.testResult,
+    startHealthCheck,
+  ]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (saveMutation.isPending) {
+      queuedSaveSnapshot.current = captureFormSnapshot();
+      dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
+      return;
+    }
+    routingSaveFeedback.current = false;
+    routingSavePending.current = false;
     dispatch({ type: 'clearSaveMessage' });
     dispatch({ type: 'clearTestResult' });
 
@@ -151,50 +367,47 @@ export const SettingsPage = (): React.JSX.Element => {
       // isError below); bail defensively so the diff never derefs undefined.
       return;
     }
+    submitSnapshot(captureFormSnapshot(), data);
+  };
+
+  const commitRoutingFields = (checkIfUnchanged = false): void => {
+    const data = settingsQuery.data;
+    if (!data || saveMutation.isPending || routingSavePending.current) {
+      return;
+    }
+
     const payload: SaveSettingsPayload = {};
-    if (state.url !== (data?.url ?? '')) {
+    if (state.url !== (data.url ?? '')) {
       payload.url = state.url;
     }
     if (state.apiKey) {
       payload.api_key = state.apiKey;
     }
-    const descriptionBudgetMaxAttempts = Number.parseInt(state.descriptionBudgetMaxAttempts, 10);
-    if (
-      Number.isFinite(descriptionBudgetMaxAttempts) &&
-      descriptionBudgetMaxAttempts !== data.description_budget.max_attempts
-    ) {
-      payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
-    }
-    if (state.recognitionEnabled !== data.recognition_enabled) {
-      payload.recognition_enabled = state.recognitionEnabled;
-    }
-    if (
-      typeof data.allow_person_names === 'boolean' &&
-      state.allowPersonNames !== null &&
-      state.allowPersonNames !== data.allow_person_names
-    ) {
-      payload.allow_person_names = state.allowPersonNames;
-    }
 
     if (Object.keys(payload).length === 0) {
-      dispatch({
-        type: 'setSaveMessage',
-        message: __('No changes to save.', 'alt-context'),
-        tone: 'warning',
-      });
+      if (checkIfUnchanged) {
+        routingSaveFeedback.current = false;
+        dispatch({ type: 'clearSaveMessage' });
+        startHealthCheck();
+      }
       return;
     }
 
+    routingSavePending.current = true;
+    routingSaveFeedback.current = true;
+    inFlightRoutingApiKey.current = payload.api_key ?? null;
+    dispatch({ type: 'clearTestResult' });
+    dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
     saveMutation.mutate(payload);
   };
 
   const handleTest = () => {
-    dispatch({ type: 'clearTestResult' });
-    testMutation.mutate({});
+    commitRoutingFields(true);
   };
 
   const handleConfirmTenantPairing = () => {
-    testMutation.mutate({ confirm_tenant_pairing: true });
+    automaticHealthCheckStarted.current = true;
+    runHealthCheck({ confirm_tenant_pairing: true });
   };
 
   const settingsErrorMessage = settingsQuery.isLoadingError
@@ -283,6 +496,9 @@ export const SettingsPage = (): React.JSX.Element => {
           testPending: testMutation.isPending,
           hasUnsavedRoutingChanges,
           testResult: state.testResult,
+          saveMessage: state.saveMessage,
+          saveMessageTone: state.saveMessageTone,
+          routingSaveFeedback: routingSaveFeedback.current,
         }}
         actions={{
           onUrlChange: (value) => dispatch({ type: 'setUrl', value }),
@@ -293,6 +509,7 @@ export const SettingsPage = (): React.JSX.Element => {
           onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
           onSave: handleSave,
           onTest: handleTest,
+          onCommitRouting: () => commitRoutingFields(),
           onFocusServiceUrl: () => {
             document.getElementById('acx-settings-url')?.focus();
           },
@@ -301,7 +518,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
       <GpuControlCard />
 
-      {state.saveMessage ? (
+      {state.saveMessage && !routingSaveFeedback.current ? (
         <div
           className={`notice inline ${TONE_CLASS[state.saveMessageTone]}`}
           role={state.saveMessageTone === 'error' ? 'alert' : 'status'}

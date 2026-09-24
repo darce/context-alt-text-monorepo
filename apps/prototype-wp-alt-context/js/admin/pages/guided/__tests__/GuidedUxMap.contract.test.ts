@@ -81,6 +81,13 @@ const LIVE_ACTION_STATES = [
   'stopped',
   'no_result',
 ] as const;
+const PHOTO_KEYS = ['tribeca', 'coachella'] as const;
+const NAME_CHOICES = [
+  { photoKey: 'tribeca', position: 'left', person: 'Justin Trudeau' },
+  { photoKey: 'tribeca', position: 'right', person: 'Katy Perry' },
+  { photoKey: 'coachella', position: 'left', person: 'Justin Trudeau' },
+  { photoKey: 'coachella', position: 'right', person: 'Katy Perry' },
+] as const;
 const deliveredHookIds = (testId: string): string[] => {
   const nameChoicePrefix = 'name-choice-';
   if (testId.startsWith(nameChoicePrefix)) {
@@ -180,27 +187,43 @@ describe('guided prototype ux-map contract (GUIDEDQM-1 shipped topology)', () =>
           ).toBeInTheDocument();
         }
 
-        fireEvent.click(
-          within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
-            name: 'Use Justin Trudeau',
-          }),
-        );
-        fireEvent.click(
-          within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
-            name: 'Use Katy Perry',
-          }),
-        );
+        for (const choice of NAME_CHOICES) {
+          fireEvent.click(
+            within(screen.getByTestId(`name-choice-${choice.photoKey}-${choice.position}`)).getByRole('radio', {
+              name: `Use ${choice.person}`,
+            }),
+          );
+        }
 
         const apply = map.screens.find((screen) => screen.id === 'apply');
-        const appliedImageZoneIds = (apply?.zones ?? [])
+        const photoZonePrefix = fixture.scope === 'public' ? 'guided-photo-' : 'demo-applied-image-';
+        const photoZoneIds = (apply?.zones ?? [])
           .map((zone) => zone.id)
-          .filter((id) => id.startsWith('demo-applied-image-'));
-        expect(appliedImageZoneIds).toHaveLength(2);
-        for (const zoneId of appliedImageZoneIds) {
+          .filter((id) => id.startsWith(photoZonePrefix));
+        expect(photoZoneIds).toEqual(PHOTO_KEYS.map((photoKey) => `${photoZonePrefix}${photoKey}`));
+
+        if (fixture.scope === 'public') {
+          expect(JSON.stringify(map)).not.toContain('guided-candidate');
+          expect(JSON.stringify(apply)).not.toContain('demo-applied-image-');
+        }
+
+        for (const zoneId of photoZoneIds) {
           expect(
             screen.getByTestId(zoneId),
             `${fixture.mapPath} zone ${zoneId} missing from the DOM`,
           ).toBeInTheDocument();
+
+          if (fixture.scope === 'public') {
+            const photoKey = zoneId.slice(photoZonePrefix.length);
+            const photo = screen.getByTestId(zoneId);
+            const image = photo.querySelector('img');
+            const currentDescription = screen
+              .getByTestId(`guided-current-alt-${photoKey}`)
+              .querySelector('[data-applied-text]');
+            expect(image, `${zoneId} must contain the sample photo`).not.toBeNull();
+            expect(currentDescription, `${zoneId} must expose its current description in the editor`).not.toBeNull();
+            expect(image).toHaveAttribute('alt', currentDescription?.textContent ?? '');
+          }
         }
       } finally {
         unmount();

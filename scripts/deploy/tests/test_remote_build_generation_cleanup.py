@@ -80,6 +80,8 @@ def _run_driver(
     body: str,
     *,
     ttl: str = "360",
+    build_timeout: str = "30",
+    remote_build_dir: str | Path | None = None,
     fail_reaper: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     driver = Path(remote_build["driver"])
@@ -91,8 +93,8 @@ def _run_driver(
         {
             "PATH": f"{remote_build['fake_bin']}{os.pathsep}{env['PATH']}",
             "TMPDIR": str(Path(remote_build["driver"]).parent),
-            "ACX_REMOTE_BUILD_DIR": str(remote_build["remote_build_dir"]),
-            "ACX_REMOTE_BUILD_TIMEOUT": "30",
+            "ACX_REMOTE_BUILD_DIR": str(remote_build_dir or remote_build["remote_build_dir"]),
+            "ACX_REMOTE_BUILD_TIMEOUT": build_timeout,
             "ACX_REMOTE_COMMAND_TIMEOUT": "10",
             "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES": ttl,
             "FAKE_FAIL_REAPER": "1" if fail_reaper else "0",
@@ -175,7 +177,7 @@ def test_reaper_targets_only_this_prefix(remote_build: dict[str, Path | str]) ->
     assert "-mmin +360" in reaper
     assert commands.index(reaper) < mkdir_index
 
-    custom = _run_driver(remote_build, "do_build_remote dev\n", ttl="15")
+    custom = _run_driver(remote_build, "do_build_remote dev\n", ttl="15", build_timeout="300")
     custom_reaper = next(command for command in _ssh_commands(remote_build) if command.startswith("find "))
     assert custom.returncode == 0, custom.stdout + custom.stderr
     assert "-mmin +15" in custom_reaper
@@ -207,3 +209,68 @@ deploy_interrupt_cleanup 130
 
     assert result.returncode == 130
     assert not any(command.startswith("rm -rf") for command in _ssh_commands(remote_build))
+
+
+def test_reaper_runs_before_free_space_gate(remote_build: dict[str, Path | str]) -> None:
+    driver_body = '''\\
+assert_remote_build_free_space() {
+  printf 'free-space\\n' >>"${FAKE_SSH_LOG:?}"
+  fail "free-space gate failed"
+}
+do_build_remote dev
+'''
+    result = _run_driver(remote_build, driver_body)
+
+    commands = _ssh_commands(remote_build)
+    reaper_indices = [index for index, command in enumerate(commands) if command.startswith("find ")]
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert reaper_indices, commands
+    assert reaper_indices[0] < commands.index("free-space"), commands
+
+
+def test_reaper_skipped_when_ttl_not_above_twice_build_timeout(
+    remote_build: dict[str, Path | str],
+) -> None:
+    skipped = _run_driver(
+        remote_build,
+        "do_build_remote dev\n",
+        ttl="60",
+        build_timeout="1800",
+    )
+    skipped_commands = _ssh_commands(remote_build)
+    assert skipped.returncode == 0, skipped.stdout + skipped.stderr
+    assert not any(command.startswith("find ") for command in skipped_commands)
+    assert "not above twice" in skipped.stderr
+    assert any(command.startswith("mkdir -p") for command in skipped_commands)
+
+    reaped = _run_driver(
+        remote_build,
+        "do_build_remote dev\n",
+        ttl="21",
+        build_timeout="600",
+    )
+    reaped_commands = _ssh_commands(remote_build)
+    reaper = next(command for command in reaped_commands if command.startswith("find "))
+    assert reaped.returncode == 0, reaped.stdout + reaped.stderr
+    assert "-mmin +21" in reaper
+
+
+def test_reaper_normalizes_trailing_slash(remote_build: dict[str, Path | str]) -> None:
+    trailing = _run_driver(
+        remote_build,
+        "do_build_remote dev\n",
+        remote_build_dir="/tmp/acx-build/",
+    )
+    trailing_commands = _ssh_commands(remote_build)
+    reaper = next(command for command in trailing_commands if command.startswith("find "))
+    mkdir = next(command for command in trailing_commands if command.startswith("mkdir -p"))
+    assert trailing.returncode == 0, trailing.stdout + trailing.stderr
+    assert reaper.startswith("find '/tmp' ")
+    assert "-name 'acx-build-*'" in reaper
+    assert re.search(r"mkdir -p -- '/tmp/acx-build-", mkdir), mkdir
+
+    root = _run_driver(remote_build, "do_build_remote dev\n", remote_build_dir="/")
+    root_commands = _ssh_commands(remote_build)
+    assert root.returncode == 0, root.stdout + root.stderr
+    assert not any(command.startswith("find ") for command in root_commands)
+    assert "no usable basename" in root.stderr

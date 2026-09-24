@@ -10,7 +10,7 @@ import {
 } from '../../components/ui/dialog';
 import { GuidedPrototypeEntrance } from '../pages/GuidedPrototypeEntrance';
 import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
-import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
+import { GuidedDescriptionReview, GuidedPhotoReview } from '../pages/guided/GuidedDescriptionReview';
 import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
 import { GuidedPhotoFaces } from '../pages/guided/GuidedPhotoFaces';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
@@ -299,6 +299,10 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     document.querySelector<HTMLInputElement>('#guided-name-tribeca-left-include')?.focus({ preventScroll: true });
   };
 
+  const focusPublicReview = (imageKey: GuidedImageKey): void => {
+    document.getElementById(`guided-photo-review-${imageKey}`)?.focus({ preventScroll: true });
+  };
+
   const guideProgressMessage = (step: GuidedStep): string => {
     const steps = guideStepsForScope(scope);
     const stepNumber = steps.indexOf(step) + 1;
@@ -359,10 +363,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     next = previewGuidedDraftForImage(next, imageKey);
     commit(next);
     if (scope === 'public') {
-      document
-        .querySelector(`[data-testid="guided-description-review-${imageKey}"]`)
-        ?.closest<HTMLElement>('[id="guided-section-apply"]')
-        ?.focus({ preventScroll: true });
+      focusPublicReview(imageKey);
     } else {
       focusGuidedSection(GUIDED_STEP.APPLY);
     }
@@ -540,8 +541,8 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                           );
                         })}
                       {scope === 'public' ? (
-                        <GuidedDescriptionReview
-                          scenario={{ ...scenario, pressPhotos: [photo] }}
+                        <GuidedPhotoReview
+                          photo={photo}
                           state={demo}
                           scope="public"
                           recordedOriginLabel={publicGuidedCopy('draft.origin.public')}
@@ -644,7 +645,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
             outcomeReady
             scope={scope}
             onReturn={() => {
-              focusGuidedSection(GUIDED_STEP.DRAFT);
+              focusPublicReview(GUIDED_IMAGE_KEYS[0]);
             }}
           />
         ) : null}

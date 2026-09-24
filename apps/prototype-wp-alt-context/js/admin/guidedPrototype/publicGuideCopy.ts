@@ -34,8 +34,8 @@ export const PUBLIC_GUIDED_COPY = {
   'context.source.comparison_boundary.public': 'For comparison only. This is not a benchmark.',
   'context.source.face_recency.public':
     'Names were suggested on 10 September 2026. Face matching is not running on this page.',
-  'comparison.altcontext.public': 'AltContext description with suggested names',
-  'comparison.alttextai.public': 'How another tool describes this photo',
+  'comparison.altcontext.public': 'AltContext, using the people list',
+  'comparison.alttextai.public': 'AltText.ai, no names or keywords',
   'faces.title.public': 'Suggested names',
   'context.next.public': 'Check the suggested names',
   'choices.help.public': 'Choose an option for both people above to see the suggested description.',
@@ -66,8 +66,8 @@ export const PUBLIC_GUIDED_COPY = {
   'names.compare.public': 'Compare photos',
   'names.use.public': 'Use {name}',
   'names.omit.public': 'Leave unnamed',
-  'names.strong.public': 'Strong match',
-  'names.weak.public': 'Weak match. Compare the photos before you use this name.',
+  'names.strong.public': '{similarity} match',
+  'names.weak.public': '{similarity} match. Weak match: compare the photos before you use this name.',
   'names.no_score.public': 'No score: the saved group for this name started from this face.',
   'description.heading.public': '2. Check the suggested description',
   'description.written.public':
@@ -98,7 +98,7 @@ export const PUBLIC_GUIDED_COPY = {
   'outcome.provenance.public':
     'AltContext suggested these names and descriptions on 9–10 September 2026. ' +
     'Nothing on this page compares faces.',
-  'comparison.title.public': 'How another tool describes this photo',
+  'comparison.title.public': 'Compare how two tools describe this photo',
   'comparison.note.public': 'For comparison only, not a benchmark. AltText.ai was given no names or keywords.',
   'lightbox.title.public': 'Compare with photos of {name}',
   'lightbox.close.public': 'Close',

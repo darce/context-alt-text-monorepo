@@ -21,12 +21,14 @@ const {
   mockUseMutation,
   mockInvalidateQueries,
   mockFetchQuery,
+  mockGetQueryData,
   mockResetConfigCache,
 } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => SettingsQueryResult>(),
   mockUseMutation: vi.fn<(options?: MutationOptions) => MockMutationResult>(),
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
+  mockGetQueryData: vi.fn(),
   mockResetConfigCache: vi.fn(),
 }));
 
@@ -38,7 +40,11 @@ vi.mock('@tanstack/react-query', async () => {
     ...actual,
     useQuery: mockUseQuery,
     useMutation: mockUseMutation,
-    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries, fetchQuery: mockFetchQuery }),
+    useQueryClient: () => ({
+      invalidateQueries: mockInvalidateQueries,
+      fetchQuery: mockFetchQuery,
+      getQueryData: mockGetQueryData,
+    }),
   };
 });
 
@@ -83,6 +89,7 @@ const saveMutate = vi.fn();
 const testMutate = vi.fn();
 let capturedSaveOptions: MutationOptions | undefined;
 let capturedTestOptions: MutationOptions | undefined;
+let saveMutationPending = false;
 
 const SettingsPageWithRouter = (): React.JSX.Element => (
   <MemoryRouter initialEntries={['/settings']}>
@@ -98,12 +105,17 @@ const renderSettings = (data: SettingsResponse = configuredSettings) => {
 beforeEach(() => {
   vi.clearAllMocks();
   mockFetchQuery.mockResolvedValue(configuredSettings);
+  mockGetQueryData.mockReturnValue(configuredSettings);
   capturedSaveOptions = undefined;
   capturedTestOptions = undefined;
+  saveMutationPending = false;
+  saveMutate.mockImplementation(() => {
+    saveMutationPending = true;
+  });
   mockUseMutation.mockImplementation((options) => {
     if (options?.mutationFn === saveSettings) {
       capturedSaveOptions = options;
-      return createMockMutation({ mutate: saveMutate });
+      return createMockMutation({ mutate: saveMutate, isPending: saveMutationPending });
     }
     if (options?.mutationFn === testConnection) {
       capturedTestOptions = options;
@@ -114,6 +126,67 @@ beforeEach(() => {
 });
 
 describe('SettingsPage routing autosave', () => {
+  it('queues a settings submit during a routing save and saves it after the refetch', async () => {
+    const savedUrl = 'https://new-api.example.com';
+    const refreshedSettings = { ...configuredSettings, url: savedUrl };
+    mockFetchQuery.mockResolvedValue(refreshedSettings);
+    mockGetQueryData.mockReturnValue(refreshedSettings);
+    renderSettings();
+
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '4' },
+    });
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: savedUrl } });
+    fireEvent.blur(url);
+
+    expect(saveMutate).toHaveBeenNthCalledWith(1, { url: savedUrl });
+    const saveButton = screen.getByRole('button', { name: 'Saving…' });
+    fireEvent.submit(saveButton.closest('form') as HTMLFormElement);
+
+    saveMutationPending = false;
+    await act(async () => {
+      await capturedSaveOptions?.onSuccess?.({ saved: ['url'], result: 'ok' });
+    });
+
+    expect(saveMutate).toHaveBeenNthCalledWith(2, { description_budget: { max_attempts: 4 } });
+  });
+
+  it('runs a queued settings submit after a routing save rejects', async () => {
+    renderSettings();
+
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '4' },
+    });
+    const url = screen.getByLabelText('Service API URL');
+    fireEvent.change(url, { target: { value: 'https://new-api.example.com' } });
+    fireEvent.blur(url);
+    const saveButton = screen.getByRole('button', { name: 'Saving…' });
+    fireEvent.submit(saveButton.closest('form') as HTMLFormElement);
+
+    saveMutationPending = false;
+    await act(async () => {
+      capturedSaveOptions?.onError?.(new Error('request failed'));
+    });
+
+    expect(saveMutate).toHaveBeenNthCalledWith(2, {
+      url: 'https://new-api.example.com',
+      description_budget: { max_attempts: 4 },
+    });
+  });
+
+  it('submits one save when there is no save already pending', () => {
+    renderSettings();
+    fireEvent.change(screen.getByLabelText('Maximum description attempts'), {
+      target: { value: '4' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+    expect(saveMutate).toHaveBeenCalledWith({ description_budget: { max_attempts: 4 } });
+  });
+
   it('saves only a changed URL on blur, then checks health after an OK save', async () => {
     renderSettings();
     testMutate.mockClear(); // Ignore the one automatic mount probe.

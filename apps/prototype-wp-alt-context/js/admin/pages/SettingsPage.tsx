@@ -30,6 +30,14 @@ import { useSettingsPageState } from './settings/useSettingsPageState';
 const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
 const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
 
+interface SettingsFormSnapshot {
+  url: string;
+  apiKey: string;
+  descriptionBudgetMaxAttempts: string;
+  recognitionEnabled: boolean;
+  allowPersonNames: boolean | null;
+}
+
 const sectionFromLocation = (search: string, hash: string): string | null => {
   const fromSearch = new URLSearchParams(search).get('section');
   if (fromSearch) {
@@ -51,6 +59,7 @@ export const SettingsPage = (): React.JSX.Element => {
   const healthProbeMetadata = useRef(new WeakMap<object, { generation: number; afterRoutingSave: boolean }>());
   const routingSavePending = useRef(false);
   const routingSaveFeedback = useRef(false);
+  const queuedSaveSnapshot = useRef<SettingsFormSnapshot | null>(null);
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: queryKeys.settings.all,
@@ -107,6 +116,84 @@ export const SettingsPage = (): React.JSX.Element => {
     }
   };
 
+  const captureFormSnapshot = (): SettingsFormSnapshot => ({
+    url: state.url,
+    apiKey: state.apiKey,
+    descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
+    recognitionEnabled: state.recognitionEnabled,
+    allowPersonNames: state.allowPersonNames,
+  });
+
+  const buildSavePayload = (
+    values: SettingsFormSnapshot,
+    data: SettingsResponse,
+  ): SaveSettingsPayload => {
+    const payload: SaveSettingsPayload = {};
+    if (values.url !== (data.url ?? '')) {
+      payload.url = values.url;
+    }
+    if (values.apiKey) {
+      payload.api_key = values.apiKey;
+    }
+    const descriptionBudgetMaxAttempts = Number.parseInt(values.descriptionBudgetMaxAttempts, 10);
+    if (
+      Number.isFinite(descriptionBudgetMaxAttempts) &&
+      descriptionBudgetMaxAttempts !== data.description_budget.max_attempts
+    ) {
+      payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
+    }
+    if (values.recognitionEnabled !== data.recognition_enabled) {
+      payload.recognition_enabled = values.recognitionEnabled;
+    }
+    if (
+      typeof data.allow_person_names === 'boolean' &&
+      values.allowPersonNames !== null &&
+      values.allowPersonNames !== data.allow_person_names
+    ) {
+      payload.allow_person_names = values.allowPersonNames;
+    }
+    return payload;
+  };
+
+  const submitSnapshot = (
+    values: SettingsFormSnapshot,
+    data: SettingsResponse,
+    queued = false,
+  ): void => {
+    const payload = buildSavePayload(values, data);
+    if (Object.keys(payload).length === 0) {
+      dispatch({
+        type: 'setSaveMessage',
+        message: __('No changes to save.', 'alt-context'),
+        tone: 'warning',
+      });
+      return;
+    }
+    if (queued) {
+      dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
+    }
+    saveMutation.mutate(payload);
+  };
+
+  const drainQueuedSave = (refreshedSettings?: SettingsResponse): void => {
+    const snapshot = queuedSaveSnapshot.current;
+    if (!snapshot) {
+      return;
+    }
+    queuedSaveSnapshot.current = null;
+    const data = refreshedSettings
+      ?? queryClient.getQueryData<SettingsResponse>(queryKeys.settings.all)
+      ?? settingsQuery.data;
+    if (!data) {
+      return;
+    }
+    routingSaveFeedback.current = false;
+    routingSavePending.current = false;
+    dispatch({ type: 'clearSaveMessage' });
+    dispatch({ type: 'clearTestResult' });
+    submitSnapshot(snapshot, data, true);
+  };
+
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
@@ -137,6 +224,7 @@ export const SettingsPage = (): React.JSX.Element => {
           queryFn: fetchSettings,
         });
         syncLocalizedRouting(refreshedOnFail);
+        drainQueuedSave(refreshedOnFail);
         return;
       }
 
@@ -160,6 +248,7 @@ export const SettingsPage = (): React.JSX.Element => {
       if (isRoutingAutosave) {
         startHealthCheck(true);
       }
+      drainQueuedSave(refreshed);
     },
     onError: (error) => {
       const isRoutingAutosave = routingSavePending.current;
@@ -171,6 +260,7 @@ export const SettingsPage = (): React.JSX.Element => {
         message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
         tone: 'error',
       });
+      drainQueuedSave();
     },
   });
 
@@ -238,6 +328,8 @@ export const SettingsPage = (): React.JSX.Element => {
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (saveMutation.isPending) {
+      queuedSaveSnapshot.current = captureFormSnapshot();
+      dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
       return;
     }
     routingSaveFeedback.current = false;
@@ -251,41 +343,7 @@ export const SettingsPage = (): React.JSX.Element => {
       // isError below); bail defensively so the diff never derefs undefined.
       return;
     }
-    const payload: SaveSettingsPayload = {};
-    if (state.url !== (data?.url ?? '')) {
-      payload.url = state.url;
-    }
-    if (state.apiKey) {
-      payload.api_key = state.apiKey;
-    }
-    const descriptionBudgetMaxAttempts = Number.parseInt(state.descriptionBudgetMaxAttempts, 10);
-    if (
-      Number.isFinite(descriptionBudgetMaxAttempts) &&
-      descriptionBudgetMaxAttempts !== data.description_budget.max_attempts
-    ) {
-      payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
-    }
-    if (state.recognitionEnabled !== data.recognition_enabled) {
-      payload.recognition_enabled = state.recognitionEnabled;
-    }
-    if (
-      typeof data.allow_person_names === 'boolean' &&
-      state.allowPersonNames !== null &&
-      state.allowPersonNames !== data.allow_person_names
-    ) {
-      payload.allow_person_names = state.allowPersonNames;
-    }
-
-    if (Object.keys(payload).length === 0) {
-      dispatch({
-        type: 'setSaveMessage',
-        message: __('No changes to save.', 'alt-context'),
-        tone: 'warning',
-      });
-      return;
-    }
-
-    saveMutation.mutate(payload);
+    submitSnapshot(captureFormSnapshot(), data);
   };
 
   const commitRoutingFields = (checkIfUnchanged = false): void => {

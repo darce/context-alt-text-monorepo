@@ -339,7 +339,9 @@ describe('public recorded walkthrough boundary', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { level: 2, name: guidedCopy('step.review.public') })).toHaveLength(2);
+    expect(
+      screen.queryByRole('heading', { name: guidedCopy('step.review.public') }),
+    ).not.toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 4, name: guidedCopy('names.heading.public') })).toHaveLength(2);
     for (const [index, imageKey] of PUBLIC_IMAGE_KEYS.entries()) {
       expect(
@@ -366,11 +368,17 @@ describe('public recorded walkthrough boundary', () => {
     chooseBothImages('right', 'include');
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
+      expect(
+        within(review).getAllByRole('heading', {
+          level: 4,
+          name: guidedCopy('step.review.public'),
+        }),
+      ).toHaveLength(1);
       expect(within(review).getByRole('textbox', { name: guidedCopy('draft.field_label.public') })).toBeInTheDocument();
       expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
       expect(
         within(review).getByRole('heading', {
-          level: 4,
+          level: 5,
           name: guidedCopy('draft.current_alt_label.public'),
         }),
       ).toBeInTheDocument();

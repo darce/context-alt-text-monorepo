@@ -458,10 +458,11 @@ const GuidedImageReviewCard = ({
         id={`guided-photo-review-${photo.key}`}
         data-testid={`guided-description-review-${photo.key}`}
         data-image-key={photo.key}
-        aria-labelledby={`${editorId}-title`}
+        aria-label={scope === 'public' ? photo.event : undefined}
+        aria-labelledby={scope === 'admin' ? `${editorId}-title` : undefined}
         tabIndex={-1}
       >
-        <h3 id={`${editorId}-title`}>{photo.event}</h3>
+        {scope === 'admin' ? <h3 id={`${editorId}-title`}>{photo.event}</h3> : null}
         <p>{guidedCopy('choices.help.public')}</p>
       </article>
     );
@@ -476,7 +477,11 @@ const GuidedImageReviewCard = ({
       aria-labelledby={`${editorId}-title`}
       tabIndex={-1}
     >
-      <h3 id={`${editorId}-title`}>{photo.event}</h3>
+      {scope === 'public' ? (
+        <h4 id={`${editorId}-title`}>{guidedCopy('step.review.public')}</h4>
+      ) : (
+        <h3 id={`${editorId}-title`}>{photo.event}</h3>
+      )}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING ? (
         <div>
@@ -501,7 +506,7 @@ const GuidedImageReviewCard = ({
             <div data-testid={`guided-editor-column-${photo.key}`}>
               <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
               <div data-testid={`guided-current-alt-${photo.key}`}>
-                <h4>{guidedCopy('draft.current_alt_label.public')}</h4>
+                <h5>{guidedCopy('draft.current_alt_label.public')}</h5>
                 <p data-applied-text>{draft.appliedAltText}</p>
               </div>
               <div data-testid={`guided-draft-field-${photo.key}`}>

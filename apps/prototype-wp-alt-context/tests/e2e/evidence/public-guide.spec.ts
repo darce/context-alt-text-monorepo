@@ -1,10 +1,6 @@
 import { devices, expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
-import {
-  classifyAcxRequest,
-  isAcxRestRequest,
-  type AcxRequestRecord,
-} from '../fixtures/guided-recording';
+import { classifyAcxRequest, isAcxRestRequest, type AcxRequestRecord } from '../fixtures/guided-recording';
 
 /**
  * GUIDEROUTE-1: signed-out public guide acceptance.
@@ -58,7 +54,9 @@ const attachAcxCounter = (page: Page): AcxRequestRecord[] => {
 
 const assertNoPrivilegedOrDescribe = (records: readonly AcxRequestRecord[]): void => {
   const privileged = records.filter((row) => row.classification === 'privileged');
-  const describeCalls = records.filter((row) => /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url));
+  const describeCalls = records.filter((row) =>
+    /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url),
+  );
   expect(privileged, JSON.stringify(privileged)).toEqual([]);
   expect(describeCalls, JSON.stringify(describeCalls)).toEqual([]);
 };
@@ -149,11 +147,7 @@ const assertResponsiveLayout = async (page: Page, viewportName: string): Promise
   }
 
   expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(16, 0);
-  await page
-    .getByTestId('guided-photo-tribeca')
-    .getByRole('button', { name: 'Compare photos' })
-    .first()
-    .click();
+  await page.getByTestId('guided-photo-tribeca').getByRole('button', { name: 'Compare photos' }).first().click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-gallery img').evaluateAll((images) =>

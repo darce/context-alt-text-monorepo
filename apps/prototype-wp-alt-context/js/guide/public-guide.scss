@@ -211,9 +211,11 @@
       16rem,
       calc(
         (
-            100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) -
-              var(--acx-guide-pad-tight) - var(--acx-space-8)
-          ) / 2
+            100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) - var(
+                --acx-guide-pad-tight
+              ) - var(--acx-space-8)
+          ) /
+          2
       )
     );
   }

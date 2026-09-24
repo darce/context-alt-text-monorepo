@@ -62,6 +62,7 @@
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
+#   ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES default 360 (stale remote build generation age)
 #   ACX_REMOTE_BUILDER_NAME  default acx-deploy-builder-v1 (stable docker-container builder)
 #   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
 #   ACX_REMOTE_BUILDER_ENDPOINT
@@ -229,6 +230,7 @@ ACX_ROLLBACK_IMAGE_BASE=""
 ACX_ROLLBACK_TAG=""
 ACX_PRIOR_IMAGE_ID=""
 ACX_PRIOR_RUNTIME_IDENTITY=""
+ACX_REMOTE_BUILD_GENERATION_DIR=""
 ACX_RESTART_EVIDENCE_PHASE=""
 ACX_TRAFFIC_FLIPPED=0
 ACX_CUTOVER_ENV=""
@@ -309,6 +311,7 @@ deploy_interrupt_cleanup() {
     rc="${requested}"
   fi
   recover_interrupted_cutover || true
+  cleanup_remote_build_generation_on_exit || true
   _purge_deploy_ocir_docker_config
   _purge_deploy_snapshot
   if [[ -n "${requested}" ]]; then
@@ -1086,6 +1089,30 @@ remote_build_cleanup_generation() {
   else
     warn "Remote build budget exhausted; generation directory may remain: ${build_dir}"
   fi
+  if [[ "${ACX_REMOTE_BUILD_GENERATION_DIR:-}" == "${build_dir}" ]]; then
+    ACX_REMOTE_BUILD_GENERATION_DIR=""
+  fi
+}
+
+cleanup_remote_build_generation_on_exit() {
+  local build_dir="${ACX_REMOTE_BUILD_GENERATION_DIR:-}" command_timeout ttl
+  [[ -n "${build_dir}" ]] || return 0
+  ttl="${ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES:-360}"
+  if [[ "${build_dir}" != "${REMOTE_BUILD_DIR%/}-"* ||
+    ! "${build_dir}" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    warn "Refusing remote cleanup for unsafe generation directory ${build_dir}"
+    ACX_REMOTE_BUILD_GENERATION_DIR=""
+    return 0
+  fi
+  command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120 2>/dev/null)" || command_timeout=120
+  if (( command_timeout > 30 )); then
+    command_timeout=30
+  fi
+  if ! run_with_deadline "${command_timeout}" "remote generation directory cleanup" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "rm -rf -- '$(remote_quote "${build_dir}")'"; then
+    warn "remote build generation ${build_dir} may remain; the next remote build reaps it after ${ttl} minutes"
+  fi
+  ACX_REMOTE_BUILD_GENERATION_DIR=""
 }
 
 do_build() {
@@ -1116,7 +1143,8 @@ do_build_remote() {
   preflight_rsync
   local sha tag build_dir build_timeout command_timeout build_rc=0 rsync_rc=0
   local remote_build_started remote_build_timeout
-  local free_space_timeout mkdir_timeout rsync_timeout remaining
+  local free_space_timeout mkdir_timeout rsync_timeout remaining generation_ttl
+  local generation_parent generation_basename reap_timeout reap_command
   local remote_program remote_command remote_arg
   pin_deploy_sha
   sha="${DEPLOY_SHA}"
@@ -1141,12 +1169,37 @@ do_build_remote() {
   fi
   assert_remote_build_free_space "${free_space_timeout}"
 
+  generation_ttl="${ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES:-360}"
+  if [[ ! "${generation_ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES must be a positive integer (got: ${generation_ttl}); skipping stale generation reap"
+  else
+    generation_parent="${REMOTE_BUILD_DIR%/*}"
+    generation_basename="${REMOTE_BUILD_DIR##*/}"
+    if [[ "${generation_parent}" == "${REMOTE_BUILD_DIR}" ]]; then
+      generation_parent="."
+    elif [[ -z "${generation_parent}" ]]; then
+      generation_parent="/"
+    fi
+    if reap_timeout="$(remote_build_phase_timeout "stale generation reap" "${command_timeout}")"; then
+      reap_command="find '$(remote_quote "${generation_parent}")' -mindepth 1 -maxdepth 1 -type d -name '$(remote_quote "${generation_basename}")-*' -mmin +$(remote_quote "${generation_ttl}") -exec rm -rf -- {} +"
+      if run_with_deadline "${reap_timeout}" "stale generation reap" \
+        ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${reap_command}"; then
+        log "Reaped remote build generations older than ${generation_ttl}m under ${generation_parent}"
+      else
+        warn "Could not reap remote build generations older than ${generation_ttl}m under ${generation_parent}; build continues"
+      fi
+    else
+      warn "Skipping stale remote build generation reap; remote build budget exhausted"
+    fi
+  fi
+
   log "Syncing build context ${SERVICE_DIR}/ -> ${SSH_TARGET}:${build_dir}/"
   # D1: REMOTE_BUILD_DIR is charset-validated at ingestion; still single-quote at the sink so a
   # future allowlist slip cannot unquote into remote argv (same blast radius as ACX_BUILD_TARGET).
   if ! mkdir_timeout="$(remote_build_phase_timeout "remote generation directory creation" "${command_timeout}")"; then
     fail "Remote build budget exhausted before generation directory creation"
   fi
+  ACX_REMOTE_BUILD_GENERATION_DIR="${build_dir}"
   run_with_deadline "${mkdir_timeout}" "remote generation directory creation" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '$(remote_quote "${build_dir}")'" \
     || build_rc=$?

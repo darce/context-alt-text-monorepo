@@ -1,4 +1,4 @@
-VERDICT: 4 confirmed, 1 refuted, 1 unverified, 0 new
+VERDICT: 3 confirmed, 1 refuted, 2 unverified, 0 new
 
 ## D6 — CONFIRMED — MEDIUM
 
@@ -15,12 +15,13 @@ VERDICT: 4 confirmed, 1 refuted, 1 unverified, 0 new
 - **Fix design:** In restore_edge_backups, use a quoted EDGE_RESTORE delimiter and pass env, edge_dir, backup_root, transaction ID, and prefer_flip as positional arguments. Match each JSON key with a remote-side quoted_network variable and grep -Fq -- "$quoted_network".
 - **Regression test:** scripts/deploy/tests/test_recognition_deploy.py — run the captured EDGE_RESTORE payload with docker inspect returning all expected network keys; assert restoration exits 0 and stderr contains neither “Trailing backslash” nor “missing restored network”.
 
-## D9a — CONFIRMED — LOW
+## D9a — UNVERIFIED — LOW
 
 - **Evidence:** scripts/deploy/recognition-service.sh:646
   > [\[{]
 
   The boot-smoke success path passes its health message through sanitize_deploy_diagnostic at line 2544; the sanitizer’s awk program contains this character class. The incident log records the awk escape warning during that path.
+- **Evidence gap:** The warning text came from operator-pasted deploy output, not a retained log. macOS BWK awk 20200816 (the local deploy host's awk), GNU Awk 5.2.1, and mawk 1.3.4 all run this class silently in isolation; the emitting implementation is unidentified. Fix stays low-cost and behaviour-preserving, so it ships regardless.
 - **Mechanism:** Some awk implementations warn that the unnecessary escape before [ is treated as a plain [. The resulting character class still matches either [ or {; local GNU Awk 5.2.1 and mawk 1.3.4 both matched those two characters and rejected x.
 - **Failure scenario:** A healthy boot smoke sanitizes “smoke health OK” → awk emits an escape warning to stderr → smoke still exits successfully, leaving a warning beside the success message.
 - **Canon:** OBS-04 — the warning is non-actionable and competes with deploy diagnostics.

@@ -107,6 +107,27 @@ describe('useRosterHooks cache merge on person mutation [S4-BR-02]', () => {
     queryClient.clear();
   });
 
+  it('useUpdatePerson invalidates label surfaces after a successful rename', async () => {
+    vi.mocked(rosterApi.updatePerson).mockResolvedValue(personsRowBody);
+
+    const { wrapper, queryClient } = createWrapper();
+    const identitiesKey = queryKeys.media.identities();
+    const clustersKey = queryKeys.clusters.all;
+    queryClient.setQueryData(identitiesKey, { identities_by_media: {} });
+    queryClient.setQueryData(clustersKey, { clusters: [] });
+
+    const { result } = renderHook(() => useUpdatePerson(), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ id: 1, name: 'Alex Updated' });
+    });
+
+    expect(queryClient.getQueryState(identitiesKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(clustersKey)?.isInvalidated).toBe(true);
+
+    queryClient.clear();
+  });
+
   it('useCreatePerson onSuccess merges sparse create body without dropping sibling projection fields on replace of optimistic row', async () => {
     const sparseCreateBody = {
       id: 99,

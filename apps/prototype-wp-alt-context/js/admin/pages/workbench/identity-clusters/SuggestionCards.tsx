@@ -192,6 +192,7 @@ export const SuggestionCard = ({
   const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
   const approvalReasonId = `acx-suggestion-review-reason-${suggestion.suggestionId}`;
   const pendingReasonId = `acx-suggestion-pending-reason-${suggestion.suggestionId}`;
+  const storedFaceListId = `acx-stored-face-list-${suggestion.suggestionId}`;
   const storedFaceListLabel = sprintf(
     /* translators: %s: person's display name */
     __('Stored faces for %s', 'alt-context'),
@@ -291,6 +292,7 @@ export const SuggestionCard = ({
         ) : null}
         {storedFaceDisclosureOpen && requiresStoredFaceReview(suggestion) ? (
           <ul
+            id={storedFaceListId}
             ref={markStoredFacesPresented}
             className="acx-suggestion-card__stored-face-list"
             aria-label={storedFaceListLabel}
@@ -338,7 +340,7 @@ export const SuggestionCard = ({
       <div className="acx-suggestion-card__actions">
         {approvalRequiresReview ? (
           <p id={approvalReasonId} className="acx-suggestion-card__disabled-reason">
-            {__('Review all stored faces before approving.', 'alt-context')}
+            {__('Show stored faces first to approve.', 'alt-context')}
           </p>
         ) : null}
         {isPending && disabledReason ? (
@@ -383,17 +385,26 @@ export const SuggestionCard = ({
           {__('No', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'reject' ? actionAccessory : null}
-        {onReview || requiresStoredFaceReview(suggestion) ? (
+        {requiresStoredFaceReview(suggestion) ? (
+          <button
+            type="button"
+            className="button button-link acx-suggestion-card__stored-face-toggle"
+            aria-expanded={storedFaceDisclosureOpen}
+            aria-controls={storedFaceListId}
+            onClick={() => setStoredFaceDisclosureOpen((isOpen) => !isOpen)}
+          >
+            {storedFaceDisclosureOpen
+              ? __('Hide stored faces', 'alt-context')
+              : __('Show stored faces', 'alt-context')}
+          </button>
+        ) : null}
+        {onReview ? (
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
-            onClick={() => {
-              setStoredFaceDisclosureOpen(true);
-              onReview?.(suggestion.clusterId);
-            }}
-            title={__('Review these faces', 'alt-context')}
+            onClick={() => onReview(suggestion.clusterId)}
           >
-            {__('Review details', 'alt-context')}
+            {__('Open cluster', 'alt-context')}
           </button>
         ) : null}
       </div>

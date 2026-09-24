@@ -6,12 +6,13 @@
  * accessibility observation would prove the shipped page wrong (P2).
  */
 import React from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import { guidedCopy } from '../../../guidedPrototype/copy';
+import { guidedCopy as publicGuidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario, type GuidedImageKey } from '../../../guidedPrototype/state';
 import type { GuidedLiveDescriptionClient } from '../../../guidedPrototype/useGuidedLiveDescription';
 import type { GuidedLiveDescriptionPanelProps } from '../GuidedLiveDescriptionPanel';
@@ -134,8 +135,8 @@ const chooseRadio = async (
   const fieldset = within(photo).getByRole('group', { name: guidedCopy('names.legend', { position }) });
   const name =
     option === 'include'
-      ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
-      : guidedCopy('names.omit');
+      ? publicGuidedCopy('names.use.public', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
+      : publicGuidedCopy('names.omit.public');
   const radio = within(fieldset).getByRole('radio', { name });
   await user.click(radio);
   return radio;
@@ -214,34 +215,38 @@ describe('GuidedA11y (W04)', () => {
       expect(leftRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
       expect(rightRadios.every((radio) => (radio as HTMLInputElement).checked === false)).toBe(true);
 
-      const cards = within(photo).getAllByRole('region', { name: /Saved suggestion:/ });
-      expect(cards).toHaveLength(2);
       const leftCard = within(photo).getByRole('region', {
-        name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+        name: 'Justin Trudeau',
       });
       const rightCard = within(photo).getByRole('region', {
-        name: guidedCopy('names.suggestion', { name: 'Katy Perry' }),
+        name: 'Katy Perry',
       });
-      expect(within(leftCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
-      expect(within(rightCard).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
+      expect(
+        within(leftCard).getByRole('radio', { name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }) }),
+      ).toBeVisible();
+      expect(
+        within(rightCard).getByRole('radio', { name: publicGuidedCopy('names.use.public', { name: 'Katy Perry' }) }),
+      ).toBeVisible();
     });
 
     for (const photoKey of photoKeys) {
       const photo = screen.getByTestId(`guided-photo-${photoKey}`);
       const leftCard = within(photo).getByRole('region', {
-        name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+        name: 'Justin Trudeau',
       });
       const rightCard = within(photo).getByRole('region', {
-        name: guidedCopy('names.suggestion', { name: 'Katy Perry' }),
+        name: 'Katy Perry',
       });
       const includeLeft = await chooseRadio(user, photoKey, 'left', 'include');
       expect(includeLeft).toBeChecked();
       expect((includeLeft as HTMLInputElement).checked).toBe(true);
-      expect(within(leftCard).getByText(guidedCopy('names.included', { name: 'Justin Trudeau' }))).toBeInTheDocument();
+      expect(
+        within(leftCard).getByRole('radio', { name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }) }),
+      ).toBeChecked();
 
       const omitRight = await chooseRadio(user, photoKey, 'right', 'omit');
       expect(omitRight).toBeChecked();
-      expect(within(rightCard).getByText(guidedCopy('names.omitted'))).toBeInTheDocument();
+      expect(within(rightCard).getByRole('radio', { name: publicGuidedCopy('names.omit.public') })).toBeChecked();
     }
   });
 
@@ -271,8 +276,8 @@ describe('GuidedA11y (W04)', () => {
     expect(indexOfStop(stops, guidedCopy('step.context'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.names')));
     expect(indexOfStop(stops, guidedCopy('step.names'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.draft')));
     expect(indexOfStop(stops, guidedCopy('step.draft'))).toBeLessThan(indexOfStop(stops, guidedCopy('step.apply')));
-    const leftInclude = guidedCopy('names.include', { name: 'Justin Trudeau' });
-    const rightInclude = guidedCopy('names.include', { name: 'Katy Perry' });
+    const leftInclude = publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' });
+    const rightInclude = publicGuidedCopy('names.use.public', { name: 'Katy Perry' });
     const photoKeys: GuidedImageKey[] = ['tribeca', 'coachella'];
     for (const photoKey of photoKeys) {
       const leftStop = photoStop(photoKey, leftInclude);
@@ -356,9 +361,13 @@ describe('GuidedA11y (W04)', () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
+    const contextSection = document.getElementById('guided-section-understand');
+    assertHtmlElement(contextSection, 'context section');
+    const focusContextSection = vi.spyOn(contextSection, 'focus');
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
     expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
+    expect(focusContextSection).toHaveBeenCalledWith({ preventScroll: true });
 
     await user.click(stepButton('names'));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
@@ -480,10 +489,10 @@ describe('GuidedA11y (W04)', () => {
   it('would prove the page wrong if demo-applied-image were the evidence node or its alt diverged from the applied sentence', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
-    const evidenceAlt = requireSample('none');
+    const evidencePhoto = within(screen.getByTestId('guided-photo-tribeca'));
+    const evidence = evidencePhoto.getByRole('img', { name: SEED_ALT_TEXT });
     const edited = 'Byte-for-byte applied festival sentence.';
 
-    const evidence = screen.getByRole('img', { name: evidenceAlt });
     await chooseRadio(user, 'tribeca', 'left', 'include');
     await chooseRadio(user, 'tribeca', 'right', 'include');
     const applied = screen.getByTestId('demo-applied-image-tribeca');
@@ -493,15 +502,14 @@ describe('GuidedA11y (W04)', () => {
 
     await completeCoreDraft(user, edited);
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
-    expect(screen.getByRole('img', { name: evidenceAlt })).toHaveAttribute('alt', evidenceAlt);
-    expect(screen.getByRole('img', { name: evidenceAlt })).not.toBe(screen.getByTestId('demo-applied-image-tribeca'));
+    expect(evidence).toHaveAttribute('alt', edited);
+    expect(evidence).not.toBe(screen.getByTestId('demo-applied-image-tribeca'));
   });
 
   it('would prove the page wrong if demo-applied-image reused the evidence photo src', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
-    const evidenceAlt = requireSample('none');
-    const evidence = screen.getByRole('img', { name: evidenceAlt });
+    const evidence = within(screen.getByTestId('guided-photo-tribeca')).getByRole('img', { name: SEED_ALT_TEXT });
     await chooseRadio(user, 'tribeca', 'left', 'include');
     await chooseRadio(user, 'tribeca', 'right', 'include');
     const applied = screen.getByTestId('demo-applied-image-tribeca');
@@ -554,18 +562,27 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
-    const leftSummary = within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' }));
-    leftSummary.focus();
+    const leftCard = within(tribecaPhoto).getByRole('region', { name: 'Justin Trudeau' });
+    const leftCompare = within(leftCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') });
+    leftCompare.focus();
     await user.keyboard('{Enter}');
-    expect(within(tribecaPhoto).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
+    const leftComparison = screen.getByRole('dialog', {
+      name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }),
+    });
+    expect(within(leftComparison).getByText(publicGuidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
+    await user.keyboard('{Escape}');
 
-    const rightSummary = within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'right' }));
-    rightSummary.focus();
+    const rightCard = within(tribecaPhoto).getByRole('region', { name: 'Katy Perry' });
+    const rightCompare = within(rightCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') });
+    rightCompare.focus();
     await user.keyboard('{Enter}');
+    const rightComparison = screen.getByRole('dialog', {
+      name: publicGuidedCopy('lightbox.title.public', { name: 'Katy Perry' }),
+    });
     expect(
-      within(tribecaPhoto).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
+      within(rightComparison).getByText(publicGuidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Show all 5/)).not.toBeInTheDocument();
+    expect(within(rightComparison).queryByText(/Show all 5/)).not.toBeInTheDocument();
   });
 
   it('would prove the page wrong if the face comparison had no keyboard-operable enlarged view of the crop or references', async () => {
@@ -573,28 +590,47 @@ describe('GuidedA11y (W04)', () => {
     render(<GuidedPrototypePage />);
 
     const tribecaPhoto = screen.getByTestId('guided-photo-tribeca');
-    await user.click(within(tribecaPhoto).getByText(guidedCopy('names.evidence_open', { position: 'left' })));
-    const enlargeButtons = within(tribecaPhoto).getAllByRole('button', { name: guidedCopy('names.enlarge') });
-    expect(enlargeButtons).toHaveLength(2);
-    expect(screen.getAllByRole('img', { name: /Detected left face in/ })).toHaveLength(2);
-    expect(screen.getAllByRole('img', { name: /Detected right face in/ })).toHaveLength(2);
+    const leftCropAlt = publicGuidedCopy('names.crop_alt_image', {
+      position: 'left',
+      image: publicGuidedCopy('names.photo.tribeca'),
+    });
+    const leftCrop = within(tribecaPhoto).getByRole('img', { name: leftCropAlt });
+    fireEvent.load(leftCrop);
+    expect(leftCrop).toBeVisible();
 
     const leftCard = within(tribecaPhoto).getByRole('region', {
-      name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }),
+      name: 'Justin Trudeau',
     });
-    const enlarge = within(leftCard).getByRole('button', { name: guidedCopy('names.enlarge') });
-    await user.click(enlarge);
-    const comparison = screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') });
-    expect(comparison).toHaveAttribute('aria-modal', 'true');
-    await user.click(within(comparison).getByRole('button', { name: guidedCopy('names.evidence_close') }));
-    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(enlarge);
-
-    enlarge.focus();
+    const compare = within(leftCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') });
+    compare.focus();
     await user.keyboard('{Enter}');
-    expect(screen.getByRole('dialog', { name: guidedCopy('names.enlarge_title') })).toBeInTheDocument();
+    const comparison = screen.getByRole('dialog', {
+      name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }),
+    });
+    expect(comparison).toHaveAttribute('aria-modal', 'true');
+    const enlargedCrop = within(comparison).getByRole('img', { name: leftCropAlt });
+    fireEvent.load(enlargedCrop);
+    expect(enlargedCrop).toBeVisible();
+    expect(
+      within(comparison).getByRole('region', {
+        name: publicGuidedCopy('lightbox.references.public', { name: 'Justin Trudeau' }),
+      }),
+    ).toBeVisible();
+    await user.click(within(comparison).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }));
+    expect(
+      screen.queryByRole('dialog', { name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }) }),
+    ).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(compare);
+
+    compare.focus();
+    await user.keyboard('{Enter}');
+    expect(
+      screen.getByRole('dialog', { name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }) }),
+    ).toBeInTheDocument();
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog', { name: guidedCopy('names.enlarge_title') })).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(enlarge);
+    expect(
+      screen.queryByRole('dialog', { name: publicGuidedCopy('lightbox.title.public', { name: 'Justin Trudeau' }) }),
+    ).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(compare);
   });
 });

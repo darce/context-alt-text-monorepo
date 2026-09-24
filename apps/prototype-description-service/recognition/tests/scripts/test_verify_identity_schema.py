@@ -47,6 +47,33 @@ def test_validate_schema_state_accepts_complete_schema() -> None:
     assert report["missing_tables"] == []
 
 
+def test_validate_schema_state_ignores_alembic_version_for_unexpected_tables() -> None:
+    script = _import_script()
+
+    report = script._validate_schema_state(
+        actual_tables=[*script.EXPECTED_TABLES, "alembic_version"],
+        actual_revision=script.EXPECTED_REVISION,
+        matview_centroid_typmod=script.EMBEDDING_DIMENSION,
+        vector_typmods=_healthy_vector_typmods(script),
+    )
+
+    assert report["unexpected_tables"] == []
+    assert report["ok"] is True
+
+
+def test_validate_schema_state_still_reports_stray_tables_with_alembic_version() -> None:
+    script = _import_script()
+
+    report = script._validate_schema_state(
+        actual_tables=[*script.EXPECTED_TABLES, "alembic_version", "legacy_scratch"],
+        actual_revision=script.EXPECTED_REVISION,
+        matview_centroid_typmod=script.EMBEDDING_DIMENSION,
+        vector_typmods=_healthy_vector_typmods(script),
+    )
+
+    assert report["unexpected_tables"] == ["legacy_scratch"]
+
+
 def _healthy_vector_typmods(script) -> dict[tuple[str, str], int]:
     return dict.fromkeys(script.IDENTITY_VECTOR_COLUMNS, script.EMBEDDING_DIMENSION)
 
@@ -321,7 +348,7 @@ def _catalog_connection(
                 present = (
                     unique_constraints
                     if unique_constraints is not None
-                    else {"uq_image_description_runs_idempotency_key"}
+                    else {name for _table, name, _columns in script.HEAL_UNIQUE_CONSTRAINTS}
                 )
                 return _Result(scalar_value=conname in present)
             if "select c.relkind from" in sql:
@@ -544,7 +571,40 @@ def test_collect_and_validate_probes_every_identity_vector_column(monkeypatch) -
         if isinstance(params, dict) and "column_name" in params
     }
     assert set(HEALTH) <= probed
+    assert report["unique_constraint_gaps"] == []
     assert report["exit_code"] == script.EXIT_OK
+
+
+def test_main_healthy_catalog_does_not_warn_about_alembic_version(monkeypatch, capsys) -> None:
+    from types import SimpleNamespace
+
+    script = _import_script()
+    connection = _catalog_connection(script, centroid_typmod=script.EMBEDDING_DIMENSION)
+
+    class _ConnectionContext:
+        def __enter__(self):
+            return connection
+
+        def __exit__(self, *_args):
+            return False
+
+    class _Engine:
+        def connect(self):
+            return _ConnectionContext()
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(script, "get_database_settings", lambda: SimpleNamespace(postgres_sync_dsn="test-dsn"))
+    monkeypatch.setattr(script, "create_engine", lambda _dsn: _Engine())
+    monkeypatch.setattr(script, "inspect", lambda _connection: _Inspector(script))
+    monkeypatch.setattr(script, "_expected_columns", lambda: {})
+
+    exit_code = script.main([])
+    captured = capsys.readouterr()
+
+    assert "warning: unexpected_tables" not in captured.err
+    assert exit_code == script.EXIT_OK
 
 
 def test_collect_and_validate_wrong_table_typmod_requires_operator(monkeypatch) -> None:

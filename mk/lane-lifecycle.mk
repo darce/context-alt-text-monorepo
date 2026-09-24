@@ -172,18 +172,19 @@ lane-dispatch: lane-guard lane-orchestrator-guard
 
 .PHONY: plan-accept
 
-# plan-accept is deliberately defined here rather than in Makefile.d/. That
-# directory is a bootstrap-materialized, gitignored plugin overlay pulled in by
-# `-include Makefile.d/*.mk` at the foot of the root Makefile; tracking a file
-# inside it makes Git silently overwrite the operator's untracked overlay on
-# merge. plan-accept is the one lifecycle target the overlay does not define,
-# so it belongs on the tracked mk/ surface.
+# Keep plan-accept on the tracked mk/ surface because tracking a file in
+# Makefile.d/ makes Git silently overwrite the operator's untracked overlay on
+# merge. The plugin overlay owns the recipe when installed; this recipe is the
+# fallback when it is absent.
 # ACX_LIFECYCLE_HANDLERS points at the in-repo handler package, not the
 # external plugin's workbay_lifecycle runner.
 ACX_LIFECYCLE_HANDLERS ?= scripts/workstate/lifecycle/handlers
 
+ifeq ($(and $(ROOT_MAKEFILE_DIR),$(wildcard Makefile.d/plans.mk)),)
+# The installed plugin overlay owns this recipe; keep this fallback when it is absent.
 plan-accept:
 	@ACX_LIFECYCLE_HANDLERS="$(ACX_LIFECYCLE_HANDLERS)" \
 		python3 "$(ACX_LIFECYCLE_HANDLERS)/plan_baseline.py" \
 			--task "$(TASK)" \
 			$(if $(PLAN),--plan "$(PLAN)",)
+endif

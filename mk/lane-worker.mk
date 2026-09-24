@@ -5,6 +5,10 @@
 .PHONY: lane-check lane-run lane-report lane-commit lane-handoff dashboard-live dashboard-tui artifact-search artifact-list
 
 lane-check: lane-worker-guard
+
+ifeq ($(and $(ROOT_MAKEFILE_DIR),$(wildcard Makefile.d/lane-gate.mk)),)
+# The installed plugin overlay owns this recipe; keep this fallback when it is absent.
+lane-check:
 	@set -eu; \
 	echo "Ensuring lane dependencies are bootstrapped..."; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m workbay_orchestrator_mcp.orchestration.bootstrap_lane \
@@ -61,6 +65,7 @@ lane-check: lane-worker-guard
 		record_test_result '$(LANE_TEST_CMD_2)' "Lane verification step 2"; \
 	fi; \
 	echo "Lane $(LANE) verification passed."
+endif
 
 lane-run: lane-guard
 	@set -eu; \

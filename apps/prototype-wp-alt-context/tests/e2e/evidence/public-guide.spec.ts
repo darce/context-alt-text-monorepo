@@ -162,7 +162,11 @@ const assertResponsiveLayout = async (page: Page, viewportName: string): Promise
   }
   expect(firstPhotoFrame.y).toBeLessThan(844 - 120);
 
-  await page.getByTestId('guided-photo-tribeca').getByRole('button', { name: PUBLIC_COMPARE_PHOTOS }).first().click();
+  await page
+    .getByTestId('guided-photo-tribeca')
+    .getByRole('button', { name: PUBLIC_COMPARE_PHOTOS, exact: true })
+    .first()
+    .click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-gallery img').evaluateAll((images) =>

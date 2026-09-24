@@ -4,7 +4,9 @@ import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
+  GUIDED_OUTCOME,
   canApplyImageDraftPublic,
+  canKeepCurrentForImage,
   type GuidedDemoState,
   type GuidedImageKey,
   type GuidedRestoreMode,
@@ -68,7 +70,12 @@ const imageOriginLabel = (draft: GuidedImageDraft, recordedOriginLabel?: string)
   }
 };
 
-const imageApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, localText: string): string | null => {
+const imageApplyReason = (
+  state: GuidedReviewState,
+  draft: GuidedImageDraft,
+  localText: string,
+  imageKey: GuidedImageKey,
+): string | null => {
   if (draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED) {
     return guidedCopy('draft.blocked');
   }
@@ -87,7 +94,7 @@ const imageApplyReason = (state: GuidedReviewState, draft: GuidedImageDraft, loc
   if (draft.draftText === draft.appliedAltText) {
     return guidedCopy('apply.no_change');
   }
-  if (!guidedReviewNamesDecided(state)) {
+  if (!guidedReviewNamesDecided(state, imageKey)) {
     return guidedCopy('draft.blocked');
   }
   return null;
@@ -97,6 +104,7 @@ const imagePublicApplyReason = (
   state: GuidedReviewState,
   draft: GuidedImageDraft,
   localText: string,
+  imageKey: GuidedImageKey,
 ): string | null => {
   if (draft.draftStatus !== GUIDED_DRAFT_STATUS.READY || draft.draftText === null) {
     return guidedCopy('error.no_recorded_draft.public');
@@ -107,7 +115,7 @@ const imagePublicApplyReason = (
   if (localText === draft.appliedAltText) {
     return guidedCopy('error.unchanged_draft.public');
   }
-  if (!guidedReviewNamesDecided(state) || state.pendingChoiceChange !== null) {
+  if (!guidedReviewNamesDecided(state, imageKey) || state.pendingChoiceChange !== null) {
     return guidedCopy('error.no_recorded_draft.public');
   }
   return null;
@@ -157,6 +165,14 @@ interface GuidedImageReviewCardProps {
   scope: 'public' | 'admin';
 }
 
+export interface GuidedPhotoReviewProps {
+  photo: GuidedScenario['pressPhotos'][number];
+  state: GuidedReviewState;
+  actions: GuidedDescriptionReviewActions;
+  recordedOriginLabel?: string;
+  scope?: 'public' | 'admin';
+}
+
 const GuidedImageReviewCard = ({
   photo,
   state,
@@ -176,13 +192,11 @@ const GuidedImageReviewCard = ({
   const previousDraftTextRef = useRef(draft.draftText);
   const publicActionRef = useRef<
     | { type: 'apply'; text: string; previousHistoryLength: number }
-    | {
-        type: 'undo';
-        restoredAltText: string;
-        previousHistoryLength: number;
-      }
+    | { type: 'undo'; restoredAltText: string; previousHistoryLength: number }
+    | { type: 'keep'; restoredAltText: string; previousHistoryLength: number }
     | null
   >(null);
+  const publicUndoButtonRef = useRef<HTMLButtonElement>(null);
 
   const resizeEditor = useCallback((): void => {
     const editor = editorRef.current;
@@ -260,10 +274,17 @@ const GuidedImageReviewCard = ({
         (publicAction.type === 'apply'
           ? draft.appliedAltText === publicAction.text &&
             draft.applicationHistory.length > publicAction.previousHistoryLength
-          : draft.appliedAltText === publicAction.restoredAltText &&
-            draft.applicationHistory.length < publicAction.previousHistoryLength);
+          : publicAction.type === 'undo'
+            ? draft.appliedAltText === publicAction.restoredAltText &&
+              draft.applicationHistory.length < publicAction.previousHistoryLength
+            : draft.outcome === GUIDED_OUTCOME.KEPT &&
+              draft.appliedAltText === publicAction.restoredAltText &&
+              draft.applicationHistory.length === 0);
       publicActionRef.current = null;
       if (actionSucceeded) {
+        if (publicAction.type === 'apply') {
+          publicUndoButtonRef.current?.focus();
+        }
         return;
       }
     }
@@ -347,16 +368,32 @@ const GuidedImageReviewCard = ({
   };
   const applyEnabled =
     scope === 'public'
-      ? draft.draftText !== null && canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft)
-      : guidedReviewCanApply(state, draft) && localMatches;
+      ? draft.draftText !== null &&
+        canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft, photo.key)
+      : guidedReviewCanApply(state, draft, photo.key) && localMatches;
+  const namesAnswered = guidedReviewNamesDecided(state, photo.key);
+  const keepEnabled = canKeepCurrentForImage(state, photo.key) && draft.outcome !== GUIDED_OUTCOME.APPLIED;
+  const publicReviewWaitingForNames = scope === 'public' && !namesAnswered;
   const undoEnabled = guidedReviewCanUndo(draft);
   const reason =
-    scope === 'public' ? imagePublicApplyReason(state, draft, editValue) : imageApplyReason(state, draft, editValue);
-  const previewBlocked = scope === 'admin' && !guidedReviewCanPreview(state, draft) && localMatches ? reason : null;
+    scope === 'public'
+      ? imagePublicApplyReason(state, draft, editValue, photo.key)
+      : imageApplyReason(state, draft, editValue, photo.key);
+  const previewBlocked =
+    scope === 'admin' && !guidedReviewCanPreview(state, draft, photo.key) && localMatches ? reason : null;
   const editorId = `guided-description-draft-${photo.key}`;
   const errorId = `${editorId}-error`;
   const applyReasonId = `${editorId}-apply-reason`;
   const undoReasonId = `${editorId}-undo-reason`;
+  const applyLabel = scope === 'public' ? guidedCopy('description.use.public') : guidedCopy('apply.submit');
+  const keepLabel = scope === 'public' ? guidedCopy('description.keep.public') : guidedCopy('draft.keep');
+  const undoLabel = scope === 'public' ? guidedCopy('description.undo.public') : guidedCopy('apply.undo');
+  const applyStatus = guidedCopy('outcome.applied_image.public');
+  const keepStatus = guidedCopy('outcome.kept_body.public');
+  const showApplyReason =
+    !applyEnabled &&
+    reason !== null &&
+    (scope !== 'public' || (publicStatus !== applyStatus && publicStatus !== keepStatus));
 
   const handlePreview = (): void => {
     if (editValue.trim() === '') {
@@ -384,7 +421,20 @@ const GuidedImageReviewCard = ({
       previousHistoryLength: draft.applicationHistory.length,
     };
     callTextImageAction(actions.onApplyForImage, actions.onApply, photo.key, editValue);
-    setPublicStatus(guidedCopy('outcome.applied_image.public'));
+    setPublicStatus(applyStatus);
+  };
+
+  const handlePublicKeep = (): void => {
+    if (!keepEnabled) {
+      return;
+    }
+    publicActionRef.current = {
+      type: 'keep',
+      restoredAltText: draft.applicationHistory[0]?.previousAltText ?? draft.appliedAltText,
+      previousHistoryLength: draft.applicationHistory.length,
+    };
+    callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key);
+    setPublicStatus(keepStatus);
   };
 
   const handlePublicUndo = (): void => {
@@ -401,14 +451,37 @@ const GuidedImageReviewCard = ({
     setPublicStatus(guidedCopy('outcome.undone_image.public'));
   };
 
+  if (publicReviewWaitingForNames) {
+    return (
+      <article
+        className="acx-guided-review__image-card"
+        id={`guided-photo-review-${photo.key}`}
+        data-testid={`guided-description-review-${photo.key}`}
+        data-image-key={photo.key}
+        aria-label={scope === 'public' ? photo.event : undefined}
+        aria-labelledby={scope === 'admin' ? `${editorId}-title` : undefined}
+        tabIndex={-1}
+      >
+        {scope === 'admin' ? <h3 id={`${editorId}-title`}>{photo.event}</h3> : null}
+        <p>{guidedCopy('choices.help.public')}</p>
+      </article>
+    );
+  }
+
   return (
     <article
       className="acx-guided-review__image-card"
+      id={`guided-photo-review-${photo.key}`}
       data-testid={`guided-description-review-${photo.key}`}
       data-image-key={photo.key}
       aria-labelledby={`${editorId}-title`}
+      tabIndex={-1}
     >
-      <h3 id={`${editorId}-title`}>{photo.event}</h3>
+      {scope === 'public' ? (
+        <h4 id={`${editorId}-title`}>{guidedCopy('step.review.public')}</h4>
+      ) : (
+        <h3 id={`${editorId}-title`}>{photo.event}</h3>
+      )}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.BLOCKED ? <p>{guidedCopy('draft.blocked')}</p> : null}
       {draft.draftStatus === GUIDED_DRAFT_STATUS.FIXTURE_MISSING ? (
         <div>
@@ -430,18 +503,10 @@ const GuidedImageReviewCard = ({
             className="acx-guided-review__comparison acx-guided-review__editor-layout"
             data-testid={`guided-editor-layout-${photo.key}`}
           >
-            <figure className="acx-guided-review__demo-preview">
-              <figcaption>{guidedCopy('apply.preview_title')}</figcaption>
-              <img
-                data-testid={`demo-applied-image-${photo.key}`}
-                src={`${photo.src}#demo-applied-preview-${photo.key}`}
-                alt={draft.appliedAltText}
-              />
-            </figure>
             <div data-testid={`guided-editor-column-${photo.key}`}>
               <p className="acx-guided-review__origin">{imageOriginLabel(draft, recordedOriginLabel)}</p>
               <div data-testid={`guided-current-alt-${photo.key}`}>
-                <h4>{guidedCopy('draft.current_alt_label.public')}</h4>
+                <h5>{guidedCopy('draft.current_alt_label.public')}</h5>
                 <p data-applied-text>{draft.appliedAltText}</p>
               </div>
               <div data-testid={`guided-draft-field-${photo.key}`}>
@@ -483,17 +548,18 @@ const GuidedImageReviewCard = ({
                   data-testid={`demo-apply-${photo.key}`}
                   onClick={handlePublicApply}
                   disabled={!applyEnabled}
-                  aria-describedby={!applyEnabled && reason ? applyReasonId : undefined}
+                  aria-describedby={showApplyReason ? applyReasonId : undefined}
                 >
-                  {guidedCopy('apply.submit')}
+                  {applyLabel}
                 </button>
                 <button
                   type="button"
                   className="acx-button acx-button--tertiary"
                   data-testid={`guided-keep-current-${photo.key}`}
-                  onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
+                  onClick={handlePublicKeep}
+                  disabled={!keepEnabled}
                 >
-                  {guidedCopy('draft.keep')}
+                  {keepLabel}
                 </button>
                 <button
                   type="button"
@@ -501,10 +567,11 @@ const GuidedImageReviewCard = ({
                   data-testid={`demo-undo-${photo.key}`}
                   onClick={handlePublicUndo}
                   disabled={!undoEnabled}
+                  ref={publicUndoButtonRef}
                 >
-                  {guidedCopy('apply.undo')}
+                  {undoLabel}
                 </button>
-                {!applyEnabled && reason ? (
+                {showApplyReason ? (
                   <p id={applyReasonId} className="acx-guided-review__apply-reason">
                     {reason}
                   </p>
@@ -563,7 +630,9 @@ const GuidedImageReviewCard = ({
                   <button
                     type="button"
                     className="acx-button acx-button--tertiary"
+                    data-testid={`guided-keep-current-${photo.key}`}
                     onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
+                    disabled={!keepEnabled}
                   >
                     {guidedCopy('draft.keep')}
                   </button>
@@ -638,17 +707,18 @@ const GuidedImageReviewCard = ({
             data-testid={`demo-apply-${photo.key}`}
             onClick={handlePublicApply}
             disabled={!applyEnabled}
-            aria-describedby={reason ? applyReasonId : undefined}
+            aria-describedby={showApplyReason ? applyReasonId : undefined}
           >
-            {guidedCopy('apply.submit')}
+            {applyLabel}
           </button>
           <button
             type="button"
             className="acx-button acx-button--tertiary"
             data-testid={`guided-keep-current-${photo.key}`}
-            onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
+            onClick={handlePublicKeep}
+            disabled={!keepEnabled}
           >
-            {guidedCopy('draft.keep')}
+            {keepLabel}
           </button>
           <button
             type="button"
@@ -656,10 +726,11 @@ const GuidedImageReviewCard = ({
             data-testid={`demo-undo-${photo.key}`}
             onClick={handlePublicUndo}
             disabled={!undoEnabled}
+            ref={publicUndoButtonRef}
           >
-            {guidedCopy('apply.undo')}
+            {undoLabel}
           </button>
-          {reason ? (
+          {showApplyReason ? (
             <p id={applyReasonId} className="acx-guided-review__apply-reason">
               {reason}
             </p>
@@ -673,7 +744,9 @@ const GuidedImageReviewCard = ({
           <button
             type="button"
             className="acx-button acx-button--tertiary"
+            data-testid={`guided-keep-current-${photo.key}`}
             onClick={() => callImageOnlyAction(actions.onKeepForImage, actions.onKeep, photo.key)}
+            disabled={!keepEnabled}
           >
             {guidedCopy('draft.keep')}
           </button>
@@ -686,7 +759,7 @@ const GuidedImageReviewCard = ({
           <p>{guidedCopy('draft.history_note')}</p>
           <ul>
             {draft.draftHistory.map((revision) => {
-              const matching = guidedReviewCanRestore(state, draft, revision.revisionId);
+              const matching = guidedReviewCanRestore(state, draft, revision.revisionId, photo.key);
               return (
                 <li key={revision.revisionId} data-image-key={photo.key}>
                   <p>{revision.text}</p>
@@ -736,6 +809,32 @@ const GuidedImageReviewCard = ({
   );
 };
 
+export const GuidedPhotoReview = ({
+  photo,
+  state,
+  actions,
+  recordedOriginLabel,
+  scope = 'admin',
+}: GuidedPhotoReviewProps): React.JSX.Element | null => {
+  const draft = guidedReviewDraftFor(state, photo.key);
+  if (draft === null) {
+    return null;
+  }
+
+  return (
+    <GuidedImageReviewCard
+      photo={photo}
+      state={state}
+      draft={draft}
+      actions={actions}
+      scope={scope}
+      {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}
+    />
+  );
+};
+
+GuidedPhotoReview.displayName = 'GuidedPhotoReview';
+
 export const GuidedDescriptionReview = ({
   scenario,
   state: reviewState,
@@ -765,16 +864,11 @@ export const GuidedDescriptionReview = ({
       >
         {scope === 'admin' ? <h2 id="acx-guided-apply-title">{guidedCopy('step.apply')}</h2> : null}
         {scenario.pressPhotos.map((photo) => {
-          const draft = guidedReviewDraftFor(reviewState, photo.key);
-          if (draft === null) {
-            return null;
-          }
           return (
-            <GuidedImageReviewCard
+            <GuidedPhotoReview
               key={photo.key}
               photo={photo}
               state={reviewState}
-              draft={draft}
               actions={actions}
               scope={scope}
               {...(recordedOriginLabel !== undefined ? { recordedOriginLabel } : {})}

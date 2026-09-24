@@ -118,4 +118,211 @@
   }
 
   @include meta.load-css('theme-darce-components');
+
+  // Let the page own the outer gutter so nested public sections do not stack
+  // their shell padding on top of it.
+  .acx-guided-page {
+    max-width: var(--acx-guide-max-width);
+  }
+
+  .acx-guided-entrance,
+  .acx-guided-review,
+  .acx-guided-outcome {
+    max-width: none;
+    margin-inline: 0;
+    padding: 0;
+  }
+
+  .acx-guided-entrance {
+    margin-bottom: var(--acx-space-48);
+  }
+
+  .acx-guided-entrance__title {
+    max-width: 20ch;
+  }
+
+  .acx-guided-entrance__intro {
+    max-width: 36em;
+  }
+
+  .acx-guided-page__workspace {
+    gap: var(--acx-space-48);
+  }
+
+  .acx-guided-page__media-list {
+    gap: 0;
+  }
+
+  .acx-guided-page__photo-step {
+    padding-block: var(--acx-space-20);
+  }
+
+  .acx-guided-page__photo-step + .acx-guided-page__photo-step {
+    border-top: var(--acx-guide-border-width) solid var(--acx-color-border);
+  }
+
+  .acx-guided-page__media-card {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+
+    > h3 {
+      padding: 0;
+    }
+
+    > .acx-guided-page__credit {
+      padding-inline: 0;
+    }
+
+    > figcaption {
+      padding-inline: 0;
+    }
+  }
+
+  .acx-guided-page__faces {
+    padding: 0;
+  }
+
+  .acx-guided-face__card {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .acx-guided-face__choice {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .acx-guided-face__lightbox {
+    box-sizing: border-box;
+    width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
+    max-width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
+    padding: var(--acx-guide-pad-tight);
+  }
+
+  .acx-guided-face__lightbox-gallery {
+    --acx-guide-lightbox-tile-size: min(
+      16rem,
+      calc(
+        (
+            100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight) - var(
+                --acx-guide-pad-tight
+              ) - var(--acx-space-8)
+          ) /
+          2
+      )
+    );
+  }
+
+  @media (min-width: 60rem) {
+    .acx-guided-entrance {
+      grid-template-columns: minmax(0, 38em) minmax(12em, 1fr);
+      column-gap: var(--acx-space-48);
+      row-gap: var(--acx-space-24);
+      align-items: center;
+    }
+
+    .acx-guided-entrance__escape {
+      grid-column: 1 / -1;
+    }
+
+    .acx-guided-entrance__content {
+      grid-column: 1;
+    }
+
+    .acx-guided-entrance__plan {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .acx-guided-page__media-card {
+      grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.45fr);
+    }
+  }
+
+  @media (max-width: 48rem) {
+    .acx-guided-page {
+      padding-inline: var(--acx-guide-pad-tight);
+    }
+
+    .acx-guided-entrance,
+    .acx-guided-review,
+    .acx-guided-outcome {
+      padding-inline: 0;
+    }
+
+    .acx-guided-page__workspace {
+      gap: var(--acx-space-16);
+    }
+
+    .acx-guided-entrance {
+      gap: var(--acx-space-8);
+      margin-bottom: var(--acx-space-16);
+      padding-block: var(--acx-space-12);
+    }
+
+    .acx-guided-entrance__escape {
+      align-items: center;
+      gap: var(--acx-space-8);
+
+      > a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+      }
+    }
+
+    .acx-guided-entrance__content {
+      display: grid;
+      gap: var(--acx-space-8);
+      line-height: 1.4;
+
+      > * {
+        margin: 0;
+      }
+
+      > h1 {
+        margin: 0;
+      }
+    }
+
+    .acx-guided-entrance__plan {
+      h2 {
+        margin-bottom: var(--acx-space-4);
+      }
+
+      ol {
+        gap: var(--acx-space-4);
+        padding-left: var(--acx-space-16);
+        font-size: var(--acx-text-sm);
+        line-height: 1.35;
+      }
+    }
+
+    .acx-guided-entrance__actions {
+      align-items: stretch;
+      gap: var(--acx-space-8);
+    }
+
+    .acx-guided-entrance__actions > .acx-button {
+      justify-content: center;
+      flex: 1 1 9rem;
+      width: auto;
+      min-width: 0;
+      min-height: 44px;
+      padding: var(--acx-space-8);
+      font-size: var(--acx-text-xs);
+      text-align: center;
+    }
+
+    .acx-guided-page__photo-step {
+      padding-block: var(--acx-space-16);
+    }
+  }
 }

@@ -1,10 +1,6 @@
 import { devices, expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
-import {
-  classifyAcxRequest,
-  isAcxRestRequest,
-  type AcxRequestRecord,
-} from '../fixtures/guided-recording';
+import { classifyAcxRequest, isAcxRestRequest, type AcxRequestRecord } from '../fixtures/guided-recording';
 
 /**
  * GUIDEROUTE-1: signed-out public guide acceptance.
@@ -12,9 +8,9 @@ import {
  * Runs under the `public-guide` Playwright project (no auth-setup). Skips when
  * ACX_PUBLIC_GUIDE_URL is unset. Wire it with `npm run e2e:public-guide` or
  * `make demo-public-guide-e2e SITE_URL=...` (not implied by deploy-enable).
- * Desktop 1440×900 and mobile Pixel 7 both complete choose → edit →
- * apply → undo from the keyboard only, with zero privileged acx/v1
- * traffic and zero describe calls.
+ * Desktop 1440×900 and mobile 390×844 check the delivered layout, then
+ * complete choose → edit → apply → undo from the keyboard with zero
+ * privileged acx/v1 traffic and zero describe calls.
  */
 
 const PUBLIC_SCOPE = 'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.';
@@ -58,7 +54,9 @@ const attachAcxCounter = (page: Page): AcxRequestRecord[] => {
 
 const assertNoPrivilegedOrDescribe = (records: readonly AcxRequestRecord[]): void => {
   const privileged = records.filter((row) => row.classification === 'privileged');
-  const describeCalls = records.filter((row) => /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url));
+  const describeCalls = records.filter((row) =>
+    /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url),
+  );
   expect(privileged, JSON.stringify(privileged)).toEqual([]);
   expect(describeCalls, JSON.stringify(describeCalls)).toEqual([]);
 };
@@ -108,6 +106,74 @@ const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
   await expect(appliedText).toHaveText(before, { timeout: STEP_TIMEOUT_MS });
 };
 
+const assertResponsiveLayout = async (page: Page, viewportName: string): Promise<void> => {
+  const root = page.getByTestId('guided-demo-root');
+  const rootBox = await root.boundingBox();
+  expect(rootBox, 'public guide root box').not.toBeNull();
+
+  const layout = await page.locator('.acx-guided-entrance').evaluate((entrance) => {
+    const content = entrance.querySelector('.acx-guided-entrance__content');
+    const plan = entrance.querySelector('.acx-guided-entrance__plan');
+    const samplePhoto = document.querySelector('[data-testid="guided-photo-tribeca"]');
+    const image = samplePhoto?.querySelector('.acx-guided-page__image-wrap');
+    const faces = samplePhoto?.querySelector('.acx-guided-page__faces');
+    if (
+      content === null ||
+      plan === null ||
+      image === null ||
+      image === undefined ||
+      faces === null ||
+      faces === undefined
+    ) {
+      throw new Error('Public guide layout landmarks are missing');
+    }
+    const contentBox = content.getBoundingClientRect();
+    const planBox = plan.getBoundingClientRect();
+    const imageBox = image.getBoundingClientRect();
+    const facesBox = faces.getBoundingClientRect();
+    return {
+      contentLeft: contentBox.left,
+      contentRight: contentBox.right,
+      planLeft: planBox.left,
+      imageRight: imageBox.right,
+      facesLeft: facesBox.left,
+    };
+  });
+
+  if (viewportName === 'desktop 1440x900') {
+    expect(layout.planLeft).toBeGreaterThan(layout.contentRight);
+    expect(layout.facesLeft).toBeGreaterThan(layout.imageRight);
+    return;
+  }
+
+  expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(16, 0);
+  const firstPhotoFrame = await page
+    .getByTestId('guided-photo-tribeca')
+    .locator('.acx-guided-page__image-wrap')
+    .boundingBox();
+  if (firstPhotoFrame === null) {
+    throw new Error('The first sample photo image frame is missing');
+  }
+  expect(firstPhotoFrame.y).toBeLessThan(844 - 120);
+
+  await page.getByTestId('guided-photo-tribeca').getByRole('button', { name: 'Compare photos' }).first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-gallery img').evaluateAll((images) =>
+    images.slice(0, 2).map((image) => {
+      const bounds = image.getBoundingClientRect();
+      return { width: bounds.width, top: bounds.top };
+    }),
+  );
+  expect(referenceTiles).toHaveLength(2);
+  expect(referenceTiles[0].width).toBeGreaterThanOrEqual(158);
+  expect(referenceTiles[0].width).toBeLessThanOrEqual(160);
+  expect(referenceTiles[1].width).toBe(referenceTiles[0].width);
+  expect(Math.abs(referenceTiles[0].top - referenceTiles[1].top)).toBeLessThan(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+};
+
 test.describe('public guide signed-out', () => {
   test.skip(
     configuredUrl === '',
@@ -119,7 +185,7 @@ test.describe('public guide signed-out', () => {
   const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices['Pixel 7'];
   const viewports = [
     { name: 'desktop 1440x900', use: { viewport: { width: 1440, height: 900 } } },
-    { name: 'mobile Pixel 7', use: pixel7 },
+    { name: 'mobile 390x844', use: { ...pixel7, viewport: { width: 390, height: 844 } } },
   ] as const;
 
   for (const viewport of viewports) {
@@ -146,6 +212,7 @@ test.describe('public guide signed-out', () => {
         await expect(page.getByRole('button', { name: PUBLIC_START })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Read the case study' })).toBeVisible();
 
+        await assertResponsiveLayout(page, viewport.name);
         await completeKeyboardWalkthrough(page);
         assertNoPrivilegedOrDescribe(acxRequests);
       });

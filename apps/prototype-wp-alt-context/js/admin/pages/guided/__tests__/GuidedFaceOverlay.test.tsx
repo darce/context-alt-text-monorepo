@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { overlayRectFor } from '../../../../components/ui/faceGeometry';
+import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from '../GuidedFaceOverlay';
 
 const naturalSize = { width: 1000, height: 800 };
@@ -24,8 +25,13 @@ const faces: GuidedFaceOverlayFace[] = [
   },
 ];
 
+const matchWords = (face: GuidedFaceOverlayFace): string =>
+  face.strength === 'weak' ? guidedCopy('names.weak.public') : guidedCopy('names.strong.public');
+
+const accessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${matchWords(face)}`;
+
 describe('GuidedFaceOverlay', () => {
-  it('renders one percent-positioned outline button and chip per face', () => {
+  it('renders one positioned outline button per face with strength words instead of similarity values', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
     const buttons = screen.getAllByRole('button');
@@ -33,7 +39,7 @@ describe('GuidedFaceOverlay', () => {
 
     faces.forEach((face) => {
       const button = screen.getByRole('button', {
-        name: `${face.label}, ${face.similarityText}`,
+        name: accessibleName(face),
       });
       const rect = overlayRectFor(face.box, naturalSize);
 
@@ -45,21 +51,39 @@ describe('GuidedFaceOverlay', () => {
         width: `${rect.width}%`,
         height: `${rect.height}%`,
       });
-      expect(button).toHaveTextContent(`${face.label} · ${face.similarityText}`);
+      expect(button).toHaveTextContent(`${face.label} · ${matchWords(face)}`);
+      expect(button.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
     });
   });
 
   it('uses the warning icon and dashed outline only for weak matches', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
-    const weakButton = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
-    const strongButton = screen.getByRole('button', { name: 'Justin Trudeau, 91.2% (strong)' });
+    const weakButton = screen.getByRole('button', { name: accessibleName(faces[0]) });
+    const strongButton = screen.getByRole('button', { name: accessibleName(faces[1]) });
 
     expect(weakButton).toHaveClass('acx-guided-face-overlay__outline--weak');
     expect(weakButton).toHaveClass('acx-guided-face-overlay__outline');
     expect(weakButton.querySelector('.acx-guided-face-overlay__warning-icon')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Weak match' })).toBeInTheDocument();
     expect(strongButton).not.toHaveClass('acx-guided-face-overlay__outline--weak');
     expect(strongButton.querySelector('.acx-guided-face-overlay__warning-icon')).toBeNull();
+  });
+
+  it('uses the no-score copy for a cluster anchor', () => {
+    const anchor: GuidedFaceOverlayFace = {
+      ...faces[1],
+      id: 'anchor',
+      strength: 'self_anchor',
+      isClusterAnchor: true,
+    };
+    render(<GuidedFaceOverlay faces={[anchor]} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
+
+    const noScoreCopy = `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
+    const button = screen.getByRole('button', { name: `${anchor.label}, ${noScoreCopy}` });
+    expect(button).toHaveTextContent(noScoreCopy);
+    expect(button).not.toHaveTextContent(/\d+(?:\.\d+)?%/);
+    expect(button.querySelector('.acx-guided-face-overlay__warning-icon')).toBeNull();
   });
 
   it('keeps every face button in the keyboard sequence and clears highlight on Escape', async () => {
@@ -89,7 +113,7 @@ describe('GuidedFaceOverlay', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible={false} idPrefix="guided-tribeca" />);
 
     const layer = screen.getByTestId('guided-face-overlay');
-    const buttons = faces.map((face) => screen.getByRole('button', { name: `${face.label}, ${face.similarityText}` }));
+    const buttons = faces.map((face) => screen.getByRole('button', { name: accessibleName(face) }));
     expect(layer).not.toHaveAttribute('hidden');
     expect(buttons).toHaveLength(faces.length);
     expect(layer.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
@@ -114,7 +138,7 @@ describe('GuidedFaceOverlay', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
+    const button = screen.getByRole('button', { name: accessibleName(faces[0]) });
     await user.click(button);
     expect(onHighlightChange).toHaveBeenLastCalledWith('katy');
     expect(button).toHaveAttribute('aria-pressed', 'true');
@@ -146,7 +170,7 @@ describe('GuidedFaceOverlay', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
+    const button = screen.getByRole('button', { name: accessibleName(faces[0]) });
     await user.click(button);
     await user.keyboard('{Escape}');
 
@@ -169,7 +193,7 @@ describe('GuidedFaceOverlay', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Katy Perry, 56.7% (weak)' });
+    const button = screen.getByRole('button', { name: accessibleName(faces[0]) });
     fireEvent.pointerEnter(button);
     expect(onHighlightChange).toHaveBeenCalledWith('katy');
     expect(button).toHaveAttribute('aria-pressed', 'false');

@@ -1,22 +1,22 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { FaceThumbnailProps } from '../../../../components/ui/FaceThumbnail';
 import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_NAME_CHOICE,
-  chooseGuidedName,
-  createGuidedDemoState,
   createGuidedScenario,
   guidedNameCoverage,
+  type GuidedFace,
   type GuidedFacePosition,
+  type GuidedImageKey,
   type GuidedNameChoice,
 } from '../../../guidedPrototype/state';
-import { GuidedFaceMatchCard } from '../GuidedFaceMatchCard';
-import { GuidedFacesPanel } from '../GuidedFacesPanel';
+import { GuidedFaceMatchCard, type GuidedFaceMatchCardProps } from '../GuidedFaceMatchCard';
 
 vi.mock('../../../../components/ui/FaceThumbnail', () => ({
-  FaceThumbnail: ({ alt, bbox, mediaUrl, shape, size }: FaceThumbnailProps) => (
+  FaceThumbnail: ({ alt, bbox, mediaUrl, shape, size, sizePx }: FaceThumbnailProps) => (
     <div
       role="img"
       aria-label={alt}
@@ -26,13 +26,57 @@ vi.mock('../../../../components/ui/FaceThumbnail', () => ({
       data-media-url={mediaUrl}
       data-shape={shape}
       data-size={size}
+      data-size-px={sizePx}
     />
   ),
 }));
 
 const scenario = createGuidedScenario();
 
-type ChooseName = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement) => void;
+type ChooseName = (
+  position: GuidedFacePosition,
+  choice: GuidedNameChoice,
+  origin: HTMLInputElement,
+  imageKey: GuidedImageKey,
+) => void;
+
+const matchesFor = (face: GuidedFace) =>
+  scenario.faces
+    .filter((candidate) => candidate.imageKey === face.imageKey && candidate.matchedPersonKey === face.matchedPersonKey)
+    .map((match) => {
+      const photo = scenario.pressPhotos.find((candidate) => candidate.key === match.imageKey);
+      if (photo === undefined) {
+        throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+      }
+      return { face: match, mediaUrl: photo.src };
+    });
+
+const cardFor = (
+  faceId: string,
+  props?: { choice?: GuidedNameChoice; onChoose?: GuidedFaceMatchCardProps['onChoose'] },
+) => {
+  const face = scenario.faces.find((candidate) => candidate.id === faceId);
+  if (face === undefined) {
+    throw new Error(`Missing guided face ${faceId}.`);
+  }
+  const person = scenario.people.find((candidate) => candidate.key === face.matchedPersonKey);
+  const coverage = guidedNameCoverage(scenario).find((entry) => entry.key === face.matchedPersonKey);
+  if (person === undefined || coverage === undefined) {
+    throw new Error(`Missing person evidence for ${face.matchedPersonKey}.`);
+  }
+
+  return (
+    <GuidedFaceMatchCard
+      matches={matchesFor(face)}
+      person={person}
+      coverage={coverage}
+      choice={props?.choice ?? GUIDED_NAME_CHOICE.UNANSWERED}
+      idScope={face.imageKey}
+      disabled={false}
+      onChoose={props?.onChoose ?? vi.fn()}
+    />
+  );
+};
 
 const getRadioInputs = (group: HTMLElement): HTMLInputElement[] =>
   within(group)
@@ -44,205 +88,153 @@ const getRadioInputs = (group: HTMLElement): HTMLInputElement[] =>
       return radio;
     });
 
-const renderPanel = (
-  state = createGuidedDemoState(),
-  handlers?: {
-    onChoose?: ChooseName;
-    onContinue?: () => void;
-  },
-) => {
-  const onChoose = handlers?.onChoose ?? vi.fn();
-  const onContinue = handlers?.onContinue ?? vi.fn();
-  const onConfirmReplacement = vi.fn();
-  const onCancelReplacement = vi.fn();
-  const cardViews = scenario.faces
-    .filter((face) => face.imageKey === scenario.pressPhotos[0].key)
-    .map((face) => {
-      const person = scenario.people.find((candidate) => candidate.key === face.matchedPersonKey);
-      const coverage = guidedNameCoverage(scenario).find((entry) => entry.key === face.matchedPersonKey);
-      if (!person || !coverage) {
-        throw new Error('Expected the bundled person and coverage fixture.');
-      }
-
-      return (
-        <GuidedFaceMatchCard
-          key={face.id}
-          matches={scenario.faces
-            .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
-            .map((match) => ({
-              face: match,
-              mediaUrl: scenario.pressPhotos.find((photo) => photo.key === match.imageKey)?.src ?? '',
-            }))}
-          person={person}
-          coverage={coverage}
-          choice={state.choices[face.position]}
-          idScope={face.imageKey}
-          disabled={state.pendingChoiceChange !== null}
-          onChoose={(choice, origin) => {
-            onChoose(face.position, choice, origin);
-          }}
-        />
-      );
-    });
-  const view = render(
-    <>
-      <GuidedFacesPanel
-        scenario={scenario}
-        state={state}
-        onChoose={onChoose}
-        onContinue={onContinue}
-        onConfirmReplacement={onConfirmReplacement}
-        onCancelReplacement={onCancelReplacement}
-      />
-      <div data-testid="guided-face-card-fixture">{cardViews}</div>
-    </>,
+const renderPhotoCards = (onChoose: ChooseName = vi.fn()) =>
+  render(
+    <div>
+      {scenario.faces
+        .filter((face) => face.imageKey === 'tribeca')
+        .map((face) => (
+          <div key={face.id} data-testid={`face-card-${face.position}`}>
+            {cardFor(face.id, {
+              onChoose: (choice, origin, imageKey) => onChoose(face.position, choice, origin, imageKey),
+            })}
+          </div>
+        ))}
+    </div>,
   );
 
-  return { ...view, onChoose, onContinue, onConfirmReplacement, onCancelReplacement };
-};
-
-describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
-  it('puts a native unselected radio group inside each evidence card section', () => {
-    const { onChoose } = renderPanel();
-
-    expect(screen.getByRole('heading', { name: guidedCopy('step.names') })).toBeInTheDocument();
-    expect(screen.getByText(guidedCopy('names.intro'))).toBeInTheDocument();
-    expect(screen.getByText(guidedCopy('names.assisted'))).toBeInTheDocument();
-    expect(screen.queryByText(/How this works/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Match strength/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Yes, this is/)).not.toBeInTheDocument();
-
-    const cards = screen.getAllByRole('region', { name: /Saved suggestion:/ });
-    expect(cards).toHaveLength(2);
+describe('GuidedFaceMatchCard', () => {
+  it('provides native per-photo radio groups with large answer targets', () => {
+    const onChoose = vi.fn();
+    renderPhotoCards(onChoose);
 
     const left = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) });
     const right = screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) });
-    expect(cards[0]).toContainElement(left);
-    expect(cards[1]).toContainElement(right);
     expect(left.tagName).toBe('FIELDSET');
     expect(right.tagName).toBe('FIELDSET');
-    expect(within(left).getByText(guidedCopy('names.legend', { position: 'left' }))).toBeInTheDocument();
-    expect(within(right).getByText(guidedCopy('names.legend', { position: 'right' }))).toBeInTheDocument();
+    expect(getRadioInputs(left)).toHaveLength(2);
+    expect(getRadioInputs(right)).toHaveLength(2);
+    expect([...getRadioInputs(left), ...getRadioInputs(right)].every((radio) => !radio.checked)).toBe(true);
 
-    const leftRadios = getRadioInputs(left);
-    const rightRadios = getRadioInputs(right);
-    expect(leftRadios).toHaveLength(2);
-    expect(rightRadios).toHaveLength(2);
-    expect(leftRadios.every((radio) => !radio.checked)).toBe(true);
-    expect(rightRadios.every((radio) => !radio.checked)).toBe(true);
-    expect(within(cards[0]).getByText(guidedCopy('names.pending'))).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeDisabled();
-
-    fireEvent.click(within(left).getByRole('radio', { name: guidedCopy('names.include', { name: 'Justin Trudeau' }) }));
-    fireEvent.click(within(right).getByRole('radio', { name: guidedCopy('names.omit') }));
-    expect(onChoose).toHaveBeenCalledWith('left', GUIDED_NAME_CHOICE.INCLUDE, expect.any(HTMLInputElement));
-    expect(onChoose).toHaveBeenCalledWith('right', GUIDED_NAME_CHOICE.OMIT, expect.any(HTMLInputElement));
-  });
-
-  it('shows bundled reference counts and credits without inventing missing photos', () => {
-    renderPanel();
-
-    const cards = screen.getAllByRole('region', { name: /Saved suggestion:/ });
-    expect(cards).toHaveLength(2);
-    const leftCard = screen.getByRole('region', { name: guidedCopy('names.suggestion', { name: 'Justin Trudeau' }) });
-    const rightCard = screen.getByRole('region', { name: guidedCopy('names.suggestion', { name: 'Katy Perry' }) });
-    expect(within(leftCard).getByText(guidedCopy('names.coverage_all', { total: 3 }))).toBeInTheDocument();
-    expect(
-      within(rightCard).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 })),
-    ).toBeInTheDocument();
-    expect(within(leftCard).getAllByRole('img', { name: /Justin Trudeau/ })).toHaveLength(3);
-    expect(within(rightCard).getAllByRole('img', { name: /Katy Perry/ })).toHaveLength(3);
-    expect(within(leftCard).getAllByText('© European Union, 2025, EU reuse licence, resized')).toHaveLength(1);
-    expect(within(rightCard).getByText('Justin Higuchi, CC BY 4.0, resized')).toHaveClass('screen-reader-text');
-
-    const thumbnails = screen.getAllByTestId('face-thumbnail');
-    expect(thumbnails.map((thumbnail) => thumbnail.getAttribute('data-bbox'))).toEqual([
-      JSON.stringify({ x: 513, y: 76, width: 133, height: 189 }),
-      JSON.stringify({ x: 196, y: 182, width: 89, height: 129 }),
-      JSON.stringify({ x: 706, y: 139, width: 121, height: 182 }),
-      JSON.stringify({ x: 386, y: 196, width: 80, height: 118 }),
-    ]);
-    expect(thumbnails.map((thumbnail) => thumbnail.getAttribute('data-media-url'))).toEqual([
-      scenario.pressPhotos[0].src,
-      scenario.pressPhotos[1].src,
-      scenario.pressPhotos[0].src,
-      scenario.pressPhotos[1].src,
-    ]);
-    expect(thumbnails[0]).toHaveAttribute('data-alt', 'Detected left face in Tribeca press photo');
-    expect(thumbnails[1]).toHaveAttribute('data-alt', 'Detected left face in Coachella press photo');
-    expect(thumbnails[2]).toHaveAttribute('data-alt', 'Detected right face in Tribeca press photo');
-    expect(thumbnails[3]).toHaveAttribute('data-alt', 'Detected right face in Coachella press photo');
-  });
-
-  it('reflects include and omit as ordinary selected states', () => {
-    let state = createGuidedDemoState();
-    state = chooseGuidedName(state, scenario, 'left', GUIDED_NAME_CHOICE.INCLUDE);
-    state = chooseGuidedName(state, scenario, 'right', GUIDED_NAME_CHOICE.OMIT);
-    renderPanel(state);
-
-    expect(
-      within(screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'left' }) })).getByRole('radio', {
-        name: guidedCopy('names.include', { name: 'Justin Trudeau' }),
-      }),
-    ).toBeChecked();
-    expect(
-      within(screen.getByRole('group', { name: guidedCopy('names.legend', { position: 'right' }) })).getByRole(
-        'radio',
-        {
-          name: guidedCopy('names.omit'),
-        },
-      ),
-    ).toBeChecked();
-    expect(screen.getByText(guidedCopy('names.included', { name: 'Justin Trudeau' }))).toBeInTheDocument();
-    expect(screen.getByText(guidedCopy('names.omitted'))).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeEnabled();
-  });
-
-  it('renders the fieldset on a standalone card', () => {
-    const face = scenario.faces.find((candidate) => candidate.position === 'left');
-    if (!face) {
-      throw new Error('Expected the bundled two-face scenario fixture.');
-    }
-    const person = scenario.people.find((candidate) => candidate.key === face.matchedPersonKey);
-    const coverage = guidedNameCoverage(scenario).find((entry) => entry.key === face.matchedPersonKey);
-    if (!person || !coverage) {
-      throw new Error('Expected the bundled person and coverage fixture.');
-    }
-
-    render(
-      <GuidedFaceMatchCard
-        matches={scenario.faces
-          .filter((candidate) => candidate.matchedPersonKey === face.matchedPersonKey)
-          .map((candidate) => ({
-            face: candidate,
-            mediaUrl: scenario.pressPhotos.find((photo) => photo.key === candidate.imageKey)?.src ?? '',
-          }))}
-        person={person}
-        coverage={coverage}
-        choice={GUIDED_NAME_CHOICE.UNDECIDED}
-        idScope="tribeca"
-        disabled={false}
-        onChoose={vi.fn()}
-      />,
-    );
-    const card = screen.getByRole('region', {
-      name: guidedCopy('names.suggestion', { name: person.name }),
+    const useJustin = within(left).getByRole('radio', {
+      name: guidedCopy('names.use.public', { name: 'Justin Trudeau' }),
     });
-    expect(card).toHaveAttribute('aria-labelledby', `guided-face-tribeca-${person.key}-title`);
+    const leaveUnnamed = within(right).getByRole('radio', { name: guidedCopy('names.omit.public') });
+    expect(useJustin.closest('label')).toHaveStyle({ minHeight: '44px' });
+    expect(leaveUnnamed.closest('label')).toHaveStyle({ minHeight: '44px' });
+    const justinCard = screen.getByRole('region', {
+      name: 'Justin Trudeau',
+    });
+    expect(within(justinCard).getByText(guidedCopy('names.strong.public')).closest('li')).toHaveStyle({
+      minHeight: '64px',
+    });
+    expect(screen.getAllByRole('button', { name: guidedCopy('names.compare.public') })[0]).toHaveStyle({
+      minHeight: '44px',
+    });
+
+    fireEvent.click(useJustin);
+    fireEvent.click(leaveUnnamed);
+    expect(onChoose).toHaveBeenCalledWith('left', GUIDED_NAME_CHOICE.USE, expect.any(HTMLInputElement), 'tribeca');
+    expect(onChoose).toHaveBeenCalledWith(
+      'right',
+      GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
+      expect.any(HTMLInputElement),
+      'tribeca',
+    );
+  });
+
+  it('keeps the same person’s answer groups separate for Tribeca and Coachella', () => {
+    render(
+      <div>
+        {scenario.faces.map((face) => (
+          <div key={face.id}>{cardFor(face.id)}</div>
+        ))}
+      </div>,
+    );
+
+    const tribecaLeft = screen.getByTestId('name-choice-tribeca-left');
+    const coachellaLeft = screen.getByTestId('name-choice-coachella-left');
+    const tribecaRadios = getRadioInputs(tribecaLeft);
+    const coachellaRadios = getRadioInputs(coachellaLeft);
+    expect(tribecaRadios[0]).toHaveAttribute('name', 'guided-name-tribeca-left');
+    expect(coachellaRadios[0]).toHaveAttribute('name', 'guided-name-coachella-left');
+    expect(tribecaRadios.every((radio) => !radio.checked)).toBe(true);
+    expect(coachellaRadios.every((radio) => !radio.checked)).toBe(true);
+  });
+
+  it('uses strength words, warns on weak evidence, and explains the anchor has no score', () => {
+    renderPhotoCards();
+
+    const justinCard = screen.getByRole('region', { name: 'Justin Trudeau' });
+    const katyCard = screen.getByRole('region', { name: 'Katy Perry' });
+    expect(within(justinCard).getByText(guidedCopy('names.strong.public'))).toBeInTheDocument();
+    expect(
+      within(katyCard).getByText(/No score: the saved group for this name started from this face\./),
+    ).toBeInTheDocument();
+    expect(justinCard).not.toHaveTextContent(/Saved suggestion:/);
+    expect(justinCard.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
+    expect(katyCard.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
+
+    const weakCard = render(cardFor('coachella-katy-perry'));
+    expect(screen.getByText(guidedCopy('names.weak.public'))).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: guidedCopy('names.match.weak_icon') })).toBeInTheDocument();
+    weakCard.unmount();
+  });
+
+  it('opens a crop-first comparison with visible reference credits and restores focus on Escape', async () => {
+    const user = userEvent.setup();
+    render(cardFor('tribeca-katy-perry'));
+
+    const compareButton = screen.getByRole('button', { name: guidedCopy('names.compare.public') });
+    await user.click(compareButton);
+    const dialog = await screen.findByRole('dialog', {
+      name: guidedCopy('lightbox.title.public', { name: 'Katy Perry' }),
+    });
+    const currentPhotoHeading = within(dialog).getByRole('heading', { name: guidedCopy('lightbox.current.public') });
+    const referenceHeading = within(dialog).getByRole('heading', {
+      name: guidedCopy('lightbox.references.public', { name: 'Katy Perry' }),
+    });
+    expect(
+      currentPhotoHeading.compareDocumentPosition(referenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const currentPhoto = within(dialog).getByTestId('face-thumbnail');
+    expect(currentPhoto).toHaveAttribute('data-media-url', scenario.pressPhotos[0].src);
+    expect(currentPhoto).toHaveAttribute('data-size-px', '160');
+
+    const references = within(dialog).getAllByTestId('guided-lightbox-reference-photo');
+    expect(references).toHaveLength(3);
+    expect(references.map((reference) => reference.className)).toEqual(
+      Array.from({ length: 3 }, () => 'acx-guided-face__lightbox-reference'),
+    );
+    expect(within(dialog).getByText('Voice of America, public domain')).not.toHaveClass('screen-reader-text');
+    expect(within(dialog).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
+
+    const closeButton = within(dialog).getByRole('button', { name: guidedCopy('lightbox.close.public') });
+    expect(closeButton).toHaveStyle({ minHeight: '44px', minWidth: '44px' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(compareButton).toHaveFocus();
+  });
+
+  it('keeps the standalone card ids and selected answer aligned to its photo', () => {
+    render(cardFor('tribeca-justin-trudeau', { choice: GUIDED_NAME_CHOICE.USE }));
+
+    const card = screen.getByRole('region', { name: 'Justin Trudeau' });
+    expect(card).toHaveAttribute('aria-labelledby', 'guided-face-tribeca-justin-trudeau-title');
     const fieldset = screen.getByTestId('name-choice-tribeca-left');
-    expect(fieldset).toBeInTheDocument();
     const radios = within(fieldset).getAllByRole('radio');
     expect(radios[0]).toHaveAttribute('id', 'guided-name-tribeca-left-include');
     expect(radios[0]).toHaveAttribute('name', 'guided-name-tribeca-left');
     expect(radios[1]).toHaveAttribute('id', 'guided-name-tribeca-left-omit');
     expect(radios[1]).toHaveAttribute('name', 'guided-name-tribeca-left');
-    expect(within(card).getByRole('button', { name: guidedCopy('names.enlarge') })).toHaveAttribute(
+    expect(
+      within(fieldset).getByRole('radio', {
+        name: guidedCopy('names.use.public', { name: 'Justin Trudeau' }),
+      }),
+    ).toBeChecked();
+    expect(within(card).getByRole('button', { name: guidedCopy('names.compare.public') })).toHaveAttribute(
       'id',
       'guided-name-tribeca-left-enlarge',
-    );
-    expect(within(card).getAllByTestId('face-thumbnail')[0]).toHaveAttribute(
-      'data-alt',
-      'Detected left face in Tribeca press photo',
     );
   });
 });

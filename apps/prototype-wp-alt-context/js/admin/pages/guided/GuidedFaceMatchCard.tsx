@@ -270,11 +270,7 @@ export const GuidedFaceMatchCard = ({
                     className="acx-guided-face__lightbox-reference"
                     data-testid="guided-lightbox-reference-photo"
                   >
-                    <img
-                      ref={index === 0 ? setLightboxReferenceTile : undefined}
-                      src={photo.src}
-                      alt={photo.altText}
-                    />
+                    <img ref={index === 0 ? setLightboxReferenceTile : undefined} src={photo.src} alt={photo.altText} />
                     <p className="acx-guided-face__gallery-credit">{photo.credit}</p>
                   </li>
                 ))}

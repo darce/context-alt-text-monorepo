@@ -224,10 +224,7 @@
     width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
     max-width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
     padding: var(--acx-guide-pad-tight);
-    --acx-guide-lightbox-tile-size: min(
-      12rem,
-      calc((100vw - 4 * var(--acx-guide-pad-tight) - var(--acx-space-8)) / 2)
-    );
+    --acx-guide-lightbox-tile-size: min(12rem, calc((100vw - 4 * var(--acx-guide-pad-tight) - var(--acx-space-8)) / 2));
   }
 
   .acx-guided-face__lightbox-gallery {

@@ -50,6 +50,13 @@ const publicOverlaySimilarityText = (
     : guidedCopy('names.strong.public', values);
 };
 
+const adminOverlaySimilarityText = (similarity: number | null, anchor: boolean): string => {
+  if (anchor) {
+    return guidedCopy('names.no_score.public');
+  }
+  return similarity === null ? guidedCopy('names.match.unavailable') : `${formatGuidedSimilarity(similarity)} match`;
+};
+
 const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
   <span>
     {isExternalUrl(photo.credit) ? (
@@ -178,7 +185,7 @@ const AdminPhotoCaptions = ({
   );
 };
 
-const overlayFacesForPhoto = (photo: GuidedPressPhoto): GuidedFaceOverlayFace[] => {
+const overlayFacesForPhoto = (photo: GuidedPressPhoto, scope: GuidedSamplePhotoScope): GuidedFaceOverlayFace[] => {
   const scenario = createGuidedScenario();
 
   return scenario.faces
@@ -192,7 +199,10 @@ const overlayFacesForPhoto = (photo: GuidedPressPhoto): GuidedFaceOverlayFace[] 
           ? GUIDED_MATCH_STRENGTH.WEAK
           : GUIDED_MATCH_STRENGTH.STRONG;
       const publicStrength = face.strength ?? strength;
-      const similarityText = publicOverlaySimilarityText(face.similarity, publicStrength, anchor);
+      const similarityText =
+        scope === 'admin'
+          ? adminOverlaySimilarityText(face.similarity, anchor)
+          : publicOverlaySimilarityText(face.similarity, publicStrength, anchor);
 
       return {
         id: face.id,
@@ -200,7 +210,7 @@ const overlayFacesForPhoto = (photo: GuidedPressPhoto): GuidedFaceOverlayFace[] 
         label: person.name,
         similarityText,
         strength: scope === 'public' ? publicStrength : strength,
-        isClusterAnchor: anchor,
+        ...(scope === 'public' ? { isClusterAnchor: anchor } : {}),
       };
     });
 };
@@ -218,7 +228,7 @@ export const GuidedSamplePhoto = ({
   const [pointerInside, setPointerInside] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
   const accessibleAlt = currentAltText;
-  const overlayFaces = useMemo(() => overlayFacesForPhoto(photo), [photo]);
+  const overlayFaces = useMemo(() => overlayFacesForPhoto(photo, scope), [photo, scope]);
   const overlayVisible = pointerInside || focusWithin;
   const imageLoaded = isUsableNaturalSize(naturalSize);
   const imageOrientation = imageLoaded && naturalSize.width / naturalSize.height < 1 ? 'portrait' : 'landscape';

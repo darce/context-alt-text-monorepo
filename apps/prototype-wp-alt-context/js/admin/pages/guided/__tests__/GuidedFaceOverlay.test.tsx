@@ -31,7 +31,7 @@ const matchWords = (face: GuidedFaceOverlayFace): string => face.similarityText;
 const accessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${matchWords(face)}`;
 
 describe('GuidedFaceOverlay', () => {
-  it('renders formatted similarity copy in the outline labels and accessible names', () => {
+  it('renders percentage match copy in outline labels and accessible names', () => {
     render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
     const buttons = screen.getAllByRole('button');
@@ -52,7 +52,7 @@ describe('GuidedFaceOverlay', () => {
         height: `${rect.height}%`,
       });
       expect(button).toHaveTextContent(`${face.label} · ${matchWords(face)}`);
-      expect(button.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
+      expect(button.textContent).toMatch(/\d+(?:\.\d+)?% match/);
     });
   });
 
@@ -74,12 +74,13 @@ describe('GuidedFaceOverlay', () => {
     const anchor: GuidedFaceOverlayFace = {
       ...faces[1],
       id: 'anchor',
+      similarityText: guidedCopy('names.strong.public', { similarity: '100.0%' }),
       strength: 'self_anchor',
       isClusterAnchor: true,
     };
     render(<GuidedFaceOverlay faces={[anchor]} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
-    const noScoreCopy = guidedCopy('names.no_score.public');
+    const noScoreCopy = `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
     const button = screen.getByRole('button', { name: `${anchor.label}, ${noScoreCopy}` });
     expect(button).toHaveTextContent(noScoreCopy);
     expect(button).not.toHaveTextContent(/100%/);

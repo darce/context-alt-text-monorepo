@@ -48,7 +48,7 @@ const faceButtonId = (idPrefix: string, faceId: string): string =>
 
 const matchWords = (face: GuidedFaceOverlayFace): string => {
   if (face.isClusterAnchor === true || face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
-    return guidedCopy('names.no_score.public');
+    return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
   }
   return face.similarityText || guidedCopy('names.match.unavailable');
 };

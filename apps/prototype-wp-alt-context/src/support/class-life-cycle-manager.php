@@ -133,7 +133,7 @@ class LifecycleManager {
 
 	/**
 	 * Flush rewrites once when an already-active install picks up a new rule set.
- *
+	 *
 	 * Activation may flush before init registers ^guide/?$; the version stays
 	 * unset so this init-priority-20 flush persists the registered guide rule.
 	 */

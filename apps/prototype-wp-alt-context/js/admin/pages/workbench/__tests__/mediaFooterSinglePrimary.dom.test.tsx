@@ -435,7 +435,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     await screen.findByRole('button', { name: 'Yes' });
     // HAI-17: this multi-face assignment is committable only after its stored-face
     // disclosure has rendered. Satisfy the real precondition before opening the tray.
-    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await user.click(screen.getByRole('button', { name: 'Show stored faces' }));
     await screen.findByRole('list', { name: 'Stored faces for Alex' });
     await user.click(screen.getByTestId('acx-review-select'));
     await user.click(screen.getByRole('button', { name: 'Review selection' }));
@@ -486,7 +486,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     // Pinned focus policy: do NOT move focus to the new accent owner when the
     // stored-face gate lifts. The bulk commit must remain reachable in forward
     // tab order (not HTML-disabled) so the operator can Tab to it; we do not
-    // steal focus from Review details / Yes.
+    // steal focus from Show stored faces / Yes.
     oneAssignment();
     const user = userEvent.setup();
     const { container } = renderViewport();
@@ -501,7 +501,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(bulkCommit).not.toBeDisabled();
     expect(bulkCommit).toHaveAttribute('aria-disabled', 'true');
 
-    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await user.click(screen.getByRole('button', { name: 'Show stored faces' }));
     await screen.findByRole('list', { name: 'Stored faces for Alex' });
 
     await waitFor(() => expect(markerCount(container)).toBe(1));

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognition';
 import { classifyError, isCooldown } from '../utils/appError';
+import { hasRetryAfterWait, RETRY_AFTER_MAX_MS } from '../utils/retryAfter';
 import {
   cooldownRemainingMs,
   DEFAULT_COOLDOWN_SECONDS,
@@ -67,12 +68,31 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
     enabled: enabled && mediaIds.length > 0,
     // Retry transient failures before surfacing an error because cold starts, rate limits, and
     // network blips are expected to recover. [RES-06]
-    retry: (failureCount, error) => failureCount < 2 && isTransientIdentityError(error),
-    retryDelay: (attempt) =>
-      Math.min(
-        RECOVERY_DELAY_FLOOR_MS,
-        Math.max(cooldownRemainingMs(), 1000 * 2 ** attempt),
-      ),
+    retry: (failureCount, error) => {
+      if (failureCount >= 2) {
+        return false;
+      }
+
+      const classified = classifyError(error);
+      if (
+        classified._tag === 'http' &&
+        classified.retryAfterMs !== undefined &&
+        classified.retryAfterMs > RETRY_AFTER_MAX_MS
+      ) {
+        return false;
+      }
+
+      return isTransientIdentityError(error);
+    },
+    retryDelay: (attempt, error) => {
+      const classified = classifyError(error);
+      const retryAfterMs =
+        classified._tag === 'http' && hasRetryAfterWait(classified.retryAfterMs)
+          ? classified.retryAfterMs
+          : 0;
+
+      return Math.max(retryAfterMs, cooldownRemainingMs(), 1000 * 2 ** attempt);
+    },
     staleTime: 15_000,
     placeholderData: (previousData) => previousData,
     // Auto-poll every 3 seconds when there are identities pending cluster assignment.

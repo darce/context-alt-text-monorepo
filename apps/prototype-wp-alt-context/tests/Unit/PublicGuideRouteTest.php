@@ -3,6 +3,13 @@
 declare(strict_types=1);
 
 namespace {
+    if (!function_exists('_wp_render_title_tag')) {
+        function _wp_render_title_tag(): void
+        {
+            echo '<title>ACX Demo</title>';
+        }
+    }
+
     if (!function_exists('wp_styles')) {
         function wp_styles(): object
         {
@@ -187,11 +194,13 @@ final class PublicGuideRouteTest extends TestCase
         self::assertSame(200, $GLOBALS['__ac_status_header']);
         self::assertSame($this->expectedTemplatePath(), $result);
 
+        add_action('wp_head', '_wp_render_title_tag', 1);
         $html = $this->renderTemplate($result);
         $templateSource = (string) file_get_contents($result);
 
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
+        self::assertSame(1, substr_count($html, '<title>'));
         self::assertStringContainsString(
             "<title>Demo: names change a photo's meaning | AltContext</title>",
             $html

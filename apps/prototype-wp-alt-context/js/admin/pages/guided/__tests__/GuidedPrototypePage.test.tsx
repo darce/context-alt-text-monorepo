@@ -2,7 +2,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
+import { guidedCopy } from '../../../guidedPrototype/copy';
+import { guidedCopy as publicGuidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario } from '../../../guidedPrototype/state';
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
@@ -14,22 +15,21 @@ const BOTH_NAMES_DRAFT = SCENARIO.samples.tribeca.both;
 const NONE_DRAFT = SCENARIO.samples.tribeca.none;
 const KATY_DRAFT = SCENARIO.samples.tribeca['katy-perry'];
 
-const choose = (position: 'left' | 'right', option: 'include' | 'omit'): void => {
-  const fieldset = screen.getByTestId(`name-choice-tribeca-${position}`);
+const choose = (
+  position: 'left' | 'right',
+  option: 'include' | 'omit',
+  imageKey: 'tribeca' | 'coachella' = 'tribeca',
+): void => {
+  const fieldset = screen.getByTestId(`name-choice-${imageKey}-${position}`);
   const name =
     option === 'include'
-      ? guidedCopy('names.include', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
-      : guidedCopy('names.omit');
+      ? publicGuidedCopy('names.use.public', { name: position === 'left' ? 'Justin Trudeau' : 'Katy Perry' })
+      : publicGuidedCopy('names.omit.public');
   fireEvent.click(within(fieldset).getByRole('radio', { name }));
 };
 
-const stepButton = (step: 'context' | 'names' | 'draft' | 'apply') =>
-  within(screen.getByTestId('guided-demo-stepper')).getByRole('button', {
-    name: guidedCopy(`step.${step}`),
-  });
-
 describe('GuidedPrototypePage shell', () => {
-  it('opens with catalog copy, four steps, and no pre-choice success story', () => {
+  it('opens with catalog copy and no pre-choice success story or stepper', () => {
     render(<GuidedPrototypePage />);
 
     expect(screen.getByTestId('guided-demo-root')).toBeInTheDocument();
@@ -44,21 +44,8 @@ describe('GuidedPrototypePage shell', () => {
     expect(caseStudy).toHaveAttribute('href', 'https://darce.xyz/projects/altcontext/');
     expect(caseStudy).toHaveAttribute('target', '_blank');
 
-    const stepper = screen.getByTestId('guided-demo-stepper');
-    expect(stepper).toHaveTextContent(
-      guidedCopy('guide.current', {
-        stepNumber: 1,
-        stepTitle: guidedCopy('step.context'),
-      }),
-    );
-    for (const label of [
-      guidedCopy('step.context'),
-      guidedCopy('step.names'),
-      guidedCopy('step.draft'),
-      guidedCopy('step.apply'),
-    ]) {
-      expect(within(stepper).getByRole('button', { name: label })).toBeInTheDocument();
-    }
+    expect(screen.queryByTestId('guided-demo-stepper')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') })).toBeInTheDocument();
 
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
@@ -100,24 +87,18 @@ describe('GuidedPrototypePage shell', () => {
     });
   });
 
-  it('keeps the guided-prototype hash when moving between steps', async () => {
+  it('starts by focusing the first name question without changing the guided-prototype hash', async () => {
     const user = userEvent.setup();
     window.location.hash = '#/guided-prototype';
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
+    expect(document.activeElement).toBe(
+      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
+        name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
+      }),
+    );
     expect(window.location.hash).toBe('#/guided-prototype');
-
-    await user.click(stepButton('names'));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
-    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
-    expect(window.location.hash).toBe('#/guided-prototype');
-
-    await user.click(stepButton('draft'));
-    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
-    expect(window.location.hash).not.toMatch(/guided-section-/);
   });
 
   it('resets choices and the demo copy after confirm, and restores focus on cancel', async () => {
@@ -161,28 +142,30 @@ describe('GuidedPrototypePage shell', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
-  it('keeps the weak-alt evidence image separate from the applied preview', () => {
+  it('keeps the current sample-photo description separate from the applied preview', () => {
     render(<GuidedPrototypePage />);
 
-    const evidence = screen.getByRole('img', { name: NONE_DRAFT ?? '' });
-    expect(evidence).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
+    const sampleImage = within(screen.getByTestId('guided-photo-tribeca')).getByRole('img', {
+      name: SEED_ALT_TEXT,
+    });
+    expect(sampleImage).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
     choose('left', 'omit');
     choose('right', 'omit');
     const appliedPreview = screen.getByTestId('demo-applied-image-tribeca');
     expect(appliedPreview).toHaveAttribute('alt', SEED_ALT_TEXT);
-    expect(appliedPreview).not.toBe(evidence);
+    expect(appliedPreview).not.toBe(sampleImage);
     expect(
       within(screen.getByTestId('guided-photo-tribeca')).getByText(
         `${guidedCopy('context.current_label')}: ${SEED_ALT_TEXT}`,
       ),
     ).toBeInTheDocument();
-    fireEvent.error(evidence);
-    expect(screen.getByRole('img', { name: NONE_DRAFT ?? '' })).toBeInTheDocument();
+    fireEvent.error(sampleImage);
+    expect(screen.getByRole('img', { name: SEED_ALT_TEXT })).toBeInTheDocument();
   });
 });
 
 describe('GuidedPrototypePage journey', () => {
-  it('leaves both radios unchecked until a visitor chooses, then loads the matching sample', () => {
+  it('leaves both radios unchecked until a visitor chooses, then loads that photo’s sample', () => {
     render(<GuidedPrototypePage />);
 
     const left = screen.getByTestId('name-choice-tribeca-left');
@@ -197,29 +180,23 @@ describe('GuidedPrototypePage journey', () => {
         .getAllByRole('radio')
         .every((radio) => !(radio as HTMLInputElement).checked),
     ).toBe(true);
-    expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeDisabled();
-    expect(screen.getByText(guidedCopy('names.next_blocked'))).toBeInTheDocument();
+    const review = screen.getByTestId('guided-description-review-tribeca');
+    expect(review).toHaveTextContent(guidedCopy('draft.blocked'));
     expect(
-      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox', {
-        name: guidedCopy('draft.label'),
-      }),
+      within(review).queryByRole('textbox', { name: guidedCopy('draft.label') }),
     ).not.toBeInTheDocument();
 
     choose('left', 'include');
+    expect(within(review).queryByRole('textbox', { name: guidedCopy('draft.label') })).not.toBeInTheDocument();
+
+    choose('right', 'omit');
+    expect(within(review).getByRole('textbox', { name: guidedCopy('draft.label') })).toHaveValue(JUSTIN_DRAFT);
+    expect(review).not.toHaveTextContent('Katy Perry');
     expect(
-      within(screen.getByTestId('guided-description-review-tribeca')).queryByRole('textbox', {
+      within(screen.getByTestId('guided-description-review-coachella')).queryByRole('textbox', {
         name: guidedCopy('draft.label'),
       }),
     ).not.toBeInTheDocument();
-
-    choose('right', 'omit');
-    expect(
-      within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
-        name: guidedCopy('draft.label'),
-      }),
-    ).toHaveValue(JUSTIN_DRAFT);
-    expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Katy Perry');
-    expect(screen.getByRole('button', { name: guidedCopy('names.next') })).toBeEnabled();
   });
 
   it('treats omit/omit and include/include as ordinary completed choices', () => {
@@ -262,7 +239,7 @@ describe('GuidedPrototypePage journey', () => {
 
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(within(review).getByText(edited, { selector: '[data-applied-text]' })).toBeInTheDocument();
-    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
+    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('apply.success'));
     expect(screen.getByTestId('guided-page-feedback-icon')).toHaveAttribute('aria-hidden', 'true');
 
@@ -301,7 +278,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(editor).toHaveValue(typed);
     expect(
       within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
-        name: guidedCopy('names.omit'),
+        name: publicGuidedCopy('names.omit.public'),
       }),
     ).toBeChecked();
   });
@@ -324,7 +301,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(editor).toHaveValue('A locally edited portrait description.');
     expect(
       within(screen.getByTestId('name-choice-tribeca-right')).getByRole('radio', {
-        name: guidedCopy('names.omit'),
+        name: publicGuidedCopy('names.omit.public'),
       }),
     ).toBeChecked();
 
@@ -377,6 +354,13 @@ describe('GuidedPrototypePage journey', () => {
         name: guidedCopy('draft.keep'),
       }),
     );
+    choose('left', 'include', 'coachella');
+    choose('right', 'include', 'coachella');
+    await user.click(
+      within(screen.getByTestId('guided-description-review-coachella')).getByRole('button', {
+        name: guidedCopy('draft.keep'),
+      }),
+    );
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept'));
     expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.kept_body'));
     expect(
@@ -401,8 +385,6 @@ describe('GuidedPrototypePage journey', () => {
 
     const sectionIds = [
       'guided-section-understand',
-      'guided-section-face',
-      'guided-section-identity',
       'guided-section-review',
       'guided-section-apply',
     ];

@@ -3,8 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../pages/guided/GuidedPrototypePage';
-import { CASE_STUDY_URL, guidedCopy } from './publicGuideCopy';
+import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from './publicGuideCopy';
 import { RecordedWalkthrough } from './RecordedWalkthrough';
+
+const guidedCopy = publicGuidedCopy;
 
 const START_DEMO = guidedCopy('entry.start.public');
 const READ_CASE_STUDY = guidedCopy('entry.read_case_study');
@@ -42,28 +44,41 @@ describe('RecordedWalkthrough public scope', () => {
     expect(container.querySelector('.acx-guided-history')).toBeNull();
   });
 
-  it('shows every roster reference before a visitor makes a name choice', () => {
+  it('opens every roster reference before a visitor makes a name choice', async () => {
+    const user = userEvent.setup();
     const { container } = render(<RecordedWalkthrough scope="public" />);
     for (const photoKey of ['tribeca', 'coachella']) {
       const faces = container.querySelector(`[data-testid="guided-faces-${photoKey}"]`);
       expect(faces).not.toBeNull();
-      const galleries = faces?.querySelectorAll('.acx-guided-face__gallery') ?? [];
-      expect(galleries).toHaveLength(2);
-      for (const gallery of Array.from(galleries)) {
+      const cards = Array.from(faces?.querySelectorAll('.acx-guided-face__card') ?? []);
+      expect(cards).toHaveLength(2);
+      for (const card of cards) {
+        const faceCard = card as HTMLElement;
+        const name = within(faceCard).getByRole('heading', { level: 5 }).textContent ?? '';
+        await user.click(
+          within(faceCard).getByRole('button', { name: publicGuidedCopy('names.compare.public') }),
+        );
+        const dialog = screen.getByRole('dialog', {
+          name: publicGuidedCopy('lightbox.title.public', { name }),
+        });
+        const gallery = within(dialog).getByRole('list', {
+          name: publicGuidedCopy('lightbox.references.public', { name }),
+        });
         expect(gallery.querySelectorAll('img').length).toBeGreaterThanOrEqual(2);
-        const disclosure = gallery.closest('details');
-        expect(disclosure === null || disclosure.open).toBe(true);
+        await user.click(
+          within(dialog).getByRole('button', { name: publicGuidedCopy('lightbox.close.public') }),
+        );
       }
     }
   });
 
-  it('composes context, per-photo face cards, provenance, and Continue in order', () => {
+  it('composes context, per-photo face cards, and provenance without a separate Continue action', () => {
     const { container } = render(<RecordedWalkthrough scope="public" />);
     const scenario = container.querySelector('.acx-guided-page__scenario');
     const context = scenario?.querySelector('.acx-guided-page__context');
     const mediaList = scenario?.querySelector('.acx-guided-page__media-list');
     const footer = scenario?.querySelector('.acx-guided-page__provenance-footer');
-    const continueButton = scenario?.querySelector('button.acx-button--primary');
+    const review = container.querySelector('.acx-guided-review');
 
     expect(scenario).not.toBeNull();
     expect(scenario?.firstElementChild).toBe(context);
@@ -72,8 +87,9 @@ describe('RecordedWalkthrough public scope', () => {
     expect(context?.querySelector('details, button')).toBeNull();
     expect(mediaList).not.toBeNull();
     expect(footer).not.toBeNull();
+    expect(scenario?.querySelector('button.acx-button--primary')).toBeNull();
     expect(mediaList?.compareDocumentPosition(footer ?? mediaList)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(footer?.compareDocumentPosition(continueButton ?? footer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(footer?.compareDocumentPosition(review ?? footer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     for (const photoKey of ['tribeca', 'coachella']) {
       const faces = container.querySelector(`[data-testid="guided-faces-${photoKey}"]`);

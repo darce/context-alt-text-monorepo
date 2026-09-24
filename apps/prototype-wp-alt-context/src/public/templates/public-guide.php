@@ -21,6 +21,8 @@ $acx_guide_timeout   = \AltContext\PublicSite\PublicGuideRoute::LOAD_TIMEOUT_MS;
 	<title><?php echo esc_html__( "Demo: names change a photo's meaning | AltContext", 'alt-context' ); ?></title>
 	<meta name="description" content="<?php echo esc_attr( __( 'Try the AltContext demo. Write an image description (alt text) and choose who is named in each photo.', 'alt-context' ) ); ?>">
 	<link rel="canonical" href="<?php echo esc_url( $acx_guide_canonical ); ?>">
+	<?php // Keep the standalone guide's approved title when the theme adds its own title tag.
+	remove_action( 'wp_head', '_wp_render_title_tag', 1 ); ?>
 	<?php wp_head(); ?>
 </head>
 <body <?php body_class( 'acx-public-guide' ); ?>>

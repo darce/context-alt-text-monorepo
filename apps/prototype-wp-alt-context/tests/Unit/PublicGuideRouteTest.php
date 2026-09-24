@@ -202,7 +202,7 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
         self::assertSame(1, substr_count($html, '<title>'));
         self::assertStringContainsString(
-            "<title>Demo: names change a photo's meaning | AltContext</title>",
+            "<title>Demo: Names change a photo's meaning | AltContext</title>",
             $html
         );
         self::assertStringContainsString(

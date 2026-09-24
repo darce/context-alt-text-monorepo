@@ -656,7 +656,7 @@ sanitize_deploy_diagnostic() {
   LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
-        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[\[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[\[{][ \t]*$"; return (t ~ pat) }
+        function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[[{][ \t]*$"; return (t ~ pat) }
         function pem_begin_end(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/ && s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function pem_has_begin(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function redact_pem_oneline(s,    pre, rest) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); pre=substr(s, 1, RSTART+RLENGTH-1); rest=substr(s, RSTART+RLENGTH); match(rest, /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/); return pre " [REDACTED] " substr(rest, RSTART) }
@@ -805,10 +805,21 @@ preflight_branch_synced() {
   local env="$1"
   # dev + dev-fir are developed from feature branches; skip origin/main sync.
   [[ "$env" == "dev" || "$env" == "dev-fir" ]] && return 0
-  local head upstream
-  git -C "${REPO_ROOT}" fetch origin main >/dev/null 2>&1 || warn "git fetch failed; skew check may be stale"
+  local head upstream fetch_err fetch_rc fetch_first_line
+  if fetch_err="$(git -C "${REPO_ROOT}" fetch origin main 2>&1 >/dev/null)"; then
+    fetch_rc=0
+  else
+    fetch_rc=$?
+  fi
+  if [[ "$fetch_rc" -ne 0 && "$GIT_REF_EXPLICIT" == "0" ]]; then
+    fetch_first_line="${fetch_err%%$'\n'*}"
+    fail "git fetch origin main failed (${fetch_first_line}); cannot prove DEPLOY_SHA is the latest main for ${env}. Restore access to origin, or deploy an explicit reviewed ref with GIT_REF=<sha>."
+  fi
   head="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null)" || fail "Could not resolve HEAD in ${REPO_ROOT}"
   upstream="$(git -C "${REPO_ROOT}" rev-parse --verify --quiet origin/main 2>/dev/null || echo unknown)"
+  if [[ "$fetch_rc" -ne 0 ]]; then
+    warn "git fetch origin main failed; checking ancestry against cached origin/main (${upstream:0:8})"
+  fi
   if [[ -z "$upstream" || "$upstream" == "unknown" ]]; then
     fail "Could not resolve origin/main; refusing production deploy with unknown upstream."
   fi
@@ -2949,7 +2960,7 @@ verify_edge_networks() {
   [ -n "\$cid" ] || { echo 'caddy container is absent after edge topology restore' >&2; return 1; }
   networks="\$(docker inspect -f '{{json .NetworkSettings.Networks}}' "\$cid")"
   for network in acx-prod-net acx-staging-net acx-dev-net acx-dev-fir-net acx-demo-net; do
-    printf '%s' "\$networks" | grep -q "\\\"\$network\\\"" || {
+    printf '%s' "\$networks" | grep -Fq -- "\"\$network\"" || {
       echo "caddy container is missing restored network \$network" >&2
       return 1
     }
@@ -3006,14 +3017,20 @@ abort_cutover_candidate() {
   if ! run_with_deadline "${timeout}" "drain cutover candidate ${next_unit}" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -euo pipefail
-     if sudo systemctl stop $(remote_quote "${next_unit}"); then
-       :
+     if stop_out=\"\$(sudo systemctl stop $(remote_quote "${next_unit}") 2>&1)\"; then
+       [ -z \"\${stop_out}\" ] || printf '%s\n' \"\${stop_out}\" >&2
      else
        stop_rc=\$?
        # Failed stop is not confirmed absence (MCP10415). Query explicit
        # unit state; only LoadState=not-found ActiveState=inactive
        # SubState=dead licenses cleanup. TEST-15 / RLSE-03 / RES-03.
-       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || exit \$?
+       show_out=\"\$(sudo systemctl show $(remote_quote "${next_unit}.service") --property=LoadState --property=ActiveState --property=SubState --no-pager)\" || {
+         show_rc=\$?
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${show_rc}\"
+       }
+       parse_rc=0
+       (
        load_state=
        active_state=
        sub_state=
@@ -3038,6 +3055,11 @@ abort_cutover_candidate() {
          esac
        done <<< \"\${show_out}\"
        [ \"\${load_state}\" = not-found ] && [ \"\${active_state}\" = inactive ] && [ \"\${sub_state}\" = dead ] || exit \"\${stop_rc}\"
+       ) || parse_rc=\$?
+       if [ \"\${parse_rc}\" -ne 0 ]; then
+         printf '%s\n' \"\${stop_out}\" >&2
+         exit \"\${parse_rc}\"
+       fi
      fi
      if sudo systemctl is-enabled $(remote_quote "${next_unit}") >/dev/null 2>&1; then
        sudo systemctl disable $(remote_quote "${next_unit}")

@@ -51,7 +51,18 @@ describe('public guide stylesheet isolation', () => {
 
     expect(css).toContain('--acx-guide-reference-tile-size: 48px;');
     expect(css).toContain('--acx-guide-pad-tight: 16px;');
-    expect(css).toContain('var(--acx-guide-reference-tile-size)');
+    expect(css).toMatch(
+      /\.acx-guided-face__gallery img\s*\{[^}]*width: var\(--acx-guide-reference-tile-size\);[^}]*height: var\(--acx-guide-reference-tile-size\);/,
+    );
+    expect(css).toMatch(
+      /\.acx-guided-face__lightbox-gallery\s*\{[^}]*--acx-guide-lightbox-tile-size: min\(16rem, calc\(\(100vw - 78px\) \/ 2\)\);/,
+    );
+    expect(css).toMatch(
+      /\.acx-guided-face__lightbox-gallery img\s*\{[^}]*width: var\(--acx-guide-lightbox-tile-size\);[^}]*height: var\(--acx-guide-lightbox-tile-size\);/,
+    );
+    expect(css).not.toMatch(
+      /\.acx-guided-face__lightbox-gallery img\s*\{[^}]*var\(--acx-guide-reference-tile-size\)/,
+    );
     expect(css).not.toMatch(/--acx-space-80:\s*24px/);
     expect(css).not.toMatch(/\.acx-guided-page__workspace\s*>\s*\.acx-guided-review\s*\{/);
     expect(css).not.toMatch(/\.acx-public-guide\s+\.acx-guided-page__media-card::(?:before|after)/);

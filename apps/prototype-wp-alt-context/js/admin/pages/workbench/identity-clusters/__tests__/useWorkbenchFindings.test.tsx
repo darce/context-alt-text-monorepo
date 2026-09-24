@@ -10,7 +10,7 @@ import {
   fetchTopUnlabeledClusters,
 } from '../../../../api/recognition';
 import { resetConfigCache } from '../../../../api/config';
-import { DATA_SOURCE } from '../../../../api/recognition/types';
+import { DATA_SOURCE, PROJECTION_STATUS } from '../../../../api/recognition/types';
 import type {
   PendingMergeSuggestion,
   PendingNameSuggestion,
@@ -21,6 +21,7 @@ import { fromPendingRow } from '../suggestionProjection';
 import { buildSuggestionReviewItems } from '../suggestionReviewItems';
 import {
   buildWorkbenchFindings,
+  FINDINGS_READ_ONLY_REASON,
   NEXT_ACTION_KIND,
   NONE_REASON,
   useWorkbenchFindings,
@@ -377,16 +378,35 @@ describe('buildWorkbenchFindings', () => {
     expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'still-visible' });
   });
 
-  it('marks findings read-only under backend-proxy projection while keeping the next action visible', () => {
+  it('keeps backend-proxy findings actionable while the projection is healthy', () => {
     const model = buildWorkbenchFindings(
       makeQueues({
         topUnlabeledClusters: [makeCluster({ id: 'proxy-cluster', identity_count: 4 })],
       }),
-      makeState({ topUnlabeledDataSource: DATA_SOURCE.BACKEND_PROXY }),
+      makeState({
+        assignmentDataSource: DATA_SOURCE.BACKEND_PROXY,
+        nameDataSource: DATA_SOURCE.BACKEND_PROXY,
+        topUnlabeledDataSource: DATA_SOURCE.BACKEND_PROXY,
+        projectionStatus: PROJECTION_STATUS.AVAILABLE,
+      }),
+    );
+
+    expect(model.isReadOnly).toBe(false);
+    expect(model.readOnlyReason).toBeNull();
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'proxy-cluster' });
+  });
+
+  it('marks findings read-only with a reason when the projection is unavailable', () => {
+    const model = buildWorkbenchFindings(
+      makeQueues({
+        topUnlabeledClusters: [makeCluster({ id: 'unavailable-cluster', identity_count: 4 })],
+      }),
+      makeState({ projectionStatus: PROJECTION_STATUS.UNAVAILABLE }),
     );
 
     expect(model.isReadOnly).toBe(true);
-    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'proxy-cluster' });
+    expect(model.readOnlyReason).toBe(FINDINGS_READ_ONLY_REASON.PROJECTION_UNAVAILABLE);
+    expect(model.nextAction).toEqual({ kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'unavailable-cluster' });
   });
 
   it('collects representative previews in priority order and drops entries without imagery', () => {

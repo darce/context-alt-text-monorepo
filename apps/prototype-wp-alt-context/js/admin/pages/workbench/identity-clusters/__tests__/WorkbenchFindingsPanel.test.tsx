@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import {
   buildWorkbenchFindings,
+  FINDINGS_READ_ONLY_REASON,
   NEXT_ACTION_KIND,
   NONE_REASON,
   useWorkbenchFindings,
@@ -126,6 +127,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
+  readOnlyReason: null,
   queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
   queue: [],
@@ -479,12 +481,13 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('Recognition findings are unavailable right now.')).toBeInTheDocument();
   });
 
-  it('keeps findings visible but disables curation in read-only state', () => {
+  it('keeps findings visible and explains why the next action is disabled in read-only state', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 2, total: 2 },
         hasFindings: true,
         isReadOnly: true,
+        readOnlyReason: FINDINGS_READ_ONLY_REASON.PROJECTION_UNAVAILABLE,
         nextAction: { kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'cluster-2' },
       }),
     );
@@ -492,12 +495,11 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Findings are visible while local sync catches up. Curation stays disabled until projected results are available locally.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
+    const reason = screen.getByText('Findings are read-only because projected results are unavailable.');
+    const reviewNext = screen.getByRole('button', { name: /Review next/ });
+    expect(reason).toBeInTheDocument();
+    expect(reviewNext).toBeDisabled();
+    expect(reviewNext).toHaveAccessibleDescription(reason.textContent);
   });
 
   it('shows a low-emphasis secondary action to view all findings for mixed queues', async () => {

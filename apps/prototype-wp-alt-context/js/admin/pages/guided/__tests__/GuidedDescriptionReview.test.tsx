@@ -6,6 +6,7 @@ import {
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
   GUIDED_NAME_CHOICE,
+  GUIDED_OUTCOME,
 } from '../../../guidedPrototype/state';
 import { guidedCopy as publicGuidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { GuidedDescriptionReview, type GuidedDescriptionReviewActions } from '../GuidedDescriptionReview';
@@ -224,6 +225,87 @@ describe('GuidedDescriptionReview per-image drafts', () => {
       publicGuidedCopy('outcome.kept_body.public'),
     );
     expect(within(card).queryByText(publicGuidedCopy('error.unchanged_draft.public'))).not.toBeInTheDocument();
+  });
+
+  it('disables Keep after Use and enables it again after Undo', () => {
+    const reviewActions = actions();
+    reviewActions.onApplyForImage = vi.fn();
+    reviewActions.onUndoForImage = vi.fn();
+    const state = perImageState();
+    state.photoChoices = {
+      tribeca: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+      coachella: {
+        left: GUIDED_NAME_CHOICE.INCLUDE,
+        right: GUIDED_NAME_CHOICE.INCLUDE,
+      },
+    };
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />,
+    );
+    const card = screen.getByTestId('guided-description-review-tribeca');
+    const editor = within(card).getByRole('textbox', { name: publicGuidedCopy('draft.field_label.public') });
+    const editedDescription = 'An edited description used for this photo.';
+    fireEvent.change(editor, { target: { value: editedDescription } });
+    fireEvent.click(within(card).getByTestId('demo-apply-tribeca'));
+
+    expect(reviewActions.onApplyForImage).toHaveBeenCalledWith('tribeca', editedDescription);
+
+    const appliedState = perImageState();
+    const tribecaDraft = appliedState.drafts?.tribeca;
+    if (tribecaDraft === undefined) {
+      throw new Error('Expected an applied Tribeca draft fixture.');
+    }
+    appliedState.photoChoices = state.photoChoices;
+    appliedState.drafts = {
+      ...appliedState.drafts,
+      tribeca: {
+        ...tribecaDraft,
+        draftText: editedDescription,
+        draftVersion: 2,
+        appliedAltText: editedDescription,
+        outcome: GUIDED_OUTCOME.APPLIED,
+        applicationHistory: [
+          {
+            previousAltText: appliedTribeca,
+            appliedDraftVersion: 2,
+            sequence: 1,
+          },
+        ],
+      },
+    };
+    const appliedTribecaDraft = appliedState.drafts.tribeca;
+    if (appliedTribecaDraft === undefined) {
+      throw new Error('Expected the applied Tribeca draft.');
+    }
+    rerender(
+      <GuidedDescriptionReview scenario={scenario} state={appliedState} actions={reviewActions} scope="public" />,
+    );
+
+    expect(within(card).getByTestId('guided-keep-current-tribeca')).toBeDisabled();
+    expect(within(card).getByTestId('demo-undo-tribeca')).toBeEnabled();
+
+    fireEvent.click(within(card).getByTestId('demo-undo-tribeca'));
+    expect(reviewActions.onUndoForImage).toHaveBeenCalledWith('tribeca');
+
+    const undoneState: GuidedReviewState = {
+      ...appliedState,
+      drafts: {
+        ...appliedState.drafts,
+        tribeca: {
+          ...appliedTribecaDraft,
+          appliedAltText: appliedTribeca,
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
+          applicationHistory: [],
+        },
+      },
+    };
+    rerender(<GuidedDescriptionReview scenario={scenario} state={undoneState} actions={reviewActions} scope="public" />);
+
+    expect(within(card).getByTestId('guided-keep-current-tribeca')).toBeEnabled();
+    expect(within(card).getByTestId('demo-undo-tribeca')).toBeDisabled();
   });
 
   it('clears a public card status when reset replaces its draft state', () => {

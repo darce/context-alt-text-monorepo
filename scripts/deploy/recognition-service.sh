@@ -203,6 +203,7 @@ source "${SCRIPT_DIR}/lib/ocir-auth.sh"
 # shellcheck source=lib/bounded-remote-build.sh
 source "${SCRIPT_DIR}/lib/bounded-remote-build.sh"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
+DEPLOY_SNAPSHOT_DIR=""
 # Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
 # so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
 SSH_TARGET="${OCI_USER}@${OCI_HOST}"
@@ -284,10 +285,19 @@ _purge_deploy_ocir_docker_config() {
   unset ACX_OCIR_DOCKER_CONFIG_DIR DOCKER_CONFIG
 }
 
+_purge_deploy_snapshot() {
+  local snapshot_dir="${DEPLOY_SNAPSHOT_DIR:-}"
+  case "${snapshot_dir}" in
+    "${TMPDIR:-/tmp}"/acx-deploy-src.*) rm -rf -- "${snapshot_dir}" ;;
+  esac
+  DEPLOY_SNAPSHOT_DIR=""
+}
+
 cleanup_deploy_ocir_docker_config() {
   local rc=$?
   trap - EXIT HUP INT TERM
   _purge_deploy_ocir_docker_config
+  _purge_deploy_snapshot
   return "${rc}"
 }
 
@@ -300,6 +310,7 @@ deploy_interrupt_cleanup() {
   fi
   recover_interrupted_cutover || true
   _purge_deploy_ocir_docker_config
+  _purge_deploy_snapshot
   if [[ -n "${requested}" ]]; then
     exit "${rc}"
   fi
@@ -765,8 +776,9 @@ preflight_rsync() {
 }
 # Only paths that reach the image (rsync build context) or drive the deploy itself.
 # Edits elsewhere (harness config, docs) cannot change what ships, so they must not
-# train operators to reach for ACX_ALLOW_DIRTY. Untracked non-ignored files count: rsync
-# ships them. Gitignored files (e.g. a stray *.onnx) are not detected and can still ship.
+# train operators to reach for ACX_ALLOW_DIRTY. The build context and templates now
+# come from the DEPLOY_SHA snapshot, so untracked and gitignored files can no longer
+# ship. The dirty check still guards the deploy script itself and the operator's intent.
 DEPLOY_CLEAN_PATHS=("apps/prototype-description-service" "scripts/deploy")
 preflight_git_clean() {
   local env="$1" dirty
@@ -839,6 +851,48 @@ pin_deploy_sha() {
     DEPLOY_SHA="$resolved"
   fi
   readonly DEPLOY_SHA
+}
+
+materialize_deploy_snapshot() {
+  local cmd="${1:-}" env="${2:-}" snapshot_dir
+  pin_deploy_sha
+  if [[ -n "${DEPLOY_SNAPSHOT_DIR}" ]]; then
+    return 0
+  fi
+  if [[ "${ACX_ALLOW_DIRTY:-0}" == "1" ]]; then
+    case "${cmd}" in
+      build|build-remote)
+        warn "ACX_ALLOW_DIRTY=1: building the live working tree; image is labelled ${DEPLOY_SHA:0:8} but may include uncommitted changes"
+        return 0
+        ;;
+      deploy|prepare-producer)
+        case "${env}" in
+          dev|dev-fir)
+            warn "ACX_ALLOW_DIRTY=1: building the live working tree; image is labelled ${DEPLOY_SHA:0:8} but may include uncommitted changes"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  if ! snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/acx-deploy-src.XXXXXX")"; then
+    fail "Could not create a private DEPLOY_SHA build snapshot"
+  fi
+  if ! git -C "${REPO_ROOT}" archive --format=tar "${DEPLOY_SHA}" -- apps/prototype-description-service | tar -x -C "${snapshot_dir}"; then
+    rm -rf -- "${snapshot_dir}"
+    fail "Could not extract DEPLOY_SHA=${DEPLOY_SHA} into a private build snapshot"
+  fi
+  if [[ ! -f "${snapshot_dir}/apps/prototype-description-service/Dockerfile" ]]; then
+    rm -rf -- "${snapshot_dir}"
+    fail "DEPLOY_SHA=${DEPLOY_SHA} snapshot is missing apps/prototype-description-service/Dockerfile"
+  fi
+  SERVICE_DIR="${snapshot_dir}/apps/prototype-description-service"
+  DEPLOY_SNAPSHOT_DIR="${snapshot_dir}"
+  log "Build context: DEPLOY_SHA=${DEPLOY_SHA:0:8} snapshot ${snapshot_dir}"
+  trap deploy_interrupt_cleanup EXIT
+  trap 'deploy_interrupt_cleanup 129' HUP
+  trap 'deploy_interrupt_cleanup 130' INT
+  trap 'deploy_interrupt_cleanup 143' TERM
 }
 
 # FIR stack volume-mounts YuNet+SFace ONNX (not baked
@@ -4968,6 +5022,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   if [[ "$cmd" == "build" || "$cmd" == "build-remote" || "$cmd" == "deploy" \
      || "$cmd" == "promote" || "$cmd" == "prepare-producer" || "$cmd" == "verify" ]]; then
     pin_deploy_sha
+  fi
+  if [[ "$cmd" == "build" || "$cmd" == "build-remote" || "$cmd" == "deploy" \
+     || "$cmd" == "promote" || "$cmd" == "prepare-producer" ]]; then
+    materialize_deploy_snapshot "$cmd" "${1:-}"
   fi
   case "$cmd" in
     build)        do_build "${1:-dev}" ;;

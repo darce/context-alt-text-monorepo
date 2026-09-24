@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
@@ -45,6 +45,9 @@ const sectionFromLocation = (search: string, hash: string): string | null => {
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const location = useLocation();
+  const automaticHealthCheckStarted = useRef(false);
+  const routingSavePending = useRef(false);
+  const routingSaveFeedback = useRef(false);
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: queryKeys.settings.all,
@@ -77,6 +80,10 @@ export const SettingsPage = (): React.JSX.Element => {
   const saveMutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: async (data: SaveSettingsResponse) => {
+      const isRoutingAutosave = routingSavePending.current;
+      if (isRoutingAutosave) {
+        routingSavePending.current = false;
+      }
       // R23-BR-14: backend may return 200 with result partial/error when some
       // options did not persist. Do not render "Settings saved." unless ok —
       // a corrected backend that still paints success on the frontend has
@@ -100,7 +107,13 @@ export const SettingsPage = (): React.JSX.Element => {
         return;
       }
 
-      dispatch({ type: 'setSaveMessage', message: __('Settings saved.', 'alt-context'), tone: 'success' });
+      dispatch({
+        type: 'setSaveMessage',
+        message: isRoutingAutosave
+          ? __('Saved — checking health…', 'alt-context')
+          : __('Settings saved.', 'alt-context'),
+        tone: isRoutingAutosave ? 'info' : 'success',
+      });
       dispatch({ type: 'setApiKey', value: '' });
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings.all });
       // A saved URL/key may repair the recognition breaker; refetch sync health
@@ -111,8 +124,15 @@ export const SettingsPage = (): React.JSX.Element => {
         queryFn: fetchSettings,
       });
       syncLocalizedRouting(refreshed);
+      if (isRoutingAutosave) {
+        startHealthCheck(true);
+      }
     },
     onError: (error) => {
+      const isRoutingAutosave = routingSavePending.current;
+      if (isRoutingAutosave) {
+        routingSavePending.current = false;
+      }
       dispatch({
         type: 'setSaveMessage',
         message: resolveWpErrorMessage(error, __('Failed to save settings.', 'alt-context')),
@@ -140,8 +160,54 @@ export const SettingsPage = (): React.JSX.Element => {
     },
   });
 
+  const clearRoutingCheckFeedback = (): void => {
+    if (routingSaveFeedback.current) {
+      routingSaveFeedback.current = false;
+      dispatch({ type: 'clearSaveMessage' });
+    }
+  };
+
+  const startHealthCheck = (afterRoutingSave = false): void => {
+    automaticHealthCheckStarted.current = true;
+    dispatch({ type: 'clearTestResult' });
+    testMutation.mutate(
+      {},
+      afterRoutingSave
+        ? {
+            onSuccess: clearRoutingCheckFeedback,
+            onError: clearRoutingCheckFeedback,
+          }
+        : undefined,
+    );
+  };
+
+  useEffect(() => {
+    if (
+      settingsQuery.isLoading ||
+      settingsQuery.isLoadingError ||
+      !settingsQuery.data?.effective_target_url.trim() ||
+      state.testResult ||
+      automaticHealthCheckStarted.current
+    ) {
+      return;
+    }
+    automaticHealthCheckStarted.current = true;
+    testMutation.mutate({});
+  }, [
+    settingsQuery.data?.effective_target_url,
+    settingsQuery.isLoading,
+    settingsQuery.isLoadingError,
+    state.testResult,
+    testMutation.mutate,
+  ]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (saveMutation.isPending) {
+      return;
+    }
+    routingSaveFeedback.current = false;
+    routingSavePending.current = false;
     dispatch({ type: 'clearSaveMessage' });
     dispatch({ type: 'clearTestResult' });
 
@@ -188,12 +254,42 @@ export const SettingsPage = (): React.JSX.Element => {
     saveMutation.mutate(payload);
   };
 
-  const handleTest = () => {
+  const commitRoutingFields = (checkIfUnchanged = false): void => {
+    const data = settingsQuery.data;
+    if (!data || saveMutation.isPending || routingSavePending.current) {
+      return;
+    }
+
+    const payload: SaveSettingsPayload = {};
+    if (state.url !== (data.url ?? '')) {
+      payload.url = state.url;
+    }
+    if (state.apiKey) {
+      payload.api_key = state.apiKey;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      if (checkIfUnchanged) {
+        routingSaveFeedback.current = false;
+        dispatch({ type: 'clearSaveMessage' });
+        startHealthCheck();
+      }
+      return;
+    }
+
+    routingSavePending.current = true;
+    routingSaveFeedback.current = true;
     dispatch({ type: 'clearTestResult' });
-    testMutation.mutate({});
+    dispatch({ type: 'setSaveMessage', message: __('Saving…', 'alt-context'), tone: 'info' });
+    saveMutation.mutate(payload);
+  };
+
+  const handleTest = () => {
+    commitRoutingFields(true);
   };
 
   const handleConfirmTenantPairing = () => {
+    automaticHealthCheckStarted.current = true;
     testMutation.mutate({ confirm_tenant_pairing: true });
   };
 
@@ -283,6 +379,9 @@ export const SettingsPage = (): React.JSX.Element => {
           testPending: testMutation.isPending,
           hasUnsavedRoutingChanges,
           testResult: state.testResult,
+          saveMessage: state.saveMessage,
+          saveMessageTone: state.saveMessageTone,
+          routingSaveFeedback: routingSaveFeedback.current,
         }}
         actions={{
           onUrlChange: (value) => dispatch({ type: 'setUrl', value }),
@@ -293,6 +392,7 @@ export const SettingsPage = (): React.JSX.Element => {
           onAllowPersonNamesChange: (value) => dispatch({ type: 'setAllowPersonNames', value }),
           onSave: handleSave,
           onTest: handleTest,
+          onCommitRouting: () => commitRoutingFields(),
           onFocusServiceUrl: () => {
             document.getElementById('acx-settings-url')?.focus();
           },
@@ -301,7 +401,7 @@ export const SettingsPage = (): React.JSX.Element => {
 
       <GpuControlCard />
 
-      {state.saveMessage ? (
+      {state.saveMessage && !routingSaveFeedback.current ? (
         <div
           className={`notice inline ${TONE_CLASS[state.saveMessageTone]}`}
           role={state.saveMessageTone === 'error' ? 'alert' : 'status'}

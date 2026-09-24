@@ -113,9 +113,7 @@ describe('GuidedDescriptionReview per-image drafts', () => {
       },
     };
 
-    render(
-      <GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />,
-    );
+    render(<GuidedDescriptionReview scenario={scenario} state={state} actions={reviewActions} scope="public" />);
 
     const tribeca = screen.getByTestId('guided-description-review-tribeca');
     const coachella = screen.getByTestId('guided-description-review-coachella');

@@ -360,7 +360,8 @@ const GuidedImageReviewCard = ({
   };
   const applyEnabled =
     scope === 'public'
-      ? draft.draftText !== null && canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft, photo.key)
+      ? draft.draftText !== null &&
+        canApplyImageDraftPublic(guidedReviewLegacyState(state), publicApplyDraft, photo.key)
       : guidedReviewCanApply(state, draft, photo.key) && localMatches;
   const namesAnswered = guidedReviewNamesDecided(state, photo.key);
   const keepEnabled = canKeepCurrentForImage(state, photo.key);

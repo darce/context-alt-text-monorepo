@@ -28,8 +28,11 @@ const choose = (
   fireEvent.click(within(fieldset).getByRole('radio', { name }));
 };
 
+const stepButton = (step: 'context' | 'names' | 'draft' | 'apply'): HTMLElement =>
+  within(screen.getByTestId('guided-demo-stepper')).getByRole('button', { name: guidedCopy(`step.${step}`) });
+
 describe('GuidedPrototypePage shell', () => {
-  it('opens with catalog copy and no pre-choice success story or stepper', () => {
+  it('opens with catalog copy, the four admin steps, and no pre-choice success story', () => {
     render(<GuidedPrototypePage />);
 
     expect(screen.getByTestId('guided-demo-root')).toBeInTheDocument();
@@ -44,10 +47,16 @@ describe('GuidedPrototypePage shell', () => {
     expect(caseStudy).toHaveAttribute('href', 'https://darce.xyz/projects/altcontext/');
     expect(caseStudy).toHaveAttribute('target', '_blank');
 
-    expect(screen.queryByTestId('guided-demo-stepper')).not.toBeInTheDocument();
+    const stepper = screen.getByTestId('guided-demo-stepper');
+    expect(stepper).toHaveTextContent(
+      guidedCopy('guide.current', { stepNumber: 1, stepTitle: guidedCopy('step.context') }),
+    );
     expect(
-      screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
+      screen.getByRole('heading', { level: 2, name: guidedCopy('step.context') }),
     ).toBeInTheDocument();
+    for (const step of ['context', 'names', 'draft', 'apply'] as const) {
+      expect(stepButton(step)).toBeInTheDocument();
+    }
 
     expect(screen.queryByText(/How two faces become two names/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Matched to Justin Trudeau/)).not.toBeInTheDocument();
@@ -89,17 +98,34 @@ describe('GuidedPrototypePage shell', () => {
     });
   });
 
-  it('starts by focusing the first name question without changing the guided-prototype hash', async () => {
+  it('navigates the admin stepper to each section and can hide and show its steps', async () => {
     const user = userEvent.setup();
     window.location.hash = '#/guided-prototype';
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: guidedCopy('page.start') }));
-    expect(document.activeElement).toBe(
-      within(screen.getByTestId('name-choice-tribeca-left')).getByRole('radio', {
-        name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
-      }),
-    );
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.context'));
+
+    await user.click(stepButton('names'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.names'));
+
+    await user.click(stepButton('draft'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-review');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.draft'));
+
+    await user.click(stepButton('apply'));
+    expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
+    expect(document.activeElement).toHaveAccessibleName(guidedCopy('step.apply'));
+
+    const stepper = screen.getByTestId('guided-demo-stepper');
+    const hide = within(stepper).getByRole('button', { name: guidedCopy('guide.hide') });
+    await user.click(hide);
+    expect(hide).toHaveAttribute('aria-expanded', 'false');
+    expect(within(stepper).queryByRole('button', { name: guidedCopy('step.context') })).not.toBeInTheDocument();
+    await user.click(within(stepper).getByRole('button', { name: guidedCopy('guide.show') }));
+    expect(within(stepper).getByRole('button', { name: guidedCopy('step.context') })).toBeInTheDocument();
     expect(window.location.hash).toBe('#/guided-prototype');
   });
 
@@ -237,7 +263,8 @@ describe('GuidedPrototypePage journey', () => {
 
     expect(screen.getByTestId('demo-applied-image-tribeca')).toHaveAttribute('alt', edited);
     expect(within(review).getByText(edited, { selector: '[data-applied-text]' })).toBeInTheDocument();
-    expect(screen.queryByTestId('demo-outcome')).not.toBeInTheDocument();
+    expect(screen.getByTestId('demo-outcome')).toHaveTextContent(guidedCopy('outcome.applied'));
+    expect(screen.getByTestId('guided-keep-current-tribeca')).toBeDisabled();
     expect(screen.getByTestId('guided-page-feedback')).toHaveTextContent(guidedCopy('apply.success'));
     expect(screen.getByTestId('guided-page-feedback-icon')).toHaveAttribute('aria-hidden', 'true');
 

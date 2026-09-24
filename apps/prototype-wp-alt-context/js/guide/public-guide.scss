@@ -247,6 +247,7 @@
   }
 
   @media (max-width: 48rem) {
+    // 390x844 budget: show at least 120px of the first photo on first paint.
     .acx-guided-page {
       padding-inline: var(--acx-guide-pad-tight);
     }
@@ -258,13 +259,13 @@
     }
 
     .acx-guided-page__workspace {
-      gap: var(--acx-space-16);
+      gap: var(--acx-space-8);
     }
 
     .acx-guided-entrance {
-      gap: var(--acx-space-8);
-      margin-bottom: var(--acx-space-16);
-      padding-block: var(--acx-space-12);
+      gap: var(--acx-space-4);
+      margin-bottom: var(--acx-space-8);
+      padding-block: var(--acx-space-8);
     }
 
     .acx-guided-entrance__escape {
@@ -280,7 +281,7 @@
 
     .acx-guided-entrance__content {
       display: grid;
-      gap: var(--acx-space-8);
+      gap: var(--acx-space-4);
       line-height: 1.4;
 
       > * {
@@ -289,6 +290,14 @@
 
       > h1 {
         margin: 0;
+        font-size: var(--acx-text-2xl);
+        line-height: 1.1;
+      }
+
+      > .acx-guided-entrance__intro,
+      > .acx-guided-entrance__scope {
+        font-size: var(--acx-text-base);
+        line-height: 1.4;
       }
     }
 
@@ -298,10 +307,10 @@
       }
 
       ol {
-        gap: var(--acx-space-4);
+        gap: var(--acx-space-2);
         padding-left: var(--acx-space-16);
-        font-size: var(--acx-text-sm);
-        line-height: 1.35;
+        font-size: var(--acx-text-base);
+        line-height: 1.4;
       }
     }
 
@@ -316,13 +325,53 @@
       width: auto;
       min-width: 0;
       min-height: 44px;
-      padding: var(--acx-space-8);
-      font-size: var(--acx-text-xs);
+      padding: var(--acx-space-4);
+      font-size: var(--acx-text-sm);
+      line-height: 1.2;
       text-align: center;
     }
 
+    .acx-guided-page__understand {
+      gap: var(--acx-space-8);
+    }
+
+    .acx-guided-page__hero {
+      align-items: center;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: var(--acx-space-8);
+      justify-content: space-between;
+
+      h2 {
+        flex: 0 1 auto;
+        margin: 0;
+        font-size: var(--acx-text-base);
+      }
+    }
+
+    .acx-guided-page__scenario {
+      gap: var(--acx-space-8);
+    }
+
+    .acx-guided-page__context p {
+      font-size: var(--acx-text-base);
+      line-height: 1.4;
+    }
+
     .acx-guided-page__photo-step {
-      padding-block: var(--acx-space-16);
+      padding-block: var(--acx-space-8);
+
+      > h3 {
+        margin: 0 0 var(--acx-space-4);
+      }
+    }
+
+    .acx-guided-page__media-card {
+      row-gap: var(--acx-space-8);
+
+      > h3 {
+        margin: 0;
+      }
     }
   }
 }

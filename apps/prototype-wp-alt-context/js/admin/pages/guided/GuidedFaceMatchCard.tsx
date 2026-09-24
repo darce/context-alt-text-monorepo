@@ -14,6 +14,7 @@ import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import {
   GUIDED_MATCH_STRENGTH,
   GUIDED_NAME_CHOICE,
+  formatGuidedSimilarity,
   isClusterAnchor,
   type GuidedFace,
   type GuidedImageKey,
@@ -61,13 +62,16 @@ const matchEvidenceCopy = (match: GuidedFaceMatch): string => {
   if (isClusterAnchor(match.face) || match.face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
     return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
   }
+  if (match.face.similarity === null) {
+    return guidedCopy('names.match.unavailable');
+  }
   if (match.face.strength === GUIDED_MATCH_STRENGTH.WEAK) {
-    return guidedCopy('names.weak.public');
+    return guidedCopy('names.weak.public', { similarity: formatGuidedSimilarity(match.face.similarity) });
   }
   if (match.face.strength === GUIDED_MATCH_STRENGTH.STRONG) {
-    return guidedCopy('names.strong.public');
+    return guidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(match.face.similarity) });
   }
-  return 'Match strength unavailable.';
+  return guidedCopy('names.match.unavailable');
 };
 
 export const GuidedFaceMatchCard = ({
@@ -80,7 +84,9 @@ export const GuidedFaceMatchCard = ({
   onChoose,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [lightboxCropSizePx, setLightboxCropSizePx] = useState(ENLARGED_CROP_PX);
   const enlargeRef = useRef<HTMLButtonElement>(null);
+  const lightboxReferenceTileRef = useRef<HTMLImageElement>(null);
   const wasComparisonOpenRef = useRef(false);
   const representative = matches[0]?.face;
   if (representative === undefined) {
@@ -106,6 +112,36 @@ export const GuidedFaceMatchCard = ({
     }
     wasComparisonOpenRef.current = false;
     enlargeRef.current?.focus();
+  }, [comparisonOpen]);
+
+  useEffect(() => {
+    if (!comparisonOpen) {
+      return;
+    }
+    setLightboxCropSizePx(ENLARGED_CROP_PX);
+    const referenceTile = lightboxReferenceTileRef.current;
+    if (referenceTile === null) {
+      return;
+    }
+
+    const updateCropSize = (width: number): void => {
+      if (Number.isFinite(width) && width > 0) {
+        setLightboxCropSizePx(Math.round(width));
+      }
+    };
+    updateCropSize(referenceTile.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const resizeObserver = new ResizeObserver((entries) => {
+      const tileEntry = entries.find((entry) => entry.target === referenceTile);
+      if (tileEntry !== undefined) {
+        updateCropSize(tileEntry.contentRect.width);
+      }
+    });
+    resizeObserver.observe(referenceTile);
+    return () => resizeObserver.disconnect();
   }, [comparisonOpen]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>, nextChoice: GuidedNameChoice): void => {
@@ -221,7 +257,7 @@ export const GuidedFaceMatchCard = ({
             </DialogDescription>
             <section className="acx-guided-face__lightbox-crop" aria-labelledby={`${groupName}-lightbox-current`}>
               <h3 id={`${groupName}-lightbox-current`}>{guidedCopy('lightbox.current.public')}</h3>
-              {thumbnail(currentPhotoMatch, ENLARGED_CROP_PX)}
+              {thumbnail(currentPhotoMatch, lightboxCropSizePx)}
               {matchEvidence(currentPhotoMatch)}
             </section>
             <section aria-labelledby={`${groupName}-lightbox-references`}>
@@ -232,13 +268,17 @@ export const GuidedFaceMatchCard = ({
                 className="acx-guided-face__lightbox-gallery"
                 aria-label={guidedCopy('lightbox.references.public', { name: person.name })}
               >
-                {person.galleryPhotos.map((photo) => (
+                {person.galleryPhotos.map((photo, index) => (
                   <li
                     key={`gallery-${photo.src}`}
                     className="acx-guided-face__lightbox-reference"
                     data-testid="guided-lightbox-reference-photo"
                   >
-                    <img src={photo.src} alt={photo.altText} />
+                    <img
+                      ref={index === 0 ? lightboxReferenceTileRef : undefined}
+                      src={photo.src}
+                      alt={photo.altText}
+                    />
                     <p className="acx-guided-face__gallery-credit">{photo.credit}</p>
                   </li>
                 ))}

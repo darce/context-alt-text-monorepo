@@ -8,16 +8,17 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import { guidedCopy } from '../../guidedPrototype/copy';
+import { guidedCopy } from '../../guidedPrototype/publicGuideCopy';
 import { GUIDED_STEP } from '../../guidedPrototype/state';
 import { focusGuidedSection } from './GuidedPrototypeGuide';
 
 export interface GuidedResetDialogProps {
   liveWaiting: boolean;
   onConfirm: () => void;
+  scope?: 'public' | 'admin';
 }
 
-export const GuidedResetDialog = ({ liveWaiting, onConfirm }: GuidedResetDialogProps): React.JSX.Element => {
+export const GuidedResetDialog = ({ liveWaiting, onConfirm, scope = 'admin' }: GuidedResetDialogProps): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const focusScenarioAfterConfirmRef = useRef(false);
@@ -61,6 +62,8 @@ export const GuidedResetDialog = ({ liveWaiting, onConfirm }: GuidedResetDialogP
     event.preventDefault();
   };
 
+  const publicScope = scope === 'public';
+
   return (
     <>
       <button
@@ -77,15 +80,15 @@ export const GuidedResetDialog = ({ liveWaiting, onConfirm }: GuidedResetDialogP
         <DialogPortal>
           <DialogOverlay />
           <DialogContent aria-modal="true" onCloseAutoFocus={handleCloseAutoFocus}>
-            <DialogTitle>{guidedCopy('reset.title')}</DialogTitle>
-            <DialogDescription>{guidedCopy('reset.body')}</DialogDescription>
-            {liveWaiting ? <p>{guidedCopy('reset.active_live_note')}</p> : null}
+            <DialogTitle>{guidedCopy(publicScope ? 'reset.title.public' : 'reset.title')}</DialogTitle>
+            <DialogDescription>{guidedCopy(publicScope ? 'reset.body.public' : 'reset.body')}</DialogDescription>
+            {liveWaiting && !publicScope ? <p>{guidedCopy('reset.active_live_note')}</p> : null}
             <div className="acx-dialog__actions">
               <button type="button" className="acx-button acx-button--secondary" onClick={handleCancel} autoFocus>
-                {guidedCopy('reset.cancel')}
+                {guidedCopy(publicScope ? 'reset.keep.public' : 'reset.cancel')}
               </button>
               <button type="button" className="acx-button acx-button--danger" onClick={handleConfirm}>
-                {guidedCopy('reset.confirm')}
+                {guidedCopy(publicScope ? 'reset.confirm.public' : 'reset.confirm')}
               </button>
             </div>
           </DialogContent>

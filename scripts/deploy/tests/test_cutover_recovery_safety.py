@@ -23,6 +23,7 @@ is rewritten to a tmp unit dir. sudo/systemctl/docker/rm are fail-closed shims.
 from __future__ import annotations
 
 import os
+import shlex
 import stat
 import subprocess
 from pathlib import Path
@@ -261,6 +262,71 @@ def test_abort_payload_succeeds_when_candidate_unit_is_absent(tmp_path: Path) ->
     combined = result.stdout + result.stderr + logged
     assert result.returncode == 0, combined
     assert "compose" in logged and "rm" in logged
+
+
+def test_abort_payload_absent_unit_is_quiet(tmp_path: Path) -> None:
+    result, _ = _run_abort_payload(tmp_path, unit_state="absent")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not loaded" not in result.stderr
+    assert "Failed to stop" not in result.stderr
+
+    failed_stop, _ = _run_abort_payload(tmp_path, unit_state="active", fail_at="stop-5")
+    assert failed_stop.returncode != 0
+    assert "Failed to stop" in failed_stop.stderr
+
+
+def test_edge_restore_network_check_matches_present_networks(tmp_path: Path) -> None:
+    payload_path = tmp_path / "edge-restore.payload"
+    command = f'''
+source {shlex.quote(str(SCRIPT))}
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ cat >{shlex.quote(str(payload_path))}; return 0; }}
+restore_edge_backups dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    payload = payload_path.read_text(encoding="utf-8")
+    start = payload.index("verify_edge_networks() {")
+    end = payload.index("\n}\n", start) + 2
+    function_src = payload[start:end]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "docker",
+        "#!/usr/bin/env bash\n"
+        "case \"${1:-}\" in\n"
+        "  compose) printf 'cid1\\n' ;;\n"
+        "  inspect) printf '%s\\n' \"${NETWORK_JSON:-}\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+    )
+    edge_dir = tmp_path / "edge"
+    edge_dir.mkdir()
+
+    def run_check(network_json: str) -> subprocess.CompletedProcess[str]:
+        env_vars = os.environ.copy()
+        env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+        env_vars["NETWORK_JSON"] = network_json
+        driver = f"{function_src}\nedge_dir={shlex.quote(str(edge_dir))}\nverify_edge_networks"
+        return subprocess.run(
+            ["bash", "-c", driver], text=True, capture_output=True, check=False, env=env_vars
+        )
+
+    present = run_check(
+        '{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},'
+        '"acx-dev-fir-net":{},"acx-demo-net":{}}'
+    )
+    assert present.returncode == 0, present.stdout + present.stderr
+    assert "Trailing backslash" not in present.stderr
+    assert "missing restored network" not in present.stderr
+
+    missing = run_check(
+        '{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},"acx-dev-fir-net":{}}'
+    )
+    assert missing.returncode == 1
+    assert "missing restored network acx-demo-net" in missing.stderr
 
 
 def test_abort_payload_succeeds_when_candidate_unit_is_inactive(tmp_path: Path) -> None:

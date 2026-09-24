@@ -161,6 +161,23 @@ describe('GuidedDescriptionReview per-image drafts', () => {
     }
   });
 
+  it('renders current and suggested descriptions as sibling blocks before the apply group', () => {
+    render(
+      <GuidedDescriptionReview scenario={scenario} state={perImageState()} actions={actions()} scope="public" />,
+    );
+
+    const layout = screen.getByTestId('guided-editor-layout-tribeca');
+    const current = screen.getByTestId('guided-current-alt-tribeca');
+    const suggested = screen.getByTestId('guided-draft-field-tribeca');
+    const apply = screen.getByTestId('guided-apply-tribeca');
+
+    expect(current.parentElement).toBe(layout);
+    expect(suggested.parentElement).toBe(layout);
+    expect(apply.parentElement).toBe(layout);
+    expect(current.nextElementSibling).toBe(suggested);
+    expect(suggested.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('passes the latest public field value to image apply and announces it in that card', () => {
     const reviewActions = actions();
     reviewActions.onApplyForImage = vi.fn();

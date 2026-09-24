@@ -61,7 +61,8 @@ import {
 
 const KATY = 'katy-perry';
 const JUSTIN = 'justin-trudeau';
-const ORIGINAL_ALT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const ORIGINAL_ALT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 
 const INCLUDE = GUIDED_NAME_CHOICE.INCLUDE;
 const OMIT = GUIDED_NAME_CHOICE.OMIT;
@@ -92,13 +93,7 @@ const chooseBoth = (
   right: GuidedNameChoice,
   imageKey?: GuidedImageKey,
 ): GuidedDemoState =>
-  chooseGuidedName(
-    chooseGuidedName(state, scenario, 'left', left, imageKey),
-    scenario,
-    'right',
-    right,
-    imageKey,
-  );
+  chooseGuidedName(chooseGuidedName(state, scenario, 'left', left, imageKey), scenario, 'right', right, imageKey);
 
 const includeBoth = (scenario: GuidedScenario, state: GuidedDemoState = createGuidedDemoState()): GuidedDemoState =>
   chooseBoth(state, scenario, INCLUDE, INCLUDE);

@@ -39,9 +39,7 @@ describe('public guide stylesheet isolation', () => {
     expect(css).toMatch(/\.acx-public-guide\s+\.acx-button--danger\b/);
 
     for (const surface of ['dashboard', 'workbench', 'roster', 'review-queue'] as const) {
-      expect(css, `guide CSS must not contain ${surface} selectors`).not.toMatch(
-        new RegExp(`\\.acx-${surface}\\b`),
-      );
+      expect(css, `guide CSS must not contain ${surface} selectors`).not.toMatch(new RegExp(`\\.acx-${surface}\\b`));
     }
 
     expect(hasUnscopedTypeRule(css, 'body'), 'unscoped body { rule').toBe(false);

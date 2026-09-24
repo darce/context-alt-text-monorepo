@@ -281,6 +281,15 @@ class FakeClusterRepository:
         sorted_clusters = sorted(unlabeled, key=lambda cluster: cluster.identity_count, reverse=True)
         return sorted_clusters[:limit]
 
+    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+        return sum(
+            1
+            for cluster in self.clusters.values()
+            if not cluster.label
+            and cluster.identity_count >= min_identity_count
+            and cluster.dismissed_at is None
+        )
+
     async def dismiss_cluster(self, cluster_id: str) -> bool:
         cluster = self.clusters.get(cluster_id)
         if not cluster or cluster.dismissed_at is not None:

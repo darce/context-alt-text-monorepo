@@ -93,6 +93,7 @@ const renderBody = (
     hasDraftFilter?: boolean;
     draftRunId?: string | null;
     onClearDraftFilters?: () => void;
+    identitiesLoading?: boolean;
   } = {},
 ) => {
   const client = new QueryClient({
@@ -134,6 +135,13 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
+  it('shows loading faces in a row while identities are loading', () => {
+    renderBody([makeItem()], undefined, { identitiesLoading: true });
+
+    expect(screen.getByText('Loading faces…')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('No identities detected yet.')).not.toBeInTheDocument();
   });
 
   it('resolves the true-zero "Open the media library" href from configured admin URLs, not a hardcoded /wp-admin/ path [DUX-W2D6C-RV-07]', () => {

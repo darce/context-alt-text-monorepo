@@ -259,23 +259,42 @@ describe('GpuTierStatus', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });
 
-  it('renders fetch-failure copy with Retry and refetches on click', async () => {
+  it('renders neutral idle copy with Check status and refetches on click', async () => {
     fetchGpuStatusMock.mockRejectedValue(new Error('network down'));
     renderGpu(createElement(GpuTierStatus));
 
-    const status = await screen.findByRole('status', { name: 'Description Service status unavailable' });
+    const status = await screen.findByRole('status', {
+      name: 'Description Service idle — status not checked',
+    });
     expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.UNKNOWN);
-    expect(status).toHaveTextContent('Description Service status unavailable');
+    expect(status).toHaveTextContent('Description Service idle — status not checked');
+    expect(status).not.toHaveClass('acx-sync-status--warning');
+    expect(status).not.toHaveClass('acx-sync-status--danger');
     expect(status.textContent).not.toContain('GPU tier: not reported');
 
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
 
     expect(
       await screen.findByRole('status', {
         name: 'Description Service is off — it starts when you describe',
       }),
     ).toBeInTheDocument();
+  });
+
+  it('keeps the run-owned status copy when idle polling is paused for a run', async () => {
+    fetchGpuStatusMock.mockRejectedValue(new Error('network down'));
+    renderGpu(
+      createElement(GpuTierStatus, {
+        isRunPending: true,
+        gpuState: GPU_STATE.WARMING,
+      }),
+    );
+
+    const status = await screen.findByRole('status', { name: 'Description Service is starting…' });
+    expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.WARMING);
+    expect(status).not.toHaveTextContent('Description Service idle — status not checked');
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 
   it('does not render a raw degraded lifecycle reason from the status payload', async () => {

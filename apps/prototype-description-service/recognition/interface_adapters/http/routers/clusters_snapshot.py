@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from math import isfinite
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.settings import ClusteringSettings
@@ -55,6 +56,13 @@ _INFERENCE_CAP = 20
 
 _QUALITY_COMPONENT_KEYS = ("confidence", "bbox_area", "sharpness", "occlusion_severity")
 _UNIT_INTERVAL_KEYS = frozenset({"confidence", "occlusion_severity"})
+
+
+class TopUnlabeledClustersResponse(BaseModel):
+    clusters: list[ClusterResponse]
+    limit: int
+    total: int
+    truncated: bool
 
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
@@ -426,19 +434,20 @@ async def get_tenant_cluster_delta(
     )
 
 
-@router.get("/clusters/top-unlabeled", response_model=list[ClusterResponse])
+@router.get("/clusters/top-unlabeled", response_model=TopUnlabeledClustersResponse)
 async def get_top_unlabeled_clusters(
     tenant_id: str = Depends(get_authenticated_tenant_id),
-    limit: int = Query(10),
+    limit: int = Query(10, ge=1, le=500),
     min_identity_count: int = Query(2, ge=1, description="Minimum identity count (default 2 to skip singletons)"),
     repo=Depends(get_cluster_repository),
     session=Depends(get_session),
-) -> list[ClusterResponse]:
+) -> TopUnlabeledClustersResponse:
     """Fetch top unlabeled clusters by member count for bootstrapping suggestions.
 
     Includes cluster representatives with face thumbnails for display in the
     suggestion panel.
     """
+    total = await repo.count_top_unlabeled(tenant_id, min_identity_count=min_identity_count)
     clusters = await repo.get_top_unlabeled(
         tenant_id,
         limit=limit,
@@ -498,7 +507,12 @@ async def get_top_unlabeled_clusters(
             )
         )
 
-    return responses
+    return TopUnlabeledClustersResponse(
+        clusters=responses,
+        limit=limit,
+        total=total,
+        truncated=total > len(responses),
+    )
 
 
 @router.get("/clusters/{cluster_id}/members", response_model=ClusterMembersEnvelopeResponse)

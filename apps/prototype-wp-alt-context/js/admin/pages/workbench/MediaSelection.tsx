@@ -251,6 +251,7 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
               onToggleRow={onToggleRow}
               selection={selection}
               identitiesDataSource={deriveIdentitiesPresentationSource(identityQuery.isError, identityQuery.data)}
+              identitiesLoading={identityQuery.isLoading || (identityQuery.isPlaceholderData && identityQuery.isFetching)}
               onRetryIdentities={() => void identityQuery.refetch()}
               searchQuery={searchQuery}
               statusFilter={statusFilter}

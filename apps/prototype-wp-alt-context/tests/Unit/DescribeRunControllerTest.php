@@ -78,6 +78,7 @@ class DescribeRunControllerTest extends TestCase
         $response = $this->controller->submit_describe_run($request);
 
         $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertArrayNotHasKey('unreadable_media_ids', $response->get_data());
 
         $call = $this->getHttpCalls()[0];
         $this->assertStringContainsString('/scene/describe/run', $call['url']);
@@ -159,13 +160,40 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testSubmitRejectsUnreadableAttachmentNamingTheId(): void
+    public function testSubmitSkipsUnreadableAttachmentAndReportsIt(): void
     {
-        // 101 is readable; 202 has no planted file → load fails, run is rejected.
+        // 101 is readable; 202 has no planted file and should be skipped.
         $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+        $runId = '33333333-3333-3333-3333-333333333333';
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"' . $runId . '","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
         $request->set_param('media_ids', [101, 202]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertCount(1, $this->getHttpCalls());
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertStringContainsString('[101]', $body);
+        $this->assertStringContainsString('name="image_101"', $body);
+        $this->assertStringNotContainsString('name="image_202"', $body);
+        $stored = get_option('acx_describe_run_media_ids_' . $runId);
+        $this->assertSame([101], $stored['media_ids'] ?? null);
+        $this->assertSame([202], $response->get_data()['unreadable_media_ids'] ?? null);
+        $this->assertNotEmpty(array_filter(
+            $this->getErrorLog(),
+            static fn (string $line): bool => str_contains($line, 'media_id=202')
+        ));
+    }
+
+    public function testSubmitRejectsWhenEveryAttachmentIsUnreadable(): void
+    {
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [202, 303]);
 
         $response = $this->controller->submit_describe_run($request);
 
@@ -173,7 +201,8 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame('describe_run_attachment_unreadable', $response->get_error_code());
         $this->assertSame(400, $response->get_error_data()['status'] ?? null);
         $this->assertStringContainsString('202', $response->get_error_message());
-        // Fail fast before dispatching a partial run.
+        $this->assertStringContainsString('303', $response->get_error_message());
+        $this->assertSame([202, 303], $response->get_error_data()['media_ids'] ?? null);
         $this->assertSame([], $this->getHttpCalls());
     }
 

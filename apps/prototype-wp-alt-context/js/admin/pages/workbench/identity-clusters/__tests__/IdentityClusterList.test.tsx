@@ -143,6 +143,15 @@ const renderList = (identities: DetectedIdentity[]) => {
   );
 };
 
+const renderEmptyList = (isLoading: boolean) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <IdentityClusterList identities={[]} isLoading={isLoading} />
+    </QueryClientProvider>,
+  );
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.AltContextAdmin = {
@@ -184,6 +193,23 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe('IdentityClusterList loading state', () => {
+  it('shows a loading message instead of the empty scan state while identities are loading', () => {
+    renderEmptyList(true);
+
+    expect(screen.getByText('Loading faces…')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('No identities detected yet.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Go to Scan' })).not.toBeInTheDocument();
+  });
+
+  it('shows the existing empty copy when identities are no longer loading', () => {
+    renderEmptyList(false);
+
+    expect(screen.getByText('No identities detected yet.')).toBeInTheDocument();
+    expect(screen.getByText('Scan media to find faces in this item.')).toBeInTheDocument();
+  });
 });
 
 describe('IdentityClusterList split affordance (WBUX6-W3-L6-03)', () => {

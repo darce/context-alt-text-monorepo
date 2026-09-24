@@ -76,9 +76,7 @@ describe('GuidedSamplePhoto figure content', () => {
   it('keeps the admin overlay chip similarity as a bare percentage', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[0];
-    render(
-      <GuidedSamplePhoto photo={photo} currentAltText={photo.altText} showCurrentAltText={false} scope="admin" />,
-    );
+    render(<GuidedSamplePhoto photo={photo} currentAltText={photo.altText} showCurrentAltText={false} scope="admin" />);
 
     const image = screen.getByRole('img', { name: photo.altText });
     Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 1000 });

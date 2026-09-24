@@ -71,7 +71,7 @@ const pressControl = async (locator: Locator, key: 'Enter' | 'Space' = 'Enter'):
   await locator.press(key);
 };
 
-const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
+const completeKeyboardWalkthrough = async (page: Page, viewportName: string): Promise<void> => {
   const walkthroughPhoto = page.getByTestId(`guided-photo-${WALKTHROUGH_PHOTO_KEY}`);
   const walkthroughReview = page.getByTestId(`guided-description-review-${WALKTHROUGH_PHOTO_KEY}`);
 
@@ -86,6 +86,26 @@ const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
       .getByRole('radio', { name: PUBLIC_LEAVE_UNNAMED }),
     'Space',
   );
+
+  const reviewBox = await walkthroughReview.boundingBox();
+  if (reviewBox === null) {
+    throw new Error('The Tribeca photo review card is missing.');
+  }
+  if (viewportName === 'desktop 1440x900') {
+    const imageBox = await walkthroughPhoto.locator('.acx-guided-page__image-wrap').boundingBox();
+    const editorBox = await walkthroughReview
+      .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
+      .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL })
+      .boundingBox();
+    if (imageBox === null || editorBox === null) {
+      throw new Error('The desktop review card or its description fields are missing.');
+    }
+    expect(reviewBox.width).toBeGreaterThanOrEqual(imageBox.width);
+    expect(editorBox.width).toBeGreaterThanOrEqual(300);
+  } else {
+    expect(reviewBox.x).toBeGreaterThanOrEqual(0);
+    expect(reviewBox.x + reviewBox.width).toBeLessThanOrEqual(390);
+  }
 
   const appliedText = walkthroughReview
     .getByTestId(`guided-current-alt-${WALKTHROUGH_PHOTO_KEY}`)
@@ -149,6 +169,30 @@ const assertResponsiveLayout = async (page: Page, viewportName: string): Promise
   if (viewportName === 'desktop 1440x900') {
     expect(layout.planLeft).toBeGreaterThan(layout.contentRight);
     expect(layout.facesLeft).toBeGreaterThan(layout.imageRight);
+
+    await page
+      .getByTestId('guided-photo-tribeca')
+      .getByRole('button', { name: PUBLIC_COMPARE_PHOTOS, exact: true })
+      .first()
+      .click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-reference img').evaluateAll((images) =>
+      images.map((image) => {
+        const bounds = image.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }),
+    );
+    expect(referenceTiles.length).toBeGreaterThan(0);
+    for (const tile of referenceTiles) {
+      expect(tile.width).toBeGreaterThanOrEqual(184);
+      expect(tile.width).toBeLessThanOrEqual(200);
+      expect(tile.height).toBeGreaterThanOrEqual(184);
+      expect(tile.height).toBeLessThanOrEqual(200);
+      expect(Math.abs(tile.width - tile.height)).toBeLessThan(1);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
     return;
   }
 
@@ -225,7 +269,7 @@ test.describe('public guide signed-out', () => {
         await expect(page.getByRole('link', { name: PUBLIC_CASE_STUDY })).toBeVisible();
 
         await assertResponsiveLayout(page, viewport.name);
-        await completeKeyboardWalkthrough(page);
+        await completeKeyboardWalkthrough(page, viewport.name);
         assertNoPrivilegedOrDescribe(acxRequests);
       });
 

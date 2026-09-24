@@ -10,7 +10,7 @@ import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntran
 import { GuidedPrototypePage } from '../../admin/pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
-import { createGuidedScenario } from '../../admin/guidedPrototype/state';
+import { createGuidedScenario, GUIDED_MATCH_STRENGTH, formatGuidedSimilarity } from '../../admin/guidedPrototype/state';
 
 const SEED_ALT_TEXT =
   'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
@@ -291,7 +291,7 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.getByTestId('demo-apply-coachella')).toBeEnabled();
   });
 
-  it('places each public description review directly after its photo name choices', () => {
+  it('places each public description review after its photo content', () => {
     render(<RecordedWalkthrough scope="public" />);
     chooseBothImages('left', 'include');
     chooseBothImages('right', 'include');
@@ -304,11 +304,12 @@ describe('public recorded walkthrough boundary', () => {
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const photoStep = screen.getByTestId(`guided-photo-step-${imageKey}`);
       const faces = screen.getByTestId(`guided-faces-${imageKey}`);
+      const photo = screen.getByTestId(`guided-photo-${imageKey}`);
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
       expect(photoStep).toContainElement(review);
-      expect(faces).toContainElement(review);
-      expect(review.parentElement).toBe(faces.querySelector('.acx-guided-page__faces-list'));
-      expect(review.previousElementSibling).toHaveClass('acx-guided-face__card');
+      expect(faces).not.toContainElement(review);
+      expect(review.parentElement).toBe(photoStep);
+      expect(photo.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(review).toContainElement(publicEditor(imageKey));
       expect(screen.queryByTestId(`guided-description-step-${imageKey}`)).not.toBeInTheDocument();
     }
@@ -319,16 +320,32 @@ describe('public recorded walkthrough boundary', () => {
     expect(mediaList?.compareDocumentPosition(footer as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('uses word-only match strength in the public name cards', () => {
+  it('shows scored match strength while keeping the cluster anchor score hidden', () => {
     const { container } = render(<RecordedWalkthrough scope="public" />);
+    const scenario = createGuidedScenario();
+    const strongSimilarity = scenario.faces.find((face) => face.strength === GUIDED_MATCH_STRENGTH.STRONG)?.similarity;
+    const weakSimilarity = scenario.faces.find((face) => face.strength === GUIDED_MATCH_STRENGTH.WEAK)?.similarity;
+    if (
+      strongSimilarity === undefined ||
+      strongSimilarity === null ||
+      weakSimilarity === undefined ||
+      weakSimilarity === null
+    ) {
+      throw new Error('The recorded scenario must include scored strong and weak matches.');
+    }
     const evidence = Array.from(container.querySelectorAll('.acx-guided-face__matches'))
       .map((match) => match.textContent ?? '')
       .join(' ');
 
-    expect(evidence).toContain(publicGuidedCopy('names.strong.public'));
-    expect(evidence).toContain(publicGuidedCopy('names.weak.public'));
+    expect(evidence).toContain(
+      publicGuidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(strongSimilarity) }),
+    );
+    expect(evidence).toContain(
+      publicGuidedCopy('names.weak.public', { similarity: formatGuidedSimilarity(weakSimilarity) }),
+    );
     expect(evidence).toContain(publicGuidedCopy('names.no_score.public'));
-    expect(evidence).not.toMatch(/[0-9%]/);
+    const cards = Array.from(container.querySelectorAll('.acx-guided-face__card'));
+    expect(cards.every((card) => !/100(?:\.0)?%/.test(card.textContent ?? ''))).toBe(true);
   });
 
   it('keeps public headings and editor labels scoped to both source images', () => {
@@ -349,12 +366,7 @@ describe('public recorded walkthrough boundary', () => {
         }),
       ).toBeInTheDocument();
     }
-    expect(screen.getAllByText(publicGuidedCopy('comparison.alttextai.public'), { selector: 'summary' })).toHaveLength(
-      2,
-    );
-    expect(
-      screen.queryByRole('heading', { name: publicGuidedCopy('comparison.altcontext.public') }),
-    ).not.toBeInTheDocument();
+    expect(screen.getAllByText(publicGuidedCopy('comparison.title.public'), { selector: 'summary' })).toHaveLength(2);
     expect(
       screen.queryByRole('heading', { name: guidedCopy('context.photo.altcontext_title') }),
     ).not.toBeInTheDocument();

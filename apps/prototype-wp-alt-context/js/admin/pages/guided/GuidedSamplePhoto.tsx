@@ -44,9 +44,7 @@ const publicOverlaySimilarityText = (
   if (similarity === null) {
     return guidedCopy('names.match.unavailable');
   }
-  return strength === GUIDED_MATCH_STRENGTH.WEAK
-    ? guidedCopy('names.weak.public')
-    : guidedCopy('names.strong.public');
+  return strength === GUIDED_MATCH_STRENGTH.WEAK ? guidedCopy('names.weak.public') : guidedCopy('names.strong.public');
 };
 
 const Credit = ({ photo }: { photo: GuidedPressPhoto }): React.JSX.Element => (
@@ -259,11 +257,7 @@ export const GuidedSamplePhoto = ({
           <AltTextAiCaption photo={photo} />
         </figcaption>
       ) : (
-        <AdminPhotoCaptions
-          photo={photo}
-          currentAltText={currentAltText}
-          showCurrentAltText={showCurrentAltText}
-        />
+        <AdminPhotoCaptions photo={photo} currentAltText={currentAltText} showCurrentAltText={showCurrentAltText} />
       )}
       {children}
     </figure>

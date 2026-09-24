@@ -8,8 +8,7 @@ import { guidedCopy as catalogCopy, interpolateGuidedCopy, type GuidedCopyKey } 
 
 export const CASE_STUDY_URL = 'https://darce.xyz/projects/altcontext/';
 
-export const PUBLIC_GUIDE_FALLBACK =
-  'The walkthrough could not load. Reload the page and try again.';
+export const PUBLIC_GUIDE_FALLBACK = 'The walkthrough could not load. Reload the page and try again.';
 
 export const PUBLIC_GUIDE_LOADING = 'Loading the walkthrough.';
 
@@ -27,14 +26,12 @@ export const PUBLIC_GUIDED_COPY = {
   'step.names.public': 'Check the suggested names',
   'step.review.public': 'Check and use the suggested description',
   'guide.current.public': 'Step {stepNumber} of {stepCount}: {stepTitle}',
-  'names.scope.public':
-    'Use a name only if you agree. Not sure? Leave the person unnamed.',
+  'names.scope.public': 'Use a name only if you agree. Not sure? Leave the person unnamed.',
   'feedback.choices.public': 'Name choices: {leftName}: {leftChoice}; {rightName}: {rightChoice}.',
   'context.source.summary.public':
     'AltText.ai was given no names or keywords. This comparison is for reference only, ' +
     'not a test of which tool is better.',
-  'context.source.comparison_boundary.public':
-    'For comparison only. This is not a benchmark.',
+  'context.source.comparison_boundary.public': 'For comparison only. This is not a benchmark.',
   'context.source.face_recency.public':
     'Names were suggested on 10 September 2026. Face matching is not running on this page.',
   'comparison.altcontext.public': 'AltContext description with suggested names',
@@ -42,19 +39,15 @@ export const PUBLIC_GUIDED_COPY = {
   'faces.title.public': 'Suggested names',
   'context.next.public': 'Check the suggested names',
   'choices.help.public': 'Choose an option for both people above to see the suggested description.',
-  'draft.origin.public':
-    'Written by AI in advance from the photo, the page it appears on, and the names you chose.',
+  'draft.origin.public': 'Written by AI in advance from the photo, the page it appears on, and the names you chose.',
   'draft.context.public':
     'This description was written by AI in advance from the photo, its page, and the names you chose.',
   'draft.field_label.public': 'Suggested description',
   'draft.current_alt_label.public': 'Current description',
   'draft.apply_scope.public': 'Only the demo image on this page changes.',
-  'outcome.scope.public':
-    'Nothing was saved or published. Your changes clear when you reload.',
-  'outcome.next_batch.public':
-    'In real use, you would review each new photo the same way.',
-  'outcome.kept_body.public':
-    'You kept the current description.',
+  'outcome.scope.public': 'Nothing was saved or published. Your changes clear when you reload.',
+  'outcome.next_batch.public': 'In real use, you would review each new photo the same way.',
+  'outcome.kept_body.public': 'You kept the current description.',
   'outcome.applied_image.public': 'The demo image now uses this description.',
   'outcome.undone_image.public': 'The previous description is back.',
   'error.empty_draft.public': 'Enter a description before you use it.',
@@ -78,8 +71,7 @@ export const PUBLIC_GUIDED_COPY = {
   'names.no_score.public': 'No score: the saved group for this name started from this face.',
   'description.heading.public': '2. Check the suggested description',
   'description.written.public':
-    'Written by AI in advance from the photo, the page it appears on, ' +
-    'and the names you chose.',
+    'Written by AI in advance from the photo, the page it appears on, ' + 'and the names you chose.',
   'description.current.public': 'Current description',
   'description.suggested.public': 'Suggested description',
   'description.edit_help.public': 'Edit anything that is wrong or that you would not publish.',
@@ -97,8 +89,7 @@ export const PUBLIC_GUIDED_COPY = {
   'reset.success.public': 'Started over. The original descriptions are back.',
   'name_change.title.public': 'Replace your edits?',
   'name_change.body.public':
-    'Changing a name loads a new suggested description for this photo. ' +
-    'Your edits to it will be replaced.',
+    'Changing a name loads a new suggested description for this photo. ' + 'Your edits to it will be replaced.',
   'name_change.keep.public': 'Keep my edits',
   'name_change.confirm.public': 'Change the name',
   'outcome.title.public': 'You checked both photos',

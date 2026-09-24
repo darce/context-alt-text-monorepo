@@ -595,15 +595,7 @@ const assertNoBannedReviewWords = (root: HTMLElement = document.body): void => {
 };
 
 /** Operator-visible UX-map fields only. Ids / url_params / code_ref / decision records are exempt. */
-const UXMAP_OPERATOR_COPY_KEYS = new Set([
-  'title',
-  'label',
-  'purpose',
-  'verb',
-  'goals',
-  'description',
-  'branch_label',
-]);
+const UXMAP_OPERATOR_COPY_KEYS = new Set(['title', 'label', 'purpose', 'verb', 'goals', 'description', 'branch_label']);
 
 const UXMAP_EXEMPT_KEYS = new Set(['id', 'url_params', 'code_ref', 'open_questions', 'not_doing']);
 
@@ -629,9 +621,7 @@ const collectUxMapOperatorCopy = (value: unknown, key?: string): string[] => {
 };
 
 const collectVisibleText = (container: HTMLElement): string => {
-  const attrBits = Array.from(
-    container.querySelectorAll('[alt],[aria-label],[aria-description],[title],[placeholder]'),
-  )
+  const attrBits = Array.from(container.querySelectorAll('[alt],[aria-label],[aria-description],[title],[placeholder]'))
     .map((el) =>
       [
         el.getAttribute('alt'),
@@ -694,12 +684,8 @@ describe('banned vocabulary across js/admin pages', () => {
    * copy are swept here as constants that render on the review-queue surface.
    */
   it('review-queue chip + person-commit + HAI-05 copy are free of banned jargon', async () => {
-    const {
-      NEXT_ACTION_CHIP_LABEL,
-      NEXT_ACTION_KIND,
-      REVIEW_QUEUE_BAND,
-      REVIEW_QUEUE_BAND_CHIP_LABEL,
-    } = await import('../pages/workbench/identity-clusters/reviewQueueDriver');
+    const { NEXT_ACTION_CHIP_LABEL, NEXT_ACTION_KIND, REVIEW_QUEUE_BAND, REVIEW_QUEUE_BAND_CHIP_LABEL } =
+      await import('../pages/workbench/identity-clusters/reviewQueueDriver');
     // BR-33: sweep every exported person-commit copy constant (import *).
     const personCommitCopy = await import('../pages/workbench/identity-clusters/personCommitCopy');
     // Slice 5: bulk commit / hold / PR-38 labels.
@@ -750,9 +736,7 @@ describe('banned vocabulary across js/admin pages', () => {
    */
   it('retention card copy constants are free of banned jargon', async () => {
     const retentionCardCopy = await import('../pages/dashboard/retentionCardCopy');
-    const retentionStrings = Object.values(retentionCardCopy).filter(
-      (value) => typeof value === 'string',
-    ) as string[];
+    const retentionStrings = Object.values(retentionCardCopy).filter((value) => typeof value === 'string') as string[];
     const surface = retentionStrings.join(' ');
 
     for (const banned of BANNED_STRINGS) {
@@ -1114,10 +1098,7 @@ describe('banned vocabulary across js/admin pages', () => {
 
   it('ReviewQueue source does not say unlabeled clusters (UXW2-3-R2-06 mutant)', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(
-      path.resolve(here, '../pages/workbench/identity-clusters/ReviewQueue.tsx'),
-      'utf8',
-    );
+    const source = readFileSync(path.resolve(here, '../pages/workbench/identity-clusters/ReviewQueue.tsx'), 'utf8');
     expect(source).toContain('Unable to load unlabeled faces.');
     expect(source).not.toMatch(/Unable to load unlabeled clusters\./);
   });

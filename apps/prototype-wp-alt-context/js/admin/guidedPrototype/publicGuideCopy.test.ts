@@ -133,8 +133,10 @@ describe('public guide copy overlay', () => {
     expect(guidedCopy('scope.public')).toBe(PUBLIC_SCOPE);
     expect(guidedCopy('steps.title.public')).toBe("What you'll do");
     expect(guidedCopy('photo.count.public', { photoNumber: 1 })).toBe('Photo 1 of 2');
-    expect(guidedCopy('names.strong.public')).toBe('Strong match');
-    expect(guidedCopy('names.weak.public')).toBe('Weak match. Compare the photos before you use this name.');
+    expect(guidedCopy('names.strong.public', { similarity: '89.4%' })).toBe('89.4% match');
+    expect(guidedCopy('names.weak.public', { similarity: '56.7%' })).toBe(
+      '56.7% match. Weak match: compare the photos before you use this name.',
+    );
     expect(guidedCopy('names.no_score.public')).toBe('No score: the saved group for this name started from this face.');
     expect(guidedCopy('description.use.public')).toBe('Use this description');
     expect(guidedCopy('description.keep.public')).toBe('Keep the current description');
@@ -163,7 +165,9 @@ describe('public guide copy overlay', () => {
       expect(value).not.toMatch(/\b(?:draft|roster|prototype)\b/i);
       expect(value).not.toMatch(/\b\d+(?:\.\d+)?\s?%/);
     }
-    expect(guidedCopy('comparison.title.public')).toBe('How another tool describes this photo');
+    expect(guidedCopy('comparison.altcontext.public')).toBe('AltContext, using the people list');
+    expect(guidedCopy('comparison.alttextai.public')).toBe('AltText.ai, no names or keywords');
+    expect(guidedCopy('comparison.title.public')).toBe('Compare how two tools describe this photo');
     expect(guidedCopy('comparison.note.public')).toContain('For comparison only');
     expect(guidedCopy('outcome.provenance.public')).toContain('Nothing on this page compares faces.');
     expect(guidedCopy('error.unchanged_draft.public')).toBe('The current and suggested descriptions are the same.');

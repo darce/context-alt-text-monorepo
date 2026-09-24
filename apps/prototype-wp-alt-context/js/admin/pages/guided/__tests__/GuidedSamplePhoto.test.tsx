@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
-import { createGuidedScenario, getGuidedFace } from '../../../guidedPrototype/state';
+import { createGuidedScenario, formatGuidedSimilarity, getGuidedFace } from '../../../guidedPrototype/state';
 import { GuidedSamplePhoto } from '../GuidedSamplePhoto';
 
 describe('GuidedSamplePhoto image geometry', () => {
@@ -40,11 +40,18 @@ describe('GuidedSamplePhoto image geometry', () => {
     expect((wrap as HTMLElement).style.aspectRatio).toBe('');
 
     const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
-    const outline = screen.getByRole('button', { name: /Justin Trudeau, Strong match/ });
+    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4% match/ });
     expect(outline).toHaveStyle({
       left: `${(justinFace.box.x / 1000) * 100}%`,
       top: `${(justinFace.box.y / 800) * 100}%`,
     });
+
+    const anchorFace = scenario.faces.find((face) => face.imageKey === photo.key && face.isClusterAnchor);
+    expect(anchorFace).toBeDefined();
+    const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
+    expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
+    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/100%/);
+    expect(anchorButton?.textContent).not.toMatch(/100%/);
   });
 
   it('marks a loaded portrait image as portrait', () => {
@@ -67,7 +74,7 @@ describe('GuidedSamplePhoto image geometry', () => {
 });
 
 describe('GuidedSamplePhoto figure content', () => {
-  it('uses the current description as image alt and collapses the comparison caption', () => {
+  it('shows both public descriptions and their provenance in an open comparison caption', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[1];
     const currentDescription = 'The current description for this photo.';
@@ -104,23 +111,40 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(credit?.closest('details')).toBeNull();
     expect(credit?.querySelector('a')).toHaveAttribute('href', photo.credit);
 
-    const altTextAiDetails = figure.querySelector('details.acx-guided-page__caption');
-    expect(altTextAiDetails).toBeInstanceOf(HTMLDetailsElement);
-    expect(altTextAiDetails).not.toHaveAttribute('open');
-    expect(altTextAiDetails).toContainElement(
-      within(altTextAiDetails as HTMLDetailsElement).getByText('How another tool describes this photo'),
-    );
-    expect(altTextAiDetails).toHaveTextContent('For comparison only, not a benchmark.');
-    expect(altTextAiDetails).not.toHaveTextContent(photo.altContextDescription.text);
-    const captionProvenance = within(altTextAiDetails as HTMLDetailsElement).getByText(/Captured 10 September 2026\./, {
+    const comparisonDetails = figure.querySelector('details.acx-guided-page__caption');
+    expect(comparisonDetails).toBeInstanceOf(HTMLDetailsElement);
+    expect(comparisonDetails).toHaveAttribute('open');
+    const comparison = within(comparisonDetails as HTMLDetailsElement);
+    expect(comparison.getByText(guidedCopy('comparison.title.public'))).toBeInTheDocument();
+    expect(
+      comparison.getByRole('heading', { level: 4, name: guidedCopy('comparison.altcontext.public') }),
+    ).toBeInTheDocument();
+    expect(
+      comparison.getByRole('heading', { level: 4, name: guidedCopy('comparison.alttextai.public') }),
+    ).toBeInTheDocument();
+    expect(comparison.getByText(photo.altContextDescription.text)).toBeInTheDocument();
+    if (photo.altTextAiCaption.text === null) {
+      expect(comparison.getByText(guidedCopy('context.photo.no_caption'))).toBeInTheDocument();
+    } else {
+      expect(comparison.getByText(photo.altTextAiCaption.text)).toBeInTheDocument();
+    }
+    const altContextLink = comparison.getByRole('link', {
+      name: guidedCopy('context.external_link', { label: photo.altContextDescription.system }),
+    });
+    expect(altContextLink).toHaveAttribute('href', photo.altContextDescription.systemUrl);
+    expect(altContextLink.closest('p')).toHaveClass('acx-guided-page__caption-provenance');
+    expect(altContextLink.closest('p')).toHaveTextContent(photo.altContextDescription.generatedOn);
+
+    const captionProvenance = comparison.getByText(/Captured 10 September 2026\./, {
       selector: 'p.acx-guided-page__caption-provenance',
     });
     expect(captionProvenance.textContent).toBe('AltText.ai · Captured 10 September 2026.');
-    expect(captionProvenance).not.toHaveTextContent(photo.altTextAiCaption.note);
+    expect(comparison.getByText(guidedCopy('comparison.note.public'))).toBeInTheDocument();
+    expect(comparisonDetails).not.toHaveTextContent(photo.altTextAiCaption.note);
 
     expect(figcaption).not.toContainElement(slot);
     expect(figure.lastElementChild).toBe(slot);
-    expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(0);
+    expect(container.querySelectorAll('section.acx-guided-page__caption')).toHaveLength(2);
     expect(figcaption).not.toHaveTextContent('Current alt text in the demo copy:');
   });
 
@@ -158,7 +182,7 @@ describe('GuidedSamplePhoto figure content', () => {
     expect(figure?.querySelector('details.acx-guided-page__caption')).toBeNull();
   });
 
-  it('does not expose similarity values in the public overlay chip or accessible names', () => {
+  it('shows formatted similarity values for scored public matches and no score for the anchor', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhotos[0];
     render(
@@ -181,9 +205,11 @@ describe('GuidedSamplePhoto figure content', () => {
       const chipText = button.querySelector('.acx-guided-face-overlay__chip-label')?.textContent ?? '';
       const accessibleName = button.getAttribute('aria-label') ?? '';
       const publicText = `${chipText} ${accessibleName}`;
-      expect(publicText).not.toMatch(/\d+\s*%/);
-      if (face?.similarity !== null && face?.similarity !== undefined) {
-        expect(publicText).not.toContain(String(face.similarity));
+      if (face?.isClusterAnchor) {
+        expect(publicText).toContain(guidedCopy('names.no_score.public'));
+        expect(publicText).not.toMatch(/100%/);
+      } else if (face?.similarity !== null && face?.similarity !== undefined) {
+        expect(publicText).toContain(formatGuidedSimilarity(face.similarity));
       }
     }
 
@@ -191,7 +217,8 @@ describe('GuidedSamplePhoto figure content', () => {
     if (anchor !== undefined) {
       const anchorButton = overlay.querySelector(`[data-face-id="${anchor.id}"]`);
       expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
-      expect(anchorButton?.textContent).not.toMatch(/\d+\s*%/);
+      expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/100%/);
+      expect(anchorButton?.textContent).not.toMatch(/100%/);
     }
   });
 });

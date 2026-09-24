@@ -36,6 +36,7 @@ from recognition.application.health import IDENTITY_VECTOR_COLUMNS
 identity_schema = importlib.import_module("db.migrations.versions.001_identity_schema")
 EXPECTED_REVISION = identity_schema.revision
 EXPECTED_TABLES = tuple(identity_schema.EXPECTED_SCHEMA_TABLES)
+SCHEMA_BOOKKEEPING_TABLES = frozenset({"alembic_version"})
 TENANT_TABLES = tuple(identity_schema.TENANT_TABLES)
 HEAL_UNIQUE_CONSTRAINTS = tuple(identity_schema.HEAL_UNIQUE_CONSTRAINTS)
 EMBEDDING_DIMENSION = identity_schema.EMBEDDING_DIMENSION
@@ -106,7 +107,7 @@ def _validate_schema_state(
     actual_table_set = set(actual_tables)
     expected_table_set = set(expected_tables)
     missing_tables = sorted(expected_table_set - actual_table_set)
-    unexpected_tables = sorted(actual_table_set - expected_table_set)
+    unexpected_tables = sorted(actual_table_set - expected_table_set - SCHEMA_BOOKKEEPING_TABLES)
     revision_matches = actual_revision == expected_revision
 
     rls_gaps: list[str] = []

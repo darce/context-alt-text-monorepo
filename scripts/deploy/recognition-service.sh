@@ -3605,6 +3605,12 @@ recover_interrupted_cutover() {
       *) return "${inflight_rc}" ;;
     esac
   fi
+  if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" ]]; then
+    local unit
+    unit="$(env_to_unit "${env}")"
+    warn "INTERRUPTED while ${unit} restarts; traffic left on ${env}-next. Recovery: $(rollback_command_hint "${env}")"
+    return 1
+  fi
   log "Interrupted cutover for ${env}; restoring canonical routing while keeping the candidate recoverable"
   if restore_edge_backups "${env}"; then
     # Keep durable inflight evidence until candidate cleanup succeeds. A fresh
@@ -3661,6 +3667,7 @@ restore_runtime_topology() {
   if [[ "${restore_mode}" == "current-only" ]]; then
     restore_topology_backups "$env" current-only || return 1
     restore_edge_backups "$env" current-only || return 1
+    return 0
   else
     restore_topology_backups "$env" || return 1
     restore_edge_backups "$env" || return 1

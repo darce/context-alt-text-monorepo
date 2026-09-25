@@ -161,6 +161,17 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringNotContainsString('DROP TABLE', \implode("\n", $queries));
     }
 
+    public function testOutboxSchemaHasTenantLeadingHealthIndex(): void
+    {
+        $statements = $this->manager->build_projection_schema_statements('wp_', 'COLLATE test');
+        $outboxSql = $statements['acx_sync_outbox'] ?? '';
+
+        $this->assertMatchesRegularExpression(
+            '/^\\s*KEY [a-z_]+ \\(tenant_id, status, created_at\\)$/m',
+            $outboxSql
+        );
+    }
+
     public function testActivateImportsLegacyRosterDataBeforeRetiringOptions(): void
     {
         global $wpdb;

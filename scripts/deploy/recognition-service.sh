@@ -20,6 +20,7 @@
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
 #                                       promote staging dev, promote dev dev-fir (reset FIR to current :dev).
+#                                       promote requires the source image's commit to equal DEPLOY_SHA (use GIT_REF=<sha> to promote an older release).
 #   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
 #                                       restore compose/unit/edge .bak topology, restart, and verify.
 #                                       prod requires CONFIRM=PROMOTE.
@@ -1507,8 +1508,17 @@ remote_image_id_for_digest() {
   printf '%s\n' "${image_id}"
 }
 
+extract_image_commit_sha() {
+  local output="$1" commit_sha
+  commit_sha="$(printf '%s\n' "${output}" | awk 'index($0, "APP_GIT_COMMIT_SHA=") == 1 { value = substr($0, 20) } END { print value }')"
+  if [[ ! "${commit_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+    return 1
+  fi
+  printf '%s\n' "${commit_sha}"
+}
+
 remote_image_commit_sha() {
-  local digest_ref="$1" timeout output commit_sha rc=0
+  local digest_ref="$1" timeout output rc=0
   if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     return 1
   fi
@@ -1516,11 +1526,23 @@ remote_image_commit_sha() {
   output="$(run_with_deadline "${timeout}" "remote image commit SHA inspection for ${digest_ref}" \
     remote_docker_with_config image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${digest_ref}")" || rc=$?
   (( rc == 0 )) || return 1
-  commit_sha="$(printf '%s\n' "${output}" | awk 'index($0, "APP_GIT_COMMIT_SHA=") == 1 { value = substr($0, 20) } END { print value }')"
-  if [[ ! "${commit_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+  extract_image_commit_sha "${output}"
+}
+
+image_commit_sha() {
+  local digest_ref="$1" timeout output rc=0
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
     return 1
   fi
-  printf '%s\n' "${commit_sha}"
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    remote_image_commit_sha "${digest_ref}"
+    return $?
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
+  output="$(run_with_deadline "${timeout}" "local image commit SHA inspection for ${digest_ref}" \
+    local_docker_with_config image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${digest_ref}")" || rc=$?
+  (( rc == 0 )) || return 1
+  extract_image_commit_sha "${output}"
 }
 
 # A local RepoDigests entry describes a cached image object, not necessarily the
@@ -4356,7 +4378,7 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
-  local verify_status
+  local verify_status source_sha rerun_command
   init_deploy_ocir_docker_config
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
@@ -4395,6 +4417,19 @@ do_promote() {
   fi
   ACX_CANDIDATE_DIGEST_REF="$(image_digest_ref "${IMAGE_BASE}:${from_tag}")" \
     || fail "Could not capture digest for promotion source ${IMAGE_BASE}:${from_tag}"
+
+  pin_deploy_sha
+  source_sha="$(image_commit_sha "${ACX_CANDIDATE_DIGEST_REF}")" \
+    || fail "cannot read APP_GIT_COMMIT_SHA from promotion source ${ACX_CANDIDATE_DIGEST_REF}; refusing to promote an image whose commit cannot be proven. ${to_env} env tag and runtime were not changed."
+  if [[ "${source_sha}" != "${DEPLOY_SHA}" ]]; then
+    rerun_command="GIT_REF=${source_sha}"
+    if [[ "${to_env}" == "prod" ]]; then
+      rerun_command+=" CONFIRM=PROMOTE"
+    fi
+    rerun_command+=" $0 promote ${from_env} ${to_env}"
+    fail "promotion source ${from_env} runs commit ${source_sha:0:12}, but this run expects DEPLOY_SHA=${DEPLOY_SHA:0:12}; ${to_env} env tag and runtime were not changed. Promote exactly what ${from_env} serves: ${rerun_command}"
+  fi
+  log "Promotion source commit ${source_sha:0:12} matches DEPLOY_SHA"
 
   # Same safety gate as deploy: boot-smoke the source image + converge compose/
   # unit after rollback was captured, then retag exactly the digest that passed.

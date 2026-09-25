@@ -1522,6 +1522,7 @@ capture_failure_evidence() {{ return 0; }}
 _pull_ref() {{ printf 'pull:%s\\n' "$*" >>"{records}"; return 0; }}
 _pull_ref_remote() {{ printf 'pull-remote:%s\\n' "$*" >>"{records}"; return 0; }}
 image_digest_ref() {{ printf '%s@sha256:%s\\n' "${{1%:*}}" "$(printf 'a%.0s' {{1..64}})"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 promote_gate() {{ printf 'gate:%s\\n' "$1" >>"{records}"; return 0; }}
 do_push_tag() {{ printf 'push:%s\\n' "$1" >>"{records}"; return 0; }}
 do_restart() {{ printf 'restart:%s\\n' "$1" >>"{records}"; return 0; }}

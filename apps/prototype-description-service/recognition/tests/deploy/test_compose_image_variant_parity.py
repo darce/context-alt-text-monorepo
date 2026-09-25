@@ -576,6 +576,14 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             IMAGE_NAME=acx-backend
             OCI_USER=probe
             OCI_HOST=probe.invalid
+            # A mutated script lives under tmp, but DEPLOY_SHA resolves at source time.
+            git() {{
+                if [[ "${{3:-}}" == "rev-parse" ]]; then
+                    command git -C {str(REPO_ROOT)!r} rev-parse HEAD
+                else
+                    command git "$@"
+                fi
+            }}
             source "{source}"
             LOG={str(log)!r}
             preserve_rollback_tag() {{ echo "preserve_rollback_tag $*" >> "$LOG"; }}
@@ -583,14 +591,31 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             read_remote_image_repo() {{ printf '%s\\n' "acx/prior"; }}
             ship_remote_image_repo_env() {{ echo "ship $*" >> "$LOG"; }}
             converge_runtime() {{ echo "converge_runtime $*" >> "$LOG"; }}
+            probe_cutover_api_health() {{ :; }}
+            probe_canonical_api_health() {{ :; }}
+            verify_running_image_digest() {{ :; }}
+            flip_edge_alias() {{ :; }}
+            curl() {{ :; }}
             assert_remote_disk_headroom_for_pull() {{ :; }}
             repair_blob_volume_ownership() {{ echo "repair $*" >> "$LOG"; }}
-            ssh() {{ echo "ssh $*" >> "$LOG"; }}
+            ssh() {{
+                echo "ssh $*" >> "$LOG"
+                if [[ "$*" == *"cat >"* ]]; then
+                    cat >/dev/null
+                fi
+                if [[ "$*" == *ACX_IMAGE_TAG* ]]; then
+                    printf '%s\\n' latest
+                elif [[ "$*" == *lstat* ]]; then
+                    printf '%s\\n' ABSENT
+                fi
+            }}
             # do_restart re-resolves the pulled digest against the registry;
             # the fake ssh has no docker behind it, so answer it directly.
             remote_image_digest_ref() {{ printf '%s\\n' "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; }}
+            ACX_DEPLOY_ENV=prod
             promote_gate prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             do_restart prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            ACX_DEPLOY_PHASE=""
             """
         )
         result = subprocess.run(
@@ -604,9 +629,7 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
-def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
-    """S2-A-06 behavioural: one ship, and it precedes the systemctl restart."""
-    calls = _probe_ship_invocations()
+def _assert_ship_once_before_restart(calls: list[str]) -> None:
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
     assert len(ships) == 1, f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
@@ -614,6 +637,11 @@ def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
     assert ships[0] < restarts[0], (
         f"ship must precede the unit restart, else the unit boots on a stale ACX_IMAGE_REPO; got {calls}"
     )
+
+
+def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
+    """S2-A-06 behavioural: one ship, and it precedes the systemctl restart."""
+    _assert_ship_once_before_restart(_probe_ship_invocations())
 
 
 def test_mutation_removing_ship_call_fails_behavioural_gate() -> None:
@@ -632,7 +660,34 @@ def test_mutation_removing_ship_call_fails_behavioural_gate() -> None:
 
 def test_mutation_ship_after_restart_fails_ordering_gate() -> None:
     """TEST-15: shipping after the restart must not satisfy the ordering claim."""
-    calls = ["ssh sudo systemctl restart acx-prod", "ship /opt/acx-backend/prod"]
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    mutated = script.replace('ship_remote_image_repo_env "${remote_dir}"', "true", 1)
+    assert mutated != script, "ship call mutation anchor not found"
+
+    lines = mutated.splitlines()
+    restart_lines = [
+        index
+        for index, line in enumerate(lines)
+        if 'ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart ${unit}"' in line
+    ]
+    assert len(restart_lines) == 1, "do_restart systemctl restart anchor not found exactly once"
+    restart_index = restart_lines[0]
+    restart_block_end = next(
+        (index for index in range(restart_index + 1, len(lines)) if lines[index].strip() == "fi"),
+        None,
+    )
+    assert restart_block_end is not None, "do_restart systemctl restart block end not found"
+    neutralized = mutated
+    lines.insert(restart_block_end + 1, '  ship_remote_image_repo_env "${remote_dir}"')
+    mutated = "\n".join(lines) + "\n"
+    assert mutated != neutralized, "ship-after-restart mutation anchor not applied"
+    assert mutated != script, "ship-after-restart mutation did not change deploy script"
+
+    calls = _probe_ship_invocations(mutated)
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
+    assert len(ships) == 1, f"mutation control: expected exactly one ship call; got {calls}"
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
-    assert not (ships[0] < restarts[0]), "ordering assertion must reject ship-after-restart"
+    assert restarts, f"mutation control: expected a systemctl restart; got {calls}"
+    assert ships[0] > restarts[0], f"mutation control: ship must follow restart; got {calls}"
+    with pytest.raises(AssertionError):
+        _assert_ship_once_before_restart(calls)

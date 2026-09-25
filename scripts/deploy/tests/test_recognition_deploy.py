@@ -2719,6 +2719,7 @@ GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_OPTIONAL=1
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ return 0; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
 preflight_branch_synced() {{ return 0; }}
@@ -3180,6 +3181,7 @@ ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
 preflight_ssh() {{ return 0; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
 preflight_branch_synced() {{ return 0; }}
@@ -3953,6 +3955,7 @@ GREEN=; YELLOW=; RED=; RESET=
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ printf 'preflight\\n' >>"{records}"; return 0; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ return 0; }}
 preflight_git_clean() {{ return 0; }}
 preflight_branch_synced() {{ return 0; }}
@@ -4079,12 +4082,14 @@ def test_prepare_producer_convergence_does_not_require_missing_siblings(
     result, logged = _run_prepare_producer(tmp_path, sibling_rc=0, records_name="sib-complete.log")
     combined = result.stdout + result.stderr
     assert "restart-accepted:prod" in logged.splitlines(), combined
+    assert "scoped:prod" in logged.splitlines(), logged
     assert result.returncode == 0, combined
     result_missing, logged_missing = _run_prepare_producer(tmp_path, sibling_rc=1, records_name="sib-missing.log")
     combined_missing = result_missing.stdout + result_missing.stderr
     assert "restart-accepted:prod" in logged_missing.splitlines(), combined_missing
+    assert "scoped:prod" in logged_missing.splitlines(), logged_missing
     assert result_missing.returncode == 0, combined_missing
-    assert logged.splitlines() != logged_missing.splitlines() or "sibling:prod" not in logged
+    assert logged.splitlines() == logged_missing.splitlines(), (logged, logged_missing)
 
 
 def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:
@@ -4308,6 +4313,7 @@ ACX_VERIFY_OPTIONAL=1
 ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{"a" * 64}"
 ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
 ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{"b" * 64}"
+deploy_env_lease() {{ return 0; }}
 for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pipeline_models preflight_git_clean preflight_branch_synced preflight_remote_ocir_auth preflight_remote_docker preflight_docker preflight_ocir_auth assert_remote_disk_headroom_for_pull preserve_rollback_tag do_build do_build_remote do_push_sha promote_gate _pull_ref _pull_ref_remote capture_failure_evidence capture_prior_runtime_identity {"assert_rollback_fence" if fence_kind == "late" else ""}; do
   eval "$fn() {{ :; }}"
 done

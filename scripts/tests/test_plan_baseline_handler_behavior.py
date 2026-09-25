@@ -77,7 +77,7 @@ def test_validates_existing_plan_file(tmp_path: Path) -> None:
     plan.write_text("# plan\n", encoding="utf-8")
     completed = _run("--task", "ISSUEDAG-1", "--plan", str(plan))
     payload = _payload(completed)
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 3, completed.stderr
     assert payload["status"] == "validated_only"
     assert payload["handler"] == HANDLER_ID
     assert payload["task"] == "ISSUEDAG-1"
@@ -91,11 +91,28 @@ def test_validates_empty_plan_file(tmp_path: Path) -> None:
     plan.write_text("", encoding="utf-8")
     completed = _run("--task", "ISSUEDAG-1", "--plan", str(plan))
     payload = _payload(completed)
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 3, completed.stderr
     assert payload["status"] == "validated_only"
     assert payload["plan"] == str(plan.resolve())
     assert "nothing was landed" in completed.stderr
     assert "accepted" not in completed.stdout
+
+
+def test_validated_only_exit_differs_from_every_other_outcome(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.md"
+    plan.write_text("# plan\n", encoding="utf-8")
+    missing = tmp_path / "missing.md"
+
+    outcomes = [
+        _run("--task", " ", "--plan", str(plan)),
+        _run("--task", "ISSUEDAG-1"),
+        _run("--task", "ISSUEDAG-1", "--plan", str(missing)),
+        _run("--task", "ISSUEDAG-1", "--plan", str(plan)),
+    ]
+    exit_codes = [outcome.returncode for outcome in outcomes]
+
+    assert all(code != 0 for code in exit_codes)
+    assert exit_codes[-1] not in {1, 2}
 
 
 def test_docstring_describes_overlay_absent_fallback() -> None:

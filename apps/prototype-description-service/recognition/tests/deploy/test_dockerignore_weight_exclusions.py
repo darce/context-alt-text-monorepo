@@ -36,6 +36,16 @@ WEIGHT_EXTENSION_CLASSES: frozenset[str] = frozenset(("safetensors", "bin", "pt"
 HF_SNAPSHOT_CLASS = "models--"
 ONNX_CLASS = "onnx"
 ONNX_PATTERN = "recognition/infrastructure/face_pipeline/models/*.onnx"
+_WEIGHT_CLASS_REPRESENTATIVES = {
+    "safetensors": ("x/y/model.safetensors",),
+    "bin": ("x/y/pytorch_model.bin",),
+    "pt": ("x/y/model.pt",),
+    "pth": ("x/y/model.pth",),
+    "gguf": ("x/y/model.gguf",),
+    "msgpack": ("x/y/model.msgpack",),
+    HF_SNAPSHOT_CLASS: ("x/models--org--name/blobs/abc",),
+    ONNX_CLASS: ("recognition/infrastructure/face_pipeline/models/det.onnx",),
+}
 
 # Dead cache-dir patterns that must stay gone (ORCH-LAUNCH-01-S1-RA-09 / RB-06).
 _DEAD_CACHE_PATTERNS = (
@@ -60,21 +70,18 @@ _RSYNC_HF_RE = re.compile(r"^models--\*/$")
 # Context-shipping rsync: SERVICE_DIR → REMOTE_BUILD_DIR (the real build-context
 # transfer). Other inert rsync calls must not satisfy the weight-exclude gate (RC6).
 _CONTEXT_RSYNC_DEST_RE = re.compile(r"""["']?\$\{?SSH_TARGET\}?:\$\{?(?P<dest_var>\w+)\}?/?["']?""")
-# The destination may be a per-build generation directory rather than
-# REMOTE_BUILD_DIR itself (OCIRV1-FD-01 fenced concurrent builds behind
-# `build_dir="${REMOTE_BUILD_DIR%/}-..."`). Provenance is still required: the
-# variable must be assigned from REMOTE_BUILD_DIR somewhere in the script, so an
-# rsync to an unrelated remote path still fails this gate.
-_DEST_VAR_PROVENANCE_RE_TMPL = r"""^\s*(?:local\s+)?{var}=[^\n]*\$\{{?REMOTE_BUILD_DIR"""
+_FUNCTION_START_RE = re.compile(r"^([A-Za-z_]\w*)\s*\(\)\s*\{\s*$")
+_SHELL_VAR_RE = re.compile(r"\$(?!\()\{?([A-Za-z_]\w*)")
 _CONTEXT_RSYNC_SRC_RE = re.compile(r"""["']?\$\{?SERVICE_DIR\}?/?["']?""")
 
 
-def _iter_rsync_commands(text: str) -> list[str]:
-    """Split deploy-script text into logical rsync command strings (\\-joined)."""
-    commands: list[str] = []
+def _iter_rsync_commands_with_lines(text: str) -> list[tuple[str, int]]:
+    """Split deploy-script text into logical rsync command strings and start lines."""
+    commands: list[tuple[str, int]] = []
     buf = ""
     in_rsync = False
-    for raw in text.splitlines():
+    start_line = 0
+    for line_number, raw in enumerate(text.splitlines(), start=1):
         line = raw.rstrip()
         stripped = line.strip()
         if not in_rsync:
@@ -85,11 +92,12 @@ def _iter_rsync_commands(text: str) -> list[str]:
             start = re.search(r"\brsync\s+-", stripped)
             if start is not None:
                 in_rsync = True
+                start_line = line_number
                 buf = stripped[start.start() :]
                 if buf.endswith("\\"):
                     buf = buf[:-1] + " "
                     continue
-                commands.append(buf)
+                commands.append((buf, start_line))
                 buf = ""
                 in_rsync = False
             continue
@@ -98,28 +106,207 @@ def _iter_rsync_commands(text: str) -> list[str]:
             buf += stripped[:-1] + " "
             continue
         buf += stripped
-        commands.append(buf)
+        commands.append((buf, start_line))
         buf = ""
         in_rsync = False
     if buf:
-        commands.append(buf)
+        commands.append((buf, start_line))
     return commands
+
+
+def _iter_rsync_commands(text: str) -> list[str]:
+    """Split deploy-script text into logical rsync command strings (\\-joined)."""
+    return [command for command, _ in _iter_rsync_commands_with_lines(text)]
+
+
+def _function_ranges(text: str) -> dict[str, tuple[int, int]]:
+    """Map function names to their 1-based body start and exclusive end lines."""
+    ranges: dict[str, tuple[int, int]] = {}
+    current: str | None = None
+    body_start = 0
+    lines = text.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if current is None:
+            match = _FUNCTION_START_RE.match(line)
+            if match is not None:
+                current = match.group(1)
+                body_start = line_number + 1
+        elif re.match(r"^\}\s*$", line):
+            ranges[current] = (body_start, line_number)
+            current = None
+    if current is not None:
+        ranges[current] = (body_start, len(lines) + 1)
+    return ranges
+
+
+def _function_at_line(line_number: int, function_ranges: dict[str, tuple[int, int]]) -> str | None:
+    for name, (start, end) in function_ranges.items():
+        if start <= line_number < end:
+            return name
+    return None
+
+
+def _shell_words(text: str) -> list[str]:
+    """Split local declarations into shell words while retaining quoted values."""
+    words: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    substitution_depth = 0
+    for index, char in enumerate(text):
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if quote is not None:
+            current.append(char)
+            if char == "\\" and quote == '"':
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+        elif char == "\\":
+            current.append(char)
+            escaped = True
+        elif char == "(" and index > 0 and text[index - 1] == "$":
+            substitution_depth += 1
+            current.append(char)
+        elif char == "(" and substitution_depth:
+            substitution_depth += 1
+            current.append(char)
+        elif char == ")" and substitution_depth:
+            substitution_depth -= 1
+            current.append(char)
+        elif char.isspace() and substitution_depth == 0:
+            if current:
+                words.append("".join(current))
+                current = []
+        else:
+            current.append(char)
+    if current:
+        words.append("".join(current))
+    return words
+
+
+def _assignment_pairs(line: str) -> list[tuple[str, str]]:
+    local = re.match(r"^\s*local(?:\s+)(?P<declarations>.*)$", line)
+    if local is not None:
+        pairs: list[tuple[str, str]] = []
+        for word in _shell_words(local.group("declarations")):
+            variable, separator, value = word.partition("=")
+            if separator and re.fullmatch(r"[A-Za-z_]\w*", variable):
+                pairs.append((variable, value))
+        return pairs
+    assignment = re.match(r"^\s*(?P<variable>[A-Za-z_]\w*)=(?P<value>.*)$", line)
+    if assignment is None:
+        return []
+    return [(assignment.group("variable"), assignment.group("value").strip())]
+
+
+def _assigned_values(text: str) -> dict[str, list[tuple[int, str, str | None]]]:
+    """Collect line, value and function scope for positional resolution."""
+    function_ranges = _function_ranges(text)
+    assignments: dict[str, list[tuple[int, str, str | None]]] = {}
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        scope = _function_at_line(line_number, function_ranges)
+        for variable, value in _assignment_pairs(line):
+            assignments.setdefault(variable, []).append((line_number, value, scope))
+    return assignments
+
+
+def _assignment_reaches_remote_build_dir(
+    variable: str,
+    assignments: dict[str, list[tuple[int, str, str | None]]],
+    *,
+    line_number: int,
+    function_name: str | None,
+    function_ranges: dict[str, tuple[int, int]],
+    script_lines: list[str],
+    hops_left: int = 8,
+    seen: frozenset[tuple[str, int, str | None]] = frozenset(),
+) -> bool:
+    if variable == "REMOTE_BUILD_DIR":
+        return True
+    if hops_left == 0:
+        return False
+    candidates = [
+        assignment
+        for assignment in assignments.get(variable, [])
+        if assignment[0] < line_number and assignment[2] == function_name
+    ]
+    if not candidates and function_name is not None:
+        candidates = [
+            assignment
+            for assignment in assignments.get(variable, [])
+            if assignment[0] < line_number and assignment[2] is None
+        ]
+    if not candidates:
+        return False
+    assignment_line, value, assignment_scope = candidates[-1]
+    state = (variable, assignment_line, assignment_scope)
+    if state in seen:
+        return False
+    next_seen = seen | {state}
+
+    for ref in _SHELL_VAR_RE.findall(value):
+        if _assignment_reaches_remote_build_dir(
+            ref,
+            assignments,
+            line_number=assignment_line,
+            function_name=assignment_scope,
+            function_ranges=function_ranges,
+            script_lines=script_lines,
+            hops_left=hops_left - 1,
+            seen=next_seen,
+        ):
+            return True
+
+    for call in re.finditer(r"\$\(\s*([A-Za-z_]\w*)\b", value):
+        function = call.group(1)
+        if function not in function_ranges:
+            continue
+        start, end = function_ranges[function]
+        for output_line in range(start, end):
+            line = script_lines[output_line - 1]
+            if re.match(r"^\s*(?:printf|echo)\b", line):
+                for ref in _SHELL_VAR_RE.findall(line):
+                    if _assignment_reaches_remote_build_dir(
+                        ref,
+                        assignments,
+                        line_number=output_line,
+                        function_name=function,
+                        function_ranges=function_ranges,
+                        script_lines=script_lines,
+                        hops_left=hops_left - 1,
+                        seen=next_seen,
+                    ):
+                        return True
+    return False
 
 
 def context_shipping_rsync_commands(text: str) -> list[str]:
     """Rsync invocations that ship SERVICE_DIR → REMOTE_BUILD_DIR (build context)."""
     hits: list[str] = []
-    for cmd in _iter_rsync_commands(text):
+    assignments = _assigned_values(text)
+    function_ranges = _function_ranges(text)
+    script_lines = text.splitlines()
+    for cmd, line_number in _iter_rsync_commands_with_lines(text):
         if not _CONTEXT_RSYNC_SRC_RE.search(cmd):
             continue
         match = _CONTEXT_RSYNC_DEST_RE.search(cmd)
         if match is None:
             continue
         dest_var = match.group("dest_var")
-        if dest_var == "REMOTE_BUILD_DIR" or re.search(
-            _DEST_VAR_PROVENANCE_RE_TMPL.format(var=re.escape(dest_var)),
-            text,
-            re.MULTILINE,
+        if _assignment_reaches_remote_build_dir(
+            dest_var,
+            assignments,
+            line_number=line_number,
+            function_name=_function_at_line(line_number, function_ranges),
+            function_ranges=function_ranges,
+            script_lines=script_lines,
         ):
             hits.append(cmd)
     return hits
@@ -143,10 +330,10 @@ def rsync_excludes_from_script(text: str) -> set[str]:
     """
     context_cmds = context_shipping_rsync_commands(text)
     if context_cmds:
-        patterns: set[str] = set()
-        for cmd in context_cmds:
-            patterns |= rsync_excludes_from_command(cmd)
-        return patterns
+        common_patterns = rsync_excludes_from_command(context_cmds[0])
+        for cmd in context_cmds[1:]:
+            common_patterns &= rsync_excludes_from_command(cmd)
+        return common_patterns
     # Synthetic fixtures / unit tests without the real dest markers.
     patterns = set()
     for cmd in _iter_rsync_commands(text):
@@ -182,6 +369,60 @@ def _docker_line_to_class(pattern: str) -> str | None:
     return None
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str] | None:
+    """Translate the supported path-glob operators; None means uncertain."""
+    if "[" in pattern or "]" in pattern or "\\" in pattern:
+        return None
+    pieces: list[str] = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if pattern.startswith("**/", index):
+            pieces.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            pieces.append(".*")
+            index += 2
+        elif char == "*":
+            pieces.append("[^/]*")
+            index += 1
+        elif char == "?":
+            pieces.append("[^/]")
+            index += 1
+        else:
+            pieces.append(re.escape(char))
+            index += 1
+    try:
+        return re.compile("^" + "".join(pieces) + "$")
+    except re.error:
+        return None
+
+
+def _docker_pattern_matches_path(pattern: str, path: str) -> bool:
+    """Match a root-relative Docker pattern against a representative artifact."""
+    normalized = pattern.lstrip("/")
+    is_directory = normalized.endswith("/")
+    if is_directory:
+        normalized = normalized.rstrip("/")
+    matcher = _glob_regex(normalized)
+    # Unsupported pattern details are treated as a possible match so a negation
+    # cannot leave a class marked protected merely because this model is narrow.
+    if matcher is None:
+        return True
+    candidates = [path]
+    if is_directory:
+        segments = path.split("/")[:-1]
+        candidates = ["/".join(segments[:end]) for end in range(1, len(segments) + 1)]
+    return any(matcher.fullmatch(candidate) is not None for candidate in candidates)
+
+
+def _docker_pattern_matches_class(pattern: str, class_id: str) -> bool:
+    return any(
+        _docker_pattern_matches_path(pattern, representative)
+        for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]
+    )
+
+
 def docker_weight_classes(text: str) -> set[str]:
     """Map .dockerignore → protected class ids with last-match-wins (RC5).
 
@@ -194,9 +435,17 @@ def docker_weight_classes(text: str) -> set[str]:
         negated = line.startswith("!")
         pattern = line[1:].lstrip() if negated else line
         class_id = _docker_line_to_class(pattern)
-        if class_id is None:
-            continue
-        disposition[class_id] = not negated
+        candidate_classes = (
+            {class_id}
+            if class_id is not None
+            else {
+                candidate
+                for candidate in _WEIGHT_CLASS_REPRESENTATIVES
+                if _docker_pattern_matches_class(pattern, candidate)
+            }
+        )
+        for candidate in candidate_classes:
+            disposition[candidate] = not negated
     return {cid for cid, excluded in disposition.items() if excluded}
 
 
@@ -226,6 +475,87 @@ def _rsync_filter_rule(raw: str) -> tuple[str, str] | None:
     return None
 
 
+def _rsync_pattern_matches_path(pattern: str, path: str, *, directory: bool) -> bool:
+    """Match an rsync pattern against a file or one of its parent directories."""
+    anchored = pattern.startswith("/")
+    normalized = pattern.lstrip("/")
+    is_directory_pattern = normalized.endswith("/")
+    if is_directory_pattern:
+        normalized = normalized.rstrip("/")
+    matcher = _glob_regex(normalized)
+    if matcher is None:
+        return True
+
+    candidates = [path]
+    if is_directory_pattern or directory:
+        segments = path.split("/")[:-1] if directory is False else path.split("/")
+        candidates = ["/".join(segments[:end]) for end in range(1, len(segments) + 1)]
+    for candidate in candidates:
+        if "/" not in normalized and not anchored:
+            if matcher.fullmatch(candidate.rsplit("/", 1)[-1]) is not None:
+                return True
+            continue
+        suffixes = [candidate] if anchored else [
+            "/".join(candidate.split("/")[index:])
+            for index in range(len(candidate.split("/")))
+        ]
+        if any(matcher.fullmatch(suffix) is not None for suffix in suffixes):
+            return True
+    return False
+
+
+def _rsync_pattern_matches_class(pattern: str, class_id: str) -> bool:
+    for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]:
+        if _rsync_pattern_matches_path(pattern, representative, directory=False):
+            return True
+        parent_segments = representative.split("/")[:-1]
+        for end in range(1, len(parent_segments) + 1):
+            parent = "/".join(parent_segments[:end])
+            if _rsync_pattern_matches_path(pattern, parent, directory=True):
+                return True
+    return False
+
+
+def _rsync_rule_matches_class(disposition: str, pattern: str, class_id: str) -> bool:
+    if _rsync_pattern_to_class(pattern) == class_id:
+        return True
+    # Protecting excludes must keep the recognised rsync spelling; only an
+    # include is widened so an unfamiliar first rule cannot hide a reship.
+    if disposition == "exclude":
+        return False
+    return _rsync_pattern_matches_class(pattern, class_id)
+
+
+def _rsync_rules_from_text(text: str) -> list[tuple[str, str]]:
+    rules: list[tuple[str, str]] = []
+    for match in re.finditer(
+        r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
+        text,
+    ):
+        full = match.group(0)
+        value = match.group(1) or match.group(2) or match.group(3) or ""
+        if full.startswith("--exclude="):
+            rules.append(("exclude", value))
+        elif full.startswith("--include="):
+            rules.append(("include", value))
+        else:
+            rule = _rsync_filter_rule(value)
+            if rule is not None:
+                rules.append(rule)
+    return rules
+
+
+def _rsync_classes_for_rules(rules: list[tuple[str, str]]) -> set[str]:
+    disposition: dict[str, bool] = {}
+    for disposition_name, pattern in rules:
+        for class_id in _WEIGHT_CLASS_REPRESENTATIVES:
+            if class_id in disposition:
+                continue
+            if _rsync_rule_matches_class(disposition_name, pattern, class_id):
+                disposition[class_id] = disposition_name == "exclude"
+    return {class_id for class_id, excluded in disposition.items() if excluded}
+
+
 def rsync_weight_classes(text: str) -> set[str]:
     """Map context-shipping rsync rules → excluded class ids (first-match-wins).
 
@@ -237,53 +567,30 @@ def rsync_weight_classes(text: str) -> set[str]:
     exclude globs).
     """
     context_cmds = context_shipping_rsync_commands(text)
-    commands = context_cmds if context_cmds else _iter_rsync_commands(text)
+    if context_cmds:
+        per_transfer_classes: list[set[str]] = []
+        for cmd in context_cmds:
+            if _FILES_FROM_RE.search(cmd):
+                # Explicit file list: weight globs no longer protect the transfer.
+                return set()
+            per_transfer_classes.append(_rsync_classes_for_rules(_rsync_rules_from_text(cmd)))
+        common_classes = per_transfer_classes[0]
+        for classes in per_transfer_classes[1:]:
+            common_classes &= classes
+        return common_classes
+
+    commands = _iter_rsync_commands(text)
     if not commands:
         # Synthetic single-line fixtures without a full rsync invocation.
-        disposition: dict[str, bool] = {}
-        for match in _EXCLUDE_RE.finditer(text):
-            value = match.group(1) or match.group(2) or match.group(3)
-            if not value:
-                continue
-            class_id = _rsync_pattern_to_class(value)
-            if class_id is not None and class_id not in disposition:
-                disposition[class_id] = True  # excluded
-        for match in _INCLUDE_RE.finditer(text):
-            value = match.group(1) or match.group(2) or match.group(3)
-            if not value:
-                continue
-            class_id = _rsync_pattern_to_class(value)
-            if class_id is not None and class_id not in disposition:
-                disposition[class_id] = False  # included (not excluded)
-        return {cid for cid, excluded in disposition.items() if excluded}
+        return _rsync_classes_for_rules(_rsync_rules_from_text(text))
 
-    disposition: dict[str, bool] = {}
+    rules: list[tuple[str, str]] = []
     for cmd in commands:
         if _FILES_FROM_RE.search(cmd):
             # Explicit file list: weight globs no longer protect the transfer.
             return set()
-        # Walk flags left-to-right; first disposition per class wins.
-        tokens: list[tuple[str, str]] = []
-        for match in re.finditer(
-            r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
-            cmd,
-        ):
-            full = match.group(0)
-            value = match.group(1) or match.group(2) or match.group(3) or ""
-            if full.startswith("--exclude="):
-                tokens.append(("exclude", value))
-            elif full.startswith("--include="):
-                tokens.append(("include", value))
-            else:
-                rule = _rsync_filter_rule(value)
-                if rule is not None:
-                    tokens.append(rule)
-        for disp, pattern in tokens:
-            class_id = _rsync_pattern_to_class(pattern)
-            if class_id is None or class_id in disposition:
-                continue
-            disposition[class_id] = disp == "exclude"
-    return {cid for cid, excluded in disposition.items() if excluded}
+        rules.extend(_rsync_rules_from_text(cmd))
+    return _rsync_classes_for_rules(rules)
 
 
 def expected_weight_classes() -> set[str]:
@@ -337,6 +644,7 @@ def test_rsync_weight_classes_are_rsync_depth_recursive() -> None:
     """
     text = DEPLOY_SCRIPT.read_text()
     context_cmds = context_shipping_rsync_commands(text)
+    assert len(context_cmds) == 1, "deploy script must have exactly one context-shipping rsync"
     assert context_cmds, (
         "deploy script must contain a context-shipping rsync (SERVICE_DIR → SSH_TARGET:REMOTE_BUILD_DIR)"
     )
@@ -469,6 +777,134 @@ def test_parser_rsync_classes_from_synthetic() -> None:
         ONNX_CLASS,
         HF_SNAPSHOT_CLASS,
     }
+
+
+def test_docker_specific_negation_reincludes_class() -> None:
+    body = "**/*.bin\n!**/pytorch_model.bin\n**/*.safetensors\n"
+
+    classes = docker_weight_classes(body)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_rsync_unrecognised_include_before_exclude_reships_class() -> None:
+    script = (
+        "rsync -az \\\n"
+        "  --include='**/*.bin' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+
+    classes = rsync_weight_classes(script)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_rsync_filter_plus_rule_reships_class() -> None:
+    script = (
+        "rsync -az \\\n"
+        "  --filter='+ **/*.bin' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+
+    classes = rsync_weight_classes(script)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_irrelevant_negations_do_not_unprotect() -> None:
+    body = "**/*.bin\n**/*.safetensors\n!.env.example\n"
+
+    assert docker_weight_classes(body) == {"bin", "safetensors"}
+
+
+def test_context_shipping_rsync_rejects_unrelated_destination_chain() -> None:
+    script = (
+        'unrelated_root="/srv/other-builds"\n'
+        'remote_dest="${unrelated_root}/generation"\n'
+        'rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${remote_dest}/"\n'
+    )
+    assert context_shipping_rsync_commands(script) == []
+
+
+def test_context_shipping_uses_last_assignment_before_rsync() -> None:
+    script = (
+        'dest="${REMOTE_BUILD_DIR}/generation"\n'
+        'dest="/srv/unrelated"\n'
+        'rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${dest}/"\n'
+    )
+    assert context_shipping_rsync_commands(script) == []
+
+    reverse_order = (
+        'dest="/srv/unrelated"\n'
+        'dest="${REMOTE_BUILD_DIR}/generation"\n'
+        'rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${dest}/"\n'
+    )
+    assert len(context_shipping_rsync_commands(reverse_order)) == 1
+
+
+def test_context_shipping_ignores_other_function_assignment() -> None:
+    script = (
+        "a() {\n"
+        '  x="${REMOTE_BUILD_DIR}/g"\n'
+        "}\n"
+        "b() {\n"
+        '  local x="/srv/other"\n'
+        '  rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${x}/"\n'
+        "}\n"
+    )
+    assert context_shipping_rsync_commands(script) == []
+
+
+def test_context_shipping_follows_command_substitution() -> None:
+    script = (
+        "root_fn() {\n"
+        '  local r="${REMOTE_BUILD_DIR}"\n'
+        '  r="${r%/}"\n'
+        "  printf '%s\\n' \"${r}\"\n"
+        "}\n"
+        "build() {\n"
+        "  local root d\n"
+        '  root="$(root_fn)"\n'
+        '  d="${root}-x"\n'
+        '  rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${d}/"\n'
+        "}\n"
+    )
+    assert len(context_shipping_rsync_commands(script)) == 1
+
+    non_derived = script.replace(
+        '  local r="${REMOTE_BUILD_DIR}"\n',
+        '  local r="/srv/unrelated"\n',
+    )
+    assert context_shipping_rsync_commands(non_derived) == []
+
+
+def test_weight_classes_intersect_across_context_transfers() -> None:
+    guarded = (
+        "rsync -az \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.pt' \\\n"
+        "  --exclude='*.pth' \\\n"
+        "  --exclude='*.gguf' \\\n"
+        "  --exclude='*.msgpack' \\\n"
+        "  --exclude='models--*/' \\\n"
+        f"  --exclude='{ONNX_PATTERN}' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+    unguarded = (
+        "rsync -az \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+    script = guarded + unguarded
+    assert rsync_weight_classes(script) == set()
+    assert "*.bin" not in rsync_excludes_from_script(script)
 
 
 def test_parity_bites_when_rsync_drops_a_class() -> None:

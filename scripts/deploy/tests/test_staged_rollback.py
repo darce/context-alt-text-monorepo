@@ -20,6 +20,7 @@ def _run_rollback(
     fail_candidate: int = 0,
     fail_canonical: int = 0,
     fail_digest: int = 0,
+    fail_public: int = 0,
 ) -> tuple[int, str, list[str]]:
     records = tmp_path / "records.log"
     driver = tmp_path / "rollback-driver.sh"
@@ -34,6 +35,7 @@ INFLIGHT_RC={inflight_rc}
 FAIL_CANDIDATE={fail_candidate}
 FAIL_CANONICAL={fail_canonical}
 FAIL_DIGEST={fail_digest}
+FAIL_PUBLIC={fail_public}
 ACX_ROLLBACK_DIGEST_REF="$ROLLBACK_DIGEST"
 ACX_TRAFFIC_FLIPPED={flipped}
 ACX_LIVE_DISRUPTED=0
@@ -48,6 +50,7 @@ probe_cutover_api_health() {{ record "probe_cutover_api_health $*"; return "$FAI
 flip_edge_alias() {{ record "flip_edge_alias $*"; }}
 enable_cutover_candidate() {{ record "enable_cutover_candidate $*"; }}
 run_with_deadline() {{ record "run_with_deadline $2"; }}
+curl() {{ record "curl $*"; return "$FAIL_PUBLIC"; }}
 probe_canonical_api_health() {{ record "probe_canonical_api_health $*"; return "$FAIL_CANONICAL"; }}
 verify_running_image_digest() {{ record "verify_running_image_digest $*"; return "$FAIL_DIGEST"; }}
 restore_edge_backups() {{ record "restore_edge_backups $* flipped=$ACX_TRAFFIC_FLIPPED"; ACX_TRAFFIC_FLIPPED=0; }}
@@ -99,6 +102,7 @@ def test_canonical_side_rollback_stages_before_restart(tmp_path: Path) -> None:
             "recreate_cutover_candidate ",
             f"probe_cutover_api_health prod {ROLLBACK_DIGEST} --image-only",
             f"flip_edge_alias prod next {ROLLBACK_DIGEST}",
+            "curl ",
             "run_with_deadline rollback systemctl restart ",
             "probe_canonical_api_health prod",
             f"verify_running_image_digest prod {ROLLBACK_DIGEST}",
@@ -108,6 +112,23 @@ def test_canonical_side_rollback_stages_before_restart(tmp_path: Path) -> None:
         ],
     )
     _assert_receipt_last(records)
+
+
+def test_rollback_public_edge_failure_reverts_before_canonical_restart(tmp_path: Path) -> None:
+    rc, _, records = _run_rollback(tmp_path, flipped=0, inflight_rc=1, fail_public=1)
+    assert rc != 0
+    _assert_in_order(
+        records,
+        [
+            f"flip_edge_alias prod next {ROLLBACK_DIGEST}",
+            "curl ",
+            "flip_edge_alias prod canonical",
+            "abort_cutover_candidate prod",
+        ],
+    )
+    assert any(line.startswith("curl ") and "https://api.altcontext.com/health" in line for line in records)
+    assert not any(line.startswith("run_with_deadline rollback systemctl restart ") for line in records)
+    assert not any(line.startswith("write_deployed_release_receipt ") for line in records)
 
 
 def test_unhealthy_rollback_candidate_never_restarts_canonical(tmp_path: Path) -> None:

@@ -3607,10 +3607,18 @@ def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
 def test_deploy_signal_traps_run_cutover_recovery() -> None:
     """R-09: HUP/INT/TERM must recover inflight cutover instead of bare-exit."""
     init = _function_body("init_deploy_ocir_docker_config")
-    assert "deploy_interrupt_cleanup" in init
+    assert "install_deploy_interrupt_traps" in init
+    traps = _function_body("install_deploy_interrupt_traps")
+    assert "trap deploy_interrupt_cleanup EXIT" in traps
+    assert "trap 'deploy_interrupt_cleanup 129' HUP" in traps
+    assert "trap 'deploy_interrupt_cleanup 130' INT" in traps
+    assert "trap 'deploy_interrupt_cleanup 143' TERM" in traps
     assert "trap 'exit 129' HUP" not in init
     assert "trap 'exit 130' INT" not in init
     assert "trap 'exit 143' TERM" not in init
+    assert "trap 'exit 129' HUP" not in traps
+    assert "trap 'exit 130' INT" not in traps
+    assert "trap 'exit 143' TERM" not in traps
     cleanup = _function_body("deploy_interrupt_cleanup")
     assert "recover_interrupted_cutover" in cleanup
     restart = _function_body("do_restart")

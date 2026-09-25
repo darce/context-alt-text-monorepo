@@ -112,7 +112,8 @@
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
 #   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600,
-#                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets + 300).
+#                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets
+#                              + ACX_GPU_SNAPSHOT_GATE attempts×sleep + one ACX_VERIFY_SLEEP + 300).
 #   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
@@ -2025,8 +2026,9 @@ deploy_env_lease() {
   local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
   local program response rc marker lease_transaction lease_holder lease_expiry lease_path
   local push_timeout pull_timeout transfer_timeout ttl_required ttl_margin width index transfer_index margin_index
-  local transfer_digit margin_digit sum carry cutover_budget canonical_budget
+  local transfer_digit margin_digit sum carry cutover_budget canonical_budget verify_budget gpu_budget
   local cutover_attempts cutover_sleep canonical_attempts canonical_sleep
+  local verify_attempts verify_sleep gpu_attempts gpu_sleep
   case "${action}" in
     acquire|renew|release) ;;
     *) fail "internal: invalid deploy lease action ${action}" ;;
@@ -2064,9 +2066,17 @@ deploy_env_lease() {
     if ! canonical_budget="$(probe_budget ACX_CANONICAL_HEALTH 5 5)"; then
       fail "ACX_CANONICAL_HEALTH_ATTEMPTS and ACX_CANONICAL_HEALTH_SLEEP must define a valid restart health budget"
     fi
+    if ! verify_budget="$(probe_budget ACX_VERIFY 5 5)"; then
+      fail "ACX_VERIFY_ATTEMPTS and ACX_VERIFY_SLEEP must define a valid post-deploy verification budget"
+    fi
+    if ! gpu_budget="$(probe_budget ACX_GPU_SNAPSHOT_GATE 3 5)"; then
+      fail "ACX_GPU_SNAPSHOT_GATE_ATTEMPTS and ACX_GPU_SNAPSHOT_GATE_SLEEP must define a valid GPU snapshot gate budget"
+    fi
     read -r cutover_attempts cutover_sleep <<<"${cutover_budget}"
     read -r canonical_attempts canonical_sleep <<<"${canonical_budget}"
-    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + 300))
+    read -r verify_attempts verify_sleep <<<"${verify_budget}"
+    read -r gpu_attempts gpu_sleep <<<"${gpu_budget}"
+    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + gpu_attempts * gpu_sleep + verify_sleep + 300))
     ttl_required=""
     carry=0
     width="${#transfer_timeout}"
@@ -2094,7 +2104,7 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets and 300 seconds; minimum 600)"
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets, ACX_GPU_SNAPSHOT_GATE attempts×sleep, one ACX_VERIFY_SLEEP and 300 seconds; minimum 600)"
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -4836,6 +4846,10 @@ capture_failure_evidence() {
 handle_failed_verification() {
   local env="$1" label="$2"
   local rollback_ok=0 rollback_status=0
+  if ! deploy_env_lease renew "${env}"; then
+    skip_compensation_after_lease_loss "${env}"
+    fail "stopping without compensation after deploy lease loss for ${env}"
+  fi
   ACX_DEPLOY_PHASE=compensating
   capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
   if restore_env_tag_to_rollback "$env" 1; then
@@ -5638,6 +5652,12 @@ do_verify() {
   log "Post-deploy public verify budget: ${max_attempts}x${sleep_s}s (ACX_VERIFY_*)"
 
   for attempt in $(seq 1 "$max_attempts"); do
+    if [[ -n "${ACX_DEPLOY_LEASE_ENV:-}" && "${ACX_DEPLOY_LEASE_ENV}" == "${env}" ]]; then
+      if ! deploy_env_lease renew "${env}"; then
+        warn "deploy lease for ${env} lost before verification attempt ${attempt}; stopping verification"
+        return 1
+      fi
+    fi
     log "GET ${url} (attempt ${attempt}/${max_attempts})"
     health_response=""
     curl_rc=0

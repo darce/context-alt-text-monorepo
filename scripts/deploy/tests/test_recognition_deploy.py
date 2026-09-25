@@ -1033,8 +1033,13 @@ def test_remote_env_image_tag_guard_leaves_dev_unaffected() -> None:
 def test_do_restart_guards_remote_env_image_tag_before_compose() -> None:
     """Cutover compose interpolates ACX_IMAGE_TAG; refuse before compose up."""
     body = _function_body("do_restart")
+    ship = _function_body("ship_cutover_candidate_units")
     assert "assert_remote_env_image_tag" in body
-    assert body.index("assert_remote_env_image_tag") < body.index("render_cutover_compose")
+    assert "ship_cutover_candidate_units" in body
+    assert "render_cutover_compose" in ship
+    assert "render_next_unit" in ship
+    assert body.index("assert_remote_env_image_tag") < body.index("ship_cutover_candidate_units")
+    assert body.index("ship_cutover_candidate_units") < body.index("recreate_cutover_candidate")
     assert body.index("assert_remote_env_image_tag") < body.index("recreate_cutover_candidate")
 
 
@@ -2888,7 +2893,12 @@ fi
 
 if [[ "${1:-}" == "exec" ]]; then
   if [[ "$*" == *"urllib.request"* ]]; then
-    printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
+    if [[ "${FAKE_HEALTH_CODE:-200}" =~ ^2[0-9][0-9]$ ]]; then
+      printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
+    else
+      printf 'HTTP %s\n' "${FAKE_HEALTH_CODE:-000}"
+      exit 1
+    fi
   fi
   exit 0
 fi
@@ -3030,7 +3040,11 @@ if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
   if [[ "$remote" == *"docker compose"* && "$remote" == *"rm -fs api"* ]]; then
     : >"${state}/candidate-recreated"
   fi
-  printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  if [[ -f "${state}/rollback-pushed" ]]; then
+    printf '%s\n' "__ROLLBACK_CID__" >"${state}/next-running-cid"
+  else
+    printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  fi
   exit 0
 fi
 if [[ "$remote" == *"systemctl restart"* ]]; then
@@ -3237,6 +3251,7 @@ def test_manual_rollback_captures_stopped_current_generation(tmp_path: Path) -> 
         tmp_path,
         invoke="do_rollback dev " + "a" * 12,
         runtime_mode="prior",
+        fail_at="none",
     )
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
@@ -3250,7 +3265,11 @@ def test_manual_rollback_captures_stopped_current_generation(tmp_path: Path) -> 
     assert "Rollback verified healthy" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:dev") == 1
     assert docker_log.count(f"push {base}:dev") == 1
+    assert ssh_log.count("systemctl start acx-dev-next") == 1, ssh_log
     assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert ssh_log.index("systemctl start acx-dev-next") < ssh_log.index("systemctl restart acx-dev"), ssh_log
+    assert "systemctl stop acx-dev-next" in ssh_log, ssh_log
+    assert ssh_log.rindex("systemctl restart acx-dev") < ssh_log.rindex("systemctl stop acx-dev-next"), ssh_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
 
 
@@ -3261,12 +3280,15 @@ def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
         invoke="do_rollback dev " + "a" * 12,
         runtime_mode="prior",
         health_code="503",
+        fail_at="none",
     )
     combined = result.stdout + result.stderr
+    ssh_log = (tmp_path / "rollback-state" / "ssh.log").read_text()
 
     assert result.returncode != 0, combined
-    assert "Rollback health/digest verification failed" in combined, combined
     assert "503" in combined, combined
+    assert "rollback candidate never became healthy" in combined, combined
+    assert ssh_log.count("systemctl restart acx-dev") == 0, ssh_log
     assert "Rollback verified healthy" not in combined
 
 
@@ -3294,15 +3316,18 @@ def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Pa
 def test_do_restart_is_additive_then_flip() -> None:
     """OCIRV1-RB-11: start a next unit and flip traffic before touching the live unit."""
     body = _function_body("do_restart")
+    ship = _function_body("ship_cutover_candidate_units")
     assert "env_to_next_unit" in body
-    assert "render_cutover_compose" in body
-    assert "render_next_unit" in body
+    assert "ship_cutover_candidate_units" in body
+    assert "render_cutover_compose" in ship
+    assert "render_next_unit" in ship
     assert "recreate_cutover_candidate" in body
     assert "flip_edge_alias" in body
     assert "probe_cutover_api_health" in body
     assert body.index("recreate_cutover_candidate") < body.index("flip_edge_alias")
     assert body.index("probe_cutover_api_health") < body.index("flip_edge_alias")
     assert body.index("flip_edge_alias") < body.index("systemctl restart")
+    assert body.index("ship_cutover_candidate_units") < body.index("recreate_cutover_candidate")
     recreate = _function_body("recreate_cutover_candidate")
     assert recreate.index("systemctl stop") < recreate.index("rm -fs api") < recreate.index("systemctl start")
 

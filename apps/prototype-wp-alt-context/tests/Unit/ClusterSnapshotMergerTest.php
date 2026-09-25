@@ -46,7 +46,10 @@ class ClusterSnapshotMergerTest extends TestCase
             $query
         );
         $this->assertStringContainsString("NULLIF('', ''), NULLIF('', ''), NULLIF('', ''), NULLIF('', '')", $query);
-        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $query
+        );
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
     }
 
@@ -119,7 +122,63 @@ class ClusterSnapshotMergerTest extends TestCase
         // The monotonic version column itself stays GREATEST and the curation
         // guard on label is preserved.
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
-        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $query
+        );
+    }
+
+    public function testOlderSnapshotAfterNewerPreservesLabelAndCurationState(): void
+    {
+        global $wpdb;
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-out-of-order',
+                    'label' => 'Current Label',
+                    'curation_state' => 'dismissed',
+                    'identity_count' => 8,
+                ],
+            ],
+            20
+        );
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-out-of-order',
+                    'label' => 'Stale Label',
+                    'curation_state' => 'uncurated',
+                    'identity_count' => 2,
+                ],
+            ],
+            19
+        );
+
+        $upserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO `wp_acx_clusters`')
+            )
+        );
+        $this->assertCount(2, $upserts);
+        $this->assertStringContainsString("NULLIF('Current Label', ''), '', 0, 'dismissed'", $upserts[0]);
+        $this->assertStringContainsString('20, 0,', $upserts[0]);
+        $olderUpsert = $upserts[1];
+        $this->assertStringContainsString("VALUES ('cluster-out-of-order', 'tenant-merge', NULLIF('Stale Label', '')", $olderUpsert);
+        $this->assertStringContainsString("NULLIF('Stale Label', ''), '', 0, 'uncurated'", $olderUpsert);
+        $this->assertStringContainsString('19, 0,', $olderUpsert);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $olderUpsert
+        );
+        $this->assertStringContainsString(
+            'curation_state = IF(is_user_confirmed = 1, curation_state, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(curation_state), curation_state))',
+            $olderUpsert
+        );
+        $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $olderUpsert);
     }
 
     public function testMergeBatchCoercesActiveCurationStateToUncurated(): void

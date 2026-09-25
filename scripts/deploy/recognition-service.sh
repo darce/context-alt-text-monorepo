@@ -245,6 +245,13 @@ ACX_CUTOVER_ENV=""
 ACX_CUTOVER_COMMITTED=0
 ACX_ENV_TAG_LOCK_HELD=""
 ACX_LIVE_DISRUPTED=0
+# Transaction phase values: "" (nothing to compensate), repo_shipped,
+# tag_promoted, restarted, compensating.
+ACX_DEPLOY_ENV=""
+ACX_DEPLOY_PHASE=""
+# Defer signal cleanup across tag promotion until its caller records the result.
+ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+ACX_DEPLOY_PENDING_INTERRUPT=""
 # One deploy transaction owns one immutable remote topology snapshot. The
 # value is intentionally a narrow token because it is interpolated into paths
 # in remote shell commands; a caller may provide it when a higher-level retry
@@ -312,15 +319,63 @@ cleanup_deploy_ocir_docker_config() {
   return "${rc}"
 }
 
+compensate_interrupted_deploy() {
+  local phase="${ACX_DEPLOY_PHASE:-}"
+  ACX_DEPLOY_PHASE=""
+  local env="${ACX_DEPLOY_ENV:-}" rollback_status=0
+
+  case "${phase}" in
+    "")
+      return 0
+      ;;
+    repo_shipped)
+      log "Interrupted deploy of ${env} at phase ${phase}; compensating"
+      restore_runtime_topology "${env}" || warn "topology restore failed for ${env}"
+      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      ;;
+    tag_promoted)
+      if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+        warn "INTERRUPTED: ${env} runtime was disrupted mid-cutover; not rolling back from a signal handler. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+      log "Interrupted deploy of ${env} at phase ${phase}; compensating"
+      if restore_env_tag_to_rollback "${env}" 0; then
+        rollback_status=0
+      else
+        rollback_status=$?
+        warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "${env}")"
+      fi
+      if (( rollback_status != 75 )); then
+        restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      fi
+      ;;
+    restarted)
+      warn "INTERRUPTED before verify completed: ${env} serves unverified ${ACX_CANDIDATE_DIGEST_REF}. Verify: make deploy-verify-${env} / rollback: $(rollback_command_hint "${env}")"
+      ;;
+    compensating)
+      warn "INTERRUPTED during rollback of ${env}; state unknown. Recovery: $(rollback_command_hint "${env}")"
+      ;;
+    *)
+      warn "INTERRUPTED with unknown deploy phase ${phase} for ${env}; state unknown. Recovery: $(rollback_command_hint "${env}")"
+      return 1
+      ;;
+  esac
+}
+
 deploy_interrupt_cleanup() {
   local requested="${1-}"
   local rc=$?
+  if [[ -n "${requested}" && "${ACX_DEPLOY_TAG_PUSH_ACTIVE:-0}" == "1" ]]; then
+    ACX_DEPLOY_PENDING_INTERRUPT="${requested}"
+    return 0
+  fi
   trap - EXIT HUP INT TERM
   if [[ -n "${requested}" ]]; then
     rc="${requested}"
   fi
   recover_interrupted_cutover || true
   cleanup_remote_build_generation_on_exit || true
+  compensate_interrupted_deploy || true
   _purge_deploy_ocir_docker_config
   _purge_deploy_snapshot
   if [[ -n "${requested}" ]]; then
@@ -1620,7 +1675,7 @@ do_push_tag() {
 # into remote .env (before any env-tag promotion), converge compose+unit.
 # Used by both do_deploy and do_promote so the prod path is uniform.
 promote_gate() {
-  local env="$1" image="$2" remote_dir ship_status=0
+  local env="$1" image="$2" remote_dir ship_status=0 claim_status=0
   remote_dir="$(env_to_remote_dir "$env")"
   if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
     fail "promote gate requires a digest-pinned candidate (got: ${image})"
@@ -1635,12 +1690,22 @@ promote_gate() {
 
   # Claim and capture prior state together on the target before any sticky write.
   ACX_PRIOR_IMAGE_REPO_ENV="$env"
-  ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "${remote_dir}" "" "")" || return $?
+  ACX_DEPLOY_PHASE=repo_shipped
+  if ACX_IMAGE_REPO_OWNER_ID="$(image_repo_resource claim "${remote_dir}" "" "")"; then
+    :
+  else
+    claim_status=$?
+    if (( claim_status == 75 )); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    return "${claim_status}"
+  fi
   ship_remote_image_repo_env "${remote_dir}" || ship_status=$?
   if (( ship_status != 0 )); then
     if (( ship_status != 75 )); then
       restore_prior_image_repo_env || warn "prior sticky repository restore failed"
     fi
+    ACX_DEPLOY_PHASE=""
     return "${ship_status}"
   fi
 
@@ -1652,6 +1717,7 @@ promote_gate() {
       warn "Runtime convergence failed for ${env}; restoring the prior topology and sticky repository"
       restore_runtime_topology "$env" || warn "topology restore failed for ${env}"
       restore_prior_image_repo_env
+      ACX_DEPLOY_PHASE=""
       return 1
     fi
   else
@@ -1661,6 +1727,7 @@ promote_gate() {
     if ! runtime_in_sync "$env"; then
       warn "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo"
       restore_prior_image_repo_env
+      ACX_DEPLOY_PHASE=""
       return 1
     fi
     warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
@@ -4405,9 +4472,11 @@ capture_failure_evidence() {
 handle_failed_verification() {
   local env="$1" label="$2"
   local rollback_ok=0 rollback_status=0
+  ACX_DEPLOY_PHASE=compensating
   capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing with rollback"
   if restore_env_tag_to_rollback "$env" 1; then
     rollback_ok=1
+    ACX_DEPLOY_PHASE=""
   else
     rollback_status=$?
     rollback_ok=0
@@ -4424,8 +4493,10 @@ handle_failed_verification() {
 
 report_verify_expectation_error() {
   local env="$1" label="$2"
+  ACX_DEPLOY_PHASE=compensating
   capture_failure_evidence "$env" candidate || warn "automatic failure evidence capture failed; continuing without rollback"
   printf '%s\n' "VERIFY EXPECTATION ERROR: ${label} left the healthy candidate serving on ${env}; no rollback was performed. Check the image's GIT_COMMIT_SHA build-arg against DEPLOY_SHA=${DEPLOY_SHA}. Manual rollback if needed: $(rollback_command_hint "$env")" >&2
+  ACX_DEPLOY_PHASE=""
   exit 2
 }
 
@@ -4436,7 +4507,7 @@ report_verify_expectation_error() {
 _ship_selected_env() {
   local env="$1"
   local completion="$2"
-  local tag sha restart_runtime verify_status
+  local tag sha restart_runtime verify_status pending_interrupt
 
   case "${completion}" in
     aggregate|scoped) ;;
@@ -4482,11 +4553,23 @@ _ship_selected_env() {
   # Push :SHA first, gate on the boot smoke, and only then promote the env tag
   # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
   do_push_sha
+  ACX_DEPLOY_ENV="$env"
   promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
-  if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+  ACX_DEPLOY_TAG_PUSH_ACTIVE=1
+  if do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=tag_promoted
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+  else
+    ACX_DEPLOY_PHASE=compensating
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
     capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    local rollback_status=0
+    local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$env" 0; then
       :
     else
@@ -4494,15 +4577,24 @@ _ship_selected_env() {
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
     if (( rollback_status != 75 )); then
-      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      restore_prior_image_repo_env || { repo_restore_status=$?; warn "prior sticky repository restore failed"; }
+    fi
+    if (( rollback_status == 0 && repo_restore_status == 0 )); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
     fi
     rollback_failure "${rollback_status}" "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=compensating
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     restart_runtime="$(cutover_failure_restart_runtime)"
-    local rollback_status=0
+    local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$env" "${restart_runtime}"; then
       :
     else
@@ -4510,10 +4602,14 @@ _ship_selected_env() {
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$env")"
     fi
     if (( rollback_status != 75 )); then
-      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      restore_prior_image_repo_env || { repo_restore_status=$?; warn "prior sticky repository restore failed"; }
+    fi
+    if (( rollback_status == 0 && repo_restore_status == 0 )); then
+      ACX_DEPLOY_PHASE=""
     fi
     rollback_failure "${rollback_status}" "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
+  ACX_DEPLOY_PHASE=restarted
 
   if [[ "${completion}" == "aggregate" ]]; then
     log "Deploy submitted. Verifying..."
@@ -4531,6 +4627,7 @@ _ship_selected_env() {
       *) handle_failed_verification "$env" "Deploy" ;;
     esac
   fi
+  ACX_DEPLOY_PHASE=""
 }
 
 do_deploy() {
@@ -4554,7 +4651,7 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
-  local verify_status source_sha rerun_command
+  local verify_status source_sha rerun_command pending_interrupt
   init_deploy_ocir_docker_config
   local from_tag to_tag
   from_tag="$(env_to_tag "$from_env")"
@@ -4609,11 +4706,23 @@ do_promote() {
 
   # Same safety gate as deploy: boot-smoke the source image + converge compose/
   # unit after rollback was captured, then retag exactly the digest that passed.
+  ACX_DEPLOY_ENV="$to_env"
   promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
 
-  if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+  ACX_DEPLOY_TAG_PUSH_ACTIVE=1
+  if do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=tag_promoted
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
+    fi
+  else
+    ACX_DEPLOY_PHASE=compensating
+    ACX_DEPLOY_TAG_PUSH_ACTIVE=0
     capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
-    local rollback_status=0
+    local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$to_env" 0; then
       :
     else
@@ -4621,16 +4730,25 @@ do_promote() {
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
     if (( rollback_status != 75 )); then
-      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      restore_prior_image_repo_env || { repo_restore_status=$?; warn "prior sticky repository restore failed"; }
+    fi
+    if (( rollback_status == 0 && repo_restore_status == 0 )); then
+      ACX_DEPLOY_PHASE=""
+    fi
+    if [[ -n "${ACX_DEPLOY_PENDING_INTERRUPT}" ]]; then
+      pending_interrupt="${ACX_DEPLOY_PENDING_INTERRUPT}"
+      ACX_DEPLOY_PENDING_INTERRUPT=""
+      deploy_interrupt_cleanup "${pending_interrupt}"
     fi
     rollback_failure "${rollback_status}" "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    ACX_DEPLOY_PHASE=compensating
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"
-    local rollback_status=0
+    local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$to_env" "${restart_runtime}"; then
       :
     else
@@ -4638,10 +4756,14 @@ do_promote() {
       warn "automatic env-tag restore failed; refusing further runtime compensation; run: $(rollback_command_hint "$to_env")"
     fi
     if (( rollback_status != 75 )); then
-      restore_prior_image_repo_env || warn "prior sticky repository restore failed"
+      restore_prior_image_repo_env || { repo_restore_status=$?; warn "prior sticky repository restore failed"; }
+    fi
+    if (( rollback_status == 0 && repo_restore_status == 0 )); then
+      ACX_DEPLOY_PHASE=""
     fi
     rollback_failure "${rollback_status}" "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
   fi
+  ACX_DEPLOY_PHASE=restarted
 
   log "Promotion submitted. Verifying..."
   verify_status=0
@@ -4655,6 +4777,7 @@ do_promote() {
     2) report_verify_expectation_error "$to_env" "Promotion" ;;
     *) handle_failed_verification "$to_env" "Promotion" ;;
   esac
+  ACX_DEPLOY_PHASE=""
 }
 
 #---------------------------------------------------------------- verify

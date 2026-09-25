@@ -29,7 +29,7 @@ The `[acx_demo_describe]` shortcode is a deliberately narrow public adapter over
 
 The status is an `aria-live="polite"` region. Every state combines an icon with token-based color, so meaning does not depend on color alone. Completion moves focus to the result. While a request is active, picker controls are disabled; terminal and error states restore them.
 
-Polling begins at 500 ms, doubles to a maximum interval of 5 seconds, and stops at the deadline returned by the server. That deadline combines the configured GPU warm-up budget (`ACX_GPU_WARMUP_TIMEOUT_SECONDS`, default 510 seconds) with the 180-second inference budget. Each submit/status fetch is independently aborted at its remaining deadline or when the page navigates away. The hard stop does not claim that backend work was cancelled: it tells the visitor to wait and refresh, avoiding an automatic retry that could duplicate paid work.
+Polling begins at 500 ms and doubles to a maximum interval of 5 seconds. After submission, the public client's observation budget is the smaller of the server deadline and its 120-second ceiling. The server deadline combines the configured GPU warm-up budget (`ACX_GPU_WARMUP_TIMEOUT_SECONDS`, default 510 seconds) with the 180-second inference budget. Each submit/status fetch is independently aborted at its remaining deadline or when the page navigates away. When the client observation budget expires, the browser stops polling and tells the visitor to wait and refresh; this timeout does not cancel backend work. Avoiding an automatic retry prevents duplicating paid work.
 
 ## Safety boundaries
 

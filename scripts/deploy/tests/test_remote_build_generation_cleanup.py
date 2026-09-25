@@ -20,6 +20,9 @@ FAKE_SSH = r"""#!/usr/bin/env bash
 set -euo pipefail
 remote="${@: -1}"
 printf '%s\n' "$remote" >>"${FAKE_SSH_LOG:?}"
+if [[ "$remote" == mkdir\ * && "${FAKE_TERM_ON_MKDIR:-0}" == 1 ]]; then
+  kill -TERM "${PPID}"
+fi
 if [[ "$remote" == find\ * && "${FAKE_FAIL_REAPER:-0}" == 1 ]]; then
   exit 1
 fi
@@ -83,6 +86,8 @@ def _run_driver(
     build_timeout: str = "30",
     remote_build_dir: str | Path | None = None,
     fail_reaper: bool = False,
+    term_on_mkdir: bool = False,
+    allow_dirty: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     driver = Path(remote_build["driver"])
     driver.write_text(_driver_prelude() + body)
@@ -98,6 +103,8 @@ def _run_driver(
             "ACX_REMOTE_COMMAND_TIMEOUT": "10",
             "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES": ttl,
             "FAKE_FAIL_REAPER": "1" if fail_reaper else "0",
+            "FAKE_TERM_ON_MKDIR": "1" if term_on_mkdir else "0",
+            "ACX_ALLOW_DIRTY": "1" if allow_dirty else "0",
             "FAKE_SSH_LOG": str(remote_build["ssh_log"]),
             "FAKE_RSYNC_LOG": str(remote_build["rsync_log"]),
             "FAKE_DEADLINE_LOG": str(remote_build["deadline_log"]),
@@ -177,10 +184,10 @@ def test_reaper_targets_only_this_prefix(remote_build: dict[str, Path | str]) ->
     assert "-mmin +360" in reaper
     assert commands.index(reaper) < mkdir_index
 
-    custom = _run_driver(remote_build, "do_build_remote dev\n", ttl="15", build_timeout="300")
+    custom = _run_driver(remote_build, "do_build_remote dev\n", ttl="241")
     custom_reaper = next(command for command in _ssh_commands(remote_build) if command.startswith("find "))
     assert custom.returncode == 0, custom.stdout + custom.stderr
-    assert "-mmin +15" in custom_reaper
+    assert "-mmin +241" in custom_reaper
 
     invalid = _run_driver(remote_build, "do_build_remote dev\n", ttl="0")
     invalid_commands = _ssh_commands(remote_build)
@@ -234,8 +241,7 @@ def test_reaper_skipped_when_ttl_not_above_twice_build_timeout(
     skipped = _run_driver(
         remote_build,
         "do_build_remote dev\n",
-        ttl="60",
-        build_timeout="1800",
+        ttl="240",
     )
     skipped_commands = _ssh_commands(remote_build)
     assert skipped.returncode == 0, skipped.stdout + skipped.stderr
@@ -246,13 +252,44 @@ def test_reaper_skipped_when_ttl_not_above_twice_build_timeout(
     reaped = _run_driver(
         remote_build,
         "do_build_remote dev\n",
-        ttl="21",
-        build_timeout="600",
+        ttl="241",
+        build_timeout="60",
     )
     reaped_commands = _ssh_commands(remote_build)
     reaper = next(command for command in reaped_commands if command.startswith("find "))
     assert reaped.returncode == 0, reaped.stdout + reaped.stderr
-    assert "-mmin +21" in reaper
+    assert "-mmin +241" in reaper
+
+
+def test_build_timeout_above_ceiling_fails_before_remote_calls(
+    remote_build: dict[str, Path | str],
+) -> None:
+    result = _run_driver(remote_build, "do_build_remote dev\n", build_timeout="7201")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "ceiling" in result.stderr
+    assert not _ssh_commands(remote_build)
+    assert not Path(remote_build["rsync_log"]).exists()
+
+
+def test_allow_dirty_build_remote_cleans_generation_on_interrupt(
+    remote_build: dict[str, Path | str],
+) -> None:
+    result = _run_driver(
+        remote_build,
+        "materialize_deploy_snapshot build-remote\ndo_build_remote dev\n",
+        allow_dirty=True,
+        term_on_mkdir=True,
+    )
+
+    commands = _ssh_commands(remote_build)
+    mkdir_index = next(index for index, command in enumerate(commands) if command.startswith("mkdir -p"))
+    mkdir = commands[mkdir_index]
+    generation = re.search(r"'([^']+)'$", mkdir)
+    assert generation, commands
+    generation_rm = f"rm -rf -- '{generation.group(1)}'"
+    assert result.returncode == 143, result.stdout + result.stderr
+    assert generation_rm in commands[mkdir_index + 1 :]
 
 
 def test_reaper_normalizes_trailing_slash(remote_build: dict[str, Path | str]) -> None:

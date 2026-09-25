@@ -111,7 +111,8 @@
 #   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
-#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600, ACX_PUSH_TIMEOUT + 300) seconds.
+#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600,
+#                              max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets + 300).
 #   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
@@ -2008,7 +2009,9 @@ PY_RESOURCE
 deploy_env_lease() {
   local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
   local program response rc marker lease_transaction lease_holder lease_expiry lease_path
-  local push_timeout ttl_required width index value_index digit add_digit sum carry
+  local push_timeout pull_timeout transfer_timeout ttl_required ttl_margin width index transfer_index margin_index
+  local transfer_digit margin_digit sum carry cutover_budget canonical_budget
+  local cutover_attempts cutover_sleep canonical_attempts canonical_sleep
   case "${action}" in
     acquire|renew|release) ;;
     *) fail "internal: invalid deploy lease action ${action}" ;;
@@ -2033,21 +2036,41 @@ deploy_env_lease() {
     fi
   else
     push_timeout="$(validated_deadline ACX_PUSH_TIMEOUT 900)"
+    pull_timeout="$(validated_deadline ACX_PULL_TIMEOUT 900)"
+    transfer_timeout="${push_timeout}"
+    if (( ${#pull_timeout} > ${#transfer_timeout} )) || {
+      (( ${#pull_timeout} == ${#transfer_timeout} )) && [[ "${pull_timeout}" > "${transfer_timeout}" ]]
+    }; then
+      transfer_timeout="${pull_timeout}"
+    fi
+    if ! cutover_budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
+      fail "ACX_CUTOVER_HEALTH_ATTEMPTS and ACX_CUTOVER_HEALTH_SLEEP must define a valid restart health budget"
+    fi
+    if ! canonical_budget="$(probe_budget ACX_CANONICAL_HEALTH 5 5)"; then
+      fail "ACX_CANONICAL_HEALTH_ATTEMPTS and ACX_CANONICAL_HEALTH_SLEEP must define a valid restart health budget"
+    fi
+    read -r cutover_attempts cutover_sleep <<<"${cutover_budget}"
+    read -r canonical_attempts canonical_sleep <<<"${canonical_budget}"
+    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + 300))
     ttl_required=""
     carry=0
-    width="${#push_timeout}"
-    (( width < 3 )) && width=3
-    # Add the margin as decimal digits so shell integer overflow cannot bypass the floor.
+    width="${#transfer_timeout}"
+    (( width < ${#ttl_margin} )) && width="${#ttl_margin}"
+    # Keep decimal addition safe even when a configured transfer timeout exceeds shell integer range.
     for ((index = 0; index < width; index++)); do
-      value_index=$((${#push_timeout} - index - 1))
-      if (( value_index >= 0 )); then
-        digit="${push_timeout:value_index:1}"
+      transfer_index=$((${#transfer_timeout} - index - 1))
+      if (( transfer_index >= 0 )); then
+        transfer_digit="${transfer_timeout:transfer_index:1}"
       else
-        digit=0
+        transfer_digit=0
       fi
-      add_digit=0
-      (( index == 2 )) && add_digit=3
-      sum=$((10#${digit} + add_digit + carry))
+      margin_index=$((${#ttl_margin} - index - 1))
+      if (( margin_index >= 0 )); then
+        margin_digit="${ttl_margin:margin_index:1}"
+      else
+        margin_digit=0
+      fi
+      sum=$((10#${transfer_digit} + 10#${margin_digit} + carry))
       ttl_required="$((sum % 10))${ttl_required}"
       carry=$((sum / 10))
     done
@@ -2056,7 +2079,7 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least ACX_PUSH_TIMEOUT (${push_timeout}) plus 300 seconds (minimum ${ttl_required})"
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets and 300 seconds; minimum 600)"
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -2203,7 +2226,7 @@ try:
             print("HELD\t\t\t")
             print("deploy lease for {} is missing".format(env), file=sys.stderr)
             raise SystemExit(75)
-        if current["transaction"] != transaction:
+        if current["transaction"] != transaction or current["holder"] != holder:
             expires = expiry_text(current["expires_at"])
             print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
             print("deploy lease for {} held by {} (transaction {}) until {}".format(
@@ -2213,7 +2236,7 @@ try:
         record = {"transaction": transaction, "holder": holder, "expires_at": int(time.time()) + int(ttl)}
         write_lease(record)
     elif action == "release":
-        if current is not None and current["transaction"] != transaction:
+        if current is not None and (current["transaction"] != transaction or current["holder"] != holder):
             print("NOT_OWNER\t{}\t{}".format(current["transaction"], current["holder"]))
         elif current is not None:
             os.unlink(path)
@@ -2282,6 +2305,7 @@ clear_remote_image_repo_env() {
     fail "clear-image-repo prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart). Re-run: CONFIRM=PROMOTE $0 clear-image-repo prod"
   fi
   preflight_ssh
+  install_deploy_interrupt_traps
   deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to clear the image repository"
   if image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""; then
     deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after clearing the image repository"
@@ -4647,6 +4671,9 @@ do_rollback() {
   capture_prior_runtime_identity "${env}" "${current_image_id},${rollback_image_id}" 1 \
     || fail "Current ${env} runtime generation could not be captured; refusing unfenced rollback"
   ACX_CANDIDATE_DIGEST_REF="${current_digest}"
+  if ! deploy_env_lease renew "${env}"; then
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; refusing rollback"
+  fi
   restore_env_tag_to_rollback "${env}" 1 \
     || rollback_failure "$?" "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
   # restore_env_tag_to_rollback already requires both /health and immutable
@@ -5894,6 +5921,8 @@ do_reset() {
   fi
 
   preflight_ssh
+  install_deploy_interrupt_traps
+  deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing reset"
   # Face-pipeline weights must exist before reset restarts the runtime (C-02).
   preflight_remote_face_pipeline_models "$env"
   log "Executing reset on ${SSH_TARGET}"
@@ -5930,6 +5959,7 @@ echo "==> Creating post-reset service-mode API key (operator: copy api_key= line
 sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant "${tenant_id}" < /dev/null
 BOOTSTRAP
 
+  deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after reset"
   log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
 }
 

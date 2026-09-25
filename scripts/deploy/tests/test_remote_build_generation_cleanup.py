@@ -170,19 +170,33 @@ printf 'GENERATION=%s\\n' "${ACX_REMOTE_BUILD_GENERATION_DIR}"
     assert result.returncode == 0, result.stdout + result.stderr
     assert "GENERATION=\n" in result.stdout
     assert len(_generation_rms(commands, Path(remote_build["remote_build_dir"]))) == 1
+    assert "--omit-dir-times" in Path(remote_build["rsync_log"]).read_text()
 
 
-def test_reaper_targets_only_this_prefix(remote_build: dict[str, Path | str]) -> None:
-    result = _run_driver(remote_build, "do_build_remote dev\n")
+def test_reaper_removes_only_old_real_generations(remote_build: dict[str, Path | str], tmp_path: Path) -> None:
+    build_root = tmp_path / "acx"
+    result = _run_driver(remote_build, "do_build_remote dev\n", remote_build_dir=build_root)
 
     commands = _ssh_commands(remote_build)
     reaper = next(command for command in commands if command.startswith("find "))
     mkdir_index = next(index for index, command in enumerate(commands) if command.startswith("mkdir -p"))
     assert result.returncode == 0, result.stdout + result.stderr
     assert "-mindepth 1 -maxdepth 1 -type d" in reaper
-    assert "-name 'remote-build-*'" in reaper
     assert "-mmin +360" in reaper
     assert commands.index(reaper) < mkdir_index
+
+    old_generation = tmp_path / "acx-0123456789ab-1700000000-42-7"
+    fresh_generation = tmp_path / "acx-fedcba987654-1700000001-43-8"
+    backend_dir = tmp_path / "acx-backend"
+    for path in (old_generation, fresh_generation, backend_dir):
+        path.mkdir()
+    subprocess.run(["touch", "-t", "202001010000", str(old_generation), str(backend_dir)], check=True)
+
+    reap_result = subprocess.run(["bash", "-c", reaper], text=True, capture_output=True, check=False)
+    assert reap_result.returncode == 0, reap_result.stdout + reap_result.stderr
+    assert not old_generation.exists()
+    assert fresh_generation.is_dir()
+    assert backend_dir.is_dir()
 
     custom = _run_driver(remote_build, "do_build_remote dev\n", ttl="241")
     custom_reaper = next(command for command in _ssh_commands(remote_build) if command.startswith("find "))
@@ -303,7 +317,8 @@ def test_reaper_normalizes_trailing_slash(remote_build: dict[str, Path | str]) -
     mkdir = next(command for command in trailing_commands if command.startswith("mkdir -p"))
     assert trailing.returncode == 0, trailing.stdout + trailing.stderr
     assert reaper.startswith("find '/tmp' ")
-    assert "-name 'acx-build-*'" in reaper
+    assert "-name 'acx-build-[0-9a-f]" in reaper
+    assert "-[0-9]*-[0-9]*-[0-9]*' -mmin +360" in reaper
     assert re.search(r"mkdir -p -- '/tmp/acx-build-", mkdir), mkdir
 
     root = _run_driver(remote_build, "do_build_remote dev\n", remote_build_dir="/")

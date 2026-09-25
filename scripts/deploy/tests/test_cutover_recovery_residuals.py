@@ -268,6 +268,7 @@ ACX_BOOT_SMOKE=0
 record() {{ printf '%s\\n' "$*" >>"{records}"; }}
 init_deploy_ocir_docker_config() {{ :; }}
 preflight_ssh() {{ :; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}

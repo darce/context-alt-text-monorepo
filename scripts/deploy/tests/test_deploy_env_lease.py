@@ -1,0 +1,266 @@
+"""Regressions for the fenced deploy environment lease."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import time
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
+
+
+def _lease_path(tmp_path: Path, env: str = "dev") -> Path:
+    return tmp_path / "vm-backups" / "locks" / f"deploy-{env}.lease"
+
+
+def _write_lease(path: Path, transaction: str, holder: str, expires_at: int) -> bytes:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(
+        {"transaction": transaction, "holder": holder, "expires_at": expires_at},
+        separators=(",", ":"),
+    ).encode("ascii")
+    path.write_bytes(content)
+    return content
+
+
+def _run_driver(
+    tmp_path: Path,
+    statements: str,
+    *,
+    transaction: str = "transaction-a",
+    **extra_env: str,
+) -> subprocess.CompletedProcess[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
+    sudo.chmod(0o755)
+    command = f'''
+source {shlex.quote(str(SCRIPT))}
+GREEN=; YELLOW=; RED=; RESET=
+export PATH={shlex.quote(str(bin_dir))}:$PATH
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ bash -c "${{@: -1}}"; }}
+ACX_DEPLOY_BACKUP_ROOT={shlex.quote(str(tmp_path / "vm-backups"))}
+{statements}
+'''
+    env = os.environ.copy()
+    env.update({"ACX_DEPLOY_TRANSACTION_ID": transaction, **extra_env})
+    return subprocess.run(
+        ["bash", "-c", command],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+        timeout=30,
+    )
+
+
+def test_second_transaction_is_refused_while_first_holds(tmp_path: Path) -> None:
+    first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert first.returncode == 0, first.stdout + first.stderr
+    path = _lease_path(tmp_path)
+    original = path.read_bytes()
+    holder = json.loads(original)["holder"]
+
+    second = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-b")
+
+    assert second.returncode == 75, second.stdout + second.stderr
+    assert holder in second.stderr
+    assert "until " in second.stderr
+    assert re.search(r"until \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", second.stderr)
+    assert path.read_bytes() == original
+
+
+def test_expired_lease_is_taken_over(tmp_path: Path) -> None:
+    path = _lease_path(tmp_path)
+    _write_lease(path, "transaction-a", "a@example:123", int(time.time()) - 1)
+
+    result = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-b")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(path.read_bytes())["transaction"] == "transaction-b"
+
+
+def test_renew_extends_only_own_lease(tmp_path: Path) -> None:
+    path = _lease_path(tmp_path)
+    old_expiry = int(time.time()) + 600
+    _write_lease(path, "transaction-a", "a@example:123", old_expiry)
+
+    own = _run_driver(tmp_path, "deploy_env_lease renew dev", transaction="transaction-a")
+    assert own.returncode == 0, own.stdout + own.stderr
+    renewed = path.read_bytes()
+    assert json.loads(renewed)["expires_at"] > old_expiry
+
+    other = _run_driver(tmp_path, "deploy_env_lease renew dev", transaction="transaction-b")
+    assert other.returncode == 75, other.stdout + other.stderr
+    assert path.read_bytes() == renewed
+
+
+def test_release_is_owner_checked(tmp_path: Path) -> None:
+    acquired = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert acquired.returncode == 0, acquired.stdout + acquired.stderr
+    path = _lease_path(tmp_path)
+    original = path.read_bytes()
+
+    other = _run_driver(tmp_path, "deploy_env_lease release dev", transaction="transaction-b")
+    assert other.returncode == 0, other.stdout + other.stderr
+    assert path.read_bytes() == original
+
+    owner = _run_driver(tmp_path, "deploy_env_lease release dev", transaction="transaction-a")
+    assert owner.returncode == 0, owner.stdout + owner.stderr
+    assert not path.exists()
+
+
+def test_break_glass_matches_transaction(tmp_path: Path) -> None:
+    first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    breaker = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        transaction="transaction-b",
+        ACX_DEPLOY_LOCK_BREAK="transaction-a",
+    )
+    assert breaker.returncode == 0, breaker.stdout + breaker.stderr
+    assert "breaking deploy lease of transaction transaction-a held by" in breaker.stderr
+    path = _lease_path(tmp_path)
+    assert json.loads(path.read_bytes())["transaction"] == "transaction-b"
+
+    original = _write_lease(path, "transaction-a", "a@example:123", int(time.time()) + 7200)
+    refused = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        transaction="transaction-b",
+        ACX_DEPLOY_LOCK_BREAK="other",
+    )
+    assert refused.returncode == 75, refused.stdout + refused.stderr
+    assert path.read_bytes() == original
+
+
+def test_malformed_lease_fails_closed(tmp_path: Path) -> None:
+    path = _lease_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"not json")
+
+    result = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-b")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert str(path) in result.stderr
+    assert "inspect and remove" in result.stderr
+    assert path.read_bytes() == b"not json"
+
+
+def test_ship_refuses_before_rollback_tag_when_env_is_held(tmp_path: Path) -> None:
+    first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert first.returncode == 0, first.stdout + first.stderr
+    path = _lease_path(tmp_path)
+    original = path.read_bytes()
+    records = tmp_path / "records.log"
+    statements = f'''
+RECORDS={shlex.quote(str(records))}
+record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+preflight_git_clean() {{ :; }}
+preflight_branch_synced() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+preserve_rollback_tag() {{ record preserve_rollback_tag "$@"; }}
+recover_interrupted_cutover() {{ :; }}
+cleanup_remote_build_generation_on_exit() {{ :; }}
+_purge_deploy_ocir_docker_config() {{ :; }}
+_purge_deploy_snapshot() {{ :; }}
+_ship_selected_env dev aggregate
+'''
+
+    result = _run_driver(tmp_path, statements, transaction="transaction-b")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert not records.exists() or "preserve_rollback_tag" not in records.read_text(encoding="utf-8")
+    assert path.read_bytes() == original
+
+
+def test_exit_trap_releases_own_lease(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        """
+recover_interrupted_cutover() { :; }
+cleanup_remote_build_generation_on_exit() { :; }
+_purge_deploy_ocir_docker_config() { :; }
+_purge_deploy_snapshot() { :; }
+install_deploy_interrupt_traps
+deploy_env_lease acquire dev
+exit 0
+""",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not _lease_path(tmp_path).exists()
+
+
+def test_lost_lease_before_restart_stops_without_compensation(tmp_path: Path) -> None:
+    records = tmp_path / "records.log"
+    statements = f'''
+RECORDS={shlex.quote(str(records))}
+record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+preflight_git_clean() {{ :; }}
+preflight_branch_synced() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+preserve_rollback_tag() {{ :; }}
+capture_prior_runtime_identity() {{ :; }}
+do_build() {{ :; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF=repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+promote_gate() {{ ACX_DEPLOY_PHASE=repo_shipped; }}
+do_push_tag() {{
+  record do_push_tag "$@"
+  printf '%s' '{{"transaction":"transaction-other","holder":"other@example:123","expires_at":4102444800}}' >"${{ACX_DEPLOY_BACKUP_ROOT}}/locks/deploy-dev.lease"
+}}
+do_restart() {{ record do_restart "$@"; }}
+restore_env_tag_to_rollback() {{ record restore_env_tag_to_rollback "$@"; }}
+restore_runtime_topology() {{ record restore_runtime_topology "$@"; }}
+recover_interrupted_cutover() {{ :; }}
+cleanup_remote_build_generation_on_exit() {{ :; }}
+_purge_deploy_ocir_docker_config() {{ :; }}
+_purge_deploy_snapshot() {{ :; }}
+_ship_selected_env dev aggregate
+'''
+
+    result = _run_driver(tmp_path, statements, transaction="transaction-a")
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "lost to" in combined
+    assert "do_push_tag" in records.read_text(encoding="utf-8")
+    assert "do_restart" not in records.read_text(encoding="utf-8")
+    assert "restore_env_tag_to_rollback" not in records.read_text(encoding="utf-8")
+    assert "restore_runtime_topology" not in records.read_text(encoding="utf-8")
+    assert json.loads(_lease_path(tmp_path).read_bytes())["transaction"] == "transaction-other"
+
+
+def _function_body(name: str) -> str:
+    source = SCRIPT.read_text(encoding="utf-8")
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n(.*?)^\}}", source)
+    assert match, f"could not find function {name}"
+    return match.group(1)
+
+
+def test_acquire_calls_precede_mutations() -> None:
+    for name, mutation in (
+        ("_ship_selected_env", "preserve_rollback_tag"),
+        ("do_promote", "preserve_rollback_tag"),
+        ("do_rollback", "_pull_ref_remote"),
+    ):
+        body = _function_body(name)
+        assert "deploy_env_lease acquire" in body
+        assert body.index("deploy_env_lease acquire") < body.index(mutation)

@@ -1055,7 +1055,7 @@ _remote_dotenv_value() {
   local remote_dir="$1" key="$2" raw rc=0
   # Remote `|| true` only covers a missing key / missing file (grep exit 1).
   # Local ssh failure is NOT swallowed.
-  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+  raw="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
     "grep -E '^${key}=' '${remote_dir}/.env' 2>/dev/null | tail -1 | cut -d= -f2- || true")" || rc=$?
   if (( rc != 0 )); then
     fail "ssh failed reading ${key} from ${remote_dir}/.env on ${SSH_TARGET} (exit ${rc})"
@@ -1117,7 +1117,7 @@ preflight_remote_face_pipeline_models() {
   # Ship the extractable verify body to the remote and execute it (C-07/C-11).
   # Capture stdout even when the remote check exits non-zero; do not swallow
   # unrelated ssh failures with `|| true` (C-06).
-  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 "${SSH_TARGET}" \
+  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
     "bash -s" <<REMOTE
 set -euo pipefail
 $(declare -p FACE_PIPELINE_ONNX_SHA256)

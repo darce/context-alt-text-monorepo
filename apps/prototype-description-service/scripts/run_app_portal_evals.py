@@ -295,11 +295,6 @@ def load_manifest(path: str | Path) -> EvalManifest:
                 f"{case_path}.additional_evidence_required",
                 "must be a boolean",
             )
-        if additional_evidence_required and "artifact" not in case:
-            raise _manifest_error(
-                f"{case_path}.artifact",
-                "is required when additional_evidence_required is true",
-            )
         artifact = None
         if "artifact" in case:
             artifact = _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
@@ -348,6 +343,21 @@ def _selected_groups(manifest: EvalManifest, requested: Sequence[str] | None) ->
             )
         if group not in selected:
             selected.append(group)
+    return selected
+
+
+def _selected_gates(manifest: EvalManifest, requested: Sequence[str] | None) -> list[str]:
+    if not requested:
+        return []
+    selected: list[str] = []
+    for gate_name in requested:
+        if gate_name not in manifest.release_gates:
+            raise ManifestValidationError(
+                f"manifest {manifest.path}: unknown release gate {gate_name!r}; "
+                f"known gates: {sorted(manifest.release_gates)}"
+            )
+        if gate_name not in selected:
+            selected.append(gate_name)
     return selected
 
 
@@ -660,6 +670,7 @@ def run_evals(
     manifest_path: str | Path,
     *,
     groups: Sequence[str] | None = None,
+    gates: Sequence[str] | None = None,
     out_dir: str | Path | None = None,
     environment: Mapping[str, str] | None = None,
     command_runner: CommandRunner | None = None,
@@ -668,6 +679,7 @@ def run_evals(
 
     manifest = load_manifest(manifest_path)
     selected = _selected_groups(manifest, groups)
+    selected_gates = _selected_gates(manifest, gates)
     effective_environment = dict(os.environ if environment is None else environment)
     _, _, command_environment = _manifest_command(manifest.command)
     effective_environment.update(command_environment)
@@ -712,6 +724,7 @@ def run_evals(
     group_status = {result["group"]: int(result["exit_status"]) for result in group_results}
     case_results: dict[str, dict[str, Any]] = {}
     release_gate_failures: list[str] = []
+    cases_by_id = {case.case_id: case for case in manifest.cases}
     for case in manifest.cases:
         artifact_path = _case_artifact_path(case)
         artifact_present = artifact_path is not None and artifact_path.is_file()
@@ -730,26 +743,37 @@ def run_evals(
             "artifact_path": str(artifact_path) if artifact_path is not None else None,
             "artifact_present": artifact_present if artifact_path is not None else None,
         }
-        if artifact_path is not None and not artifact_present:
-            release_gate_failures.append(
-                f"case {case.case_id!r} evidence artifact is missing: {artifact_path}"
-            )
-
+    release_gate_results: dict[str, dict[str, Any]] = {}
     for gate_name, gate in manifest.release_gates.items():
+        reasons: list[str] = []
         for case_id in gate["required_cases"]:
-            case = next(case for case in manifest.cases if case.case_id == case_id)
+            case = cases_by_id[case_id]
             result = case_results[case_id]
-            case_executed = (
-                result["execution_status"] == "passed"
-                if case.test is not None
-                else result["execution_status"] == "evidence_present"
-            )
-            if not case_executed:
-                release_gate_failures.append(
-                    f"release gate {gate_name!r} required case {case_id!r} was not executed"
+            if case.test is not None:
+                if result["execution_status"] != "passed":
+                    reasons.append(
+                        f"release gate {gate_name!r} required case {case_id!r} "
+                        "was not executed or did not pass"
+                    )
+                continue
+            artifact_path = _case_artifact_path(case)
+            if artifact_path is None:
+                reasons.append(
+                    f"release gate {gate_name!r} required evidence-only case "
+                    f"{case_id!r} has no artifact path"
                 )
-    if release_gate_failures:
-        worst_status = max(worst_status, 1)
+            elif not artifact_path.is_file():
+                reasons.append(
+                    f"release gate {gate_name!r} required evidence-only case "
+                    f"{case_id!r} artifact is missing: {artifact_path}"
+                )
+        release_gate_results[gate_name] = {
+            "status": "failed" if reasons else "passed",
+            "reasons": reasons,
+        }
+        release_gate_failures.extend(reasons)
+        if gate_name in selected_gates and reasons:
+            worst_status = max(worst_status, 1)
 
     finished_at = datetime.now(UTC)
     artifact_paths = [
@@ -774,6 +798,7 @@ def run_evals(
         "finished_at": finished_at.isoformat(),
         "groups": group_results,
         "case_results": list(case_results.values()),
+        "release_gate_results": release_gate_results,
         "release_gate_failures": release_gate_failures,
         "artifact_paths": artifact_paths,
         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,
@@ -794,6 +819,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run only this group; repeat for multiple groups (default: all)",
     )
     parser.add_argument(
+        "--gate",
+        action="append",
+        choices=_REQUIRED_RELEASE_GATES,
+        default=None,
+        help="enforce only this release gate; repeat for multiple gates (default: report all)",
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -807,7 +839,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _build_parser().parse_args(argv)
     try:
-        status = run_evals(args.manifest, groups=args.group, out_dir=args.out)
+        status = run_evals(args.manifest, groups=args.group, gates=args.gate, out_dir=args.out)
     except (ManifestValidationError, EvalRunnerError) as exc:
         print(f"run_app_portal_evals: {exc}", file=sys.stderr)
         return 2

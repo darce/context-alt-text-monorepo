@@ -1,10 +1,8 @@
-"""Slice 6 guard: the ``clusters.py`` god-router split into 4 concern routers.
+"""Slice 6 guard: the cluster concern routers preserve the full route surface.
 
-Pins the invariant that the split preserves the full cluster route surface and
-that each concern router (`clusters_admission`, `clusters_snapshot`,
-`clusters_topology`, `clusters_maintenance`) is a non-empty, importable
-`APIRouter` whose paths form a disjoint partition of the original surface. The
-monolithic `clusters` module must be gone (greenfield: delete-over-shim).
+Pins the invariant that the split concern routers plus the merge-candidates and
+receipt-revert routers form a disjoint partition of the cluster route surface.
+The monolithic `clusters` module must be gone (greenfield: delete-over-shim).
 """
 
 from __future__ import annotations
@@ -27,7 +25,9 @@ EXPECTED_CLUSTER_ROUTES: set[tuple[str, str]] = {
     ("PATCH", "/clusters/{cluster_id}"),
     ("POST", "/clusters/create-for-identity"),
     ("POST", "/clusters/{cluster_id}/merge"),
+    ("GET", "/clusters/{cluster_id}/merge-candidates"),
     ("POST", "/clusters/{cluster_id}/split"),
+    ("POST", "/clusters/{cluster_id}/revert-merge"),
     ("POST", "/topology-commands/split"),
     ("POST", "/clusters/reassign"),
     ("POST", "/clusters/revert-merge"),
@@ -57,6 +57,8 @@ def test_concern_routers_partition_cluster_surface() -> None:
         clusters_maintenance,
         clusters_snapshot,
         clusters_topology,
+        cluster_merge_candidates,
+        cluster_revert,
     )
 
     concern_sets = [
@@ -64,6 +66,8 @@ def test_concern_routers_partition_cluster_surface() -> None:
         _routes(clusters_snapshot.router),
         _routes(clusters_topology.router),
         _routes(clusters_maintenance.router),
+        _routes(cluster_merge_candidates.router),
+        _routes(cluster_revert.router),
     ]
     assert all(concern_sets), "every concern router must own at least one route"
 

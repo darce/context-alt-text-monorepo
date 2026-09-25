@@ -111,7 +111,7 @@
 #   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
-#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; minimum 600 seconds for the environment-scoped deploy lease.
+#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600, ACX_PUSH_TIMEOUT + 300) seconds.
 #   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
@@ -2008,6 +2008,7 @@ PY_RESOURCE
 deploy_env_lease() {
   local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
   local program response rc marker lease_transaction lease_holder lease_expiry lease_path
+  local push_timeout ttl_required width index value_index digit add_digit sum carry
   case "${action}" in
     acquire|renew|release) ;;
     *) fail "internal: invalid deploy lease action ${action}" ;;
@@ -2023,8 +2024,40 @@ deploy_env_lease() {
   fi
 
   ttl="${ACX_DEPLOY_LOCK_TTL_SECONDS:-7200}"
-  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]] || (( ${#ttl} < 3 )) || { (( ${#ttl} == 3 )) && [[ "${ttl}" < 600 ]]; }; then
-    fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer of at least 600 (got: ${ttl})"
+  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer (got: ${ttl})"
+  fi
+  if [[ "${action}" == "release" ]]; then
+    if (( ${#ttl} < 3 )) || { (( ${#ttl} == 3 )) && [[ "${ttl}" < 600 ]]; }; then
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer of at least 600 (got: ${ttl})"
+    fi
+  else
+    push_timeout="$(validated_deadline ACX_PUSH_TIMEOUT 900)"
+    ttl_required=""
+    carry=0
+    width="${#push_timeout}"
+    (( width < 3 )) && width=3
+    # Add the margin as decimal digits so shell integer overflow cannot bypass the floor.
+    for ((index = 0; index < width; index++)); do
+      value_index=$((${#push_timeout} - index - 1))
+      if (( value_index >= 0 )); then
+        digit="${push_timeout:value_index:1}"
+      else
+        digit=0
+      fi
+      add_digit=0
+      (( index == 2 )) && add_digit=3
+      sum=$((10#${digit} + add_digit + carry))
+      ttl_required="$((sum % 10))${ttl_required}"
+      carry=$((sum / 10))
+    done
+    (( carry > 0 )) && ttl_required="${carry}${ttl_required}"
+    if (( ${#ttl_required} < 3 )) || { (( ${#ttl_required} == 3 )) && [[ "${ttl_required}" < 600 ]]; }; then
+      ttl_required=600
+    fi
+    if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least ACX_PUSH_TIMEOUT (${push_timeout}) plus 300 seconds (minimum ${ttl_required})"
+    fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   transaction="${ACX_DEPLOY_TRANSACTION_ID}"
@@ -2154,7 +2187,9 @@ try:
         breaking = current is not None and bool(break_transaction) and current["transaction"] == break_transaction
         if breaking:
             print("BREAK\t{}\t{}".format(current["transaction"], current["holder"]))
-        elif current is not None and current["expires_at"] > int(time.time()) and current["transaction"] != transaction:
+        elif current is not None and current["expires_at"] > int(time.time()) and (
+            current["transaction"] != transaction or current["holder"] != holder
+        ):
             expires = expiry_text(current["expires_at"])
             print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
             print("deploy lease for {} held by {} (transaction {}) until {}".format(
@@ -2242,12 +2277,19 @@ ship_remote_image_repo_env() {
 }
 
 clear_remote_image_repo_env() {
-  local env="$1"
+  local env="$1" rc
   if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
     fail "clear-image-repo prod requires CONFIRM=PROMOTE (sticky-repo clear is latent until next unit restart). Re-run: CONFIRM=PROMOTE $0 clear-image-repo prod"
   fi
   preflight_ssh
-  image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""
+  deploy_env_lease acquire "$env" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to clear the image repository"
+  if image_repo_resource clear "$(env_to_remote_dir "$env")" "" ""; then
+    deploy_env_lease release "$env" || fail "deploy lease for ${env} could not be released after clearing the image repository"
+  else
+    rc=$?
+    deploy_env_lease release "$env" || warn "deploy lease for ${env} not released after clearing the image repository; it expires at its TTL"
+    return "${rc}"
+  fi
 }
 
 # Converge the deployed compose file(s) + systemd unit + shared Caddy edge with
@@ -4841,6 +4883,11 @@ _ship_selected_env() {
     fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
   fi
   promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   ACX_DEPLOY_TAG_PUSH_ACTIVE=1
   if do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
@@ -5005,6 +5052,11 @@ do_promote() {
     fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
   fi
   promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
 
   ACX_DEPLOY_TAG_PUSH_ACTIVE=1
   if do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then

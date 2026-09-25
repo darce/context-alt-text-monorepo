@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 from sqlalchemy import select, update
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.models.identity import (
+    ClusterMergeKind,
     ClusterMergeReceipt,
     ReceiptExpiredError,
     ReceiptNotTopError,
@@ -31,6 +32,7 @@ from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.settings.clustering import ClusteringSettings
 from recognition.application.suggestions.embedding_space import (
     models_are_same_space,
     same_space_representative_vectors,
@@ -334,8 +336,24 @@ async def merge_cluster(
 
     await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
 
-    moved_identity_ids: list[uuid.UUID] = []
+    receipt_id: uuid.UUID | None = None
     if moved_by_merge_id and session is not None:
+        try:
+            receipt_id = uuid.UUID(str(moved_by_merge_id))
+        except ValueError:
+            pass
+
+    moved_identity_ids: list[uuid.UUID] = []
+    sibling_receipts: list[ClusterMergeReceipt] = []
+    if receipt_id is not None and session is not None:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        target_uuid = uuid.UUID(str(target.id))
+        await _lock_survivor_cluster(session, tenant_id=tenant_uuid, survivor_cluster_id=target_uuid)
+        sibling_receipts = await _load_sibling_receipts(
+            session,
+            tenant_id=tenant_uuid,
+            survivor_cluster_id=target_uuid,
+        )
         source_members = await member_repo.get_by_cluster(source_cluster_id)
         for member in source_members:
             try:
@@ -344,18 +362,31 @@ async def merge_cluster(
                 continue
 
     moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
-    if moved_by_merge_id and session is not None and moved_identity_ids:
-        try:
-            provenance_uuid = uuid.UUID(str(moved_by_merge_id))
-        except ValueError:
-            provenance_uuid = None
-        if provenance_uuid is not None:
+    if receipt_id is not None and session is not None:
+        if moved_identity_ids:
             await session.execute(
                 update(MediaIdentityModel)
                 .where(MediaIdentityModel.id.in_(moved_identity_ids))
-                .values(moved_by_merge_id=provenance_uuid)
+                .values(moved_by_merge_id=receipt_id)
             )
             await session.flush()
+        settings = getattr(assignment_writer, "_settings", None) or ClusteringSettings()
+        created_at = datetime.now(tz=UTC)
+        session.add(
+            ClusterMergeReceipt(
+                receipt_id=receipt_id,
+                tenant_id=uuid.UUID(str(tenant_id)),
+                survivor_cluster_id=uuid.UUID(str(target.id)),
+                source_cluster_id=uuid.UUID(str(source.id)),
+                source_label=source.label,
+                moved_identity_ids=moved_identity_ids,
+                rule_version="operator-v1",
+                kind=ClusterMergeKind.OPERATOR.value,
+                created_at=created_at,
+                expires_at=created_at + timedelta(days=settings.merge_undo_window_days),
+                sequence_no=ClusterMergeReceipt.next_sequence_no(sibling_receipts),
+            )
+        )
 
     target.identity_count = (target.identity_count or 0) + moved
     final_label = target_label or target.label

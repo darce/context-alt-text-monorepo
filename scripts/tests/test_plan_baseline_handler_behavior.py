@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -71,23 +72,34 @@ def test_directory_plan_is_missing_file(tmp_path: Path) -> None:
     assert payload["status"] == "missing_file"
 
 
-def test_accepts_existing_plan_file(tmp_path: Path) -> None:
+def test_validates_existing_plan_file(tmp_path: Path) -> None:
     plan = tmp_path / "plan.md"
     plan.write_text("# plan\n", encoding="utf-8")
     completed = _run("--task", "ISSUEDAG-1", "--plan", str(plan))
     payload = _payload(completed)
     assert completed.returncode == 0, completed.stderr
-    assert payload["status"] == "accepted"
+    assert payload["status"] == "validated_only"
     assert payload["handler"] == HANDLER_ID
     assert payload["task"] == "ISSUEDAG-1"
     assert payload["plan"] == str(plan.resolve())
+    assert "nothing was landed" in completed.stderr
+    assert "accepted" not in completed.stdout
 
 
-def test_accepts_empty_plan_file(tmp_path: Path) -> None:
+def test_validates_empty_plan_file(tmp_path: Path) -> None:
     plan = tmp_path / "empty.md"
     plan.write_text("", encoding="utf-8")
     completed = _run("--task", "ISSUEDAG-1", "--plan", str(plan))
     payload = _payload(completed)
     assert completed.returncode == 0, completed.stderr
-    assert payload["status"] == "accepted"
+    assert payload["status"] == "validated_only"
     assert payload["plan"] == str(plan.resolve())
+    assert "nothing was landed" in completed.stderr
+    assert "accepted" not in completed.stdout
+
+
+def test_docstring_describes_overlay_absent_fallback() -> None:
+    module_docstring = ast.get_docstring(ast.parse(HANDLER.read_text(encoding="utf-8")))
+    assert module_docstring is not None
+    assert "Makefile.d/plans.mk" in module_docstring
+    assert "fallback" in module_docstring

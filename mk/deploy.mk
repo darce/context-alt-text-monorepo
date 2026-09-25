@@ -57,8 +57,8 @@ deploy-help:
 	@echo "                                               Previous-digest rollback: recognition-service.sh rollback dev-fir <id>"
 	@echo ""
 	@echo "  Verify / status / sticky-repo reset:"
-	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
-	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (reads remote ACX_IMAGE_REPO for VLM)"
+	@echo "    make deploy-verify ENV=dev                 Compare /health and running image to VM release receipt (deployed-release.json)"
+	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (compares to VM receipt; reads remote ACX_IMAGE_REPO for VLM)"
 	@echo "    make deploy-status                         Snapshot /health for dev, dev-fir, staging, prod"
 	@echo "    make deploy-clear-image-repo ENV=dev       Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
 	@echo "    make deploy-clear-image-repo ENV=prod CONFIRM=PROMOTE   Same for prod (CONFIRM required)"
@@ -113,7 +113,7 @@ deploy-help:
 	@echo "                      REMOTE_BUILD (default 1; set 0 for local), ACX_REMOTE_BUILD (env equivalent)"
 	@echo "                      ACX_BUILD_TARGET (e.g. runtime-vlm; charset [A-Za-z0-9_.-]+ only)"
 	@echo "                      ACX_IMAGE_VARIANT (recognition|vlm; vlm requires *vlm* build target)"
-	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_BOOT_SMOKE"
+	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_CUTOVER_HEALTH_ATTEMPTS ACX_CUTOVER_HEALTH_SLEEP ACX_CANONICAL_HEALTH_ATTEMPTS ACX_CANONICAL_HEALTH_SLEEP ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_ROLLBACK_VERIFY_ATTEMPTS ACX_ROLLBACK_VERIFY_SLEEP ACX_GPU_SNAPSHOT_GATE_ATTEMPTS ACX_GPU_SNAPSHOT_GATE_SLEEP ACX_BOOT_SMOKE"
 
 # Build only (no push). Override the tag with TAG=staging.
 # ACX_BUILD_TARGET / ACX_IMAGE_VARIANT are passed through the environment.
@@ -167,7 +167,7 @@ deploy-reset-dev-fir-to-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote dev dev-fir
 
-# Verify a deployed environment matches local HEAD.
+# Verify /health and the running image against the VM release receipt (deployed-release.json).
 # Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
 # ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
 deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)

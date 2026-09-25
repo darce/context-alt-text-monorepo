@@ -760,7 +760,7 @@ def test_do_verify_surfaces_non_gating_readiness_code_and_body(tmp_path: Path) -
     assert failed.returncode != 0, failed.stdout + failed.stderr
     curl_log = (fail_dir / "curl.log").read_text()
     assert curl_log.count("/ready") == 1
-    assert curl_log.count("/health") == 3
+    assert curl_log.count("/health") == 1
 
 
 def test_restart_and_rollback_integration_points_are_deadlined() -> None:
@@ -821,7 +821,11 @@ def test_rollback_success_requires_post_restart_health_evidence() -> None:
     assert "abort_cutover_candidate" in body
     assert body.index("restore_prior_image_repo_env") < body.index("restore_topology_backups")
     assert body.index("restore_prior_image_repo_env") < body.index('"rollback systemctl restart')
-    assert body.index('"rollback systemctl restart') < body.index("restore_edge_backups")
+    assert body.index("cutover_inflight_present") < body.index("staged_rollback_runtime")
+    restart_at = body.index('"rollback systemctl restart')
+    canonical_probe_at = body.index("probe_canonical_api_health", restart_at)
+    edge_restore_at = body.index("restore_edge_backups", canonical_probe_at)
+    assert restart_at < canonical_probe_at < edge_restore_at
     assert body.index("restore_edge_backups") < body.index("abort_cutover_candidate")
     assert body.index("verify_restored_runtime") > body.index("abort_cutover_candidate")
     assert 'log "Restored' in orchestrator
@@ -1029,8 +1033,13 @@ def test_remote_env_image_tag_guard_leaves_dev_unaffected() -> None:
 def test_do_restart_guards_remote_env_image_tag_before_compose() -> None:
     """Cutover compose interpolates ACX_IMAGE_TAG; refuse before compose up."""
     body = _function_body("do_restart")
+    ship = _function_body("ship_cutover_candidate_units")
     assert "assert_remote_env_image_tag" in body
-    assert body.index("assert_remote_env_image_tag") < body.index("render_cutover_compose")
+    assert "ship_cutover_candidate_units" in body
+    assert "render_cutover_compose" in ship
+    assert "render_next_unit" in ship
+    assert body.index("assert_remote_env_image_tag") < body.index("ship_cutover_candidate_units")
+    assert body.index("ship_cutover_candidate_units") < body.index("recreate_cutover_candidate")
     assert body.index("assert_remote_env_image_tag") < body.index("recreate_cutover_candidate")
 
 
@@ -1430,6 +1439,8 @@ def _run_do_verify(
     attempts: int,
     health_sha: str,
     health_code: str = "200",
+    running_image_id: str = "sha256:" + "1" * 64,
+    candidate_image_id: str = "sha256:" + "1" * 64,
 ) -> subprocess.CompletedProcess[str]:
     curl_log = tmp_path / "curl.log"
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -1441,9 +1452,18 @@ source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS={attempts}
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS={attempts}
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS={attempts}
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS={attempts}
+ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
+ACX_CANDIDATE_DIGEST_REF="iad.ocir.io/test/acx-backend@sha256:{'a' * 64}"
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
+read_running_api_image_id() {{ printf '%s\\n' '{running_image_id}'; }}
+remote_image_id_for_digest() {{ printf '%s\\n' '{candidate_image_id}'; }}
 curl() {{
   printf '%s\\n' "$*" >>"{curl_log}"
   url="${{@: -1}}"
@@ -1489,7 +1509,7 @@ def test_do_verify_probes_ready_only_on_terminal_failure(tmp_path: Path) -> None
     assert result.returncode != 0, combined
     curl_log = (tmp_path / "curl.log").read_text()
     assert curl_log.count("/ready") == 1
-    assert curl_log.count("/health") == 3
+    assert curl_log.count("/health") == 1
     assert "non-gating" in combined
 
 
@@ -1586,6 +1606,12 @@ source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS=1
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS=1
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS=1
+ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
@@ -1704,6 +1730,12 @@ source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS=1
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS=1
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS=1
+ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
@@ -1739,6 +1771,12 @@ source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS=1
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS=1
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS=1
+ACX_ROLLBACK_VERIFY_SLEEP=0
 curl() {{
   printf '%s' $'password=hunter2\\001'
   return 7
@@ -1831,6 +1869,12 @@ source "{SCRIPT}"
 GREEN=; YELLOW=; RED=; RESET=
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS=1
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS=1
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS=1
+ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_VERIFY_EXPECT_LOCAL=1
 verify_running_image_matches_deployed() {{ return 0; }}
 verify_live_gpu_snapshots() {{ return 0; }}
@@ -2699,6 +2743,7 @@ _pull_ref() {{ return 0; }}
 image_digest_ref() {{
   printf '%s\\n' "$IMAGE_BASE@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 do_verify() {{ return 1; }}
 capture_failure_evidence() {{ return 0; }}
 restore_env_tag_to_rollback() {{ printf 'rollback-runtime=%s\\n' "$2"; return {rollback_rc}; }}
@@ -2879,7 +2924,12 @@ fi
 
 if [[ "${1:-}" == "exec" ]]; then
   if [[ "$*" == *"urllib.request"* ]]; then
-    printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
+    if [[ "${FAKE_HEALTH_CODE:-200}" =~ ^2[0-9][0-9]$ ]]; then
+      printf '{"commit_sha":"%s","status":"ok"}\n' "$candidate_commit"
+    else
+      printf 'HTTP %s\n' "${FAKE_HEALTH_CODE:-000}"
+      exit 1
+    fi
   fi
   exit 0
 fi
@@ -3021,7 +3071,11 @@ if [[ "$remote" == *"systemctl start"* && "$remote" == *"-next"* ]]; then
   if [[ "$remote" == *"docker compose"* && "$remote" == *"rm -fs api"* ]]; then
     : >"${state}/candidate-recreated"
   fi
-  printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  if [[ -f "${state}/rollback-pushed" ]]; then
+    printf '%s\n' "__ROLLBACK_CID__" >"${state}/next-running-cid"
+  else
+    printf '%s\n' "$stopped_cid" >"${state}/next-running-cid"
+  fi
   exit 0
 fi
 if [[ "$remote" == *"systemctl restart"* ]]; then
@@ -3117,6 +3171,12 @@ ACX_PULL_TIMEOUT=5
 ACX_PUSH_TIMEOUT=5
 ACX_VERIFY_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
 ACX_VERIFY_SLEEP=0
+ACX_CUTOVER_HEALTH_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
+ACX_CUTOVER_HEALTH_SLEEP=0
+ACX_CANONICAL_HEALTH_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
+ACX_CANONICAL_HEALTH_SLEEP=0
+ACX_ROLLBACK_VERIFY_ATTEMPTS={"2" if fail_at == "canonical_digest_race" else "1"}
+ACX_ROLLBACK_VERIFY_SLEEP=0
 ACX_IMAGE_REPO="$IMAGE_BASE"
 init_deploy_ocir_docker_config() {{ ACX_DEPLOY_OCIR_CONFIG_DIR="{tmp_path / "docker-config"}"; mkdir -p "$ACX_DEPLOY_OCIR_CONFIG_DIR"; return 0; }}
 preflight_ssh() {{ return 0; }}
@@ -3143,6 +3203,7 @@ repair_blob_volume_ownership() {{ return 0; }}
 restore_prior_image_repo_env() {{ return 0; }}
 _pull_ref() {{ return 0; }}
 image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 do_verify() {{ return 1; }}
 fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 {invoke}
@@ -3228,6 +3289,7 @@ def test_manual_rollback_captures_stopped_current_generation(tmp_path: Path) -> 
         tmp_path,
         invoke="do_rollback dev " + "a" * 12,
         runtime_mode="prior",
+        fail_at="none",
     )
     combined = result.stdout + result.stderr
     state = tmp_path / "rollback-state"
@@ -3241,7 +3303,11 @@ def test_manual_rollback_captures_stopped_current_generation(tmp_path: Path) -> 
     assert "Rollback verified healthy" in combined, combined
     assert docker_log.count(f"tag {rollback_digest} {base}:dev") == 1
     assert docker_log.count(f"push {base}:dev") == 1
+    assert ssh_log.count("systemctl start acx-dev-next") == 1, ssh_log
     assert ssh_log.count("systemctl restart acx-dev") == 1, ssh_log
+    assert ssh_log.index("systemctl start acx-dev-next") < ssh_log.index("systemctl restart acx-dev"), ssh_log
+    assert "systemctl stop acx-dev-next" in ssh_log, ssh_log
+    assert ssh_log.rindex("systemctl restart acx-dev") < ssh_log.rindex("systemctl stop acx-dev-next"), ssh_log
     assert (state / "running-cid").read_text().strip() == "4" * 64
 
 
@@ -3252,12 +3318,15 @@ def test_manual_rollback_keeps_http_503_health_gate(tmp_path: Path) -> None:
         invoke="do_rollback dev " + "a" * 12,
         runtime_mode="prior",
         health_code="503",
+        fail_at="none",
     )
     combined = result.stdout + result.stderr
+    ssh_log = (tmp_path / "rollback-state" / "ssh.log").read_text()
 
     assert result.returncode != 0, combined
-    assert "Rollback health/digest verification failed" in combined, combined
     assert "503" in combined, combined
+    assert "rollback candidate never became healthy" in combined, combined
+    assert ssh_log.count("systemctl restart acx-dev") == 0, ssh_log
     assert "Rollback verified healthy" not in combined
 
 
@@ -3285,15 +3354,18 @@ def test_actual_restart_failure_refuses_unowned_runtime_observation(tmp_path: Pa
 def test_do_restart_is_additive_then_flip() -> None:
     """OCIRV1-RB-11: start a next unit and flip traffic before touching the live unit."""
     body = _function_body("do_restart")
+    ship = _function_body("ship_cutover_candidate_units")
     assert "env_to_next_unit" in body
-    assert "render_cutover_compose" in body
-    assert "render_next_unit" in body
+    assert "ship_cutover_candidate_units" in body
+    assert "render_cutover_compose" in ship
+    assert "render_next_unit" in ship
     assert "recreate_cutover_candidate" in body
     assert "flip_edge_alias" in body
     assert "probe_cutover_api_health" in body
     assert body.index("recreate_cutover_candidate") < body.index("flip_edge_alias")
     assert body.index("probe_cutover_api_health") < body.index("flip_edge_alias")
     assert body.index("flip_edge_alias") < body.index("systemctl restart")
+    assert body.index("ship_cutover_candidate_units") < body.index("recreate_cutover_candidate")
     recreate = _function_body("recreate_cutover_candidate")
     assert recreate.index("systemctl stop") < recreate.index("rm -fs api") < recreate.index("systemctl start")
 
@@ -3535,10 +3607,18 @@ def test_flip_edge_alias_canonical_writes_commit_marker(tmp_path: Path) -> None:
 def test_deploy_signal_traps_run_cutover_recovery() -> None:
     """R-09: HUP/INT/TERM must recover inflight cutover instead of bare-exit."""
     init = _function_body("init_deploy_ocir_docker_config")
-    assert "deploy_interrupt_cleanup" in init
+    assert "install_deploy_interrupt_traps" in init
+    traps = _function_body("install_deploy_interrupt_traps")
+    assert "trap deploy_interrupt_cleanup EXIT" in traps
+    assert "trap 'deploy_interrupt_cleanup 129' HUP" in traps
+    assert "trap 'deploy_interrupt_cleanup 130' INT" in traps
+    assert "trap 'deploy_interrupt_cleanup 143' TERM" in traps
     assert "trap 'exit 129' HUP" not in init
     assert "trap 'exit 130' INT" not in init
     assert "trap 'exit 143' TERM" not in init
+    assert "trap 'exit 129' HUP" not in traps
+    assert "trap 'exit 130' INT" not in traps
+    assert "trap 'exit 143' TERM" not in traps
     cleanup = _function_body("deploy_interrupt_cleanup")
     assert "recover_interrupted_cutover" in cleanup
     restart = _function_body("do_restart")
@@ -4233,6 +4313,7 @@ for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pip
 done
 with_shared_tag_lock() {{ shift; "$@"; }}
 image_digest_ref() {{ echo "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 remote_image_id_for_digest() {{ echo "sha256:{"d" * 64}"; }}
 remote_image_digest_ref() {{
   if [[ "$1" == *@sha256:* ]]; then
@@ -4406,6 +4487,9 @@ def test_health_program_connection_refused(expected_sha: str) -> None:
 @pytest.mark.parametrize("probe", ["canonical", "cutover"])
 @pytest.mark.parametrize("rc,cause", [(1, "connection refused"), (124, "deadline exceeded")])
 def test_health_attempt_has_one_warning(probe: str, rc: int, cause: str) -> None:
+    health_budget = (
+        "ACX_CUTOVER_HEALTH" if probe == "cutover" else "ACX_CANONICAL_HEALTH"
+    )
     command = f"""
 source "{SCRIPT}"
 env_to_remote_dir() {{ echo /tmp; }}
@@ -4413,8 +4497,9 @@ env_to_compose_files() {{ echo -f compose.yml; }}
 remote_image_id_for_digest() {{ echo sha256:{'b' * 64}; }}
 run_with_deadline() {{ printf 'connection refused\nextra noise\n' >&2; return {rc}; }}
 warn() {{ echo "$*"; }}
-ACX_VERIFY_ATTEMPTS=2
-ACX_VERIFY_SLEEP=0
+{health_budget}_ATTEMPTS=2
+{health_budget}_SLEEP=0
+ACX_VERIFY_ATTEMPTS=9
 OCI_USER=test
 OCI_HOST=test
 probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
@@ -4423,8 +4508,11 @@ probe_{probe}_api_health dev image@sha256:{'b' * 64} {'a' * 40}
     assert result.returncode == 1
     assert result.stderr == ""
     lines = result.stdout.splitlines()
-    assert len(lines) == 2
-    for attempt, line in enumerate(lines, 1):
+    budget_lines = [line for line in lines if "budget: 2x0s" in line]
+    warning_lines = [line for line in lines if "budget: 2x0s" not in line]
+    assert len(budget_lines) == 1
+    assert len(warning_lines) == 2
+    for attempt, line in enumerate(warning_lines, 1):
         assert f"attempt {attempt}/2: " in line
         assert cause in line
 

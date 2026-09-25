@@ -224,7 +224,14 @@ class ClusterProjectionWriterTest extends TestCase
         $this->assertStringContainsString('quality_components', $query);
         $this->assertStringContainsString('representative_media_id', $query);
         $this->assertStringContainsString('undoable_merge_receipt_id', $query);
-        $this->assertStringContainsString('representative_quality = IF(1, VALUES(representative_quality), representative_quality)', $query);
+        $this->assertStringContainsString('representative_quality = IF(1 AND VALUES(snapshot_version) > snapshot_version, VALUES(representative_quality), representative_quality)', $query);
+        $this->assertStringContainsString('quality_components = IF(1 AND VALUES(snapshot_version) > snapshot_version, VALUES(quality_components), quality_components)', $query);
+        $this->assertStringContainsString('representative_media_id = IF(1 AND VALUES(snapshot_version) > snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
+        $this->assertStringContainsString('undoable_merge_receipt_id = IF(1 AND VALUES(snapshot_version) > snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
+        $this->assertTrue(
+            strpos($query, 'representative_quality = IF') < strpos($query, 'snapshot_version = GREATEST'),
+            'export fields must compare against the stored version before it is updated'
+        );
 
         $row = $wpdb->tableRows['wp_acx_clusters'][0];
         $this->assertSame('0.82', (string) $row['representative_quality']);
@@ -299,5 +306,44 @@ class ClusterProjectionWriterTest extends TestCase
         $this->assertNull($row['quality_components']);
         $this->assertNull($row['representative_media_id']);
         $this->assertNull($row['undoable_merge_receipt_id']);
+    }
+
+    public function testUpsertProjectionClusterRequiresQualityFieldsAsAPair(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $partial_exports = [
+            'quality-only' => [
+                'representative_quality' => 0.82,
+            ],
+            'components-only' => [
+                'quality_components' => [
+                    'confidence' => 0.94,
+                    'bbox_area' => 77.0,
+                    'sharpness' => 42.5,
+                    'occlusion_severity' => null,
+                ],
+            ],
+        ];
+
+        foreach ($partial_exports as $cluster_uuid => $snapshot_export) {
+            $this->writer->upsert_projection_cluster(
+                self::currentTenantId(),
+                'cluster-' . $cluster_uuid,
+                'Projection Label',
+                4,
+                9,
+                null,
+                null,
+                false,
+                $snapshot_export
+            );
+        }
+
+        foreach ($wpdb->tableRows['wp_acx_clusters'] as $row) {
+            $this->assertNull($row['representative_quality']);
+            $this->assertNull($row['quality_components']);
+        }
     }
 }

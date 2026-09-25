@@ -383,6 +383,7 @@ export PATH="{bin_dir}:$PATH"
 env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 ssh() {{ bash -c "${{@: -1}}"; }}
 preflight_ssh() {{ :; }}
+ACX_DEPLOY_BACKUP_ROOT="{tmp_path}/deploy-backups"
 ACX_PRIOR_IMAGE_REPO_ENV=dev
 {command}
 '''
@@ -433,6 +434,7 @@ def test_sticky_clear_invalidates_prior_owner(tmp_path: Path, action: str) -> No
     assert _sticky_ship(tmp_path, owner).returncode == 0
     result = _sticky_run(tmp_path, "clear_remote_image_repo_env dev")
     assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "deploy-backups" / "locks" / "deploy-dev.lease").exists()
     cleared = env_file.read_bytes()
     result = _sticky_run(tmp_path, f'image_repo_resource {action} "{tmp_path}" {owner} example.test/shared')
     assert result.returncode == 75, result.stderr

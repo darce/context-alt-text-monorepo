@@ -937,6 +937,7 @@ class LifecycleManager {
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_idempotency (idempotency_key),
+			KEY idx_tenant_status_created (tenant_id, status, created_at),
 			KEY idx_status_created (status, created_at),
 			KEY idx_entity (entity_type, entity_key)
 		) {$charset_collate};";

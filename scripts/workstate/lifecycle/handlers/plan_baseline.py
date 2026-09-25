@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tracked fallback for `make plan-accept`, used only when `Makefile.d/plans.mk` is not installed.
 When the overlay is installed, its recipe runs instead and owns review gating and landing.
-This fallback validates `TASK`/`PLAN` inputs only; it never commits or lands anything.
+This fallback validates `TASK`/`PLAN` inputs only; it exits 3 because nothing was landed.
 `mk/lane-lifecycle.mk` invokes this file through `ACX_LIFECYCLE_HANDLERS`.
 """
 
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 HANDLER_ID = "scripts/workstate/lifecycle/handlers/plan_baseline.py"
+EXIT_VALIDATED_ONLY = 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         "(install the workbay plugin overlay for the gated plan-accept)",
         file=sys.stderr,
     )
-    return 0
+    return EXIT_VALIDATED_ONLY
 
 
 if __name__ == "__main__":

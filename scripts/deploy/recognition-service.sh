@@ -1825,6 +1825,24 @@ render_unit() {
     | sed -E 's|^(ExecStop=.*) stop$|\1 stop api worker|'
 }
 
+install_rendered_unit() {
+  local env="$1" remote_dir unit secret_backend hook probe_rc=0 rendered
+  remote_dir="$(env_to_remote_dir "$env")"
+  unit="$(env_to_unit "$env")"
+  secret_backend="$(_remote_dotenv_value "$remote_dir" RECOGNITION_SECRET_BACKEND)"
+  if [[ "$secret_backend" == "oci_vault" ]]; then
+    hook="${remote_dir}/fetch-vault-bootstrap.sh"
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" "test -x '${hook}'" || probe_rc=$?
+    if (( probe_rc == 255 )); then
+      fail "could not verify vault bootstrap hook ${hook} on ${SSH_TARGET} (ssh exit ${probe_rc}); refusing to install the unit"
+    elif (( probe_rc != 0 )); then
+      fail "oci_vault requires executable ${hook}; install it per infra/oci/vault-instance-principal-runbook.md"
+    fi
+  fi
+  rendered="$(render_unit "$env" "$secret_backend")"
+  printf '%s\n' "$rendered" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+}
+
 # API-only compose for the additive cutover candidate. Shares the live
 # network, named blob volume, and postgres data via bind mounts, but uses a
 # unique DNS alias so Caddy can flip without stopping the serving unit.
@@ -2519,7 +2537,7 @@ converge_runtime() {
     _ship_file "${SERVICE_DIR}/docker-compose.admin.yml" "${remote_dir}/docker-compose.admin.yml"
   fi
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06) — not re-written here.
-  render_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cat > '/tmp/${unit}.service' && sudo cp '/tmp/${unit}.service' '/etc/systemd/system/${unit}.service' && rm -f '/tmp/${unit}.service' && sudo systemctl daemon-reload"
+  install_rendered_unit "$env"
 
   # ---- Edge mutation (only when gated in) ---------------------------------
   if (( edge_apply_edge == 0 )); then

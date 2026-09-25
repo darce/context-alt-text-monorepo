@@ -63,7 +63,6 @@ const PUBLIC_KEYS = [
   'names.omit.public',
   'names.strong.public',
   'names.weak.public',
-  'names.no_score.public',
   'description.heading.public',
   'description.written.public',
   'description.current.public',
@@ -134,10 +133,7 @@ describe('public guide copy overlay', () => {
     expect(guidedCopy('steps.title.public')).toBe("What you'll do");
     expect(guidedCopy('photo.count.public', { photoNumber: 1 })).toBe('Photo 1 of 2');
     expect(guidedCopy('names.strong.public', { similarity: '89.4%' })).toBe('89.4% match');
-    expect(guidedCopy('names.weak.public', { similarity: '56.7%' })).toBe(
-      '56.7% match. Weak match: compare the photos before you use this name.',
-    );
-    expect(guidedCopy('names.no_score.public')).toBe('No score: the saved group for this name started from this face.');
+    expect(guidedCopy('names.weak.public', { similarity: '56.7%' })).toBe('56.7% match. Weak match');
     expect(guidedCopy('description.use.public')).toBe('Use this description');
     expect(guidedCopy('description.keep.public')).toBe('Keep the current description');
     expect(guidedCopy('description.undo.public')).toBe('Undo this change');

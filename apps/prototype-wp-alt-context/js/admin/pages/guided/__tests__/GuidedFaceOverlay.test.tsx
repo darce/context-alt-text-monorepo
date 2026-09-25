@@ -76,7 +76,7 @@ describe('GuidedFaceOverlay', () => {
     expect(strongButton.querySelector('.acx-guided-face-overlay__warning-icon')).toBeNull();
   });
 
-  it('uses the no-score copy for a cluster anchor', () => {
+  it('shows only the name for a cluster anchor', () => {
     const anchor: GuidedFaceOverlayFace = {
       ...faces[1],
       id: 'anchor',
@@ -86,9 +86,8 @@ describe('GuidedFaceOverlay', () => {
     };
     render(<GuidedFaceOverlay faces={[anchor]} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
 
-    const noScoreCopy = `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
-    const button = screen.getByRole('button', { name: `${anchor.label}, ${noScoreCopy}` });
-    expect(button).toHaveTextContent(noScoreCopy);
+    const button = screen.getByRole('button', { name: anchor.label });
+    expect(button.querySelector('.acx-guided-face-overlay__chip-label')?.textContent).toBe(anchor.label);
     expect(button).not.toHaveTextContent(/100%/);
     expect(button.querySelector('.acx-guided-face-overlay__warning-icon')).toBeNull();
   });

@@ -58,9 +58,10 @@ const cropAlt = (match: GuidedFaceMatch): string =>
 
 const isWeakMatch = (match: GuidedFaceMatch): boolean => match.face.strength === GUIDED_MATCH_STRENGTH.WEAK;
 
-const matchEvidenceCopy = (match: GuidedFaceMatch): string => {
+// The anchor face seeded the saved group, so it has no score worth showing.
+const matchEvidenceCopy = (match: GuidedFaceMatch): string | null => {
   if (isClusterAnchor(match.face) || match.face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
-    return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
+    return null;
   }
   if (match.face.similarity === null) {
     return guidedCopy('names.match.unavailable');
@@ -155,20 +156,26 @@ export const GuidedFaceMatchCard = ({
     />
   );
 
-  const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element => (
-    <p
-      className={
-        isWeakMatch(match) ? 'acx-guided-face__match-line acx-guided-face__weak-match' : 'acx-guided-face__match-line'
-      }
-    >
-      {isWeakMatch(match) ? (
-        <span className="acx-guided-face__warning-icon" role="img" aria-label={guidedCopy('names.match.weak_icon')}>
-          <AlertTriangle aria-hidden="true" size={16} />
-        </span>
-      ) : null}
-      <span>{matchEvidenceCopy(match)}</span>
-    </p>
-  );
+  const matchEvidence = (match: GuidedFaceMatch): React.JSX.Element | null => {
+    const copy = matchEvidenceCopy(match);
+    if (copy === null) {
+      return null;
+    }
+    return (
+      <p
+        className={
+          isWeakMatch(match) ? 'acx-guided-face__match-line acx-guided-face__weak-match' : 'acx-guided-face__match-line'
+        }
+      >
+        {isWeakMatch(match) ? (
+          <span className="acx-guided-face__warning-icon" role="img" aria-label={guidedCopy('names.match.weak_icon')}>
+            <AlertTriangle aria-hidden="true" size={16} />
+          </span>
+        ) : null}
+        <span>{copy}</span>
+      </p>
+    );
+  };
 
   return (
     <section aria-labelledby={titleId} className="acx-guided-face__card" data-image-key={representative.imageKey}>

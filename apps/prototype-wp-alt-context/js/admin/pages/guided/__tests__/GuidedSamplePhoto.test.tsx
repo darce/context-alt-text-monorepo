@@ -50,7 +50,7 @@ describe('GuidedSamplePhoto image geometry', () => {
     expect(anchorFace).toBeDefined();
     const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
     expect(anchorButton?.getAttribute('aria-label')).toContain(formatGuidedSimilarity(anchorFace!.similarity!));
-    expect(anchorButton?.getAttribute('aria-label')).not.toContain(guidedCopy('names.no_score.public'));
+    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/No score/);
   });
 
   it('marks a loaded portrait image as portrait', () => {
@@ -223,8 +223,8 @@ describe('GuidedSamplePhoto figure content', () => {
       const accessibleName = button.getAttribute('aria-label') ?? '';
       const publicText = `${chipText} ${accessibleName}`;
       if (face?.isClusterAnchor) {
-        expect(publicText).toContain(guidedCopy('names.no_score.public'));
-        expect(publicText).not.toMatch(/100%/);
+        expect(chipText).toBe(accessibleName);
+        expect(publicText).not.toMatch(/100%|No score/);
       } else if (face?.similarity !== null && face?.similarity !== undefined) {
         expect(publicText).toContain(formatGuidedSimilarity(face.similarity));
       }
@@ -233,7 +233,7 @@ describe('GuidedSamplePhoto figure content', () => {
     const anchor = photoFaces.find((face) => face.isClusterAnchor);
     if (anchor !== undefined) {
       const anchorButton = overlay.querySelector(`[data-face-id="${anchor.id}"]`);
-      expect(anchorButton?.getAttribute('aria-label')).toContain(guidedCopy('names.no_score.public'));
+      expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/No score/);
       expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/100%/);
       expect(anchorButton?.textContent).not.toMatch(/100%/);
     }

@@ -67,8 +67,7 @@ export const PUBLIC_GUIDED_COPY = {
   'names.use.public': 'Use {name}',
   'names.omit.public': 'Leave unnamed',
   'names.strong.public': '{similarity} match',
-  'names.weak.public': '{similarity} match. Weak match: compare the photos before you use this name.',
-  'names.no_score.public': 'No score: the saved group for this name started from this face.',
+  'names.weak.public': '{similarity} match. Weak match',
   'description.heading.public': '2. Check the suggested description',
   'description.written.public':
     'Written by AI in advance from the photo, the page it appears on, ' + 'and the names you chose.',

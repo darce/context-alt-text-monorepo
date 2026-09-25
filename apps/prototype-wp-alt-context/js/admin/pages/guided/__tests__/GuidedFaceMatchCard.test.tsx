@@ -177,10 +177,8 @@ describe('GuidedFaceMatchCard', () => {
     expect(
       within(justinCard).getByText(guidedCopy('names.strong.public', { similarity: formatGuidedSimilarity(0.8938) })),
     ).toBeInTheDocument();
-    expect(
-      within(katyCard).getByText(/No score: the saved group for this name started from this face\./),
-    ).toBeInTheDocument();
-    expect(katyCard).toHaveTextContent('Compare photos before you use this name.');
+    expect(katyCard).not.toHaveTextContent(/No score|before you use this name/);
+    expect(katyCard.querySelector('.acx-guided-face__match-line')).toBeNull();
     expect(justinCard).not.toHaveTextContent(/Saved suggestion:/);
     expect(katyCard.textContent).not.toMatch(/\d+(?:\.\d+)?%/);
 
@@ -244,10 +242,9 @@ describe('GuidedFaceMatchCard', () => {
     expect(currentPhoto).toHaveAttribute('data-size-px', '160');
     expect(currentPhoto).toHaveAttribute('data-shape', 'square');
     expect(currentPhoto).toHaveStyle({ width: '160px', height: '160px' });
-    const anchorEvidence = guidedCopy('names.no_score.public') + ' Compare photos before you use this name.';
-    expect(within(dialog).getByText(anchorEvidence)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(/No score/);
     expect(currentPhotoHeading.nextElementSibling).toBe(currentPhoto);
-    expect(currentPhoto.nextElementSibling).toHaveClass('acx-guided-face__match-line');
+    expect(currentPhoto.nextElementSibling).toBeNull();
     expect(dialog).not.toHaveTextContent(/\b100(?:\.0)?%/);
 
     const references = within(dialog).getAllByTestId('guided-lightbox-reference-photo');

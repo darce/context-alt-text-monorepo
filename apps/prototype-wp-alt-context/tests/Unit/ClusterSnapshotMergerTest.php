@@ -108,10 +108,14 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned)', $query);
         $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $query);
         $this->assertStringContainsString('suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)', $query);
-        $this->assertStringContainsString('representative_quality = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_quality), representative_quality)', $query);
-        $this->assertStringContainsString('quality_components = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(quality_components), quality_components)', $query);
-        $this->assertStringContainsString('representative_media_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
-        $this->assertStringContainsString('undoable_merge_receipt_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
+        $this->assertStringContainsString('representative_quality = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_quality), representative_quality)', $query);
+        $this->assertStringContainsString('quality_components = IF(VALUES(snapshot_version) > snapshot_version, VALUES(quality_components), quality_components)', $query);
+        $this->assertStringContainsString('representative_media_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
+        $this->assertStringContainsString('undoable_merge_receipt_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
+        $this->assertTrue(
+            strpos($query, 'representative_quality = IF') < strpos($query, 'snapshot_version = GREATEST'),
+            'export fields must compare against the stored version before it is updated'
+        );
         // The monotonic version column itself stays GREATEST and the curation
         // guard on label is preserved.
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);

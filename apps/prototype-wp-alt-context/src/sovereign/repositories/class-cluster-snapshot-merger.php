@@ -142,10 +142,10 @@ class ClusterSnapshotMerger {
 				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)
 				VALUES (%s, %s, NULLIF(%s, \'\'), %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
-					label = IF(is_user_confirmed = 1, label, VALUES(label)),
-					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, VALUES(label_cleared_label)),
-					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, VALUES(label_cleared_revision)),
-					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
+					label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label)),
+					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label_cleared_label), label_cleared_label)),
+					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label_cleared_revision), label_cleared_revision)),
+					curation_state = IF(is_user_confirmed = 1, curation_state, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(curation_state), curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
 					local_revision = IF(is_user_confirmed = 1, local_revision, local_revision),

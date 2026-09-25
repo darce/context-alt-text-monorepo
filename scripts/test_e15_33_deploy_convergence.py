@@ -1510,6 +1510,7 @@ GREEN=; YELLOW=; RED=; RESET=
 REMOTE_BUILD=0
 init_deploy_ocir_docker_config() {{ return 0; }}
 preflight_ssh() {{ printf 'preflight_ssh\\n' >>"{records}"; return 0; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ printf 'preflight:%s\\n' "$1" >>"{records}"; return 0; }}
 preflight_remote_ocir_auth() {{ return 0; }}
 preflight_docker() {{ return 0; }}

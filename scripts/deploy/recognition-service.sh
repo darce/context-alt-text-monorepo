@@ -3312,7 +3312,11 @@ flip_edge_alias() {
   alias="$(env_to_api_alias "$env")"
   next_alias="${alias}-next"
   next_unit="$(env_to_next_unit "$env")"
-  digest="${ACX_CANDIDATE_DIGEST_REF:-}"
+  if (( $# >= 3 )); then
+    digest="$3"
+  else
+    digest="${ACX_CANDIDATE_DIGEST_REF:-}"
+  fi
   case "$target" in
     next) from="$alias"; to="$next_alias" ;;
     canonical) from="$next_alias"; to="$alias" ;;
@@ -3424,11 +3428,17 @@ PYPROBE
 
 probe_cutover_api_health() {
   local env="$1" expected_digest expected_sha next_project remote_dir timeout attempt max_attempts sleep_s budget
+  local image_only=0 sha_argument=""
   local expected_image_id cause rc program
   program="$(health_probe_program)"
   expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
   expected_sha="${3:-}"
-  pin_deploy_sha
+  if [[ "${expected_sha}" == "--image-only" ]]; then
+    image_only=1
+    expected_sha=""
+  else
+    pin_deploy_sha
+  fi
   remote_dir="$(env_to_remote_dir "$env")"
   next_project="acx-${env}-next"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -3436,12 +3446,15 @@ probe_cutover_api_health() {
     warn "cutover candidate health probe requires a digest-pinned expected image"
     return 1
   fi
-  if [[ -z "${expected_sha}" ]]; then
-    expected_sha="${DEPLOY_SHA}"
-  fi
-  if [[ ! "${expected_sha}" =~ ^[a-f0-9]{40}$ ]]; then
-    warn "cutover candidate health probe requires a valid expected commit"
-    return 1
+  if [[ "${image_only}" != "1" ]]; then
+    if [[ -z "${expected_sha}" ]]; then
+      expected_sha="${DEPLOY_SHA}"
+    fi
+    if [[ ! "${expected_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+      warn "cutover candidate health probe requires a valid expected commit"
+      return 1
+    fi
+    sha_argument=" '${expected_sha}'"
   fi
   if ! budget="$(probe_budget ACX_CUTOVER_HEALTH 5 5)"; then
     return 1
@@ -3456,7 +3469,7 @@ probe_cutover_api_health() {
   for attempt in $(seq 1 "${max_attempts}"); do
     if cause="$(run_with_deadline "${timeout}" "cutover health probe ${env} attempt ${attempt}" \
       ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && { [ \"\$image_id\" = '${expected_image_id}' ] || { echo image mismatch; exit 1; }; } && docker exec \"\$cid\" python -c '${program}' '${expected_sha}'" 2>&1)"; then
+      "cd '${remote_dir}' && cid=\$(docker compose -p '${next_project}' -f docker-compose.cutover.yml ps -q api | head -1) && { [ -n \"\$cid\" ] || { echo container missing; exit 1; }; } && image_id=\$(docker inspect --format '{{.Image}}' \"\$cid\") && { [ \"\$image_id\" = '${expected_image_id}' ] || { echo image mismatch; exit 1; }; } && docker exec \"\$cid\" python -c '${program}'${sha_argument}" 2>&1)"; then
       log "Cutover candidate ${next_project} is healthy"
       return 0
     else
@@ -3499,6 +3512,23 @@ probe_canonical_api_health() {
     verify_retry_sleep "${attempt}" "${max_attempts}" "${sleep_s}"
   done
   return 1
+}
+
+ship_cutover_candidate_units() {
+  local env="$1" remote_dir next_unit
+  remote_dir="$(env_to_remote_dir "$env")"
+  next_unit="$(env_to_next_unit "$env")"
+  log "Shipping cutover candidate unit ${next_unit} on ${SSH_TARGET}"
+  if ! render_cutover_compose | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cat > '/tmp/docker-compose.cutover.yml' && sudo cp '/tmp/docker-compose.cutover.yml' '${remote_dir}/docker-compose.cutover.yml' && rm -f '/tmp/docker-compose.cutover.yml'"; then
+    warn "could not ship cutover compose for ${env}"
+    return 1
+  fi
+  if ! render_next_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "cat > '/tmp/${next_unit}.service' && sudo cp '/tmp/${next_unit}.service' '/etc/systemd/system/${next_unit}.service' && rm -f '/tmp/${next_unit}.service' && sudo systemctl daemon-reload"; then
+    warn "could not ship cutover unit ${next_unit}"
+    return 1
+  fi
 }
 
 do_restart() {
@@ -3556,15 +3586,8 @@ do_restart() {
     return 1
   fi
 
-  log "Shipping cutover candidate unit ${next_unit} on ${SSH_TARGET}"
-  if ! render_cutover_compose | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cat > '/tmp/docker-compose.cutover.yml' && sudo cp '/tmp/docker-compose.cutover.yml' '${remote_dir}/docker-compose.cutover.yml' && rm -f '/tmp/docker-compose.cutover.yml'"; then
-    warn "could not ship cutover compose for ${env}"
-    return 1
-  fi
-  if ! render_next_unit "$env" | ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cat > '/tmp/${next_unit}.service' && sudo cp '/tmp/${next_unit}.service' '/etc/systemd/system/${next_unit}.service' && rm -f '/tmp/${next_unit}.service' && sudo systemctl daemon-reload"; then
-    warn "could not ship cutover unit ${next_unit}"
+  # Deploy and rollback share the same rendered candidate units.
+  if ! ship_cutover_candidate_units "$env"; then
     return 1
   fi
 
@@ -3886,8 +3909,86 @@ restore_registry_env_tag() {
   fi
 }
 
+staged_rollback_runtime() {
+  local env="$1" unit next_unit timeout
+  unit="$(env_to_unit "$env")"
+  next_unit="$(env_to_next_unit "$env")"
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "staged rollback requires a digest-pinned rollback image (got: ${ACX_ROLLBACK_DIGEST_REF:-empty})"
+    return 1
+  fi
+  if ! ship_cutover_candidate_units "$env"; then
+    return 1
+  fi
+  ACX_CUTOVER_ENV="$env"
+  ACX_CUTOVER_COMMITTED=0
+  if ! recreate_cutover_candidate "$env"; then
+    warn "rollback candidate ${next_unit} could not be force-recreated"
+    if ! abort_cutover_candidate "$env"; then
+      warn "rollback candidate cleanup also failed after recreation failure"
+    fi
+    return 1
+  fi
+  if ! probe_cutover_api_health "$env" "${ACX_ROLLBACK_DIGEST_REF}" --image-only; then
+    if ! abort_cutover_candidate "$env"; then
+      warn "rollback candidate cleanup failed after health failure"
+    fi
+    warn "rollback candidate never became healthy; ${unit} left serving the current release"
+    return 1
+  fi
+  if ! flip_edge_alias "$env" next "${ACX_ROLLBACK_DIGEST_REF}"; then
+    warn "traffic flip to ${next_unit} failed; ${unit} left serving the current release"
+    if ! abort_cutover_candidate "$env"; then
+      warn "rollback candidate cleanup failed after traffic flip failure"
+    fi
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=1
+  if ! enable_cutover_candidate "$env"; then
+    warn "could not enable ${next_unit} after traffic flip; reverting to keep reboot-safe routing"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "cutover candidate cleanup failed after enablement rollback"
+      fi
+    else
+      warn "canonical flip failed; leaving candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  ACX_LIVE_DISRUPTED=1
+  if ! run_with_deadline "${timeout}" "rollback systemctl restart ${unit}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
+    warn "rollback restart failed; traffic remains on ${next_unit} serving the rollback image"
+    return 1
+  fi
+  if ! probe_canonical_api_health "$env"; then
+    warn "canonical ${unit} did not become healthy after rollback restart; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! verify_running_image_digest "$env" "${ACX_ROLLBACK_DIGEST_REF}"; then
+    warn "canonical ${unit} is running the wrong rollback image; traffic remains on ${next_unit}"
+    return 1
+  fi
+  if ! flip_edge_alias "$env" canonical; then
+    warn "could not flip traffic back to ${unit}; traffic remains on ${next_unit}"
+    return 1
+  fi
+  ACX_TRAFFIC_FLIPPED=0
+  ACX_CUTOVER_COMMITTED=1
+  if ! abort_cutover_candidate "$env"; then
+    warn "cutover candidate cleanup failed after successful canonical flip"
+    return 1
+  fi
+  ACX_LIVE_DISRUPTED=0
+  return 0
+}
+
 restore_runtime_and_edge() {
   local env="$1" restart_runtime="${2:-0}" unit inspect_timeout rollback_sha
+  local traffic_side="" skip_edge_cleanup=0 inflight_rc=0
   inspect_timeout="$(validated_deadline ACX_REMOTE_INSPECT_TIMEOUT 60)"
   # Check ownership at the sticky resource before any runtime compensation.
   # This also keeps sticky cleanup independent of downstream topology failures.
@@ -3902,29 +4003,68 @@ restore_runtime_and_edge() {
     return 1
   fi
   if [[ "${restart_runtime}" == "1" ]]; then
-    assert_remote_env_image_tag "$env"
-    unit="$(env_to_unit "${env}")"
-    if ! run_with_deadline "${inspect_timeout}" "rollback systemctl restart ${unit}" \
-      ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
-      warn "could not restart ${unit} on the restored image"
-      return 1
-    fi
-  fi
-  if ! restore_edge_backups "${env}"; then
     if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
-      warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+      traffic_side="next"
+    else
+      cutover_inflight_present "${env}" || inflight_rc=$?
+      case "${inflight_rc}" in
+        0)
+          traffic_side="next"
+          ACX_TRAFFIC_FLIPPED=1
+          ;;
+        1) traffic_side="canonical" ;;
+        *)
+          warn "rollback cannot establish which unit serves ${env}; refusing to restart"
+          return 1
+          ;;
+      esac
+    fi
+    unit="$(env_to_unit "${env}")"
+    if [[ "${traffic_side}" == "canonical" ]]; then
+      if ! restore_edge_backups "${env}"; then
+        if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+          warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+          return 1
+        fi
+        warn "could not restore Caddy edge topology from .bak"
+        return 1
+      fi
+      assert_remote_env_image_tag "$env"
+      if ! staged_rollback_runtime "${env}"; then
+        return 1
+      fi
+      skip_edge_cleanup=1
+    else
+      assert_remote_env_image_tag "$env"
+      if ! run_with_deadline "${inspect_timeout}" "rollback systemctl restart ${unit}" \
+        ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
+        warn "could not restart ${unit} on the restored image"
+        return 1
+      fi
+      if ! probe_canonical_api_health "${env}" \
+        || ! verify_running_image_digest "${env}" "${ACX_ROLLBACK_DIGEST_REF}"; then
+        warn "canonical ${unit} is not healthy on the rollback image; traffic remains on ${env}-next. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+    fi
+  fi
+  if (( skip_edge_cleanup == 0 )); then
+    if ! restore_edge_backups "${env}"; then
+      if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+        warn "edge restore failed while traffic remains on ${env}-next; leaving candidate serving. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+      warn "could not restore Caddy edge topology from .bak"
       return 1
     fi
-    warn "could not restore Caddy edge topology from .bak"
-    return 1
-  fi
-  if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
-    warn "edge restore left traffic on ${env}-next; refusing to drain candidate. Recovery: $(rollback_command_hint "${env}")"
-    return 1
-  fi
-  if ! abort_cutover_candidate "${env}"; then
-    warn "could not drain cutover candidate after restoring canonical topology"
-    return 1
+    if [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
+      warn "edge restore left traffic on ${env}-next; refusing to drain candidate. Recovery: $(rollback_command_hint "${env}")"
+      return 1
+    fi
+    if ! abort_cutover_candidate "${env}"; then
+      warn "could not drain cutover candidate after restoring canonical topology"
+      return 1
+    fi
   fi
   if [[ "${restart_runtime}" == "1" ]]; then
     if ! verify_restored_runtime "${env}" "${ACX_ROLLBACK_DIGEST_REF}"; then

@@ -121,7 +121,7 @@ def test_main_returns_zero_and_disposes_on_success(monkeypatch) -> None:
 
     engine = _patch_engine(monkeypatch)
     monkeypatch.setattr(mod, "sync_schema", lambda _engine: [])
-    assert mod.main() == 0
+    assert mod.main([]) == 0
     assert engine.disposed is True
 
 
@@ -134,7 +134,7 @@ def test_main_fails_closed_and_disposes_on_error(monkeypatch) -> None:
         raise RuntimeError("DDL error")
 
     monkeypatch.setattr(mod, "sync_schema", _boom)
-    assert mod.main() == 1
+    assert mod.main([]) == 1
     assert engine.disposed is True
 
 

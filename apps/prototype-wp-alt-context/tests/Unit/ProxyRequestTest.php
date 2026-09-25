@@ -1451,6 +1451,10 @@ PHP;
         $uiReadCircuit = $this->familyCircuitKey($baseUrl, 'ui_read');
 
         $starting = $this->validatedWarmingHttp();
+        $startingBody = json_decode((string) $starting['body'], true);
+        $this->assertIsArray($startingBody);
+        $startingBody['detail']['startup_budget_seconds'] = 90;
+        $starting['body'] = json_encode($startingBody);
 
         for ($i = 0; $i < 3; $i++) {
             $this->queueHttpResponse($starting);
@@ -1463,12 +1467,56 @@ PHP;
                 $result->get_data()['detail']['code'] ?? null
             );
             $this->assertSame(5, $result->get_data()['detail']['warmup_eta_seconds'] ?? null);
+            $this->assertSame(90, $result->get_data()['detail']['startup_budget_seconds'] ?? null);
         }
 
         $this->assertFalse(get_transient($describeCircuit), 'validated warming must not open describe');
         $this->assertFalse(get_transient($describeFailures), 'validated warming must not increment describe');
         $this->assertFalse(get_transient($uiReadCircuit), 'warming must not open ui_read');
         $this->assertCount(3, $this->getHttpCalls());
+    }
+
+    public function testTypedErrorDetailKeySetIncludesSchemaLifecycleFields(): void
+    {
+        $constants = (new \ReflectionClass(AbstractRecognitionProxyController::class))->getConstants();
+        $detailKeys = $constants['TYPED_ERROR_DETAIL_KEYS'] ?? null;
+
+        $this->assertIsArray($detailKeys);
+        $this->assertContains('startup_budget_seconds', $detailKeys);
+        $this->assertContains('reason', $detailKeys);
+        $this->assertContains('lifecycle_reason', $detailKeys);
+    }
+
+    public function testDescribeOpenCircuitPreservesValidatedOperationIdAndBoundsRetryAfter(): void
+    {
+        add_filter('acx_proxy_circuit_open_seconds', static fn (): int => 3600);
+
+        $harness = $this->makeFamilyHarness();
+        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl(), 'describe');
+        set_transient($circuitKey, 1, 60);
+
+        $open = $harness->call(
+            'POST',
+            '/scene/describe/multipart',
+            'description',
+            ['operation_id' => 'op-open-circuit-lease']
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $open);
+        $this->assertSame(503, $open->get_status());
+        $this->assertSame('120', $open->get_headers()['Retry-After'] ?? null);
+        $this->assertTypedUnavailableOpenCircuit($open->get_data(), 'op-open-circuit-lease');
+
+        $invalid = $harness->call(
+            'POST',
+            '/scene/describe/multipart',
+            'description',
+            ['operation_id' => str_repeat('a', 129)]
+        );
+
+        $this->assertInstanceOf(WP_REST_Response::class, $invalid);
+        $this->assertTypedUnavailableOpenCircuit($invalid->get_data());
+        $this->assertCount(0, $this->getHttpCalls());
     }
 
     public function testDescribeFailuresOpenOnlyDescribeFamily(): void
@@ -1514,7 +1562,7 @@ PHP;
             'description_service_unavailable',
             $open->get_data()['detail']['code'] ?? null
         );
-        $this->assertArrayNotHasKey('Retry-After', $open->get_headers());
+        $this->assertSame('60', $open->get_headers()['Retry-After'] ?? null);
         $this->assertCount(2, $this->getHttpCalls(), 'open describe breaker must not dispatch');
         $this->assertTypedUnavailableOpenCircuit($open->get_data());
     }
@@ -1846,12 +1894,12 @@ PHP;
 
     /**
      * Structural check of scene-describe-multipart.schema.json error branch
-     * for a locally generated open-circuit envelope (operation_id is null
-     * because no durable operation was accepted).
+     * for a locally generated open-circuit envelope. A validated request
+     * operation_id is retained when a lease was accepted before the circuit opened.
      *
      * @param mixed $body
      */
-    private function assertTypedUnavailableOpenCircuit(mixed $body): void
+    private function assertTypedUnavailableOpenCircuit(mixed $body, ?string $operationId = null): void
     {
         $this->assertIsArray($body);
         $this->assertSame(['detail'], array_keys($body));
@@ -1861,9 +1909,10 @@ PHP;
         $this->assertIsString($detail['message'] ?? null);
         $this->assertNotSame('', $detail['message']);
         $this->assertArrayHasKey('operation_id', $detail);
-        $this->assertNull($detail['operation_id']);
+        $this->assertSame($operationId, $detail['operation_id']);
         $this->assertArrayHasKey('startup_id', $detail);
         $this->assertNull($detail['startup_id']);
+        $this->assertSame('circuit_open', $detail['reason'] ?? null);
         $this->assertArrayNotHasKey('warmup_eta_seconds', $detail);
         $timing = $detail['timing'] ?? null;
         $this->assertIsArray($timing);
@@ -1877,7 +1926,7 @@ PHP;
         $this->assertNull($timing['startup_ms']);
         $this->assertNull($timing['server_elapsed_ms']);
         $this->assertEqualsCanonicalizing(
-            ['code', 'message', 'operation_id', 'startup_id', 'timing'],
+            ['code', 'message', 'operation_id', 'startup_id', 'reason', 'timing'],
             array_keys($detail)
         );
     }
@@ -1898,9 +1947,9 @@ PHP;
             /**
              * @return \WP_REST_Response|\WP_Error
              */
-            public function call(string $method, string $path, string $requestClass)
+            public function call(string $method, string $path, string $requestClass, array $body = [])
             {
-                return $this->proxy_request($method, $path, [], [], $requestClass);
+                return $this->proxy_request($method, $path, $body, [], $requestClass);
             }
 
             public function resolvedBaseUrl(): string

@@ -3291,6 +3291,21 @@ recover_interrupted_cutover() {
   return 1
 }
 
+recover_failed_flip_to_next() {
+  local env="$1" inflight_rc=0
+  cutover_inflight_present "${env}" || inflight_rc=$?
+  if (( inflight_rc == 1 )); then
+    if ! abort_cutover_candidate "${env}"; then
+      warn "cutover candidate cleanup failed after failed traffic flip"
+      return 1
+    fi
+    return 0
+  fi
+  ACX_TRAFFIC_FLIPPED=1
+  recover_interrupted_cutover || return $?
+  return 0
+}
+
 recover_persisted_cutover() {
   local env="$1" inflight_rc=0
   env_to_unit "${env}" >/dev/null
@@ -3617,8 +3632,8 @@ do_restart() {
   fi
   if ! flip_edge_alias "$env" next; then
     warn "traffic flip to ${next_unit} failed; live unit ${unit} left serving"
-    if ! abort_cutover_candidate "$env"; then
-      warn "cutover candidate cleanup failed after canonical flip rollback"
+    if ! recover_failed_flip_to_next "$env"; then
+      warn "edge state after failed flip is unresolved for ${env}; candidate ${next_unit} left running. Recovery: $(rollback_command_hint "${env}")"
     fi
     return 1
   fi
@@ -3946,8 +3961,8 @@ staged_rollback_runtime() {
   fi
   if ! flip_edge_alias "$env" next "${ACX_ROLLBACK_DIGEST_REF}"; then
     warn "traffic flip to ${next_unit} failed; ${unit} left serving the current release"
-    if ! abort_cutover_candidate "$env"; then
-      warn "rollback candidate cleanup failed after traffic flip failure"
+    if ! recover_failed_flip_to_next "$env"; then
+      warn "edge state after failed flip is unresolved for ${env}; candidate ${next_unit} left running. Recovery: $(rollback_command_hint "${env}")"
     fi
     return 1
   fi

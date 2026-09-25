@@ -72,7 +72,13 @@ _ENV_ASSIGN_RE = re.compile(
 _PRINTF_BAKE_RE = re.compile(
     r"""printf\s+['"](?P<label>[^'"]+)\\n['"]\s*>\s*/app/\.image-variant""",
 )
-_CHMOD_0444_RE = re.compile(r"chmod\s+0444\s+/app/\.image-variant")
+_IMAGE_VARIANT_REDIRECT_RE = re.compile(r"(?:&>|>{1,2})\s*/app/\.image-variant\b")
+_IMAGE_VARIANT_CHMOD_RE = re.compile(r"\bchmod\s+(?P<mode>[0-7]{3,4})\s+/app/\.image-variant\b")
+_IMAGE_VARIANT_RM_RE = re.compile(r"\brm\b[^;&|]*\s+/app/\.image-variant\b")
+_IMAGE_VARIANT_COPY_ADD_RE = re.compile(
+    r"^\s*(?:COPY|ADD)\b[^\n]*\s/app/\.image-variant\s*$",
+    re.IGNORECASE,
+)
 
 
 # ---- parsers (live-tree + synthetic) -------------------------------------
@@ -127,17 +133,34 @@ def expected_image_variant_for_stage(stage_name: str) -> str:
 
 
 def stage_bakes_image_variant(stage_text: str, expected: str) -> bool:
-    """True when stage prints expected label into /app/.image-variant + chmod 0444."""
-    bake_ok = False
-    chmod_ok = False
+    """True when the final file contents and mode are the expected immutable bake."""
+    bake_ok = chmod_ok = False
     for ln in _active_lines(stage_text):
-        m = _PRINTF_BAKE_RE.search(ln)
-        if m and m.group("label") == expected:
-            bake_ok = True
-        if _CHMOD_0444_RE.search(ln):
-            chmod_ok = True
-        if m and m.group("label") == expected and _CHMOD_0444_RE.search(ln):
-            return True
+        events: list[tuple[int, str, str | None]] = []
+        bake = _PRINTF_BAKE_RE.search(ln)
+        for write in _IMAGE_VARIANT_REDIRECT_RE.finditer(ln):
+            if bake and bake.start() <= write.start() < bake.end():
+                events.append((write.start(), "bake", bake.group("label")))
+            else:
+                events.append((write.start(), "mutation", None))
+        for chmod in _IMAGE_VARIANT_CHMOD_RE.finditer(ln):
+            events.append((chmod.start(), "chmod", chmod.group("mode")))
+        for remove in _IMAGE_VARIANT_RM_RE.finditer(ln):
+            events.append((remove.start(), "mutation", None))
+        if _IMAGE_VARIANT_COPY_ADD_RE.search(ln):
+            events.append((0, "mutation", None))
+
+        for _, event, value in sorted(events, key=lambda item: item[0]):
+            if event == "bake":
+                bake_ok = value == expected
+                chmod_ok = False
+            elif event == "chmod":
+                if bake_ok and value == "0444":
+                    chmod_ok = True
+                else:
+                    bake_ok = chmod_ok = False
+            else:
+                bake_ok = chmod_ok = False
     return bake_ok and chmod_ok
 
 
@@ -411,6 +434,7 @@ def _run_do_restart(
             # unconditional cat blocks there until the gate's own timeout.
             if [ ! -t 0 ]; then cat >/dev/null; fi
             case "$cmd" in
+              *ACX_IMAGE_TAG*) echo dev; exit 0 ;;
               *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
               *image*inspect*|*RepoDigests*)
                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
@@ -484,6 +508,9 @@ def test_deploy_restart_fails_when_repair_fails(tmp_path: Path) -> None:
     """W8-VER-01: repair failure must non-zero exit and must not restart the unit."""
     rc, log = _run_do_restart(tmp_path, repair_exit=1)
     assert rc != 0, f"expected non-zero when repair fails; log:\n{log}"
+    assert "pull" in log, f"expected digest-pinned pull before repair; log:\n{log}"
+    assert "fix-blob-ownership" in log, f"expected repair invocation before failure; log:\n{log}"
+    assert log.index("pull") < log.index("fix-blob-ownership"), f"repair must follow pull:\n{log}"
     # Fake matches *repair* / *fix-blob-ownership* and exits 1 — systemctl must
     # not be attempted after that failure.
     assert "systemctl" not in log, f"must not restart after repair failure:\n{log}"
@@ -558,6 +585,19 @@ def test_discriminator_image_variant_bake_mutations() -> None:
     assert not stage_bakes_image_variant(cross, "recognition")
     no_chmod = "RUN printf 'recognition\\n' > /app/.image-variant\n"
     assert not stage_bakes_image_variant(no_chmod, "recognition")
+
+    mutations = {
+        "later chmod": good + "RUN chmod 0644 /app/.image-variant\n",
+        "later write": good + "RUN printf 'vlm\\n' > /app/.image-variant\n",
+        "chmod before bake": (
+            "RUN chmod 0444 /app/.image-variant\n"
+            "RUN printf 'recognition\\n' > /app/.image-variant\n"
+        ),
+    }
+    accepted = [
+        name for name, stage in mutations.items() if stage_bakes_image_variant(stage, "recognition")
+    ]
+    assert not accepted, f"accepted final-state image-variant mutations: {accepted!r}"
 
 
 def test_discriminator_compose_tmpfs_path_and_service_scope(tmp_path: Path) -> None:
@@ -658,12 +698,16 @@ def test_ssh_identity_refuses_leading_dash() -> None:
     assert "charset" in combined.lower() or "refusing" in combined.lower(), combined
 
 
-def test_ssh_invocations_use_l_and_double_dash() -> None:
-    """S2-A-12: live ssh destinations must use -l user -- host (not user@host as host arg)."""
-    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    # Join backslash continuations first. Checking physical lines let a wrapped
-    # invocation carry its `-l`/`--` on the next line and read as a violation,
-    # and would equally let a real `user@host` invocation hide behind a wrap.
+_SSH_IDENTITY_ALLOWLIST: dict[re.Pattern[str], str] = {}
+_SSH_INVOCATION_RE = re.compile(r'(?:^|[\s(;&|!])(?P<invocation>ssh\s+(?:-|\"))')
+_SSH_USER_TOKEN_RE = re.compile(r'(?<!\S)-l\s+"\$\{OCI_USER\}"')
+_SSH_HOST_TOKEN_RE = re.compile(r'(?<!\S)--\s+"\$\{OCI_HOST\}"')
+_SSH_HOST_ARGUMENT_RE = re.compile(r'(?<!\S)--\s+(?P<host>"[^"]+"|\'[^\']+\'|\S+)')
+_SSH_TARGET_TOKEN_RE = re.compile(r'(?<!\S)"\$\{SSH_TARGET\}"')
+
+
+def _live_ssh_invocations(script: str) -> list[tuple[str, str]]:
+    """Join continuations and return each live ssh invocation with its source line."""
     logical_lines: list[str] = []
     pending = ""
     for raw in script.splitlines():
@@ -675,27 +719,45 @@ def test_ssh_invocations_use_l_and_double_dash() -> None:
         pending = ""
     if pending:
         logical_lines.append(pending)
+    invocations: list[tuple[str, str]] = []
+    for line in logical_lines:
+        if line.strip().startswith("#"):
+            continue
+        match = _SSH_INVOCATION_RE.search(line)
+        if match:
+            invocations.append((line, line[match.start("invocation"):]))
+    return invocations
 
-    # Allow display-only SSH_TARGET and rsync user@host:path.
-    # Every `ssh ...` that used to pass "${SSH_TARGET}" as host must now use -l/--.
-    ssh_lines = [
-        ln
-        for ln in logical_lines
-        if re.search(r"\bssh\b", ln)
-        and not ln.strip().startswith("#")
-        and "SSH_TARGET" not in ln  # display / rsync labels only
-    ]
-    for ln in ssh_lines:
-        if "ssh " not in ln and not ln.strip().startswith("ssh"):
+
+def test_ssh_invocations_use_l_and_double_dash() -> None:
+    """S2-A-12: every live ssh uses separate user and host arguments."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    ssh_lines = _live_ssh_invocations(script)
+    assert len(ssh_lines) >= 65, f"expected at least 65 live ssh invocations; checked {len(ssh_lines)}"
+
+    violations: list[str] = []
+    for line, invocation in ssh_lines:
+        allowed_reason = next(
+            (reason for pattern, reason in _SSH_IDENTITY_ALLOWLIST.items() if pattern.search(invocation)),
+            None,
+        )
+        if allowed_reason:
             continue
-        # Skip pure comments already filtered.
-        if "-l" in ln and "--" in ln:
-            continue
-        # Heredoc-less ssh should carry -l/-- when talking to the deploy host.
-        if "OCI_USER" in ln or "OCI_HOST" in ln or "ssh -" in ln or 'ssh "' in ln:
-            assert "-l" in ln and '"${OCI_USER}"' in ln and '"${OCI_HOST}"' in ln, (
-                f"ssh line must use -l/-- identity form: {ln}"
-            )
+
+        issues: list[str] = []
+        if not _SSH_USER_TOKEN_RE.search(invocation):
+            issues.append('missing token -l "${OCI_USER}"')
+        if not _SSH_HOST_TOKEN_RE.search(invocation):
+            issues.append('missing token -- "${OCI_HOST}"')
+        host_match = _SSH_HOST_ARGUMENT_RE.search(invocation)
+        if host_match and "@" in host_match.group("host"):
+            issues.append("host argument contains @")
+        if _SSH_TARGET_TOKEN_RE.search(invocation):
+            issues.append('uses "${SSH_TARGET}" as an ssh argument')
+        if issues:
+            violations.append(f"{', '.join(issues)}: {line.strip()}")
+
+    assert not violations, "ssh invocations must use the -l/-- identity form:\n" + "\n".join(violations)
 
 
 def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:

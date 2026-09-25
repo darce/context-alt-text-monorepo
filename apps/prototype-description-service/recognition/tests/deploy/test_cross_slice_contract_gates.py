@@ -411,6 +411,7 @@ def _run_do_restart(
             # unconditional cat blocks there until the gate's own timeout.
             if [ ! -t 0 ]; then cat >/dev/null; fi
             case "$cmd" in
+              *ACX_IMAGE_TAG*) echo dev; exit 0 ;;
               *cutover-inflight*|*os.lstat*) echo ABSENT; exit 0 ;;
               *image*inspect*|*RepoDigests*)
                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
@@ -484,6 +485,9 @@ def test_deploy_restart_fails_when_repair_fails(tmp_path: Path) -> None:
     """W8-VER-01: repair failure must non-zero exit and must not restart the unit."""
     rc, log = _run_do_restart(tmp_path, repair_exit=1)
     assert rc != 0, f"expected non-zero when repair fails; log:\n{log}"
+    assert "pull" in log, f"expected digest-pinned pull before repair; log:\n{log}"
+    assert "fix-blob-ownership" in log, f"expected repair invocation before failure; log:\n{log}"
+    assert log.index("pull") < log.index("fix-blob-ownership"), f"repair must follow pull:\n{log}"
     # Fake matches *repair* / *fix-blob-ownership* and exits 1 — systemctl must
     # not be attempted after that failure.
     assert "systemctl" not in log, f"must not restart after repair failure:\n{log}"

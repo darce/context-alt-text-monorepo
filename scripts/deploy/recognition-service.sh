@@ -330,7 +330,7 @@ compensate_interrupted_deploy() {
       ;;
     repo_shipped)
       log "Interrupted deploy of ${env} at phase ${phase}; compensating"
-      restore_runtime_topology "${env}" || warn "topology restore failed for ${env}"
+      restore_runtime_topology "${env}" current-only || warn "topology restore failed for ${env}"
       restore_prior_image_repo_env || warn "prior sticky repository restore failed"
       ;;
     tag_promoted)
@@ -2952,7 +2952,10 @@ verify_restored_runtime() {
 }
 
 restore_topology_backups() {
-  local env="$1" remote_dir unit timeout
+  local env="$1" remote_dir unit timeout restore_current_only=0
+  if [[ "${2:-}" == "current-only" ]]; then
+    restore_current_only=1
+  fi
   remote_dir="$(env_to_remote_dir "$env")"
   unit="$(env_to_unit "$env")"
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -2965,6 +2968,15 @@ restore_topology_backups() {
      latest_file=\"\$backup_root/${env}/latest\"
      topology_dir=\"\$transaction_dir\"
      legacy=0
+     restore_current_only='${restore_current_only}'
+     if [ "\$restore_current_only" = 1 ] && sudo test -f "\$topology_dir/topology.pending" && ! sudo test -f "\$topology_dir/topology.ready"; then
+       echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+       exit 1
+     fi
+     if [ "\$restore_current_only" = 1 ] && ! sudo test -f "\$topology_dir/topology.ready"; then
+       echo 'no current-transaction topology snapshot; topology left untouched'
+       exit 0
+     fi
      if sudo test -f \"\$topology_dir/topology.pending\" && ! sudo test -f \"\$topology_dir/topology.ready\"; then
        echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
        exit 1
@@ -3021,7 +3033,10 @@ restore_topology_backups() {
 }
 
 restore_edge_backups() {
-  local env="$1" edge_dir="/opt/acx-backend" timeout prefer_flip=0
+  local env="$1" edge_dir="/opt/acx-backend" timeout prefer_flip=0 restore_current_only=0
+  if [[ "${2:-}" == "current-only" ]]; then
+    restore_current_only=1
+  fi
   env_to_unit "$env" >/dev/null
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   [[ "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]] && prefer_flip=1
@@ -3038,6 +3053,7 @@ pointer_file="\$backup_root/\$env/edge-cutover.current"
 topology_dir="\$transaction_dir"
 edge_snapshot=""
 edge_transaction=0
+restore_current_only='${restore_current_only}'
 
 valid_transaction_dir() {
   case "\$1" in
@@ -3045,6 +3061,17 @@ valid_transaction_dir() {
     *) return 1 ;;
   esac
 }
+
+if [ "\$restore_current_only" = 1 ]; then
+  if sudo test -f "\$topology_dir/topology.pending" && ! sudo test -f "\$topology_dir/topology.ready"; then
+    echo 'topology snapshot is incomplete; refusing restore without a complete transaction snapshot' >&2
+    exit 1
+  fi
+  if ! sudo test -f "\$topology_dir/topology.ready"; then
+    echo 'no current-transaction topology snapshot; topology left untouched'
+    exit 0
+  fi
+fi
 
 if ! sudo test -f "\$topology_dir/topology.ready" && sudo test -f "\$topology_dir/edge-cutover.ready"; then
   topology_dir=""
@@ -3060,7 +3087,7 @@ if sudo test -f "\$topology_dir/edge.ready"; then
 fi
 if sudo test -f "\$transaction_dir/edge/Caddyfile.pre-cutover"; then
   edge_snapshot="\$transaction_dir/edge/Caddyfile.pre-cutover"
-elif sudo test -f "\$pointer_file"; then
+elif [ "\$restore_current_only" != 1 ] && sudo test -f "\$pointer_file"; then
   pointed_snapshot="\$(sudo cat "\$pointer_file")"
   case "\$pointed_snapshot" in
     "\$backup_root/\$env/"*/edge/Caddyfile.pre-cutover) ;;
@@ -3390,9 +3417,14 @@ recover_persisted_cutover() {
 }
 
 restore_runtime_topology() {
-  local env="$1"
-  restore_topology_backups "$env" || return 1
-  restore_edge_backups "$env" || return 1
+  local env="$1" restore_mode="${2:-}"
+  if [[ "${restore_mode}" == "current-only" ]]; then
+    restore_topology_backups "$env" current-only || return 1
+    restore_edge_backups "$env" current-only || return 1
+  else
+    restore_topology_backups "$env" || return 1
+    restore_edge_backups "$env" || return 1
+  fi
   abort_cutover_candidate "$env" || return 1
 }
 

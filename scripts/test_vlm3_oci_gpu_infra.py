@@ -65,7 +65,7 @@ def test_gpu_watchdog_rollout_checks_capacity_and_preserves_existing_boot_volume
 
     assert 'resource "oci_core_compute_capacity_report" "acx_gpu_replacement"' in main_tf
     assert "shape_availabilities" in main_tf
-    assert "availability_status == \"AVAILABLE\"" in main_tf
+    assert 'availability_status == "AVAILABLE"' in main_tf
     assert "available_count >= 1" in main_tf
     assert "create_before_destroy = true" in gpu_block
     assert "preserve_boot_volume = true" in gpu_block
@@ -186,11 +186,7 @@ def _self_stop_script(cloud_init: dict, tmp_path: Path) -> tuple[Path, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env_path = tmp_path / "watchdog.env"
-    env_path.write_text(
-        "MAX_UPTIME_SECONDS=3600\n"
-        "ACX_SELF_STOP_ENABLED=1\n"
-        "ACX_SELF_STOP_FALLBACK_POWEROFF=0\n"
-    )
+    env_path.write_text("MAX_UPTIME_SECONDS=3600\nACX_SELF_STOP_ENABLED=1\nACX_SELF_STOP_FALLBACK_POWEROFF=0\n")
     # Keep production commands on fixed absolute paths while allowing this
     # test to exercise the enabled branch without touching host /usr/bin.
     script = script.replace("/etc/acx-gpu-self-stop.env", str(env_path))
@@ -237,11 +233,11 @@ def test_gpu_self_stop_enabled_path_retries_and_verifies_stopped(tmp_path: Path)
     (bin_dir / "python3").chmod(0o755)
     (bin_dir / "oci").write_text(
         "#!/bin/sh\n"
-        "case \" $* \" in\n"
+        'case " $* " in\n'
         "  *' compute instance action '*)\n"
         f"    printf '%s\\n' \"$*\" >> {action_log}\n"
         "    count=$(grep -c 'compute instance action' " + str(action_log) + " 2>/dev/null || true)\n"
-        "    [ \"$count\" -ge 2 ] || exit 1\n"
+        '    [ "$count" -ge 2 ] || exit 1\n'
         "    exit 0;;\n"
         "  *' compute instance get '*)\n"
         f"    printf '%s\\n' \"$*\" >> {action_log}\n"
@@ -284,7 +280,7 @@ def test_gpu_self_stop_enabled_path_retries_iam_failure_three_times(tmp_path: Pa
     _write_metadata_fakes(bin_dir, instance_id)
     (bin_dir / "oci").write_text(
         "#!/bin/sh\n"
-        "case \" $* \" in\n"
+        'case " $* " in\n'
         "  *' compute instance action '*)\n"
         f"    printf '%s\\n' \"$*\" >> {action_log}; exit 1;;\n"
         "esac\n"
@@ -314,7 +310,7 @@ def test_gpu_self_stop_enabled_path_retries_cli_timeout(tmp_path: Path) -> None:
     _write_metadata_fakes(bin_dir, instance_id)
     (bin_dir / "oci").write_text(
         "#!/bin/sh\n"
-        "case \" $* \" in\n"
+        'case " $* " in\n'
         "  *' compute instance action '*)\n"
         f"    printf '%s\\n' \"$*\" >> {action_log}; exit 124;;\n"
         "esac\n"
@@ -343,7 +339,7 @@ def test_gpu_self_stop_enabled_path_rejects_non_terminal_state(tmp_path: Path) -
     _write_metadata_fakes(bin_dir, instance_id)
     (bin_dir / "oci").write_text(
         "#!/bin/sh\n"
-        "case \" $* \" in\n"
+        'case " $* " in\n'
         "  *' compute instance action '*)\n"
         f"    printf '%s\\n' \"$*\" >> {action_log}; exit 0;;\n"
         "  *' compute instance get '*)\n"
@@ -418,10 +414,7 @@ def test_gpu_self_stop_enabled_path_fails_closed_when_cli_missing(tmp_path: Path
 
 def test_terraform_configuration_validates() -> None:
     if shutil.which("terraform") is None:
-        pytest.fail(
-            "terraform binary not on PATH; the mandatory release gate is "
-            "`make test-infra-terraform`"
-        )
+        pytest.fail("terraform binary not on PATH; the mandatory release gate is `make test-infra-terraform`")
 
     # validate requires an initialized working directory. Initialization is
     # part of the release gate, so provider download failures must be visible
@@ -595,11 +588,7 @@ def test_gpu_self_stop_failure_uses_guest_poweroff_fallback(tmp_path: Path) -> N
     cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
     script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
     env_path = tmp_path / "watchdog.env"
-    env_path.write_text(
-        "MAX_UPTIME_SECONDS=3600\n"
-        "ACX_SELF_STOP_ENABLED=1\n"
-        "ACX_SELF_STOP_FALLBACK_POWEROFF=1\n"
-    )
+    env_path.write_text("MAX_UPTIME_SECONDS=3600\nACX_SELF_STOP_ENABLED=1\nACX_SELF_STOP_FALLBACK_POWEROFF=1\n")
     _write_metadata_fakes(bin_dir, "ocid1.instance.oc1..fallback")
     (bin_dir / "oci").write_text("#!/bin/sh\nexit 1\n")
     (bin_dir / "oci").chmod(0o755)
@@ -630,7 +619,7 @@ def test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present() -> None:
     assert re.search(r'variable "gpu_max_uptime_seconds".*?default\s*=\s*3600', variables_tf, re.DOTALL)
     assert 'variable "gpu_self_stop_enabled"' in variables_tf
     assert re.search(r'variable "gpu_self_stop_enabled".*?default\s*=\s*true', variables_tf, re.DOTALL)
-    assert "templatefile(\"${path.module}/gpu-cloud-init.yaml\"" in main_tf
+    assert 'templatefile("${path.module}/gpu-cloud-init.yaml"' in main_tf
     assert "max_uptime_seconds = var.gpu_max_uptime_seconds" in main_tf
     assert "self_stop_enabled  = var.gpu_self_stop_enabled ? 1 : 0" in main_tf
     assert "gpu_max_uptime_seconds" in tfvars_example

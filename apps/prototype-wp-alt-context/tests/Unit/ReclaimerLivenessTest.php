@@ -164,8 +164,8 @@ class ReclaimerLivenessTest extends TestCase
 	{
 		global $wpdb;
 
-		// The lightweight test adapter stores lease rows in its options table so
-		// fencing checks can observe each claim and reject the expired owner.
+		// The lightweight adapter appends duplicate options rows, so fencing
+		// reads must use the most recent lease to reject the expired owner.
 		$now = 1_700_000_000;
 		$first = new ReclaimerLiveness(static function () use (&$now): int {
 			return $now;
@@ -183,6 +183,16 @@ class ReclaimerLivenessTest extends TestCase
 			false,
 			ReclaimerLiveness::SCHEDULER_WP_CRON
 		);
+		$lease_option = 'acx_reclaimer_lease_tenant-fenced';
+		$wpdb->onGetVarResolve = static function (string $query) use ($wpdb, $lease_option): ?string {
+			foreach ( array_reverse( $wpdb->tableRows[ $wpdb->options ] ?? array() ) as $row ) {
+				if ( $lease_option === ( $row['option_name'] ?? null ) ) {
+					return is_string( $row['option_value'] ?? null ) ? $row['option_value'] : null;
+				}
+			}
+
+			return null;
+		};
 
 		$now += 301;
 		$this->assertIsString($second->claim('tenant-fenced'));

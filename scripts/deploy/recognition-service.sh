@@ -62,8 +62,8 @@
 #   ACX_DEPLOY_PLATFORM      default linux/arm64 (matches A1 Always Free shape; ignored in remote-build)
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
-#   ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES default 360 (stale generation age; must exceed twice
-#                              the largest ACX_REMOTE_BUILD_TIMEOUT any coordinator uses; smaller values disable the reaper)
+#   ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES default 360 (stale generation age; must exceed 240
+#                              (twice the 7200 s build ceiling); smaller values disable the reaper)
 #   ACX_REMOTE_BUILDER_NAME  default acx-deploy-builder-v1 (stable docker-container builder)
 #   ACX_REMOTE_BUILDER_NODE  default acx-deploy-builder-v1-node (single explicit node)
 #   ACX_REMOTE_BUILDER_ENDPOINT
@@ -115,7 +115,7 @@
 #                              raising the pull/restart knob does not stretch the pre-rollback
 #                              outage window.
 #   ACX_REMOTE_BUILD_TIMEOUT positive integer wall-clock seconds for remote rsync/BuildKit setup,
-#                              bootstrap, prune, and build work (default 1800; one shared budget).
+#                              bootstrap, prune, and build work (default 1800; max 7200; one shared budget).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Image variants / rollback (RA-07):
@@ -164,6 +164,7 @@ REMOTE_BUILDER_NAME="${ACX_REMOTE_BUILDER_NAME:-acx-deploy-builder-v1}"
 REMOTE_BUILDER_NODE="${ACX_REMOTE_BUILDER_NODE:-acx-deploy-builder-v1-node}"
 REMOTE_BUILDER_ENDPOINT="${ACX_REMOTE_BUILDER_ENDPOINT:-unix:///var/run/docker.sock}"
 REMOTE_BUILD_LOCK="${REMOTE_BUILD_DIR}.lock"
+readonly REMOTE_BUILD_TIMEOUT_CEILING=7200
 # Optional docker build --target. Empty means BuildKit's default (last stage = runtime).
 # This is the plumbing the script would pass as `docker build --target ...`; there was no
 # prior target notion in this file — introduce it only as the explicit opt-in for VLM/etc.
@@ -326,6 +327,13 @@ deploy_interrupt_cleanup() {
   fi
 }
 
+install_deploy_interrupt_traps() {
+  trap deploy_interrupt_cleanup EXIT
+  trap 'deploy_interrupt_cleanup 129' HUP
+  trap 'deploy_interrupt_cleanup 130' INT
+  trap 'deploy_interrupt_cleanup 143' TERM
+}
+
 init_deploy_ocir_docker_config() {
   if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
     return 0
@@ -335,10 +343,7 @@ init_deploy_ocir_docker_config() {
     || fail "Could not create the deploy-scoped Docker credential directory"
   ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
   DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
-  trap deploy_interrupt_cleanup EXIT
-  trap 'deploy_interrupt_cleanup 129' HUP
-  trap 'deploy_interrupt_cleanup 130' INT
-  trap 'deploy_interrupt_cleanup 143' TERM
+  install_deploy_interrupt_traps
 }
 
 # The local dir lives under the laptop's TMPDIR (macOS: /var/folders/...), which does not
@@ -922,10 +927,7 @@ materialize_deploy_snapshot() {
   DEPLOY_SNAPSHOT_DIR="${snapshot_dir}"
   DEPLOY_ASSETS_DIR="${snapshot_dir}/scripts/deploy"
   log "Build context: DEPLOY_SHA=${DEPLOY_SHA:0:8} snapshot ${snapshot_dir}"
-  trap deploy_interrupt_cleanup EXIT
-  trap 'deploy_interrupt_cleanup 129' HUP
-  trap 'deploy_interrupt_cleanup 130' INT
-  trap 'deploy_interrupt_cleanup 143' TERM
+  install_deploy_interrupt_traps
 }
 
 # FIR stack volume-mounts YuNet+SFace ONNX (not baked
@@ -1177,20 +1179,23 @@ do_build() {
 }
 
 do_build_remote() {
-  preflight_ssh
-  preflight_remote_docker
-  preflight_rsync
   local sha tag build_root build_dir build_timeout command_timeout build_rc=0 rsync_rc=0
   local remote_build_started remote_build_timeout
   local free_space_timeout mkdir_timeout rsync_timeout remaining generation_ttl
   local generation_parent generation_basename reap_timeout reap_command
   local remote_program remote_command remote_arg
+  build_timeout="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
+  if (( build_timeout > REMOTE_BUILD_TIMEOUT_CEILING )); then
+    fail "ACX_REMOTE_BUILD_TIMEOUT=${build_timeout}s exceeds the ${REMOTE_BUILD_TIMEOUT_CEILING}s ceiling; stale-generation reaping relies on no build outliving it"
+  fi
+  preflight_ssh
+  preflight_remote_docker
+  preflight_rsync
   pin_deploy_sha
   sha="${DEPLOY_SHA}"
   tag="${1:-dev}"
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
-  build_timeout="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
   command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   remote_build_started="${SECONDS}"
   remote_build_timeout="${build_timeout}"
@@ -1205,8 +1210,8 @@ do_build_remote() {
   generation_ttl="${ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES:-360}"
   if [[ ! "${generation_ttl}" =~ ^[1-9][0-9]*$ ]]; then
     warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES must be a positive integer (got: ${generation_ttl}); skipping stale generation reap"
-  elif (( generation_ttl * 60 <= 2 * build_timeout )); then
-    warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES=${generation_ttl} is not above twice ACX_REMOTE_BUILD_TIMEOUT (${build_timeout}s); skipping stale generation reap so a live build is never deleted"
+  elif (( generation_ttl * 60 <= 2 * REMOTE_BUILD_TIMEOUT_CEILING )); then
+    warn "ACX_REMOTE_BUILD_GENERATION_TTL_MINUTES=${generation_ttl} is not above twice the ${REMOTE_BUILD_TIMEOUT_CEILING}s build ceiling; skipping stale generation reap so a live build is never deleted"
   else
     generation_parent="${build_root%/*}"
     generation_basename="${build_root##*/}"
@@ -1246,6 +1251,7 @@ do_build_remote() {
   if ! mkdir_timeout="$(remote_build_phase_timeout "remote generation directory creation" "${command_timeout}")"; then
     fail "Remote build budget exhausted before generation directory creation"
   fi
+  install_deploy_interrupt_traps
   ACX_REMOTE_BUILD_GENERATION_DIR="${build_dir}"
   run_with_deadline "${mkdir_timeout}" "remote generation directory creation" \
     ssh -l "${OCI_USER}" -- "${OCI_HOST}" "mkdir -p -- '$(remote_quote "${build_dir}")'" \

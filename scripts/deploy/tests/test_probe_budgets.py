@@ -59,6 +59,57 @@ probe_budget ACX_VERIFY 5 5
     assert result.stdout.strip() == f"5 {sleep_value}"
 
 
+@pytest.mark.parametrize("attempts_value", ["61", "99999999999999999999"])
+def test_probe_budget_rejects_attempts_above_maximum(tmp_path: Path, attempts_value: str) -> None:
+    result = _run_shell(
+        tmp_path,
+        f'''
+ACX_VERIFY_ATTEMPTS={attempts_value}
+if budget="$(probe_budget ACX_VERIFY 5 5)"; then
+  printf 'budget=%s\\n' "$budget"
+  exit 0
+else
+  exit 1
+fi
+''',
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "exceeds the maximum" in result.stderr
+
+
+def test_probe_budget_rejects_sleep_above_maximum(tmp_path: Path) -> None:
+    result = _run_shell(
+        tmp_path,
+        '''
+ACX_VERIFY_SLEEP=121
+if budget="$(probe_budget ACX_VERIFY 5 5)"; then
+  printf 'budget=%s\\n' "$budget"
+  exit 0
+else
+  exit 1
+fi
+''',
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "exceeds the maximum" in result.stderr
+
+
+def test_probe_budget_accepts_maximum_attempts_and_sleep(tmp_path: Path) -> None:
+    result = _run_shell(
+        tmp_path,
+        '''
+ACX_VERIFY_ATTEMPTS=60
+ACX_VERIFY_SLEEP=120
+probe_budget ACX_VERIFY 5 5
+''',
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "60 120"
+
+
 def test_health_probe_budgets_are_independent(tmp_path: Path) -> None:
     attempts_log = tmp_path / "attempts.log"
     result = _run_shell(

@@ -39,6 +39,31 @@ rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
     return result
 
 
+def _run_real_driver(tmp_path: Path, statements: str) -> subprocess.CompletedProcess[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    records = tmp_path / "records.log"
+    command = f'''
+source {shlex.quote(str(SCRIPT))}
+GREEN=; YELLOW=; RED=; RESET=
+RECORDS={shlex.quote(str(records))}
+record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+deploy_env_lease() {{ return 0; }}
+cleanup_remote_build_generation_on_exit() {{ record cleanup_remote_build_generation_on_exit "$@"; }}
+_purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$@"; }}
+_purge_deploy_snapshot() {{ record _purge_deploy_snapshot "$@"; }}
+rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
+{statements}
+'''
+    result = subprocess.run(
+        ["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False
+    )
+    if records.exists():
+        result.records = records.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
+    else:
+        result.records = []  # type: ignore[attr-defined]
+    return result
+
+
 def _function_body(name: str) -> str:
     source = SCRIPT.read_text(encoding="utf-8")
     match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n(.*?)^\}}", source)
@@ -205,6 +230,76 @@ def test_repo_shipped_interrupt_uses_strict_topology_restore(tmp_path: Path) -> 
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
     assert "restore_runtime_topology dev current-only" in records
+
+
+def test_repo_shipped_current_only_does_not_abort_candidate(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r'''
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130
+''',
+    )
+    assert result.returncode == 130, result.stdout + result.stderr
+    records = result.records  # type: ignore[attr-defined]
+    assert "restore_topology_backups dev current-only" in records
+    assert "restore_edge_backups dev current-only" in records
+    assert not any(record.startswith("abort_cutover_candidate") for record in records)
+
+
+def test_non_strict_topology_restore_still_aborts_candidate(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r'''
+restore_topology_backups() { record restore_topology_backups "$@"; }
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+restore_runtime_topology dev
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = result.records  # type: ignore[attr-defined]
+    assert "restore_topology_backups dev" in records
+    assert "restore_edge_backups dev" in records
+    assert "abort_cutover_candidate dev" in records
+
+
+def test_interrupt_during_canonical_restart_leaves_candidate_serving(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r'''
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+commit_cutover_state() { record commit_cutover_state "$@"; }
+ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=1; deploy_interrupt_cleanup 130
+''',
+    )
+    assert result.returncode == 130, result.stdout + result.stderr
+    records = result.records  # type: ignore[attr-defined]
+    assert not any(
+        record.startswith(("restore_edge_backups", "abort_cutover_candidate", "commit_cutover_state"))
+        for record in records
+    )
+    assert "make deploy-rollback-dev" in result.stderr
+    assert "traffic left on dev-next" in result.stderr
+
+
+def test_interrupt_after_flip_before_restart_still_recovers(tmp_path: Path) -> None:
+    result = _run_real_driver(
+        tmp_path,
+        r'''
+restore_edge_backups() { record restore_edge_backups "$@"; }
+abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
+commit_cutover_state() { record commit_cutover_state "$@"; }
+ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=0; deploy_interrupt_cleanup 130
+''',
+    )
+    assert result.returncode == 130, result.stdout + result.stderr
+    records = result.records  # type: ignore[attr-defined]
+    assert records.index("restore_edge_backups dev") < records.index("abort_cutover_candidate dev")
+    assert records.index("abort_cutover_candidate dev") < records.index("commit_cutover_state dev")
 
 
 def test_strict_restore_ignores_latest_pointer(tmp_path: Path) -> None:

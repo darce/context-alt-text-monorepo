@@ -8,6 +8,7 @@ use AltContext\Api\AbstractRecognitionProxyController;
 use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use WP_REST_Request;
@@ -396,6 +397,7 @@ PHP;
 
     public function testAnalyzeRequestUsesDeterministicUuidTenantId(): void
     {
+        $this->assertTrue(RecognitionPolicy::set(true));
         $GLOBALS['__ac_attachment_urls'][123] = 'http://example.test/media/123.jpg';
 
         // E15-11 Slice 2.2: pin to legacy URL transport — this test asserts
@@ -427,6 +429,20 @@ PHP;
         $this->assertIsArray($payload);
         $this->assertSame($tenantId, $payload['tenant_id'] ?? null);
         $this->assertNotSame(md5((string) \get_site_url()), $tenantId);
+    }
+
+    public function testAnalyzeRequestReturnsErrorWhenRecognitionIsDisabledByDefault(): void
+    {
+        $this->assertNull(get_option(RecognitionPolicy::OPTION, null));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('media_ids', [123]);
+
+        $result = $this->controller->analyze_media($request);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('recognition_disabled', $result->get_error_code());
+        $this->assertCount(0, $this->getHttpCalls());
     }
 
     public function testProxyRequestUsesFilteredBaseUrlWhenOptionMissing(): void
@@ -618,6 +634,7 @@ PHP;
 
     public function testProxyRequestReturnsErrorWhenApiKeyMissing(): void
     {
+        $this->assertTrue(RecognitionPolicy::set(true));
         $this->setOption('acx_recognition_api_key', '');
 
         // E15-11 Slice 2.2: pin to legacy URL transport so the test reaches

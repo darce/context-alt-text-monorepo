@@ -77,6 +77,65 @@ def test_second_transaction_is_refused_while_first_holds(tmp_path: Path) -> None
     assert path.read_bytes() == original
 
 
+def test_same_transaction_with_different_holder_is_refused(tmp_path: Path) -> None:
+    first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert first.returncode == 0, first.stdout + first.stderr
+    path = _lease_path(tmp_path)
+    original = path.read_bytes()
+    original_holder = json.loads(original)["holder"]
+
+    second = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+
+    assert second.returncode == 75, second.stdout + second.stderr
+    assert original_holder in second.stderr
+    assert path.read_bytes() == original
+
+
+def test_same_process_can_reacquire_own_lease(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        "set -e; deploy_env_lease acquire dev; deploy_env_lease acquire dev",
+        transaction="transaction-a",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads(_lease_path(tmp_path).read_bytes())
+    assert record["transaction"] == "transaction-a"
+
+
+def test_ttl_covers_push_timeout_and_margin(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="600",
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "ACX_DEPLOY_LOCK_TTL_SECONDS" in combined
+    assert "ACX_PUSH_TIMEOUT" in combined
+    assert "600" in combined
+    assert "900" in combined
+
+
+def test_ttl_must_reach_exact_push_timeout_margin(tmp_path: Path) -> None:
+    below = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="1199",
+        ACX_PUSH_TIMEOUT="900",
+    )
+    assert below.returncode != 0, below.stdout + below.stderr
+
+    exact = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="1200",
+        ACX_PUSH_TIMEOUT="900",
+    )
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+
+
 def test_expired_lease_is_taken_over(tmp_path: Path) -> None:
     path = _lease_path(tmp_path)
     _write_lease(path, "transaction-a", "a@example:123", int(time.time()) - 1)
@@ -248,6 +307,74 @@ _ship_selected_env dev aggregate
     assert json.loads(_lease_path(tmp_path).read_bytes())["transaction"] == "transaction-other"
 
 
+def test_lost_lease_after_promote_gate_stops_before_tag_push(tmp_path: Path) -> None:
+    marker = tmp_path / "tag-push-ran"
+    lease_path = _lease_path(tmp_path)
+    statements = f'''
+pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+preflight_git_clean() {{ :; }}
+preflight_branch_synced() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+preserve_rollback_tag() {{ :; }}
+capture_prior_runtime_identity() {{ :; }}
+do_build() {{ :; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF=repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+promote_gate() {{ rm -f {shlex.quote(str(lease_path))}; ACX_DEPLOY_PHASE=repo_shipped; }}
+do_push_tag() {{ touch {shlex.quote(str(marker))}; }}
+recover_interrupted_cutover() {{ :; }}
+cleanup_remote_build_generation_on_exit() {{ :; }}
+_purge_deploy_ocir_docker_config() {{ :; }}
+_purge_deploy_snapshot() {{ :; }}
+_ship_selected_env dev aggregate
+'''
+
+    result = _run_driver(tmp_path, statements)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "lost to" in result.stdout + result.stderr
+    assert not marker.exists()
+
+
+def test_clear_image_repo_refuses_when_env_is_held(tmp_path: Path) -> None:
+    first = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert first.returncode == 0, first.stdout + first.stderr
+    marker = tmp_path / "image-repo-clear-ran"
+    statements = f'''
+preflight_ssh() {{ :; }}
+image_repo_resource() {{ touch {shlex.quote(str(marker))}; }}
+clear_remote_image_repo_env dev
+'''
+
+    result = _run_driver(tmp_path, statements, transaction="transaction-b")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "holder line:" in result.stdout + result.stderr
+    assert "refusing to clear the image repository" in result.stdout + result.stderr
+    assert not marker.exists()
+
+
+def test_clear_image_repo_holds_and_releases_lease(tmp_path: Path) -> None:
+    marker = tmp_path / "image-repo-clear-ran"
+    lease_path = _lease_path(tmp_path)
+    statements = f'''
+preflight_ssh() {{ :; }}
+image_repo_resource() {{
+  [[ -f {shlex.quote(str(lease_path))} ]] || return 1
+  touch {shlex.quote(str(marker))}
+}}
+clear_remote_image_repo_env dev
+'''
+
+    result = _run_driver(tmp_path, statements)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert marker.exists()
+    assert not lease_path.exists()
+
+
 def _function_body(name: str) -> str:
     source = SCRIPT.read_text(encoding="utf-8")
     match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n(.*?)^\}}", source)
@@ -264,3 +391,14 @@ def test_acquire_calls_precede_mutations() -> None:
         body = _function_body(name)
         assert "deploy_env_lease acquire" in body
         assert body.index("deploy_env_lease acquire") < body.index(mutation)
+
+
+def test_deploy_and_promote_renew_after_gate_before_tag_push() -> None:
+    for name in ("_ship_selected_env", "do_promote"):
+        body = _function_body(name)
+        gate = body.index("promote_gate")
+        push = body.index("do_push_tag")
+        renew = body.rfind("deploy_env_lease renew", gate, push)
+        assert gate < renew < push
+
+    assert '_ship_selected_env "$env" aggregate' in _function_body("do_deploy")

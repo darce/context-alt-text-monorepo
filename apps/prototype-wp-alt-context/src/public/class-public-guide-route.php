@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\PublicSite;
 
+use AltContext\Support\Telemetry;
 use AltContext\Support\ViteManifest;
 
 use function add_action;
@@ -11,6 +12,7 @@ use function add_filter;
 use function add_rewrite_rule;
 use function array_values;
 use function class_exists;
+use function do_action;
 use function flush_rewrite_rules;
 use function function_exists;
 use function get_option;
@@ -151,11 +153,17 @@ final class PublicGuideRoute {
 
 		$assets = $resolver( self::ENTRY_POINT );
 		if ( ! is_array( $assets ) ) {
+			$this->report_asset_bootstrap_failure(
+				'Missing or invalid build manifest entry for ' . self::ENTRY_POINT . '.'
+			);
 			return;
 		}
 
 		$js = $assets['js'] ?? '';
 		if ( ! is_string( $js ) || '' === $js ) {
+			$this->report_asset_bootstrap_failure(
+				'Missing JavaScript URL for build manifest entry ' . self::ENTRY_POINT . '.'
+			);
 			return;
 		}
 
@@ -232,6 +240,18 @@ final class PublicGuideRoute {
 		$real = realpath( $path );
 
 		return is_string( $real ) ? $real : $path;
+	}
+
+	private function report_asset_bootstrap_failure( string $reason ): void {
+		Telemetry::log_line( $reason );
+		do_action(
+			'acx_admin_asset_bootstrap_failure',
+			$reason,
+			array(
+				'entry_point' => self::ENTRY_POINT,
+				'reason'      => $reason,
+			)
+		);
 	}
 
 	private function is_plugin_handle( string $handle ): bool {

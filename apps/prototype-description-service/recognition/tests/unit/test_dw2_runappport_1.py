@@ -64,7 +64,7 @@ def _successful_runner(calls: list[tuple[list[str], dict[str, Any]]]):
     return fake
 
 
-def test_unselected_required_case_prevents_green_run(tmp_path: Path) -> None:
+def test_selected_gate_fails_when_required_case_was_not_executed(tmp_path: Path) -> None:
     manifest_path = _manifest(
         tmp_path,
         [
@@ -76,6 +76,7 @@ def test_unselected_required_case_prevents_green_run(tmp_path: Path) -> None:
     status = runner.run_evals(
         manifest_path,
         groups=["first"],
+        gates=["beta"],
         out_dir=tmp_path / "out",
         command_runner=_successful_runner([]),
     )
@@ -83,6 +84,7 @@ def test_unselected_required_case_prevents_green_run(tmp_path: Path) -> None:
     assert status == 1
     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert "SC-2" in evidence["release_gate_failures"][0]
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
 
 
 def test_missing_evidence_only_artifact_prevents_green_run(tmp_path: Path) -> None:
@@ -97,6 +99,7 @@ def test_missing_evidence_only_artifact_prevents_green_run(tmp_path: Path) -> No
 
     status = runner.run_evals(
         manifest_path,
+        gates=["beta"],
         out_dir=tmp_path / "out",
         command_runner=_successful_runner([]),
     )
@@ -109,7 +112,7 @@ def test_missing_evidence_only_artifact_prevents_green_run(tmp_path: Path) -> No
     )
 
 
-def test_additional_evidence_artifact_is_required_for_test_case(tmp_path: Path) -> None:
+def test_missing_supplemental_artifact_does_not_fail_executed_case_gate(tmp_path: Path) -> None:
     artifact = tmp_path / "missing-browser-record.json"
     manifest_path = _manifest(
         tmp_path,
@@ -126,14 +129,19 @@ def test_additional_evidence_artifact_is_required_for_test_case(tmp_path: Path) 
 
     status = runner.run_evals(
         manifest_path,
+        gates=["beta"],
         out_dir=tmp_path / "out",
         command_runner=_successful_runner([]),
     )
 
-    assert status == 1
+    assert status == 0
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert evidence["release_gate_results"]["beta"]["status"] == "passed"
+    case_result = next(case for case in evidence["case_results"] if case["case_id"] == "SC-1")
+    assert case_result["artifact_present"] is False
 
 
-def test_additional_evidence_requirement_needs_an_artifact(tmp_path: Path) -> None:
+def test_additional_evidence_requirement_can_have_pending_artifact(tmp_path: Path) -> None:
     manifest_path = _manifest(
         tmp_path,
         [
@@ -146,8 +154,148 @@ def test_additional_evidence_requirement_needs_an_artifact(tmp_path: Path) -> No
         ],
     )
 
-    with pytest.raises(runner.ManifestValidationError, match="artifact"):
-        runner.load_manifest(manifest_path)
+    manifest = runner.load_manifest(manifest_path)
+
+    assert manifest.cases[0].artifact is None
+
+
+def test_real_app1_manifest_loads_with_pending_additional_evidence() -> None:
+    repository_root = next(
+        parent
+        for parent in Path(__file__).resolve().parents
+        if (parent / "docs" / "scopes").is_dir()
+    )
+    manifest = runner.load_manifest(
+        repository_root / "docs" / "scopes" / "app-altcontext-beta-clerk-polar-evals.json"
+    )
+
+    pending_case_ids = {
+        case.case_id
+        for case in manifest.cases
+        if case.additional_evidence_required and case.artifact is None
+    }
+    assert pending_case_ids == {
+        "APP-SC-04",
+        "APP-SC-09",
+        "APP-SC-10",
+        "APP-SC-12",
+        "APP-SC-14",
+        "APP-SC-15",
+        "APP-SC-16",
+        "APP-SC-17",
+        "APP-SC-18",
+    }
+
+
+def test_beta_run_passes_while_expansion_and_paid_artifacts_are_absent(tmp_path: Path) -> None:
+    expansion_artifact = tmp_path / "missing-cohort-report.md"
+    paid_artifact = tmp_path / "missing-transaction-receipt.json"
+    manifest_path = _manifest(
+        tmp_path,
+        [
+            _case("APP-SC-01", "beta", test="tests/test_beta.py::test_beta"),
+            _case("APP-SC-19", "expansion", artifact=str(expansion_artifact)),
+            _case("APP-SC-20", "paid", artifact=str(paid_artifact)),
+        ],
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["release_gates"] = {
+        "beta": {"required_cases": ["APP-SC-01"]},
+        "expansion": {"required_cases": ["APP-SC-19"]},
+        "paid": {"required_cases": ["APP-SC-20"]},
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["beta"],
+        out_dir=tmp_path / "out",
+        command_runner=_successful_runner([]),
+    )
+
+    assert status == 0
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert evidence["release_gate_results"]["beta"]["status"] == "passed"
+    assert evidence["release_gate_results"]["expansion"]["status"] == "failed"
+    assert evidence["release_gate_results"]["paid"]["status"] == "failed"
+
+
+def test_selected_paid_gate_fails_when_app_sc_20_artifact_is_absent(tmp_path: Path) -> None:
+    artifact = tmp_path / "missing-transaction-receipt.json"
+    manifest_path = _manifest(
+        tmp_path,
+        [
+            _case("APP-SC-01", "beta", test="tests/test_beta.py::test_beta"),
+            _case("APP-SC-20", "paid", artifact=str(artifact)),
+        ],
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["release_gates"] = {
+        "beta": {"required_cases": ["APP-SC-01"]},
+        "expansion": {"required_cases": ["APP-SC-01"]},
+        "paid": {"required_cases": ["APP-SC-20"]},
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["beta"],
+        gates=["paid"],
+        out_dir=tmp_path / "out",
+        command_runner=_successful_runner([]),
+    )
+
+    assert status == 1
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    paid_gate = evidence["release_gate_results"]["paid"]
+    assert paid_gate["status"] == "failed"
+    assert any("APP-SC-20" in reason and str(artifact) in reason for reason in paid_gate["reasons"])
+
+
+def test_selected_beta_gate_fails_when_required_evidence_artifact_is_absent(tmp_path: Path) -> None:
+    artifact = tmp_path / "missing-beta-observation.md"
+    manifest_path = _manifest(
+        tmp_path,
+        [
+            _case("APP-SC-01", "beta", test="tests/test_beta.py::test_beta"),
+            _case("APP-SC-04", "study", artifact=str(artifact)),
+        ],
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["release_gates"] = {
+        "beta": {"required_cases": ["APP-SC-01", "APP-SC-04"]},
+        "expansion": {"required_cases": ["APP-SC-04"]},
+        "paid": {"required_cases": ["APP-SC-04"]},
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    status = runner.run_evals(
+        manifest_path,
+        groups=["beta"],
+        gates=["beta"],
+        out_dir=tmp_path / "out",
+        command_runner=_successful_runner([]),
+    )
+
+    assert status == 1
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    beta_gate = evidence["release_gate_results"]["beta"]
+    assert beta_gate["status"] == "failed"
+    assert any("APP-SC-04" in reason and str(artifact) in reason for reason in beta_gate["reasons"])
+
+
+def test_gate_option_repeats_and_unknown_name_is_an_argument_error() -> None:
+    args = runner._build_parser().parse_args(
+        ["--manifest", "manifest.json", "--gate", "beta", "--gate", "paid"]
+    )
+    assert args.gate == ["beta", "paid"]
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner._build_parser().parse_args(
+            ["--manifest", "manifest.json", "--gate", "unknown"]
+        )
+
+    assert exc_info.value.code == 2
 
 
 def test_release_gate_cannot_have_no_required_cases(tmp_path: Path) -> None:

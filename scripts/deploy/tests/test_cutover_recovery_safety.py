@@ -65,7 +65,7 @@ def _install_fail_closed_shims(
         "under_allowed() {\n"
         "  local raw=\"$1\" abs prefix\n"
         "  [[ \"$raw\" == /* ]] || raw=\"$PWD/$raw\"\n"
-        "  abs=\"$(realpath -m -- \"$raw\")\"\n"
+        "  abs=\"$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$raw\")\"\n"
         "  prefix=\"$allowed/\"\n"
         "  [[ \"$abs\" == \"$allowed\" || \"$abs\" == \"$prefix\"* ]]\n"
         "}\n"

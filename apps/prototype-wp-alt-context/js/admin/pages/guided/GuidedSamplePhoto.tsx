@@ -39,7 +39,7 @@ const publicOverlaySimilarityText = (
   anchor: boolean,
 ): string => {
   if (anchor) {
-    return guidedCopy('names.no_score.public');
+    return '';
   }
   if (similarity === null) {
     return guidedCopy('names.match.unavailable');

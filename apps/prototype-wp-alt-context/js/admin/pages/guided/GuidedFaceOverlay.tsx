@@ -108,14 +108,20 @@ const faceButtonId = (idPrefix: string, faceId: string): string =>
 
 const matchWords = (face: GuidedFaceOverlayFace): string => {
   if (face.isClusterAnchor === true || face.strength === GUIDED_MATCH_STRENGTH.SELF_ANCHOR) {
-    return `${guidedCopy('names.no_score.public')} Compare photos before you use this name.`;
+    return '';
   }
   return face.similarityText || guidedCopy('names.match.unavailable');
 };
 
-const faceChipText = (face: GuidedFaceOverlayFace): string => `${face.label} · ${matchWords(face)}`;
+const faceChipText = (face: GuidedFaceOverlayFace): string => {
+  const words = matchWords(face);
+  return words === '' ? face.label : `${face.label} · ${words}`;
+};
 
-const faceAccessibleName = (face: GuidedFaceOverlayFace): string => `${face.label}, ${matchWords(face)}`;
+const faceAccessibleName = (face: GuidedFaceOverlayFace): string => {
+  const words = matchWords(face);
+  return words === '' ? face.label : `${face.label}, ${words}`;
+};
 
 export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
   faces,

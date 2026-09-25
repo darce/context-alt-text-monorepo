@@ -56,7 +56,7 @@ describe('public guide stylesheet isolation', () => {
       /\.acx-guided-face__gallery img\s*\{[^}]*width: var\(--acx-guide-reference-tile-size\);[^}]*height: var\(--acx-guide-reference-tile-size\);/,
     );
     expect(css).toMatch(
-      /\.acx-guided-face__lightbox\s*\{[^}]*--acx-guide-lightbox-tile-size: min\(12rem, calc\(\(100vw - 4 \* var\(--acx-guide-pad-tight\) - var\(--acx-space-8\)\) \/ 2\)\);/,
+      /\.acx-guided-face__lightbox-gallery\s*\{[^}]*container-type: inline-size;[^}]*flex-wrap: nowrap;[^}]*--acx-guide-lightbox-tile-size: min\(12rem, calc\(\(100cqi - 2 \* var\(--acx-space-8\)\) \/ 3\)\);/,
     );
     expect(css.match(/--acx-guide-lightbox-tile-size:/g)).toHaveLength(1);
     expect(css).toMatch(

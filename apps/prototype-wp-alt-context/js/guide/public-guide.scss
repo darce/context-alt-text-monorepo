@@ -246,10 +246,16 @@
     width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
     max-width: min(40rem, calc(100vw - var(--acx-guide-pad-tight) - var(--acx-guide-pad-tight)));
     padding: var(--acx-guide-pad-tight);
-    --acx-guide-lightbox-tile-size: min(12rem, calc((100vw - 4 * var(--acx-guide-pad-tight) - var(--acx-space-8)) / 2));
   }
 
+  // The three reference photos share one row; cqi resolves against the list
+  // wherever the tile size is used, so tiles shrink with the dialog.
   .acx-guided-face__lightbox-gallery {
+    container-type: inline-size;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    --acx-guide-lightbox-tile-size: min(12rem, calc((100cqi - 2 * var(--acx-space-8)) / 3));
+
     .acx-guided-face__lightbox-reference {
       flex: 0 0 var(--acx-guide-lightbox-tile-size);
       width: var(--acx-guide-lightbox-tile-size);
@@ -257,6 +263,9 @@
     }
 
     .acx-guided-face__gallery-credit {
+      margin-block: var(--acx-space-4) 0;
+      font-size: var(--acx-text-xs);
+      line-height: 1.4;
       overflow-wrap: anywhere;
     }
   }

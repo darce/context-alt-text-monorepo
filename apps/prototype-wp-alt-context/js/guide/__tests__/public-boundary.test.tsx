@@ -320,7 +320,7 @@ describe('public recorded walkthrough boundary', () => {
     expect(evidence).toContain(
       publicGuidedCopy('names.weak.public', { similarity: formatGuidedSimilarity(weakSimilarity) }),
     );
-    expect(evidence).toContain(publicGuidedCopy('names.no_score.public'));
+    expect(evidence).not.toMatch(/No score/);
     const cards = Array.from(container.querySelectorAll('.acx-guided-face__card'));
     expect(cards.every((card) => !/100(?:\.0)?%/.test(card.textContent ?? ''))).toBe(true);
   });

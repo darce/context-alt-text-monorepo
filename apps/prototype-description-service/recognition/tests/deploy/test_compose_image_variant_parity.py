@@ -612,8 +612,10 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             # do_restart re-resolves the pulled digest against the registry;
             # the fake ssh has no docker behind it, so answer it directly.
             remote_image_digest_ref() {{ printf '%s\\n' "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; }}
+            ACX_DEPLOY_ENV=prod
             promote_gate prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             do_restart prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            ACX_DEPLOY_PHASE=""
             """
         )
         result = subprocess.run(

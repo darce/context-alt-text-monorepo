@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { overlayRectFor } from '../../../../components/ui/faceGeometry';
 import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { formatGuidedSimilarity } from '../../../guidedPrototype/state';
-import { GuidedFaceOverlay, type GuidedFaceOverlayFace } from '../GuidedFaceOverlay';
+import {
+  FACE_CHIP_ANCHOR,
+  FACE_CHIP_PLACEMENT,
+  GuidedFaceOverlay,
+  layoutFaceChips,
+  type GuidedFaceOverlayFace,
+} from '../GuidedFaceOverlay';
 
 const naturalSize = { width: 1000, height: 800 };
 
@@ -201,5 +207,40 @@ describe('GuidedFaceOverlay', () => {
     expect(button).toHaveAttribute('data-pinned', 'false');
     fireEvent.pointerLeave(button);
     expect(onHighlightChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('alternates side-by-side chips above and below so they cannot overlap', () => {
+    const layout = layoutFaceChips(faces, naturalSize);
+
+    expect(layout.get('katy')).toEqual({
+      placement: FACE_CHIP_PLACEMENT.ABOVE,
+      anchor: FACE_CHIP_ANCHOR.START,
+      roomPct: 90,
+    });
+    expect(layout.get('justin')).toEqual({
+      placement: FACE_CHIP_PLACEMENT.BELOW,
+      anchor: FACE_CHIP_ANCHOR.END,
+      roomPct: 68,
+    });
+
+    render(<GuidedFaceOverlay faces={faces} naturalSize={naturalSize} visible idPrefix="guided-tribeca" />);
+    const justinButton = screen.getByRole('button', { name: accessibleName(faces[1]) });
+    expect(justinButton).toHaveClass('acx-guided-face-overlay__outline--chip-below');
+    expect(justinButton).toHaveClass('acx-guided-face-overlay__outline--chip-end');
+    expect(justinButton.style.getPropertyValue('--acx-face-chip-room')).toBe('68.00');
+  });
+
+  it('stops each chip at the next chip on the same side of a crowded row', () => {
+    const row = ['a', 'b', 'c'].map((id, index) => ({
+      ...faces[1],
+      id,
+      box: { x: 100 + index * 250, y: 100 + index * 10, width: 100, height: 100 },
+    }));
+
+    const layout = layoutFaceChips(row, naturalSize);
+
+    expect(layout.get('a')).toMatchObject({ placement: FACE_CHIP_PLACEMENT.ABOVE, roomPct: 50 });
+    expect(layout.get('b')).toMatchObject({ placement: FACE_CHIP_PLACEMENT.BELOW, anchor: FACE_CHIP_ANCHOR.START });
+    expect(layout.get('c')).toMatchObject({ placement: FACE_CHIP_PLACEMENT.ABOVE, roomPct: 40 });
   });
 });

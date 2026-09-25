@@ -43,6 +43,66 @@ const outlineStyle = (box: BoundingBox, naturalSize: GuidedFaceOverlayProps['nat
   };
 };
 
+export const FACE_CHIP_PLACEMENT = {
+  ABOVE: 'above',
+  BELOW: 'below',
+} as const;
+export type FaceChipPlacement = (typeof FACE_CHIP_PLACEMENT)[keyof typeof FACE_CHIP_PLACEMENT];
+
+export const FACE_CHIP_ANCHOR = {
+  START: 'start',
+  END: 'end',
+} as const;
+export type FaceChipAnchor = (typeof FACE_CHIP_ANCHOR)[keyof typeof FACE_CHIP_ANCHOR];
+
+export interface FaceChipLayout {
+  placement: FaceChipPlacement;
+  anchor: FaceChipAnchor;
+  /** Widest the chip may grow, as a percentage of the photo width. */
+  roomPct: number;
+}
+
+const FACE_CHIP_BAND_PCT = 15;
+
+// Faces at a similar height share a band. Their chips alternate above and
+// below the outlines, and each chip stops where the next chip on its side
+// starts, so labels neither overlap nor spill past the photo on phones.
+export const layoutFaceChips = (
+  faces: GuidedFaceOverlayFace[],
+  naturalSize: GuidedFaceOverlayProps['naturalSize'],
+): Map<string, FaceChipLayout> => {
+  const entries = faces
+    .map((face) => ({ id: face.id, rect: overlayRectFor(face.box, naturalSize) }))
+    .sort((a, b) => a.rect.top - b.rect.top);
+  const bands: (typeof entries)[] = [];
+  for (const entry of entries) {
+    const band = bands[bands.length - 1];
+    if (band !== undefined && entry.rect.top - band[0].rect.top < FACE_CHIP_BAND_PCT) {
+      band.push(entry);
+    } else {
+      bands.push([entry]);
+    }
+  }
+
+  const layout = new Map<string, FaceChipLayout>();
+  for (const band of bands) {
+    const ordered = [...band].sort((a, b) => a.rect.left - b.rect.left);
+    for (const placement of Object.values(FACE_CHIP_PLACEMENT)) {
+      const group = ordered.filter((_, index) => (index % 2 === 0) === (placement === FACE_CHIP_PLACEMENT.ABOVE));
+      group.forEach((entry, index) => {
+        const { left, width } = entry.rect;
+        if (group.length === 1 && left + width / 2 > 50) {
+          layout.set(entry.id, { placement, anchor: FACE_CHIP_ANCHOR.END, roomPct: left + width });
+          return;
+        }
+        const limit = group[index + 1]?.rect.left ?? 100;
+        layout.set(entry.id, { placement, anchor: FACE_CHIP_ANCHOR.START, roomPct: limit - left });
+      });
+    }
+  }
+  return layout;
+};
+
 const faceButtonId = (idPrefix: string, faceId: string): string =>
   `${idPrefix}-${GUIDED_FACE_BUTTON_ID_SUFFIX}-${faceId}`;
 
@@ -125,6 +185,7 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
   );
 
   const usableNaturalSize = isUsableNaturalSize(naturalSize);
+  const chipLayout = layoutFaceChips(faces, naturalSize);
   const overlayId = `${idPrefix}-${GUIDED_FACE_OVERLAY_ID_SUFFIX}`;
 
   return (
@@ -141,6 +202,7 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
         const isHighlighted = highlightedFaceId === face.id || interactionFaceId === face.id || isPinned;
         const chipText = faceChipText(face);
         const accessibleName = faceAccessibleName(face);
+        const chip = chipLayout.get(face.id);
 
         return (
           <button
@@ -152,10 +214,17 @@ export const GuidedFaceOverlay: React.FC<GuidedFaceOverlayProps> = ({
               isWeak ? 'acx-guided-face-overlay__outline--weak' : '',
               isHighlighted ? 'acx-guided-face-overlay__outline--highlighted' : '',
               isPinned ? 'acx-guided-face-overlay__outline--pinned' : '',
+              chip?.placement === FACE_CHIP_PLACEMENT.BELOW ? 'acx-guided-face-overlay__outline--chip-below' : '',
+              chip?.anchor === FACE_CHIP_ANCHOR.END ? 'acx-guided-face-overlay__outline--chip-end' : '',
             ]
               .filter(Boolean)
               .join(' ')}
-            style={outlineStyle(face.box, naturalSize)}
+            style={
+              {
+                ...outlineStyle(face.box, naturalSize),
+                '--acx-face-chip-room': (chip?.roomPct ?? 100).toFixed(2),
+              } as React.CSSProperties
+            }
             aria-label={accessibleName}
             aria-pressed={isPinned}
             tabIndex={0}

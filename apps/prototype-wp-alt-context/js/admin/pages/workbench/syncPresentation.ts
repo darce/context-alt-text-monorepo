@@ -519,7 +519,11 @@ export const buildSyncPresentation = (input: SyncPresentationInput): SyncPresent
       return base;
     }
     if (reclaimerPresentation && reclaimerSeverity(reclaimer) > syncHealthSeverity(effective)) {
-      return reclaimerPresentation;
+      return {
+        ...reclaimerPresentation,
+        ...(base.action ? { action: base.action } : {}),
+        ...(base.badgeHref ? { badgeHref: base.badgeHref } : {}),
+      };
     }
     if (reclaimerPresentation) {
       return withReclaimerDetails(base, [

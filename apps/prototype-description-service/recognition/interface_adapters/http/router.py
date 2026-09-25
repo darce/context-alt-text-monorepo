@@ -11,6 +11,8 @@ from recognition.interface_adapters.http.routers import (
     analyze,
     analyze_multipart,
     blobs,
+    cluster_merge_candidates,
+    cluster_revert,
     clusters_admission,
     clusters_maintenance,
     clusters_snapshot,
@@ -35,6 +37,8 @@ router.include_router(clusters_admission.router)
 router.include_router(clusters_snapshot.router)
 router.include_router(clusters_topology.router)
 router.include_router(clusters_maintenance.router)
+router.include_router(cluster_merge_candidates.router)
+router.include_router(cluster_revert.router)
 router.include_router(events.router)
 router.include_router(suggestions.router)
 router.include_router(diagnostics.router)

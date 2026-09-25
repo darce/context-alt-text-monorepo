@@ -2704,6 +2704,7 @@ _pull_ref() {{ return 0; }}
 image_digest_ref() {{
   printf '%s\\n' "$IMAGE_BASE@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 do_verify() {{ return 1; }}
 capture_failure_evidence() {{ return 0; }}
 restore_env_tag_to_rollback() {{ printf 'rollback-runtime=%s\\n' "$2"; return {rollback_rc}; }}
@@ -3148,6 +3149,7 @@ repair_blob_volume_ownership() {{ return 0; }}
 restore_prior_image_repo_env() {{ return 0; }}
 _pull_ref() {{ return 0; }}
 image_digest_ref() {{ printf '%s\\n' "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 do_verify() {{ return 1; }}
 fail() {{ printf 'xx %s\\n' "$*" >&2; exit 1; }}
 {invoke}
@@ -4238,6 +4240,7 @@ for fn in init_deploy_ocir_docker_config preflight_ssh preflight_remote_face_pip
 done
 with_shared_tag_lock() {{ shift; "$@"; }}
 image_digest_ref() {{ echo "$IMAGE_BASE@sha256:{"b" * 64}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 remote_image_id_for_digest() {{ echo "sha256:{"d" * 64}"; }}
 remote_image_digest_ref() {{
   if [[ "$1" == *@sha256:* ]]; then

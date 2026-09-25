@@ -284,6 +284,7 @@ capture_prior_runtime_identity() {{ return 0; }}
 do_build() {{ :; }}
 do_build_remote() {{ :; }}
 do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 promote_gate() {{ :; }}
 do_push_tag() {{ return 1; }}
 _pull_ref() {{ :; }}

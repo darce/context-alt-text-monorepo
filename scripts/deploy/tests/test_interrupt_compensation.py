@@ -322,6 +322,7 @@ def test_ship_interrupt_between_push_and_restart(tmp_path: Path) -> None:
 pin_deploy_sha() { DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
 init_deploy_ocir_docker_config() { install_deploy_interrupt_traps; }
 preflight_ssh() { :; }
+deploy_env_lease() { return 0; }
 preflight_remote_face_pipeline_models() { :; }
 preflight_git_clean() { :; }
 preflight_branch_synced() { :; }

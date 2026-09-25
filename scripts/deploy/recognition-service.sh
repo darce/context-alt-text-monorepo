@@ -70,12 +70,12 @@
 #   ACX_REMOTE_BUILDER_ENDPOINT
 #                            default unix:///var/run/docker.sock; other endpoints are refused
 #   ACX_ALLOW_DIRTY          set to 1 to allow dirty deploy inputs (dev and dev-fir only)
-#   ACX_CUTOVER_HEALTH_ATTEMPTS default 5; ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (candidate admission)
-#   ACX_CANONICAL_HEALTH_ATTEMPTS default 5; ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (restart readiness)
-#   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy public verify only)
-#   ACX_VERIFY_SLEEP         default 5  (seconds between post-deploy public verify attempts)
-#   ACX_ROLLBACK_VERIFY_ATTEMPTS default 5; ACX_ROLLBACK_VERIFY_SLEEP default 5 seconds (rollback verify)
-#   ACX_GPU_SNAPSHOT_GATE_ATTEMPTS default 3; ACX_GPU_SNAPSHOT_GATE_SLEEP default 5 seconds (GPU snapshot gate)
+#   ACX_CUTOVER_HEALTH_ATTEMPTS default 5 (max 60); ACX_CUTOVER_HEALTH_SLEEP default 5 seconds (max 120 s) (candidate admission)
+#   ACX_CANONICAL_HEALTH_ATTEMPTS default 5 (max 60); ACX_CANONICAL_HEALTH_SLEEP default 5 seconds (max 120 s) (restart readiness)
+#   ACX_VERIFY_ATTEMPTS      default 5 (max 60) (post-deploy public verify only)
+#   ACX_VERIFY_SLEEP         default 5 (max 120 s) (seconds between post-deploy public verify attempts)
+#   ACX_ROLLBACK_VERIFY_ATTEMPTS default 5 (max 60); ACX_ROLLBACK_VERIFY_SLEEP default 5 seconds (max 120 s) (rollback verify)
+#   ACX_GPU_SNAPSHOT_GATE_ATTEMPTS default 3 (max 60); ACX_GPU_SNAPSHOT_GATE_SLEEP default 5 seconds (max 120 s) (GPU snapshot gate)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
 #   ACX_DEPLOY_GPU_LIFECYCLE default 0: explicit gpu-lifecycle exits 2 unless set to 1
 #   ACX_GPU_READY_URL        required when ACX_DEPLOY_GPU_LIFECYCLE=1; no production default
@@ -1183,7 +1183,7 @@ do_build_remote() {
   local sha tag build_root build_dir build_timeout command_timeout build_rc=0 rsync_rc=0
   local remote_build_started remote_build_timeout
   local free_space_timeout mkdir_timeout rsync_timeout remaining generation_ttl
-  local generation_parent generation_basename reap_timeout reap_command
+  local generation_parent generation_basename generation_glob reap_timeout reap_command
   local remote_program remote_command remote_arg
   build_timeout="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
   if (( build_timeout > REMOTE_BUILD_TIMEOUT_CEILING )); then
@@ -1226,7 +1226,8 @@ do_build_remote() {
         generation_parent="/"
       fi
       if reap_timeout="$(remote_build_phase_timeout "stale generation reap" "${command_timeout}")"; then
-        reap_command="find '$(remote_quote "${generation_parent}")' -mindepth 1 -maxdepth 1 -type d -name '$(remote_quote "${generation_basename}")-*' -mmin +$(remote_quote "${generation_ttl}") -exec rm -rf -- {} +"
+        generation_glob="$(remote_quote "${generation_basename}")-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9]*-[0-9]*-[0-9]*"
+        reap_command="find '$(remote_quote "${generation_parent}")' -mindepth 1 -maxdepth 1 -type d -name '${generation_glob}' -mmin +$(remote_quote "${generation_ttl}") -exec rm -rf -- {} +"
         if run_with_deadline "${reap_timeout}" "stale generation reap" \
           ssh -l "${OCI_USER}" -- "${OCI_HOST}" "${reap_command}"; then
           log "Reaped remote build generations older than ${generation_ttl}m under ${generation_parent}"
@@ -1271,7 +1272,8 @@ do_build_remote() {
   #   the rule to full-path matching; that is the opposite of Docker .dockerignore, where
   #   `*.bin` is root-anchored and `**/*.bin` is the recursive form. Never add `**/` here.
   if rsync_timeout="$(remote_build_phase_timeout "remote build-context rsync" "${build_timeout}")"; then
-    run_with_deadline "${rsync_timeout}" "remote build-context rsync" rsync -az --delete \
+    # The reaper reads generation age from the root's mtime.
+    run_with_deadline "${rsync_timeout}" "remote build-context rsync" rsync -az --delete --omit-dir-times \
     --exclude='.git/' \
     --exclude='__pycache__/' \
     --exclude='*.pyc' \
@@ -3963,6 +3965,19 @@ staged_rollback_runtime() {
     fi
     return 1
   fi
+  if ! curl --fail --silent --show-error --max-time 10 "$(env_to_health_url "$env")" >/dev/null; then
+    warn "public health failed after rollback traffic flip; reverting to ${unit}"
+    if flip_edge_alias "$env" canonical; then
+      ACX_TRAFFIC_FLIPPED=0
+      ACX_CUTOVER_COMMITTED=1
+      if ! abort_cutover_candidate "$env"; then
+        warn "rollback candidate cleanup failed after public health revert"
+      fi
+    else
+      warn "canonical flip failed; leaving rollback candidate ${next_unit} serving"
+    fi
+    return 1
+  fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
   ACX_LIVE_DISRUPTED=1
   if ! run_with_deadline "${timeout}" "rollback systemctl restart ${unit}" \
@@ -4825,6 +4840,14 @@ probe_budget() {
   fi
   if [[ ! "${sleep_s}" =~ ^(0|[1-9][0-9]*)$ ]]; then
     warn "${sleep_var} must be a non-negative integer (got: ${sleep_s})"
+    return 1
+  fi
+  if (( ${#max_attempts} > 2 || max_attempts > 60 )); then
+    warn "${attempts_var}=${max_attempts} exceeds the maximum of 60 attempts"
+    return 1
+  fi
+  if (( ${#sleep_s} > 3 || sleep_s > 120 )); then
+    warn "${sleep_var}=${sleep_s} exceeds the maximum of 120 seconds"
     return 1
   fi
   printf '%s %s\n' "${max_attempts}" "${sleep_s}"

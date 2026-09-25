@@ -167,7 +167,7 @@ class LifecycleManagerTest extends TestCase
         $outboxSql = $statements['acx_sync_outbox'] ?? '';
 
         $this->assertMatchesRegularExpression(
-            '/^\\s*KEY [a-z_]+ \\(tenant_id, status, created_at\\)$/m',
+            '/^[ \\t]*KEY [a-z_]+ \\(tenant_id, status, created_at\\),?$/m',
             $outboxSql
         );
     }

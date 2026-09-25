@@ -60,12 +60,8 @@ _RSYNC_HF_RE = re.compile(r"^models--\*/$")
 # Context-shipping rsync: SERVICE_DIR → REMOTE_BUILD_DIR (the real build-context
 # transfer). Other inert rsync calls must not satisfy the weight-exclude gate (RC6).
 _CONTEXT_RSYNC_DEST_RE = re.compile(r"""["']?\$\{?SSH_TARGET\}?:\$\{?(?P<dest_var>\w+)\}?/?["']?""")
-# The destination may be a per-build generation directory rather than
-# REMOTE_BUILD_DIR itself (OCIRV1-FD-01 fenced concurrent builds behind
-# `build_dir="${REMOTE_BUILD_DIR%/}-..."`). Provenance is still required: the
-# variable must be assigned from REMOTE_BUILD_DIR somewhere in the script, so an
-# rsync to an unrelated remote path still fails this gate.
-_DEST_VAR_PROVENANCE_RE_TMPL = r"""^\s*(?:local\s+)?{var}=[^\n]*\$\{{?REMOTE_BUILD_DIR"""
+_ASSIGNMENT_RE = re.compile(r"^\s*(?:local\s+)?(?P<var>[A-Za-z_]\w*)=(?P<value>[^\n]*)$")
+_SHELL_VAR_RE = re.compile(r"\$\{?([A-Za-z_]\w*)")
 _CONTEXT_RSYNC_SRC_RE = re.compile(r"""["']?\$\{?SERVICE_DIR\}?/?["']?""")
 
 
@@ -106,9 +102,42 @@ def _iter_rsync_commands(text: str) -> list[str]:
     return commands
 
 
+def _assigned_values(text: str) -> dict[str, list[str]]:
+    assignments: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        match = _ASSIGNMENT_RE.match(line)
+        if match is not None:
+            assignments.setdefault(match.group("var"), []).append(match.group("value"))
+    return assignments
+
+
+def _assignment_reaches_remote_build_dir(
+    variable: str,
+    assignments: dict[str, list[str]],
+    *,
+    hops_left: int = 4,
+    seen: frozenset[str] = frozenset(),
+) -> bool:
+    if variable == "REMOTE_BUILD_DIR":
+        return True
+    if hops_left == 0 or variable in seen:
+        return False
+    refs = (
+        ref
+        for value in assignments.get(variable, [])
+        for ref in _SHELL_VAR_RE.findall(value)
+    )
+    next_seen = seen | {variable}
+    return any(
+        _assignment_reaches_remote_build_dir(ref, assignments, hops_left=hops_left - 1, seen=next_seen)
+        for ref in refs
+    )
+
+
 def context_shipping_rsync_commands(text: str) -> list[str]:
     """Rsync invocations that ship SERVICE_DIR → REMOTE_BUILD_DIR (build context)."""
     hits: list[str] = []
+    assignments = _assigned_values(text)
     for cmd in _iter_rsync_commands(text):
         if not _CONTEXT_RSYNC_SRC_RE.search(cmd):
             continue
@@ -116,11 +145,7 @@ def context_shipping_rsync_commands(text: str) -> list[str]:
         if match is None:
             continue
         dest_var = match.group("dest_var")
-        if dest_var == "REMOTE_BUILD_DIR" or re.search(
-            _DEST_VAR_PROVENANCE_RE_TMPL.format(var=re.escape(dest_var)),
-            text,
-            re.MULTILINE,
-        ):
+        if _assignment_reaches_remote_build_dir(dest_var, assignments):
             hits.append(cmd)
     return hits
 
@@ -469,6 +494,15 @@ def test_parser_rsync_classes_from_synthetic() -> None:
         ONNX_CLASS,
         HF_SNAPSHOT_CLASS,
     }
+
+
+def test_context_shipping_rsync_rejects_unrelated_destination_chain() -> None:
+    script = (
+        'unrelated_root="/srv/other-builds"\n'
+        'remote_dest="${unrelated_root}/generation"\n'
+        'rsync -az "${SERVICE_DIR}/" "${SSH_TARGET}:${remote_dest}/"\n'
+    )
+    assert context_shipping_rsync_commands(script) == []
 
 
 def test_parity_bites_when_rsync_drops_a_class() -> None:

@@ -122,7 +122,7 @@ def test_ttl_must_reach_exact_push_timeout_margin(tmp_path: Path) -> None:
     below = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="1199",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="1249",
         ACX_PUSH_TIMEOUT="900",
     )
     assert below.returncode != 0, below.stdout + below.stderr
@@ -130,8 +130,51 @@ def test_ttl_must_reach_exact_push_timeout_margin(tmp_path: Path) -> None:
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="1200",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="1250",
         ACX_PUSH_TIMEOUT="900",
+    )
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+
+
+def test_ttl_covers_default_restart_budget(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="7200",
+        ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="900",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
+    tmp_path: Path,
+) -> None:
+    budget = {
+        "ACX_CUTOVER_HEALTH_ATTEMPTS": "60",
+        "ACX_CUTOVER_HEALTH_SLEEP": "120",
+        "ACX_CANONICAL_HEALTH_ATTEMPTS": "60",
+        "ACX_CANONICAL_HEALTH_SLEEP": "120",
+    }
+    below = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="7200",
+        **budget,
+    )
+    assert below.returncode != 0, below.stdout + below.stderr
+    assert "15600" in below.stdout + below.stderr
+
+    exact = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="15600",
+        **budget,
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr
 
@@ -148,10 +191,13 @@ def test_expired_lease_is_taken_over(tmp_path: Path) -> None:
 
 def test_renew_extends_only_own_lease(tmp_path: Path) -> None:
     path = _lease_path(tmp_path)
-    old_expiry = int(time.time()) + 600
-    _write_lease(path, "transaction-a", "a@example:123", old_expiry)
+    old_expiry = int(time.time()) + 7200
 
-    own = _run_driver(tmp_path, "deploy_env_lease renew dev", transaction="transaction-a")
+    own = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev; sleep 1; deploy_env_lease renew dev",
+        transaction="transaction-a",
+    )
     assert own.returncode == 0, own.stdout + own.stderr
     renewed = path.read_bytes()
     assert json.loads(renewed)["expires_at"] > old_expiry
@@ -161,19 +207,43 @@ def test_renew_extends_only_own_lease(tmp_path: Path) -> None:
     assert path.read_bytes() == renewed
 
 
-def test_release_is_owner_checked(tmp_path: Path) -> None:
-    acquired = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
-    assert acquired.returncode == 0, acquired.stdout + acquired.stderr
+def test_renew_refuses_same_transaction_with_different_holder(tmp_path: Path) -> None:
     path = _lease_path(tmp_path)
-    original = path.read_bytes()
+    original = _write_lease(path, "transaction-a", "someone@else:1", int(time.time()) + 7200)
 
-    other = _run_driver(tmp_path, "deploy_env_lease release dev", transaction="transaction-b")
-    assert other.returncode == 0, other.stdout + other.stderr
+    result = _run_driver(tmp_path, "deploy_env_lease renew dev", transaction="transaction-a")
+
+    assert result.returncode == 75, result.stdout + result.stderr
     assert path.read_bytes() == original
 
-    owner = _run_driver(tmp_path, "deploy_env_lease release dev", transaction="transaction-a")
-    assert owner.returncode == 0, owner.stdout + owner.stderr
+
+def test_release_is_owner_checked(tmp_path: Path) -> None:
+    path = _lease_path(tmp_path)
+    result = _run_driver(
+        tmp_path,
+        f"""
+deploy_env_lease acquire dev
+ACX_DEPLOY_TRANSACTION_ID=transaction-b deploy_env_lease release dev
+test -f {shlex.quote(str(path))}
+deploy_env_lease release dev
+""",
+        transaction="transaction-a",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not released" in result.stderr
     assert not path.exists()
+
+
+def test_release_refuses_same_transaction_with_different_holder(tmp_path: Path) -> None:
+    path = _lease_path(tmp_path)
+    original = _write_lease(path, "transaction-a", "someone@else:1", int(time.time()) + 7200)
+
+    result = _run_driver(tmp_path, "deploy_env_lease release dev", transaction="transaction-a")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not released" in result.stderr
+    assert path.read_bytes() == original
 
 
 def test_break_glass_matches_transaction(tmp_path: Path) -> None:
@@ -375,6 +445,51 @@ clear_remote_image_repo_env dev
     assert not lease_path.exists()
 
 
+def test_clear_image_repo_exit_trap_releases_lease(tmp_path: Path) -> None:
+    lease_path = _lease_path(tmp_path)
+    result = _run_driver(
+        tmp_path,
+        """
+preflight_ssh() { :; }
+image_repo_resource() { exit 1; }
+clear_remote_image_repo_env dev
+""",
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not lease_path.exists()
+
+
+def test_reset_refuses_with_other_live_transaction_before_ssh_mutation(tmp_path: Path) -> None:
+    held = _run_driver(tmp_path, "deploy_env_lease acquire dev", transaction="transaction-a")
+    assert held.returncode == 0, held.stdout + held.stderr
+    ssh_log = tmp_path / "reset-ssh.log"
+    statements = f'''
+SSH_LOG={shlex.quote(str(ssh_log))}
+ssh() {{
+  local remote_command="${{@: -1}}"
+  printf '%s\\n' "$remote_command" >>"$SSH_LOG"
+  if [[ "$remote_command" == sudo\\ python3\\ -c* ]]; then
+    bash -c "$remote_command"
+  fi
+}}
+CONFIRM_REMOTE_RESET=RESET
+ACX_RESET_SITE_URL=http://localhost:10010
+ACX_RESET_TENANT_ID=11111111-2222-7333-9444-555555555555
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+curl() {{ return 0; }}
+sleep() {{ :; }}
+do_reset dev
+'''
+
+    result = _run_driver(tmp_path, statements, transaction="transaction-b")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "refusing reset" in result.stdout + result.stderr
+    assert "rm -rf" not in ssh_log.read_text(encoding="utf-8")
+
+
 def _function_body(name: str) -> str:
     source = SCRIPT.read_text(encoding="utf-8")
     match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{\n(.*?)^\}}", source)
@@ -391,6 +506,31 @@ def test_acquire_calls_precede_mutations() -> None:
         body = _function_body(name)
         assert "deploy_env_lease acquire" in body
         assert body.index("deploy_env_lease acquire") < body.index(mutation)
+
+    rollback = _function_body("do_rollback")
+    assert rollback.index("deploy_env_lease renew") < rollback.index("restore_env_tag_to_rollback")
+
+
+def test_manual_rollback_stops_if_lease_was_lost_during_pulls(tmp_path: Path) -> None:
+    marker = tmp_path / "rollback-mutation-ran"
+    lease_path = _lease_path(tmp_path)
+    statements = f'''
+preflight_ssh() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+_pull_ref_remote() {{ rm -f {shlex.quote(str(lease_path))}; }}
+remote_image_digest_ref() {{ printf '%s@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' "$IMAGE_BASE"; }}
+remote_image_id_for_digest() {{ printf 'image-id\\n'; }}
+capture_prior_runtime_identity() {{ :; }}
+restore_env_tag_to_rollback() {{ touch {shlex.quote(str(marker))}; }}
+do_rollback dev aaaaaaaaaaaa
+'''
+
+    result = _run_driver(tmp_path, statements)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "lost to" in result.stdout + result.stderr
+    assert "refusing rollback" in result.stdout + result.stderr
+    assert not marker.exists()
 
 
 def test_deploy_and_promote_renew_after_gate_before_tag_push() -> None:

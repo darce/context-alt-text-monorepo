@@ -36,6 +36,16 @@ WEIGHT_EXTENSION_CLASSES: frozenset[str] = frozenset(("safetensors", "bin", "pt"
 HF_SNAPSHOT_CLASS = "models--"
 ONNX_CLASS = "onnx"
 ONNX_PATTERN = "recognition/infrastructure/face_pipeline/models/*.onnx"
+_WEIGHT_CLASS_REPRESENTATIVES = {
+    "safetensors": ("x/y/model.safetensors",),
+    "bin": ("x/y/pytorch_model.bin",),
+    "pt": ("x/y/model.pt",),
+    "pth": ("x/y/model.pth",),
+    "gguf": ("x/y/model.gguf",),
+    "msgpack": ("x/y/model.msgpack",),
+    HF_SNAPSHOT_CLASS: ("x/models--org--name/blobs/abc",),
+    ONNX_CLASS: ("recognition/infrastructure/face_pipeline/models/det.onnx",),
+}
 
 # Dead cache-dir patterns that must stay gone (ORCH-LAUNCH-01-S1-RA-09 / RB-06).
 _DEAD_CACHE_PATTERNS = (
@@ -359,6 +369,60 @@ def _docker_line_to_class(pattern: str) -> str | None:
     return None
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str] | None:
+    """Translate the supported path-glob operators; None means uncertain."""
+    if "[" in pattern or "]" in pattern or "\\" in pattern:
+        return None
+    pieces: list[str] = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if pattern.startswith("**/", index):
+            pieces.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            pieces.append(".*")
+            index += 2
+        elif char == "*":
+            pieces.append("[^/]*")
+            index += 1
+        elif char == "?":
+            pieces.append("[^/]")
+            index += 1
+        else:
+            pieces.append(re.escape(char))
+            index += 1
+    try:
+        return re.compile("^" + "".join(pieces) + "$")
+    except re.error:
+        return None
+
+
+def _docker_pattern_matches_path(pattern: str, path: str) -> bool:
+    """Match a root-relative Docker pattern against a representative artifact."""
+    normalized = pattern.lstrip("/")
+    is_directory = normalized.endswith("/")
+    if is_directory:
+        normalized = normalized.rstrip("/")
+    matcher = _glob_regex(normalized)
+    # Unsupported pattern details are treated as a possible match so a negation
+    # cannot leave a class marked protected merely because this model is narrow.
+    if matcher is None:
+        return True
+    candidates = [path]
+    if is_directory:
+        segments = path.split("/")[:-1]
+        candidates = ["/".join(segments[:end]) for end in range(1, len(segments) + 1)]
+    return any(matcher.fullmatch(candidate) is not None for candidate in candidates)
+
+
+def _docker_pattern_matches_class(pattern: str, class_id: str) -> bool:
+    return any(
+        _docker_pattern_matches_path(pattern, representative)
+        for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]
+    )
+
+
 def docker_weight_classes(text: str) -> set[str]:
     """Map .dockerignore → protected class ids with last-match-wins (RC5).
 
@@ -371,9 +435,17 @@ def docker_weight_classes(text: str) -> set[str]:
         negated = line.startswith("!")
         pattern = line[1:].lstrip() if negated else line
         class_id = _docker_line_to_class(pattern)
-        if class_id is None:
-            continue
-        disposition[class_id] = not negated
+        candidate_classes = (
+            {class_id}
+            if class_id is not None
+            else {
+                candidate
+                for candidate in _WEIGHT_CLASS_REPRESENTATIVES
+                if _docker_pattern_matches_class(pattern, candidate)
+            }
+        )
+        for candidate in candidate_classes:
+            disposition[candidate] = not negated
     return {cid for cid, excluded in disposition.items() if excluded}
 
 
@@ -403,6 +475,87 @@ def _rsync_filter_rule(raw: str) -> tuple[str, str] | None:
     return None
 
 
+def _rsync_pattern_matches_path(pattern: str, path: str, *, directory: bool) -> bool:
+    """Match an rsync pattern against a file or one of its parent directories."""
+    anchored = pattern.startswith("/")
+    normalized = pattern.lstrip("/")
+    is_directory_pattern = normalized.endswith("/")
+    if is_directory_pattern:
+        normalized = normalized.rstrip("/")
+    matcher = _glob_regex(normalized)
+    if matcher is None:
+        return True
+
+    candidates = [path]
+    if is_directory_pattern or directory:
+        segments = path.split("/")[:-1] if directory is False else path.split("/")
+        candidates = ["/".join(segments[:end]) for end in range(1, len(segments) + 1)]
+    for candidate in candidates:
+        if "/" not in normalized and not anchored:
+            if matcher.fullmatch(candidate.rsplit("/", 1)[-1]) is not None:
+                return True
+            continue
+        suffixes = [candidate] if anchored else [
+            "/".join(candidate.split("/")[index:])
+            for index in range(len(candidate.split("/")))
+        ]
+        if any(matcher.fullmatch(suffix) is not None for suffix in suffixes):
+            return True
+    return False
+
+
+def _rsync_pattern_matches_class(pattern: str, class_id: str) -> bool:
+    for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]:
+        if _rsync_pattern_matches_path(pattern, representative, directory=False):
+            return True
+        parent_segments = representative.split("/")[:-1]
+        for end in range(1, len(parent_segments) + 1):
+            parent = "/".join(parent_segments[:end])
+            if _rsync_pattern_matches_path(pattern, parent, directory=True):
+                return True
+    return False
+
+
+def _rsync_rule_matches_class(disposition: str, pattern: str, class_id: str) -> bool:
+    if _rsync_pattern_to_class(pattern) == class_id:
+        return True
+    # Protecting excludes must keep the recognised rsync spelling; only an
+    # include is widened so an unfamiliar first rule cannot hide a reship.
+    if disposition == "exclude":
+        return False
+    return _rsync_pattern_matches_class(pattern, class_id)
+
+
+def _rsync_rules_from_text(text: str) -> list[tuple[str, str]]:
+    rules: list[tuple[str, str]] = []
+    for match in re.finditer(
+        r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
+        text,
+    ):
+        full = match.group(0)
+        value = match.group(1) or match.group(2) or match.group(3) or ""
+        if full.startswith("--exclude="):
+            rules.append(("exclude", value))
+        elif full.startswith("--include="):
+            rules.append(("include", value))
+        else:
+            rule = _rsync_filter_rule(value)
+            if rule is not None:
+                rules.append(rule)
+    return rules
+
+
+def _rsync_classes_for_rules(rules: list[tuple[str, str]]) -> set[str]:
+    disposition: dict[str, bool] = {}
+    for disposition_name, pattern in rules:
+        for class_id in _WEIGHT_CLASS_REPRESENTATIVES:
+            if class_id in disposition:
+                continue
+            if _rsync_rule_matches_class(disposition_name, pattern, class_id):
+                disposition[class_id] = disposition_name == "exclude"
+    return {class_id for class_id, excluded in disposition.items() if excluded}
+
+
 def rsync_weight_classes(text: str) -> set[str]:
     """Map context-shipping rsync rules → excluded class ids (first-match-wins).
 
@@ -420,28 +573,7 @@ def rsync_weight_classes(text: str) -> set[str]:
             if _FILES_FROM_RE.search(cmd):
                 # Explicit file list: weight globs no longer protect the transfer.
                 return set()
-            disposition: dict[str, bool] = {}
-            for match in re.finditer(
-                r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
-                cmd,
-            ):
-                full = match.group(0)
-                value = match.group(1) or match.group(2) or match.group(3) or ""
-                if full.startswith("--exclude="):
-                    rule = ("exclude", value)
-                elif full.startswith("--include="):
-                    rule = ("include", value)
-                else:
-                    rule = _rsync_filter_rule(value)
-                    if rule is None:
-                        continue
-                disposition_name, pattern = rule
-                class_id = _rsync_pattern_to_class(pattern)
-                if class_id is not None and class_id not in disposition:
-                    disposition[class_id] = disposition_name == "exclude"
-            per_transfer_classes.append(
-                {class_id for class_id, excluded in disposition.items() if excluded}
-            )
+            per_transfer_classes.append(_rsync_classes_for_rules(_rsync_rules_from_text(cmd)))
         common_classes = per_transfer_classes[0]
         for classes in per_transfer_classes[1:]:
             common_classes &= classes
@@ -450,50 +582,15 @@ def rsync_weight_classes(text: str) -> set[str]:
     commands = _iter_rsync_commands(text)
     if not commands:
         # Synthetic single-line fixtures without a full rsync invocation.
-        disposition: dict[str, bool] = {}
-        for match in _EXCLUDE_RE.finditer(text):
-            value = match.group(1) or match.group(2) or match.group(3)
-            if not value:
-                continue
-            class_id = _rsync_pattern_to_class(value)
-            if class_id is not None and class_id not in disposition:
-                disposition[class_id] = True  # excluded
-        for match in _INCLUDE_RE.finditer(text):
-            value = match.group(1) or match.group(2) or match.group(3)
-            if not value:
-                continue
-            class_id = _rsync_pattern_to_class(value)
-            if class_id is not None and class_id not in disposition:
-                disposition[class_id] = False  # included (not excluded)
-        return {cid for cid, excluded in disposition.items() if excluded}
+        return _rsync_classes_for_rules(_rsync_rules_from_text(text))
 
-    disposition: dict[str, bool] = {}
+    rules: list[tuple[str, str]] = []
     for cmd in commands:
         if _FILES_FROM_RE.search(cmd):
             # Explicit file list: weight globs no longer protect the transfer.
             return set()
-        # Walk flags left-to-right; first disposition per class wins.
-        tokens: list[tuple[str, str]] = []
-        for match in re.finditer(
-            r"""--(?:exclude|include|filter)=(?:'([^']+)'|"([^"]+)"|(\S+))""",
-            cmd,
-        ):
-            full = match.group(0)
-            value = match.group(1) or match.group(2) or match.group(3) or ""
-            if full.startswith("--exclude="):
-                tokens.append(("exclude", value))
-            elif full.startswith("--include="):
-                tokens.append(("include", value))
-            else:
-                rule = _rsync_filter_rule(value)
-                if rule is not None:
-                    tokens.append(rule)
-        for disp, pattern in tokens:
-            class_id = _rsync_pattern_to_class(pattern)
-            if class_id is None or class_id in disposition:
-                continue
-            disposition[class_id] = disp == "exclude"
-    return {cid for cid, excluded in disposition.items() if excluded}
+        rules.extend(_rsync_rules_from_text(cmd))
+    return _rsync_classes_for_rules(rules)
 
 
 def expected_weight_classes() -> set[str]:
@@ -680,6 +777,51 @@ def test_parser_rsync_classes_from_synthetic() -> None:
         ONNX_CLASS,
         HF_SNAPSHOT_CLASS,
     }
+
+
+def test_docker_specific_negation_reincludes_class() -> None:
+    body = "**/*.bin\n!**/pytorch_model.bin\n**/*.safetensors\n"
+
+    classes = docker_weight_classes(body)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_rsync_unrecognised_include_before_exclude_reships_class() -> None:
+    script = (
+        "rsync -az \\\n"
+        "  --include='**/*.bin' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+
+    classes = rsync_weight_classes(script)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_rsync_filter_plus_rule_reships_class() -> None:
+    script = (
+        "rsync -az \\\n"
+        "  --filter='+ **/*.bin' \\\n"
+        "  --exclude='*.bin' \\\n"
+        "  --exclude='*.safetensors' \\\n"
+        '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
+    )
+
+    classes = rsync_weight_classes(script)
+
+    assert "bin" not in classes
+    assert "safetensors" in classes
+
+
+def test_irrelevant_negations_do_not_unprotect() -> None:
+    body = "**/*.bin\n**/*.safetensors\n!.env.example\n"
+
+    assert docker_weight_classes(body) == {"bin", "safetensors"}
 
 
 def test_context_shipping_rsync_rejects_unrelated_destination_chain() -> None:

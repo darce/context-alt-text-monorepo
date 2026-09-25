@@ -13,6 +13,7 @@ use function array_values;
 use function is_array;
 use function is_numeric;
 use function is_string;
+use function json_decode;
 use function trim;
 
 class ClusterResponseMapper {
@@ -217,7 +218,44 @@ class ClusterResponseMapper {
 			'representative_identity' => $representative,
 			'sample_identities' => $sample_identities,
 			'person_uuid' => '' !== $person_uuid ? $person_uuid : null,
+			'representative_quality' => $this->normalize_representative_quality( $cluster_row['representative_quality'] ?? null ),
+			'quality_components' => $this->normalize_quality_components( $cluster_row['quality_components'] ?? null ),
+			'representative_media_id' => $this->normalize_representative_media_id( $cluster_row['representative_media_id'] ?? null ),
+			'undoable_merge_receipt_id' => $this->normalize_optional_string( $cluster_row['undoable_merge_receipt_id'] ?? null ),
 		);
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function normalize_quality_components( mixed $value ): ?array {
+		if ( is_array( $value ) ) {
+			return $value;
+		}
+		if ( ! is_string( $value ) || '' === trim( $value ) ) {
+			return null;
+		}
+
+		$decoded = json_decode( $value, true );
+		return is_array( $decoded ) ? $decoded : null;
+	}
+
+	private function normalize_representative_quality( mixed $value ): ?float {
+		return is_numeric( $value ) ? (float) $value : null;
+	}
+
+	private function normalize_representative_media_id( mixed $value ): ?int {
+		$media_id = absint( $value );
+		return $media_id > 0 ? $media_id : null;
+	}
+
+	private function normalize_optional_string( mixed $value ): ?string {
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
 	}
 
 	/**

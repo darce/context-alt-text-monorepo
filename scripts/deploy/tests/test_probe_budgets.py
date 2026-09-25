@@ -7,6 +7,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
 
@@ -22,6 +24,39 @@ def _run_shell(tmp_path: Path, driver: str) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=20,
     )
+
+
+@pytest.mark.parametrize("sleep_value", ["08", "00", "010"])
+def test_probe_budget_rejects_leading_zero_sleep(tmp_path: Path, sleep_value: str) -> None:
+    result = _run_shell(
+        tmp_path,
+        f'''
+ACX_VERIFY_SLEEP={sleep_value}
+if budget="$(probe_budget ACX_VERIFY 5 5)"; then
+  printf 'budget=%s\\n' "$budget"
+  exit 0
+else
+  exit 1
+fi
+''',
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "ACX_VERIFY_SLEEP must be a non-negative integer" in result.stderr
+
+
+@pytest.mark.parametrize("sleep_value", ["0", "10"])
+def test_probe_budget_accepts_canonical_sleep_values(tmp_path: Path, sleep_value: str) -> None:
+    result = _run_shell(
+        tmp_path,
+        f'''
+ACX_VERIFY_SLEEP={sleep_value}
+probe_budget ACX_VERIFY 5 5
+''',
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == f"5 {sleep_value}"
 
 
 def test_health_probe_budgets_are_independent(tmp_path: Path) -> None:

@@ -108,6 +108,10 @@ def test_ttl_covers_push_timeout_and_margin(tmp_path: Path) -> None:
         tmp_path,
         "deploy_env_lease acquire dev",
         ACX_DEPLOY_LOCK_TTL_SECONDS="600",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
 
     assert result.returncode != 0, result.stdout + result.stderr
@@ -122,56 +126,125 @@ def test_ttl_must_cover_three_tag_promotion_transfers(tmp_path: Path) -> None:
     below = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="3049",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3069",
         ACX_PUSH_TIMEOUT="900",
         ACX_PULL_TIMEOUT="900",
         ACX_CUTOVER_HEALTH_ATTEMPTS="5",
         ACX_CUTOVER_HEALTH_SLEEP="5",
         ACX_CANONICAL_HEALTH_ATTEMPTS="5",
         ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
     assert below.returncode != 0, below.stdout + below.stderr
-    assert "3050" in below.stdout + below.stderr
+    assert "3070" in below.stdout + below.stderr
 
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="3050",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3070",
         ACX_PUSH_TIMEOUT="900",
         ACX_PULL_TIMEOUT="900",
         ACX_CUTOVER_HEALTH_ATTEMPTS="5",
         ACX_CUTOVER_HEALTH_SLEEP="5",
         ACX_CANONICAL_HEALTH_ATTEMPTS="5",
         ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr
+
+
+def test_ttl_floor_grows_with_gpu_snapshot_gate_budget(tmp_path: Path) -> None:
+    result = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3082",
+        ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="900",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="4",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="10",
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "3095" in result.stdout + result.stderr
+
+
+def test_do_verify_renews_a_held_lease_once_per_attempt(tmp_path: Path) -> None:
+    for lease_env, expected_renewals in (("dev", 3), ("", 0)):
+        case_dir = tmp_path / (lease_env or "no-lease")
+        renew_log = case_dir / "renew.log"
+        statements = f'''
+env_to_health_url() {{ printf 'https://verify.invalid/health'; }}
+env_to_ready_url() {{ printf 'https://verify.invalid/ready'; }}
+pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; GIT_REF=test; }}
+deploy_env_lease() {{ printf '%s %s\\n' "$1" "$2" >>{shlex.quote(str(renew_log))}; return 0; }}
+curl() {{ printf 'unavailable\\n503'; }}
+verify_retry_sleep() {{ :; }}
+emit_verify_ready_diagnostic() {{ :; }}
+ACX_DEPLOY_LEASE_ENV={shlex.quote(lease_env)}
+ACX_VERIFY_EXPECT_LOCAL=1
+if do_verify dev; then printf 'VERIFY=pass\\n'; else printf 'VERIFY=fail\\n'; fi
+'''
+
+        result = _run_driver(
+            case_dir,
+            statements,
+            ACX_DEPLOY_LEASE_ENV=lease_env,
+            ACX_VERIFY_ATTEMPTS="3",
+            ACX_VERIFY_SLEEP="0",
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "VERIFY=fail" in result.stdout
+        renewals = renew_log.read_text(encoding="utf-8").splitlines() if renew_log.exists() else []
+        assert len(renewals) == expected_renewals
+        assert renewals == (["renew dev"] * expected_renewals)
 
 
 def test_ttl_uses_larger_pull_timeout_for_three_transfers(tmp_path: Path) -> None:
     below = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="3949",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3969",
         ACX_PUSH_TIMEOUT="900",
         ACX_PULL_TIMEOUT="1200",
         ACX_CUTOVER_HEALTH_ATTEMPTS="5",
         ACX_CUTOVER_HEALTH_SLEEP="5",
         ACX_CANONICAL_HEALTH_ATTEMPTS="5",
         ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
     assert below.returncode != 0, below.stdout + below.stderr
-    assert "3950" in below.stdout + below.stderr
+    assert "3970" in below.stdout + below.stderr
 
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="3950",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3970",
         ACX_PUSH_TIMEOUT="900",
         ACX_PULL_TIMEOUT="1200",
         ACX_CUTOVER_HEALTH_ATTEMPTS="5",
         ACX_CUTOVER_HEALTH_SLEEP="5",
         ACX_CANONICAL_HEALTH_ATTEMPTS="5",
         ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr
 
@@ -187,6 +260,10 @@ def test_ttl_covers_default_restart_budget(tmp_path: Path) -> None:
         ACX_CUTOVER_HEALTH_SLEEP="5",
         ACX_CANONICAL_HEALTH_ATTEMPTS="5",
         ACX_CANONICAL_HEALTH_SLEEP="5",
+        ACX_VERIFY_ATTEMPTS="5",
+        ACX_VERIFY_SLEEP="5",
+        ACX_GPU_SNAPSHOT_GATE_ATTEMPTS="3",
+        ACX_GPU_SNAPSHOT_GATE_SLEEP="5",
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -200,6 +277,10 @@ def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
         "ACX_CUTOVER_HEALTH_SLEEP": "120",
         "ACX_CANONICAL_HEALTH_ATTEMPTS": "60",
         "ACX_CANONICAL_HEALTH_SLEEP": "120",
+        "ACX_VERIFY_ATTEMPTS": "5",
+        "ACX_VERIFY_SLEEP": "5",
+        "ACX_GPU_SNAPSHOT_GATE_ATTEMPTS": "3",
+        "ACX_GPU_SNAPSHOT_GATE_SLEEP": "5",
     }
     below = _run_driver(
         tmp_path,
@@ -208,12 +289,12 @@ def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
         **budget,
     )
     assert below.returncode != 0, below.stdout + below.stderr
-    assert "17400" in below.stdout + below.stderr
+    assert "17420" in below.stdout + below.stderr
 
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="17400",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="17420",
         **budget,
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr

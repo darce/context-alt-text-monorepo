@@ -465,6 +465,52 @@ def test_interrupted_compensation_runs_when_lease_is_owned(tmp_path: Path) -> No
     assert "restore_prior_image_repo_env" in records
 
 
+def test_failed_verification_skips_evidence_and_rollback_after_lease_loss(
+    tmp_path: Path,
+) -> None:
+    lease_path = tmp_path / "backups" / "locks" / "deploy-dev.lease"
+    original = _write_lease(
+        lease_path,
+        "transaction-b",
+        "other@example:456",
+        int(time.time()) + 3600,
+    )
+    evidence_marker = tmp_path / "evidence-captured"
+    rollback_marker = tmp_path / "rollback-ran"
+    result = _run_lease_driver(
+        tmp_path,
+        f'''
+capture_failure_evidence() {{ touch {shlex.quote(str(evidence_marker))}; }}
+restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
+ACX_DEPLOY_LEASE_ENV=dev
+handle_failed_verification dev Deploy
+''',
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert not evidence_marker.exists()
+    assert not rollback_marker.exists()
+    assert lease_path.read_bytes() == original
+
+
+def test_failed_verification_rolls_back_when_lease_is_owned(tmp_path: Path) -> None:
+    evidence_marker = tmp_path / "evidence-captured"
+    rollback_marker = tmp_path / "rollback-ran"
+    result = _run_lease_driver(
+        tmp_path,
+        f'''
+deploy_env_lease acquire dev
+capture_failure_evidence() {{ touch {shlex.quote(str(evidence_marker))}; }}
+restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
+handle_failed_verification dev Deploy
+''',
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert evidence_marker.exists()
+    assert rollback_marker.exists()
+
+
 def test_no_phase_is_a_noop(tmp_path: Path) -> None:
     result = _run_driver(tmp_path, 'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=""; deploy_interrupt_cleanup 130')
     assert result.returncode == 130, result.stdout + result.stderr

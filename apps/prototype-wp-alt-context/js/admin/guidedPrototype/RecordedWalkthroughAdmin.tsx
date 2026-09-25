@@ -413,11 +413,7 @@ export const RecordedWalkthroughAdmin = ({ scope, livePanel }: RecordedWalkthrou
       data-testid="guided-demo-root"
       data-scope={scope}
     >
-      <GuidedPrototypeEntrance
-        onBegin={handleBegin}
-        onFocusFirstNameQuestion={handleFocusFirstNameQuestion}
-        scope={scope}
-      />
+      <GuidedPrototypeEntrance onBegin={handleBegin} scope={scope} />
       {scope === 'admin' ? (
         <GuidedPrototypeGuide
           activeStep={demo.activeStep}

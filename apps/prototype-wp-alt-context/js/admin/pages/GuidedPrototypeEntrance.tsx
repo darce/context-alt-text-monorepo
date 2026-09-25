@@ -6,7 +6,7 @@ const PRODUCT_HOME_URL = 'https://altcontext.com/';
 
 export interface GuidedPrototypeEntranceProps {
   onBegin: () => void;
-  onFocusFirstNameQuestion?: () => void;
+  onFocusFirstPhoto?: () => void;
   scope?: 'public' | 'admin';
 }
 
@@ -29,7 +29,7 @@ const ExternalGuideLink = ({
 
 export const GuidedPrototypeEntrance = ({
   onBegin,
-  onFocusFirstNameQuestion,
+  onFocusFirstPhoto,
   scope = 'admin',
 }: GuidedPrototypeEntranceProps): React.JSX.Element => {
   if (scope === 'public') {
@@ -57,7 +57,7 @@ export const GuidedPrototypeEntrance = ({
               className="acx-button acx-button--primary"
               onClick={() => {
                 onBegin();
-                onFocusFirstNameQuestion?.();
+                onFocusFirstPhoto?.();
               }}
             >
               {guidedCopy('entry.start.public')}

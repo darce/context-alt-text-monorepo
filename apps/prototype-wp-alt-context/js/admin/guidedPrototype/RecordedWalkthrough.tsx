@@ -302,6 +302,10 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     document.querySelector<HTMLInputElement>('#guided-name-tribeca-left-include')?.focus({ preventScroll: true });
   };
 
+  const handleFocusFirstPhoto = (): void => {
+    document.getElementById(`guided-photo-step-${GUIDED_IMAGE_KEYS[0]}`)?.focus();
+  };
+
   const focusPublicReview = (imageKey: GuidedImageKey): void => {
     document.getElementById(`guided-photo-review-${imageKey}`)?.focus({ preventScroll: true });
   };
@@ -417,11 +421,7 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
       data-testid="guided-demo-root"
       data-scope={scope}
     >
-      <GuidedPrototypeEntrance
-        onBegin={handleBegin}
-        onFocusFirstNameQuestion={handleFocusFirstNameQuestion}
-        scope={scope}
-      />
+      <GuidedPrototypeEntrance onBegin={handleBegin} onFocusFirstPhoto={handleFocusFirstPhoto} scope={scope} />
       {scope === 'admin' ? (
         <GuidedPrototypeGuide
           activeStep={demo.activeStep}
@@ -548,6 +548,8 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
                 return scope === 'public' ? (
                   <section
                     key={photo.key}
+                    id={`guided-photo-step-${photo.key}`}
+                    tabIndex={-1}
                     className="acx-guided-page__photo-step"
                     data-testid={`guided-photo-step-${photo.key}`}
                     aria-labelledby={`guided-photo-step-${photo.key}-title`}

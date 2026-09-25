@@ -6,7 +6,6 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GuidedPrototypeEntrance } from '../../admin/pages/GuidedPrototypeEntrance';
 import { GuidedPrototypePage } from '../../admin/pages/guided/GuidedPrototypePage';
 import { CASE_STUDY_URL, guidedCopy as publicGuidedCopy } from '../../admin/guidedPrototype/publicGuideCopy';
 import { RecordedWalkthrough } from '../../admin/guidedPrototype/RecordedWalkthrough';
@@ -222,29 +221,13 @@ describe('public recorded walkthrough boundary', () => {
     expect(screen.queryByTestId('guided-live')).not.toBeInTheDocument();
   });
 
-  it('lets the public start action focus the first name question', async () => {
+  it('moves focus to the first photo when the public demo starts', async () => {
     const user = userEvent.setup();
-    const onBegin = vi.fn();
-    let firstNameQuestion: HTMLInputElement | null = null;
-    const onFocusFirstNameQuestion = vi.fn(() => firstNameQuestion?.focus());
-
-    render(
-      <>
-        <GuidedPrototypeEntrance onBegin={onBegin} onFocusFirstNameQuestion={onFocusFirstNameQuestion} scope="public" />
-        <input
-          ref={(element) => {
-            firstNameQuestion = element;
-          }}
-          aria-label="First name question"
-        />
-      </>,
-    );
+    render(<RecordedWalkthrough scope="public" />);
 
     await user.click(screen.getByRole('button', { name: guidedCopy('entry.start.public') }));
 
-    expect(onBegin).toHaveBeenCalledOnce();
-    expect(onFocusFirstNameQuestion).toHaveBeenCalledOnce();
-    expect(document.activeElement).toBe(firstNameQuestion);
+    expect(document.activeElement).toBe(screen.getByTestId('guided-photo-step-tribeca'));
   });
 
   it('keeps each public photo in a zero state until its name questions are answered', async () => {
@@ -255,12 +238,6 @@ describe('public recorded walkthrough boundary', () => {
     expect(
       screen.getByRole('heading', { level: 2, name: publicGuidedCopy('photos.title.public') }),
     ).toBeInTheDocument();
-    const firstNameQuestion = within(screen.getByTestId('guided-photo-tribeca')).getByRole('radio', {
-      name: publicGuidedCopy('names.use.public', { name: 'Justin Trudeau' }),
-    });
-    await user.click(screen.getByRole('button', { name: publicGuidedCopy('entry.start.public') }));
-    expect(document.activeElement).toBe(firstNameQuestion);
-
     for (const imageKey of PUBLIC_IMAGE_KEYS) {
       const review = screen.getByTestId(`guided-description-review-${imageKey}`);
       expect(review).toHaveTextContent(publicGuidedCopy('choices.help.public'));

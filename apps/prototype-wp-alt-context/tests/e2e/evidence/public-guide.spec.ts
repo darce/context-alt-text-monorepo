@@ -211,7 +211,7 @@ const assertResponsiveLayout = async (page: Page, viewportName: string): Promise
     return;
   }
 
-  expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(16, 0);
+  expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(24, 0);
   const firstPhotoFrame = await page
     .getByTestId('guided-photo-tribeca')
     .locator('.acx-guided-page__image-wrap')

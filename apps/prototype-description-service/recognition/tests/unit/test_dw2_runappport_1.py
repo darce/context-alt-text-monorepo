@@ -52,10 +52,22 @@ def _successful_runner(calls: list[tuple[list[str], dict[str, Any]]]):
     def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
         if command[:3] == ["git", "rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout="d" * 40, stderr="")
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         calls.append((command, kwargs))
         xml_path = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml=")))
+        testcase_xml = []
+        for node in (arg for arg in command if "::" in arg and not arg.startswith("-")):
+            parts = node.split("::")
+            path = parts[0].replace("/", ".")
+            if path.endswith(".py"):
+                path = path[:-3]
+            classname = ".".join([path, *parts[1:-1]])
+            testcase_xml.append(
+                f"<testcase classname='{classname}' name='{parts[-1]}'/>"
+            )
         xml_path.write_text(
-            "<testsuite tests='1'><testcase classname='tests' name='case-0'/></testsuite>",
+            f"<testsuite tests='{len(testcase_xml)}'>{''.join(testcase_xml)}</testsuite>",
             encoding="utf-8",
         )
         kwargs["stdout"].write("test passed\n")
@@ -401,3 +413,174 @@ def test_evidence_only_group_passes_with_its_artifact(tmp_path: Path) -> None:
     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert evidence["groups"][0]["evidence_only_group"] is True
     assert evidence["release_gate_failures"] == []
+
+
+def test_gate_fails_when_a_required_test_is_missing_from_junit(tmp_path: Path) -> None:
+    manifest_path = _manifest(
+        tmp_path,
+        [
+            _case(
+                "SC-PRESENT",
+                "selected",
+                test="tests/test_suite.py::TestSuite::test_present[param-1]",
+            ),
+            _case(
+                "SC-MISSING",
+                "selected",
+                test="tests/test_suite.py::TestSuite::test_deselected[param-2]",
+            ),
+        ],
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["release_gates"] = {
+        gate: {"required_cases": ["SC-PRESENT", "SC-MISSING"]}
+        for gate in ("beta", "expansion", "paid")
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def deselecting_runner(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="d" * 40, stderr="")
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        xml_path = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--junitxml=")))
+        xml_path.write_text(
+            "<testsuite tests='1'><testcase classname='tests.test_suite.TestSuite' name='test_present[param-1]'/></testsuite>",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(
+        manifest_path,
+        gates=["beta"],
+        out_dir=tmp_path / "out",
+        command_runner=deselecting_runner,
+    )
+
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    case_results = {case["case_id"]: case for case in evidence["case_results"]}
+    assert status == 1
+    assert case_results["SC-PRESENT"]["execution_status"] == "passed"
+    assert case_results["SC-MISSING"]["execution_status"] == "not_executed_or_failed"
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
+
+
+def test_pytest_filter_environment_is_stripped_and_recorded(tmp_path: Path) -> None:
+    manifest_path = _manifest(
+        tmp_path,
+        [_case("SC-1", "selected", test="tests/test_suite.py::test_present")],
+    )
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    status = runner.run_evals(
+        manifest_path,
+        out_dir=tmp_path / "out",
+        environment={"PYTEST_ADDOPTS": "-k nothing", "PYTEST_PLUGINS": "hidden_plugin"},
+        command_runner=_successful_runner(calls),
+    )
+
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert status == 0
+    assert "PYTEST_ADDOPTS" not in calls[0][1]["env"]
+    assert "PYTEST_PLUGINS" not in calls[0][1]["env"]
+    assert evidence["gate_environment"]["PYTEST_ADDOPTS"] == "-k nothing"
+    assert evidence["gate_environment"]["PYTEST_PLUGINS"] == "hidden_plugin"
+    assert evidence["groups"][0]["stripped_env_keys"] == ["PYTEST_ADDOPTS", "PYTEST_PLUGINS"]
+
+
+def _paid_artifact_manifest(tmp_path: Path, artifact: Path) -> Path:
+    manifest_path = _manifest(
+        tmp_path,
+        [_case("APP-SC-20", "paid", artifact=str(artifact))],
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["release_gates"]["paid"]["requires_explicit_live_charge_authorization"] = True
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return manifest_path
+
+
+def test_paid_gate_rejects_empty_app_sc_20_artifact(tmp_path: Path) -> None:
+    artifact = tmp_path / "app1-paid-release.json"
+    artifact.write_text("", encoding="utf-8")
+    manifest_path = _paid_artifact_manifest(tmp_path, artifact)
+
+    status = runner.run_evals(
+        manifest_path,
+        gates=["paid"],
+        out_dir=tmp_path / "out",
+        command_runner=_successful_runner([]),
+    )
+
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    case_result = evidence["case_results"][0]
+    assert status == 1
+    assert case_result["artifact_present"] is False
+    assert any("APP-SC-20" in reason for reason in evidence["release_gate_results"]["paid"]["reasons"])
+
+
+def test_paid_gate_requires_and_records_live_charge_authorization(tmp_path: Path) -> None:
+    artifact = tmp_path / "app1-paid-release.json"
+    artifact.write_text("{\"transaction\": \"recorded\"}", encoding="utf-8")
+    manifest_path = _paid_artifact_manifest(tmp_path, artifact)
+
+    status_without_authorization = runner.run_evals(
+        manifest_path,
+        gates=["paid"],
+        out_dir=tmp_path / "without-authorization",
+        command_runner=_successful_runner([]),
+    )
+    without_authorization = json.loads(
+        (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+
+    args = runner._build_parser().parse_args(
+        ["--manifest", str(manifest_path), "--live-charge-authorized-by", "Dana Operator"]
+    )
+    status_with_authorization = runner.run_evals(
+        manifest_path,
+        gates=["paid"],
+        out_dir=tmp_path / "with-authorization",
+        command_runner=_successful_runner([]),
+        live_charge_authorized_by=args.live_charge_authorized_by,
+    )
+    with_authorization = json.loads(
+        (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+
+    assert status_without_authorization == 1
+    assert "explicit live-charge authorization not given" in without_authorization["release_gate_results"]["paid"]["reasons"]
+    assert without_authorization["release_gate_results"]["paid"]["live_charge_authorized_by"] is None
+    assert status_with_authorization == 0
+    assert with_authorization["release_gate_results"]["paid"]["status"] == "passed"
+    assert with_authorization["release_gate_results"]["paid"]["live_charge_authorized_by"] == "Dana Operator"
+
+
+def test_selected_gate_fails_and_records_dirty_tree_paths(tmp_path: Path) -> None:
+    manifest_path = _manifest(
+        tmp_path,
+        [_case("SC-1", "selected", test="tests/test_suite.py::test_present")],
+    )
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    successful_runner = _successful_runner(calls)
+
+    def dirty_runner(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        if command[:2] == ["git", "status"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=" M docs/assessments/dirty-report.md\n",
+                stderr="",
+            )
+        return successful_runner(command, **kwargs)
+
+    status = runner.run_evals(
+        manifest_path,
+        gates=["beta"],
+        out_dir=tmp_path / "out",
+        command_runner=dirty_runner,
+    )
+
+    evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert status == 1
+    assert evidence["git_dirty"] is True
+    assert evidence["git_dirty_paths"] == ["docs/assessments/dirty-report.md"]
+    assert "repository working tree is dirty" in evidence["release_gate_results"]["beta"]["reasons"]

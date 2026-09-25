@@ -98,6 +98,67 @@ def test_render_unit_enables_vault_bootstrap_only_for_oci_vault() -> None:
     assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in env_backend
 
 
+def _run_unit_install(tmp_path: Path, backend: str, hook_present: bool) -> tuple[subprocess.CompletedProcess[str], str, Path]:
+    remote_commands = tmp_path / "ssh.log"
+    installed_unit = tmp_path / "installed.service"
+    command = f'''
+source "{SCRIPT}"
+REMOTE_COMMANDS="{remote_commands}"
+INSTALLED_UNIT="{installed_unit}"
+BACKEND="{backend}"
+HOOK_PRESENT={1 if hook_present else 0}
+ssh() {{
+  last="${{@: -1}}"
+  printf '%s\\n' "$last" >>"$REMOTE_COMMANDS"
+  if [[ "$last" == *"RECOGNITION_SECRET_BACKEND="* ]]; then
+    printf '%s\\n' "$BACKEND"
+  elif [[ "$last" == test\\ -x\\ * ]]; then
+    [[ "$HOOK_PRESENT" == 1 ]]
+  elif [[ "$last" == *"cat > '/tmp/acx-dev.service'"* ]]; then
+    printf 'unit-install\\n' >>"$REMOTE_COMMANDS"
+    cat >"$INSTALLED_UNIT"
+  else
+    return 91
+  fi
+}}
+install_rendered_unit dev
+'''
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    logged = remote_commands.read_text(encoding="utf-8") if remote_commands.exists() else ""
+    return result, logged, installed_unit
+
+
+def test_vault_unit_install_refuses_missing_bootstrap_hook(tmp_path: Path) -> None:
+    result, logged, _ = _run_unit_install(tmp_path, "oci_vault", hook_present=False)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "/opt/acx-backend/dev/fetch-vault-bootstrap.sh" in combined, combined
+    assert "infra/oci/vault-instance-principal-runbook.md" in combined, combined
+    assert "unit-install" not in logged, logged
+
+
+def test_vault_unit_install_enables_bootstrap_hook_when_present(tmp_path: Path) -> None:
+    result, logged, installed_unit = _run_unit_install(tmp_path, "oci_vault", hook_present=True)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "unit-install" in logged, logged
+    unit = installed_unit.read_text(encoding="utf-8")
+    assert "\nExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in unit
+
+
+def test_env_unit_install_does_not_probe_vault_hook(tmp_path: Path) -> None:
+    result, logged, installed_unit = _run_unit_install(tmp_path, "env", hook_present=False)
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert "test -x" not in logged, logged
+    assert "unit-install" in logged, logged
+    unit = installed_unit.read_text(encoding="utf-8")
+    assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in unit
+
+
 def _sticky_shell(tmp_path: Path, command: str) -> str:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)

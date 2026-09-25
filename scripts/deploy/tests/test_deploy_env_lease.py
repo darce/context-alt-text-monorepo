@@ -118,20 +118,60 @@ def test_ttl_covers_push_timeout_and_margin(tmp_path: Path) -> None:
     assert "900" in combined
 
 
-def test_ttl_must_reach_exact_push_timeout_margin(tmp_path: Path) -> None:
+def test_ttl_must_cover_three_tag_promotion_transfers(tmp_path: Path) -> None:
     below = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="1249",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3049",
         ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="900",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
     )
     assert below.returncode != 0, below.stdout + below.stderr
+    assert "3050" in below.stdout + below.stderr
 
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="1250",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3050",
         ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="900",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
+    )
+    assert exact.returncode == 0, exact.stdout + exact.stderr
+
+
+def test_ttl_uses_larger_pull_timeout_for_three_transfers(tmp_path: Path) -> None:
+    below = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3949",
+        ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="1200",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
+    )
+    assert below.returncode != 0, below.stdout + below.stderr
+    assert "3950" in below.stdout + below.stderr
+
+    exact = _run_driver(
+        tmp_path,
+        "deploy_env_lease acquire dev",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="3950",
+        ACX_PUSH_TIMEOUT="900",
+        ACX_PULL_TIMEOUT="1200",
+        ACX_CUTOVER_HEALTH_ATTEMPTS="5",
+        ACX_CUTOVER_HEALTH_SLEEP="5",
+        ACX_CANONICAL_HEALTH_ATTEMPTS="5",
+        ACX_CANONICAL_HEALTH_SLEEP="5",
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr
 
@@ -168,12 +208,12 @@ def test_ttl_rejects_restart_budget_beyond_default_and_accepts_exact_floor(
         **budget,
     )
     assert below.returncode != 0, below.stdout + below.stderr
-    assert "15600" in below.stdout + below.stderr
+    assert "17400" in below.stdout + below.stderr
 
     exact = _run_driver(
         tmp_path,
         "deploy_env_lease acquire dev",
-        ACX_DEPLOY_LOCK_TTL_SECONDS="15600",
+        ACX_DEPLOY_LOCK_TTL_SECONDS="17400",
         **budget,
     )
     assert exact.returncode == 0, exact.stdout + exact.stderr

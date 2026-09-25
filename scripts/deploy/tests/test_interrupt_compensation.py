@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 import subprocess
+import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
@@ -19,6 +21,7 @@ source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
 record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+deploy_env_lease() {{ return 0; }}
 restore_runtime_topology() {{ record restore_runtime_topology "$@"; }}
 restore_prior_image_repo_env() {{ record restore_prior_image_repo_env "$@"; }}
 restore_env_tag_to_rollback() {{ record restore_env_tag_to_rollback "$@"; return "${{RESTORE_ENV_RC:-0}}"; }}
@@ -52,6 +55,54 @@ cleanup_remote_build_generation_on_exit() {{ record cleanup_remote_build_generat
 _purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$@"; }}
 _purge_deploy_snapshot() {{ record _purge_deploy_snapshot "$@"; }}
 rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
+{statements}
+'''
+    result = subprocess.run(
+        ["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False
+    )
+    if records.exists():
+        result.records = records.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
+    else:
+        result.records = []  # type: ignore[attr-defined]
+    return result
+
+
+def _write_lease(path: Path, transaction: str, holder: str, expires_at: int) -> bytes:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(
+        {"transaction": transaction, "holder": holder, "expires_at": expires_at},
+        separators=(",", ":"),
+    ).encode("ascii")
+    path.write_bytes(content)
+    return content
+
+
+def _run_lease_driver(tmp_path: Path, statements: str) -> subprocess.CompletedProcess[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    records = tmp_path / "records.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
+    sudo.chmod(0o755)
+    command = f'''
+source {shlex.quote(str(SCRIPT))}
+GREEN=; YELLOW=; RED=; RESET=
+RECORDS={shlex.quote(str(records))}
+record() {{ printf '%s\\n' "$*" >>"$RECORDS"; }}
+restore_runtime_topology() {{ record restore_runtime_topology "$@"; }}
+restore_prior_image_repo_env() {{ record restore_prior_image_repo_env "$@"; }}
+restore_env_tag_to_rollback() {{ record restore_env_tag_to_rollback "$@"; return "${{RESTORE_ENV_RC:-0}}"; }}
+recover_interrupted_cutover() {{ record recover_interrupted_cutover "$@"; }}
+cleanup_remote_build_generation_on_exit() {{ record cleanup_remote_build_generation_on_exit "$@"; }}
+_purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$@"; }}
+_purge_deploy_snapshot() {{ record _purge_deploy_snapshot "$@"; }}
+rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
+export PATH={shlex.quote(str(bin_dir))}:$PATH
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ bash -c "${{@: -1}}"; }}
+ACX_DEPLOY_BACKUP_ROOT={shlex.quote(str(tmp_path / "backups"))}
+ACX_DEPLOY_TRANSACTION_ID=transaction-a
 {statements}
 '''
     result = subprocess.run(
@@ -374,6 +425,46 @@ def test_interrupt_after_live_disruption_only_warns(tmp_path: Path) -> None:
     assert "_purge_deploy_ocir_docker_config" in records
 
 
+def test_interrupted_compensation_skips_when_lease_is_lost(tmp_path: Path) -> None:
+    for phase in ("tag_promoted", "repo_shipped"):
+        case_dir = tmp_path / phase
+        lease_path = case_dir / "backups" / "locks" / "deploy-dev.lease"
+        original = _write_lease(
+            lease_path,
+            "transaction-b",
+            "other@example:456",
+            int(time.time()) + 3600,
+        )
+        result = _run_lease_driver(
+            case_dir,
+            f'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE={phase} ACX_DEPLOY_LEASE_ENV=dev; deploy_interrupt_cleanup 130',
+        )
+
+        assert result.returncode == 130, result.stdout + result.stderr
+        output = result.stdout + result.stderr
+        assert "lost to other@example:456" in output
+        assert "skipping compensation" in output
+        records = result.records  # type: ignore[attr-defined]
+        assert "restore_prior_image_repo_env" not in records
+        if phase == "tag_promoted":
+            assert "restore_env_tag_to_rollback dev 0" not in records
+        else:
+            assert "restore_runtime_topology dev current-only" not in records
+        assert lease_path.read_bytes() == original
+
+
+def test_interrupted_compensation_runs_when_lease_is_owned(tmp_path: Path) -> None:
+    result = _run_lease_driver(
+        tmp_path,
+        'deploy_env_lease acquire dev; ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130',
+    )
+
+    assert result.returncode == 130, result.stdout + result.stderr
+    records = result.records  # type: ignore[attr-defined]
+    assert "restore_env_tag_to_rollback dev 0" in records
+    assert "restore_prior_image_repo_env" in records
+
+
 def test_no_phase_is_a_noop(tmp_path: Path) -> None:
     result = _run_driver(tmp_path, 'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=""; deploy_interrupt_cleanup 130')
     assert result.returncode == 130, result.stdout + result.stderr
@@ -436,6 +527,48 @@ _ship_selected_env dev aggregate
     records = result.records  # type: ignore[attr-defined]
     assert "restore_env_tag_to_rollback dev 0" in records
     assert "do_restart dev repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not in records
+
+
+def test_ship_tag_push_failure_skips_rollback_after_lease_loss(tmp_path: Path) -> None:
+    lease_path = tmp_path / "backups" / "locks" / "deploy-dev.lease"
+    rollback_marker = tmp_path / "rollback-marker"
+    repo_marker = tmp_path / "repo-restore-marker"
+    foreign_lease = json.dumps(
+        {
+            "transaction": "transaction-b",
+            "holder": "other@example:789",
+            "expires_at": 4102444800,
+        },
+        separators=(",", ":"),
+    )
+    statements = f'''
+pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+preflight_git_clean() {{ :; }}
+preflight_branch_synced() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+preserve_rollback_tag() {{ :; }}
+capture_prior_runtime_identity() {{ :; }}
+do_build() {{ :; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF=repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
+promote_gate() {{ ACX_DEPLOY_PHASE=repo_shipped; }}
+do_push_tag() {{ printf '%s' {shlex.quote(foreign_lease)} >{shlex.quote(str(lease_path))}; return 1; }}
+capture_failure_evidence() {{ :; }}
+restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
+restore_prior_image_repo_env() {{ touch {shlex.quote(str(repo_marker))}; }}
+_ship_selected_env dev aggregate
+'''
+    result = _run_lease_driver(tmp_path, statements)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    assert "lost to other@example:789" in output
+    assert "skipping compensation" in output
+    assert not rollback_marker.exists()
+    assert not repo_marker.exists()
+    assert lease_path.read_text(encoding="ascii") == foreign_lease
 
 
 def test_phase_boundaries_are_recorded() -> None:

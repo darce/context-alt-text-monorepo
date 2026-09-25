@@ -112,7 +112,7 @@
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
 #   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600,
-#                              max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets + 300).
+#                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets + 300).
 #   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
@@ -324,6 +324,13 @@ cleanup_deploy_ocir_docker_config() {
   return "${rc}"
 }
 
+skip_compensation_after_lease_loss() {
+  local env="$1"
+  ACX_DEPLOY_PHASE=""
+  ACX_DEPLOY_LEASE_ENV=""
+  warn "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; skipping compensation. Inspect: $(rollback_command_hint "${env}")"
+}
+
 compensate_interrupted_deploy() {
   local phase="${ACX_DEPLOY_PHASE:-}"
   ACX_DEPLOY_PHASE=""
@@ -334,6 +341,10 @@ compensate_interrupted_deploy() {
       return 0
       ;;
     repo_shipped)
+      if ! deploy_env_lease renew "${env}"; then
+        skip_compensation_after_lease_loss "${env}"
+        return 1
+      fi
       log "Interrupted deploy of ${env} at phase ${phase}; compensating"
       restore_runtime_topology "${env}" current-only || warn "topology restore failed for ${env}"
       restore_prior_image_repo_env || warn "prior sticky repository restore failed"
@@ -341,6 +352,10 @@ compensate_interrupted_deploy() {
     tag_promoted)
       if [[ "${ACX_LIVE_DISRUPTED:-0}" == "1" || "${ACX_TRAFFIC_FLIPPED:-0}" == "1" ]]; then
         warn "INTERRUPTED: ${env} runtime was disrupted mid-cutover; not rolling back from a signal handler. Recovery: $(rollback_command_hint "${env}")"
+        return 1
+      fi
+      if ! deploy_env_lease renew "${env}"; then
+        skip_compensation_after_lease_loss "${env}"
         return 1
       fi
       log "Interrupted deploy of ${env} at phase ${phase}; compensating"
@@ -2070,7 +2085,7 @@ deploy_env_lease() {
       else
         margin_digit=0
       fi
-      sum=$((10#${transfer_digit} + 10#${margin_digit} + carry))
+      sum=$((10#${transfer_digit} * 3 + 10#${margin_digit} + carry))
       ttl_required="$((sum % 10))${ttl_required}"
       carry=$((sum / 10))
     done
@@ -2079,7 +2094,7 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets and 300 seconds; minimum 600)"
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets and 300 seconds; minimum 600)"
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -4928,6 +4943,10 @@ _ship_selected_env() {
   else
     ACX_DEPLOY_PHASE=compensating
     ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping without compensation after deploy lease loss for ${env}"
+    fi
     capture_failure_evidence "$env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$env" 0; then
@@ -4957,6 +4976,10 @@ _ship_selected_env() {
   fi
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     ACX_DEPLOY_PHASE=compensating
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping without compensation after deploy lease loss for ${env}"
+    fi
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     restart_runtime="$(cutover_failure_restart_runtime)"
     local rollback_status=0 repo_restore_status=0
@@ -5097,6 +5120,10 @@ do_promote() {
   else
     ACX_DEPLOY_PHASE=compensating
     ACX_DEPLOY_TAG_PUSH_ACTIVE=0
+    if ! deploy_env_lease renew "${to_env}"; then
+      skip_compensation_after_lease_loss "${to_env}"
+      fail "stopping without compensation after deploy lease loss for ${to_env}"
+    fi
     capture_failure_evidence "$to_env" pre_candidate || warn "automatic failure evidence capture failed; continuing with rollback"
     local rollback_status=0 repo_restore_status=0
     if restore_env_tag_to_rollback "$to_env" 0; then
@@ -5126,6 +5153,10 @@ do_promote() {
   fi
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     ACX_DEPLOY_PHASE=compensating
+    if ! deploy_env_lease renew "${to_env}"; then
+      skip_compensation_after_lease_loss "${to_env}"
+      fail "stopping without compensation after deploy lease loss for ${to_env}"
+    fi
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
     local restart_runtime
     restart_runtime="$(cutover_failure_restart_runtime)"

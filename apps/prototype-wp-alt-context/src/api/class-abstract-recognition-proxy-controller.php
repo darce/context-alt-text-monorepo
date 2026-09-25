@@ -108,6 +108,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		'operation_id',
 		'startup_id',
 		'warmup_eta_seconds',
+		'startup_budget_seconds',
+		'reason',
+		'lifecycle_reason',
 		'timing',
 	);
 
@@ -180,7 +183,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$failure_key = $this->build_failure_key( $base_url, $route_family );
 
 		if ( $policy['circuit_enabled'] && false !== get_transient( $circuit_key ) ) {
-			return $this->open_circuit_response( $route_family );
+			return $this->open_circuit_response( $route_family, $body['operation_id'] ?? null );
 		}
 
 		if ( 'multipart' === $body_kind ) {
@@ -767,19 +770,24 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $timing;
 	}
 
-	private function open_circuit_response( string $route_family ): WP_REST_Response|WP_Error {
+	private function open_circuit_response( string $route_family, mixed $operation_id = null ): WP_REST_Response|WP_Error {
 		if ( self::ROUTE_FAMILY_DESCRIBE === $route_family ) {
+			$operation_id = $this->is_opaque_id( $operation_id ) ? $operation_id : null;
+			$retry_after  = min( 120, $this->circuit_open_seconds() );
+
 			return new WP_REST_Response(
 				array(
 					'detail' => array(
 						'code'         => self::TYPED_CODE_UNAVAILABLE,
 						'message'      => 'Description service temporarily unavailable; try again shortly.',
-						'operation_id' => null,
+						'operation_id' => $operation_id,
 						'startup_id'   => null,
+						'reason'       => 'circuit_open',
 						'timing'       => $this->open_circuit_local_timing(),
 					),
 				),
-				503
+				503,
+				array( 'Retry-After' => (string) $retry_after )
 			);
 		}
 
@@ -788,6 +796,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			'Recognition service temporarily unavailable; try again shortly.',
 			array( 'status' => 503 )
 		);
+	}
+
+	private function circuit_open_seconds(): int {
+		return max( 10, (int) apply_filters( 'acx_proxy_circuit_open_seconds', 60 ) );
 	}
 
 	/**
@@ -806,9 +818,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			return;
 		}
 
-		$open_seconds = (int) apply_filters( 'acx_proxy_circuit_open_seconds', 60 );
-		$open_seconds = max( 10, $open_seconds );
-		set_transient( $circuit_key, 1, $open_seconds );
+		set_transient( $circuit_key, 1, $this->circuit_open_seconds() );
 	}
 
 	/**

@@ -50,7 +50,8 @@ describe('public guide stylesheet isolation', () => {
     const css = compileGuideCss();
 
     expect(css).toContain('--acx-guide-reference-tile-size: 48px;');
-    expect(css).toContain('--acx-guide-pad-tight: 16px;');
+    expect(css).toContain('--acx-guide-pad-tight: 24px;');
+    expect(css).not.toContain('--acx-guide-pad-tight: 16px;');
     expect(css).toMatch(
       /\.acx-guided-face__gallery img\s*\{[^}]*width: var\(--acx-guide-reference-tile-size\);[^}]*height: var\(--acx-guide-reference-tile-size\);/,
     );

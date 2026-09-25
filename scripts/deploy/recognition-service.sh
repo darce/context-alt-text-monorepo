@@ -753,12 +753,15 @@ sanitize_deploy_diagnostic() {
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
         function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[[{][ \t]*$"; return (t ~ pat) }
+        function is_pretty_scalar_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*(:[ \t]*)?$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*(:[ \t]*)?$"; return (t ~ pat) }
+        function is_yaml_secret_block(s,    t, pat, quote) { t=tolower(s); quote="(\"|" sq ")"; pat="^[ \t]*" quote "?(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" quote "?[ \t]*:[ \t]*[|>][+-]?[0-9]?[+-]?[ \t]*(#.*)?$"; return (t ~ pat) }
+        function redact_pending_scalar(s,    lead, body, suffix) { lead=s; sub(/[^ \t].*$/, "", lead); body=substr(s, length(lead)+1); if (body ~ /^"([^"\\]|\\.)*"[ \t]*[,}][ \t]*$/) { suffix=body; sub(/^"([^"\\]|\\.)*"/, "", suffix); return lead "\"[REDACTED]\"" suffix } if (body ~ /^[^ \t,}][^ \t]*[,}][ \t]*$/) { suffix=body; sub(/^[^ \t,}]+/, "", suffix); return lead "[REDACTED]" suffix } return lead "[REDACTED]" }
         function pem_begin_end(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/ && s ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function pem_has_begin(s) { return (s ~ /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/) }
         function redact_pem_oneline(s,    pre, rest) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); pre=substr(s, 1, RSTART+RLENGTH-1); rest=substr(s, RSTART+RLENGTH); match(rest, /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/); return pre " [REDACTED] " substr(rest, RSTART) }
         function redact_pem_prefix(s,    t) { match(s, /-----BEGIN [A-Za-z0-9 ]*PRIVATE KEY-----/); t=substr(s, RSTART+RLENGTH); if (t ~ /^[ \t]*$/) return substr(s, 1, RSTART+RLENGTH-1); return substr(s, 1, RSTART+RLENGTH-1) " [REDACTED]" }
-        BEGIN { pem=0; depth=0 }
-        { if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (pem_begin_end($0)) { print redact_pem_oneline($0); next } if (pem_has_begin($0)) { print redact_pem_prefix($0); pem=1; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
+        BEGIN { pem=0; depth=0; yaml_indent=-1; pending_secret=0 }
+        { if (yaml_indent>=0) { if ($0 ~ /^[ \t]*$/) { print; next } match($0, /[^ \t]/); indent=RSTART-1; if (indent>yaml_indent) { print "[REDACTED]"; next } yaml_indent=-1 } if (pending_secret) { if (pending_secret==1 && $0 ~ /^[ \t]*:[ \t]*$/) { pending_secret=2; print; next } if ($0 ~ /^[ \t]*$/) { print; next } pending_secret=0; if ($0 ~ /^[ \t]*[[{]/) { depth+=depth_delta($0); print "[REDACTED]"; next } print redact_pending_scalar($0); next } if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (pem_begin_end($0)) { print redact_pem_oneline($0); next } if (pem_has_begin($0)) { print redact_pem_prefix($0); pem=1; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_yaml_secret_block($0)) { match($0, /[^ \t]/); yaml_indent=RSTART-1; print; next } if (is_pretty_scalar_open($0)) { pending_secret=1; print; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
       ' \
     | LC_ALL=C LANG=C LC_CTYPE=C sed -E \
       -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
@@ -774,9 +777,13 @@ sanitize_deploy_diagnostic() {
       -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
       -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
       -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
+      -e 's/"('"${_sk}"')"[[:space:]]*:[[:space:]]*\[REDACTED\]([,}][^[:space:]]+)/"\1": [REDACTED]/gI' \
       -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/gI' \
       -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*([=:]+>?[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/gI" \
       -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/gI' \
+      -e "s/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)\"[^\"]*\"/\\1\\2\\3 \\4 [REDACTED]/gI" \
+      -e "s/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)'[^']*'/\\1\\2\\3 \\4 [REDACTED]/gI" \
+      -e 's/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)[^[:space:]]+/\1\2\3 \4 [REDACTED]/gI' \
       -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[=:][^[:space:]]+/\1--\2=[REDACTED]/gI' \
       -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[[:space:]]+[^[:space:]]+/\1--\2 [REDACTED]/gI' \
       -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-(token|secret|key))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/gI' \
@@ -1801,9 +1808,19 @@ env_to_compose_files() {
 
 # Render the systemd unit for <env> from the checked-in template to stdout.
 render_unit() {
-  local env="$1" compose_files
+  local env="$1" compose_files secret_backend pre_start
   compose_files="$(env_to_compose_files "$env")"
+  if (( $# >= 2 )); then
+    secret_backend="$2"
+  else
+    secret_backend="$(_remote_dotenv_value "$(env_to_remote_dir "$env")" RECOGNITION_SECRET_BACKEND)"
+  fi
+  pre_start='# '
+  if [[ "$secret_backend" == "oci_vault" ]]; then
+    pre_start=''
+  fi
   sed -e "s/{{ENV}}/${env}/g" -e "s|{{COMPOSE_FILES}}|${compose_files}|g" \
+    -e "s|^# ExecStartPre=|${pre_start}ExecStartPre=|" \
     "${SERVICE_DIR}/systemd/acx-env.service.template" \
     | sed -E 's|^(ExecStop=.*) stop$|\1 stop api worker|'
 }
@@ -1997,7 +2014,7 @@ try:
         fd, staged = tempfile.mkstemp(prefix=".env.acx-", dir=root)
         with os.fdopen(fd, "wb") as stream:
             os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
-            os.fchmod(stream.fileno(), stat.S_IMODE(metadata.st_mode))
+            os.fchmod(stream.fileno(), 0o600)
             stream.write(kept)
             stream.flush()
             os.fsync(stream.fileno())

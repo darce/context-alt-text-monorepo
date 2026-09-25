@@ -253,6 +253,20 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
     async def update_status(self, tenant_id: str, suggestion_id: str, status: SuggestionStatus) -> AssignmentSuggestion:
         """Update the resolution of a suggestion."""
+        if status is SuggestionStatus.EXPIRED:
+            expire_stmt = (
+                update(SuggestionModel)
+                .where(SuggestionModel.id == _coerce_uuid(suggestion_id))
+                .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
+                .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
+                .values(
+                    resolution=status.value,
+                    resolved_at=datetime.now(tz=UTC),
+                )
+            )
+            await self._session.execute(expire_stmt)
+            await self._session.flush()
+
         stmt = (
             select(SuggestionModel)
             .where(SuggestionModel.id == _coerce_uuid(suggestion_id))
@@ -262,6 +276,10 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         model = result.scalar_one_or_none()
         if model is None:
             raise ValueError(f"Suggestion not found: {suggestion_id}")
+
+        if status is SuggestionStatus.EXPIRED:
+            await self._session.refresh(model)
+            return self._to_domain(model)
 
         model.resolution = status.value
         model.resolved_at = datetime.now(tz=UTC)

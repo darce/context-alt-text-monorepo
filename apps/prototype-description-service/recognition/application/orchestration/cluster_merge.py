@@ -349,6 +349,9 @@ async def merge_cluster(
         tenant_uuid = uuid.UUID(str(tenant_id))
         target_uuid = uuid.UUID(str(target.id))
         await _lock_survivor_cluster(session, tenant_id=tenant_uuid, survivor_cluster_id=target_uuid)
+        target = await cluster_repo.get_by_id(target_cluster_id)
+        if target is None:
+            return None
         sibling_receipts = await _load_sibling_receipts(
             session,
             tenant_id=tenant_uuid,
@@ -573,6 +576,7 @@ async def _lock_survivor_cluster(
             IdentityClusterModel.tenant_id == tenant_id,
             IdentityClusterModel.id == survivor_cluster_id,
         )
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
 

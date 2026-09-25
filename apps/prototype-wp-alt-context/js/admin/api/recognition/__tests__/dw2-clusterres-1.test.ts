@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../utils/http', () => ({
+vi.mock('../../../utils/http', () => ({
   fetchRequiredApi: vi.fn(),
   stripTrailingSlash: (value: string) => value.replace(/\/+$/, ''),
 }));
 
-vi.mock('../config', () => ({
+vi.mock('../../config', () => ({
   getEndpoint: () => '/wp-json/recognition/clusters',
   getConfig: () => ({ nonce: 'nonce' }),
 }));
 
-import { fetchRequiredApi } from '../../utils/http';
+import { fetchRequiredApi } from '../../../utils/http';
 import { listRecognitionClusters } from '../clusterApiQueries';
 
 describe('cluster export metadata response', () => {

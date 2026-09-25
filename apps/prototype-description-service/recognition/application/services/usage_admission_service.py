@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from collections.abc import Awaitable
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +22,22 @@ from recognition.infrastructure.repositories.usage_repository import (
 )
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
+
+
+async def _with_operation_timeout[T](
+    awaitable: Awaitable[T],
+    *,
+    timeout_s: float,
+    operation: str,
+) -> T:
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except UsageAdmissionTimeoutError:
+        raise
+    except TimeoutError as exc:
+        raise UsageAdmissionTimeoutError(
+            f"usage admission repository operation timed out: {operation}"
+        ) from exc
 
 
 def _validate_request(
@@ -74,6 +92,7 @@ class UsageAdmissionService:
             raise ValueError("timeout_s must be a finite positive number")
         if not math.isfinite(float(timeout_s)) or float(timeout_s) <= 0:
             raise ValueError("timeout_s must be a finite positive number")
+        self._timeout_s = float(timeout_s)
 
         candidate: Any = repository if repository is not None else session
         if candidate is None:
@@ -84,7 +103,7 @@ class UsageAdmissionService:
         if all(callable(getattr(candidate, name, None)) for name in ("reserve", "commit", "release")):
             self._repository = candidate
         else:
-            self._repository = SqlAlchemyUsageRepository(candidate, timeout_s=timeout_s)
+            self._repository = SqlAlchemyUsageRepository(candidate, timeout_s=self._timeout_s)
 
     async def reserve(
         self,
@@ -101,11 +120,15 @@ class UsageAdmissionService:
             job_id=job_id,
             cost_units=cost_units,
         )
-        reservation = await self._repository.reserve(
-            tenant_id,
-            idempotency_key=idempotency_key,
-            job_id=job_id,
-            cost_units=cost_units,
+        reservation = await _with_operation_timeout(
+            self._repository.reserve(
+                tenant_id,
+                idempotency_key=idempotency_key,
+                job_id=job_id,
+                cost_units=cost_units,
+            ),
+            timeout_s=self._timeout_s,
+            operation="reserve",
         )
         if isinstance(reservation, UsageTicket):
             return reservation
@@ -119,12 +142,20 @@ class UsageAdmissionService:
     async def commit(self, ticket: UsageTicket) -> None:
         """Commit one reservation; duplicate completion is a no-op."""
         _validate_ticket(ticket)
-        await self._repository.commit(ticket)
+        await _with_operation_timeout(
+            self._repository.commit(ticket),
+            timeout_s=self._timeout_s,
+            operation="commit",
+        )
 
     async def release(self, ticket: UsageTicket) -> None:
         """Release one reservation; duplicate or late release is a no-op."""
         _validate_ticket(ticket)
-        await self._repository.release(ticket)
+        await _with_operation_timeout(
+            self._repository.release(ticket),
+            timeout_s=self._timeout_s,
+            operation="release",
+        )
 
 
 # Explicit implementation aliases are useful to dependency-wiring code while

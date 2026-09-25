@@ -111,6 +111,8 @@
 #   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
 #   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
+#   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; minimum 600 seconds for the environment-scoped deploy lease.
+#   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
 #                              raising the pull/restart knob does not stretch the pre-rollback
@@ -249,6 +251,8 @@ ACX_LIVE_DISRUPTED=0
 # tag_promoted, restarted, compensating.
 ACX_DEPLOY_ENV=""
 ACX_DEPLOY_PHASE=""
+ACX_DEPLOY_LEASE_ENV=""
+ACX_DEPLOY_LEASE_LAST_HOLDER=""
 # Defer signal cleanup across tag promotion until its caller records the result.
 ACX_DEPLOY_TAG_PUSH_ACTIVE=0
 ACX_DEPLOY_PENDING_INTERRUPT=""
@@ -376,6 +380,10 @@ deploy_interrupt_cleanup() {
   recover_interrupted_cutover || true
   cleanup_remote_build_generation_on_exit || true
   compensate_interrupted_deploy || true
+  if [[ -n "${ACX_DEPLOY_LEASE_ENV:-}" ]]; then
+    local lease_env="${ACX_DEPLOY_LEASE_ENV}"
+    deploy_env_lease release "${lease_env}" || warn "deploy lease for ${lease_env} not released; it expires at its TTL"
+  fi
   _purge_deploy_ocir_docker_config
   _purge_deploy_snapshot
   if [[ -n "${requested}" ]]; then
@@ -1997,6 +2005,237 @@ PY_RESOURCE
     "sudo python3 -c $(remote_quote "${program}") $(remote_quote "${remote_dir}") $(remote_quote "${action}") $(remote_quote "${owner}") $(remote_quote "${value}") ${timeout}"
 }
 
+deploy_env_lease() {
+  local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
+  local program response rc marker lease_transaction lease_holder lease_expiry lease_path
+  case "${action}" in
+    acquire|renew|release) ;;
+    *) fail "internal: invalid deploy lease action ${action}" ;;
+  esac
+  case "${env}" in
+    dev|dev-fir|staging|prod) ;;
+    *) fail "internal: invalid deploy lease environment ${env}" ;;
+  esac
+  ACX_DEPLOY_LEASE_LAST_HOLDER=""
+  if [[ "${action}" == "acquire" && -n "${ACX_DEPLOY_LEASE_ENV:-}" && "${ACX_DEPLOY_LEASE_ENV}" != "${env}" ]]; then
+    local old_env="${ACX_DEPLOY_LEASE_ENV}"
+    deploy_env_lease release "${old_env}" || return $?
+  fi
+
+  ttl="${ACX_DEPLOY_LOCK_TTL_SECONDS:-7200}"
+  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]] || (( ${#ttl} < 3 )) || { (( ${#ttl} == 3 )) && [[ "${ttl}" < 600 ]]; }; then
+    fail "ACX_DEPLOY_LOCK_TTL_SECONDS must be a positive integer of at least 600 (got: ${ttl})"
+  fi
+  timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+  transaction="${ACX_DEPLOY_TRANSACTION_ID}"
+  break_transaction="${ACX_DEPLOY_LOCK_BREAK:-}"
+  local_user="$(id -un)" || fail "could not determine local deploy lease user"
+  local_host="$(hostname)" || fail "could not determine local deploy lease hostname"
+  holder="${local_user}@${local_host}:$$"
+  if [[ ! "${holder}" =~ ^[A-Za-z0-9_.@:-]{1,128}$ ]]; then
+    fail "local deploy lease holder failed charset validation"
+  fi
+  lease_path="${ACX_DEPLOY_BACKUP_ROOT}/locks/deploy-${env}.lease"
+  program="$(cat <<'PY_DEPLOY_LEASE'
+import datetime
+import fcntl
+import json
+import os
+import re
+import stat
+import sys
+import tempfile
+import time
+
+root, action, env, transaction, holder, ttl, break_transaction, timeout = sys.argv[1:]
+if not re.fullmatch(r"(?:dev|dev-fir|staging|prod)", env):
+    print("invalid deploy lease environment", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[A-Za-z0-9_.-]+", transaction):
+    print("invalid deploy lease transaction", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", holder):
+    print("invalid deploy lease holder", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[1-9][0-9]*", ttl) or int(ttl) < 600:
+    print("invalid deploy lease TTL", file=sys.stderr)
+    raise SystemExit(1)
+if not re.fullmatch(r"[1-9][0-9]*", timeout):
+    print("invalid deploy lease command timeout", file=sys.stderr)
+    raise SystemExit(1)
+
+lock_dir = os.path.join(root, "locks")
+path = os.path.join(lock_dir, "deploy-" + env + ".lease")
+lock_path = os.path.join(lock_dir, "deploy-" + env + ".lease.lock")
+
+
+def refuse_unknown(exc=None):
+    detail = ": " + str(exc) if exc is not None else ""
+    print("deploy lease state at {} is malformed or unreadable; inspect and remove it{}".format(path, detail), file=sys.stderr)
+    raise SystemExit(1)
+
+
+def expiry_text(expires_at):
+    return datetime.datetime.fromtimestamp(expires_at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_lease():
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("lease must be a regular single-link file")
+        raw = stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError("lease is too large")
+    record = json.loads(raw.decode("ascii"))
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"transaction", "holder", "expires_at"}
+        or not isinstance(record["transaction"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", record["transaction"])
+        or not isinstance(record["holder"], str)
+        or not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,128}", record["holder"])
+        or isinstance(record["expires_at"], bool)
+        or not isinstance(record["expires_at"], int)
+    ):
+        raise ValueError("lease fields are invalid")
+    return record
+
+
+def write_lease(record):
+    staged = None
+    try:
+        fd, staged = tempfile.mkstemp(prefix=".deploy-" + env + ".lease.", dir=lock_dir)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(json.dumps(record, separators=(",", ":")).encode("ascii"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged, path)
+        staged = None
+        directory = os.open(lock_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staged is not None:
+            os.unlink(staged)
+
+
+lock_fd = None
+try:
+    os.makedirs(lock_dir, mode=0o700, exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    lock_metadata = os.fstat(lock_fd)
+    if not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1:
+        raise ValueError("lease lock must be a regular single-link file")
+    deadline = time.monotonic() + int(timeout)
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("deploy lease lock for {} remained busy".format(env), file=sys.stderr)
+                raise SystemExit(75)
+            time.sleep(min(0.05, remaining))
+
+    try:
+        current = read_lease()
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+        refuse_unknown(exc)
+
+    if action == "acquire":
+        breaking = current is not None and bool(break_transaction) and current["transaction"] == break_transaction
+        if breaking:
+            print("BREAK\t{}\t{}".format(current["transaction"], current["holder"]))
+        elif current is not None and current["expires_at"] > int(time.time()) and current["transaction"] != transaction:
+            expires = expiry_text(current["expires_at"])
+            print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
+            print("deploy lease for {} held by {} (transaction {}) until {}".format(
+                env, current["holder"], current["transaction"], expires
+            ), file=sys.stderr)
+            raise SystemExit(75)
+        record = {"transaction": transaction, "holder": holder, "expires_at": int(time.time()) + int(ttl)}
+        write_lease(record)
+    elif action == "renew":
+        if current is None:
+            print("HELD\t\t\t")
+            print("deploy lease for {} is missing".format(env), file=sys.stderr)
+            raise SystemExit(75)
+        if current["transaction"] != transaction:
+            expires = expiry_text(current["expires_at"])
+            print("HELD\t{}\t{}\t{}".format(current["transaction"], current["holder"], expires))
+            print("deploy lease for {} held by {} (transaction {}) until {}".format(
+                env, current["holder"], current["transaction"], expires
+            ), file=sys.stderr)
+            raise SystemExit(75)
+        record = {"transaction": transaction, "holder": holder, "expires_at": int(time.time()) + int(ttl)}
+        write_lease(record)
+    elif action == "release":
+        if current is not None and current["transaction"] != transaction:
+            print("NOT_OWNER\t{}\t{}".format(current["transaction"], current["holder"]))
+        elif current is not None:
+            os.unlink(path)
+            directory = os.open(lock_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    else:
+        print("invalid deploy lease action", file=sys.stderr)
+        raise SystemExit(1)
+except SystemExit:
+    raise
+except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+    refuse_unknown(exc)
+finally:
+    if lock_fd is not None:
+        os.close(lock_fd)
+PY_DEPLOY_LEASE
+)"
+  if response="$(run_with_deadline "${timeout}" "deploy lease ${action} for ${env}" \
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo python3 -c $(remote_quote "${program}") $(remote_quote "${ACX_DEPLOY_BACKUP_ROOT}") $(remote_quote "${action}") $(remote_quote "${env}") $(remote_quote "${transaction}") $(remote_quote "${holder}") $(remote_quote "${ttl}") $(remote_quote "${break_transaction}") ${timeout}")"; then
+    marker=""
+    lease_transaction=""
+    lease_holder=""
+    lease_expiry=""
+    IFS=$'\t' read -r marker lease_transaction lease_holder lease_expiry <<<"${response}"
+    case "${marker}" in
+      BREAK) warn "breaking deploy lease of transaction ${lease_transaction} held by ${lease_holder}" ;;
+      NOT_OWNER) warn "deploy lease for ${env} is held by ${lease_holder} (transaction ${lease_transaction}); not released" ;;
+    esac
+    if [[ "${action}" == "acquire" ]]; then
+      ACX_DEPLOY_LEASE_ENV="${env}"
+    elif [[ "${action}" == "release" && "${ACX_DEPLOY_LEASE_ENV:-}" == "${env}" ]]; then
+      ACX_DEPLOY_LEASE_ENV=""
+    fi
+  else
+    rc=$?
+    marker=""
+    lease_transaction=""
+    lease_holder=""
+    lease_expiry=""
+    IFS=$'\t' read -r marker lease_transaction lease_holder lease_expiry <<<"${response}"
+    if [[ "${marker}" == "HELD" ]]; then
+      if [[ -n "${lease_holder}" ]]; then
+        ACX_DEPLOY_LEASE_LAST_HOLDER="${lease_holder} (transaction ${lease_transaction}) until ${lease_expiry}"
+      else
+        ACX_DEPLOY_LEASE_LAST_HOLDER="another transaction"
+      fi
+    elif (( rc == 1 )); then
+      warn "deploy lease state at ${lease_path} is malformed or unreadable; inspect and remove it"
+    fi
+    return "${rc}"
+  fi
+}
+
 ship_remote_image_repo_env() {
   assert_safe_image_repo "ACX_IMAGE_REPO" "${ACX_IMAGE_REPO}"
   image_repo_resource ship "$1" "${ACX_IMAGE_REPO_OWNER_ID:-}" "${ACX_IMAGE_REPO}"
@@ -3400,6 +3639,7 @@ recover_failed_flip_to_next() {
   return 0
 }
 
+# The environment lease means markers here belong only to a dead or expired transaction.
 recover_persisted_cutover() {
   local env="$1" inflight_rc=0
   env_to_unit "${env}" >/dev/null
@@ -4325,6 +4565,7 @@ do_rollback() {
   init_deploy_ocir_docker_config
   preflight_ssh
   preflight_remote_ocir_auth
+  deploy_env_lease acquire "${env}" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing rollback"
   rollback_ref="${IMAGE_BASE}:rollback-${rollback_id}"
   _pull_ref_remote "${rollback_ref}"
   digest="$(remote_image_digest_ref "${rollback_ref}")" \
@@ -4568,6 +4809,7 @@ _ship_selected_env() {
   # Snapshot and publish the previous-good digest before building the candidate.
   # Remote builds only tag the SHA; the environment tag changes after smoke.
   preflight_remote_ocir_auth
+  deploy_env_lease acquire "${env}" || fail "deploy lease for ${env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
   preserve_rollback_tag "$env"
   if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
     if ! capture_prior_runtime_identity "$env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
@@ -4586,6 +4828,11 @@ _ship_selected_env() {
   # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
   do_push_sha
   ACX_DEPLOY_ENV="$env"
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
   promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
   ACX_DEPLOY_TAG_PUSH_ACTIVE=1
@@ -4622,6 +4869,11 @@ _ship_selected_env() {
     rollback_failure "${rollback_status}" "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
+  if ! deploy_env_lease renew "${env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${env}. Inspect: $(rollback_command_hint "${env}")"
+  fi
   if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     ACX_DEPLOY_PHASE=compensating
     capture_failure_evidence "$env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"
@@ -4698,6 +4950,7 @@ do_promote() {
   fi
 
   preflight_remote_ocir_auth
+  deploy_env_lease acquire "${to_env}" || fail "deploy lease for ${to_env} unavailable; holder line: ${ACX_DEPLOY_LEASE_LAST_HOLDER:-unknown}; refusing to preserve the rollback tag"
   preserve_rollback_tag "$to_env"
   if [[ -n "${ACX_ROLLBACK_DIGEST_REF:-}" ]]; then
     if ! capture_prior_runtime_identity "$to_env" "${ACX_PRIOR_IMAGE_ID:-}" 0; then
@@ -4739,6 +4992,11 @@ do_promote() {
   # Same safety gate as deploy: boot-smoke the source image + converge compose/
   # unit after rollback was captured, then retag exactly the digest that passed.
   ACX_DEPLOY_ENV="$to_env"
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
   promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
 
   ACX_DEPLOY_TAG_PUSH_ACTIVE=1
@@ -4775,6 +5033,11 @@ do_promote() {
     rollback_failure "${rollback_status}" "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
+  if ! deploy_env_lease renew "${to_env}"; then
+    ACX_DEPLOY_PHASE=""
+    ACX_DEPLOY_LEASE_ENV=""
+    fail "deploy lease for ${to_env} lost to ${ACX_DEPLOY_LEASE_LAST_HOLDER:-another transaction}; stopping without compensation because another transaction owns ${to_env}. Inspect: $(rollback_command_hint "${to_env}")"
+  fi
   if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
     ACX_DEPLOY_PHASE=compensating
     capture_failure_evidence "$to_env" "${ACX_RESTART_EVIDENCE_PHASE:-pre_candidate}" || warn "automatic failure evidence capture failed; continuing with rollback"

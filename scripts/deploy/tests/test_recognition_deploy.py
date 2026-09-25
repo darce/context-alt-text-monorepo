@@ -4079,12 +4079,14 @@ def test_prepare_producer_convergence_does_not_require_missing_siblings(
     result, logged = _run_prepare_producer(tmp_path, sibling_rc=0, records_name="sib-complete.log")
     combined = result.stdout + result.stderr
     assert "restart-accepted:prod" in logged.splitlines(), combined
+    assert "scoped:prod" in logged.splitlines(), logged
     assert result.returncode == 0, combined
     result_missing, logged_missing = _run_prepare_producer(tmp_path, sibling_rc=1, records_name="sib-missing.log")
     combined_missing = result_missing.stdout + result_missing.stderr
     assert "restart-accepted:prod" in logged_missing.splitlines(), combined_missing
+    assert "scoped:prod" in logged_missing.splitlines(), logged_missing
     assert result_missing.returncode == 0, combined_missing
-    assert logged.splitlines() != logged_missing.splitlines() or "sibling:prod" not in logged
+    assert logged.splitlines() == logged_missing.splitlines(), (logged, logged_missing)
 
 
 def test_prepare_producer_prod_requires_confirm_promote(tmp_path: Path) -> None:

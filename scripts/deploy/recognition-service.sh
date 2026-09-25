@@ -4571,7 +4571,7 @@ probe_budget() {
     warn "${attempts_var} must be a positive integer (got: ${max_attempts})"
     return 1
   fi
-  if [[ ! "${sleep_s}" =~ ^[0-9]+$ ]]; then
+  if [[ ! "${sleep_s}" =~ ^(0|[1-9][0-9]*)$ ]]; then
     warn "${sleep_var} must be a non-negative integer (got: ${sleep_s})"
     return 1
   fi

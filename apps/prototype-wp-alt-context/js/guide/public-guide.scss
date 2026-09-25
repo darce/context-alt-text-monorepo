@@ -362,6 +362,7 @@
     }
 
     .acx-guided-entrance__actions {
+      flex-wrap: nowrap;
       align-items: stretch;
       gap: var(--acx-space-12);
     }
@@ -377,7 +378,7 @@
       font-size: var(--acx-text-sm);
       line-height: 1.3;
       text-align: center;
-      white-space: nowrap;
+      text-wrap: balance;
     }
 
     .acx-guided-page__understand {

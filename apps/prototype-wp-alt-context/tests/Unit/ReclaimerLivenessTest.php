@@ -119,8 +119,10 @@ class ReclaimerLivenessTest extends TestCase
 				false,
 				ReclaimerLiveness::SCHEDULER_WP_CRON
 			);
+			$lease_option = 'acx_reclaimer_lease_' . str_replace( array( '/', ' ' ), '_', $tenant );
+			delete_option( $lease_option );
 			$this->assertIsString( $liveness->claim( $tenant ) );
-			$this->setOption( 'acx_reclaimer_lease_' . str_replace( array( '/', ' ' ), '_', $tenant ), 'owner|1|1700000300' );
+			$this->setOption( $lease_option, 'owner|1|1700000300' );
 		}
 		$liveness->record_booked_scheduler_mode( ReclaimerLiveness::SCHEDULER_WP_CRON );
 		$this->setOption( 'acx_persons', 'must-survive' );
@@ -162,12 +164,8 @@ class ReclaimerLivenessTest extends TestCase
 	{
 		global $wpdb;
 
-		// The lightweight test adapter does not expose raw option reads. The
-		// implementation must still issue distinct monotonic fallback tokens so
-		// the stale-owner CAS is exercised below.
-		$wpdb->onGetVarResolve = static function (string $query): ?string {
-			return null;
-		};
+		// The lightweight test adapter stores lease rows in its options table so
+		// fencing checks can observe each claim and reject the expired owner.
 		$now = 1_700_000_000;
 		$first = new ReclaimerLiveness(static function () use (&$now): int {
 			return $now;
@@ -309,7 +307,7 @@ class ReclaimerLivenessTest extends TestCase
 		$this->assertArrayNotHasKey('acx_reclaimer_tenant_index', $GLOBALS['__ac_options']);
 	}
 
-	public function testUnreadableLeaseReportsPermissiveWriteDistinctly(): void
+	public function testUnreadableLeaseRejectsFencedWrite(): void
 	{
 		global $wpdb;
 
@@ -328,9 +326,64 @@ class ReclaimerLivenessTest extends TestCase
 		);
 
 		$this->assertIsArray($result);
+		$this->assertFalse($result['committed']);
+		$this->assertSame('fence_rejected', $result['status']);
+		$this->assertArrayNotHasKey('acx_reclaimer_liveness_' . $tenant, $GLOBALS['__ac_options']);
+	}
+
+	public function testReleasePublishesUpdatedLeaseAndClearsAggregateOptionCaches(): void
+	{
+		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
+		$tenant = 'tenant-release-cache';
+		$owner = $liveness->claim($tenant);
+		$this->assertIsString($owner);
+
+		$lease_option = 'acx_reclaimer_lease_' . $tenant;
+		wp_cache_set($lease_option, 'stale-lease', 'options');
+		wp_cache_set('alloptions', array( $lease_option => 'stale-lease' ), 'options');
+		wp_cache_set('notoptions', array( $lease_option => true ), 'options');
+
+		$this->assertTrue($liveness->release($tenant, $owner));
+		$cached_lease = wp_cache_get($lease_option, 'options');
+		$this->assertIsString($cached_lease);
+		$this->assertStringStartsWith($owner . '|', $cached_lease);
+		$this->assertStringEndsWith('|0', $cached_lease);
+		$alloptions = wp_cache_get('alloptions', 'options');
+		$this->assertFalse(is_array($alloptions) && array_key_exists($lease_option, $alloptions));
+		$notoptions = wp_cache_get('notoptions', 'options');
+		$this->assertFalse(is_array($notoptions) && isset($notoptions[$lease_option]));
+	}
+
+	public function testFencedWritePublishesUpdatedOptionValueAfterDatabaseWrite(): void
+	{
+		global $wpdb;
+
+		$tenant = 'tenant-published-cache';
+		$option = 'acx_reclaimer_liveness_' . $tenant;
+		$lease = 'owner-a|1|1700000300';
+		$previous = array( 'last_success_at' => 'old', 'last_purged_count' => 1 );
+		$state = array( 'last_success_at' => 'new', 'last_purged_count' => 8 );
+		$this->setOption($option, $previous);
+		$wpdb->onGetVarResolve = static fn (string $query): string => $lease;
+		$wpdb->defaultQueryResult = 1;
+		wp_cache_set($option, $previous, 'options');
+		wp_cache_set('alloptions', array( $option => $previous ), 'options');
+		wp_cache_set('notoptions', array( $option => true ), 'options');
+
+		$result = $this->invokeFencedWrite(
+			new ReclaimerLiveness(static fn (): int => 1_700_000_000),
+			$tenant,
+			$state,
+			$lease
+		);
+
+		$this->assertIsArray($result);
 		$this->assertTrue($result['committed']);
-		$this->assertSame('committed_without_fence', $result['status']);
-		$this->assertSame($state, get_option('acx_reclaimer_liveness_' . $tenant));
+		$this->assertSame($state, wp_cache_get($option, 'options'));
+		$alloptions = wp_cache_get('alloptions', 'options');
+		$this->assertFalse(is_array($alloptions) && array_key_exists($option, $alloptions));
+		$notoptions = wp_cache_get('notoptions', 'options');
+		$this->assertFalse(is_array($notoptions) && isset($notoptions[$option]));
 	}
 
 	public function testRejectedFencedWriteDispatchesSovereignWarning(): void
@@ -338,7 +391,6 @@ class ReclaimerLivenessTest extends TestCase
 		global $wpdb;
 
 		$tenant = 'tenant-rejection-warning';
-		$wpdb->onGetVarResolve = static fn (string $query): ?string => null;
 		$liveness = new ReclaimerLiveness(static fn (): int => 1_700_000_000);
 		$this->assertIsString($liveness->claim($tenant));
 

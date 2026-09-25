@@ -367,7 +367,7 @@ restore_prior_image_repo_env
     combined = result.stdout + result.stderr
     assert result.returncode == 75, combined
     assert env_file.read_text().startswith("SECRET=preserved\nACX_IMAGE_REPO=example.test/shared\n")
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
 def _sticky_shell(tmp_path: Path, command: str) -> str:
@@ -422,7 +422,7 @@ def test_sticky_owned_cleanup_is_idempotent_and_preserves_secrets(tmp_path: Path
     assert env_file.read_bytes() == after
     assert after.startswith(("SECRET=do-not-log\n" + prior).encode())
     assert "do-not-log" not in result.stdout + result.stderr
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     assert _sticky_ship(tmp_path, owner).returncode == 75
 
 

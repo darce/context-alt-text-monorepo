@@ -27,3 +27,19 @@ def test_uncertain_docker_negation_still_fails_closed_for_weight_coverage() -> N
     body = "**/*.bin\n![a-z].bin\n"
 
     assert weight_exclusions.docker_weight_classes(body) == set()
+
+
+def test_filename_specific_docker_exclude_does_not_claim_bin_class() -> None:
+    assert weight_exclusions.docker_weight_classes("**/pytorch_model.bin\n") == set()
+
+
+def test_bin_class_requires_all_representatives_after_last_match_wins() -> None:
+    body = "**/pytorch_model.bin\n**/adapter_model.bin\n"
+
+    assert weight_exclusions.docker_weight_classes(body) == {"bin"}
+
+
+def test_reincluding_one_bin_representative_unprotects_the_class() -> None:
+    body = "**/*.bin\n!**/pytorch_model.bin\n"
+
+    assert "bin" not in weight_exclusions.docker_weight_classes(body)

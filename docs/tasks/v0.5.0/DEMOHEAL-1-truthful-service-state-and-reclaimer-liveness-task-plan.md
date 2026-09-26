@@ -97,7 +97,7 @@ per-tenant purge success + backlog -> health display + bounded next-sync recover
 
 | Boundary / owner | Contract | Change / compatibility | Proof |
 | --- | --- | --- | --- |
-| API manifest / Python tooling | `proxy-route-manifest.md` (new) | Deterministic sorted method/path export, checked fixture; no API behavior change | Export freshness + actual PHP emission parity |
+| API manifest / Python tooling | `proxy-route-manifest.md` (new) | Deterministic sorted method/path export, non-mutating fixture check, and explicit fixture update; no API behavior change | Export freshness + actual PHP emission parity |
 | WP→API retention / PHP proxy | same | Correct prefix; static route mismatch differs from entity 404 | Exact URL/method assertions |
 | WP REST→SPA / PHP + TS | same | Shared vocabulary and optional request id; PHP 8.0 class constants | Producer/consumer fixtures and error-path rendering |
 | WP→API request header / both HTTP boundaries | `security.md` | Validated UUID; API echo/logging; no authentication meaning | Concurrent/exception/access-log tests |
@@ -117,7 +117,7 @@ Existing change symbols appear in Current State Analysis. Additional symbols bel
 
 | Slice | Surface / change symbols |
 | --- | --- |
-| 1 | `P/src/api/class-proxy-routes.php:ProxyRoutes`; existing `RetentionController`; `P/tests/Unit/ProxyRouteParityTest.php:ProxyRouteParityTest`; existing `RetentionControllerTest`; `S/scripts/export_route_manifest.py:export_route_manifest`; `S/api/tests/test_route_manifest_fresh.py:test_route_manifest_fresh`; root `Makefile:export-route-manifest`; `P/tests/fixtures/api-route-manifest.json`; new route contract |
+| 1 | `P/src/api/class-proxy-routes.php:ProxyRoutes`; existing `RetentionController`; `P/tests/Unit/ProxyRouteParityTest.php:ProxyRouteParityTest`; existing `RetentionControllerTest`; `S/scripts/export_route_manifest.py:export_route_manifest`; `S/api/tests/test_route_manifest_fresh.py:test_route_manifest_fresh`; root `Makefile:check-route-manifest/export-route-manifest`; `P/tests/fixtures/api-route-manifest.json`; new route contract |
 | 2 | Existing two builders and abstract proxy; `P/src/api/class-unavailable-reason.php:UnavailableReason` constant class; existing parser/fetcher; `P/js/admin/components/ServiceUnavailableNotice.tsx:ServiceUnavailableNotice`; existing `RetentionPage` and `GpuControlCard`; Description Service state within `GpuControlCard` (not a third independent component); shared vocabulary fixture |
 | 3 | Existing `proxy_request/record_proxy_failure`; `P/src/api/class-connection-controller.php:ConnectionController::register_routes/get_status/check/reset_breaker`; `P/js/admin/pages/settings/ConnectionCheckCard.tsx:ConnectionCheckCard`; existing `S/recognition/interface_adapters/http/middleware/correlation.py:CorrelationIdMiddleware/CorrelationIdFilter/generate_correlation_id`, `S/api/logging_config.py:configure_logging` and `S/api/main.py` middleware registration; controller registration, localized endpoint keys and Settings mount included |
 | 4 | Existing `useDescribeRunProgress/useActivityStatus`; `P/js/admin/utils/warmingDeadline.ts:deriveWarmingObservation`; `gpu-lifecycle.md` UI policy section; UX-map mirrors |
@@ -137,7 +137,7 @@ All commands run from the stated directory. Remote sandboxes must install their 
 | Slice | Bounded command / location |
 | --- | --- |
 | 1 PHP | `composer test -- --filter 'RetentionControllerTest|ProxyRouteParityTest'` from P |
-| 1 API | `uv run pytest api/tests/test_route_manifest_fresh.py` from S on remote test VM; root `make export-route-manifest` is a **new target**, runs exporter with explicit output P fixture path |
+| 1 API | Run root `make check-route-manifest` before `uv run pytest api/tests/test_route_manifest_fresh.py` from S on the remote test VM. `make export-route-manifest` is the explicit fixture-update command and must not precede the freshness proof in CI. |
 | 2 PHP | `composer test -- --filter 'RetentionControllerTest|GpuControlControllerTest|UnavailableEnvelopeTest'` from P; last class new |
 | 2 TS | `npx vitest run js/admin/components/__tests__/ServiceUnavailableNotice.test.tsx js/admin/api/recognition/__tests__/retentionApi.test.ts` from P; add fixtures for both available:false and thrown WP errors |
 | 3 PHP | `composer test -- --filter 'ProxyRequestTest|RecognitionProxyRetryPolicyTest|ConnectionControllerTest'` from P; last class new |
@@ -154,7 +154,7 @@ All commands run from the stated directory. Remote sandboxes must install their 
 
 - **Goal**: Correct nine call sites and make actual method/path drift fail CI.
 - **Changes**: exporter + freshness test (lane S1A), map/callers/exact assertions + emitted-request parity (S1B). Scope the map honestly to migrated callers.
-- **Proof**: baseline unprefixed emitted paths fail; corrected paths pass; reverting one caller fails even if the map remains correct. Exporter works without live API/DB. Run slice 1 commands above.
+- **Proof**: baseline unprefixed emitted paths fail; corrected paths pass; reverting one caller fails even if the map remains correct. Exporter works without live API/DB. Run `make check-route-manifest` before the freshness pytest; use `make export-route-manifest` only when intentionally updating the fixture. Run slice 1 commands above.
 
 ### Slice 2: Shared unavailable contract and notice
 

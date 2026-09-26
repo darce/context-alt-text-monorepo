@@ -43,7 +43,7 @@ MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = $(UVX) "$(MCP_HANDOFF_PACKAGE)"
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
-PYTHON ?= $(MCP_PYTHON)
+PYTHON ?= $(ORCHESTRATOR_ROOT)/.venv/bin/python
 
 # --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
@@ -159,6 +159,18 @@ include $(ROOT_MAKEFILE_DIR)/mk/evals.mk
 # =============================================================================
 
 .PHONY: help check-all check-controlled-vocabulary check-frontend check-mcp check-handoff check-orchestrator lint-all lint-lane-reports lint-ratchet lint-ratchet-accept lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo lint-ux-maps
+
+.PHONY: check-route-manifest export-route-manifest
+ROUTE_MANIFEST_EXPORTER := $(ROOT_MAKEFILE_DIR)/apps/prototype-description-service/scripts/export_route_manifest.py
+ROUTE_MANIFEST_FIXTURE ?= $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context/tests/fixtures/api-route-manifest.json
+
+# CI uses the non-mutating check before the route-freshness pytest. Regeneration
+# is an explicit local action so a new route cannot hide stale fixture drift.
+check-route-manifest:
+	@$(PYTHON) "$(ROUTE_MANIFEST_EXPORTER)" --check "$(ROUTE_MANIFEST_FIXTURE)"
+
+export-route-manifest:
+	@$(PYTHON) "$(ROUTE_MANIFEST_EXPORTER)" --output "$(ROUTE_MANIFEST_FIXTURE)"
 
 # Offline half of the GPU snapshot deployment contract. This validates the
 # lifecycle-unit paths against the checked-in rendered compose file without

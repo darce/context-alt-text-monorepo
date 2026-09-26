@@ -73,7 +73,10 @@ async def test_add_member_if_not_exists_advances_cluster_updated_at(db_session, 
 @pytest.mark.asyncio
 async def test_bulk_add_members_advances_cluster_updated_at(db_session, tenant, seed_media_identity) -> None:
     cluster_id = await _new_cluster(db_session, str(tenant.id))
-    members = [MemberData(identity_id=str(uuid4()), similarity=0.8), MemberData(identity_id=str(uuid4()), similarity=0.9)]
+    members = [
+        MemberData(identity_id=str(uuid4()), similarity=0.8),
+        MemberData(identity_id=str(uuid4()), similarity=0.9),
+    ]
     for member in members:
         await seed_media_identity(member.identity_id)
     member_repository = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -86,9 +89,14 @@ async def test_bulk_add_members_advances_cluster_updated_at(db_session, tenant, 
 
 
 @pytest.mark.asyncio
-async def test_bulk_add_members_if_not_exists_advances_cluster_updated_at(db_session, tenant, seed_media_identity) -> None:
+async def test_bulk_add_members_if_not_exists_advances_cluster_updated_at(
+    db_session, tenant, seed_media_identity
+) -> None:
     cluster_id = await _new_cluster(db_session, str(tenant.id))
-    members = [MemberData(identity_id=str(uuid4()), similarity=0.8), MemberData(identity_id=str(uuid4()), similarity=0.9)]
+    members = [
+        MemberData(identity_id=str(uuid4()), similarity=0.8),
+        MemberData(identity_id=str(uuid4()), similarity=0.9),
+    ]
     for member in members:
         await seed_media_identity(member.identity_id)
     member_repository = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
@@ -110,9 +118,7 @@ async def test_move_members_advances_source_and_destination_updated_at(db_sessio
     member_repository = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
     await member_repository.add_member(source_id, identity_id, similarity=0.8)
     await db_session.execute(
-        update(ClusterModel)
-        .where(ClusterModel.id.in_([UUID(source_id), UUID(target_id)]))
-        .values(updated_at=_BASELINE)
+        update(ClusterModel).where(ClusterModel.id.in_([UUID(source_id), UUID(target_id)])).values(updated_at=_BASELINE)
     )
     await db_session.flush()
 

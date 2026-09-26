@@ -297,9 +297,7 @@ class FakeClusterRepository:
         return sum(
             1
             for cluster in self.clusters.values()
-            if not cluster.label
-            and cluster.identity_count >= min_identity_count
-            and cluster.dismissed_at is None
+            if not cluster.label and cluster.identity_count >= min_identity_count and cluster.dismissed_at is None
         )
 
     async def dismiss_cluster(self, cluster_id: str) -> bool:
@@ -732,9 +730,7 @@ class FakeClusterService:
                 if final_label and not is_reserved_label_shape(final_label):
                     repo_target.user_confirmed = True
             if moved_by_merge_id:
-                for _member, identity in self.fake_cluster_repository.members_by_cluster.get(
-                    source_cluster_id, []
-                ):
+                for _member, identity in self.fake_cluster_repository.members_by_cluster.get(source_cluster_id, []):
                     if identity.tenant_id == tenant_id:
                         identity.moved_by_merge_id = moved_by_merge_id
             if not defer_recompute:

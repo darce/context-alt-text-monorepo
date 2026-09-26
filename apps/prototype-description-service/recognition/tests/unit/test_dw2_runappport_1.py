@@ -63,9 +63,7 @@ def _successful_runner(calls: list[tuple[list[str], dict[str, Any]]]):
             if path.endswith(".py"):
                 path = path[:-3]
             classname = ".".join([path, *parts[1:-1]])
-            testcase_xml.append(
-                f"<testcase classname='{classname}' name='{parts[-1]}'/>"
-            )
+            testcase_xml.append(f"<testcase classname='{classname}' name='{parts[-1]}'/>")
         xml_path.write_text(
             f"<testsuite tests='{len(testcase_xml)}'>{''.join(testcase_xml)}</testsuite>",
             encoding="utf-8",
@@ -118,10 +116,7 @@ def test_missing_evidence_only_artifact_prevents_green_run(tmp_path: Path) -> No
 
     assert status == 1
     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
-    assert any(
-        "SC-2" in failure and str(artifact) in failure
-        for failure in evidence["release_gate_failures"]
-    )
+    assert any("SC-2" in failure and str(artifact) in failure for failure in evidence["release_gate_failures"])
 
 
 def test_missing_supplemental_artifact_does_not_fail_executed_case_gate(tmp_path: Path) -> None:
@@ -173,18 +168,12 @@ def test_additional_evidence_requirement_can_have_pending_artifact(tmp_path: Pat
 
 def test_real_app1_manifest_loads_with_pending_additional_evidence() -> None:
     repository_root = next(
-        parent
-        for parent in Path(__file__).resolve().parents
-        if (parent / "docs" / "scopes").is_dir()
+        parent for parent in Path(__file__).resolve().parents if (parent / "docs" / "scopes").is_dir()
     )
-    manifest = runner.load_manifest(
-        repository_root / "docs" / "scopes" / "app-altcontext-beta-clerk-polar-evals.json"
-    )
+    manifest = runner.load_manifest(repository_root / "docs" / "scopes" / "app-altcontext-beta-clerk-polar-evals.json")
 
     pending_case_ids = {
-        case.case_id
-        for case in manifest.cases
-        if case.additional_evidence_required and case.artifact is None
+        case.case_id for case in manifest.cases if case.additional_evidence_required and case.artifact is None
     }
     assert pending_case_ids == {
         "APP-SC-04",
@@ -297,15 +286,11 @@ def test_selected_beta_gate_fails_when_required_evidence_artifact_is_absent(tmp_
 
 
 def test_gate_option_repeats_and_unknown_name_is_an_argument_error() -> None:
-    args = runner._build_parser().parse_args(
-        ["--manifest", "manifest.json", "--gate", "beta", "--gate", "paid"]
-    )
+    args = runner._build_parser().parse_args(["--manifest", "manifest.json", "--gate", "beta", "--gate", "paid"])
     assert args.gate == ["beta", "paid"]
 
     with pytest.raises(SystemExit) as exc_info:
-        runner._build_parser().parse_args(
-            ["--manifest", "manifest.json", "--gate", "unknown"]
-        )
+        runner._build_parser().parse_args(["--manifest", "manifest.json", "--gate", "unknown"])
 
     assert exc_info.value.code == 2
 
@@ -433,8 +418,7 @@ def test_gate_fails_when_a_required_test_is_missing_from_junit(tmp_path: Path) -
     )
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload["release_gates"] = {
-        gate: {"required_cases": ["SC-PRESENT", "SC-MISSING"]}
-        for gate in ("beta", "expansion", "paid")
+        gate: {"required_cases": ["SC-PRESENT", "SC-MISSING"]} for gate in ("beta", "expansion", "paid")
     }
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -520,7 +504,7 @@ def test_paid_gate_rejects_empty_app_sc_20_artifact(tmp_path: Path) -> None:
 
 def test_paid_gate_requires_and_records_live_charge_authorization(tmp_path: Path) -> None:
     artifact = tmp_path / "app1-paid-release.json"
-    artifact.write_text("{\"transaction\": \"recorded\"}", encoding="utf-8")
+    artifact.write_text('{"transaction": "recorded"}', encoding="utf-8")
     manifest_path = _paid_artifact_manifest(tmp_path, artifact)
 
     status_without_authorization = runner.run_evals(
@@ -529,9 +513,7 @@ def test_paid_gate_requires_and_records_live_charge_authorization(tmp_path: Path
         out_dir=tmp_path / "without-authorization",
         command_runner=_successful_runner([]),
     )
-    without_authorization = json.loads(
-        (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1]
-    )
+    without_authorization = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
 
     args = runner._build_parser().parse_args(
         ["--manifest", str(manifest_path), "--live-charge-authorized-by", "Dana Operator"]
@@ -543,12 +525,13 @@ def test_paid_gate_requires_and_records_live_charge_authorization(tmp_path: Path
         command_runner=_successful_runner([]),
         live_charge_authorized_by=args.live_charge_authorized_by,
     )
-    with_authorization = json.loads(
-        (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1]
-    )
+    with_authorization = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
 
     assert status_without_authorization == 1
-    assert "explicit live-charge authorization not given" in without_authorization["release_gate_results"]["paid"]["reasons"]
+    assert (
+        "explicit live-charge authorization not given"
+        in without_authorization["release_gate_results"]["paid"]["reasons"]
+    )
     assert without_authorization["release_gate_results"]["paid"]["live_charge_authorized_by"] is None
     assert status_with_authorization == 0
     assert with_authorization["release_gate_results"]["paid"]["status"] == "passed"

@@ -49,10 +49,7 @@ def _package_roots() -> tuple[Path, ...]:
 
 
 def _using_override_roots() -> bool:
-    return any(
-        name in os.environ
-        for name in (ADMIN_SOURCE_ROOT_ENV, ADMIN_DIST_ROOT_ENV, PACKAGE_DIST_ROOT_ENV)
-    )
+    return any(name in os.environ for name in (ADMIN_SOURCE_ROOT_ENV, ADMIN_DIST_ROOT_ENV, PACKAGE_DIST_ROOT_ENV))
 
 
 def _source_mtime(source_root: Path | None = None) -> float:
@@ -67,11 +64,7 @@ def _source_mtime(source_root: Path | None = None) -> float:
 def _package_zips() -> list[Path]:
     """Zips package-plugin.sh writes (repo-root dist/), never the tracked legacy copy."""
     return sorted(
-        path
-        for root in _package_roots()
-        if root.is_dir()
-        for path in root.glob(DEPLOY_ZIP_GLOB)
-        if path.is_file()
+        path for root in _package_roots() if root.is_dir() for path in root.glob(DEPLOY_ZIP_GLOB) if path.is_file()
     )
 
 
@@ -98,9 +91,7 @@ def _require_admin_dist(dist_root: Path | None = None) -> None:
         return
     if _bundle_optional():
         pytest.skip(f"admin bundle {root} is absent and {BUNDLE_OPTIONAL_ENV}=1")
-    raise AssertionError(
-        f"missing admin bundle {root}; set {BUNDLE_OPTIONAL_ENV}=1 if the bundle is not expected"
-    )
+    raise AssertionError(f"missing admin bundle {root}; set {BUNDLE_OPTIONAL_ENV}=1 if the bundle is not expected")
 
 
 def _manifest_path(dist_root: Path) -> Path:
@@ -364,8 +355,7 @@ def test_fresh_bundle_pytest_exits_zero(tmp_path: Path) -> None:
     )
     completed = _run_live_freshness(_freshness_override_env(source_root, dist_root, package_root))
     assert completed.returncode == 0, (
-        "freshness gate went red on a fully fresh bundle; "
-        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+        f"freshness gate went red on a fully fresh bundle; stdout={completed.stdout!r}; stderr={completed.stderr!r}"
     )
 
 
@@ -464,8 +454,7 @@ def test_deploy_zip_with_retired_copy_pytest_exits_nonzero(tmp_path: Path) -> No
     )
     completed = _run_live_zip(_freshness_override_env(source_root, dist_root, package_root))
     assert completed.returncode != 0, (
-        "retired-copy zip gate stayed green; "
-        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+        f"retired-copy zip gate stayed green; stdout={completed.stdout!r}; stderr={completed.stderr!r}"
     )
     combined = f"{completed.stdout}\n{completed.stderr}"
     assert "retired" in combined.lower()

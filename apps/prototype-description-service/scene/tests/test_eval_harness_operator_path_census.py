@@ -54,9 +54,7 @@ _NEIGHBOUR_MODULES = frozenset(
     }
 )
 
-_SINK_NAMES = frozenset(
-    {"print", "error", "warn", "exit", "FacePassStalledError", "RegistryError", "RuntimeError"}
-)
+_SINK_NAMES = frozenset({"print", "error", "warn", "exit", "FacePassStalledError", "RegistryError", "RuntimeError"})
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -107,9 +105,7 @@ def _module_operator_path_violations(path: Path) -> list[str]:
             values: list[ast.AST] = []
             if isinstance(argument, ast.JoinedStr):
                 values.extend(
-                    formatted.value
-                    for formatted in argument.values
-                    if isinstance(formatted, ast.FormattedValue)
+                    formatted.value for formatted in argument.values if isinstance(formatted, ast.FormattedValue)
                 )
             else:
                 values.append(argument)
@@ -127,11 +123,7 @@ def test_current_harness_inventory_is_classified() -> None:
     # Every module with a path-bearing operator sink must be either owned by
     # this slice or named for the neighbouring owner.  This catches a new
     # generator silently escaping the review frontier.
-    sink_modules = {
-        path.name
-        for path in _HARNESS_DIR.glob("*.py")
-        if _module_operator_path_violations(path)
-    }
+    sink_modules = {path.name for path in _HARNESS_DIR.glob("*.py") if _module_operator_path_violations(path)}
     assert sink_modules <= _OWNED_MODULES | _NEIGHBOUR_MODULES
 
 
@@ -166,7 +158,9 @@ class _ReadablePathProbe:
         return '{"stale": true}\n'
 
 
-def test_checkpoint_warning_uses_path_wire_for_surrogate_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_checkpoint_warning_uses_path_wire_for_surrogate_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = _ReadablePathProbe(os.fsencode(str(tmp_path)) + b"/checkpoint-\xe9.jsonl")
 
     assert load_records(path) == []
@@ -201,8 +195,7 @@ def test_caption_anchor_main_uses_path_wire_for_report_outputs(tmp_path: Path, m
 
     output_dir = _surrogate_path(tmp_path, b"anchor-\xe9")
     paths = tuple(
-        _surrogate_path(tmp_path, leaf)
-        for leaf in (b"manifest-\xe9.json", b"run-\xe9.json", b"report-\xe9.json")
+        _surrogate_path(tmp_path, leaf) for leaf in (b"manifest-\xe9.json", b"run-\xe9.json", b"report-\xe9.json")
     )
     paths += (_surrogate_path(tmp_path, b"report-\xe9.md"),)
     monkeypatch.setattr(anchor, "validate_live_head_sha", lambda _value: None)

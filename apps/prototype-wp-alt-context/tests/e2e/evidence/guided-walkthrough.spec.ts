@@ -97,7 +97,7 @@ test.describe('guided walkthrough recording', () => {
     let appliedAfterApply: string | null = null;
     let appliedAfterUndo: string | null = null;
     let verdict: GuidedRecordingManifest['verdict'] = 'fail';
-    let walkthroughError: unknown;
+    let walkthroughError: Error | undefined;
     let videoPath: string | null = null;
 
     try {
@@ -217,7 +217,10 @@ test.describe('guided walkthrough recording', () => {
       expect(privileged, `privileged acx/v1 requests during the recorded walkthrough: ${JSON.stringify(privileged)}`).toEqual([]);
       verdict = 'pass';
     } catch (err) {
-      walkthroughError = err;
+      walkthroughError =
+        err instanceof Error
+          ? err
+          : new Error('guided walkthrough failed with a non-Error value', { cause: err });
     } finally {
       const cues = timer.cues;
       const captionsPath = testInfo.outputPath(GUIDED_RECORDING_CAPTIONS_FILENAME);
@@ -271,7 +274,7 @@ test.describe('guided walkthrough recording', () => {
       throw new Error('guided recording produced no video artifact; refusing to write a silent null video_path');
     }
     if (walkthroughError) {
-      return Promise.reject(walkthroughError);
+      throw walkthroughError;
     }
   });
 });

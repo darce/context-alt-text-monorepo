@@ -248,8 +248,11 @@ DRY_RUN=1 make demo-enable-public-guide WP_PATH=/opt/acx-backend/data/demo-wpdat
 
 That runs `scripts/deploy/enable-public-guide.sh` through the compose `wpcli` tools
 service (the same seam as `bootstrap-wp.sh`: `docker compose run --rm --no-deps wpcli wp …`).
-There is no host `wp` on the demo VM. For LocalWP, set `ACX_WP_RUNNER=host` so the script
-uses `wp --path="$WP_PATH"` instead. The script updates `acx_public_guide_enabled`,
+There is no host `wp` on the demo VM. For LocalWP, set `ACX_WP_RUNNER=host` and use a
+loopback or reserved `.test` `SITE_URL`, so the script uses `wp --path="$WP_PATH"`
+against the local site. The host runner refuses remote `SITE_URL`s before invoking
+`wp` or probing the guide; use the Compose runner for remote sites. The script updates
+`acx_public_guide_enabled`,
 flushes rewrites, then a signed-out GET of `<site>/guide/` must return 200 with
 `id="acx-public-guide-js"` (the enqueued guide module). A 404 or fallback-only body
 rolls the option back to 0 and flushes rewrites. The public demo describe endpoint

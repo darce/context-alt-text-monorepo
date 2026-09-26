@@ -177,8 +177,7 @@ class ClusterMergeSuggestion(Base):
         ),
         CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
         CheckConstraint(
-            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
-            " OR survivor_cluster_id = cluster_b_id",
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id OR survivor_cluster_id = cluster_b_id",
             name="cluster_merge_survivor_in_pair",
         ),
         UniqueConstraint("cluster_a_id", "cluster_b_id", name="unique_cluster_merge_suggestion"),

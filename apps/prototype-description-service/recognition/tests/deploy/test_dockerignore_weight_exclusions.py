@@ -37,7 +37,7 @@ ONNX_CLASS = "onnx"
 ONNX_PATTERN = "recognition/infrastructure/face_pipeline/models/*.onnx"
 _WEIGHT_CLASS_REPRESENTATIVES = {
     "safetensors": ("x/y/model.safetensors",),
-    "bin": ("x/y/pytorch_model.bin",),
+    "bin": ("x/y/pytorch_model.bin", "x/y/adapter_model.bin"),
     "pt": ("x/y/model.pt",),
     "pth": ("x/y/model.pth",),
     "gguf": ("x/y/model.gguf",),
@@ -413,21 +413,18 @@ def _docker_pattern_matches_path(pattern: str, path: str, *, unknown_matches: bo
     return any(matcher.fullmatch(candidate) is not None for candidate in candidates)
 
 
-def _docker_pattern_matches_class(pattern: str, class_id: str, *, unknown_matches: bool) -> bool:
-    return any(
-        _docker_pattern_matches_path(pattern, representative, unknown_matches=unknown_matches)
-        for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]
-    )
-
-
 def docker_weight_classes(text: str) -> set[str]:
     """Map .dockerignore → protected class ids with last-match-wins (RC5).
 
     Docker evaluates .dockerignore top-to-bottom; a later ``!**/*.bin``
     re-includes bin weights and removes the class from the excluded set.
     """
-    # disposition[class] = True when currently excluded, False when re-included.
-    disposition: dict[str, bool] = {}
+    # Keep each representative's final disposition so a filename-specific rule
+    # cannot stand in for coverage of every artifact in its weight class.
+    disposition = {
+        class_id: {representative: False for representative in representatives}
+        for class_id, representatives in _WEIGHT_CLASS_REPRESENTATIVES.items()
+    }
     for line in _active_dockerignore_lines(text):
         negated = line.startswith("!")
         pattern = line[1:].lstrip() if negated else line
@@ -435,15 +432,17 @@ def docker_weight_classes(text: str) -> set[str]:
         candidate_classes = (
             {class_id}
             if class_id is not None
-            else {
-                candidate
-                for candidate in _WEIGHT_CLASS_REPRESENTATIVES
-                if _docker_pattern_matches_class(pattern, candidate, unknown_matches=negated)
-            }
+            else set(_WEIGHT_CLASS_REPRESENTATIVES)
         )
         for candidate in candidate_classes:
-            disposition[candidate] = not negated
-    return {cid for cid, excluded in disposition.items() if excluded}
+            for representative in disposition[candidate]:
+                if _docker_pattern_matches_path(pattern, representative, unknown_matches=negated):
+                    disposition[candidate][representative] = not negated
+    return {
+        class_id
+        for class_id, representatives in disposition.items()
+        if all(representatives.values())
+    }
 
 
 def _rsync_pattern_to_class(pattern: str) -> str | None:

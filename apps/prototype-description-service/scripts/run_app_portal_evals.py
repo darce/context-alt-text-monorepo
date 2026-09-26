@@ -855,6 +855,7 @@ def run_evals(
         for case_id in gate["required_cases"]:
             case = cases_by_id[case_id]
             result = case_results[case_id]
+            artifact_path = _case_artifact_path(case)
             if case.test is not None:
                 if result["execution_status"] != "passed":
                     reasons.append(
@@ -873,7 +874,6 @@ def run_evals(
                             f"additional evidence artifact is missing, empty, or not a regular file: {artifact_path}"
                         )
                 continue
-            artifact_path = _case_artifact_path(case)
             if artifact_path is None:
                 reasons.append(
                     f"release gate {gate_name!r} required evidence-only case "

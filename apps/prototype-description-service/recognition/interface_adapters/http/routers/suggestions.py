@@ -5,10 +5,15 @@ Suggestion management routes.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from typing import TypeVar
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field
+from sqlalchemy import update
+
+from db.models.constraints import ClusterMergeSuggestion as MergeSuggestionModel
 
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.roster_candidates import (
@@ -555,9 +560,20 @@ async def accept_merge_suggestion(
         request.tenant_id, str(suggestion.id)
     )
 
+    await session.execute(
+        update(MergeSuggestionModel)
+        .where(
+            MergeSuggestionModel.tenant_id == UUID(request.tenant_id),
+            MergeSuggestionModel.id == UUID(str(suggestion.id)),
+        )
+        .values(
+            resolution=SuggestionStatus.ACCEPTED.value,
+            resolved_at=datetime.now(tz=UTC),
+        )
+    )
+    suggestion.status = SuggestionStatus.ACCEPTED
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
-    suggestion.status = SuggestionStatus.ACCEPTED
 
     # Commit before response so client refetches see committed state
     # (see clusters.py PATCH handler comment for full race condition explanation).

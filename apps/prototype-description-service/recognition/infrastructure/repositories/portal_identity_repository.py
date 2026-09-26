@@ -155,7 +155,9 @@ class SqlAlchemyPortalIdentityRepository:
             if invited_email != normalized_email:
                 raise PortalIdentityClaimRefused(_CLAIM_REFUSAL_MESSAGE)
             try:
-                tenant_id = invitation.tenant_id if isinstance(invitation.tenant_id, UUID) else UUID(str(invitation.tenant_id))
+                tenant_id = (
+                    invitation.tenant_id if isinstance(invitation.tenant_id, UUID) else UUID(str(invitation.tenant_id))
+                )
             except (AttributeError, TypeError, ValueError):
                 raise PortalIdentityClaimRefused(_CLAIM_REFUSAL_MESSAGE) from None
 

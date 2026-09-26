@@ -35,9 +35,7 @@ async def _with_operation_timeout[T](
     except UsageAdmissionTimeoutError:
         raise
     except TimeoutError as exc:
-        raise UsageAdmissionTimeoutError(
-            f"usage admission repository operation timed out: {operation}"
-        ) from exc
+        raise UsageAdmissionTimeoutError(f"usage admission repository operation timed out: {operation}") from exc
 
 
 def _validate_request(

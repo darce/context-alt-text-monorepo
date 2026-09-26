@@ -131,9 +131,7 @@ def _umeyama_similarity_homogeneous(src: np.ndarray, dst: np.ndarray) -> np.ndar
     src = np.asarray(src)
     dst = np.asarray(dst)
     if src.shape != dst.shape or src.ndim != 2:
-        raise AlignmentError(
-            f"src/dst must be (M, N) with matching shape, got {src.shape} vs {dst.shape}"
-        )
+        raise AlignmentError(f"src/dst must be (M, N) with matching shape, got {src.shape} vs {dst.shape}")
     num = src.shape[0]
     dim = src.shape[1]
     src_mean = src.mean(axis=0)
@@ -273,9 +271,7 @@ class FivePointAligner:
         self.channel_order = preprocessing.channel_order if preprocessing else _DEFAULT_CHANNEL_ORDER
         if self.template_id not in _TEMPLATE_LANDMARKS:
             supported = ", ".join(sorted(_TEMPLATE_LANDMARKS))
-            raise AlignmentError(
-                f"unknown alignment template {self.template_id!r}; supported templates: {supported}"
-            )
+            raise AlignmentError(f"unknown alignment template {self.template_id!r}; supported templates: {supported}")
         self.dst_landmarks = _TEMPLATE_LANDMARKS[self.template_id]
 
     def align(

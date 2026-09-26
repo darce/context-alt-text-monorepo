@@ -44,7 +44,7 @@ def _run_driver(tmp_path: Path, driver_body: str) -> tuple[str, list[str]]:
     records = tmp_path / "records.log"
     driver = tmp_path / "driver.sh"
     driver.write_text(
-        f'''\
+        f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORD_FILE={shlex.quote(str(records))}
@@ -52,7 +52,7 @@ record() {{ printf '%s\\n' "$*" >>"$RECORD_FILE"; }}
 log() {{ record "log $*"; }}
 warn() {{ record "warn $*"; }}
 {driver_body}
-'''
+"""
     )
     result = subprocess.run(
         ["bash", str(driver)],
@@ -76,7 +76,7 @@ def _run_recovery(
 ) -> tuple[str, list[str]]:
     output, records = _run_driver(
         tmp_path,
-        f'''\
+        f"""\
 ACX_CUTOVER_ENV=dev
 ACX_TRAFFIC_FLIPPED=0
 INFLIGHT_RC={inflight_rc}
@@ -88,7 +88,7 @@ enable_cutover_candidate() {{ record "enable_cutover_candidate $*"; }}
 commit_cutover_state() {{ record "commit_cutover_state $*"; ACX_TRAFFIC_FLIPPED=0; }}
 if recover_failed_flip_to_next dev; then driver_rc=0; else driver_rc=$?; fi
 printf 'driver_rc=%s\\ntraffic=%s\\n' "$driver_rc" "$ACX_TRAFFIC_FLIPPED"
-''',
+""",
     )
     return output, records
 
@@ -135,7 +135,7 @@ def test_flip_next_failure_branches_use_recovery() -> None:
 def test_do_restart_flip_failure_after_route_change_restores_edge(tmp_path: Path) -> None:
     output, records = _run_driver(
         tmp_path,
-        f'''\
+        f"""\
 DIGEST={shlex.quote(DIGEST)}
 ACX_IMAGE_REPO='iad.ocir.io/idu2kqqe2jxy/acx-backend'
 DEPLOY_SHA='{"b" * 40}'
@@ -168,7 +168,7 @@ commit_cutover_state() {{ record "commit_cutover_state $*"; ACX_TRAFFIC_FLIPPED=
 run_with_deadline() {{ record "run_with_deadline $2"; }}
 if do_restart dev "$DIGEST"; then driver_rc=0; else driver_rc=$?; fi
 printf 'driver_rc=%s\\n' "$driver_rc"
-''',
+""",
     )
     assert "driver_rc=1" in output
     assert records.index("restore_edge_backups dev") < records.index("abort_cutover_candidate dev")

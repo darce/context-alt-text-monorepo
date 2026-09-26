@@ -53,12 +53,14 @@ Probe timestamp: `2026-09-14T17:40:51-04:00`.
 | prod | `/recognition/tenant/whoami` | `401 HTTP Error 401: Unauthorized` |
 | prod | `/recognition/suggestions` | `401 HTTP Error 401: Unauthorized` |
 
-The original pre-promotion stale-image cause is closed as deploy skew for the
-environments whose health/ready probes report the promoted commit and `200`.
+The original pre-promotion stale-image cause is **unverified; do not close**.
+Matching health commit SHAs do not establish immutable image identity: dev and
+staging image digests are not captured, while the prod digest is recorded.
 `dev-fir` remains an unavailable `502` surface, and protected staging/prod
 routes remain observed at `401`; neither is treated as an unobserved `200`.
 VM disk usage below the 70% promotion precondition was not recorded in the
-supplied evidence and remains unverified.
+supplied evidence and remains unverified. Keep the cause open until dev and
+staging image digests and the VM disk precondition are recorded.
 
 ## Symptom classification
 
@@ -67,7 +69,7 @@ distinct defects: wrong-person assignment and duplicate suggestion avatars.
 
 | defect | evidence | classification | slice |
 | --- | --- | --- | --- |
-| 0 — pre-promotion stale API image (root cause, not an additional UI symptom) | `/health` on dev, staging and prod reports commit `51ff7022ac758121c6c0a819db25c8390debe8d3`; `/ready` is `200` on all three; operator reports prod on the promoted image. | **resolved by promotion (deploy skew; close)** | promotion gate |
+| 0 — pre-promotion stale API image (root cause, not an additional UI symptom) | `/health` on dev, staging and prod reports commit `51ff7022ac758121c6c0a819db25c8390debe8d3`; dev/staging image digests and the VM disk precondition are not captured. | **unverified; do not close** — matching commit SHAs do not prove immutable image identity or promotion readiness. | promotion gate |
 | 1 — name listbox opens on load | The operator reproduced `#acx-name-face-listbox-_r_27_` open on load. | **persists on current code**; suspect `NameFaceControl.tsx` initial `useState(true)` state. | C1 |
 | 2 — wrong person suggested | The suggestion-card evidence records ground truth **Justin Trudeau** and suggested **Emma Watson**. | **persists on current code**; suspect the recognition suggestion assignment/threshold path. Keep threshold changes evidence-gated and send the row to C3. | C3 |
 | 3 — duplicate suggestion avatars | The operator reports that the two avatars in the suggestion card are both Justin Trudeau instead of one representative thumbnail. | **persists on current code**; suspect `suggestion_repository.list_pending_with_details` stale replay and the `SuggestionCards` rendering path. | C2 |
@@ -121,12 +123,13 @@ the supplied evidence.
 **BLOCKED — do not dispatch Wave 1 from this artifact yet.** The promotion and
 runtime evidence is incomplete: dev-fir returned `502`, protected staging/prod
 routes returned `401`, the exact `/recognition/tenant/naming-agreement` route
-was not probed, and VM disk usage below 70% is unverified. Before dispatch, the
-operator must record a fresh dev-fir health/ready and target-route probe,
-authenticated protected-route results for dev, dev-fir, staging and prod
-(including the exact naming-agreement route), and the VM disk precondition
-below 70%. A repeat `502` or `401`, or absent/over-threshold disk evidence,
-keeps this gate blocked and requires another operator follow-up.
+was not probed, dev/staging image digests are missing, and VM disk usage below
+70% is unverified. Before dispatch, the operator must record the dev and
+staging immutable image digests, a fresh dev-fir health/ready and target-route
+probe, authenticated protected-route results for dev, dev-fir, staging and
+prod (including the exact naming-agreement route), and VM disk usage below
+70%. A repeat `502` or `401`, missing image digest, or absent/over-threshold
+disk evidence keeps this gate blocked and requires another operator follow-up.
 
 After those gates are satisfied, Wave 1 may dispatch `contracts`,
 `spa-naming-control`, `svc-suggestion-rep` and `spa-description-service`.

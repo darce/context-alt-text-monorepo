@@ -252,8 +252,12 @@ if [[ -e Caddyfile ]]; then
 fi
 restore_caddyfile() {
   if [[ -n "$rollback_file" ]]; then
-    cat "$rollback_file" > Caddyfile
-    rm -f "$rollback_file"
+    if cat "$rollback_file" > Caddyfile; then
+      rm -f "$rollback_file"
+    else
+      printf 'ERROR: Failed to restore Caddyfile; rollback file retained at %s\n' "$rollback_file" >&2
+      return 1
+    fi
   else
     rm -f Caddyfile
   fi

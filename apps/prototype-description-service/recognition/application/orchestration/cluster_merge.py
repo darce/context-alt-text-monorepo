@@ -19,6 +19,8 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
+from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
+from db.models import IdentityMember as IdentityMemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.models.identity import (
     ClusterMergeKind,
@@ -65,12 +67,53 @@ async def _cluster_gallery_space(
     return model, all_representatives_match
 
 
+async def _cluster_full_embedding_models(session: AsyncSession, cluster_id: str) -> set[str | None]:
+    """Read model stamps from every member and representative identity."""
+    cluster_uuid = uuid.UUID(str(cluster_id))
+    member_identity_ids = select(IdentityMemberModel.identity_id).where(
+        IdentityMemberModel.cluster_id == cluster_uuid
+    )
+    representative_identity_ids = select(IdentityClusterRepresentativeModel.identity_id).where(
+        IdentityClusterRepresentativeModel.cluster_id == cluster_uuid
+    )
+    identity_ids = member_identity_ids.union(representative_identity_ids)
+    result = await session.execute(
+        select(MediaIdentityModel.embedding_model).where(MediaIdentityModel.id.in_(identity_ids))
+    )
+    return set(result.scalars().all())
+
+
+def _model_description(models: set[str | None]) -> str | None:
+    if not models:
+        return None
+    if len(models) == 1:
+        return next(iter(models))
+    labels = sorted(model if model is not None else "<unstamped>" for model in models)
+    return f"mixed[{','.join(labels)}]"
+
+
 async def _ensure_same_space_merge(
     cluster_repo: ClusterRepository,
     source_cluster_id: str,
     target_cluster_id: str,
+    *,
+    session: AsyncSession | None = None,
 ) -> None:
     """FIR23-01: refuse composing mixed embedding spaces via merge."""
+    if session is not None:
+        source_models = await _cluster_full_embedding_models(session, source_cluster_id)
+        target_models = await _cluster_full_embedding_models(session, target_cluster_id)
+        source_spaces = source_models or {None}
+        target_spaces = target_models or {None}
+        if len(source_spaces | target_spaces) <= 1:
+            return
+        raise CrossSpaceMergeError(
+            source_cluster_id=source_cluster_id,
+            target_cluster_id=target_cluster_id,
+            source_model=_model_description(source_spaces),
+            target_model=_model_description(target_spaces),
+        )
+
     source_model, source_representatives_match = await _cluster_gallery_space(cluster_repo, source_cluster_id)
     target_model, target_representatives_match = await _cluster_gallery_space(cluster_repo, target_cluster_id)
     if (
@@ -381,7 +424,7 @@ async def merge_cluster(
             clustering_logger=clustering_logger,
         )
 
-    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
+    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id, session=session)
 
     moved_identity_ids: list[uuid.UUID] = []
     sibling_receipts: list[ClusterMergeReceipt] = []

@@ -90,4 +90,3 @@ async def test_tenant_repository_updates_naming_agreement() -> None:
     assert updated is False
     assert tenant.naming_agreement_enabled is False
     assert session.flush_calls == 1
-

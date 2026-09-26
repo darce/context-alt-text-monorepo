@@ -15,8 +15,8 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 import pytest
 import yaml
@@ -166,10 +166,7 @@ def compose_data_cache_mounts_are_readonly(compose_text: str) -> bool:
     mounts = re.findall(r"^\s*-\s*(.+):/data/cache(:\w+)?\s*$", compose_text, re.MULTILINE)
     if not mounts:
         return False
-    for _src, mode in mounts:
-        if mode != ":ro":
-            return False
-    return True
+    return all(mode == ":ro" for _src, mode in mounts)
 
 
 def script_threads_resolve_to_acx_image_repo(script_text: str) -> bool:
@@ -187,9 +184,7 @@ def script_threads_resolve_to_acx_image_repo(script_text: str) -> bool:
     # Must ship into remote .env for compose substitution.
     if "ship_remote_image_repo_env" not in script_text:
         return False
-    if "ACX_IMAGE_REPO=" not in script_text:
-        return False
-    return True
+    return "ACX_IMAGE_REPO=" in script_text
 
 
 def script_selects_remote_build_min_free_gb(script_text: str) -> bool:
@@ -203,13 +198,12 @@ def script_selects_remote_build_min_free_gb(script_text: str) -> bool:
         return False
     body = m.group("body")
     # A literal-only runtime-vlm branch misses builder-vlm and future VLM targets.
-    if re.search(r'''==\s*["']runtime-vlm["']''', body):
+    if re.search(r"""==\s*["']runtime-vlm["']""", body):
         return False
     if not re.search(r"ACX_BUILD_TARGET[^\n]*==\s*\*vlm\*", body):
         return False
     return all(
-        re.search(rf"\$\{{{name}\}}", body)
-        for name in ("REMOTE_VLM_BUILD_MIN_FREE_GB", "REMOTE_BUILD_MIN_FREE_GB")
+        re.search(rf"\$\{{{name}\}}", body) for name in ("REMOTE_VLM_BUILD_MIN_FREE_GB", "REMOTE_BUILD_MIN_FREE_GB")
     )
 
 

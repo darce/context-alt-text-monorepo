@@ -53,12 +53,12 @@ def _routes(router) -> set[tuple[str, str]]:
 
 def test_concern_routers_partition_cluster_surface() -> None:
     from recognition.interface_adapters.http.routers import (
+        cluster_merge_candidates,
+        cluster_revert,
         clusters_admission,
         clusters_maintenance,
         clusters_snapshot,
         clusters_topology,
-        cluster_merge_candidates,
-        cluster_revert,
     )
 
     concern_sets = [

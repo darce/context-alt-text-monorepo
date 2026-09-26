@@ -53,7 +53,7 @@ do not treat this file as that proof.
 5. **Idle reaper spike proof**: actuated a real STOP off the DB-derived snapshot
    (fence honored). The production timer (cron/systemd on the backend host)
    remains an open GPUSMOKE-1 S4 precondition — **not complete**. Required:
-   timers installed (`systemctl --user list-timers` shows `acx-gpu-start.timer`
+   timers installed (`systemctl list-timers` shows `acx-gpu-start.timer`
    + `acx-gpu-reap.timer`, else `scripts/deploy/gpu-lifecycle-install.sh`) and
    one timer-driven STOP observed on the production host. ☐ production
 6. **Bake-off evidence**: memo remains provisional; the license verdict is

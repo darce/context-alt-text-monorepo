@@ -876,6 +876,22 @@ lifecycle_transaction_complete=0
 unit_stage=''
 trap cleanup_gpu_lifecycle_transaction ERR EXIT
 
+# The lifecycle load directories are group-owned by ACX_API_GID. Verify the
+# active API containers themselves use that gid before publishing the paths.
+api_container_ids=\$(docker ps --filter 'label=com.docker.compose.service=api' --format '{{.ID}}')
+[ -n "\$api_container_ids" ] || { echo 'ERROR gpu-lifecycle: no running api container found to verify its gid; refusing deploy' >&2; exit 1; }
+while IFS= read -r api_container_id; do
+    [ -n "\$api_container_id" ] || continue
+    if ! api_container_gid=\$(docker exec "\$api_container_id" id -g); then
+        echo 'ERROR gpu-lifecycle: could not read running api container gid; refusing deploy' >&2
+        exit 1
+    fi
+    if [ "\$api_container_gid" != '${ACX_API_GID}' ]; then
+        echo "ERROR gpu-lifecycle: running api container gid \$api_container_gid does not match ACX_API_GID ${ACX_API_GID}; refusing deploy" >&2
+        exit 1
+    fi
+done <<< "\$api_container_ids"
+
 # ARCH-13/COST-04: establish the fail-safe before changing the live release or
 # any effective lifecycle artifact. The trap remains armed until the reaper is
 # proved and START is re-enabled and verified.

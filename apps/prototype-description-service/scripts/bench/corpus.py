@@ -56,6 +56,7 @@ class ItemOutcomeStore:
             self.path.touch()
 
     def append(self, record: dict[str, Any]) -> None:
+        _validate_record_dimensions(record)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, separators=(",", ":")) + "\n")
 
@@ -66,8 +67,16 @@ class ItemOutcomeStore:
         for line in self.path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            record = json.loads(line)
-            _validate_record_dimensions(record)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            try:
+                _validate_record_dimensions(record)
+            except BenchError:
+                continue
             records.append(record)
         return records
 

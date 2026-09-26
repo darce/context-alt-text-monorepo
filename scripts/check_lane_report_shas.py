@@ -290,10 +290,7 @@ def _is_content_digest(line: str, start: int, end: int) -> bool:
         return True
 
     # sha256sum-style listing remainder (no label required).
-    if has_sha256sum:
-        return True
-
-    return False
+    return bool(has_sha256sum)
 
 
 def _ignored_token_spans(line: str) -> set[tuple[int, int]]:
@@ -305,11 +302,7 @@ def _ignored_token_spans(line: str) -> set[tuple[int, int]]:
     markers = [m.start() for m in re.finditer(re.escape(_IGNORE_MARKER), line)]
     # Do not treat ignore-next-block as a nearest-token ignore marker.
     markers = [
-        mp
-        for mp in markers
-        if not line[mp : mp + len(_IGNORE_NEXT_BLOCK)].lower().startswith(
-            _IGNORE_NEXT_BLOCK
-        )
+        mp for mp in markers if not line[mp : mp + len(_IGNORE_NEXT_BLOCK)].lower().startswith(_IGNORE_NEXT_BLOCK)
     ]
     if not markers:
         return set()
@@ -433,11 +426,7 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
         for start, end, run in _homoglyph_sha_spans(line):
             if (start, end) in ignored:
                 continue
-            vocab_note = (
-                " adjacent to commit vocabulary"
-                if _COMMIT_VOCAB.search(line)
-                else ""
-            )
+            vocab_note = " adjacent to commit vocabulary" if _COMMIT_VOCAB.search(line) else ""
             violations.append(
                 f"{rel}:{lineno}: homoglyph / non-ASCII hex-lookalike `{run}`"
                 f"{vocab_note} — refuse to treat lookalike SHAs as invisible; "
@@ -447,15 +436,13 @@ def scan_file(repo: Path, path: Path) -> tuple[list[str], int]:
 
     if in_block_comment:
         violations.append(
-            f"{rel}: unclosed HTML comment — refusing to claim SHA citations resolve "
-            f"for a partially scanned file"
+            f"{rel}: unclosed HTML comment — refusing to claim SHA citations resolve for a partially scanned file"
         )
     # RF-08: unclosed fence (with or without ignore-next-block) must not silently
     # suppress the rest of the file and exit 0. Mirror the unclosed-comment rule.
     if in_fence:
         violations.append(
-            f"{rel}: unclosed fenced block — refusing to claim SHA citations resolve "
-            f"for a partially scanned file"
+            f"{rel}: unclosed fenced block — refusing to claim SHA citations resolve for a partially scanned file"
         )
     return violations, tokens_checked
 
@@ -495,11 +482,7 @@ def _default_report_paths(repo: Path) -> list[Path]:
     repo = repo.resolve()
     for dirpath, dirnames, filenames in os.walk(repo, topdown=True):
         # In-place prune: prevent descent into vendored / cache trees.
-        dirnames[:] = sorted(
-            d
-            for d in dirnames
-            if d not in _PRUNE_DIR_NAMES and not d.endswith(".egg-info")
-        )
+        dirnames[:] = sorted(d for d in dirnames if d not in _PRUNE_DIR_NAMES and not d.endswith(".egg-info"))
         base = Path(dirpath)
         for name in sorted(filenames):
             if not name.endswith(".md"):
@@ -527,11 +510,7 @@ def _staged_reports(repo: Path) -> list[Path]:
         text=True,
         check=True,
     )
-    return [
-        repo / name
-        for name in out.stdout.split()
-        if _is_lane_report_relpath(name)
-    ]
+    return [repo / name for name in out.stdout.split() if _is_lane_report_relpath(name)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -559,8 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         # all means the walk/predicate regressed or CI invoked us in the wrong
         # tree. Fail closed with an explicit honesty message.
         print(
-            "0 lane reports found by default walk; nothing to check — "
-            "refusing to claim success over an empty sample",
+            "0 lane reports found by default walk; nothing to check — refusing to claim success over an empty sample",
             file=sys.stderr,
         )
         return 1
@@ -572,8 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         if not path.is_file():
             # VLM6-D-03: missing path is an error, not a silent skip.
             violations.append(
-                f"{path}: target is not a readable file — "
-                f"refusing to claim SHA citations resolve for an unopened path"
+                f"{path}: target is not a readable file — refusing to claim SHA citations resolve for an unopened path"
             )
             continue
         try:
@@ -601,13 +578,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # S5-05: never claim "all resolve" when zero tokens were examined.
     if tokens_checked == 0:
-        print(
-            f"lane report SHA citations: {checked} file(s), 0 citations found (none to resolve)"
-        )
+        print(f"lane report SHA citations: {checked} file(s), 0 citations found (none to resolve)")
     else:
-        print(
-            f"lane report SHA citations: {checked} file(s), {tokens_checked} citation(s) resolved"
-        )
+        print(f"lane report SHA citations: {checked} file(s), {tokens_checked} citation(s) resolved")
     return 0
 
 

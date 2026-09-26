@@ -291,14 +291,24 @@ class ClusterProjectionWriter {
 		}
 		$has_quality_pair = array_key_exists( ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY, $snapshot_export )
 			&& array_key_exists( ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS, $snapshot_export );
+		$representative_quality = '';
+		$quality_components = '';
+		if ( $has_quality_pair ) {
+			$normalized_quality = self::normalize_representative_quality(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ]
+			);
+			$normalized_components = self::normalize_quality_components(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ]
+			);
+			if ( '' !== $normalized_quality && '' !== $normalized_components ) {
+				$representative_quality = $normalized_quality;
+				$quality_components = $normalized_components;
+			}
+		}
 
 		return array(
-			'representative_quality' => $has_quality_pair
-				? self::normalize_representative_quality( $snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ] )
-				: '',
-			'quality_components' => $has_quality_pair
-				? self::normalize_quality_components( $snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ] )
-				: '',
+			'representative_quality' => $representative_quality,
+			'quality_components' => $quality_components,
 			'representative_media_id' => self::normalize_representative_media_id(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID ] ?? null
 			),

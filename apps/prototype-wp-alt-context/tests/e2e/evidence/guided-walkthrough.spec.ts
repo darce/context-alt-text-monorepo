@@ -271,7 +271,7 @@ test.describe('guided walkthrough recording', () => {
       throw new Error('guided recording produced no video artifact; refusing to write a silent null video_path');
     }
     if (walkthroughError) {
-      throw walkthroughError;
+      return Promise.reject(walkthroughError);
     }
   });
 });

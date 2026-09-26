@@ -31,6 +31,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 import numpy as np
@@ -649,7 +650,13 @@ def has_human_adjudicated_gt_lineage(box: Any) -> bool:
         saw_machine_proposals = getattr(lineage, "saw_machine_proposals", None)
         decision = getattr(lineage, "decision", None)
     return (
-        label_source != LabelSource.LEGACY_IMPORT
+        label_source
+        in (
+            LabelSource.OPERATOR_BLIND,
+            LabelSource.OPERATOR_REPASS,
+            LabelSource.ARBITRATION,
+            LabelSource.GOLD_REFERENCE,
+        )
         and saw_machine_proposals is False
         and decision
         in (
@@ -669,6 +676,20 @@ def _strict_gt_box_dimension(box: Any, name: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _strict_detection_box_has_valid_geometry(box: Any) -> bool:
+    try:
+        if len(box) != 4:
+            return False
+        x, y, width, height = (float(value) for value in box)
+    except (OverflowError, TypeError, ValueError):
+        return False
+    return (
+        all(isfinite(value) for value in (x, y, width, height))
+        and width > 0.0
+        and height > 0.0
+    )
 
 
 def _strict_detection_overlaps_incomplete_gt(
@@ -726,6 +747,20 @@ def _strict_iou_threshold(run_manifest: Mapping[str, Any] | None) -> float:
     return threshold
 
 
+def _strict_row_refusal(
+    message: str,
+    invariant: ScoreInvariant,
+    row_index: int,
+    row: ImageDetection,
+) -> ManifestError:
+    return ManifestError(
+        f"{message} (entry_index={row_index}, entry_path={row.image})",
+        invariant=invariant,
+        entry_index=row_index,
+        entry_path=row.image,
+    )
+
+
 def detection_pr_strict(
     items: Sequence[ImageDetection],
     *,
@@ -750,13 +785,15 @@ def detection_pr_strict(
 
     # Refusal order is part of the strict contract: threshold, lineage, frame,
     # usable geometry, and finally independent count/box coverage.
-    for row in items:
+    for row_index, row in enumerate(items):
         if any(not has_human_adjudicated_gt_lineage(box) for box in row.gt_boxes):
-            raise ManifestError(
+            raise _strict_row_refusal(
                 "strict detection scoring requires human-adjudicated lineage on every GT box",
-                invariant=ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+                ScoreInvariant.DETECTION_REQUIRES_HUMAN_ADJUDICATED_GT_LINEAGE,
+                row_index,
+                row,
             )
-    for row in items:
+    for row_index, row in enumerate(items):
         carries_geometry = bool(row.gt_boxes or row.detections_bbox_px)
         frame_missing = carries_geometry and row.detection_frame_size is None
         frame_mismatch = (
@@ -765,12 +802,14 @@ def detection_pr_strict(
             and row.image_size != row.detection_frame_size
         )
         if frame_missing or frame_mismatch:
-            raise ManifestError(
+            raise _strict_row_refusal(
                 "strict detection scoring requires a declared detector frame "
                 "matching the image frame",
-                invariant=ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT,
+                ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION_FRAME_AGREEMENT,
+                row_index,
+                row,
             )
-    for row in items:
+    for row_index, row in enumerate(items):
         carries_geometry = bool(row.gt_boxes or row.detections_bbox_px)
         invalid_gt_geometry = any(
             (width := _strict_gt_box_dimension(box, "w")) is None
@@ -779,24 +818,33 @@ def detection_pr_strict(
             or height <= 0.0
             for box in row.gt_boxes
         )
+        invalid_detection_geometry = any(
+            not _strict_detection_box_has_valid_geometry(box)
+            for box in row.detections_bbox_px
+        )
         if (
             (row.labeled_faces > 0 and not row.gt_boxes)
             or (row.pred_faces > 0 and not row.detections_bbox_px)
             or invalid_gt_geometry
+            or invalid_detection_geometry
             or (row.image_size is None and carries_geometry)
         ):
-            raise ManifestError(
+            raise _strict_row_refusal(
                 "strict detection scoring requires usable localization geometry",
-                invariant=ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION,
+                ScoreInvariant.DETECTION_REQUIRES_LOCALIZATION,
+                row_index,
+                row,
             )
-    for row in items:
+    for row_index, row in enumerate(items):
         if (
             row.labeled_faces != len(row.gt_boxes)
             or row.pred_faces != len(row.detections_bbox_px)
         ):
-            raise ManifestError(
+            raise _strict_row_refusal(
                 "strict detection scoring requires face counts to cover every geometry row",
-                invariant=DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+                DETECTION_UNCOVERED_FACE_COUNT_INVARIANT,
+                row_index,
+                row,
             )
 
     from . import face_assignment

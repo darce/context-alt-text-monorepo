@@ -118,7 +118,11 @@ def _export_quality_components(raw: dict[str, float] | None) -> ClusterSnapshotQ
     # Pass through stored parts only; never derive from identity bbox/confidence (rg-015).
     if not isinstance(raw, dict) or not raw:
         return None
-    if any(_optional_float(value) is None for value in raw.values()):
+    if any(
+        (value is None and key not in _QUALITY_COMPONENT_KEYS)
+        or (value is not None and _optional_float(value) is None)
+        for key, value in raw.items()
+    ):
         return None
 
     components: dict[str, float | None] = {}
@@ -126,6 +130,10 @@ def _export_quality_components(raw: dict[str, float] | None) -> ClusterSnapshotQ
     for key in _QUALITY_COMPONENT_KEYS:
         if key not in raw:
             components[key] = None
+            continue
+        if raw[key] is None:
+            components[key] = None
+            has_component = True
             continue
         component = _component_value(key, raw[key])
         if component is None:

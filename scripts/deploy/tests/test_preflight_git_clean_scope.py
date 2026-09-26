@@ -91,9 +91,15 @@ def test_long_dirty_list_does_not_abort_overridden_dev(repo: Path) -> None:
         (repo / f"apps/prototype-description-service/scene/gen_{i}.py").write_text("x = 1\n")
     driver_env = "set -euo pipefail; "
     result = subprocess.run(
-        ["bash", "-c", driver_env + f'source "{SCRIPT}"; GREEN=; YELLOW=; RED=; RESET=; REPO_ROOT="{repo}"; '
-         "ACX_ALLOW_DIRTY=1; preflight_git_clean dev; echo PREFLIGHT_OK"],
-        capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+        [
+            "bash",
+            "-c",
+            driver_env + f'source "{SCRIPT}"; GREEN=; YELLOW=; RED=; RESET=; REPO_ROOT="{repo}"; '
+            "ACX_ALLOW_DIRTY=1; preflight_git_clean dev; echo PREFLIGHT_OK",
+        ],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
     )
     assert "PREFLIGHT_OK" in result.stdout, result.stderr[-500:]
 

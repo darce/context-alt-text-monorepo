@@ -623,7 +623,7 @@ def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: P
         [
             "/bin/bash",
             "-c",
-            f'source "{SCRIPT}"; read_deployed_release_receipt() {{ printf \'%s\\n%s\\n\' "${{DEPLOY_SHA}}" \'iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{"a" * 64}\'; }}; do_verify dev',
+            f"source \"{SCRIPT}\"; read_deployed_release_receipt() {{ printf '%s\\n%s\\n' \"${{DEPLOY_SHA}}\" 'iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{'a' * 64}'; }}; do_verify dev",
         ],
         env=env,
         text=True,

@@ -186,7 +186,7 @@ write_deployed_release_receipt dev "{LOCAL_SHA}" "{RECEIPT_DIGEST}"
     assert "mktemp" in remote_argv
     assert "deployed-release.json" in remote_argv
     assert "mv -f" in remote_argv
-    assert "" == stdin_log.read_text()
+    assert stdin_log.read_text() == ""
     assert remote_argv.count("sudo sh -c") == 1
 
 
@@ -202,6 +202,4 @@ def test_release_receipt_call_sites_follow_verified_runtime_state() -> None:
     restore_start = source.index("restore_runtime_and_edge() {")
     restore_end = source.index("\n# Restore both the registry env tag", restore_start)
     restore = source[restore_start:restore_end]
-    assert restore.index("verify_restored_runtime") < restore.index(
-        "write_deployed_release_receipt"
-    )
+    assert restore.index("verify_restored_runtime") < restore.index("write_deployed_release_receipt")

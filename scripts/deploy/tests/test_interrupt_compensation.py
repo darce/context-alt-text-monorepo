@@ -16,7 +16,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
 def _run_driver(tmp_path: Path, statements: str, **extra_env: str) -> subprocess.CompletedProcess[str]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     records = tmp_path / "records.log"
-    command = f'''
+    command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
@@ -31,7 +31,7 @@ _purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$
 _purge_deploy_snapshot() {{ record _purge_deploy_snapshot "$@"; }}
 rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
 {statements}
-'''
+"""
     env = os.environ.copy()
     env.update({"RECORDS": str(records), **extra_env})
     result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, env=env, check=False)
@@ -45,7 +45,7 @@ rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
 def _run_real_driver(tmp_path: Path, statements: str) -> subprocess.CompletedProcess[str]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     records = tmp_path / "records.log"
-    command = f'''
+    command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
@@ -56,10 +56,8 @@ _purge_deploy_ocir_docker_config() {{ record _purge_deploy_ocir_docker_config "$
 _purge_deploy_snapshot() {{ record _purge_deploy_snapshot "$@"; }}
 rollback_command_hint() {{ printf 'make deploy-rollback-%s' "$1"; }}
 {statements}
-'''
-    result = subprocess.run(
-        ["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False
-    )
+"""
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False)
     if records.exists():
         result.records = records.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
     else:
@@ -85,7 +83,7 @@ def _run_lease_driver(tmp_path: Path, statements: str) -> subprocess.CompletedPr
     sudo = bin_dir / "sudo"
     sudo.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
     sudo.chmod(0o755)
-    command = f'''
+    command = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORDS={shlex.quote(str(records))}
@@ -104,10 +102,8 @@ ssh() {{ bash -c "${{@: -1}}"; }}
 ACX_DEPLOY_BACKUP_ROOT={shlex.quote(str(tmp_path / "backups"))}
 ACX_DEPLOY_TRANSACTION_ID=transaction-a
 {statements}
-'''
-    result = subprocess.run(
-        ["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False
-    )
+"""
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, env=os.environ.copy(), check=False)
     if records.exists():
         result.records = records.read_text(encoding="utf-8").splitlines()  # type: ignore[attr-defined]
     else:
@@ -135,9 +131,7 @@ def _topology_restore_fixture(tmp_path: Path, *, pending: bool = False) -> dict[
     (previous / "docker-compose.env.yml").write_text("previous compose\n", encoding="utf-8")
     (previous / "acx-dev.service").write_text("previous unit\n", encoding="utf-8")
     (previous / "edge").mkdir()
-    (previous / "edge" / "Caddyfile.pre-cutover").write_text(
-        "reverse_proxy dev-api:8000\n", encoding="utf-8"
-    )
+    (previous / "edge" / "Caddyfile.pre-cutover").write_text("reverse_proxy dev-api:8000\n", encoding="utf-8")
     (backup_root / "dev" / "edge-cutover.current").write_text(
         f"{previous}/edge/Caddyfile.pre-cutover\n", encoding="utf-8"
     )
@@ -159,44 +153,43 @@ def _topology_restore_fixture(tmp_path: Path, *, pending: bool = False) -> dict[
     (bin_dir / "ssh").write_text(
         "#!/usr/bin/env bash\n"
         "last=\n"
-        "for arg in \"$@\"; do last=$arg; done\n"
+        'for arg in "$@"; do last=$arg; done\n'
         "if [[ $last == 'bash -s' ]]; then cat >\"$CAPTURED_PAYLOAD\"; "
-        "else printf '%s\\n' \"$last\" >\"$CAPTURED_PAYLOAD\"; fi\n",
+        'else printf \'%s\\n\' "$last" >"$CAPTURED_PAYLOAD"; fi\n',
         encoding="utf-8",
     )
     (bin_dir / "sudo").write_text(
         "#!/usr/bin/env bash\n"
         "args=()\n"
-        "for arg in \"$@\"; do\n"
-        "  case \"$arg\" in\n"
-        "    /etc/systemd/system/*) args+=(\"$FAKE_SYSTEMD/${arg#/etc/systemd/system/}\") ;;\n"
-        "    /opt/acx-backend/*) args+=(\"$FAKE_OPT/${arg#/opt/acx-backend/}\") ;;\n"
-        "    *) args+=(\"$arg\") ;;\n"
+        'for arg in "$@"; do\n'
+        '  case "$arg" in\n'
+        '    /etc/systemd/system/*) args+=("$FAKE_SYSTEMD/${arg#/etc/systemd/system/}") ;;\n'
+        '    /opt/acx-backend/*) args+=("$FAKE_OPT/${arg#/opt/acx-backend/}") ;;\n'
+        '    *) args+=("$arg") ;;\n'
         "  esac\n"
         "done\n"
         "if [[ ${args[0]:-} == systemctl ]]; then exit 0; fi\n"
-        "exec \"${args[@]}\"\n",
+        'exec "${args[@]}"\n',
         encoding="utf-8",
     )
     (bin_dir / "docker").write_text(
         "#!/usr/bin/env bash\n"
         "if [[ \"$*\" == *'ps -q caddy'* ]]; then printf 'cid\\n'; "
         "elif [[ \"$1 $2\" == 'inspect -f' ]]; then "
-        "printf '{\"acx-prod-net\":{},\"acx-staging-net\":{},\"acx-dev-net\":{},'"
-        "'\"acx-dev-fir-net\":{},\"acx-demo-net\":{}}\\n'; fi\n",
+        'printf \'{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},\''
+        '\'"acx-dev-fir-net":{},"acx-demo-net":{}}\\n\'; fi\n',
         encoding="utf-8",
     )
     bash_env = tmp_path / "bash-env"
     bash_env.write_text(
-        "cd() { if [[ ${1:-} == /opt/acx-backend ]]; then "
-        "builtin cd \"$FAKE_OPT\"; else builtin cd \"$@\"; fi; }\n",
+        'cd() { if [[ ${1:-} == /opt/acx-backend ]]; then builtin cd "$FAKE_OPT"; else builtin cd "$@"; fi; }\n',
         encoding="utf-8",
     )
     (bin_dir / "ssh").chmod(0o755)
     (bin_dir / "sudo").chmod(0o755)
     (bin_dir / "docker").chmod(0o755)
     payload = tmp_path / "restore.payload"
-    driver = f'''
+    driver = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 run_with_deadline() {{ shift 2; "$@"; }}
@@ -208,7 +201,7 @@ if [[ "${{RESTORE_STRICT:-1}}" == 1 ]]; then
 else
   "$RESTORE_FUNCTION" dev
 fi
-'''
+"""
     env = os.environ.copy()
     env.update(
         {
@@ -247,9 +240,7 @@ def _capture_and_run_restore(
         env["RESTORE_STRICT"] = "0"
     env["PATH"] = f"{fixture['bin_dir']}:{env.get('PATH', '')}"
     driver = str(fixture["driver"])
-    capture = subprocess.run(
-        ["bash", "-c", driver], text=True, capture_output=True, check=False, env=env
-    )
+    capture = subprocess.run(["bash", "-c", driver], text=True, capture_output=True, check=False, env=env)
     assert fixture["payload"].exists(), capture.stdout + capture.stderr
     execute = subprocess.run(
         ["bash", str(fixture["payload"])],
@@ -265,7 +256,7 @@ def _capture_and_run_restore(
 def test_interrupt_after_repo_ship_restores_topology_and_repo(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -276,7 +267,7 @@ def test_interrupt_after_repo_ship_restores_topology_and_repo(tmp_path: Path) ->
 def test_repo_shipped_interrupt_uses_strict_topology_restore(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -286,12 +277,12 @@ def test_repo_shipped_interrupt_uses_strict_topology_restore(tmp_path: Path) -> 
 def test_repo_shipped_current_only_does_not_abort_candidate(tmp_path: Path) -> None:
     result = _run_real_driver(
         tmp_path,
-        r'''
+        r"""
 restore_topology_backups() { record restore_topology_backups "$@"; }
 restore_edge_backups() { record restore_edge_backups "$@"; }
 abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
 ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130
-''',
+""",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -303,12 +294,12 @@ ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=repo_shipped; deploy_interrupt_cleanup 130
 def test_non_strict_topology_restore_still_aborts_candidate(tmp_path: Path) -> None:
     result = _run_real_driver(
         tmp_path,
-        r'''
+        r"""
 restore_topology_backups() { record restore_topology_backups "$@"; }
 restore_edge_backups() { record restore_edge_backups "$@"; }
 abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
 restore_runtime_topology dev
-''',
+""",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -320,12 +311,12 @@ restore_runtime_topology dev
 def test_interrupt_during_canonical_restart_leaves_candidate_serving(tmp_path: Path) -> None:
     result = _run_real_driver(
         tmp_path,
-        r'''
+        r"""
 restore_edge_backups() { record restore_edge_backups "$@"; }
 abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
 commit_cutover_state() { record commit_cutover_state "$@"; }
 ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=1; deploy_interrupt_cleanup 130
-''',
+""",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -340,12 +331,12 @@ ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=1; deploy_interrupt
 def test_interrupt_after_flip_before_restart_still_recovers(tmp_path: Path) -> None:
     result = _run_real_driver(
         tmp_path,
-        r'''
+        r"""
 restore_edge_backups() { record restore_edge_backups "$@"; }
 abort_cutover_candidate() { record abort_cutover_candidate "$@"; }
 commit_cutover_state() { record commit_cutover_state "$@"; }
 ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=0; deploy_interrupt_cleanup 130
-''',
+""",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -354,9 +345,7 @@ ACX_CUTOVER_ENV=dev ACX_TRAFFIC_FLIPPED=1 ACX_LIVE_DISRUPTED=0; deploy_interrupt
 
 
 def test_strict_restore_ignores_latest_pointer(tmp_path: Path) -> None:
-    capture, execute, fixture = _capture_and_run_restore(
-        tmp_path, function="restore_topology_backups", strict=True
-    )
+    capture, execute, fixture = _capture_and_run_restore(tmp_path, function="restore_topology_backups", strict=True)
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_compose"].read_text(encoding="utf-8") == "current compose\n"
@@ -364,9 +353,7 @@ def test_strict_restore_ignores_latest_pointer(tmp_path: Path) -> None:
 
 
 def test_strict_edge_restore_ignores_latest_and_cutover_pointer(tmp_path: Path) -> None:
-    capture, execute, fixture = _capture_and_run_restore(
-        tmp_path, function="restore_edge_backups", strict=True
-    )
+    capture, execute, fixture = _capture_and_run_restore(tmp_path, function="restore_edge_backups", strict=True)
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_caddyfile"].read_text(encoding="utf-8") == "reverse_proxy dev-api-next:8000\n"
@@ -374,9 +361,7 @@ def test_strict_edge_restore_ignores_latest_and_cutover_pointer(tmp_path: Path) 
 
 
 def test_non_strict_restore_still_uses_latest(tmp_path: Path) -> None:
-    capture, execute, fixture = _capture_and_run_restore(
-        tmp_path, function="restore_topology_backups", strict=False
-    )
+    capture, execute, fixture = _capture_and_run_restore(tmp_path, function="restore_topology_backups", strict=False)
     assert capture.returncode == 0, capture.stdout + capture.stderr
     assert execute.returncode == 0, execute.stdout + execute.stderr
     assert fixture["live_compose"].read_text(encoding="utf-8") == "previous compose\n"
@@ -394,7 +379,7 @@ def test_strict_restore_refuses_incomplete_current_snapshot(tmp_path: Path) -> N
 def test_interrupt_after_tag_push_restores_env_tag(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -403,7 +388,7 @@ def test_interrupt_after_tag_push_restores_env_tag(tmp_path: Path) -> None:
 
     refused = _run_driver(
         tmp_path / "owner-refused",
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130",
         RESTORE_ENV_RC="75",
     )
     assert refused.returncode == 130, refused.stdout + refused.stderr
@@ -415,7 +400,7 @@ def test_interrupt_after_tag_push_restores_env_tag(tmp_path: Path) -> None:
 def test_interrupt_after_live_disruption_only_warns(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted ACX_LIVE_DISRUPTED=1; deploy_interrupt_cleanup 130',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted ACX_LIVE_DISRUPTED=1; deploy_interrupt_cleanup 130",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     output = result.stdout + result.stderr
@@ -437,7 +422,7 @@ def test_interrupted_compensation_skips_when_lease_is_lost(tmp_path: Path) -> No
         )
         result = _run_lease_driver(
             case_dir,
-            f'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE={phase} ACX_DEPLOY_LEASE_ENV=dev; deploy_interrupt_cleanup 130',
+            f"ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE={phase} ACX_DEPLOY_LEASE_ENV=dev; deploy_interrupt_cleanup 130",
         )
 
         assert result.returncode == 130, result.stdout + result.stderr
@@ -456,7 +441,7 @@ def test_interrupted_compensation_skips_when_lease_is_lost(tmp_path: Path) -> No
 def test_interrupted_compensation_runs_when_lease_is_owned(tmp_path: Path) -> None:
     result = _run_lease_driver(
         tmp_path,
-        'deploy_env_lease acquire dev; ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130',
+        "deploy_env_lease acquire dev; ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup 130",
     )
 
     assert result.returncode == 130, result.stdout + result.stderr
@@ -479,12 +464,12 @@ def test_failed_verification_skips_evidence_and_rollback_after_lease_loss(
     rollback_marker = tmp_path / "rollback-ran"
     result = _run_lease_driver(
         tmp_path,
-        f'''
+        f"""
 capture_failure_evidence() {{ touch {shlex.quote(str(evidence_marker))}; }}
 restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
 ACX_DEPLOY_LEASE_ENV=dev
 handle_failed_verification dev Deploy
-''',
+""",
     )
 
     assert result.returncode != 0, result.stdout + result.stderr
@@ -498,12 +483,12 @@ def test_failed_verification_rolls_back_when_lease_is_owned(tmp_path: Path) -> N
     rollback_marker = tmp_path / "rollback-ran"
     result = _run_lease_driver(
         tmp_path,
-        f'''
+        f"""
 deploy_env_lease acquire dev
 capture_failure_evidence() {{ touch {shlex.quote(str(evidence_marker))}; }}
 restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
 handle_failed_verification dev Deploy
-''',
+""",
     )
 
     assert result.returncode != 0, result.stdout + result.stderr
@@ -528,7 +513,7 @@ def test_restarted_and_compensating_only_warn(tmp_path: Path) -> None:
     ):
         result = _run_driver(
             tmp_path / phase,
-            f'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE={phase} ACX_CANDIDATE_DIGEST_REF=repo@sha256:abc; deploy_interrupt_cleanup 130',
+            f"ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE={phase} ACX_CANDIDATE_DIGEST_REF=repo@sha256:abc; deploy_interrupt_cleanup 130",
         )
         assert result.returncode == 130, result.stdout + result.stderr
         assert warning in result.stdout + result.stderr
@@ -540,7 +525,7 @@ def test_restarted_and_compensating_only_warn(tmp_path: Path) -> None:
 def test_compensation_runs_once(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        'ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup; trap deploy_interrupt_cleanup EXIT',
+        "ACX_DEPLOY_ENV=dev ACX_DEPLOY_PHASE=tag_promoted; deploy_interrupt_cleanup; trap deploy_interrupt_cleanup EXIT",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -550,7 +535,7 @@ def test_compensation_runs_once(tmp_path: Path) -> None:
 def test_ship_interrupt_between_push_and_restart(tmp_path: Path) -> None:
     result = _run_driver(
         tmp_path,
-        r'''
+        r"""
 pin_deploy_sha() { DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
 init_deploy_ocir_docker_config() { install_deploy_interrupt_traps; }
 preflight_ssh() { :; }
@@ -567,7 +552,7 @@ promote_gate() { ACX_DEPLOY_PHASE=repo_shipped; }
 do_push_tag() { record do_push_tag "$@"; kill -INT "$$"; }
 do_restart() { record do_restart "$@"; }
 _ship_selected_env dev aggregate
-''',
+""",
     )
     assert result.returncode == 130, result.stdout + result.stderr
     records = result.records  # type: ignore[attr-defined]
@@ -587,7 +572,7 @@ def test_ship_tag_push_failure_skips_rollback_after_lease_loss(tmp_path: Path) -
         },
         separators=(",", ":"),
     )
-    statements = f'''
+    statements = f"""
 pin_deploy_sha() {{ DEPLOY_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }}
 init_deploy_ocir_docker_config() {{ install_deploy_interrupt_traps; }}
 preflight_ssh() {{ :; }}
@@ -605,7 +590,7 @@ capture_failure_evidence() {{ :; }}
 restore_env_tag_to_rollback() {{ touch {shlex.quote(str(rollback_marker))}; }}
 restore_prior_image_repo_env() {{ touch {shlex.quote(str(repo_marker))}; }}
 _ship_selected_env dev aggregate
-'''
+"""
     result = _run_lease_driver(tmp_path, statements)
 
     assert result.returncode != 0, result.stdout + result.stderr

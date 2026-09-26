@@ -35,10 +35,11 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -118,14 +119,10 @@ def _is_plain_basename(name: str) -> bool:
     if "/" in name or "\\" in name or "\x00" in name:
         return False
     # Path(name).name collapses ".." and strips dirs; require identity.
-    if Path(name).name != name:
-        return False
-    return True
+    return Path(name).name == name
 
 
-def _validate_promote_names(
-    names: list[Any], *, dest_dir: Path, ns: PromoteNamespace, context: str
-) -> list[str]:
+def _validate_promote_names(names: list[Any], *, dest_dir: Path, ns: PromoteNamespace, context: str) -> list[str]:
     """Refuse path-like or reserved *names* with a structured error (RC-04, CDX-05).
 
     Journals and caller-supplied name lists are untrusted input. A name that
@@ -134,8 +131,7 @@ def _validate_promote_names(
     """
     if not isinstance(names, list) or not names:
         raise PromoteError(
-            f"{context}: promote names missing or empty "
-            f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
+            f"{context}: promote names missing or empty (generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
         )
     cleaned: list[str] = []
     for raw in names:
@@ -156,9 +152,7 @@ def _validate_promote_names(
                 f"infrastructure (generator={ns.generator!r} dest={dest_dir}); "
                 f"refuse to proceed (CDX-05)"
             )
-        if raw.startswith(CAPTION_PROMOTE.stage_prefix) or raw.startswith(
-            FACE_PROMOTE.stage_prefix
-        ):
+        if raw.startswith(CAPTION_PROMOTE.stage_prefix) or raw.startswith(FACE_PROMOTE.stage_prefix):
             raise PromoteError(
                 f"{context}: reserved promote name {raw!r} collides with stage prefix "
                 f"(generator={ns.generator!r} dest={dest_dir}); refuse to proceed"
@@ -298,9 +292,7 @@ def _infer_artifact_namespace(path: Path) -> str | None:
     return None
 
 
-def _refuse_foreign_dest_overwrite(
-    dest_dir: Path, names: list[str], ns: PromoteNamespace
-) -> None:
+def _refuse_foreign_dest_overwrite(dest_dir: Path, names: list[str], ns: PromoteNamespace) -> None:
     """Refuse installing over a dest basename owned by the other generator (wF3).
 
     Temps are namespace-scoped (CDX-04); final dest paths are not. Caption and
@@ -382,9 +374,7 @@ def _check_legacy_journal(dest_dir: Path) -> None:
         )
 
 
-def _write_promote_journal(
-    dest_dir: Path, ns: PromoteNamespace, payload: dict[str, Any]
-) -> None:
+def _write_promote_journal(dest_dir: Path, ns: PromoteNamespace, payload: dict[str, Any]) -> None:
     body = dict(payload)
     body["generator"] = ns.generator
     path = _journal_path(dest_dir, ns)
@@ -543,9 +533,7 @@ def recover_promote(dest_dir: Path, ns: PromoteNamespace) -> None:
         _recover_promote_unlocked(dest_dir, ns)
 
 
-def atomic_promote(
-    src_dir: Path, dest_dir: Path, names: list[str], ns: PromoteNamespace
-) -> None:
+def atomic_promote(src_dir: Path, dest_dir: Path, names: list[str], ns: PromoteNamespace) -> None:
     """Promote a named freeze artifact *set* as one unit (rg-002 / VLM6-F-05 / S4-02).
 
     Per-file ``os.replace`` is atomic, but a bare loop is not: a kill after the
@@ -569,9 +557,7 @@ def atomic_promote(
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Validate caller names before acquiring lock work that stages bytes — refuse
     # reserved/path-like names up front (RC-04, CDX-05).
-    safe_names = _validate_promote_names(
-        list(names), dest_dir=dest_dir, ns=ns, context="atomic_promote"
-    )
+    safe_names = _validate_promote_names(list(names), dest_dir=dest_dir, ns=ns, context="atomic_promote")
     with _namespace_lock(dest_dir, ns):
         _recover_promote_unlocked(dest_dir, ns)
         # Cross-namespace final-dest collision: refuse before staging bytes so
@@ -738,9 +724,7 @@ def scavenge_orphan_stages(
         return []
     clock = time.time() if now is None else now
     with _namespace_lock(dest_dir, ns):
-        return _scavenge_orphan_stages_unlocked(
-            dest_dir, ns, max_age_sec=max_age_sec, now=clock
-        )
+        return _scavenge_orphan_stages_unlocked(dest_dir, ns, max_age_sec=max_age_sec, now=clock)
 
 
 def validate_live_head_sha(

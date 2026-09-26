@@ -179,8 +179,7 @@ def seed_scenes(manifest_path: str, images_dir: str, client: SceneSeedClient) ->
             image_path = _resolve_image(root, entry.path)
             if image_path is None:
                 raise ManifestError(
-                    f"image file missing: {_printable_path(entry.path)} "
-                    f"(under {_printable_path(root)})"
+                    f"image file missing: {_printable_path(entry.path)} (under {_printable_path(root)})"
                 )
             images.append((entry.media_id, image_path.name, image_path.read_bytes()))
         job_id = client.analyze(images)

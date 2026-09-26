@@ -1444,6 +1444,7 @@ def _check_score_determinism_cross_process(
         ignore_list=ignore_list,
         score_manifest_sha256=manifest_sha,
         manifest_roster=roster,
+        run_manifest=manifest.model_dump(),
         audience=audience_enum,
         rubric_gate=rubric_gate,
     )
@@ -1476,6 +1477,7 @@ def _check_score_determinism_cross_process(
         "roster=sorted(set(getattr(man,'roster',None) or [])); "
         "j,m=build_reports(rec,entries,ignore_list=ignore,"
         "score_manifest_sha256=sha,manifest_roster=roster,"
+        "run_manifest=man.model_dump(),"
         "audience=aud,rubric_gate=rg); "
         "Path(sys.argv[5]).write_text(json.dumps({"
         "'json':j,'md':m,"
@@ -1693,6 +1695,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
             ignore_list=ignore_list,
             score_manifest_sha256=manifest_sha,
             manifest_roster=roster,
+            run_manifest=manifest.model_dump(),
             rubric_gate=rubric_gate,
         )
         schema_exit = _fold_schema_errors_into_verdict(scored)
@@ -1707,6 +1710,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
                 ignore_list=ignore_list,
                 score_manifest_sha256=manifest_sha,
                 manifest_roster=roster,
+                run_manifest=manifest.model_dump(),
                 audience=Audience.PUBLIC,
                 rubric_gate=rubric_gate,
             )

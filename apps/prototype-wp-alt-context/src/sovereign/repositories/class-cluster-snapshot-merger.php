@@ -311,7 +311,7 @@ class ClusterSnapshotMerger {
 
 			return array(
 				'clusters'    => is_array( $nested ) ? $nested : array(),
-				'is_complete' => $this->payload_declares_complete( $clusters ),
+				'is_complete' => $has_nested_clusters && $this->payload_declares_complete( $clusters ),
 			);
 		}
 

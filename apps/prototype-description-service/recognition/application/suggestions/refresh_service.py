@@ -156,12 +156,12 @@ class SuggestionRefreshService:
             suggestion.cluster_id,
         )
         try:
-            await self._repository.update_status(
+            updated = await self._repository.update_status(
                 self._tenant_id,
                 suggestion.id,
                 SuggestionStatus.EXPIRED,
             )
-            return True
+            return updated.status is SuggestionStatus.EXPIRED
         except ValueError:
             logger.warning(
                 "[suggestions] already-owned suggestion disappeared before expiration suggestion_id=%s",

@@ -316,6 +316,45 @@ async def merge_cluster(
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     member_repo: MemberRepository = assignment_writer.member_repository
 
+    receipt_id: uuid.UUID | None = None
+    if moved_by_merge_id and session is not None:
+        try:
+            receipt_id = uuid.UUID(str(moved_by_merge_id))
+        except ValueError:
+            pass
+
+    tenant_uuid: uuid.UUID | None = None
+    source_uuid: uuid.UUID | None = None
+    target_uuid: uuid.UUID | None = None
+    if receipt_id is not None:
+        try:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            source_uuid = uuid.UUID(str(source_cluster_id))
+            target_uuid = uuid.UUID(str(target_cluster_id))
+        except ValueError:
+            receipt_id = None
+
+    if receipt_id is not None and session is not None:
+        assert tenant_uuid is not None and source_uuid is not None and target_uuid is not None
+        await _lock_merge_clusters(
+            session,
+            tenant_id=tenant_uuid,
+            cluster_ids=[source_uuid, target_uuid],
+        )
+        existing_receipt = await _load_receipt(session, tenant_id=tenant_uuid, receipt_id=receipt_id)
+        if existing_receipt is not None:
+            try:
+                receipt_source_id = uuid.UUID(str(existing_receipt.source_cluster_id))
+                receipt_target_id = uuid.UUID(str(existing_receipt.survivor_cluster_id))
+            except ValueError:
+                return None
+            if receipt_source_id != source_uuid or receipt_target_id != target_uuid:
+                return None
+            target = await cluster_repo.get_by_id(target_cluster_id)
+            if target is None or target.tenant_id.lower() != tenant_id.lower():
+                return None
+            return target
+
     source = await cluster_repo.get_by_id(source_cluster_id)
     target = await cluster_repo.get_by_id(target_cluster_id)
     if not source or not target:
@@ -336,28 +375,18 @@ async def merge_cluster(
 
     await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
 
-    receipt_id: uuid.UUID | None = None
-    if moved_by_merge_id and session is not None:
-        try:
-            receipt_id = uuid.UUID(str(moved_by_merge_id))
-        except ValueError:
-            pass
-
     moved_identity_ids: list[uuid.UUID] = []
     sibling_receipts: list[ClusterMergeReceipt] = []
     if receipt_id is not None and session is not None:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        target_uuid = uuid.UUID(str(target.id))
-        await _lock_survivor_cluster(session, tenant_id=tenant_uuid, survivor_cluster_id=target_uuid)
-        target = await cluster_repo.get_by_id(target_cluster_id)
-        if target is None:
-            return None
+        assert tenant_uuid is not None and target_uuid is not None
         sibling_receipts = await _load_sibling_receipts(
             session,
             tenant_id=tenant_uuid,
             survivor_cluster_id=target_uuid,
         )
         source_members = await member_repo.get_by_cluster(source_cluster_id)
+        if not source_members:
+            return None
         for member in source_members:
             try:
                 moved_identity_ids.append(uuid.UUID(str(member.identity_id)))
@@ -366,6 +395,8 @@ async def merge_cluster(
 
     moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
     if receipt_id is not None and session is not None:
+        if moved <= 0:
+            return None
         if moved_identity_ids:
             await session.execute(
                 update(MediaIdentityModel)
@@ -547,7 +578,10 @@ async def _load_receipt(
             ClusterMergeReceipt.receipt_id == receipt_id,
         )
     )
-    return result.scalar_one_or_none()
+    if hasattr(result, "scalar_one_or_none"):
+        return result.scalar_one_or_none()
+    rows = result.scalars().all()
+    return rows[0] if rows else None
 
 
 async def _load_sibling_receipts(
@@ -576,6 +610,26 @@ async def _lock_survivor_cluster(
             IdentityClusterModel.tenant_id == tenant_id,
             IdentityClusterModel.id == survivor_cluster_id,
         )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+
+
+async def _lock_merge_clusters(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    cluster_ids: Sequence[uuid.UUID],
+) -> None:
+    """Serialize competing merges by locking both clusters in UUID order."""
+    ordered_cluster_ids = sorted(set(cluster_ids))
+    await session.execute(
+        select(IdentityClusterModel)
+        .where(
+            IdentityClusterModel.tenant_id == tenant_id,
+            IdentityClusterModel.id.in_(ordered_cluster_ids),
+        )
+        .order_by(IdentityClusterModel.id)
         .execution_options(populate_existing=True)
         .with_for_update()
     )

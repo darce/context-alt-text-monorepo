@@ -327,14 +327,48 @@ class RosterEntryProjectionRepository {
 				$instances      = \array_map( array( $this, 'map_projected_instance_row' ), $instance_rows );
 
 				return array(
-					'cluster_id'             => $cluster_uuid,
-					'identity_count'         => isset( $row['identity_count'] ) ? (int) $row['identity_count'] : \count( $instances ),
-					'representative_identity' => $this->resolve_representative_identity( \trim( (string) ( $row['representative_id'] ?? '' ) ), $instances ),
-					'instances'              => $instances,
+					'cluster_id'                 => $cluster_uuid,
+					'identity_count'             => isset( $row['identity_count'] ) ? (int) $row['identity_count'] : \count( $instances ),
+					'representative_identity'    => $this->resolve_representative_identity( \trim( (string) ( $row['representative_id'] ?? '' ) ), $instances ),
+					'instances'                  => $instances,
+					'representative_quality'     => $this->normalize_representative_quality( $row['representative_quality'] ?? null ),
+					'quality_components'         => $this->normalize_quality_components( $row['quality_components'] ?? null ),
+					'representative_media_id'    => $this->normalize_representative_media_id( $row['representative_media_id'] ?? null ),
+					'undoable_merge_receipt_id'  => $this->normalize_optional_string( $row['undoable_merge_receipt_id'] ?? null ),
 				);
 			},
 			$cluster_rows
 		);
+	}
+
+	private function normalize_quality_components( mixed $value ): ?array {
+		if ( \is_array( $value ) ) {
+			return $value;
+		}
+		if ( ! \is_string( $value ) || '' === \trim( $value ) ) {
+			return null;
+		}
+
+		$decoded = \json_decode( $value, true );
+		return \is_array( $decoded ) ? $decoded : null;
+	}
+
+	private function normalize_representative_quality( mixed $value ): ?float {
+		return \is_numeric( $value ) ? (float) $value : null;
+	}
+
+	private function normalize_representative_media_id( mixed $value ): ?int {
+		$media_id = \absint( $value );
+		return $media_id > 0 ? $media_id : null;
+	}
+
+	private function normalize_optional_string( mixed $value ): ?string {
+		if ( ! \is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = \trim( $value );
+		return '' !== $normalized ? $normalized : null;
 	}
 
 	/**

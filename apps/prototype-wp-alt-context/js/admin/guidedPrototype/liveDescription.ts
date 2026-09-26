@@ -600,17 +600,24 @@ export const guidedLiveReducer = (state: GuidedLiveState, action: GuidedLiveActi
       }
       // A poll is allowed to make a FIRST disclosure -- a submit that carried
       // no budget followed by polls that do should not leave the client on a
-      // locally invented ceiling forever. It is not allowed to revise one: a
-      // poll contradicting the accept is a server bug. Either way this only
-      // records the number; `deadline_raised` is the sole path to a new
-      // deadline and it never shrinks the wait.
+      // locally invented ceiling forever. Re-derive the deadline with this
+      // poll's GPU state before advancing the clock, just as acceptance does.
+      // A poll cannot revise an existing disclosure; that is a server bug.
       const polledDisclosure = isGuidedLiveDeadlineDisclosed(action.disclosedDeadlineSeconds)
         ? action.disclosedDeadlineSeconds
         : null;
-      const seen =
-        state.disclosedDeadlineSeconds === null && polledDisclosure !== null
-          ? { ...state, disclosedDeadlineSeconds: polledDisclosure }
-          : state;
+      const firstDisclosure = state.disclosedDeadlineSeconds === null && polledDisclosure !== null;
+      const seen = firstDisclosure
+        ? {
+            ...state,
+            disclosedDeadlineSeconds: polledDisclosure,
+            deadlineMs: resolveGuidedLiveDeadlineMs(
+              guidedLiveCeilingSecondsFor(action.gpu) * 1000,
+              polledDisclosure,
+              action.gpu,
+            ),
+          }
+        : state;
       const next = advanceClock(seen, action.atMs);
 
       if (action.phase === DESCRIBE_RUN_PHASE.COMPLETE) {

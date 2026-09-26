@@ -13,8 +13,9 @@ import {
   type GpuState,
 } from '../api/describeApi';
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
+import { classifyError } from '../utils/appError';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
-import { isAbortOrTimeout } from '../utils/retryPolicy';
+import { isAbortOrTimeout, isCooldownSignal } from '../utils/retryPolicy';
 import {
   deriveWarmingObservation,
   WARMING_OBSERVATION_EVIDENCE,
@@ -35,11 +36,11 @@ import {
 export const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 
 /**
- * Consecutive abort-like poll failures that flip a frozen run to a hard error
- * (UXP-2 BR review). A single timeout freezes-and-thaws (BR-07), but a frozen
- * bar that never recovers is a silent hang: at the 2s cadence, 5 dead polls is
- * ~>10s of dead air, at which point the run stops polling and surfaces the
- * Retry affordance instead of freezing forever.
+ * Consecutive transient poll failures that flip a frozen run to a hard error
+ * (UXP-2 BR review). A single failed poll freezes-and-thaws (BR-07), but a
+ * frozen bar that never recovers is a silent hang: at the 2s cadence, 5 dead
+ * polls is ~>10s of dead air, at which point the run stops polling and surfaces
+ * the Retry affordance instead of freezing forever.
  */
 export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
 
@@ -48,26 +49,30 @@ export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
  * progress: freeze the bar and keep polling, rather than dead-ending the
  * operator on a transient failure.
  *
- * Named for its policy, not its shape, and deliberately distinct from the retry
- * decision even though both currently reduce to `isAbortOrTimeout`. They answer
- * different questions and have different reasons to change: FEBT1-W2A-05
- * narrowed the *retry* predicate and silently moved this UI policy across a
- * module boundary (three tests red). A retry-side narrowing must land here as a
- * compile-or-test event, not as a behaviour change nobody asked for
- * (DOM-03 one meaning per term per context; REF-10 the shared implementation is
- * coincidental, not a shared rule).
+ * Named for its policy, not its shape, and deliberately distinct from request
+ * retry eligibility. A retry-side narrowing must land here as a compile-or-test
+ * event, not silently narrow the progress UI's transient-failure policy
+ * (DOM-03, REF-10).
  *
- * Exported so a unit test can pin both abort-like tags directly (TEST-15).
+ * Exported so tests can pin the transient-failure policy directly (TEST-15).
  */
-export const isFrozenPollFailure = (error: unknown): boolean => isAbortOrTimeout(error);
+export const isFrozenPollFailure = (error: unknown): boolean => {
+  const classified = classifyError(error);
+  return (
+    isAbortOrTimeout(error) ||
+    classified._tag === 'transport' ||
+    classified._tag === 'auth_expired' ||
+    classified._tag === 'nonce_refresh' ||
+    isCooldownSignal(error) ||
+    (classified._tag === 'http' && classified.status >= 500 && classified.status < 600)
+  );
+};
 
 /**
  * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
  *
- * Transient abort/timeout must keep polling — user abort is never retried, and
- * timeout is retried only once, so the next scheduled poll is the remaining
- * retry. Stop only on hard (non-abort/timeout) errors, terminal run status, or
- * the frozen-streak bound.
+ * Transient poll failures keep polling inside the bounded streak. Stop only on
+ * hard errors, terminal run status, or the frozen-streak bound.
  *
  * Exported so pure unit tests can invert each branch (TEST-15) without the hook.
  */
@@ -77,7 +82,7 @@ export const getDescribeRunRefetchInterval = (args: {
   data: DescribeRunResponse | undefined;
   frozenPollStreak: number;
 }): number | false => {
-  // Keep polling through abort/timeout; only hard failures stop (BR-07).
+  // Keep polling through transient failures; only hard failures stop (BR-07).
   if (args.status === 'error' && !isFrozenPollFailure(args.error)) {
     return false;
   }

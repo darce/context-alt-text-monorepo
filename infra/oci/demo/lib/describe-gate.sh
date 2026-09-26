@@ -173,11 +173,13 @@ for key in ("model_id", "model_version"):
     if value[key] is not None and (not isinstance(value[key], str) or not value[key]):
         raise SystemExit(0)
 trusted_profiles = set(sys.argv[1].split()) if len(sys.argv) > 1 else set()
-if profile in trusted_profiles and any(
-    not isinstance(value[key], str) or not value[key]
-    for key in ("model_id", "model_version")
-):
-    raise SystemExit(0)
+if profile in trusted_profiles:
+    for key in ("model_id", "model_version"):
+        if not isinstance(value[key], str):
+            raise SystemExit(0)
+        value[key] = value[key].strip()
+        if not value[key]:
+            raise SystemExit(0)
 # Keep the profile on stdout for bootstrap-wp.sh. The readiness record is one
 # structured value; shell only consumes its already-validated scalar fields.
 endpoint_private = "null" if value["endpoint_private"] is None else str(value["endpoint_private"]).lower()
@@ -424,6 +426,10 @@ EOF
         return 1
     fi
     if [ "$usable" = true ] && [ "$reason" != "null" ]; then
+        return 1
+    fi
+    # Pending is a cold-GPU state; CPU adapters must already be usable.
+    if [ "$reason" = "endpoint_resolution_pending" ] && [ "$kind" != "gpu" ]; then
         return 1
     fi
 

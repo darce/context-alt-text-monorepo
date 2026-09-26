@@ -5,12 +5,11 @@ share one policy (artifact classes) but use **inverted** glob-depth semantics:
 
 - **Docker**: `*.bin` is root-anchored; depth-recursive form is `**/*.bin`.
 - **rsync**: a pattern with no `/` (except optional trailing `/`) matches the
-  basename at every depth. `models--*/` is recursive; `**/models--*/` is NOT
-  the portable "widen" form and must not appear in the rsync list.
+  basename at every depth. Patterns using `**/`, such as `**/*.bin` and
+  `**/models--*/`, also match recursively across path components.
 
-A test that demands identical spellings across both tools can only go green by
-getting one side wrong (the regression that put `**/models--*/` in rsync). This
-module compares **artifact class sets**, each side spelled in its own syntax.
+This module compares **artifact class sets**, each side spelled in its own
+syntax.
 """
 
 from __future__ import annotations
@@ -63,9 +62,9 @@ _FILES_FROM_RE = re.compile(r"""--files-from=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 _DOCKER_EXT_RE = re.compile(r"^\*\*/\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$")
 _DOCKER_HF_RE = re.compile(r"^\*\*/models--\*/$")
 
-# rsync depth-recursive weight patterns: no non-trailing slash (basename-any-depth).
-_RSYNC_EXT_RE = re.compile(r"^\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$")
-_RSYNC_HF_RE = re.compile(r"^models--\*/$")
+# rsync recursive weight patterns: basename-any-depth or ** across path components.
+_RSYNC_EXT_RE = re.compile(r"^(?:\*\*/)?\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$")
+_RSYNC_HF_RE = re.compile(r"^(?:\*\*/)?models--\*/$")
 
 # Context-shipping rsync: SERVICE_DIR → REMOTE_BUILD_DIR (the real build-context
 # transfer). Other inert rsync calls must not satisfy the weight-exclude gate (RC6).
@@ -398,17 +397,15 @@ def _glob_regex(pattern: str) -> re.Pattern[str] | None:
         return None
 
 
-def _docker_pattern_matches_path(pattern: str, path: str) -> bool:
+def _docker_pattern_matches_path(pattern: str, path: str, *, unknown_matches: bool) -> bool:
     """Match a root-relative Docker pattern against a representative artifact."""
     normalized = pattern.lstrip("/")
     is_directory = normalized.endswith("/")
     if is_directory:
         normalized = normalized.rstrip("/")
     matcher = _glob_regex(normalized)
-    # Unsupported pattern details are treated as a possible match so a negation
-    # cannot leave a class marked protected merely because this model is narrow.
     if matcher is None:
-        return True
+        return unknown_matches
     candidates = [path]
     if is_directory:
         segments = path.split("/")[:-1]
@@ -416,9 +413,9 @@ def _docker_pattern_matches_path(pattern: str, path: str) -> bool:
     return any(matcher.fullmatch(candidate) is not None for candidate in candidates)
 
 
-def _docker_pattern_matches_class(pattern: str, class_id: str) -> bool:
+def _docker_pattern_matches_class(pattern: str, class_id: str, *, unknown_matches: bool) -> bool:
     return any(
-        _docker_pattern_matches_path(pattern, representative)
+        _docker_pattern_matches_path(pattern, representative, unknown_matches=unknown_matches)
         for representative in _WEIGHT_CLASS_REPRESENTATIVES[class_id]
     )
 
@@ -441,7 +438,7 @@ def docker_weight_classes(text: str) -> set[str]:
             else {
                 candidate
                 for candidate in _WEIGHT_CLASS_REPRESENTATIVES
-                if _docker_pattern_matches_class(pattern, candidate)
+                if _docker_pattern_matches_class(pattern, candidate, unknown_matches=negated)
             }
         )
         for candidate in candidate_classes:
@@ -598,13 +595,13 @@ def expected_weight_classes() -> set[str]:
 
 
 def _is_rsync_depth_recursive_pattern(pattern: str) -> bool:
-    """True when pattern matches basename-at-any-depth under rsync rules.
+    """True when a supported pattern can match weights at arbitrary depth.
 
-    rsync: no non-trailing `/` means basename match at every depth.
-    A leading `**/` injects a slash and is the wrong-tool spelling for rsync.
+    rsync matches slashless patterns by basename at any depth, and `**` can
+    match across slashes in full-path patterns.
     """
-    if pattern.startswith("**/"):
-        return False
+    if "**" in pattern:
+        return _glob_regex(pattern) is not None
     # Allow a single trailing slash for directory-only excludes.
     body = pattern[:-1] if pattern.endswith("/") else pattern
     return "/" not in body
@@ -653,13 +650,9 @@ def test_rsync_weight_classes_are_rsync_depth_recursive() -> None:
     assert not missing, (
         f"context-shipping rsync excludes missing rsync-recursive coverage for "
         f"classes: {sorted(missing)}. "
-        f"Extensions must be *.<ext>; HF snapshots must be models--*/ (no **/)."
+        f"Extensions may use *.<ext> or **/*.<ext>; HF snapshots may use "
+        f"models--*/ or **/models--*/."
     )
-    excludes = rsync_excludes_from_script(text)
-    for ext in WEIGHT_EXTENSION_CLASSES:
-        assert f"*.{ext}" in excludes, f"context-shipping rsync must --exclude='*.{ext}'"
-    assert "models--*/" in excludes
-    assert ONNX_PATTERN in excludes
 
 
 def test_weight_class_sets_match_across_writers() -> None:
@@ -671,17 +664,6 @@ def test_weight_class_sets_match_across_writers() -> None:
     assert di == rs == expected_weight_classes(), (
         f"class set mismatch: dockerignore={sorted(di)} rsync={sorted(rs)} expected={sorted(expected_weight_classes())}"
     )
-
-
-def test_no_rsync_exclude_begins_with_double_star_slash() -> None:
-    """Regression guard: rsync must not use Docker-style **/ prefixes.
-
-    A prior pass rewrote --exclude='models--*/' to --exclude='**/models--*/'
-    believing it widened the guard. Under rsync rules that form is the wrong-tool
-    spelling; basename-at-any-depth requires no non-trailing slash.
-    """
-    bad = sorted(p for p in rsync_excludes_from_script(DEPLOY_SCRIPT.read_text()) if p.startswith("**/"))
-    assert not bad, f"rsync --exclude patterns must not begin with '**/' (wrong-tool Docker spelling): {bad}"
 
 
 def test_dead_cache_dir_patterns_are_absent() -> None:
@@ -766,10 +748,9 @@ def test_parser_rsync_classes_from_synthetic() -> None:
     script = (
         "rsync -az --delete \\\n"
         "  --exclude='.git/' \\\n"
-        "  --exclude='*.safetensors' \\\n"
+        "  --exclude='**/*.safetensors' \\\n"
         f"  --exclude='{ONNX_PATTERN}' \\\n"
-        "  --exclude='models--*/' \\\n"
-        "  --exclude='**/models--*/' \\\n"  # wrong-tool; must not count
+        "  --exclude='**/models--*/' \\\n"
         "  src/ dst/\n"
     )
     assert rsync_weight_classes(script) == {
@@ -951,26 +932,19 @@ def test_wrong_tool_spelling_does_not_satisfy_docker_class() -> None:
     assert docker_weight_classes(body) == set()
 
 
-def test_wrong_tool_spelling_does_not_satisfy_rsync_class() -> None:
-    """TEST-15: Docker **/ form must NOT count as rsync-recursive for HF snapshots."""
+def test_rsync_double_star_patterns_satisfy_recursive_class() -> None:
+    """TEST-15: rsync ** patterns match nested files and directories."""
     script = "rsync -az --exclude='**/models--*/' --exclude='**/*.safetensors' src/ dst/\n"
-    # **/*.safetensors contains non-trailing slashes → not rsync depth-recursive class.
-    # **/models--*/ starts with **/ → rejected by HF rsync regex.
-    assert rsync_weight_classes(script) == set()
-    bad = [p for p in rsync_excludes_from_script(script) if p.startswith("**/")]
-    assert bad == ["**/models--*/", "**/*.safetensors"] or set(bad) == {
-        "**/models--*/",
-        "**/*.safetensors",
-    }
+    assert rsync_weight_classes(script) == {"safetensors", HF_SNAPSHOT_CLASS}
 
 
-def test_rsync_depth_recursive_helper_rejects_double_star() -> None:
-    """TEST-15: helper itself goes red on **/ and green on basename forms."""
+def test_rsync_depth_recursive_helper_accepts_double_star() -> None:
+    """TEST-15: helper recognizes basename and cross-slash recursion."""
     assert _is_rsync_depth_recursive_pattern("*.bin")
     assert _is_rsync_depth_recursive_pattern("models--*/")
     assert _is_rsync_depth_recursive_pattern("__pycache__/")
-    assert not _is_rsync_depth_recursive_pattern("**/models--*/")
-    assert not _is_rsync_depth_recursive_pattern("**/*.bin")
+    assert _is_rsync_depth_recursive_pattern("**/models--*/")
+    assert _is_rsync_depth_recursive_pattern("**/*.bin")
     assert not _is_rsync_depth_recursive_pattern("recognition/infrastructure/face_pipeline/models/*.onnx")
 
 

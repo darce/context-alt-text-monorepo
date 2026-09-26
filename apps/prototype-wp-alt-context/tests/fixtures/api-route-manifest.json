@@ -78,6 +78,10 @@
     },
     {
       "method": "GET",
+      "path": "/recognition/clusters/{param_0}/merge-candidates"
+    },
+    {
+      "method": "GET",
       "path": "/recognition/clusters/{param_0}/roster-candidates"
     },
     {
@@ -275,6 +279,10 @@
     {
       "method": "POST",
       "path": "/recognition/clusters/{param_0}/merge"
+    },
+    {
+      "method": "POST",
+      "path": "/recognition/clusters/{param_0}/revert-merge"
     },
     {
       "method": "POST",

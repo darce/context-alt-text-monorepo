@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 REPO_ROOT = SCRIPT.parents[2]
 DEPLOY_SHA = "a" * 40
@@ -128,22 +127,18 @@ def _ssh_commands(remote_build: dict[str, Path | str]) -> list[str]:
 
 def _generation_rms(commands: list[str], remote_build_dir: Path) -> list[str]:
     prefix = f"{remote_build_dir}-"
-    return [
-        command
-        for command in commands
-        if command.startswith("rm -rf -- '") and prefix in command
-    ]
+    return [command for command in commands if command.startswith("rm -rf -- '") and prefix in command]
 
 
 def test_interrupt_after_rsync_removes_generation(remote_build: dict[str, Path | str]) -> None:
-    driver_body = '''\\
+    driver_body = """\\
 trap deploy_interrupt_cleanup EXIT
 trap 'deploy_interrupt_cleanup 129' HUP
 trap 'deploy_interrupt_cleanup 130' INT
 trap 'deploy_interrupt_cleanup 143' TERM
 rsync() { kill -INT "$$"; }
 do_build_remote dev
-'''
+"""
     result = _run_driver(remote_build, driver_body)
 
     commands = _ssh_commands(remote_build)
@@ -156,14 +151,14 @@ do_build_remote dev
 
 
 def test_normal_cleanup_clears_the_global(remote_build: dict[str, Path | str]) -> None:
-    driver_body = '''\\
+    driver_body = """\\
 trap deploy_interrupt_cleanup EXIT
 trap 'deploy_interrupt_cleanup 129' HUP
 trap 'deploy_interrupt_cleanup 130' INT
 trap 'deploy_interrupt_cleanup 143' TERM
 do_build_remote dev
 printf 'GENERATION=%s\\n' "${ACX_REMOTE_BUILD_GENERATION_DIR}"
-'''
+"""
     result = _run_driver(remote_build, driver_body)
 
     commands = _ssh_commands(remote_build)
@@ -222,10 +217,10 @@ def test_reaper_failure_does_not_fail_build(remote_build: dict[str, Path | str])
 
 
 def test_trap_refuses_foreign_directory(remote_build: dict[str, Path | str]) -> None:
-    driver_body = '''\\
+    driver_body = """\\
 ACX_REMOTE_BUILD_GENERATION_DIR=/etc
 deploy_interrupt_cleanup 130
-'''
+"""
     result = _run_driver(remote_build, driver_body)
 
     assert result.returncode == 130
@@ -233,13 +228,13 @@ deploy_interrupt_cleanup 130
 
 
 def test_reaper_runs_before_free_space_gate(remote_build: dict[str, Path | str]) -> None:
-    driver_body = '''\\
+    driver_body = """\\
 assert_remote_build_free_space() {
   printf 'free-space\\n' >>"${FAKE_SSH_LOG:?}"
   fail "free-space gate failed"
 }
 do_build_remote dev
-'''
+"""
     result = _run_driver(remote_build, driver_body)
 
     commands = _ssh_commands(remote_build)

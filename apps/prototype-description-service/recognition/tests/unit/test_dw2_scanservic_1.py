@@ -137,9 +137,7 @@ async def test_postgres_duplicate_persist_holds_advisory_lock_until_commit() -> 
         assert len(session_a.pending) == 1
         assert database.rows == []
 
-        second_task = asyncio.create_task(
-            _persist(session_b, tenant_id=tenant_id, bbox=_JITTER_BBOX)
-        )
+        second_task = asyncio.create_task(_persist(session_b, tenant_id=tenant_id, bbox=_JITTER_BBOX))
         await asyncio.wait_for(session_b.lock_requested.wait(), timeout=1)
         assert not second_task.done(), "second persist must wait for the uncommitted transaction lock"
         assert session_b.pending == []

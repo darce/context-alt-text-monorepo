@@ -35,6 +35,7 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.application.suggestions.embedding_space import (
     models_are_same_space,
+    representative_embedding_model,
     same_space_representative_vectors,
 )
 from recognition.domain.cluster import (
@@ -52,11 +53,17 @@ from recognition.shared.similarity import normalize_face_embedding
 logger = logging.getLogger(__name__)
 
 
-async def _cluster_gallery_model(cluster_repo: ClusterRepository, cluster_id: str) -> str | None:
-    """Resolve a cluster's gallery space from loaded representatives, not get_by_id."""
+async def _cluster_gallery_space(
+    cluster_repo: ClusterRepository,
+    cluster_id: str,
+) -> tuple[str | None, bool]:
+    """Resolve a cluster's representative space and whether all reps use it."""
     reps = list(await cluster_repo.get_all_representatives(cluster_id))
     model, _vectors = same_space_representative_vectors(reps)
-    return model
+    all_representatives_match = all(
+        models_are_same_space(representative_embedding_model(rep), model) for rep in reps
+    )
+    return model, all_representatives_match
 
 
 async def _ensure_same_space_merge(
@@ -65,9 +72,13 @@ async def _ensure_same_space_merge(
     target_cluster_id: str,
 ) -> None:
     """FIR23-01: refuse composing mixed embedding spaces via merge."""
-    source_model = await _cluster_gallery_model(cluster_repo, source_cluster_id)
-    target_model = await _cluster_gallery_model(cluster_repo, target_cluster_id)
-    if models_are_same_space(source_model, target_model):
+    source_model, source_representatives_match = await _cluster_gallery_space(cluster_repo, source_cluster_id)
+    target_model, target_representatives_match = await _cluster_gallery_space(cluster_repo, target_cluster_id)
+    if (
+        source_representatives_match
+        and target_representatives_match
+        and models_are_same_space(source_model, target_model)
+    ):
         return
     raise CrossSpaceMergeError(
         source_cluster_id=source_cluster_id,

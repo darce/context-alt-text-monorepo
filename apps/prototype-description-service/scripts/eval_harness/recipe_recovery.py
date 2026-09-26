@@ -332,14 +332,9 @@ def _validate_bytes_entries(entries: Sequence[Mapping[str, Any]]) -> None:
 def _validate_pixel_tolerance(tier: Tier, pixel_tolerance: int) -> None:
     if tier is not Tier.PIXELS:
         return
-    if (
-        isinstance(pixel_tolerance, bool)
-        or not isinstance(pixel_tolerance, int)
-        or not 0 <= pixel_tolerance < 255
-    ):
+    if isinstance(pixel_tolerance, bool) or not isinstance(pixel_tolerance, int) or not 0 <= pixel_tolerance < 255:
         raise RecipeError(
-            "pixel_tolerance must be an int in [0, 254]; 255 makes every same-size "
-            "RGB image match and is not an oracle"
+            "pixel_tolerance must be an int in [0, 254]; 255 makes every same-size RGB image match and is not an oracle"
         )
 
 
@@ -441,8 +436,7 @@ def upscale_violations(recipe: Recipe, entries: Sequence[dict[str, Any]], source
                     out.append(entry["media_id"])
         except (OSError, RecipeError, ValueError, TypeError, KeyError, OverflowError) as exc:
             raise RecipeError(
-                f"cannot verify no-upscale guard for media_id={entry['media_id']} "
-                f"({entry['path']!r}): {exc}"
+                f"cannot verify no-upscale guard for media_id={entry['media_id']} ({entry['path']!r}): {exc}"
             ) from exc
     return out
 
@@ -474,10 +468,7 @@ def sweep(
     pixel_tolerance: int = 0,
 ) -> list[tuple[Recipe, TierResult]]:
     """Score every recipe, best first. Ties break on name for determinism."""
-    scored = [
-        (r, evaluate(r, entries, sources, tier, mirror_root, pixel_tolerance=pixel_tolerance))
-        for r in recipes
-    ]
+    scored = [(r, evaluate(r, entries, sources, tier, mirror_root, pixel_tolerance=pixel_tolerance)) for r in recipes]
     scored.sort(key=lambda pair: (-pair[1].matched, pair[0].name))
     return scored
 
@@ -491,9 +482,7 @@ def load_entries(manifest_path: Path) -> list[dict[str, Any]]:
     if not isinstance(raw, Mapping):
         raise RecipeError(f"{path} must contain a manifest object")
     if raw.get("manifest_version") != 3:
-        raise RecipeError(
-            f"{path} manifest_version must be 3 for recipe recovery, got {raw.get('manifest_version')!r}"
-        )
+        raise RecipeError(f"{path} manifest_version must be 3 for recipe recovery, got {raw.get('manifest_version')!r}")
     entries = raw.get("entries", raw.get("items", []))
     if not entries:
         raise RecipeError(f"{manifest_path} carries no entries")
@@ -518,10 +507,9 @@ def characterize_residual(residual: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "n": len(residual),
         "dim_deltas": dict(deltas.most_common()),
         "buckets": dict(buckets.most_common()),
-        "off_by_one_only": bool(deltas) and all(
-            max(abs(int(p)) for p in key.split(",")) == 1 for key in deltas
-        ),
+        "off_by_one_only": bool(deltas) and all(max(abs(int(p)) for p in key.split(",")) == 1 for key in deltas),
     }
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Sweep the candidate grid and print the ranking plus the residual.
@@ -535,8 +523,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(description="Recover the corpus downscale recipe.")
     ap.add_argument("--manifest", required=True, help="v3 corpus manifest (the oracle)")
-    ap.add_argument("--source-root", action="append", required=True, dest="source_roots",
-                    help="directory of original images; repeatable")
+    ap.add_argument(
+        "--source-root",
+        action="append",
+        required=True,
+        dest="source_roots",
+        help="directory of original images; repeatable",
+    )
     ap.add_argument("--tier", choices=[t.value for t in Tier], default=Tier.DIMS.value)
     ap.add_argument("--mirror-root", help="reference downscaled tree; required for --tier pixels")
     ap.add_argument("--pixel-tolerance", type=int, default=0)
@@ -568,10 +561,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     complete = [
         (recipe, result)
         for recipe, result in ranked
-        if result.matched == len(entries)
-        and result.mismatched == 0
-        and result.errored == 0
-        and result.unavailable == 0
+        if result.matched == len(entries) and result.mismatched == 0 and result.errored == 0 and result.unavailable == 0
     ]
     if not complete:
         best, best_result = ranked[0]
@@ -613,8 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"\nREFUSED: {exc}", file=sys.stderr)
         return 1
     if violations:
-        print(f"\nREFUSED: {best.name} would upscale {len(violations)} entries: {violations[:20]}",
-              file=sys.stderr)
+        print(f"\nREFUSED: {best.name} would upscale {len(violations)} entries: {violations[:20]}", file=sys.stderr)
         return 1
     print("\nupscale check: clean")
     return 0

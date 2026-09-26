@@ -77,9 +77,7 @@ class GoldAnswerSource(StrEnum):
     SME_ARBITRATED = "sme_arbitrated"
 
 
-HARD_STRATA: frozenset[StratumName] = frozenset(
-    {StratumName.A_TRUE_OCCLUDER, StratumName.B_EYEWEAR}
-)
+HARD_STRATA: frozenset[StratumName] = frozenset({StratumName.A_TRUE_OCCLUDER, StratumName.B_EYEWEAR})
 _CAPTION_POOL_TOKENS = frozenset({"caption_pool", "caption-pool"})
 
 
@@ -122,16 +120,11 @@ class GoldItem:
         object.__setattr__(self, "live_queue_annotators", tuple(self.live_queue_annotators))
         token = _answer_source_token(self.answer_source)
         if token in _CAPTION_POOL_TOKENS:
-            raise PilotDrawError(
-                "gold known answer must not come from the caption pool being judged "
-                "(HITL-03)"
-            )
+            raise PilotDrawError("gold known answer must not come from the caption pool being judged (HITL-03)")
         try:
             source = GoldAnswerSource(token)
         except ValueError:
-            raise PilotDrawError(
-                f"gold known answer source {token!r} is not an eligible provenance"
-            ) from None
+            raise PilotDrawError(f"gold known answer source {token!r} is not an eligible provenance") from None
         object.__setattr__(self, "answer_source", source)
         author = self.authored_by.strip() if isinstance(self.authored_by, str) else ""
         if not author:
@@ -193,19 +186,13 @@ def _load_selection_payload(selection_manifest_path: str | Path) -> dict[str, ob
     except json.JSONDecodeError as exc:
         raise PilotDrawError(f"selection manifest is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise PilotDrawError(
-            f"selection manifest must be a JSON object, got {type(payload).__name__}"
-        )
+        raise PilotDrawError(f"selection manifest must be a JSON object, got {type(payload).__name__}")
     schema = payload.get("schema")
     if schema != BAKEOFF_SELECTION_SCHEMA:
-        raise PilotDrawError(
-            f"selection manifest schema must be {BAKEOFF_SELECTION_SCHEMA!r}, "
-            f"got {schema!r}"
-        )
+        raise PilotDrawError(f"selection manifest schema must be {BAKEOFF_SELECTION_SCHEMA!r}, got {schema!r}")
     if "declared_empty_cells" not in payload:
         raise PilotDrawError(
-            "selection manifest missing declared_empty_cells "
-            "(rg-015: pass through, never invent a default)"
+            "selection manifest missing declared_empty_cells (rg-015: pass through, never invent a default)"
         )
     if "strata_counts" not in payload:
         raise PilotDrawError("selection manifest missing strata_counts")
@@ -218,25 +205,19 @@ def _parse_entries(
     entries: object,
 ) -> tuple[dict[str, list[str]], dict[str, Mapping[str, object]]]:
     if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
-        raise PilotDrawError(
-            f"entries must be a sequence of objects, got {type(entries).__name__}"
-        )
+        raise PilotDrawError(f"entries must be a sequence of objects, got {type(entries).__name__}")
     if not entries:
         raise PilotDrawError("entries must be non-empty")
     members: dict[str, list[str]] = {name.value: [] for name in StratumName}
     by_sha: dict[str, Mapping[str, object]] = {}
     for index, entry in enumerate(entries):
         if not isinstance(entry, Mapping):
-            raise PilotDrawError(
-                f"entries[{index}] must be an object, got {type(entry).__name__}"
-            )
+            raise PilotDrawError(f"entries[{index}] must be an object, got {type(entry).__name__}")
         if "sha256" not in entry:
             raise PilotDrawError(f"entries[{index}] missing sha256")
         sha256 = entry["sha256"]
         if not isinstance(sha256, str) or not sha256:
-            raise PilotDrawError(
-                f"entries[{index}]['sha256'] must be a non-empty str, got {sha256!r}"
-            )
+            raise PilotDrawError(f"entries[{index}]['sha256'] must be a non-empty str, got {sha256!r}")
         if sha256 in by_sha:
             raise PilotDrawError(f"duplicate sha256 {sha256!r}")
         stratum = _parse_stratum(entry.get("stratum"), label=f"entries[{index}]['stratum']")
@@ -246,17 +227,13 @@ def _parse_entries(
             raise PilotDrawError(f"entries[{index}] missing source_path")
         source_path = entry["source_path"]
         if not isinstance(source_path, str) or not source_path:
-            raise PilotDrawError(
-                f"entries[{index}]['source_path'] must be a non-empty str, "
-                f"got {source_path!r}"
-            )
+            raise PilotDrawError(f"entries[{index}]['source_path'] must be a non-empty str, got {source_path!r}")
         if "present_identities" not in entry:
             raise PilotDrawError(f"entries[{index}] missing present_identities")
         identities = entry["present_identities"]
         if isinstance(identities, (str, bytes)) or not isinstance(identities, Sequence):
             raise PilotDrawError(
-                f"entries[{index}]['present_identities'] must be a sequence, "
-                f"got {type(identities).__name__}"
+                f"entries[{index}]['present_identities'] must be a sequence, got {type(identities).__name__}"
             )
         members[stratum.value].append(sha256)
         by_sha[sha256] = entry
@@ -276,19 +253,14 @@ def draw_pilot(
     payload = _load_selection_payload(selection_manifest_path)
     declared_empty = payload["declared_empty_cells"]
     if not isinstance(declared_empty, list):
-        raise PilotDrawError(
-            "declared_empty_cells must be a JSON list, "
-            f"got {type(declared_empty).__name__}"
-        )
+        raise PilotDrawError(f"declared_empty_cells must be a JSON list, got {type(declared_empty).__name__}")
     try:
         declared_counts = project_strata_image_counts(payload["strata_counts"])  # type: ignore[arg-type]
     except AuditSamplingError as exc:
         raise PilotDrawError(f"strata_counts is not the declared FIR-12 shape: {exc}") from exc
     unknown_declared = set(declared_counts) - {name.value for name in StratumName}
     if unknown_declared:
-        raise PilotDrawError(
-            f"strata_counts names unknown strata: {sorted(unknown_declared)}"
-        )
+        raise PilotDrawError(f"strata_counts names unknown strata: {sorted(unknown_declared)}")
     members, by_sha = _parse_entries(payload["entries"])
     frame_sizes = {name: len(units) for name, units in members.items()}
     if frame_sizes != declared_counts:
@@ -346,8 +318,7 @@ def emit_annotation_packet(
             extra = sorted(set(row) - ANNOTATION_PACKET_ROW_KEYS)
             missing = sorted(ANNOTATION_PACKET_ROW_KEYS - set(row))
             raise PilotDrawError(
-                "annotation packet row keys must equal the licensed schema "
-                f"(extra={extra}, missing={missing})"
+                f"annotation packet row keys must equal the licensed schema (extra={extra}, missing={missing})"
             )
         packets.append(row)
     return tuple(packets)
@@ -394,9 +365,7 @@ def _pick_one(
 ) -> str:
     available = [sha for sha in candidates if sha not in used]
     if not available:
-        raise PilotDrawError(
-            f"not enough frame units outside the drawn sample to select gold kind {kind}"
-        )
+        raise PilotDrawError(f"not enough frame units outside the drawn sample to select gold kind {kind}")
     chosen = rng.sample(available, 1)[0]
     used.add(chosen)
     return chosen
@@ -429,21 +398,15 @@ def select_gold_items(
         )
     foreign = sorted(sha for sha in entries_by_sha256 if sha not in pilot.frame_sha256s)
     if foreign:
-        raise PilotDrawError(
-            "entries_by_sha256 contains sha256 values not in the frozen frame: "
-            f"{foreign}"
-        )
+        raise PilotDrawError(f"entries_by_sha256 contains sha256 values not in the frozen frame: {foreign}")
     missing_n = sum(1 for sha in pilot.frame_sha256s if sha not in entries_by_sha256)
     if missing_n:
-        raise PilotDrawError(
-            f"entries_by_sha256 is missing {missing_n} frozen-frame sha256 values"
-        )
+        raise PilotDrawError(f"entries_by_sha256 is missing {missing_n} frozen-frame sha256 values")
     drawn = {str(unit.unit_id) for unit in pilot.sample.units}
     remaining = sorted(sha for sha in entries_by_sha256 if sha not in drawn)
     if len(remaining) < gold_n:
         raise PilotDrawError(
-            "gold must be drawn from the frame outside the sample "
-            f"(need {gold_n}, have {len(remaining)} remaining)"
+            f"gold must be drawn from the frame outside the sample (need {gold_n}, have {len(remaining)} remaining)"
         )
     for sha in remaining:
         if "media_id" not in entries_by_sha256[sha]:
@@ -456,8 +419,7 @@ def select_gold_items(
         GoldKind.BATCH_MATCHED: [
             sha
             for sha in remaining
-            if _parse_stratum(entries_by_sha256[sha].get("stratum"), label="entry['stratum']")
-            is plurality
+            if _parse_stratum(entries_by_sha256[sha].get("stratum"), label="entry['stratum']") is plurality
         ],
         GoldKind.RANDOM: remaining,
     }

@@ -87,8 +87,10 @@ def test_shrink_only_geometry(size, expected) -> None:
 def test_rounding_modes_actually_diverge() -> None:
     """If every mode agreed, the sweep could not discriminate between them."""
     src = (1707, 2560)  # minor axis lands on .0 + epsilon under a 1280 cap
-    results = {mode: Recipe(name=mode, cap=1280, rounding=mode).geometry(*src) for mode in
-               ("floor", "ceil", "half_up", "half_even")}
+    results = {
+        mode: Recipe(name=mode, cap=1280, rounding=mode).geometry(*src)
+        for mode in ("floor", "ceil", "half_up", "half_even")
+    }
     assert len(set(results.values())) > 1, results
     assert results["floor"][0] < results["ceil"][0]
 
@@ -209,22 +211,16 @@ def test_bytes_oracle_refuses_a_mixed_container_manifest(tmp_path: Path) -> None
         evaluate(truth, [jpeg, jpeg_alias], sources, Tier.BYTES)
 
 
-def test_main_refuses_tied_complete_recipe_candidates(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_refuses_tied_complete_recipe_candidates(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     # An under-cap source makes every shrink-only cap/rounding variant agree.
     # The CLI must not publish the alphabetically first equivalent candidate as
     # recovered provenance without a stronger oracle or an explicit class.
     truth = Recipe(name="truth", cap=1280, rounding="floor")
     src = _write_image(tmp_path / "under-cap.jpg", (400, 300))
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps({"manifest_version": 3, "entries": [_entry(1, src, truth)]})
-    )
+    manifest.write_text(json.dumps({"manifest_version": 3, "entries": [_entry(1, src, truth)]}))
 
-    status = main(
-        ["--manifest", str(manifest), "--source-root", str(tmp_path), "--tier", "dims"]
-    )
+    status = main(["--manifest", str(manifest), "--source-root", str(tmp_path), "--tier", "dims"])
 
     assert status == 1
     assert "multiple complete candidate recipes" in capsys.readouterr().err
@@ -300,8 +296,9 @@ def test_pixels_tier_reports_a_geometry_miss_as_dimensions(tmp_path: Path) -> No
     e = _entry(1, src, truth, path="1.png")
     sources = {e["sha256_source"]: src}
 
-    result = evaluate(Recipe(name="w", cap=1024, rounding="floor"), [e], sources,
-                      Tier.PIXELS, mirror_root=mirror, pixel_tolerance=24)
+    result = evaluate(
+        Recipe(name="w", cap=1024, rounding="floor"), [e], sources, Tier.PIXELS, mirror_root=mirror, pixel_tolerance=24
+    )
     assert result.mismatched == 1
     assert result.residual[0]["got"] == (1024, 768)
 
@@ -402,8 +399,7 @@ def test_empty_residual_is_not_reported_as_off_by_one() -> None:
 def test_provenance_names_every_output_affecting_field(tmp_path: Path) -> None:
     """A recovered recipe is only reproducible if it records its library [PROV-01]."""
     prov = SHRINK_FLOOR.provenance()
-    for key in ("recipe", "cap", "rounding", "shrink_only", "resample", "quality",
-                "exact_ratio", "pillow_version"):
+    for key in ("recipe", "cap", "rounding", "shrink_only", "resample", "quality", "exact_ratio", "pillow_version"):
         assert key in prov, key
     assert prov["pillow_version"]
 

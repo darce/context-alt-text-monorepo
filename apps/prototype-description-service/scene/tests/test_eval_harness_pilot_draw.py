@@ -120,9 +120,7 @@ def _write_manifest(
     payload: dict[str, object] = {
         "schema": schema,
         "declared_empty_cells": (
-            ["never-recompute-me", "mask_sufficient_n"]
-            if declared_empty is None
-            else declared_empty
+            ["never-recompute-me", "mask_sufficient_n"] if declared_empty is None else declared_empty
         ),
         "strata_counts": counts,
         "entries": entries,
@@ -137,12 +135,8 @@ def test_draw_pilot_is_reproducible_under_seed():
     first = _draw(seed=_PILOT_SEED)
     second = _draw(seed=_PILOT_SEED)
     other = _draw(seed=_PILOT_SEED + 1)
-    assert [unit.unit_id for unit in first.sample.units] == [
-        unit.unit_id for unit in second.sample.units
-    ]
-    assert [unit.unit_id for unit in first.sample.units] != [
-        unit.unit_id for unit in other.sample.units
-    ]
+    assert [unit.unit_id for unit in first.sample.units] == [unit.unit_id for unit in second.sample.units]
+    assert [unit.unit_id for unit in first.sample.units] != [unit.unit_id for unit in other.sample.units]
     assert first.seed == _PILOT_SEED
     assert other.seed == _PILOT_SEED + 1
 
@@ -195,14 +189,12 @@ def test_draw_pilot_rejects_missing_declared_empty_cells(tmp_path: Path):
 @pytest.mark.parametrize(
     ("declared_delta",),
     [
-        (6,),   # declared > observed
+        (6,),  # declared > observed
         (-2,),  # declared < observed
     ],
     ids=["declared_gt_observed", "declared_lt_observed"],
 )
-def test_draw_pilot_rejects_declared_vs_entry_count_mismatch(
-    tmp_path: Path, declared_delta: int
-):
+def test_draw_pilot_rejects_declared_vs_entry_count_mismatch(tmp_path: Path, declared_delta: int):
     """Pin the frame-size parity guard (AUDIT-08 / rg-005 / rg-015).
 
     report_rows publishes pi = n_h / DECLARED N_h. A silent mismatch
@@ -319,10 +311,14 @@ def test_gold_mix_is_random_batch_matched_and_hard():
     assert matched.stratum.value == plurality
     hard = next(item for item in gold if item.kind is GoldKind.HARD)
     entry = entries[hard.sha256]
-    assert entry["stratum"] in {
-        StratumName.A_TRUE_OCCLUDER,
-        StratumName.B_EYEWEAR,
-    } or len(entry["present_identities"]) >= 2
+    assert (
+        entry["stratum"]
+        in {
+            StratumName.A_TRUE_OCCLUDER,
+            StratumName.B_EYEWEAR,
+        }
+        or len(entry["present_identities"]) >= 2
+    )
 
 
 def test_gold_selection_is_deterministic_under_seed():
@@ -446,9 +442,7 @@ _PUBLIC_METHODS_BY_CLASS = {
     "PilotDrawError": frozenset(),
     "StratumName": frozenset(),
 }
-_DESIGN_STAT_KEYS = frozenset(
-    {"icc", "rho", "deff", "design_effect", "n_eff", "msb", "msw"}
-)
+_DESIGN_STAT_KEYS = frozenset({"icc", "rho", "deff", "design_effect", "n_eff", "msb", "msw"})
 _CLUSTER_SIZE_PARAM_NAMES = frozenset(
     {
         "a",
@@ -468,9 +462,7 @@ _ICC_PARAM_NAMES = frozenset(
         "intra_subject_icc",
     }
 )
-_EFFECTIVE_N_PARAM_NAMES = frozenset(
-    {"n", "n_obs", "sample_size", "population", "population_size"}
-)
+_EFFECTIVE_N_PARAM_NAMES = frozenset({"n", "n_obs", "sample_size", "population", "population_size"})
 _LICENSED_PACKET_ROW_KEYS = frozenset(
     {
         "sha256",
@@ -487,9 +479,7 @@ _LICENSED_PACKET_ROW_KEYS = frozenset(
 
 def _icc_groups_of_size(k: int) -> tuple[tuple[float, ...], ...]:
     # Distinct cluster means + within-group spread so ICC is not 0/1/a data leaf.
-    return tuple(
-        (float(10 * i), float(10 * i + 1), float(10 * i + 3)) for i in range(k)
-    )
+    return tuple((float(10 * i), float(10 * i + 1), float(10 * i + 3)) for i in range(k))
 
 
 _ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
@@ -504,9 +494,7 @@ _ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
 _GROUPS_PARAM_NAMES = frozenset({"groups", "clusters", "cluster", "icc_groups", "ys"})
 _UNPROBEABLE = object()
 _MISSING = object()
-_PROBE_BLOCKED_IMPORTS = frozenset(
-    {"asyncio", "http", "requests", "socket", "subprocess", "urllib"}
-)
+_PROBE_BLOCKED_IMPORTS = frozenset({"asyncio", "http", "requests", "socket", "subprocess", "urllib"})
 _PROBE_BLOCKED_CALLS = frozenset(
     {
         "compile",
@@ -529,9 +517,7 @@ _PROBE_BLOCKED_METHODS = frozenset(
 
 def _owned_callables(module: object = pilot_draw_mod) -> list[tuple[str, object]]:
     return [
-        (name, obj)
-        for name, obj in inspect.getmembers(module)
-        if callable(obj) and inspect.getmodule(obj) is module
+        (name, obj) for name, obj in inspect.getmembers(module) if callable(obj) and inspect.getmodule(obj) is module
     ]
 
 
@@ -605,9 +591,7 @@ def test_public_surface_has_no_replacement_draw_path():
     public_classes = {
         name
         for name, obj in inspect.getmembers(pilot_draw_mod)
-        if inspect.isclass(obj)
-        and inspect.getmodule(obj) is pilot_draw_mod
-        and not name.startswith("_")
+        if inspect.isclass(obj) and inspect.getmodule(obj) is pilot_draw_mod and not name.startswith("_")
     }
     if public_classes != frozenset(_PUBLIC_METHODS_BY_CLASS):
         _fail_surface_change(
@@ -655,19 +639,13 @@ def _one_way_icc(groups: Sequence[Sequence[float]]) -> float:
     n = len(flat)
     k = len(groups)
     grand = sum(flat) / n
-    msb = sum(len(group) * (sum(group) / len(group) - grand) ** 2 for group in groups) / (
-        k - 1
-    )
-    msw = sum(
-        (value - sum(group) / len(group)) ** 2 for group in groups for value in group
-    ) / (n - k)
+    msb = sum(len(group) * (sum(group) / len(group) - grand) ** 2 for group in groups) / (k - 1)
+    msw = sum((value - sum(group) / len(group)) ** 2 for group in groups for value in group) / (n - k)
     mean_size = n / k
     return (msb - msw) / (msb + (mean_size - 1) * msw)
 
 
-def _numeric_leaves(
-    value: object, *, depth: int = 0, seen: set[int] | None = None
-) -> list[float]:
+def _numeric_leaves(value: object, *, depth: int = 0, seen: set[int] | None = None) -> list[float]:
     if depth > 6 or value is None or isinstance(value, bool):
         return []
     if seen is None:
@@ -701,9 +679,7 @@ def _numeric_leaves(
         leaves.extend(_numeric_leaves(item, depth=depth + 1, seen=seen))
     for attr in _DESIGN_STAT_KEYS:
         if hasattr(value, attr):
-            leaves.extend(
-                _numeric_leaves(getattr(value, attr), depth=depth + 1, seen=seen)
-            )
+            leaves.extend(_numeric_leaves(getattr(value, attr), depth=depth + 1, seen=seen))
     return leaves
 
 
@@ -773,9 +749,7 @@ _DESIGN_PROBE_CASES: tuple[dict[str, float], ...] = (
 )
 
 
-def _typed_fixture(
-    annotation: str, fixtures: Mapping[str, object], groups: object
-) -> object:
+def _typed_fixture(annotation: str, fixtures: Mapping[str, object], groups: object) -> object:
     key = annotation.replace(" ", "")
     if key == "str":
         return fixtures["batch_id"]
@@ -800,9 +774,7 @@ def _typed_fixture(
     return _MISSING
 
 
-def _place_arg(
-    param: inspect.Parameter, value: object
-) -> tuple[tuple[object, ...], dict[str, object]]:
+def _place_arg(param: inspect.Parameter, value: object) -> tuple[tuple[object, ...], dict[str, object]]:
     if param.kind is param.KEYWORD_ONLY:
         return (), {param.name: value}
     return (value,), {}
@@ -858,24 +830,19 @@ def _iter_bindings(
     if required is None:
         return []
     as_tuples = tuple(tuple(group) for group in groups)
-    var_positional = [
-        param for param in required if param.kind is param.VAR_POSITIONAL
-    ]
+    var_positional = [param for param in required if param.kind is param.VAR_POSITIONAL]
     var_keyword = [param for param in required if param.kind is param.VAR_KEYWORD]
     regular = [
         param
         for param in required
-        if param.kind
-        in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+        if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
     ]
     if not regular:
         bases: list[tuple[tuple[object, ...], dict[str, object]]] = [((), {})]
     elif len(regular) == 1:
         bases = [_place_arg(regular[0], as_tuples)]
     else:
-        value_lists = [
-            _param_candidate_values(param, as_tuples, fixtures) for param in regular
-        ]
+        value_lists = [_param_candidate_values(param, as_tuples, fixtures) for param in regular]
         bases = []
         for combo in itertools.product(*value_lists):
             args: list[object] = []
@@ -902,10 +869,7 @@ def _matches_one_way_icc(got: object, groups: Sequence[Sequence[float]]) -> bool
     if got is _UNPROBEABLE:
         return False
     want = _one_way_icc(groups)
-    return any(
-        math.isclose(number, want, rel_tol=1e-9, abs_tol=1e-12)
-        for number in _numeric_leaves(got)
-    )
+    return any(math.isclose(number, want, rel_tol=1e-9, abs_tol=1e-12) for number in _numeric_leaves(got))
 
 
 def _kish_design_values(case: Mapping[str, float]) -> tuple[float, float]:
@@ -925,9 +889,7 @@ def _matches_kish_design_stat(got: object, case: Mapping[str, float]) -> bool:
     )
 
 
-def _returns_one_way_icc(
-    fn: object, fixtures: Mapping[str, object] | None = None
-) -> bool:
+def _returns_one_way_icc(fn: object, fixtures: Mapping[str, object] | None = None) -> bool:
     # BR-51: a raise on one fixture (min-n) is not "not an estimator"; try the rest.
     probe_fixtures = fixtures if fixtures is not None else _probe_fixture_map()
     successful = 0
@@ -954,9 +916,7 @@ def _returns_one_way_icc(
     return successful >= 2 and matching == successful
 
 
-def _returns_kish_design_stat(
-    fn: object, fixtures: Mapping[str, object] | None = None
-) -> bool:
+def _returns_kish_design_stat(fn: object, fixtures: Mapping[str, object] | None = None) -> bool:
     # BR-56/63: probe design-effect and effective-n formulas separately from
     # the ICC oracle. A helper may use neutral parameter names, so each case
     # supplies values by both name and annotation-independent fallback.
@@ -1085,9 +1045,7 @@ def _reliability_estimator_violations(
         if _callable_is_unprobeable(obj):
             unprobeable.append(name)
             continue
-        if _returns_one_way_icc(obj, fixtures) or _returns_kish_design_stat(
-            obj, fixtures
-        ):
+        if _returns_one_way_icc(obj, fixtures) or _returns_kish_design_stat(obj, fixtures):
             icc_offenders.append(name)
     tree = ast.parse(Path(module.__file__).read_text())  # type: ignore[union-attr]
     for name, fn in _isolated_functions(tree):
@@ -1097,9 +1055,7 @@ def _reliability_estimator_violations(
         if _callable_is_unprobeable(fn):
             unprobeable.append(f"isolated:{name}")
             continue
-        if _returns_one_way_icc(fn, fixtures) or _returns_kish_design_stat(
-            fn, fixtures
-        ):
+        if _returns_one_way_icc(fn, fixtures) or _returns_kish_design_stat(fn, fixtures):
             icc_offenders.append(f"isolated:{name}")
     return icc_offenders, unprobeable
 
@@ -1129,7 +1085,7 @@ def _inject_module_callable(source: str, name: str):
             raise RuntimeError(f"exec did not define callable {name}")
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-                setattr(injected, "__pilot_probe_ast__", node)
+                injected.__pilot_probe_ast__ = node
                 break
         yield injected
     finally:
@@ -1197,7 +1153,7 @@ def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
             except Exception:
                 continue
             if callable(fn):
-                setattr(getattr(fn, "__func__", fn), "__pilot_probe_ast__", method)
+                getattr(fn, "__func__", fn).__pilot_probe_ast__ = method
                 found.append((name, fn))
             continue
 
@@ -1209,7 +1165,7 @@ def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
             continue
         fn = namespace.get(node.name)
         if callable(fn):
-            setattr(fn, "__pilot_probe_ast__", node)
+            fn.__pilot_probe_ast__ = node
             found.append((name, fn))
 
     for node in ast.walk(tree):
@@ -1223,7 +1179,7 @@ def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
         except Exception:
             continue
         if callable(fn):
-            setattr(fn, "__pilot_probe_ast__", node.value)
+            fn.__pilot_probe_ast__ = node.value
             found.append((labels[0] if labels else "<lambda>", fn))
     return found
 
@@ -1243,17 +1199,9 @@ def test_pilot_module_does_not_estimate_icc_or_deff():
             expected=_PUBLIC_MODULE_CALLABLES,
         )
     tree = ast.parse(Path(pilot_draw_mod.__file__).read_text())
-    named = [
-        name
-        for name in _defined_symbol_names(tree)
-        if _name_carries_design_stat_token(name)
-    ]
+    named = [name for name in _defined_symbol_names(tree) if _name_carries_design_stat_token(name)]
     assert named == []
-    owned_named = [
-        name
-        for name, _obj in _owned_callables()
-        if _name_carries_design_stat_token(name)
-    ]
+    owned_named = [name for name, _obj in _owned_callables() if _name_carries_design_stat_token(name)]
     assert owned_named == []
 
 
@@ -1279,9 +1227,7 @@ def test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc():
     for row in packets:
         assert set(row) == _LICENSED_PACKET_ROW_KEYS
 
-    gold = select_gold_items(
-        pilot=first, entries_by_sha256=entries, seed=_PILOT_SEED
-    )
+    gold = select_gold_items(pilot=first, entries_by_sha256=entries, seed=_PILOT_SEED)
     gold_ids = {item.sha256 for item in gold}
     assert gold_ids.isdisjoint(drawn)
     assert not gold_ids > drawn
@@ -1386,7 +1332,7 @@ def test_gold_mix_round_robin_remainder_not_dumped_on_one_kind():
     payload = _payload()
     entries = _entries_by_sha256(payload)
     gold = select_gold_items(pilot=_draw(n=n), entries_by_sha256=entries, seed=_PILOT_SEED)
-    counts = {kind: 0 for kind in GOLD_MIX_ORDER}
+    counts = dict.fromkeys(GOLD_MIX_ORDER, 0)
     for item in gold:
         counts[item.kind] += 1
     assert len(gold) == 9
@@ -1510,9 +1456,7 @@ def _mutate_loader_payload(payload: dict[str, object], case: str) -> None:
         "declared_empty_cells_type",
     ],
 )
-def test_draw_pilot_rejects_loader_guard_violations(
-    tmp_path: Path, case: str, fragment: str
-):
+def test_draw_pilot_rejects_loader_guard_violations(tmp_path: Path, case: str, fragment: str):
     path = _write_manifest(tmp_path / "guard.json", n_per=8)
     payload = json.loads(path.read_text())
     _mutate_loader_payload(payload, case)
@@ -1834,9 +1778,7 @@ def test_ordinary_helper_is_not_a_reliability_estimator(name: str, source: str):
     _BR53_ICC_SHAPES,
     ids=["defaulted_groups", "varargs_groups", "kwargs_only_groups"],
 )
-def test_estimator_with_optional_or_variadic_groups_is_rejected(
-    name: str, source: str
-):
+def test_estimator_with_optional_or_variadic_groups_is_rejected(name: str, source: str):
     with _inject_module_callable(source, name):
         icc_offenders, unprobeable = _reliability_estimator_violations()
         assert name not in unprobeable
@@ -1848,9 +1790,7 @@ def test_estimator_with_optional_or_variadic_groups_is_rejected(
     _BR53_ORDINARY_VARIADIC_SOURCES,
     ids=["defaulted_mean", "varargs_mean", "kwargs_join"],
 )
-def test_ordinary_optional_or_variadic_helper_is_not_a_reliability_estimator(
-    name: str, source: str
-):
+def test_ordinary_optional_or_variadic_helper_is_not_a_reliability_estimator(name: str, source: str):
     with _inject_module_callable(source, name):
         icc_offenders, unprobeable = _reliability_estimator_violations()
         assert name not in unprobeable
@@ -1865,11 +1805,7 @@ def test_gold_draw_is_invariant_to_catalog_insertion_order():
     assert list(forward) != list(reverse)
     assert set(forward) == set(reverse)
     pilot = _draw()
-    first = select_gold_items(
-        pilot=pilot, entries_by_sha256=forward, seed=_PILOT_SEED
-    )
-    second = select_gold_items(
-        pilot=pilot, entries_by_sha256=reverse, seed=_PILOT_SEED
-    )
+    first = select_gold_items(pilot=pilot, entries_by_sha256=forward, seed=_PILOT_SEED)
+    second = select_gold_items(pilot=pilot, entries_by_sha256=reverse, seed=_PILOT_SEED)
     assert [item.sha256 for item in first] == [item.sha256 for item in second]
     assert [item.kind for item in first] == [item.kind for item in second]

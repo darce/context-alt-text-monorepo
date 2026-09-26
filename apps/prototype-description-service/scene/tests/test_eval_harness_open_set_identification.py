@@ -141,12 +141,8 @@ def test_undetected_mated_probe_counts_as_fnir_miss():
     mated_with_miss = [_hit("Alice", 0.90), _undetected_mated("Bob")]
     nonmated: list[SearchResult] = []
     tau = 0.50
-    detected_only = fnir_fpi_at_threshold(
-        mated=mated_detected_only, nonmated=nonmated, tau=tau
-    )
-    with_miss = fnir_fpi_at_threshold(
-        mated=mated_with_miss, nonmated=nonmated, tau=tau
-    )
+    detected_only = fnir_fpi_at_threshold(mated=mated_detected_only, nonmated=nonmated, tau=tau)
+    with_miss = fnir_fpi_at_threshold(mated=mated_with_miss, nonmated=nonmated, tau=tau)
     assert detected_only.fnir == pytest.approx(0.0)
     assert with_miss.fnir == pytest.approx(0.5)
     assert with_miss.n_fnir_misses == 1
@@ -377,9 +373,7 @@ def test_non_finite_detected_score_is_not_a_hit():
 def test_search_result_requires_gallery_and_media_id():
     """BR-18: a 1:N search is a (probe image, gallery) pair, structurally."""
     with pytest.raises(TypeError):
-        SearchResult(
-            detected=True, top1_score=0.90, top1_name="Alice", true_name="Alice"
-        )
+        SearchResult(detected=True, top1_score=0.90, top1_name="Alice", true_name="Alice")
     with pytest.raises(ValueError, match="media_id"):
         SearchResult(
             detected=True,
@@ -433,13 +427,13 @@ def test_calibrated_tau_agrees_with_published_fpi_and_fnir_off_observation():
 
 def test_same_probe_different_gallery_are_distinct_searches():
     """JANUS 2.2: mated-ness is per (probe, gallery), not per still."""
-    shared = dict(
-        detected=True,
-        top1_score=0.90,
-        top1_name="Alice",
-        true_name="Alice",
-        media_id=93,
-    )
+    shared = {
+        "detected": True,
+        "top1_score": 0.90,
+        "top1_name": "Alice",
+        "true_name": "Alice",
+        "media_id": 93,
+    }
     against_g1 = SearchResult(gallery=GalleryName.G1, **shared)
     against_g2 = SearchResult(gallery=GalleryName.G2, **shared)
     assert against_g1 != against_g2

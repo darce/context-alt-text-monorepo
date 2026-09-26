@@ -405,7 +405,7 @@ def _git_dirty_state(
 ) -> tuple[bool | None, list[str]]:
     try:
         completed = command_runner(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
             cwd=repository_root,
             check=False,
             stdout=subprocess.PIPE,
@@ -433,7 +433,7 @@ def _git_dirty_state(
             len(line) < 4
             or line[2] != " "
             or status == "  "
-            or any(character not in " MADRCTU" for character in status)
+            or any(character not in " MADRCTU?" for character in status)
             or not line[3:]
         ):
             return None, []
@@ -861,6 +861,17 @@ def run_evals(
                         f"release gate {gate_name!r} required case {case_id!r} "
                         "was not executed or did not pass"
                     )
+                if gate.get("require_sandbox_and_operational_evidence") and case.additional_evidence_required:
+                    if artifact_path is None:
+                        reasons.append(
+                            f"release gate {gate_name!r} required case {case_id!r} "
+                            "requires additional evidence but has no artifact path"
+                        )
+                    elif not result["artifact_present"]:
+                        reasons.append(
+                            f"release gate {gate_name!r} required case {case_id!r} "
+                            f"additional evidence artifact is missing, empty, or not a regular file: {artifact_path}"
+                        )
                 continue
             artifact_path = _case_artifact_path(case)
             if artifact_path is None:

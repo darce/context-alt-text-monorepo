@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import re
 import sys
@@ -31,6 +32,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
 
 ROLE_NAMES = ("api", "worker", "fix-blob-ownership")
 ROLE_FIELDS = (
@@ -1071,6 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
     except (json.JSONDecodeError, OSError):
         result = _error_outcome("snapshot_unreadable", "unable to read or parse JSON input")
     except Exception:
+        logger.exception("validator failed unexpectedly")
         result = _error_outcome("validator_internal_error", "validator failed unexpectedly")
     print(json.dumps(result, sort_keys=True))
     print(result["reason"], file=sys.stderr)

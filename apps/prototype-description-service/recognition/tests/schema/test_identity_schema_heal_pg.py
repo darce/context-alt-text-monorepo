@@ -593,6 +593,7 @@ def test_identity_vector_columns_agree_with_health_ready_probe() -> None:
 def test_heal_refuses_wrong_table_vector_typmod(pg_empty_engine) -> None:
     with pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)
+        conn.execute(text("DROP MATERIALIZED VIEW mv_identity_cluster_centroids"))
         conn.execute(text("ALTER TABLE media_identities ALTER COLUMN embedding TYPE vector"))
     with pytest.raises(RuntimeError) as exc_info, pg_empty_engine.begin() as conn:
         MIGRATION.heal(conn)

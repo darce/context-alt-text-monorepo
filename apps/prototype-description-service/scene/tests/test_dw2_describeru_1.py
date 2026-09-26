@@ -60,24 +60,25 @@ async def _readiness_case(session_factory):
             media_ids=[1],
             images={1: (b"image", "image/png")},
         )
-        operation = await DescribeOperationRepository(session, lease_seconds=180).accept(
-            tenant_id=TENANT_ID,
-            operation_id="op-race",
-            request_digest="ab" * 32,
-            now=now,
-        )
         run = await DescribeRunRepository(session).get_run(tenant_id=TENANT_ID, run_id=run_id)
         assert run is not None
+        operation = await DescribeOperationRepository(session, lease_seconds=180).accept(
+            tenant_id=TENANT_ID,
+            request_digest=run.request_digest,
+            now=now,
+        )
         run.operation_id = operation.operation_id
         await session.commit()
-    return run_id, now
+    return run_id, now, operation.operation_id
 
 
-async def _associate_startup(session_factory, *, now: datetime, startup_id: str) -> None:
+async def _associate_startup(
+    session_factory, *, operation_id: str, now: datetime, startup_id: str
+) -> None:
     async with session_factory() as session:
         await DescribeOperationRepository(session, lease_seconds=180).associate_startup(
             tenant_id=TENANT_ID,
-            operation_id="op-race",
+            operation_id=operation_id,
             startup_id=startup_id,
             started_at=now,
             now=now + timedelta(seconds=1),
@@ -90,7 +91,7 @@ def test_readiness_sees_startup_committed_by_a_second_session(monkeypatch):
 
     async def body():
         path, engine, session_factory = await _database()
-        run_id, now = await _readiness_case(session_factory)
+        run_id, now, operation_id = await _readiness_case(session_factory)
         await wmod._record_run_pickup(session_factory=session_factory, tenant_id=TENANT_ID, run_id=run_id)
 
         original_lock = getattr(DescribeRunRepository, "get_run_for_update", None)
@@ -99,11 +100,12 @@ def test_readiness_sees_startup_committed_by_a_second_session(monkeypatch):
 
             async def commit_association_before_locked_read(self, *, tenant_id, run_id):
                 nonlocal association_committed
-                result = await original_lock(self, tenant_id=tenant_id, run_id=run_id)
                 if not association_committed:
-                    await _associate_startup(session_factory, now=now, startup_id="raced-boot")
+                    await _associate_startup(
+                        session_factory, operation_id=operation_id, now=now, startup_id="raced-boot"
+                    )
                     association_committed = True
-                return result
+                return await original_lock(self, tenant_id=tenant_id, run_id=run_id)
 
             monkeypatch.setattr(DescribeRunRepository, "get_run_for_update", commit_association_before_locked_read)
 
@@ -129,8 +131,10 @@ def test_readiness_reads_operation_startup_after_locking_the_run(monkeypatch):
 
     async def body():
         path, engine, session_factory = await _database()
-        run_id, now = await _readiness_case(session_factory)
-        await _associate_startup(session_factory, now=now, startup_id="locked-boot")
+        run_id, now, operation_id = await _readiness_case(session_factory)
+        await _associate_startup(
+            session_factory, operation_id=operation_id, now=now, startup_id="locked-boot"
+        )
         await wmod._record_run_pickup(session_factory=session_factory, tenant_id=TENANT_ID, run_id=run_id)
 
         events: list[str] = []
@@ -189,7 +193,10 @@ def test_warm_readiness_does_not_replace_concurrent_cold_ramp_up(monkeypatch):
         async with session_factory() as session:
             run = await DescribeRunRepository(session).get_run(tenant_id=TENANT_ID, run_id=run_id)
         assert run is not None and run.started_at is not None
-        cold_ready_at = run.started_at + timedelta(seconds=5)
+        started_at = run.started_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=UTC)
+        cold_ready_at = started_at + timedelta(seconds=5)
 
         original_record_readiness = DescribeRunRepository.record_readiness
         cold_recorded = False
@@ -197,6 +204,8 @@ def test_warm_readiness_does_not_replace_concurrent_cold_ramp_up(monkeypatch):
         async def interleave_cold_readiness(self, **kwargs):
             nonlocal cold_recorded
             if not cold_recorded:
+                # SQLite's read transaction would prevent the competing session from committing.
+                await self._session.rollback()
                 async with session_factory() as other_session:
                     other_repo = DescribeRunRepository(other_session)
                     assert await original_record_readiness(

@@ -448,6 +448,12 @@ class CalibrationPolicyStatus(StrEnum):
     ACCEPTED = "accepted"
 
 
+class CalibrationStratumSelection(StrEnum):
+    """selection vocabulary for abstained calibration strata (sr-007)."""
+
+    CARTESIAN_PRODUCT = "cartesian_product"
+
+
 class _ForbidModel(BaseModel):
     """Strict nested policy node: unknown keys fail closed (CALIBR-M-06)."""
 
@@ -540,7 +546,7 @@ class PolicyAbstain(_ForbidModel):
 
 class AbstainedStrata(_ForbidModel):
     key_format: str
-    selection: str
+    selection: CalibrationStratumSelection
     quality_bands: list[str]
     operating_conditions: list[str]
 
@@ -619,11 +625,11 @@ class ClusterRecoveryCalibrationPolicy(_ForbidModel):
     def abstained_cells(self) -> frozenset[str]:
         """Return the closed set of abstained ``<quality_band>×<operating_condition>`` cells."""
         strata = self.abstained_strata
-        if strata.selection != "cartesian_product":
-            return frozenset()
-        return frozenset(
-            f"{band}×{condition}" for band in strata.quality_bands for condition in strata.operating_conditions
-        )
+        if strata.selection is CalibrationStratumSelection.CARTESIAN_PRODUCT:
+            return frozenset(
+                f"{band}×{condition}" for band in strata.quality_bands for condition in strata.operating_conditions
+            )
+        raise ValueError(f"Unsupported abstained strata selection: {strata.selection!r}")
 
 
 class EmbeddingSpaceBinding(_ForbidModel):

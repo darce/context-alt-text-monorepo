@@ -916,8 +916,15 @@ def register_health_probes(
     ) -> dict[str, object]:
         breaker = get_or_create_session_dependency_circuit_breaker(app)
         mc_check, _, _ = await _model_probe()
+        try:
+            database_check = await asyncio.wait_for(
+                check_database(session),
+                timeout=health_db_timeout_seconds,
+            )
+        except TimeoutError:
+            database_check = CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
         checks = [
-            await check_database(session),
+            database_check,
             check_breaker(breaker),
             mc_check,
             check_active_embedding_model(),

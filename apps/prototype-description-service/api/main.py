@@ -108,6 +108,7 @@ class AdapterReadinessReason(StrEnum):
 
     PROFILE_UNAVAILABLE = "profile_unavailable"
     VLM_DEPENDENCIES_MISSING = "vlm_dependencies_missing"
+    LOCAL_ADAPTER_UNAVAILABLE = "local_adapter_unavailable"
     ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
     ENDPOINT_INVALID_URL = "endpoint_invalid_url"
     ENDPOINT_NOT_ALLOWLISTED = "endpoint_not_allowlisted"
@@ -312,12 +313,21 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
         and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU
         and bool(scene_http_deps._missing_vlm_dependencies())
     )
+    local_cpu_adapter_unavailable = False
+    if spec.available and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU and not vlm_dependencies_missing:
+        local_cpu_adapter_unavailable = isinstance(
+            scene_http_deps.get_description_adapter(profile),
+            scene_http_deps.UnavailableDescriptionAdapter,
+        )
     if not spec.available:
         usable = False
         reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value
     elif vlm_dependencies_missing:
         usable = False
         reason = AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value
+    elif local_cpu_adapter_unavailable:
+        usable = False
+        reason = AdapterReadinessReason.LOCAL_ADAPTER_UNAVAILABLE.value
     elif spec.adapter_kind is not DescriptionAdapterKind.GPU:
         usable = True
         reason = None
@@ -366,6 +376,36 @@ def _resolve_health_db_timeout_seconds() -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})")
     return value
+
+
+async def _detailed_health_database_check(
+    session: AsyncSession | None,
+    *,
+    timeout_seconds: float,
+) -> CheckResult:
+    try:
+        return await asyncio.wait_for(check_database(session), timeout=timeout_seconds)
+    except TimeoutError:
+        return CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
+
+
+async def _detailed_health_embedding_runtime(
+    session: AsyncSession,
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    try:
+        capability = await asyncio.wait_for(
+            read_embedding_runtime_capability(session),
+            timeout=timeout_seconds,
+        )
+        return embedding_runtime_health_payload(capability)
+    except Exception:
+        return {
+            "available": False,
+            "reason": "capability read failed",
+            "heartbeat_age_seconds": None,
+        }
 
 
 async def _supervise_load_snapshot_refresher(session_factory) -> None:
@@ -584,11 +624,10 @@ def create_app() -> FastAPI:
         expose_headers=[CORRELATION_ID_HEADER],
         max_age=600,
     )
-    app.add_middleware(CorrelationIdMiddleware)
-    app.add_middleware(MetricsMiddleware)
     # E15-11: enforce body-size cap on the multipart upload endpoint before
     # FastAPI buffers the body. Path-scoped so the JSON variant on the same
-    # base path is unaffected.
+    # base path is unaffected. Correlation is wrapped outside this middleware
+    # so early 400/411/413 responses receive an id and access record.
     recognition_settings = RecognitionSettings()
     app.add_middleware(
         UploadSizeLimitMiddleware,
@@ -599,6 +638,8 @@ def create_app() -> FastAPI:
             "/scene/describe/async",
         },
     )
+    app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
     initialize_clustering_circuit_breaker(app)
@@ -906,7 +947,10 @@ def register_health_probes(
         # operators; never hit by load-balancer probes. Shares aggregator +
         # probes with /ready so the two stay in sync without duplicates.
         breaker = get_or_create_session_dependency_circuit_breaker(app)
-        db_check = await check_database(session)
+        db_check = await _detailed_health_database_check(
+            session,
+            timeout_seconds=health_db_timeout_seconds,
+        )
         breaker_check = check_breaker(breaker)
         mc_check, cache_dir, model_name = await _model_probe()
         embedding_model_check = check_active_embedding_model(verbose=True)
@@ -929,15 +973,10 @@ def register_health_probes(
             "heartbeat_age_seconds": None,
         }
         if session is not None:
-            try:
-                embedding_capability = await read_embedding_runtime_capability(session)
-                embedding_runtime = embedding_runtime_health_payload(embedding_capability)
-            except Exception:
-                embedding_runtime = {
-                    "available": False,
-                    "reason": "capability read failed",
-                    "heartbeat_age_seconds": None,
-                }
+            embedding_runtime = await _detailed_health_embedding_runtime(
+                session,
+                timeout_seconds=health_db_timeout_seconds,
+            )
         return {
             "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),

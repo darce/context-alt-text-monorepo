@@ -174,7 +174,7 @@ def get_cpu_description_adapter() -> DescriptionAdapter:
         )
 
 
-def get_description_adapter() -> DescriptionAdapter:
+def get_description_adapter(profile: DescriptionProfile | None = None) -> DescriptionAdapter:
     """Resolve the configured ``ACX_DESCRIPTION_ADAPTER`` profile to an adapter.
 
     - ``seeded`` (default): deterministic, instant, model-free.
@@ -188,7 +188,7 @@ def get_description_adapter() -> DescriptionAdapter:
     VisualFactsService) but still inline within the request; the DB-backed async
     worker is deferred (see the profile registry impl-notes pointer).
     """
-    settings = DescriptionSettings()
+    settings = DescriptionSettings(profile=profile) if profile is not None else DescriptionSettings()
     spec = get_profile_spec(settings.profile)
 
     if spec.profile is DescriptionProfile.SEEDED:

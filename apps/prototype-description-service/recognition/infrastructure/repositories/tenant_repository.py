@@ -38,4 +38,3 @@ class SqlAlchemyTenantRepository:
         tenant.naming_agreement_enabled = enabled
         await self.session.flush()
         return bool(tenant.naming_agreement_enabled)
-

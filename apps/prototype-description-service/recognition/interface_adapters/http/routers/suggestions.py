@@ -571,9 +571,9 @@ async def accept_merge_suggestion(
             resolved_at=datetime.now(tz=UTC),
         )
     )
-    suggestion.status = SuggestionStatus.ACCEPTED
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
+    suggestion.status = SuggestionStatus.ACCEPTED
 
     # Commit before response so client refetches see committed state
     # (see clusters.py PATCH handler comment for full race condition explanation).
@@ -738,13 +738,8 @@ async def _collect_min_confidence_page[T_Suggestion](
     filtered: list[T_Suggestion] = []
     page_offset = 0
     target_count = offset + limit
-    max_batches = 10
-    batch_count = 0
 
     while len(filtered) < target_count:
-        if batch_count >= max_batches:
-            break
-        batch_count += 1
         page = list(await fetch_page(batch_size, page_offset))
         if not page:
             break

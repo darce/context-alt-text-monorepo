@@ -322,17 +322,23 @@ class RosterEntryProjectionRepository {
 	private function map_projected_clusters_for_person( array $cluster_rows, array $instance_rows_by_cluster ): array {
 		return \array_map(
 			function ( array $row ) use ( $instance_rows_by_cluster ): array {
-				$cluster_uuid   = \trim( (string) ( $row['cluster_uuid'] ?? '' ) );
-				$instance_rows  = $instance_rows_by_cluster[ $cluster_uuid ] ?? array();
-				$instances      = \array_map( array( $this, 'map_projected_instance_row' ), $instance_rows );
+				$cluster_uuid             = \trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+				$instance_rows            = $instance_rows_by_cluster[ $cluster_uuid ] ?? array();
+				$instances                = \array_map( array( $this, 'map_projected_instance_row' ), $instance_rows );
+				$representative_identity  = $this->resolve_representative_identity( \trim( (string) ( $row['representative_id'] ?? '' ) ), $instances );
+				$representative_quality   = $this->normalize_representative_quality( $row['representative_quality'] ?? null );
+				$quality_components       = $this->normalize_quality_components( $row['quality_components'] ?? null );
+
+				if ( null !== $representative_identity ) {
+					$representative_identity['representative_quality'] = $representative_quality;
+					$representative_identity['quality_components']     = $quality_components;
+				}
 
 				return array(
 					'cluster_id'                 => $cluster_uuid,
 					'identity_count'             => isset( $row['identity_count'] ) ? (int) $row['identity_count'] : \count( $instances ),
-					'representative_identity'    => $this->resolve_representative_identity( \trim( (string) ( $row['representative_id'] ?? '' ) ), $instances ),
+					'representative_identity'    => $representative_identity,
 					'instances'                  => $instances,
-					'representative_quality'     => $this->normalize_representative_quality( $row['representative_quality'] ?? null ),
-					'quality_components'         => $this->normalize_quality_components( $row['quality_components'] ?? null ),
 					'representative_media_id'    => $this->normalize_representative_media_id( $row['representative_media_id'] ?? null ),
 					'undoable_merge_receipt_id'  => $this->normalize_optional_string( $row['undoable_merge_receipt_id'] ?? null ),
 				);

@@ -209,6 +209,7 @@ def test_compare_emits_baseline_and_delta_when_stamps_agree() -> None:
     assert row["delta"] == pytest.approx(row["candidate"] - row["baseline"])
     assert "insertion_rate" in metrics
 
+
 def test_delta_markdown_refuse_banner_names_straddle_invariant() -> None:
     """Markdown refuse must name the Δ invariant; a bare REFUSED is not unique."""
     candidate = _run_record(roster_epoch="pre-priv1")

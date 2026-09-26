@@ -31,7 +31,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from math import isfinite
+from math import ceil, isfinite
 from typing import Any
 
 import numpy as np
@@ -198,7 +198,8 @@ def nearest_rank_percentile(values: Sequence[float], q: float) -> float:
     if not values:
         raise ValueError("nearest_rank_percentile requires a non-empty values sequence")
     ordered = sorted(float(v) for v in values)
-    return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
+    rank = max(0, ceil(q * len(ordered)) - 1)
+    return ordered[min(rank, len(ordered) - 1)]
 
 
 def latency_summary(

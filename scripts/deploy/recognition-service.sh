@@ -744,11 +744,27 @@ preflight_docker() {
 # every line so captured output cannot masquerade as a deploy decision.
 sanitize_deploy_diagnostic() {
   # WHY: printf -v keeps SOH out of declare -f; tr no longer strips UTF-8 continuation bytes.
-  local _soh _sk _ek _hdr
+  local _soh _sk _ek _hdr _sk_ci _ek_ci _hdr_ci
+  _portable_ere_ci() {
+    awk '{
+      in_class=0
+      for (i=1; i<=length($0); i++) {
+        c=substr($0, i, 1)
+        if (c == "[") in_class=1
+        if (!in_class && c ~ /^[A-Za-z]$/) printf "[%s%s]", tolower(c), toupper(c)
+        else printf "%s", c
+        if (c == "]") in_class=0
+      }
+      printf "\n"
+    }'
+  }
   printf -v _soh '\001'
   _sk='token|access_token|refresh_token|password|passwd|secret|api[-_]?key|[A-Za-z0-9_]*_token|[A-Za-z0-9_]*_password|[A-Za-z0-9_]*_secret|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|[A-Za-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth'
   _ek='[A-Za-z0-9_]*_(TOKEN|PASSWORD|SECRET|KEY|AUTH|PASSPHRASE|CREDENTIALS|PWD)|[A-Za-z0-9_]*_key_id|[A-Za-z0-9_]*_key_content|[A-Za-z0-9_]*_access_key|secret_key_base|_authtoken|_auth|PGPASSWORD|PASSPHRASE|pass_phrase|CREDENTIALS|TOKEN|PASSWORD|PASSWD|SECRET|KEY|AUTH|PASS'
   _hdr='bearer|basic|token|apikey|api-key|api_key|digest|signature|aws4-hmac-sha256'
+  _sk_ci="$(printf '%s\n' "${_sk}" | _portable_ere_ci)"
+  _ek_ci="$(printf '%s\n' "${_ek}" | _portable_ere_ci)"
+  _hdr_ci="$(printf '%s\n' "${_hdr}" | _portable_ere_ci)"
   LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
@@ -764,37 +780,37 @@ sanitize_deploy_diagnostic() {
         { if (yaml_indent>=0) { if ($0 ~ /^[ \t]*$/) { print; next } match($0, /[^ \t]/); indent=RSTART-1; if (indent>yaml_indent) { print "[REDACTED]"; next } yaml_indent=-1 } if (pending_secret) { if (pending_secret==1 && $0 ~ /^[ \t]*:[ \t]*$/) { pending_secret=2; print; next } if ($0 ~ /^[ \t]*$/) { print; next } pending_secret=0; if ($0 ~ /^[ \t]*[[{]/) { depth+=depth_delta($0); print "[REDACTED]"; next } print redact_pending_scalar($0); next } if (pem) { if ($0 ~ /-----END [A-Za-z0-9 ]*PRIVATE KEY-----/) { pem=0; print; next } print "[REDACTED]"; next } if (pem_begin_end($0)) { print redact_pem_oneline($0); next } if (pem_has_begin($0)) { print redact_pem_prefix($0); pem=1; next } if (depth>0) { depth+=depth_delta($0); if (depth<0) depth=0; if ($0 ~ /^[ \t]*[\]},]*[ \t]*$/) print; else print "[REDACTED]"; next } if (is_yaml_secret_block($0)) { match($0, /[^ \t]/); yaml_indent=RSTART-1; print; next } if (is_pretty_scalar_open($0)) { pending_secret=1; print; next } if (is_pretty_open($0)) { depth+=depth_delta($0); print; next } print }
       ' \
     | LC_ALL=C LANG=C LC_CTYPE=C sed -E \
-      -e 's/["'"'"']authorization["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/gI' \
-      -e "s/[\"']authorization[\"'][[:space:]]*:[[:space:]]*'("${_hdr}")[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/gI" \
-      -e 's/authorization[[:space:]]*[=:][[:space:]]*('"${_hdr}"')[[:space:]].*/Authorization: \1 [REDACTED]/gI' \
-      -e 's/authorization[[:space:]]*[=:][[:space:]]*[^[:space:]]+$/Authorization: [REDACTED]/gI' \
-      -e 's/(^|[^[:alnum:]])('"${_hdr}"')[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"']{8,})/\1\2 [REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/gI' \
+      -e 's/["'"'"'][Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]["'"'"'][[:space:]]*:[[:space:]]*"('"${_hdr_ci}"')[[:space:]]+(\\.|[^"\\])*"/"Authorization": "\1 [REDACTED]"/g' \
+      -e "s/[\"'][Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][\"'][[:space:]]*:[[:space:]]*'("${_hdr_ci}")[[:space:]]+(\\\\.|[^'\\\\])*'/\"Authorization\": \"\\1 [REDACTED]\"/g" \
+      -e 's/[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][[:space:]]*[=:][[:space:]]*('"${_hdr_ci}"')[[:space:]].*/Authorization: \1 [REDACTED]/g' \
+      -e 's/[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][[:space:]]*[=:][[:space:]]*[^[:space:]]+$/Authorization: [REDACTED]/g' \
+      -e 's/(^|[^[:alnum:]])('"${_hdr_ci}"')[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"']{8,})/\1\2 [REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/"\1": "[REDACTED]"/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*'"'"'/"\1": "[REDACTED]"/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*\\?$/"\1": "[REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+'"'"'(\\.|[^'"'"'\\])*\\?$/"\1": "[REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+(null|true|false)([,}[:space:]]|$)/"\1": '"${_soh}"'\3\4/g' \
       -e 's/'"${_soh}"'([A-Za-z]*[A-Z][A-Za-z]*)/\1/g' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/gI' \
-      -e 's/["'"'"']('"${_sk}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/gI' \
-      -e 's/"('"${_sk}"')"[[:space:]]*:[[:space:]]*\[REDACTED\]([,}][^[:space:]]+)/"\1": [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/gI' \
-      -e "s/(^|[^A-Za-z0-9_-])(${_ek})[[:space:]]*([=:]+>?[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/gI" \
-      -e 's/(^|[^A-Za-z0-9_-])('"${_ek}"')[[:space:]]*([=:]+>?[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/gI' \
-      -e "s/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)\"[^\"]*\"/\\1\\2\\3 \\4 [REDACTED]/gI" \
-      -e "s/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)'[^']*'/\\1\\2\\3 \\4 [REDACTED]/gI" \
-      -e 's/(^|[[:space:]])(curl|wget)([[:space:]][^[:space:]]+)*[[:space:]]+(-u|--user)(=|[[:space:]]+)[^[:space:]]+/\1\2\3 \4 [REDACTED]/gI' \
-      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[=:][^[:space:]]+/\1--\2=[REDACTED]/gI' \
-      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*(password|passwd|token|secret|key))[[:space:]]+[^[:space:]]+/\1--\2 [REDACTED]/gI' \
-      -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-(token|secret|key))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*(api_key|api-key|apikey))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/gI' \
-      -e 's/(^|[^A-Za-z0-9_])(api_key|api-key|apikey)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/gI' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+[\[{].*$/"\1": [REDACTED]/g' \
+      -e 's/["'"'"']('"${_sk_ci}"')["'"'"'][[:space:]]*([=:]+>?[[:space:]]*)+([^[:space:],}"'"'"''"${_soh}"'][^[:space:],}"'"'"']*)/"\1": [REDACTED]/g' \
+      -e 's/"('"${_sk_ci}"')"[[:space:]]*:[[:space:]]*\[REDACTED\]([,}][^[:space:]]+)/"\1": [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek_ci}"')[[:space:]]*([=:]+>?[[:space:]]*)+"(\\.|[^"\\])*"/\1\2=[REDACTED]/g' \
+      -e "s/(^|[^A-Za-z0-9_-])(${_ek_ci})[[:space:]]*([=:]+>?[[:space:]]*)+'[^']*'/\1\2=[REDACTED]/g" \
+      -e 's/(^|[^A-Za-z0-9_-])('"${_ek_ci}"')[[:space:]]*([=:]+>?[[:space:]]*)+[^[:space:]]+/\1\2=[REDACTED]/g' \
+      -e "s/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)\"[^\"]*\"/\\1\\2\\3 \\4 [REDACTED]/g" \
+      -e "s/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)'[^']*'/\\1\\2\\3 \\4 [REDACTED]/g" \
+      -e 's/(^|[[:space:]])([cC][uU][rR][lL]|[wW][gG][eE][tT])([[:space:]][^[:space:]]+)*[[:space:]]+(-[uU]|--[uU][sS][eE][rR])(=|[[:space:]]+)[^[:space:]]+/\1\2\3 \4 [REDACTED]/g' \
+      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*([pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[=:][^[:space:]]+/\1--\2=[REDACTED]/g' \
+      -e 's/(^|[[:space:]])--([A-Za-z0-9_-]*([pP][aA][sS][sS][wW][oO][rR][dD]|[pP][aA][sS][sS][wW][dD]|[tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[[:space:]]+[^[:space:]]+/\1--\2 [REDACTED]/g' \
+      -e 's/(^|[^[:alnum:]])([A-Za-z0-9-]*-([tT][oO][kK][eE][nN]|[sS][eE][cC][rR][eE][tT]|[kK][eE][yY]))[[:space:]]*:[[:space:]]*[^[:space:]]+/\1\2: [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_])([A-Za-z0-9_-]*([aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY]))[[:space:]]*:[[:space:]]*[^[:space:]"]+/\1\2: [REDACTED]/g' \
+      -e 's/(^|[^A-Za-z0-9_])([aA][pP][iI]_[kK][eE][yY]|[aA][pP][iI]-[kK][eE][yY]|[aA][pP][iI][kK][eE][yY])[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]&"]+)/\1\2=[REDACTED]/g' \
       -e 's|://([^:/@[:space:]]*):([^[:space:]/]+)@([[:alnum:]._-]+)|://\1:[REDACTED]@\3|g' \
       -e 's|://([^:/@[:space:]]*):([^[:space:]/@]+)@|://\1:[REDACTED]@|g' \
       -e 's/[Cc]ookie:[[:space:]].*/Cookie: [REDACTED]/' \
-      -e 's/ghp_[A-Za-z0-9]{20,}/[REDACTED]/g' \
-      -e 's/github_pat_[A-Za-z0-9_]{10,}/[REDACTED]/g' \
-      -e 's/AKIA[A-Z0-9]{16}/[REDACTED]/g' \
+      -e 's/[gG][hH][pP]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+      -e 's/[gG][iI][tT][hH][uU][bB]_[pP][aA][tT]_[A-Za-z0-9_]{10,}/[REDACTED]/g' \
+      -e 's/[aA][kK][iI][aA][A-Z0-9]{16}/[REDACTED]/g' \
       -e 's/'"${_soh}"'//g' \
     | LC_ALL=C LANG=C LC_CTYPE=C sed 's/^/diagnostic: /'
 }
@@ -1113,7 +1129,8 @@ preflight_remote_face_pipeline_models() {
   # Only dev-fir uses the face_pipeline profile with host-mounted weights.
   [[ "$env" == "dev-fir" ]] || return 0
 
-  local remote_dir models_dir_cfg models_path models_dir remote_out remote_rc=0
+  local remote_dir models_dir_cfg models_path models_dir remote_out remote_err remote_err_file
+  local remote_diagnostic remote_diagnostic_sanitized remote_rc=0
   remote_dir="$(env_to_remote_dir "$env")"
 
   # Authoritative models dir is RECOGNITION_FACE_PIPELINE_MODELS_DIR [sr-007] (C-10).
@@ -1140,7 +1157,9 @@ preflight_remote_face_pipeline_models() {
   # Ship the extractable verify body to the remote and execute it (C-07/C-11).
   # Capture stdout even when the remote check exits non-zero; do not swallow
   # unrelated ssh failures with `|| true` (C-06).
+  remote_err_file="$(mktemp)" || fail "could not capture face_pipeline preflight diagnostic"
   remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    2>"${remote_err_file}" \
     "bash -s" <<REMOTE
 set -euo pipefail
 $(declare -p FACE_PIPELINE_ONNX_SHA256)
@@ -1148,27 +1167,35 @@ $(declare -f verify_face_pipeline_models_dir)
 verify_face_pipeline_models_dir $(printf '%q' "${models_dir}")
 REMOTE
 )" || remote_rc=$?
+  remote_err="$(cat "${remote_err_file}")"
+  rm -f "${remote_err_file}"
+  remote_diagnostic="${remote_out}"
+  if [[ -n "${remote_err}" ]]; then
+    remote_diagnostic+=$'\n'"${remote_err}"
+  fi
 
   if [[ "${remote_out}" == "OK" && "${remote_rc}" -eq 0 ]]; then
+    if [[ -n "${remote_err}" ]] && ! printf '%s\n' "${remote_err}" | sanitize_deploy_diagnostic >&2; then
+      echo "diagnostic: face_pipeline preflight diagnostic unavailable" >&2
+    fi
     log "face_pipeline ONNX weights present and sha256-verified under ${models_dir}"
     return 0
   fi
+  remote_diagnostic_sanitized="$(printf '%s\n' "${remote_diagnostic:-no remote response}" | sanitize_deploy_diagnostic)" \
+    || remote_diagnostic_sanitized="diagnostic: remote preflight diagnostic unavailable"
   if [[ "${remote_out}" == DIR_FAIL:* ]]; then
-    fail "face_pipeline models directory missing or unreadable: ${remote_out#DIR_FAIL:} on ${SSH_TARGET}"
+    fail "face_pipeline models directory missing or unreadable on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
   fi
   if [[ "${remote_out}" == FILE_FAIL:* ]]; then
-    local miss_file miss_dir
-    miss_file="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f1)"
-    miss_dir="$(printf '%s' "${remote_out#FILE_FAIL:}" | cut -d: -f2-)"
-    fail "missing face_pipeline ONNX weight ${miss_file} under ${miss_dir} on ${SSH_TARGET}"
+    fail "missing face_pipeline ONNX weight on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
   fi
   if [[ "${remote_out}" == HASH_FAIL:* ]]; then
-    fail "face_pipeline ONNX integrity check failed (${remote_out}) on ${SSH_TARGET}"
+    fail "face_pipeline ONNX integrity check failed on ${SSH_TARGET}; remote diagnostic follows: ${remote_diagnostic_sanitized}"
   fi
   if (( remote_rc != 0 )); then
-    fail "face_pipeline models preflight ssh/remote failed for ${env} (exit ${remote_rc}, looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
+    fail "face_pipeline models preflight ssh/remote failed for ${env} (exit ${remote_rc}, looked under ${models_dir} on ${SSH_TARGET}); remote diagnostic follows: ${remote_diagnostic_sanitized}"
   fi
-  fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}): ${remote_out:-no remote response}"
+  fail "face_pipeline models preflight failed for ${env} (looked under ${models_dir} on ${SSH_TARGET}); remote diagnostic follows: ${remote_diagnostic_sanitized}"
 }
 
 #---------------------------------------------------------------- build
@@ -2060,7 +2087,8 @@ PY_RESOURCE
 deploy_env_lease() {
   local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
   local program response rc marker lease_transaction lease_holder lease_expiry lease_path
-  local push_timeout pull_timeout transfer_timeout ttl_required ttl_margin width index transfer_index margin_index
+  local push_timeout pull_timeout transfer_timeout remote_command_timeout gpu_gate_timeout
+  local ttl_required ttl_margin width index transfer_index margin_index
   local transfer_digit margin_digit sum carry cutover_budget canonical_budget verify_budget gpu_budget
   local cutover_attempts cutover_sleep canonical_attempts canonical_sleep
   local verify_attempts verify_sleep gpu_attempts gpu_sleep
@@ -2107,11 +2135,13 @@ deploy_env_lease() {
     if ! gpu_budget="$(probe_budget ACX_GPU_SNAPSHOT_GATE 3 5)"; then
       fail "ACX_GPU_SNAPSHOT_GATE_ATTEMPTS and ACX_GPU_SNAPSHOT_GATE_SLEEP must define a valid GPU snapshot gate budget"
     fi
+    remote_command_timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
+    gpu_gate_timeout="$(validated_deadline ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS 60)"
     read -r cutover_attempts cutover_sleep <<<"${cutover_budget}"
     read -r canonical_attempts canonical_sleep <<<"${canonical_budget}"
     read -r verify_attempts verify_sleep <<<"${verify_budget}"
     read -r gpu_attempts gpu_sleep <<<"${gpu_budget}"
-    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + gpu_attempts * gpu_sleep + verify_sleep + 300))
+    ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + gpu_attempts * gpu_sleep + verify_sleep + (2 * cutover_attempts + canonical_attempts) * remote_command_timeout + gpu_attempts * gpu_gate_timeout + 300))
     ttl_required=""
     carry=0
     width="${#transfer_timeout}"
@@ -2139,7 +2169,7 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart health budgets, ACX_GPU_SNAPSHOT_GATE attempts×sleep, one ACX_VERIFY_SLEEP and 300 seconds; minimum 600)"
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP and 300 seconds; minimum 600)"
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"

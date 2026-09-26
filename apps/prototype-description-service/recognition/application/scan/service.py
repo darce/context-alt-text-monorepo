@@ -532,7 +532,10 @@ class ScanService:
         need the explicit no-DB gap around adapter inference should use
         ``tasks.scan.process_scan_job_inline``.
         """
-        sources_list = list(media_sources) if media_sources else list(media_ids)
+        media_ids_list = list(media_ids)
+        has_media_sources = bool(media_sources)
+        media_sources_list = list(media_sources) if media_sources is not None else None
+        sources_list = media_sources_list if has_media_sources else media_ids_list
         try:
             return await run_scan_three_phase(
                 mark_running=lambda: self.mark_job_running(job_id),
@@ -540,8 +543,8 @@ class ScanService:
                 persist=lambda detections: self.save_job_results(
                     job_id=job_id,
                     tenant_id=tenant_id,
-                    media_ids=media_ids,
-                    media_sources=media_sources,
+                    media_ids=media_ids_list,
+                    media_sources=media_sources_list if has_media_sources else None,
                     detections=detections,
                 ),
             )

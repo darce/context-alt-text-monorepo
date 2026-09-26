@@ -16,7 +16,7 @@
 
 ## Objective
 
-An operator on demo.altcontext.com can press Suggest on a cold system and see the Description Service start, warm, and describe, with ramp-up time shown separately from per-image processing time. The live identity defects from plugin 0.0.21 and the five IDCHIP-1 deferred mediums are fixed in the same wave.
+An operator on demo.altcontext.com can press Suggest on a cold system and see the Description Service start, warm, and describe, with ramp-up time shown separately from per-image processing time. The live identity defects from plugin 0.0.21 and the three IDCHIP-1 deferred mediums retained in this wave are fixed. D1 and D2 are excluded under the rebaseline decision and remain behind their recorded follow-up gates.
 
 ## Problem Statement
 
@@ -400,21 +400,25 @@ Proof:
 - Tests show an occluded high-confidence face loses to a clear face, and that a newly uploaded clearer face replaces the representative on recompute.
 - Pinned representatives are unchanged; test both an existing unpinned pose-bucket avatar versus a clearer newcomer and pose-free data. Keep unrelated assignment contracts intact.
 
-### Slice D1: Anchor picker and undo persistence (SPA)
+### Deferred slice D1: Anchor picker and undo persistence (SPA)
+
+Status: dropped from this wave pending operator re-check; it is not a GPUFLOW-1 dispatch or success gate.
 
 **Goal**: IDCHIP-1 picker and undo mediums are closed.
 
 Changes:
 
 - `IdentityClusterItem` anchor picker is disabled with a visible reason (FORM-09).
-- The undo banner can be dismissed while retryable.
+- Manual dismissal stays disabled while a retryable undo error is shown, then becomes available after reconciliation or a roster-check failure completes.
 - The undo token persists beyond 30 s for its server-side validity window.
 
 Proof:
 
-- vitest: disabled reason text and `aria-describedby`; banner dismiss; token survives a 30 s fake-timer advance.
+- vitest: disabled reason text and `aria-describedby`; dismissal disabled during retryable failure and available after reconciliation/check failure; token survives a 30 s fake-timer advance.
 
-### Slice D2: Merge cluster-count cap (PHP)
+### Deferred slice D2: Merge cluster-count cap (PHP)
+
+Status: dropped from this wave pending API-R-23 contract acceptance; it is not a GPUFLOW-1 dispatch or success gate.
 
 **Goal**: Enforce the authoritative API-R-23 bound at its specified boundary; merge admission and stored undo payload size are distinct contracts.
 
@@ -482,11 +486,9 @@ In every dependency cell, the prefix names the producer and the row names the re
 | `calibration` | C3 | `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md` | rebaseline: `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` | numeric calibration report review |
 | `svc-rep-settings` | C4 | `recognition/application/settings/clustering.py` | calibration: `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md` | `python3 -m pytest apps/prototype-description-service/recognition/tests/unit/test_recognition_settings_env.py -q -p no:cacheprovider` |
 | `svc-rep-quality` | C4 | `recognition/application/persistence/representative_selector.py`, `recognition/application/persistence/assignment_writer.py` | svc-rep-settings: `apps/prototype-description-service/recognition/application/settings/clustering.py` | `python3 -m pytest apps/prototype-description-service/recognition/tests/unit/test_representative_quality_gate.py apps/prototype-description-service/recognition/tests/unit/test_representative_selector.py apps/prototype-description-service/recognition/tests/unit/test_fir2_br_postmerge_contracts.py apps/prototype-description-service/recognition/tests/unit/test_fir_final_postmerge_runtime_contracts.py apps/prototype-description-service/recognition/tests/integration/test_assignment_writer.py -q -p no:cacheprovider` |
-| `spa-picker-undo` | D1 | `js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx`, `js/admin/pages/workbench/identity-clusters/MergeUndoBanner.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-picker-undo.json` (new test fixture) | spa-suggestion-cards: `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-candidate-preview.json` | npx vitest run js/admin/pages/workbench/identity-clusters |
-| `php-merge-cap` | D2 | `src/api/services/class-person-merge-service.php` | rebaseline: `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` | vendor/bin/phpunit --filter PersonMerge |
 | `ux-service` | A3/B2/C/D | `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.uxmap.json`, `apps/prototype-wp-alt-context/docs/ux-maps/gpu-operator-control.md` | spa-description-service: `apps/prototype-wp-alt-context/js/admin/pages/settings/__tests__/fixtures/gpuflow-service-states.json` | render_ux_maps.py --check |
 | `ux-suggest` | A3/B2/C/D | `apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.uxmap.json`, `apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.md` | spa-suggest-warming-timing: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json`; spa-bulk-timing: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-bulk-timing.json` | render_ux_maps.py --check |
-| `ux-identity` | A3/B2/C/D | `apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.uxmap.json`, `apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md` | spa-picker-undo: `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-picker-undo.json` | render_ux_maps.py --check |
+| `ux-identity` | A3/B2/C | `apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.uxmap.json`, `apps/prototype-wp-alt-context/docs/ux-maps/workbench-identity-chips.md` | spa-suggestion-cards: `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-candidate-preview.json` | render_ux_maps.py --check |
 | `ux-public` | A3/B2/C/D | `apps/prototype-wp-alt-context/docs/ux-maps/public-demo-describe.uxmap.json`, `apps/prototype-wp-alt-context/docs/ux-maps/public-demo-describe.md` | spa-suggest-warming-timing: `apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/fixtures/gpuflow-suggest-states.json` | render_ux_maps.py --check |
 
 The five C4 tests are recognition `unit/test_representative_quality_gate.py`, `unit/test_representative_selector.py`, `unit/test_fir2_br_postmerge_contracts.py`, `unit/test_fir_final_postmerge_runtime_contracts.py`, and `integration/test_assignment_writer.py`. Settings tests belong to svc-rep-settings; selector/writer contract tests belong to svc-rep-quality. The fixture producer owns edits to its tests; downstream lanes consume committed fixtures read-only and add their own component tests. Copy the exact test ownership and fixture paths above into the dispatch manifest without deferring path selection.
@@ -496,7 +498,7 @@ Each implementation lane has one luna max review twin (`lane_kind: review`) per 
 ### Collision map
 
 - Rebaseline solely owns `docs/assessments/GPUFLOW-1-rebaseline-20260914.md`; calibration consumes it read-only after integration and solely owns `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md`. These lanes never edit the same assessment file.
-- Naming-control → suggestion-cards → picker-undo carries `js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-naming-preview.json` then `js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-candidate-preview.json` (WordPress-relative); the table identifies each producer and read-only consumer. Shared-directory location alone creates no edge. The producer owns each fixture; downstream tests must not rewrite it concurrently.
+- Naming-control → suggestion-cards → ux-identity carries `js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-naming-preview.json` then `js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-candidate-preview.json` (WordPress-relative); D1 picker-undo is excluded from this wave. The table identifies each producer and read-only consumer. Shared-directory location alone creates no edge. The producer owns each fixture; downstream tests must not rewrite it concurrently.
 - Contracts solely owns the schema documents and `test_shared_schema_documents.py`, with embedded hand-written examples and no builder dependency. The multipart schema transfers read-only to svc-cold-gpu, sole owner of `test_shared_schema_multipart.py`; the run schema transfers read-only to svc-run-timing, sole owner of `test_describe_run_contract.py` (listed in its Required Tests). Both builder tests run in Wave 3 and again after their producers integrate.
 - Contract schemas → durable models → repositories → route/worker consumers carry concrete typed fields and persistence APIs. Response models and instrumentation are independent producers consumed by both route lanes. Only svc-cold-gpu owns describe.py; only svc-run-timing owns describe_run.py/worker. PHP consumes both final serialized fixtures; the SPA API client carries them to separate Suggest and bulk consumers.
 - Representative settings → selector/writer carries calibrated representative-only configuration; assignment quality is outside those lanes.
@@ -504,10 +506,10 @@ Each implementation lane has one luna max review twin (`lane_kind: review`) per 
 
 ### Merge Order
 
-1. Gate 0: preserve prior review evidence, complete luna max plan re-review and freeze, then operator promotion and rebaseline. The committed `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` persisting-defect assessment is a dispatch gate for all fixes; no implementation starts alongside unfinished rebaseline.
-2. Wave 1: contracts (schema/fixture-only, running only test_shared_schema_documents.py), naming-control, suggestion-rep, description-service UI, calibration; merge-cap only after the accepted API-R-23 brief.
+1. Gate 0: preserve prior review evidence, complete luna max plan re-review and freeze, then operator promotion and rebaseline. The committed `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` is a dispatch gate for all fixes; its BLOCKED runtime-evidence gate must be cleared before implementation starts.
+2. Wave 1 after Gate 0 clears: contracts (schema/fixture-only, running only test_shared_schema_documents.py), naming-control, suggestion-rep and description-service UI. Calibration remains held until the C3 numeric row is captured and an accepted decision is recorded.
 3. Wave 2: timing-models, response-models and instrumentation after contracts; suggestion-cards after both fixture producers; rep-settings after accepted calibration; ux-service after UI fixtures.
-4. Wave 3: timing-repository after models; demand after repository; cold-GPU and run-timing after all their table inputs, including their explicit read-only contracts schema edges; each runs its own real-builder contract test. Re-run both contract tests in aggregate verification after Wave 3 integration, as specified in Verification Strategy. Picker-undo follows suggestion fixtures; rep-quality follows settings; ux-identity follows picker fixtures.
+4. Wave 3: timing-repository after models; demand after repository; cold-GPU and run-timing after all their table inputs, including their explicit read-only contracts schema edges; each runs its own real-builder contract test. Re-run both contract tests in aggregate verification after Wave 3 integration, as specified in Verification Strategy. Rep-quality follows settings; ux-identity follows suggestion-card fixtures.
 5. Wave 4: PHP after both service fixture producers, then SPA describe client, then Suggest and bulk consumers, then ux-suggest/ux-public. These are explicit intra-wave sequences, not concurrent dispatch permission.
 6. Release gate R: all reviewed slices and tests integrated, operator smoke, local codex harmonization against the heuristics canon and enforced close check.
 
@@ -516,7 +518,7 @@ Waves describe earliest availability; the artifact DAG is authoritative. Integra
 ### Manifest
 
 ```bash
-make lane-manifest-init TASK=GPUFLOW-1 LANE_IDS='rebaseline contracts timing-models timing-repository response-models svc-demand svc-instrumentation svc-cold-gpu svc-run-timing php-breaker-passthrough spa-description-service spa-describe-client spa-suggest-warming-timing spa-bulk-timing spa-naming-control svc-suggestion-rep spa-suggestion-cards calibration svc-rep-settings svc-rep-quality spa-picker-undo php-merge-cap ux-service ux-suggest ux-identity ux-public' TASK_PLAN=docs/tasks/v0.5.0/GPUFLOW-1-description-service-flow-and-identity-fixes-task-plan.md
+make lane-manifest-init TASK=GPUFLOW-1 LANE_IDS='rebaseline contracts timing-models timing-repository response-models svc-demand svc-instrumentation svc-cold-gpu svc-run-timing php-breaker-passthrough spa-description-service spa-describe-client spa-suggest-warming-timing spa-bulk-timing spa-naming-control svc-suggestion-rep spa-suggestion-cards calibration svc-rep-settings svc-rep-quality ux-service ux-suggest ux-identity ux-public' TASK_PLAN=docs/tasks/v0.5.0/GPUFLOW-1-description-service-flow-and-identity-fixes-task-plan.md
 ```
 
 Only after freeze/re-review: materialize, re-pin `config/lane-orchestration/GPUFLOW-1.json` (materialize rewrites pins), verify row/model/effort match and validate the artifact dependencies with `lane_dag` before dispatch. The frozen table already pins every artifact path, producer, read-only consumer and exact Python test command; copy these into the manifest and reject missing or mismatched dependencies before dispatch. This plan-revision lane edits only this document, not the manifest or sibling reports.
@@ -549,6 +551,7 @@ Only after freeze/re-review: materialize, re-pin `config/lane-orchestration/GPUF
 
 - [ ] VM disk hygiene precondition met.
 - [ ] Routes and `/ready` return 200 on dev, staging and prod.
+- [ ] Resolve the rebaseline BLOCKED gate with a fresh dev-fir probe, authenticated protected-route results for every environment (including `/recognition/tenant/naming-agreement`) and recorded VM disk usage below 70%.
 - [ ] Image SHA/routes, persisting defects and the live suggestion row captured in `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` and committed for read-only downstream consumption; calibration retains sole ownership of `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md`.
 
 ### Checklist for Slice A1: Typed cold-GPU response and demand lease
@@ -601,14 +604,13 @@ Only after freeze/re-review: materialize, re-pin `config/lane-orchestration/GPUF
 - [ ] Accepted representative-only factors propagated; clearer newcomers replace unpinned pose-bucket and pose-free avatars; pins/diversity and assignment thresholds preserved.
 - [ ] Contract tests updated to the new ranking.
 
-### Checklist for Slice D1: Picker and undo
+### Deferred checklist for D1: Picker and undo
 
-- [ ] Anchor picker disabled with a reason.
-- [ ] Undo dismissible while retryable; token persists.
+- Deferred from this wave pending operator re-check; it does not block GPUFLOW-1 completion.
 
-### Checklist for Slice D2: Merge cap
+### Deferred checklist for D2: Merge cap
 
-- [ ] API-R-23 owner accepts numeric cap, bounded field, admission/undo scope and typed error before D2 dispatch; boundary tests follow that brief.
+- Deferred from this wave pending API-R-23 contract acceptance; it does not block GPUFLOW-1 completion.
 
 ### Checklist for Slice R: Release gate
 
@@ -633,4 +635,4 @@ Only after freeze/re-review: materialize, re-pin `config/lane-orchestration/GPUF
 - [ ] Every describe result shows ramp-up time separately from per-image processing time, and the operator smoke records cold and warm figures.
 - [ ] Settings shows "Description Service", the naming toggle is usable, and retention loads after describe failures.
 - [ ] The name listbox is closed on load, suggestion cards never duplicate an avatar, and representatives prefer clear faces.
-- [ ] All five IDCHIP-1 deferred mediums are closed.
+- [ ] The three IDCHIP-1 deferred mediums retained in GPUFLOW-1 are closed; D1 and D2 remain excluded pending their recorded follow-up gates.

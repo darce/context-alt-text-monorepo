@@ -1,5 +1,6 @@
 // Regenerate the shared matrix consumed by Vitest and both Python check paths.
 import fs from 'node:fs';
+import { URL } from 'node:url';
 
 const file = new URL('./declaration-mutations.json', import.meta.url);
 const fixture = JSON.parse(fs.readFileSync(file, 'utf8'));

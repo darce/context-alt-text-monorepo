@@ -135,7 +135,7 @@
             "type": ["number", "null"],
             "minimum": 0,
             "maximum": 1,
-            "description": "Service-exported composite quality in [0,1] from the representative row's quality_score (API-10 rename at export). The producer normalizes sharpness before weighting. Co-required with quality_components (both present or both omitted). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
+            "description": "Service-selected representative quality in [0,1] (legacy score by default; composite with normalized sharpness when the composite policy is enabled), exported from the representative row's quality_score (API-10 rename at export). Co-required with quality_components (both present or both omitted). Null when the snapshot omits it or the cluster has no representative. Consumers MUST NOT recompute it (rg-015)."
           },
           "quality_components": {
             "type": ["object", "null"],

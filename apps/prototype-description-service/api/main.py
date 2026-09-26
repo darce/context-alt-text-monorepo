@@ -55,7 +55,10 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
 from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
     initialize_clustering_circuit_breaker,
 )
-from recognition.interface_adapters.http.deps.portal_composition import install_portal_composition
+from recognition.interface_adapters.http.deps.portal_composition import (
+    install_portal_composition,
+    install_usage_admission_composition,
+)
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CORRELATION_ID_HEADER, CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
@@ -643,6 +646,9 @@ def create_app() -> FastAPI:
 
     initialize_session_dependency_circuit_breaker(app)
     initialize_clustering_circuit_breaker(app)
+
+    if os.environ.get("RECOGNITION_BETA_ADMISSION_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        install_usage_admission_composition(app)
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")

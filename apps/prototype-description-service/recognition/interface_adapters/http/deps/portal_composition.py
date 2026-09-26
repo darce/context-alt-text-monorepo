@@ -8,19 +8,27 @@ import os
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.application.services.usage_admission_service import (
+    AllowanceExceededError,
+    UsageAdmissionError,
+    UsageAdmissionService,
+    UsageAdmissionTimeoutError,
+)
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
+from recognition.interface_adapters.http.deps.auth import require_write_access
 from recognition.interface_adapters.http.deps.portal_auth import (
     PortalAuthSettings,
     build_portal_token_verifier,
 )
-from recognition.interface_adapters.http.deps.session import get_session
+from recognition.interface_adapters.http.deps.session import get_optional_session, get_session
 from recognition.interface_adapters.http.routers.billing_webhooks import get_billing_repository
 from shared.secrets import get_secret_provider
 
@@ -342,6 +350,91 @@ async def _resolve_billing_repository(
     return factory(session)
 
 
+async def get_usage_admission_service(
+    request: Request,
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> UsageAdmissionService | None:
+    """Resolve admission only when its independent app-level gate is installed."""
+    factory = getattr(request.app.state, "usage_admission_service_factory", None)
+    if not callable(factory):
+        return None
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    return factory(session)
+
+
+async def _request_tenant_id(request: Request) -> UUID:
+    content_type = request.headers.get("content-type", "").lower()
+    if content_type.startswith("multipart/form-data"):
+        # Cache the body so the bounded multipart parser in the route can replay it.
+        await request.body()
+        form = await request.form()
+        try:
+            request_part = form.get("request")
+            if not isinstance(request_part, str):
+                raise ValueError("request envelope is missing")
+            envelope = json.loads(request_part)
+        finally:
+            await form.close()
+    elif content_type.startswith("application/json"):
+        try:
+            envelope = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request envelope") from exc
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="request content-type must be JSON or multipart/form-data",
+        )
+
+    if not isinstance(envelope, Mapping):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request envelope")
+    try:
+        return UUID(str(envelope.get("tenant_id", "")))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
+
+
+async def admit_usage(
+    request: Request,
+    usage_admission_service: UsageAdmissionService | None = Depends(get_usage_admission_service),
+    auth=Depends(require_write_access),
+) -> None:
+    """Reserve one unit before an analysis submission reaches its route handler."""
+    if usage_admission_service is None:
+        return
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+    if not idempotency_key:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key header is required")
+    auth_tenant = getattr(auth, "tenant_claim", None)
+    if auth_tenant:
+        try:
+            tenant_id = UUID(str(auth_tenant))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid tenant claim") from exc
+    else:
+        tenant_id = await _request_tenant_id(request)
+    try:
+        await usage_admission_service.reserve(
+            tenant_id,
+            idempotency_key=idempotency_key,
+            job_id=None,
+            cost_units=1,
+        )
+    except AllowanceExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="usage allowance exhausted") from exc
+    except (UsageAdmissionError, UsageAdmissionTimeoutError) as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="usage admission unavailable") from exc
+
+
+def install_usage_admission_composition(app: FastAPI) -> None:
+    """Install the request-scoped usage service independently of portal routes."""
+    app.state.usage_admission_service_factory = UsageAdmissionService
+
+
 def install_portal_composition(
     app: FastAPI,
     *,
@@ -375,5 +468,8 @@ def install_portal_composition(
 __all__ = [
     "BillingRepositoryFactory",
     "PortalCompositionConfig",
+    "admit_usage",
+    "get_usage_admission_service",
     "install_portal_composition",
+    "install_usage_admission_composition",
 ]

@@ -60,13 +60,15 @@ def _run_shell(driver: str, **extra_env: str) -> subprocess.CompletedProcess[str
 
 
 def _source(repo: Path) -> str:
-    return f'source {shlex.quote(str(SCRIPT))}\nREPO_ROOT={shlex.quote(str(repo))}\n'
+    return f"source {shlex.quote(str(SCRIPT))}\nREPO_ROOT={shlex.quote(str(repo))}\n"
 
 
 def test_pin_survives_head_move_and_verify_uses_original_sha(tmp_path: Path) -> None:
     repo, commit_a, commit_b = _repo(tmp_path)
     _git(repo, "checkout", "--quiet", "--detach", commit_a)
-    driver = _source(repo) + f'''
+    driver = (
+        _source(repo)
+        + f"""
 pin_deploy_sha
 git -C "$REPO_ROOT" checkout --quiet --detach {shlex.quote(commit_b)}
 test "$DEPLOY_SHA" = {shlex.quote(commit_a)}
@@ -77,7 +79,8 @@ ACX_VERIFY_EXPECT_LOCAL=1
 ACX_VERIFY_ATTEMPTS=1
 ACX_VERIFY_SLEEP=0
 do_verify dev
-'''
+"""
+    )
     result = _run_shell(driver)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -102,10 +105,13 @@ def test_only_pin_deploy_sha_resolves_git_ref() -> None:
 
 def test_explicit_historical_ref_requires_checkout_at_that_sha(tmp_path: Path) -> None:
     repo, commit_a, commit_b = _repo(tmp_path)
-    driver = _source(repo) + f'''
+    driver = (
+        _source(repo)
+        + """
 pin_deploy_sha
 preflight_branch_synced prod
-'''
+"""
+    )
     _git(repo, "checkout", "--quiet", "--detach", commit_b)
     result = _run_shell(driver, GIT_REF=commit_a)
 
@@ -131,9 +137,7 @@ def test_explicit_historical_ancestor_passes_with_warning(tmp_path: Path) -> Non
 def test_default_ref_behind_origin_main_still_fails(tmp_path: Path) -> None:
     repo, commit_a, _ = _repo(tmp_path)
     _git(repo, "checkout", "--quiet", "--detach", commit_a)
-    result = _run_shell(
-        _source(repo) + "pin_deploy_sha\npreflight_branch_synced prod\n"
-    )
+    result = _run_shell(_source(repo) + "pin_deploy_sha\npreflight_branch_synced prod\n")
 
     assert result.returncode != 0
     assert "Pull/push first" in result.stderr

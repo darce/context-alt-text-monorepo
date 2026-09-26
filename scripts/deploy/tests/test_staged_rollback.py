@@ -25,7 +25,7 @@ def _run_rollback(
     records = tmp_path / "records.log"
     driver = tmp_path / "rollback-driver.sh"
     driver.write_text(
-        f'''\
+        f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORD_FILE={shlex.quote(str(records))}
@@ -60,7 +60,7 @@ remote_image_commit_sha() {{ record "remote_image_commit_sha $*"; printf '%s\\n'
 write_deployed_release_receipt() {{ record "write_deployed_release_receipt $*"; }}
 if restore_runtime_and_edge prod 1; then driver_rc=0; else driver_rc=$?; fi
 printf 'driver_rc=%s\\n' "$driver_rc"
-'''
+"""
     )
     result = subprocess.run(
         ["bash", str(driver)],
@@ -193,7 +193,7 @@ def test_cutover_health_image_only_keeps_image_identity_without_sha(tmp_path: Pa
         records = tmp_path / f"{name}.log"
         driver = tmp_path / f"{name}.sh"
         driver.write_text(
-            f'''\
+            f"""\
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 DEPLOY_SHA={shlex.quote(deploy_sha)}
@@ -204,7 +204,7 @@ record() {{ printf '%s\\n' "$*" >>"$RECORD_FILE"; }}
 remote_image_id_for_digest() {{ printf '%s\\n' {shlex.quote(image_id)}; }}
 run_with_deadline() {{ local remote_command="${{!#}}"; record "$remote_command"; }}
 probe_cutover_api_health prod {shlex.quote(digest)} {shlex.quote(third_arg)}
-'''
+"""
         )
         result = subprocess.run(
             ["bash", str(driver)],

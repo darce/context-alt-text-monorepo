@@ -226,7 +226,7 @@ def test_privileged_lock_open_passes_legacy_regression(tmp_path: Path) -> None:
     body = "\n".join(
         [
             "legacy_rc=0",
-            f"ssh -l \"$OCI_USER\" -- \"$OCI_HOST\" {shlex.quote(legacy_remote)} || legacy_rc=$?",
+            f'ssh -l "$OCI_USER" -- "$OCI_HOST" {shlex.quote(legacy_remote)} || legacy_rc=$?',
             f"printf '%s\\n' \"$legacy_rc\" >{legacy_rc}",
             f"with_shared_tag_lock shared printf 'new\\n' >{new_marker}",
         ]

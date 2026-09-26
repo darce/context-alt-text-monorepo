@@ -21,9 +21,7 @@ RUNBOOK = REPO_ROOT / "docs" / "runbooks" / "gpu-demo-env-flip.md"
 BACKEND_PROD_ENV = "/opt/acx-backend/prod/.env"
 BACKEND_PROD_SECRETS_ENV = "/opt/acx-backend/prod/secrets/.env"
 DEMO_SECRETS_ENV = "/opt/acx-backend/demo/secrets/.env"
-PREPARE_PRODUCER = (
-    "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh prepare-producer prod"
-)
+PREPARE_PRODUCER = "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh prepare-producer prod"
 GPU_LIFECYCLE = "scripts/deploy/recognition-service.sh gpu-lifecycle"
 FIRST_LIVE_CHECK = "GPU_SNAPSHOT_ENV=prod make check-gpu-snapshots-live"
 DEPLOY_PROD = "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod"
@@ -50,19 +48,11 @@ def _run_sync_preflight(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str
     log = tmp_path / "commands.log"
     log_path = shlex.quote(str(log))
     (bin_dir / "ssh").write_text(
-        "#!/usr/bin/env bash\n"
-        "set -u\n"
-        f"printf 'ssh %q ' \"$@\" >> {log_path}\n"
-        f"printf '\\n' >> {log_path}\n"
-        "exit 0\n",
+        f"#!/usr/bin/env bash\nset -u\nprintf 'ssh %q ' \"$@\" >> {log_path}\nprintf '\\n' >> {log_path}\nexit 0\n",
         encoding="utf-8",
     )
     (bin_dir / "scp").write_text(
-        "#!/usr/bin/env bash\n"
-        "set -u\n"
-        f"printf 'scp %q ' \"$@\" >> {log_path}\n"
-        f"printf '\\n' >> {log_path}\n"
-        "exit 0\n",
+        f"#!/usr/bin/env bash\nset -u\nprintf 'scp %q ' \"$@\" >> {log_path}\nprintf '\\n' >> {log_path}\nexit 0\n",
         encoding="utf-8",
     )
     for shim in (bin_dir / "ssh", bin_dir / "scp"):
@@ -121,20 +111,14 @@ def test_runbook_backup_edit_restore_use_backend_prod_env() -> None:
     """Textual runbook contract: executable backup/edit/restore blocks, not prose."""
     blocks = _bash_blocks(_runbook())
     backup = next(
-        block
-        for block in blocks
-        if "pre-gpu-flip" in block and "sudo cp -a" in block and "sudoedit" in block
+        block for block in blocks if "pre-gpu-flip" in block and "sudo cp -a" in block and "sudoedit" in block
     )
-    restore = next(
-        block
-        for block in blocks
-        if ".env.pre-gpu-flip" in block and "systemctl restart" in block
-    )
+    restore = next(block for block in blocks if ".env.pre-gpu-flip" in block and "systemctl restart" in block)
     for block in (backup, restore):
         assert BACKEND_PROD_ENV in block, block
-        assert f"{BACKEND_PROD_ENV}.pre-gpu-flip" in block or (
-            "/opt/acx-backend/prod/.env.pre-gpu-flip" in block
-        ), block
+        assert f"{BACKEND_PROD_ENV}.pre-gpu-flip" in block or ("/opt/acx-backend/prod/.env.pre-gpu-flip" in block), (
+            block
+        )
         assert BACKEND_PROD_SECRETS_ENV not in block
         assert DEMO_SECRETS_ENV in block
     assert "sudoedit" in backup
@@ -154,8 +138,7 @@ def test_green_ordering_block_runs_prepare_producer_before_first_live_check() ->
     first_check = block.index(FIRST_LIVE_CHECK)
     deploy = block.index(DEPLOY_PROD)
     assert lifecycle < prepare < first_check < deploy, (
-        f"order lifecycle={lifecycle} prepare={prepare} "
-        f"first_check={first_check} deploy={deploy}"
+        f"order lifecycle={lifecycle} prepare={prepare} first_check={first_check} deploy={deploy}"
     )
 
 
@@ -169,7 +152,7 @@ def test_green_ordering_preserves_repeated_aggregate_checks_before_demo() -> Non
 
 def test_green_ordering_does_not_fabricate_zeros_or_delete_registry() -> None:
     block = _deploy_block()
-    assert "queue_depth" not in block or "queue_depth\":0" not in block
+    assert "queue_depth" not in block or 'queue_depth":0' not in block
     assert not re.search(r"queue_depth\s*[:=]\s*0", block)
     assert "gpu-snapshot-deployments.conf" in block
     assert not re.search(r"\brm\b[^\n]*gpu-snapshot-deployments\.conf", block)

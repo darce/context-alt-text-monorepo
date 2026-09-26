@@ -29,6 +29,12 @@ def _run_remote_body(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker_log = tmp_path / "docker.log"
+    real_cat = subprocess.run(
+        ["bash", "-c", "command -v cat"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
     (bin_dir / "docker").write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
@@ -42,7 +48,7 @@ def _run_remote_body(
         "  printf 'partial replacement'\n"
         "  exit 23\n"
         "fi\n"
-        "exec /usr/bin/cat \"$@\"\n",
+        "exec \"$REAL_CAT\" \"$@\"\n",
         encoding="utf-8",
     )
     for shim in (bin_dir / "docker", bin_dir / "cat"):
@@ -50,6 +56,7 @@ def _run_remote_body(
 
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["REAL_CAT"] = real_cat
     env["DOCKER_LOG"] = str(docker_log)
     env["FAIL_STAGED_COPY"] = "1" if fail_staged_copy else "0"
     env["FAIL_CONTAINER_CHECKSUM"] = "1" if fail_container_checksum else "0"

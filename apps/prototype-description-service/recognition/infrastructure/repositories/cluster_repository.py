@@ -16,14 +16,15 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from sqlalchemy import Select, delete, exists, func, null, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm.attributes import instance_state
+from sqlalchemy.orm import raiseload, selectinload
+from sqlalchemy.orm.attributes import instance_state, set_committed_value
 from sqlalchemy.sql.elements import ColumnElement
 
 from db.models import IdentityCluster as ClusterModel
 from db.models import IdentityClusterRepresentative, IdentitySuggestion, MediaIdentity
 from db.models import IdentityMember as IdentityMemberModel
 from db.models import NameSuggestion as NameSuggestionModel
+from db.models.identity import ClusterMergeReceipt
 from db.settings import get_database_settings
 from db.tenant_context import enable_rls_bypass
 from recognition.application.suggestions.embedding_space import (
@@ -1662,12 +1663,17 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
                 selectinload(ClusterModel.centroid_data),
-                selectinload(ClusterModel.merge_receipts),
+                raiseload(ClusterModel.merge_receipts),
             )
             .order_by(ClusterModel.created_at)
         )
         clusters_result = await self._session.execute(clusters_stmt)
         cluster_models = list(clusters_result.scalars().all())
+        receipts_by_cluster = await self._load_current_unreverted_merge_receipts(
+            [model.id for model in cluster_models if model.id is not None],
+            tenant_uuid=tenant_uuid,
+        )
+        self._set_current_unreverted_merge_receipts(cluster_models, receipts_by_cluster)
 
         # Compute snapshot_version from max updated_at with microsecond precision so
         # curation replay can detect multiple mutations within the same second.
@@ -1769,7 +1775,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(ClusterModel.updated_at > since_updated_at)
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
-                selectinload(ClusterModel.merge_receipts),
+                raiseload(ClusterModel.merge_receipts),
             )
             .order_by(ClusterModel.updated_at.asc(), ClusterModel.created_at.asc())
         )
@@ -1777,6 +1783,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         cluster_models = list(clusters_result.scalars().all())
         if not cluster_models:
             return ([], [], snapshot_version)
+
+        receipts_by_cluster = await self._load_current_unreverted_merge_receipts(
+            [model.id for model in cluster_models if model.id is not None],
+            tenant_uuid=tenant_uuid,
+        )
+        self._set_current_unreverted_merge_receipts(cluster_models, receipts_by_cluster)
 
         cluster_ids = [model.id for model in cluster_models if model.id is not None]
         members_stmt = (
@@ -1852,20 +1864,79 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if tenant_uuid is None or not cluster_uuids:
             return []
 
+        receipts_by_cluster = await self._load_current_unreverted_merge_receipts(
+            cluster_uuids,
+            tenant_uuid=tenant_uuid,
+        )
+
         stmt = (
             select(ClusterModel)
             .where(ClusterModel.tenant_id == tenant_uuid)
             .where(ClusterModel.id.in_(cluster_uuids))
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
-                selectinload(ClusterModel.merge_receipts),
+                raiseload(ClusterModel.merge_receipts),
             )
             .order_by(ClusterModel.updated_at.asc(), ClusterModel.created_at.asc())
         )
         result = await self._session.execute(stmt)
         cluster_models = list(result.scalars().all())
+        self._set_current_unreverted_merge_receipts(cluster_models, receipts_by_cluster)
 
         return [self._to_domain(model) for model in cluster_models]
+
+    async def _load_current_unreverted_merge_receipts(
+        self,
+        cluster_ids: Sequence[uuid.UUID],
+        *,
+        tenant_uuid: uuid.UUID,
+    ) -> dict[uuid.UUID, ClusterMergeReceipt] | None:
+        """Fetch only each cluster's top unreverted merge receipt, regardless of expiry."""
+        if not cluster_ids:
+            return {}
+
+        ranked_receipts = (
+            select(
+                ClusterMergeReceipt.receipt_id.label("receipt_id"),
+                func.row_number()
+                .over(
+                    partition_by=ClusterMergeReceipt.survivor_cluster_id,
+                    order_by=(
+                        ClusterMergeReceipt.created_at.desc(),
+                        ClusterMergeReceipt.sequence_no.desc(),
+                    ),
+                )
+                .label("receipt_rank"),
+            )
+            .where(
+                ClusterMergeReceipt.tenant_id == tenant_uuid,
+                ClusterMergeReceipt.survivor_cluster_id.in_(cluster_ids),
+                ClusterMergeReceipt.reverted_at.is_(None),
+            )
+            .subquery()
+        )
+        receipt_stmt = (
+            select(ClusterMergeReceipt)
+            .join(ranked_receipts, ClusterMergeReceipt.receipt_id == ranked_receipts.c.receipt_id)
+            .where(ranked_receipts.c.receipt_rank == 1)
+        )
+        result = await self._session.execute(receipt_stmt)
+        receipt_rows = list(result.scalars().all())
+        if any(not isinstance(receipt, ClusterMergeReceipt) for receipt in receipt_rows):
+            return None
+        return {receipt.survivor_cluster_id: receipt for receipt in receipt_rows}
+
+    @staticmethod
+    def _set_current_unreverted_merge_receipts(
+        cluster_models: Sequence[ClusterModel],
+        receipts_by_cluster: dict[uuid.UUID, ClusterMergeReceipt] | None,
+    ) -> None:
+        if receipts_by_cluster is None:
+            return
+        for model in cluster_models:
+            if model.id is not None:
+                receipt = receipts_by_cluster.get(model.id)
+                set_committed_value(model, "merge_receipts", [receipt] if receipt is not None else [])
 
     async def get_snapshot_version(self, tenant_id: str) -> int:
         """Fetch the tenant snapshot version without loading full snapshot rows."""

@@ -5,6 +5,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import {
   cancelBulkDescribeRun,
   type DescribeRunResponse,
+  type DescribeRunSubmitResponse,
   resolveDescribeErrorDataField,
   submitBulkDescribeRun,
 } from '../api/describeApi';
@@ -26,7 +27,7 @@ import { SUGGEST_WARMING_HARD_CEILING_MS } from './useDescribeMedia';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 
 export interface UseBulkDescribeResult {
-  submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
+  submit: ReturnType<typeof useMutation<DescribeRunSubmitResponse, Error, number[]>>;
   cancel: ReturnType<typeof useMutation<DescribeRunResponse, Error, string>>;
   /** The active run id, or the most recently terminal run id for the summary. */
   runId: string | null;
@@ -41,6 +42,8 @@ export interface UseBulkDescribeResult {
    * a progress poll (BR-143 / [RLSE-04]).
    */
   errorMessage: string | null;
+  /** Selected attachments the server could not read before starting the run. */
+  unreadableMediaIds: number[];
 }
 
 const SUBMIT_ERROR_FALLBACK = __('Could not start the describe run. Please try again.', 'alt-context');
@@ -105,7 +108,7 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     emptyTenantSnapshot,
   );
   const { runId: storedRunId } = useActiveDescribeRun();
-  const submit = useMutation<DescribeRunResponse, Error, number[]>({
+  const submit = useMutation<DescribeRunSubmitResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
     onSuccess: persistRunContext,
   });
@@ -175,5 +178,13 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
       ? formatBulkDescribeErrorMessage(cancel.error, CANCEL_ERROR_FALLBACK)
       : null;
 
-  return { submit, cancel, runId, activeRunId, progress, errorMessage };
+  return {
+    submit,
+    cancel,
+    runId,
+    activeRunId,
+    progress,
+    errorMessage,
+    unreadableMediaIds: submit.data?.unreadable_media_ids ?? [],
+  };
 };

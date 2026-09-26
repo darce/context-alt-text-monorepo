@@ -41,7 +41,7 @@ const isSameFaceInMedia = (left: DetectedIdentity, right: DetectedIdentity): boo
 export const isUngroupedGroup = (group: ClusterGroup): boolean => group.key === UNGROUPED_GROUP_KEY;
 
 /**
- * Identity ids for the single inline-suggestion batch.
+ * Identity ids for the inline-suggestion query.
  *
  * Unlabeled grouped clusters contribute their anchor (`members[0]`); ungrouped
  * residue contributes every member. Grouping changes presentation only (rg-002).
@@ -49,7 +49,7 @@ export const isUngroupedGroup = (group: ClusterGroup): boolean => group.key === 
 export const unlabeledSuggestionBatchIds = (groups: readonly ClusterGroup[]): string[] => {
   const ids: string[] = [];
   for (const group of groups) {
-    if (group.label) {
+    if (group.label && !group.isAutoLabel) {
       continue;
     }
     if (isUngroupedGroup(group)) {

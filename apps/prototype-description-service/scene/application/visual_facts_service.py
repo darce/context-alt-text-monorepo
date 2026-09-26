@@ -162,6 +162,8 @@ def _phrase_boxes_from_json(payload) -> tuple[PhraseBox, ...]:
         try:
             x, y, w, h = (float(v) for v in item["box"])
             start, end = (int(v) for v in item["span"])
+            if start > end:
+                raise ValueError("span start must not exceed span end")
             boxes.append(
                 PhraseBox(
                     phrase=str(item["phrase"]),

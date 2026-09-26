@@ -12,6 +12,7 @@ inside a much larger person phrase box, so overlap ratios are meaningless.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,15 @@ class NormalizedBox:
     y: float
     width: float
     height: float
+
+    def __post_init__(self) -> None:
+        coordinates = (self.x, self.y, self.width, self.height)
+        if not all(math.isfinite(value) for value in coordinates):
+            raise ValueError("box coordinates must be finite")
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("box dimensions must be positive")
+        if self.x < 0 or self.y < 0 or self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("box must fit within normalized image bounds [0,1]")
 
     @property
     def center(self) -> tuple[float, float]:
@@ -91,7 +101,12 @@ def normalize_bbox(
     *, x: float, y: float, width: float, height: float, image_width: float, image_height: float
 ) -> NormalizedBox:
     """Convert a pixel bbox to [0,1] fractions of the original W×H (top-left origin)."""
-    if image_width <= 0 or image_height <= 0:
+    if (
+        not math.isfinite(image_width)
+        or not math.isfinite(image_height)
+        or image_width <= 0
+        or image_height <= 0
+    ):
         raise ValueError(f"image dimensions must be positive, got {image_width}x{image_height}")
     return NormalizedBox(
         x=x / image_width,

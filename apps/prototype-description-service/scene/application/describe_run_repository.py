@@ -89,7 +89,7 @@ class DescribeRunRepository:
         startup_id: str | None = None,
         startup_ms: float | None = None,
     ) -> bool:
-        """Snapshot the first worker readiness observation; warm waits are zero."""
+        """Snapshot first readiness and report whether this call recorded it."""
         validate_duration_ms(startup_ms)
         for token in (operation_id, startup_id):
             if token is not None and not 1 <= len(token) <= 128:
@@ -99,7 +99,8 @@ class DescribeRunRepository:
         run = await self._locked_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
-        if run.first_ready_at is None:
+        newly_recorded = run.first_ready_at is None
+        if newly_recorded:
             now = as_utc(now or datetime.now(UTC))
             if run.started_at is None:
                 raise ValueError("readiness requires worker pickup")
@@ -109,7 +110,7 @@ class DescribeRunRepository:
             run.ramp_up_ms = wait if startup_id is not None else 0
             run.startup_ms = startup_ms
             await self._session.flush()
-        return True
+        return newly_recorded
 
     async def record_item_processing(
         self, *, tenant_id: uuid.UUID, run_id: uuid.UUID, media_id: int, processing_ms: float
@@ -147,6 +148,10 @@ class DescribeRunRepository:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
+
+    async def get_run_for_update(self, *, tenant_id: uuid.UUID, run_id: uuid.UUID) -> DescribeRun | None:
+        """Read the run snapshot used to decide the first locked readiness write."""
+        return await self._locked_run(tenant_id=tenant_id, run_id=run_id)
 
     async def create_run(
         self,

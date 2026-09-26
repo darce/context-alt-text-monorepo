@@ -40,6 +40,7 @@ SEARCH_COMMANDS = {"rg", "grep", "egrep", "fgrep", "ag", "ack", "ripgrep"}
 # set means the agent is after prose or config, which the index cannot answer.
 CODE_SUFFIXES = {".py", ".php", ".ts", ".tsx", ".js", ".jsx"}
 CODE_RG_TYPES = {"py", "python", "php", "ts", "tsx", "js", "jsx", "typescript", "javascript"}
+_GIT_TIMEOUT_SECONDS = 1
 
 # A bare identifier: what `search_graph`/`get_code_snippet` answer directly.
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{2,}$")
@@ -66,30 +67,35 @@ comment archaeology), re-run it through Bash with the escape prefix:
 """
 
 
-def _repo_root(start: Path) -> Path:
+def _repo_context(start: Path) -> tuple[Path, Path]:
+    """Resolve the current and canonical roots with one bounded Git call."""
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir"],
             cwd=start,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_GIT_TIMEOUT_SECONDS,
             check=False,
         )
-        if out.returncode == 0 and out.stdout.strip():
-            return Path(out.stdout.strip())
+        roots = [Path(line) for line in out.stdout.splitlines() if line.strip()]
+        if out.returncode == 0 and len(roots) >= 2:
+            root, common_dir = roots[:2]
+            if not common_dir.is_absolute():
+                common_dir = root / common_dir
+            return root, common_dir.resolve().parent
     except (OSError, subprocess.SubprocessError):
         pass
-    return start
+    return start, start
 
 
-def _project_name(root: Path) -> str:
+def _project_name(root: Path, canonical_root: Path | None = None) -> str:
     """Codemap derives a project slug from the absolute root path.
 
     A linked worktree is almost never indexed on its own, so name the canonical
     root's project instead -- that is the graph the agent can actually query.
     """
-    return str(_canonical_root(root)).lstrip("/").replace("/", "-")
+    return str(canonical_root or _canonical_root(root)).lstrip("/").replace("/", "-")
 
 
 def _canonical_root(root: Path) -> Path:
@@ -100,7 +106,7 @@ def _canonical_root(root: Path) -> Path:
             cwd=root,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_GIT_TIMEOUT_SECONDS,
             check=False,
         )
         if out.returncode == 0 and out.stdout.strip():
@@ -166,7 +172,7 @@ def _filter_excludes_code(tool_input: dict) -> bool:
     """True when a glob/type filter aims the search away from indexed code."""
     glob = tool_input.get("glob") or ""
     if glob:
-        positive = [part for part in re.split(r"[,\s]+", str(glob))
+        positive = [part for part in _split_glob_filters(str(glob))
                     if part and not part.startswith("!")]
         if positive:
             expanded: list[str] = []
@@ -188,6 +194,27 @@ def _filter_excludes_code(tool_input: dict) -> bool:
     return False
 
 
+def _split_glob_filters(glob: str) -> list[str]:
+    """Split independent glob filters without splitting brace alternatives."""
+    filters: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in glob:
+        if ch == "{":
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+        if depth == 0 and (ch == "," or ch.isspace()):
+            if buf:
+                filters.append("".join(buf))
+                buf = []
+            continue
+        buf.append(ch)
+    if buf:
+        filters.append("".join(buf))
+    return filters
+
+
 def _expand_glob_braces(pattern: str) -> list[str]:
     """Expand the simple comma-brace forms accepted by ripgrep's glob flag."""
     opening = pattern.find("{")
@@ -207,7 +234,7 @@ def _expand_glob_braces(pattern: str) -> list[str]:
     return expanded
 
 
-def _decide_grep(tool_input: dict, root: Path) -> tuple[str, str] | None:
+def _decide_grep(tool_input: dict, root: Path, current_dir: Path) -> tuple[str, str] | None:
     pattern = tool_input.get("pattern")
     if not isinstance(pattern, str):
         return None
@@ -218,12 +245,13 @@ def _decide_grep(tool_input: dict, root: Path) -> tuple[str, str] | None:
         return None
     path = tool_input.get("path")
     if path:
-        indexed = _is_indexed_path(str(path), root)
+        indexed = _is_indexed_path(str(path), root, current_dir)
         if indexed is not True:
             return None
         scope = str(path)
     else:
-        # Repo-wide sweep: it covers the indexed roots by definition.
+        if _is_indexed_path(".", root, current_dir) is not True:
+            return None
         scope = "."
     return ident, scope
 
@@ -248,6 +276,11 @@ def _split_segments(command: str) -> list[tuple[bool, str]]:
             quote = ch
             buf.append(ch)
             i += 1
+            continue
+        previous = command[i - 1] if i else ""
+        if ch == "#" and (not previous or previous.isspace() or previous in ";|&()"):
+            while i < len(command) and command[i] != "\n":
+                i += 1
             continue
         two = command[i : i + 2]
         if two in ("&&", "||"):
@@ -283,11 +316,11 @@ def _change_directory(argv: list[str], current_dir: Path | None) -> Path | None:
     return target if target.is_dir() else None
 
 
-def _decide_bash(tool_input: dict, root: Path) -> tuple[str, str] | None:
+def _decide_bash(tool_input: dict, root: Path, working_dir: Path) -> tuple[str, str] | None:
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
         return None
-    current_dir: Path | None = root.resolve()
+    current_dir: Path | None = working_dir.resolve()
     for piped, segment in _split_segments(command):
         if piped:
             # Filtering another command's output is not a codebase search.
@@ -351,7 +384,7 @@ def _decide_bash(tool_input: dict, root: Path) -> tuple[str, str] | None:
 
 _VALUE_FLAGS = {"-e", "--regexp", "-t", "--type", "-g", "--glob", "--include",
                 "--exclude", "-m", "--max-count", "-A", "-B", "-C", "--context",
-                "-f", "--file", "--type-not", "-T"}
+                "-f", "--file", "--type-not", "-T", "--replace"}
 
 
 def _operands(args: list[str]) -> list[str]:
@@ -395,7 +428,7 @@ def _flag_values(args: list[str], names: tuple[str, ...]) -> list[str]:
     return values
 
 
-def decide(payload: dict, root: Path) -> str | None:
+def decide(payload: dict, root: Path, canonical_root: Path | None = None) -> str | None:
     """Return a block reason, or None to allow."""
     if os.environ.get("CODEMAP_FIRST_DISABLE") == "1":
         return None
@@ -405,11 +438,13 @@ def decide(payload: dict, root: Path) -> str | None:
     tool_input = payload.get("tool_input") or {}
     if not isinstance(tool_input, dict):
         return None
+    cwd = payload.get("cwd")
+    working_dir = Path(cwd).resolve() if isinstance(cwd, str) and cwd else root.resolve()
     if tool_name == "Grep":
-        hit = _decide_grep(tool_input, root)
+        hit = _decide_grep(tool_input, root, working_dir)
         pattern = str(tool_input.get("pattern", ""))
     elif tool_name == "Bash":
-        hit = _decide_bash(tool_input, root)
+        hit = _decide_bash(tool_input, root, working_dir)
         pattern = ""
     else:
         return None
@@ -417,7 +452,7 @@ def decide(payload: dict, root: Path) -> str | None:
         return None
     ident, scope = hit
     return ADVICE.format(
-        project=_project_name(root),
+        project=_project_name(root, canonical_root),
         ident=ident,
         pattern=pattern or ident,
         scope=scope,
@@ -436,8 +471,9 @@ def main() -> int:
     except json.JSONDecodeError:
         return 0
     try:
-        cwd = Path(payload.get("cwd") or os.getcwd())
-        reason = decide(payload, _repo_root(cwd))
+        cwd = Path(payload.get("cwd") or os.getcwd()).resolve()
+        root, canonical_root = _repo_context(cwd)
+        reason = decide(payload, root, canonical_root)
     except Exception as exc:  # noqa: BLE001 - fail open, but say so
         print(f"guard-codemap-first: internal error, allowing ({exc})", file=sys.stderr)
         return 0

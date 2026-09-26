@@ -81,6 +81,8 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
   };
 };
 
+export const IDENTITY_SUGGESTIONS_MAX_BATCH_SIZE = 100;
+
 export const fetchIdentitiesSuggestions = async (
   identityIds: string[],
   topK = 1,

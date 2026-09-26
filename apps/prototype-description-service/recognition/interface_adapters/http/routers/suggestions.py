@@ -527,6 +527,8 @@ async def accept_merge_suggestion(
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+    if cluster_a.tenant_id != request.tenant_id or cluster_b.tenant_id != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
     source_cluster_id, target_cluster_id, target_label = _resolve_merge_pair(
         cluster_a,

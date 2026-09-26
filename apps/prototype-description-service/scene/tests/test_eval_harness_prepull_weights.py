@@ -391,9 +391,7 @@ def test_cli_dry_run_prints_plan_and_skip(
     assert "free_gb=" in out
 
 
-def test_cli_plan_prints_printable_local_path_text(
-    capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
+def test_cli_plan_prints_printable_local_path_text(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     """VLM6-RV18-13: plan stdout must encode PEP 383 path surrogates."""
     local_dir = str(tmp_path / "models-\udce9")
     job = DownloadJob(

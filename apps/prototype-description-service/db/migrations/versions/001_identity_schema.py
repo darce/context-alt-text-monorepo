@@ -74,6 +74,11 @@ TENANT_TABLES = [
 # UniqueConstraint._pending_colargs.
 HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
+        "describe_operations",
+        "uq_describe_operations_retention_target",
+        ("tenant_id", "operation_id", "retain_until"),
+    ),
+    (
         "image_description_runs",
         "uq_image_description_runs_idempotency_key",
         ("tenant_id", "idempotency_key"),
@@ -82,6 +87,19 @@ HEAL_UNIQUE_CONSTRAINTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "cluster_merge_receipts",
         "uq_cluster_merge_receipts_survivor_seq",
         ("survivor_cluster_id", "sequence_no"),
+    ),
+)
+
+HEAL_FOREIGN_KEY_CONSTRAINTS: tuple[
+    tuple[str, str, tuple[str, ...], str, tuple[str, ...], str | None], ...
+] = (
+    (
+        "describe_demand_leases",
+        "fk_describe_demand_leases_operation_retention",
+        ("tenant_id", "operation_id", "retain_until"),
+        "describe_operations",
+        ("tenant_id", "operation_id", "retain_until"),
+        "CASCADE",
     ),
 )
 
@@ -336,6 +354,29 @@ def _ensure_unique_constraint(op, table_name: str, constraint) -> bool:
     return True
 
 
+def _ensure_foreign_key_constraint(op, table_name: str, constraint) -> bool:
+    """Add an explicitly opted-in composite FK to an existing table."""
+    details = next(
+        (entry for entry in HEAL_FOREIGN_KEY_CONSTRAINTS if entry[0] == table_name and entry[1] == constraint.name),
+        None,
+    )
+    if details is None:
+        return False
+    _, name, local_columns, target_table, target_columns, ondelete = details
+    bind = op.get_bind()
+    dialect = str(getattr(getattr(bind, "dialect", None), "name", "") or "")
+    if dialect and dialect != "postgresql":
+        return False
+    local = ", ".join(f'"{column}"' for column in local_columns)
+    remote = ", ".join(f'"{column}"' for column in target_columns)
+    delete_clause = f" ON DELETE {ondelete}" if ondelete else ""
+    op.execute(
+        f'ALTER TABLE "{table_name}" ADD CONSTRAINT "{name}" '
+        f'FOREIGN KEY ({local}) REFERENCES "{target_table}" ({remote}){delete_clause}'
+    )
+    return True
+
+
 def _is_unique_violation(exc: BaseException) -> bool:
     """True when *exc* (or its ``orig``) is PostgreSQL SQLSTATE 23505."""
     candidates: list[BaseException] = [exc]
@@ -379,8 +420,9 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: 
     recreate or apply the constraints rather than running with a half-healed
     schema (FL30-B-01).
 
-    ``heal_constraints`` opts named UNIQUE and CHECK constraints out of that refusal: they
-    are added additively after validating live rows. Opt-in by
+    ``heal_constraints`` opts named UNIQUE, CHECK and selected foreign key constraints
+    out of that refusal: they are added additively after validating live rows where
+    validation is needed. Opt-in by
     name so adding a constraint to an already-provisioned table is a deliberate
     declaration at the call site, not a blanket relaxation of the guard.
     """
@@ -405,6 +447,12 @@ def _ensure_table_constraints(op, table_name: str, *elements, heal_constraints: 
             name in healable
             and isinstance(element, sa.UniqueConstraint)
             and _ensure_unique_constraint(op, table_name, element)
+        ):
+            continue
+        if (
+            name in healable
+            and isinstance(element, sa.ForeignKeyConstraint)
+            and _ensure_foreign_key_constraint(op, table_name, element)
         ):
             continue
         if (
@@ -453,6 +501,40 @@ def _ensure_index(op, index_name: str, table_name: str, columns, **kw) -> None:
             f"{index_name!r} exists with relkind {relkind!r} (expected an index); "
             "drop the impostor relation before healing (operator action)"
         )
+
+
+def _describe_demand_lease_parent_retention_fk() -> sa.ForeignKeyConstraint:
+    return sa.ForeignKeyConstraint(
+        ["tenant_id", "operation_id", "retain_until"],
+        [
+            "describe_operations.tenant_id",
+            "describe_operations.operation_id",
+            "describe_operations.retain_until",
+        ],
+        ondelete="CASCADE",
+        name="fk_describe_demand_leases_operation_retention",
+    )
+
+
+def _repair_describe_demand_lease_retention(op) -> None:
+    """Cap legacy lease deadlines before adding the parent-retention FK."""
+    if _relkind(op, "describe_demand_leases") not in ("r", "p"):
+        return
+    required = {"tenant_id", "operation_id", "expires_at", "retain_until"}
+    if not required.issubset(_existing_columns(op, "describe_demand_leases")):
+        return
+    op.execute(
+        sa.text(
+            "UPDATE describe_demand_leases AS lease "
+            "SET expires_at = LEAST(lease.expires_at, operation.retain_until), "
+            "retain_until = operation.retain_until "
+            "FROM describe_operations AS operation "
+            "WHERE lease.tenant_id = operation.tenant_id "
+            "AND lease.operation_id = operation.operation_id "
+            "AND (lease.retain_until > operation.retain_until "
+            "OR lease.expires_at > operation.retain_until)"
+        )
+    )
 
 
 def ensure_tables(op) -> None:
@@ -2024,6 +2106,12 @@ def ensure_tables(op) -> None:
         sa.CheckConstraint("completed_at >= accepted_at", name="ck_describe_operation_completed"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["startup_id"], ["describe_startups.startup_id"]),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "operation_id",
+            "retain_until",
+            name="uq_describe_operations_retention_target",
+        ),
         heal_constraints=(
             "ck_describe_operation_startup_association",
             "ck_describe_operation_queue_ms",
@@ -2035,9 +2123,11 @@ def ensure_tables(op) -> None:
             "ck_describe_operation_expiry",
             "ck_describe_operation_ready",
             "ck_describe_operation_completed",
+            "uq_describe_operations_retention_target",
         ),
     )
     _ensure_index(op, "idx_describe_operations_retention", "describe_operations", ["retain_until"])
+    _repair_describe_demand_lease_retention(op)
     _ensure_table(
         op,
         "describe_demand_leases",
@@ -2050,14 +2140,11 @@ def ensure_tables(op) -> None:
             "state IN ('active', 'completed', 'expired', 'rejected')", name="ck_describe_demand_lease_state"
         ),
         sa.CheckConstraint("expires_at <= retain_until", name="ck_describe_demand_lease_expiry"),
-        sa.ForeignKeyConstraint(
-            ["tenant_id", "operation_id"],
-            ["describe_operations.tenant_id", "describe_operations.operation_id"],
-            ondelete="CASCADE",
-        ),
+        _describe_demand_lease_parent_retention_fk(),
         heal_constraints=(
             "ck_describe_demand_lease_state",
             "ck_describe_demand_lease_expiry",
+            "fk_describe_demand_leases_operation_retention",
         ),
     )
     _ensure_index(op, "idx_describe_demand_leases_retention", "describe_demand_leases", ["retain_until"])

@@ -16,11 +16,25 @@ export interface RosterEntryInstance {
   similarity_threshold?: number | null;
 }
 
+export interface RosterEntryQualityComponents {
+  confidence: number | null;
+  bbox_area: number | null;
+  sharpness: number | null;
+  occlusion_severity: number | null;
+}
+
+export interface RosterEntryRepresentativeIdentity extends RosterEntryInstance {
+  representative_quality?: number | null;
+  quality_components?: RosterEntryQualityComponents | null;
+}
+
 export interface RosterEntryCluster {
   cluster_id: string;
   identity_count: number;
-  representative_identity: RosterEntryInstance | null;
+  representative_identity: RosterEntryRepresentativeIdentity | null;
   instances: RosterEntryInstance[];
+  representative_media_id?: number | null;
+  undoable_merge_receipt_id?: string | null;
 }
 
 export interface RosterEntry {

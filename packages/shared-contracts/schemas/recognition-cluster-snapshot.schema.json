@@ -43,6 +43,36 @@
           "representative_quality": ["quality_components"],
           "quality_components": ["representative_quality"]
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "representative_quality": { "type": "number" }
+              },
+              "required": ["representative_quality"]
+            },
+            "then": {
+              "properties": {
+                "quality_components": { "type": "object" }
+              },
+              "required": ["quality_components"]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "quality_components": { "type": "object" }
+              },
+              "required": ["quality_components"]
+            },
+            "then": {
+              "properties": {
+                "representative_quality": { "type": "number" }
+              },
+              "required": ["representative_quality"]
+            }
+          }
+        ],
         "properties": {
           "cluster_uuid": {
             "type": "string",

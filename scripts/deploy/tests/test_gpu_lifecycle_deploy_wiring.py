@@ -599,7 +599,7 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
         index for index, call in enumerate(calls.splitlines()) if call == "systemctl <start> <acx-gpu-reap.service>"
     ]
     assert len(stop_fences) == len(lock_fences) == len(reapers) == 2
-    assert all(stop < lock < reap for stop, lock, reap in zip(stop_fences, lock_fences, reapers))
+    assert all(stop < lock < reap for stop, lock, reap in zip(stop_fences, lock_fences, reapers, strict=True))
     assert "running fail-safe STOP path" in result.stderr
     for ssh_call in (line for line in calls.splitlines() if line.startswith("ssh")):
         assert "<-l> <ci-user> <--> <backend.test>" in ssh_call
@@ -710,8 +710,7 @@ def test_effective_reaper_must_retain_ready_url_argument(tmp_path: Path) -> None
         ready_url="http://10.0.1.36:8000/health",
         dry_run=False,
         reap_exec_start=(
-            "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
-            "--max-lease-seconds ${MAX_LEASE_SECONDS}"
+            "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --max-lease-seconds ${MAX_LEASE_SECONDS}"
         ),
     )
 

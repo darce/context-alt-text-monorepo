@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 REPO_ROOT = SCRIPT.parents[2]
 

@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from scripts.deploy.tests.test_gpu_lifecycle_contract_ownership import _api_runtime_ids
 from scripts.deploy.tests.test_gpu_lifecycle_deploy_wiring import _run_lifecycle
 
@@ -17,10 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 CONTRACT = REPO_ROOT / "docs/workbay/contracts/gpu-lifecycle.md"
-FAKE_GPU_INSTANCE_ID = (
-    "ocid1.instance.oc1.phx."
-    "anyhqljtestfakegpu000000000000000000000000000000000000000000"
-)
+FAKE_GPU_INSTANCE_ID = "ocid1.instance.oc1.phx.anyhqljtestfakegpu000000000000000000000000000000000000000000"
 
 
 def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -92,7 +88,8 @@ def test_start_unit_always_executes_a_readiness_probe() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     start_unit = re.search(
         r"sudo tee [^\n]*/acx-gpu-start\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script, flags=re.DOTALL,
+        script,
+        flags=re.DOTALL,
     ).group(1)
 
     assert "--ready-url" in start_unit
@@ -103,7 +100,8 @@ def test_reap_unit_always_executes_a_readiness_probe() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     reap_unit = re.search(
         r"sudo tee [^\n]*/acx-gpu-reap\.service.*?<<UNIT\n(.*?)\nUNIT",
-        script, flags=re.DOTALL,
+        script,
+        flags=re.DOTALL,
     ).group(1)
 
     assert "--ready-url" in reap_unit
@@ -169,9 +167,7 @@ def test_intent_path_is_fenced_before_release_mutation_and_on_failure() -> None:
     transaction = script[script.index('run_with_deadline "systemd unit installation"') :]
 
     assert "sudo systemctl disable --now acx-gpu-intent.path" in script
-    assert transaction.index("fence_gpu_intent_path") < transaction.index(
-        "previous_release=\\$(python3 -c"
-    )
+    assert transaction.index("fence_gpu_intent_path") < transaction.index("previous_release=\\$(python3 -c")
     assert transaction.index("fence_gpu_intent_path") < transaction.index("activate_gpu_lifecycle_timers \\")
     cleanup = script[script.index("cleanup_gpu_lifecycle_transaction()") : script.index("# Hermetic verification")]
     assert cleanup.index("fence_gpu_intent_path") < cleanup.index("fence_gpu_lifecycle_start")
@@ -342,9 +338,7 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     assert result.returncode != 0, result.stdout + result.stderr
     calls = transport_log.read_text(encoding="utf-8") if transport_log.exists() else ""
     assert "scp " in calls, "the copy leg was never attempted"
-    assert "/opt/acx-gpu/current" not in calls, (
-        "the live release was switched despite a failed module copy"
-    )
+    assert "/opt/acx-gpu/current" not in calls, "the live release was switched despite a failed module copy"
 
 
 def test_installer_provisions_every_supplementary_group_it_references(tmp_path: Path) -> None:
@@ -372,9 +366,7 @@ def test_installer_provisions_every_supplementary_group_it_references(tmp_path: 
     group_db = (tmp_path / "fake-etc-group").read_text(encoding="utf-8")
     _, image_gid = _api_runtime_ids()
     groups_by_name = {
-        fields[0]: fields[2]
-        for line in group_db.splitlines()
-        if (fields := line.split(":")) and len(fields) >= 3
+        fields[0]: fields[2] for line in group_db.splitlines() if (fields := line.split(":")) and len(fields) >= 3
     }
     assert image_gid in groups_by_name.values(), (
         "the executed installer must leave the image-pinned GID resolvable in the fake NSS database"

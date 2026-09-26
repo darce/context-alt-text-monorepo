@@ -8,7 +8,6 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "apps/prototype-description-service/docker-compose.env.yml"
 DEPLOY_ROOT = ROOT / "scripts/deploy"
@@ -80,15 +79,11 @@ def _is_nested(path: str, parent: str) -> bool:
 
 def _host_creation_sources(destination: str) -> list[Path]:
     """Find deploy/systemd commands that explicitly create a host directory."""
-    destination_pattern = re.compile(
-        rf"(?<![A-Za-z0-9_.-]){re.escape(destination)}(?![A-Za-z0-9_.-])"
-    )
+    destination_pattern = re.compile(rf"(?<![A-Za-z0-9_.-]){re.escape(destination)}(?![A-Za-z0-9_.-])")
     sources: list[Path] = []
-    candidates = [
-        path
-        for path in DEPLOY_ROOT.rglob("*")
-        if path.is_file() and "tests" not in path.parts
-    ] + [path for path in SYSTEMD_ROOT.rglob("*") if path.is_file()]
+    candidates = [path for path in DEPLOY_ROOT.rglob("*") if path.is_file() and "tests" not in path.parts] + [
+        path for path in SYSTEMD_ROOT.rglob("*") if path.is_file()
+    ]
     for path in candidates:
         for line in path.read_text(encoding="utf-8").splitlines():
             if not destination_pattern.search(line):
@@ -119,10 +114,9 @@ def test_api_and_worker_probe_path_is_a_read_only_bind_destination() -> None:
 
         probe_path = environment[_PROBE_ENVIRONMENT_KEY]
         assert probe_path == EXPECTED_PROBE_PATH
-        assert any(
-            mount.is_bind and mount.read_only and mount.destination == probe_path
-            for mount in mounts
-        ), f"{service_name} probe path must be the destination of a read-only bind mount"
+        assert any(mount.is_bind and mount.read_only and mount.destination == probe_path for mount in mounts), (
+            f"{service_name} probe path must be the destination of a read-only bind mount"
+        )
         assert any(
             mount.source == "${ACX_PGDATA_PATH}"
             and mount.is_bind
@@ -139,11 +133,7 @@ def test_read_only_mounts_do_not_hide_uncreated_nested_mountpoints() -> None:
         mounts = [mount for mount in _service_mounts(service) if mount.is_bind]
         read_only_destinations = [mount.destination for mount in mounts if mount.read_only]
         for mount in mounts:
-            parents = [
-                parent
-                for parent in read_only_destinations
-                if _is_nested(mount.destination, parent)
-            ]
+            parents = [parent for parent in read_only_destinations if _is_nested(mount.destination, parent)]
             if not parents:
                 continue
             creators = _host_creation_sources(mount.destination)

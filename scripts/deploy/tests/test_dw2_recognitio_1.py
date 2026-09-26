@@ -98,7 +98,9 @@ def test_render_unit_enables_vault_bootstrap_only_for_oci_vault() -> None:
     assert "\n# ExecStartPre=/opt/acx-backend/dev/fetch-vault-bootstrap.sh\n" in env_backend
 
 
-def _run_unit_install(tmp_path: Path, backend: str, hook_present: bool) -> tuple[subprocess.CompletedProcess[str], str, Path]:
+def _run_unit_install(
+    tmp_path: Path, backend: str, hook_present: bool
+) -> tuple[subprocess.CompletedProcess[str], str, Path]:
     remote_commands = tmp_path / "ssh.log"
     installed_unit = tmp_path / "installed.service"
     command = f'''
@@ -163,7 +165,7 @@ def _sticky_shell(tmp_path: Path, command: str) -> str:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
     sudo.chmod(0o755)
     return f'''
 source "{SCRIPT}"

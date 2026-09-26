@@ -83,11 +83,11 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     GpuLifecycleState,
     LastTransitionReason,
     hold_ready_until_consecutive_failures,
-    instance_state_is_explicitly_stopped,
     instance_state_is_unknown,
     read_previous_gpu_state,
     read_ready_probe_failure_count,
     resolve_gpu_state_path,
+    state_for_instance,
     state_for_instances,
     write_gpu_state_snapshot,
     write_ready_probe_failure_count,
@@ -2981,7 +2981,7 @@ def _is_operator_stop_with_work(
         return False
     if not instances:
         return False
-    return all(instance_state_is_explicitly_stopped(instance.state) for instance in instances)
+    return all(state_for_instance(instance.state) is GpuLifecycleState.STOPPED for instance in instances)
 
 
 def _operator_stop_with_work_fallbacks(
@@ -3329,19 +3329,20 @@ def _run_start_cycle(
         effective_intent=effective_intent,
         errors=errors,
     )
-    errors.extend(
-        _start_blocking_errors(
-            controller=controller,
-            instances=instances,
-            decision=decision,
-            effective_intent=effective_intent,
-        )
-    )
     operator_stop_with_work = _is_operator_stop_with_work(
         effective_intent=effective_intent,
         load=decision.load,
         instances=instances,
     )
+    if not operator_stop_with_work:
+        errors.extend(
+            _start_blocking_errors(
+                controller=controller,
+                instances=instances,
+                decision=decision,
+                effective_intent=effective_intent,
+            )
+        )
     pre_actuation = _start_pre_actuation(
         decision=decision,
         errors=errors,

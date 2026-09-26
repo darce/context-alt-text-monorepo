@@ -280,7 +280,17 @@
             "string",
             "null"
           ],
-          "description": "Machine-readable readiness reason; null when usable (or when a non-GPU profile has no GPU endpoint reason). Common values include profile_unavailable, endpoint_unconfigured, endpoint_invalid_url, endpoint_not_private, and endpoint_resolution_pending."
+          "enum": [
+            null,
+            "profile_unavailable",
+            "vlm_dependencies_missing",
+            "endpoint_unconfigured",
+            "endpoint_invalid_url",
+            "endpoint_not_allowlisted",
+            "endpoint_not_private",
+            "endpoint_resolution_pending"
+          ],
+          "description": "Machine-readable readiness reason; null when usable (or when a non-GPU profile has no GPU endpoint reason)."
         },
         "model_id": {
           "type": [
@@ -296,7 +306,77 @@
           ],
           "description": "Model version the active adapter stamps on responses; null when the profile spec has no model_id."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "fresh": {
+                "const": true
+              }
+            },
+            "required": [
+              "fresh"
+            ]
+          },
+          "then": {
+            "properties": {
+              "endpoint_private": {
+                "type": "boolean"
+              },
+              "checked_at": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "gpu"
+              },
+              "usable": {
+                "const": true
+              }
+            },
+            "required": [
+              "kind",
+              "usable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "fresh": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "gpu"
+              },
+              "usable": {
+                "const": false
+              }
+            },
+            "required": [
+              "kind",
+              "usable"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "examples": [

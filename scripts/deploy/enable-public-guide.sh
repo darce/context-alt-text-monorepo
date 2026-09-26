@@ -8,8 +8,9 @@
 #
 # Default WP runner is the compose `wpcli` tools service (same seam as
 # infra/oci/demo/bootstrap-wp.sh) when a compose file is present. Host `wp`
-# is for LocalWP via ACX_WP_RUNNER=host. Does not enable acx_public_demo_enabled
-# (`/acx/v1/public/demo/describe` stays off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1).
+# is for LocalWP via ACX_WP_RUNNER=host and only accepts local SITE_URLs. Does
+# not enable acx_public_demo_enabled (`/acx/v1/public/demo/describe` stays off
+# unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1).
 set -euo pipefail
 export LC_ALL=C
 export LANG=C
@@ -35,6 +36,7 @@ Environment:
   ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1  Allow acx_public_demo_enabled to stay on
   ACX_WP_RUNNER=compose|host       Force the wp runner (default: compose when a
                                    compose file is present, else host wp)
+                                   Host wp requires a loopback or .test SITE_URL
   DEMO_DIR                         Demo stack dir (default /opt/acx-backend/demo)
   COMPOSE_FILE                     Compose file name or path (default docker-compose.demo.yml)
 EOF
@@ -170,6 +172,26 @@ select_wp_runner() {
   esac
 }
 
+is_local_site_url() {
+  case "$1" in
+    http://*|https://*) ;;
+    *) return 1 ;;
+  esac
+
+  _authority="${1#*://}"
+  _authority="${_authority%%[/?#]*}"
+  _authority="${_authority##*@}"
+  _authority="$(printf '%s' "$_authority" | tr '[:upper:]' '[:lower:]')"
+  case "$_authority" in
+    localhost|localhost:*|127.0.0.1|127.0.0.1:*|\[::1\]|\[::1\]:*|*.test|*.test:*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 run_wp() {
   case "$WP_RUNNER" in
     compose)
@@ -212,6 +234,10 @@ EOF
 }
 
 select_wp_runner
+
+if [ "$WP_RUNNER" = "host" ] && ! is_local_site_url "$SITE_URL"; then
+  refuse "ACX_WP_RUNNER=host cannot target a remote SITE_URL (use a loopback URL or the compose runner)"
+fi
 
 if is_truthy "$DRY_RUN"; then
   print_plan

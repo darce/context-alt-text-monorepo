@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
 from sqlalchemy import select, update
-from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
@@ -60,9 +61,7 @@ async def _cluster_gallery_space(
     """Resolve a cluster's representative space and whether all reps use it."""
     reps = list(await cluster_repo.get_all_representatives(cluster_id))
     model, _vectors = same_space_representative_vectors(reps)
-    all_representatives_match = all(
-        models_are_same_space(representative_embedding_model(rep), model) for rep in reps
-    )
+    all_representatives_match = all(models_are_same_space(representative_embedding_model(rep), model) for rep in reps)
     return model, all_representatives_match
 
 
@@ -329,10 +328,8 @@ async def merge_cluster(
 
     receipt_id: uuid.UUID | None = None
     if moved_by_merge_id and session is not None:
-        try:
+        with suppress(ValueError):
             receipt_id = uuid.UUID(str(moved_by_merge_id))
-        except ValueError:
-            pass
 
     tenant_uuid: uuid.UUID | None = None
     source_uuid: uuid.UUID | None = None
@@ -583,8 +580,7 @@ async def _load_receipt(
 ) -> ClusterMergeReceipt | None:
     """Look up a receipt by (tenant_id, receipt_id) without taking a row lock."""
     result = await session.execute(
-        select(ClusterMergeReceipt)
-        .where(
+        select(ClusterMergeReceipt).where(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.receipt_id == receipt_id,
         )
@@ -683,11 +679,7 @@ async def _revert_merge_impl(
         survivor_cluster_id=requested_survivor_id,
     )
     receipt = next(
-        (
-            sibling
-            for sibling in siblings
-            if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)
-        ),
+        (sibling for sibling in siblings if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)),
         None,
     )
     if receipt is None:

@@ -146,9 +146,7 @@ class SqlAlchemyTenantEntitlementRepository:
             ):
                 raise ValueError("past_due_grace_s must be a finite positive number")
             past_due_grace = timedelta(seconds=float(past_due_grace_s))
-        if past_due_grace is not None and (
-            not isinstance(past_due_grace, timedelta) or past_due_grace <= timedelta(0)
-        ):
+        if past_due_grace is not None and (not isinstance(past_due_grace, timedelta) or past_due_grace <= timedelta(0)):
             raise ValueError("past_due_grace must be a positive timedelta")
         self._past_due_grace = past_due_grace
 
@@ -279,10 +277,7 @@ class SqlAlchemyTenantEntitlementRepository:
             if row is None:
                 row = TenantEntitlement(**values)
                 self._session.add(row)
-            elif (
-                _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE
-                and row.source != _BILLING_SOURCE
-            ):
+            elif _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE and row.source != _BILLING_SOURCE:
                 self._set_beta_values(row, values)
 
         await _with_timeout(
@@ -353,9 +348,7 @@ class SqlAlchemyTenantEntitlementRepository:
                 or (existing_grace_until is not None and normalized_now <= existing_grace_until)
             )
             beta_current = (
-                row.plan_code == "beta"
-                and existing_status is EntitlementStatus.BETA_ACTIVE
-                and current_period
+                row.plan_code == "beta" and existing_status is EntitlementStatus.BETA_ACTIVE and current_period
             )
             # WHY: active paid billing outranks beta, but an unexpired beta
             # grant remains an independent authorization while billing is
@@ -380,8 +373,7 @@ class SqlAlchemyTenantEntitlementRepository:
                 }
             )
             transitioning_from_beta_to_paid = (
-                existing_status is EntitlementStatus.BETA_ACTIVE
-                and normalized_status is EntitlementStatus.PAID_ACTIVE
+                existing_status is EntitlementStatus.BETA_ACTIVE and normalized_status is EntitlementStatus.PAID_ACTIVE
             )
             recovering_to_paid = (
                 normalized_status is EntitlementStatus.PAID_ACTIVE

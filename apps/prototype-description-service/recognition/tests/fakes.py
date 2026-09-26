@@ -32,8 +32,14 @@ def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterRespon
 class _FakeClusterRecord:
     """Minimal cluster record with confirmation state."""
 
-    def __init__(self, cluster: ClusterResponse | FakeClusterForRepo) -> None:
+    def __init__(
+        self,
+        cluster: ClusterResponse | FakeClusterForRepo,
+        *,
+        fallback_tenant_id: str = "00000000-0000-0000-0000-000000000000",
+    ) -> None:
         self.id = cluster.id
+        self.tenant_id = str(getattr(cluster, "tenant_id", fallback_tenant_id))
         self.label = cluster.label
         self.backend_version = int(getattr(cluster, "backend_version", 0) or 0)
         # Prefer explicit user_confirmed when the fake repo models it (E21-17-R2-PY-N1).
@@ -52,15 +58,21 @@ class _FakeClusterRepository:
         self._service = service
 
     async def get_by_id(self, cluster_id: str) -> _FakeClusterRecord | None:
-        if self._service.fake_cluster_repository is not None:
-            seeded_cluster = await self._service.fake_cluster_repository.get_by_id(cluster_id)
+        fake_repository = self._service.fake_cluster_repository
+        fallback_tenant_id = "00000000-0000-0000-0000-000000000000"
+        if fake_repository is not None:
+            seeded_cluster = await fake_repository.get_by_id(cluster_id)
             if seeded_cluster is not None:
                 return _FakeClusterRecord(seeded_cluster)
+            fallback_tenant_id = next(
+                (cluster.tenant_id for cluster in fake_repository.clusters.values()),
+                fallback_tenant_id,
+            )
 
         cluster = next((c for c in self._service.clusters if c.id == cluster_id), None)
         if not cluster:
             return None
-        return _FakeClusterRecord(cluster)
+        return _FakeClusterRecord(cluster, fallback_tenant_id=fallback_tenant_id)
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []

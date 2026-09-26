@@ -818,6 +818,57 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertSame(array('version_conflict:cluster-keep'), $this->conflictKeys());
     }
 
+    public function testCompleteEnvelopeWithoutArrayClustersDoesNotTombstone(): void
+    {
+        $malformedPayloads = array(
+            array('is_complete' => true),
+            array(
+                'clusters' => 'invalid',
+                'is_complete' => true,
+            ),
+        );
+
+        foreach ($malformedPayloads as $index => $payload) {
+            $tenant = 'tenant-malformed-' . $index;
+            $this->seedTombstoneProjection($tenant);
+
+            $result = $this->merger->merge_snapshot_for_tenant($tenant, $payload, 21);
+
+            global $wpdb;
+            $this->assertSame(
+                array(
+                    'tombstoned_clusters' => 0,
+                    'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
+                ),
+                $result
+            );
+            $this->assertSame(
+                array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+                $this->clusterIdsForTenant($tenant)
+            );
+            $this->assertCount(3, $wpdb->tableRows['wp_acx_identity_members']);
+        }
+    }
+
+    public function testExplicitCompleteEmptySnapshotTombstonesAbsentClusters(): void
+    {
+        $this->seedTombstoneProjection('tenant-empty-snapshot');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-empty-snapshot',
+            array(
+                'clusters' => array(),
+                'is_complete' => true,
+            ),
+            21
+        );
+
+        $this->assertSame(3, $result['tombstoned_clusters']);
+        $this->assertSame(3, $result['tombstoned_members']);
+        $this->assertSame(array(), $this->clusterIdsForTenant('tenant-empty-snapshot'));
+    }
+
     public function testUpsertQueryFailureThrowsAndDoesNotTombstone(): void
     {
         $this->seedTombstoneProjection('tenant-upsert-fail');

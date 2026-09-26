@@ -186,7 +186,10 @@ The Lane Decomposition is the authoritative exhaustive ownership list, including
 | SPA | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/NameFaceControl.tsx` (+ new test) | `useState(false)`; group preview fallback chain |
 | SPA | `.../identity-clusters/SuggestionCards.tsx` (+ new test) | null-representative placeholder; `isCroppableBbox` gate |
 | SPA | `.../identity-clusters/IdentityClusterItem.tsx` | anchor picker disabled with reason |
-| SPA | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/MergeUndoBanner.tsx` | dismissible while retryable; token persisted past 30 s |
+| SPA | `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/MergeUndoBanner.tsx` | dismissible while retryable |
+| SPA | `apps/prototype-wp-alt-context/js/admin/pages/roster/RosterEntriesSection.tsx` | owns the 30-second notice timer and compact undo recovery action until token expiry |
+| SPA | `apps/prototype-wp-alt-context/js/admin/hooks/usePersonMerge.ts` | persists the undo token through its 24-hour server validity window and clears it on success or expiry |
+| tests | `apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx` | proves recovery after the notice closes and checks D1 ownership and procedure requirements |
 | backend | `apps/prototype-description-service/recognition/infrastructure/repositories/suggestion_repository.py` | representative excludes candidate identity |
 | backend | `recognition/application/persistence/representative_selector.py`, `recognition/application/settings/clustering.py`, `recognition/application/persistence/assignment_writer.py` | calibrated occlusion/sharpness factor in representative ranking |
 | tests | `test_representative_quality_gate.py`, `test_representative_selector.py`, `test_assignment_writer.py`, `test_fir2_br_postmerge_contracts.py`, `test_fir_final_postmerge_runtime_contracts.py` | deliberate update to the new ranking contract |
@@ -224,7 +227,11 @@ The Lane Decomposition is the authoritative exhaustive ownership list, including
   - After Wave 3 integration, re-run both real-builder checks in post-integration aggregate verification: `python3 -m pytest apps/prototype-description-service/scene/tests/test_shared_schema_multipart.py apps/prototype-description-service/scene/tests/test_describe_run_contract.py -q -p no:cacheprovider`. This check requires the integrated contracts schemas, response-models, svc-cold-gpu builder/test and svc-run-timing builder/test; it is not a Wave 1 contracts command.
   - `render_ux_maps.py --check` runs after the ux-map edits.
 - **Runtime parity (read-only agent checks after promotion):**
-  - `curl` `/ready`, `/scene/gpu/status` and `/recognition/tenant/naming-agreement` on each environment's `127.0.0.1:8000` and expect 200.
+  - Probe `/ready` on each environment's `127.0.0.1:8000` and expect HTTP 200.
+  - For protected routes, use that environment's service API key and matching tenant ID: the service accepts `X-Api-Key` or `Authorization` API-key authentication and requires `X-Tenant-ID`. A WordPress application password authenticates WordPress and is not a credential for the service on port 8000.
+  - Run these exact probes on each environment, supplying its service credentials through `GPUFLOW_API_KEY` and `GPUFLOW_TENANT_ID`; expect HTTP 200 from both:
+    - `curl -fsS -H "X-Api-Key: ${GPUFLOW_API_KEY}" -H "X-Tenant-ID: ${GPUFLOW_TENANT_ID}" http://127.0.0.1:8000/scene/gpu/status`
+    - `curl -fsS -H "X-Api-Key: ${GPUFLOW_API_KEY}" -H "X-Tenant-ID: ${GPUFLOW_TENANT_ID}" http://127.0.0.1:8000/recognition/tenant/naming-agreement`
   - Confirm the image SHA matches the promoted `main` SHA.
 - **Operator smoke (release gate, operator-run):**
   - GPU stopped with Auto intent → Suggest on one image without preceding Start; record `ramp_up_ms` and `processing_ms`.
@@ -410,11 +417,14 @@ Changes:
 
 - `IdentityClusterItem` anchor picker is disabled with a visible reason (FORM-09).
 - Manual dismissal stays disabled while a retryable undo error is shown, then becomes available after reconciliation or a roster-check failure completes.
-- The undo token persists beyond 30 s for its server-side validity window.
+- `RosterEntriesSection.tsx` owns the 30-second banner timer and keeps a compact recovery action available after the banner closes.
+- `usePersonMerge.ts` owns the token store; retain each undo token in browser `localStorage` through its 24-hour server validity window, then clear it after successful undo or expiry.
+- `MergeUndoBanner.tsx` remains the presentational dismissible/retryable surface; it does not own the roster timer or token lifecycle.
 
 Proof:
 
-- vitest: disabled reason text and `aria-describedby`; dismissal disabled during retryable failure and available after reconciliation/check failure; token survives a 30 s fake-timer advance.
+- vitest: disabled reason text and `aria-describedby`; dismissal disabled during retryable failure and available after reconciliation/check failure; after a 30 s fake-timer advance, the compact recovery action still invokes undo and the stored token remains valid for 24 hours.
+- The roster owner runs `npx vitest run --root apps/prototype-wp-alt-context js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx js/admin/pages/roster/__tests__/PersonMergeFlow.test.tsx`.
 
 ### Deferred slice D2: Merge cluster-count cap (PHP)
 
@@ -483,6 +493,7 @@ In every dependency cell, the prefix names the producer and the row names the re
 | `spa-naming-control` | C1 | `js/admin/pages/workbench/identity-clusters/NameFaceControl.tsx`, `js/admin/pages/workbench/identity-clusters/buildNamingOptions.ts`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-naming-preview.json` (new test fixture) | rebaseline: `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` | npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/NameFaceControl.test.tsx js/admin/pages/workbench/identity-clusters/__tests__/buildNamingOptions.test.ts |
 | `svc-suggestion-rep` | C2 | `recognition/infrastructure/repositories/suggestion_repository.py`, `apps/prototype-description-service/recognition/tests/fixtures/gpuflow-suggestion-representatives.json` (new test fixture) | rebaseline: `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` | `python3 -m pytest apps/prototype-description-service/recognition/tests/integration/test_suggestion_repository.py -q -p no:cacheprovider` |
 | `spa-suggestion-cards` | C2 | `js/admin/pages/workbench/identity-clusters/SuggestionCards.tsx`, `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-candidate-preview.json` (new test fixture) | svc-suggestion-rep: `apps/prototype-description-service/recognition/tests/fixtures/gpuflow-suggestion-representatives.json`; spa-naming-control: `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/fixtures/gpuflow-naming-preview.json` | npx vitest run js/admin/pages/workbench/identity-clusters/__tests__/SuggestionCards.test.tsx |
+| `spa-roster-undo` (deferred; not dispatched) | D1 | `js/admin/hooks/usePersonMerge.ts`, `js/admin/pages/roster/RosterEntriesSection.tsx`; `apps/prototype-wp-alt-context/js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx` (new regression test) | — (D1 remains held pending operator re-check) | `npx vitest run --root apps/prototype-wp-alt-context js/admin/pages/roster/__tests__/dw2-gpuflow1re-1.test.tsx js/admin/pages/roster/__tests__/PersonMergeFlow.test.tsx` |
 | `calibration` | C3 | `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md` | rebaseline: `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` | numeric calibration report review |
 | `svc-rep-settings` | C4 | `recognition/application/settings/clustering.py` | calibration: `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md` | `python3 -m pytest apps/prototype-description-service/recognition/tests/unit/test_recognition_settings_env.py -q -p no:cacheprovider` |
 | `svc-rep-quality` | C4 | `recognition/application/persistence/representative_selector.py`, `recognition/application/persistence/assignment_writer.py` | svc-rep-settings: `apps/prototype-description-service/recognition/application/settings/clustering.py` | `python3 -m pytest apps/prototype-description-service/recognition/tests/unit/test_representative_quality_gate.py apps/prototype-description-service/recognition/tests/unit/test_representative_selector.py apps/prototype-description-service/recognition/tests/unit/test_fir2_br_postmerge_contracts.py apps/prototype-description-service/recognition/tests/unit/test_fir_final_postmerge_runtime_contracts.py apps/prototype-description-service/recognition/tests/integration/test_assignment_writer.py -q -p no:cacheprovider` |
@@ -551,7 +562,7 @@ Only after freeze/re-review: materialize, re-pin `config/lane-orchestration/GPUF
 
 - [ ] VM disk hygiene precondition met.
 - [ ] Routes and `/ready` return 200 on dev, staging and prod.
-- [ ] Resolve the rebaseline BLOCKED gate with a fresh dev-fir probe, authenticated protected-route results for every environment (including `/recognition/tenant/naming-agreement`) and recorded VM disk usage below 70%.
+- [ ] Resolve the rebaseline BLOCKED gate with dev/staging image digests, a fresh dev-fir probe, authenticated protected-route results for every environment (including `/recognition/tenant/naming-agreement`) and recorded VM disk usage below 70%.
 - [ ] Image SHA/routes, persisting defects and the live suggestion row captured in `docs/assessments/GPUFLOW-1-rebaseline-20260914.md` and committed for read-only downstream consumption; calibration retains sole ownership of `docs/assessments/GPUFLOW-1-wrong-match-and-occlusion-calibration-20260913.md`.
 
 ### Checklist for Slice A1: Typed cold-GPU response and demand lease

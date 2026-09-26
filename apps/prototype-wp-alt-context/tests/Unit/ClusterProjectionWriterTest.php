@@ -325,6 +325,23 @@ class ClusterProjectionWriterTest extends TestCase
                     'occlusion_severity' => null,
                 ],
             ],
+            'invalid-components' => [
+                'representative_quality' => 0.82,
+                'quality_components' => [
+                    'confidence' => 0.94,
+                    'bbox_area' => 77.0,
+                    'occlusion_severity' => null,
+                ],
+            ],
+            'invalid-quality' => [
+                'representative_quality' => '0.82',
+                'quality_components' => [
+                    'confidence' => 0.94,
+                    'bbox_area' => 77.0,
+                    'sharpness' => 42.5,
+                    'occlusion_severity' => null,
+                ],
+            ],
         ];
 
         foreach ($partial_exports as $cluster_uuid => $snapshot_export) {

@@ -333,8 +333,11 @@ norecursedirs = [
 # See docs/workbay/rules/testing-python.md#commands.
 testpaths = [
     "recognition/tests",
+    "recognition/tests/scripts",
     "apps/prototype-description-service/recognition/tests",
     "scene/tests",
     "scripts/eval_harness/tests",
+    "scripts/bench/tests",
     "apps/prototype-description-service/scripts/eval_harness/tests",
+    "apps/prototype-description-service/scripts/bench/tests",
 ]

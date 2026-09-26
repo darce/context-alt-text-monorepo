@@ -35,9 +35,7 @@ def _run_pytest_child(
     config.write_text("\n".join(ini_lines) + "\n", encoding="utf-8")
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        part for part in (str(SERVICE_ROOT), env.get("PYTHONPATH")) if part
-    )
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (str(SERVICE_ROOT), env.get("PYTHONPATH")) if part)
     args = [
         sys.executable,
         "-m",
@@ -89,14 +87,10 @@ def test_default_receipt_is_run_unique_and_self_identifying(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("override_kind", ["cli", "ini"])
-def test_receipt_overrides_remain_supported(
-    tmp_path: Path, override_kind: str
-) -> None:
+def test_receipt_overrides_remain_supported(tmp_path: Path, override_kind: str) -> None:
     expected = tmp_path / "custom" / f"{override_kind}.json"
     if override_kind == "cli":
-        result, receipt_path, _ = _run_pytest_child(
-            tmp_path / "cli", cli_receipt=expected
-        )
+        result, receipt_path, _ = _run_pytest_child(tmp_path / "cli", cli_receipt=expected)
     else:
         result, receipt_path, _ = _run_pytest_child(
             tmp_path / "ini",

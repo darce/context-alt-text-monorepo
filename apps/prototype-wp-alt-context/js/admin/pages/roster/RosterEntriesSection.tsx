@@ -630,6 +630,7 @@ export const PersonMergeFlow = ({
   };
   const pending = merge.undo.isPending || checking;
   const retryableFailure = checkFailed || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error));
+  const dismissDisabled = pending || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error) && !reconciled);
   const [open, setOpen] = useState(true);
   const [merged, setMerged] = useState<PersonMergePreview | null>(null);
   // Synchronous mirror of `merged`: the dialog's onSuccess handler calls
@@ -700,7 +701,7 @@ export const PersonMergeFlow = ({
               access to undo.
             </p>
           )}
-          <button type="button" disabled={pending} onClick={onDismiss} aria-label="Dismiss merge notification">
+          <button type="button" disabled={dismissDisabled} onClick={onDismiss} aria-label="Dismiss merge notification">
             <X aria-hidden="true" />
           </button>
         </div>

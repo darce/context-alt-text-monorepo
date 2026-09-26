@@ -111,18 +111,31 @@ the supplied evidence.
 | B2 | run | No timing evidence exists for Suggest or runs; timing display and evidence mapping remain open. | `php-breaker-passthrough`, `spa-describe-client`, `spa-suggest-warming-timing`, `spa-bulk-timing` |
 | C1 | run | Defect 1 is reproduced on load. | `spa-naming-control` |
 | C2 | run | Defect 3 is reproduced with the candidate rendered as its own representative. | `svc-suggestion-rep`, `spa-suggestion-cards` |
-| C3 | run | Defect 2 is a recorded wrong-person suggestion; the required numeric row is pending and must be captured for calibration. | `calibration` |
+| C3 | hold pending numeric capture and accepted decision | Defect 2 is a recorded wrong-person suggestion, but every numeric field is NOT CAPTURED. Calibration cannot run until the row is captured and C3 is accepted. | `calibration` (held) |
 | C4 | run after C3 acceptance | Defect 4 is a recorded occluded representative; calibrated factors must precede ranking changes. | `svc-rep-settings`, `svc-rep-quality` |
-| D1 | drop pending operator re-check | No anchor-picker or undo-persistence observation is present in the supplied evidence, so this slice is not classified as a persisting live defect. | `spa-picker-undo` |
-| D2 | drop pending contract acceptance | The plan explicitly blocks dispatch until API-R-23 supplies the numeric cap, bounded field, scope, typed error and boundary cases; no cap is inferred here. | `php-merge-cap` |
+| D1 | drop pending operator re-check | No anchor-picker or undo-persistence observation is present in the supplied evidence, so this slice is not classified as a persisting live defect. | — (excluded from this wave) |
+| D2 | drop pending contract acceptance | The plan explicitly blocks dispatch until API-R-23 supplies the numeric cap, bounded field, scope, typed error and boundary cases; no cap is inferred here. | — (excluded from this wave) |
 
 ### Wave 1
 
-Dispatch these lanes after this artifact is committed: `contracts`,
-`spa-naming-control`, `svc-suggestion-rep`, `spa-description-service` and
-`calibration`. Hold `php-merge-cap` until the accepted API-R-23 brief exists.
-The later timing, service, PHP, SPA and representative-quality lanes follow the
-slice matrix and artifact DAG; C4 remains downstream of accepted C3 evidence.
+**BLOCKED — do not dispatch Wave 1 from this artifact yet.** The promotion and
+runtime evidence is incomplete: dev-fir returned `502`, protected staging/prod
+routes returned `401`, the exact `/recognition/tenant/naming-agreement` route
+was not probed, and VM disk usage below 70% is unverified. Before dispatch, the
+operator must record a fresh dev-fir health/ready and target-route probe,
+authenticated protected-route results for dev, dev-fir, staging and prod
+(including the exact naming-agreement route), and the VM disk precondition
+below 70%. A repeat `502` or `401`, or absent/over-threshold disk evidence,
+keeps this gate blocked and requires another operator follow-up.
+
+After those gates are satisfied, Wave 1 may dispatch `contracts`,
+`spa-naming-control`, `svc-suggestion-rep` and `spa-description-service`.
+`calibration` remains held until the Trudeau-to-Watson numeric row is captured
+and an accepted C3 decision is recorded. D1 and D2 remain dropped from the
+wave; re-open either only after its operator or API-R-23 follow-up gate clears.
+The later timing, service, PHP, SPA and
+representative-quality lanes follow the slice matrix and artifact DAG; C4
+remains downstream of accepted C3 evidence.
 
 PERSISTING: A1,A2,A3,B1,B2,C1,C2,C3,C4
 DROPPED: D1,D2

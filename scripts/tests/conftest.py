@@ -26,10 +26,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def _using_override_roots() -> bool:
-    return any(
-        name in os.environ
-        for name in (ADMIN_SOURCE_ROOT_ENV, ADMIN_DIST_ROOT_ENV, PACKAGE_DIST_ROOT_ENV)
-    )
+    return any(name in os.environ for name in (ADMIN_SOURCE_ROOT_ENV, ADMIN_DIST_ROOT_ENV, PACKAGE_DIST_ROOT_ENV))
 
 
 def _admin_dist_present() -> bool:

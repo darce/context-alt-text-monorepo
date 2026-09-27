@@ -5,11 +5,7 @@ import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import { PersonMergeDialog } from './PersonMergeDialog';
-import {
-  clearPersonMergeUndoToken,
-  PERSON_MERGE_UNDO_TOKEN_TTL_MS,
-  usePersonMerge,
-} from '../../hooks/usePersonMerge';
+import { clearPersonMergeUndoToken, PERSON_MERGE_UNDO_TOKEN_TTL_MS, usePersonMerge } from '../../hooks/usePersonMerge';
 import { isPersonMergeConflict, personMergeErrorMessage, type PersonMergePreview } from '../../api/personMergeApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
@@ -380,7 +376,9 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           entries={entries}
           undoTokenScope={`roster-${session.id}-${session.person.id}`}
           onDismiss={(reason) => {
-            if (reason === 'banner-expired' || reason === 'banner-closed') return;
+            if (reason === 'banner-expired' || reason === 'banner-closed') {
+              return;
+            }
             setMergeSessions((current) => current.filter((item) => item.id !== session.id));
           }}
         />
@@ -666,11 +664,7 @@ export const PersonMergeFlow = ({
   }, [merged, bannerVisible, pending, retryableFailure, merge.undo.isSuccess]);
 
   useEffect(() => {
-    if (
-      merge.undoToken === null ||
-      merge.undoExpiresAt === null ||
-      merge.undo.isSuccess
-    ) {
+    if (merge.undoToken === null || merge.undoExpiresAt === null || merge.undo.isSuccess) {
       return;
     }
     const delay = Math.max(0, merge.undoExpiresAt - Date.now());

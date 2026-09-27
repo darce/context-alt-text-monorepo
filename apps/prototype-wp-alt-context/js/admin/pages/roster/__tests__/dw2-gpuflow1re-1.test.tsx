@@ -9,8 +9,8 @@ import * as api from '../../../api/personMergeApi';
 import type { RosterEntry } from '../../../api/rosterApi';
 import { PersonMergeFlow, UNDO_BANNER_TTL_MS } from '../RosterEntriesSection';
 
-vi.mock('../../../api/personMergeApi', async importOriginal => ({
-  ...await importOriginal<typeof import('../../../api/personMergeApi')>(),
+vi.mock('../../../api/personMergeApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/personMergeApi')>()),
   previewPersonMerge: vi.fn(),
   commitPersonMerge: vi.fn(),
   undoPersonMerge: vi.fn(),
@@ -31,12 +31,17 @@ vi.mock('../PersonMergeDialog', () => ({
     open ? (
       <button
         type="button"
-        onClick={() => merge.commit.mutate({ survivor_id: 1, loser_id: 2 }, {
-          onSuccess: () => {
-            onMerged({ loser: { id: 2, name: 'Ally' }, survivor: { id: 1, name: 'Alice' } });
-            onOpenChange(false);
-          },
-        })}
+        onClick={() =>
+          merge.commit.mutate(
+            { survivor_id: 1, loser_id: 2 },
+            {
+              onSuccess: () => {
+                onMerged({ loser: { id: 2, name: 'Ally' }, survivor: { id: 1, name: 'Alice' } });
+                onOpenChange(false);
+              },
+            },
+          )
+        }
       >
         Complete merge
       </button>
@@ -68,7 +73,11 @@ beforeEach(() => {
     tags: [],
     conflicts: [],
   });
-  vi.mocked(api.commitPersonMerge).mockResolvedValue({ survivor_id: 1, merged_cluster_ids: ['c'], undo_token: 'server-token' });
+  vi.mocked(api.commitPersonMerge).mockResolvedValue({
+    survivor_id: 1,
+    merged_cluster_ids: ['c'],
+    undo_token: 'server-token',
+  });
   vi.mocked(api.undoPersonMerge).mockResolvedValue({ restored_person_id: 2, restored_cluster_ids: ['c'] });
 });
 
@@ -100,7 +109,11 @@ describe('GPUFLOW-1 deferred review regressions', () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(
       <QueryClientProvider client={client}>
-        <PersonMergeFlow loser={entry(2, 'Ally')} entries={[entry(1, 'Alice'), entry(2, 'Ally')]} onDismiss={onDismiss} />
+        <PersonMergeFlow
+          loser={entry(2, 'Ally')}
+          entries={[entry(1, 'Alice'), entry(2, 'Ally')]}
+          onDismiss={onDismiss}
+        />
       </QueryClientProvider>,
     );
 

@@ -14,7 +14,9 @@ interface StoredUndoToken {
 const undoTokenStorageKey = (scope: string): string => `${UNDO_TOKEN_STORAGE_PREFIX}${encodeURIComponent(scope)}`;
 
 const browserStorage = (): Storage | null => {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === 'undefined') {
+    return null;
+  }
   try {
     return window.localStorage;
   } catch {
@@ -24,16 +26,25 @@ const browserStorage = (): Storage | null => {
 
 export const readPersonMergeUndoToken = (scope: string, now = Date.now()): StoredUndoToken | null => {
   const storage = browserStorage();
-  if (!storage) return null;
+  if (!storage) {
+    return null;
+  }
   const key = undoTokenStorageKey(scope);
   try {
     const raw = storage.getItem(key);
-    if (raw === null) return null;
+    if (raw === null) {
+      return null;
+    }
     const stored: unknown = JSON.parse(raw);
     if (
-      typeof stored !== 'object' || stored === null ||
-      !('token' in stored) || typeof stored.token !== 'string' || stored.token.length === 0 ||
-      !('expiresAt' in stored) || typeof stored.expiresAt !== 'number' || !Number.isFinite(stored.expiresAt)
+      typeof stored !== 'object' ||
+      stored === null ||
+      !('token' in stored) ||
+      typeof stored.token !== 'string' ||
+      stored.token.length === 0 ||
+      !('expiresAt' in stored) ||
+      typeof stored.expiresAt !== 'number' ||
+      !Number.isFinite(stored.expiresAt)
     ) {
       storage.removeItem(key);
       return null;
@@ -63,7 +74,9 @@ const persistPersonMergeUndoToken = (scope: string, token: string): StoredUndoTo
 
 export const clearPersonMergeUndoToken = (scope: string): void => {
   const storage = browserStorage();
-  if (!storage) return;
+  if (!storage) {
+    return;
+  }
   try {
     storage.removeItem(undoTokenStorageKey(scope));
   } catch {
@@ -82,12 +95,15 @@ export const usePersonMerge = (undoTokenScope = 'default') => {
     void client.invalidateQueries({ queryKey: queryKeys.media.identities() });
   };
   const preview = useMutation({ mutationFn: previewPersonMerge });
-  const commit = useMutation({ mutationFn: commitPersonMerge, onSuccess: (result) => {
-    setStoredUndoToken(persistPersonMergeUndoToken(undoTokenScope, result.undo_token));
-    invalidate();
-  } });
+  const commit = useMutation({
+    mutationFn: commitPersonMerge,
+    onSuccess: (result) => {
+      setStoredUndoToken(persistPersonMergeUndoToken(undoTokenScope, result.undo_token));
+      invalidate();
+    },
+  });
   const undo = useMutation({
-    mutationFn: undoPersonMerge,
+    mutationFn: (token: string) => undoPersonMerge(token),
     onSuccess: () => {
       clearPersonMergeUndoToken(undoTokenScope);
       invalidate();

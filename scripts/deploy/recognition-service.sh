@@ -113,7 +113,8 @@
 #   ACX_REMOTE_COMMAND_TIMEOUT positive integer wall-clock seconds for ordinary remote calls (default 120).
 #   ACX_DEPLOY_LOCK_TTL_SECONDS default 7200; at least max(600,
 #                              3 × max(ACX_PUSH_TIMEOUT, ACX_PULL_TIMEOUT) + restart health budgets
-#                              + ACX_GPU_SNAPSHOT_GATE attempts×sleep + one ACX_VERIFY_SLEEP + 300).
+#                              + ACX_GPU_SNAPSHOT_GATE attempts×sleep + one ACX_VERIFY_SLEEP + 300
+#                              + ACX_REMOTE_BUILD_TIMEOUT when shipping a remote build).
 #   ACX_DEPLOY_LOCK_BREAK      transaction id whose environment lease may be broken (break-glass; use with care).
 #   ACX_EVIDENCE_TIMEOUT     positive integer wall-clock seconds for capture_failure_evidence
 #                              probes (default 30). Decoupled from ACX_REMOTE_COMMAND_TIMEOUT so
@@ -765,7 +766,28 @@ sanitize_deploy_diagnostic() {
   _sk_ci="$(printf '%s\n' "${_sk}" | _portable_ere_ci)"
   _ek_ci="$(printf '%s\n' "${_ek}" | _portable_ere_ci)"
   _hdr_ci="$(printf '%s\n' "${_hdr}" | _portable_ere_ci)"
-  LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
+  LC_ALL=C LANG=C LC_CTYPE=C awk '
+      BEGIN { for (i=1; i<256; i++) byte[sprintf("%c", i)]=i }
+      {
+        out=""
+        for (i=1; i<=length($0); i++) {
+          c=substr($0,i,1); b=byte[c]
+          n=(b>=194 && b<=223) ? 2 : (b>=224 && b<=239) ? 3 : (b>=240 && b<=244) ? 4 : 0
+          valid=(n>0 && i+n-1<=length($0))
+          for (j=1; valid && j<n; j++) {
+            v=byte[substr($0,i+j,1)]
+            if (v<128 || v>191) valid=0
+            if (j==1 && ((b==224 && v<160) || (b==237 && v>=160) || (b==240 && v<144) || (b==244 && v>=144))) valid=0
+          }
+          if (valid) {
+            if (!(b==194 && byte[substr($0,i+1,1)]<=159)) out=out substr($0,i,n)
+            i+=n-1
+          } else if (b<128 || b>159) out=out c
+        }
+        print out
+      }
+    ' \
+    | LC_ALL=C LANG=C LC_CTYPE=C tr -d '\000-\010\013-\037\177' \
     | LC_ALL=C LANG=C LC_CTYPE=C awk -v sq="'" '
         function depth_delta(s,    i, c, in_str, esc, d) { d=0; in_str=0; esc=0; for (i=1; i<=length(s); i++) { c=substr(s,i,1); if (in_str) { if (esc) { esc=0; continue } if (c=="\\") { esc=1; continue } if (c=="\"") in_str=0; continue } if (c=="\"") { in_str=1; continue } if (c=="["||c=="{") d++; else if (c=="]"||c=="}") d-- } return d }
         function is_pretty_open(s,    t, pat) { t=tolower(s); if (t ~ /"(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)"[ \t]*[=:]+[ \t]*[[{][ \t]*$/) return 1; pat=sq "(token|access_token|refresh_token|password|passwd|secret|apikey|api-key|api_key|[a-z0-9_]*_token|[a-z0-9_]*_password|[a-z0-9_]*_secret|[a-z0-9_]*_key_id|[a-z0-9_]*_key_content|[a-z0-9_]*_access_key|secret_key_base|[a-z0-9_]*_key|pgpassword|identitytoken|pass_phrase|auth|_auth)" sq "[ \t]*[=:]+[ \t]*[[{][ \t]*$"; return (t ~ pat) }
@@ -2088,7 +2110,7 @@ deploy_env_lease() {
   local action="$1" env="$2" timeout ttl transaction break_transaction local_user local_host holder
   local program response rc marker lease_transaction lease_holder lease_expiry lease_path
   local push_timeout pull_timeout transfer_timeout remote_command_timeout gpu_gate_timeout
-  local ttl_required ttl_margin width index transfer_index margin_index
+  local ttl_required ttl_margin width index transfer_index margin_index build_budget=0
   local transfer_digit margin_digit sum carry cutover_budget canonical_budget verify_budget gpu_budget
   local cutover_attempts cutover_sleep canonical_attempts canonical_sleep
   local verify_attempts verify_sleep gpu_attempts gpu_sleep
@@ -2141,7 +2163,14 @@ deploy_env_lease() {
     read -r canonical_attempts canonical_sleep <<<"${canonical_budget}"
     read -r verify_attempts verify_sleep <<<"${verify_budget}"
     read -r gpu_attempts gpu_sleep <<<"${gpu_budget}"
+    if [[ "${ship_remote_build:-0}" == "1" ]]; then
+      build_budget="$(validated_deadline ACX_REMOTE_BUILD_TIMEOUT 1800)"
+      if (( build_budget > REMOTE_BUILD_TIMEOUT_CEILING )); then
+        fail "ACX_REMOTE_BUILD_TIMEOUT exceeds the ${REMOTE_BUILD_TIMEOUT_CEILING}s ceiling"
+      fi
+    fi
     ttl_margin=$((cutover_attempts * cutover_sleep + canonical_attempts * canonical_sleep + gpu_attempts * gpu_sleep + verify_sleep + (2 * cutover_attempts + canonical_attempts) * remote_command_timeout + gpu_attempts * gpu_gate_timeout + 300))
+    ttl_margin=$((ttl_margin + build_budget))
     ttl_required=""
     carry=0
     width="${#transfer_timeout}"
@@ -2169,7 +2198,7 @@ deploy_env_lease() {
       ttl_required=600
     fi
     if (( ${#ttl} < ${#ttl_required} )) || { (( ${#ttl} == ${#ttl_required} )) && [[ "${ttl}" < "${ttl_required}" ]]; }; then
-      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP and 300 seconds; minimum 600)"
+      fail "ACX_DEPLOY_LOCK_TTL_SECONDS (${ttl}) must be at least computed floor ${ttl_required} seconds (three times max of ACX_PUSH_TIMEOUT (${push_timeout}) and ACX_PULL_TIMEOUT (${pull_timeout}) plus restart probe attempts×ACX_REMOTE_COMMAND_TIMEOUT (${remote_command_timeout}), health sleeps, ACX_GPU_SNAPSHOT_GATE attempts×timeout (${gpu_gate_timeout}) and sleep, one ACX_VERIFY_SLEEP, remote build budget (${build_budget}) and 300 seconds; minimum 600)"
     fi
   fi
   timeout="$(validated_deadline ACX_REMOTE_COMMAND_TIMEOUT 120)"
@@ -4951,6 +4980,7 @@ _ship_selected_env() {
   local env="$1"
   local completion="$2"
   local tag sha restart_runtime verify_status pending_interrupt
+  local ship_remote_build="${REMOTE_BUILD}"
 
   case "${completion}" in
     aggregate|scoped) ;;
@@ -4989,6 +5019,10 @@ _ship_selected_env() {
 
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Mode: remote-build (${SSH_TARGET}, no local docker required)"
+    if ! deploy_env_lease renew "${env}"; then
+      skip_compensation_after_lease_loss "${env}"
+      fail "stopping before remote build after deploy lease loss for ${env}"
+    fi
     do_build_remote "$tag"
   else
     do_build "$tag"

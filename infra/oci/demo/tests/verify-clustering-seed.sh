@@ -26,7 +26,7 @@ guided=0
 
 is_image_name() {
   case "$1" in
-    *.jpg|*.jpeg|*.png|*.webp|*.JPG|*.JPEG|*.PNG|*.WEBP) return 0 ;;
+    *.jpg | *.jpeg | *.png | *.webp | *.JPG | *.JPEG | *.PNG | *.WEBP) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -34,9 +34,9 @@ is_image_name() {
 # Keep WebP under its own extension; never accept renamed WebP as JPEG/PNG.
 valid_image_content() {
   case "$1:$2" in
-    *.webp:image/webp|*.WEBP:image/webp) return 0 ;;
-    *.webp:*|*.WEBP:*) return 1 ;;
-    *:image/jpeg|*:image/png) return 0 ;;
+    *.webp:image/webp | *.WEBP:image/webp) return 0 ;;
+    *.webp:* | *.WEBP:*) return 1 ;;
+    *:image/jpeg | *:image/png) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -93,7 +93,7 @@ if [[ -f "$GUIDED_MANIFEST" ]]; then
       fi
       i=$((i + 1))
     done
-  done < "$GUIDED_MANIFEST"
+  done <"$GUIDED_MANIFEST"
 fi
 EXPECT=$((PERSONS * PER_PERSON + guided))
 
@@ -105,7 +105,10 @@ for f in "$OUT"/*; do
     n=$((n + 1))
   fi
 done
-[[ "$n" -eq "$EXPECT" ]] || { echo "FAIL: expected $EXPECT images in $OUT, found $n" >&2; fail=1; }
+[[ "$n" -eq "$EXPECT" ]] || {
+  echo "FAIL: expected $EXPECT images in $OUT, found $n" >&2
+  fail=1
+}
 
 # Content (magic-byte) assertion: reject invalid or disguised images even when
 # their names match the supported extensions.
@@ -119,10 +122,14 @@ for f in "$OUT"/*; do
     bad_content=$((bad_content + 1))
   fi
 done
-[[ "$bad_content" -eq 0 ]] || { echo "FAIL: $bad_content image(s) have invalid jpeg/png/webp content" >&2; fail=1; }
+[[ "$bad_content" -eq 0 ]] || {
+  echo "FAIL: $bad_content image(s) have invalid jpeg/png/webp content" >&2
+  fail=1
+}
 
 if [[ ! -f "$MANIFEST" ]]; then
-  echo "FAIL: manifest missing at $MANIFEST" >&2; fail=1
+  echo "FAIL: manifest missing at $MANIFEST" >&2
+  fail=1
 else
   lines=0
   while IFS= read -r line || [[ -n "${line:-}" ]]; do
@@ -131,23 +138,39 @@ else
     if [[ "$line" =~ ^[a-z0-9_]+\ [0-9]+$ ]]; then
       lines=$((lines + 1))
     fi
-  done < "$MANIFEST"
-  [[ "$lines" -eq "$PERSONS" ]] || { echo "FAIL: manifest has $lines persons, expected $PERSONS" >&2; fail=1; }
+  done <"$MANIFEST"
+  [[ "$lines" -eq "$PERSONS" ]] || {
+    echo "FAIL: manifest has $lines persons, expected $PERSONS" >&2
+    fail=1
+  }
   while read -r p c; do
     [[ -z "${p:-}" ]] && continue
     p=${p%$'\r'}
     c=${c%$'\r'}
-    [[ "${c:-0}" -ge "$PER_PERSON" ]] || { echo "FAIL: manifest person $p has $c < $PER_PERSON" >&2; fail=1; }
+    [[ "${c:-0}" -ge "$PER_PERSON" ]] || {
+      echo "FAIL: manifest person $p has $c < $PER_PERSON" >&2
+      fail=1
+    }
     actual=$(count_prefix_files "$OUT" "$p")
-    [[ "$actual" -ge "$PER_PERSON" ]] || { echo "FAIL: $p has $actual files on disk < $PER_PERSON" >&2; fail=1; }
-  done < "$MANIFEST"
+    [[ "$actual" -ge "$PER_PERSON" ]] || {
+      echo "FAIL: $p has $actual files on disk < $PER_PERSON" >&2
+      fail=1
+    }
+  done <"$MANIFEST"
 fi
 
 if grep -q '_(operator fills)_' "$README" 2>/dev/null; then
-  echo "FAIL: placeholder provenance row remains in $README" >&2; fail=1
+  echo "FAIL: placeholder provenance row remains in $README" >&2
+  fail=1
 fi
 rows=$(grep -cE '^\| [a-z0-9_]+\.(jpg|jpeg|png|webp|WEBP) \|' "$README" 2>/dev/null || true)
-[[ "$rows" -ge "$EXPECT" ]] || { echo "FAIL: provenance rows $rows < $EXPECT in $README" >&2; fail=1; }
+[[ "$rows" -ge "$EXPECT" ]] || {
+  echo "FAIL: provenance rows $rows < $EXPECT in $README" >&2
+  fail=1
+}
 
-if [[ "$fail" -ne 0 ]]; then echo "verify-clustering-seed: FAIL" >&2; exit 1; fi
+if [[ "$fail" -ne 0 ]]; then
+  echo "verify-clustering-seed: FAIL" >&2
+  exit 1
+fi
 echo "verify-clustering-seed: OK ($n images = $PERSONS persons x $PER_PERSON + $guided guided, $rows provenance rows)"

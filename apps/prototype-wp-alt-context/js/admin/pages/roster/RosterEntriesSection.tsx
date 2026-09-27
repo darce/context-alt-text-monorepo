@@ -5,7 +5,7 @@ import { listRosterEntries, type RosterEntry } from '../../api/rosterApi';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import { PersonMergeDialog } from './PersonMergeDialog';
-import { usePersonMerge } from '../../hooks/usePersonMerge';
+import { clearPersonMergeUndoToken, PERSON_MERGE_UNDO_TOKEN_TTL_MS, usePersonMerge } from '../../hooks/usePersonMerge';
 import { isPersonMergeConflict, personMergeErrorMessage, type PersonMergePreview } from '../../api/personMergeApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { getEntryPersonUuid, ROSTER_ROUTE_PARAM_KEYS } from './rosterRoute';
@@ -43,10 +43,10 @@ const NAMED_PEOPLE_HEADING_ID = 'acx-roster-named-title';
 /** Quiet period before the search summary is copied into role=status [ROSTER-W-03]. */
 export const SEARCH_STATUS_DEBOUNCE_MS = 300;
 
-// IDCHIP-1-MUI-R-04: the undo banner must not linger forever once a merge
-// completes; auto-dismiss it after a bounded window while still allowing
-// manual dismissal before then.
+// IDCHIP-1-MUI-R-04: the merge notice auto-dismisses while its undo action
+// remains available for the server's full validity window.
 export const UNDO_BANNER_TTL_MS = 30_000;
+const UNDO_TOKEN_VALIDITY_HOURS = PERSON_MERGE_UNDO_TOKEN_TTL_MS / (60 * 60 * 1000);
 
 const isQueueFilterId = (value: string | null): value is QueueFilterId =>
   value === 'singleton-proposals' || value === 'hard-examples' || value === 'needs-confirmation-after-merge';
@@ -374,7 +374,13 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
           key={session.id}
           loser={session.person}
           entries={entries}
-          onDismiss={() => setMergeSessions((current) => current.filter((item) => item.id !== session.id))}
+          undoTokenScope={`roster-${session.id}-${session.person.id}`}
+          onDismiss={(reason) => {
+            if (reason === 'banner-expired' || reason === 'banner-closed') {
+              return;
+            }
+            setMergeSessions((current) => current.filter((item) => item.id !== session.id));
+          }}
         />
       ))}
       <header className="acx-roster-section__header">
@@ -570,18 +576,22 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
   );
 };
 
-// Mount mutations only when a row action starts a merge; retain them for undo after closing.
+// Keep the undo mutation mounted after the notice closes so it can remain
+// available for the server-side token validity window.
 // Exported for direct testing of the close/undo-expiry lifecycle (IDCHIP-1-MUI-R-04/R-05).
 export const PersonMergeFlow = ({
   loser,
   entries,
+  undoTokenScope,
   onDismiss,
 }: {
   loser: RosterEntry;
   entries: RosterEntry[];
-  onDismiss: () => void;
+  undoTokenScope?: string;
+  onDismiss: (reason?: 'banner-expired' | 'banner-closed' | 'token-expired' | 'completed') => void;
 }) => {
-  const merge = usePersonMerge();
+  const tokenScope = undoTokenScope ?? String(loser.id);
+  const merge = usePersonMerge(tokenScope);
   const client = useQueryClient();
   const attempts = React.useRef(0);
   const [checking, setChecking] = useState(false);
@@ -632,6 +642,7 @@ export const PersonMergeFlow = ({
   const retryableFailure = checkFailed || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error));
   const dismissDisabled = pending || (!!merge.undo.error && !isPersonMergeConflict(merge.undo.error) && !reconciled);
   const [open, setOpen] = useState(true);
+  const [bannerVisible, setBannerVisible] = useState(true);
   const [merged, setMerged] = useState<PersonMergePreview | null>(null);
   // Synchronous mirror of `merged`: the dialog's onSuccess handler calls
   // onMerged() then onOpenChange(false) in the same tick, so the onOpenChange
@@ -639,14 +650,30 @@ export const PersonMergeFlow = ({
   const mergedRef = React.useRef(false);
   const onDismissRef = React.useRef(onDismiss);
   onDismissRef.current = onDismiss;
-  // IDCHIP-1-MUI-R-04: bound the undo banner's lifetime once a merge lands.
+  // IDCHIP-1-MUI-R-04: close the large notice after 30 seconds, but keep a
+  // compact recovery action until the server-side undo token expires.
   useEffect(() => {
-    if (!merged || pending || retryableFailure) {
+    if (!merged || !bannerVisible || pending || retryableFailure) {
       return;
     }
-    const timer = window.setTimeout(() => onDismissRef.current(), UNDO_BANNER_TTL_MS);
+    const timer = window.setTimeout(() => {
+      setBannerVisible(false);
+      onDismissRef.current(merge.undo.isSuccess ? 'completed' : 'banner-expired');
+    }, UNDO_BANNER_TTL_MS);
     return () => window.clearTimeout(timer);
-  }, [merged, pending, retryableFailure]);
+  }, [merged, bannerVisible, pending, retryableFailure, merge.undo.isSuccess]);
+
+  useEffect(() => {
+    if (merge.undoToken === null || merge.undoExpiresAt === null || merge.undo.isSuccess) {
+      return;
+    }
+    const delay = Math.max(0, merge.undoExpiresAt - Date.now());
+    const timer = window.setTimeout(() => {
+      clearPersonMergeUndoToken(tokenScope);
+      onDismissRef.current('token-expired');
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [tokenScope, merge.undoToken, merge.undoExpiresAt, merge.undo.isSuccess, merge.undo.error]);
   return (
     <>
       <PersonMergeDialog
@@ -668,7 +695,7 @@ export const PersonMergeFlow = ({
           }
         }}
       />
-      {merged && (
+      {merged && bannerVisible && (
         <div className="acx-person-merge-banner" role="status">
           {reconciled ? (
             <p>{reconciled}</p>
@@ -696,14 +723,50 @@ export const PersonMergeFlow = ({
           )}
           {!merge.undo.isSuccess && !reconciled && !isPersonMergeConflict(merge.undo.error) && (
             <p>
-              Undo is available only while this notification remains on this page. It closes after{' '}
-              {UNDO_BANNER_TTL_MS / 1000} seconds, except while undo is pending or needs a retry. Dismissing it ends
-              access to undo.
+              This notice closes after {UNDO_BANNER_TTL_MS / 1000} seconds. Undo remains available for{' '}
+              {UNDO_TOKEN_VALIDITY_HOURS} hours.
             </p>
           )}
-          <button type="button" disabled={dismissDisabled} onClick={onDismiss} aria-label="Dismiss merge notification">
+          <button
+            type="button"
+            disabled={dismissDisabled}
+            onClick={() => {
+              setBannerVisible(false);
+              onDismissRef.current('banner-closed');
+            }}
+            aria-label="Dismiss merge notification"
+          >
             <X aria-hidden="true" />
           </button>
+        </div>
+      )}
+      {merged && !bannerVisible && (
+        <div className="acx-person-merge-banner" role="status">
+          {!merge.undo.isSuccess && !isPersonMergeConflict(merge.undo.error) && merge.undoToken !== null ? (
+            <>
+              <span>Undo remains available for {UNDO_TOKEN_VALIDITY_HOURS} hours.</span>
+              <button type="button" onClick={() => setBannerVisible(true)} aria-label="Undo recent merge">
+                Undo recent merge
+              </button>
+            </>
+          ) : (
+            <>
+              <span>{merge.undo.isSuccess ? 'Person restored.' : 'Merge undo needs review.'}</span>
+              <button type="button" onClick={() => setBannerVisible(true)} aria-label="Show merge status">
+                Show merge status
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearPersonMergeUndoToken(tokenScope);
+                  onDismiss();
+                }}
+                aria-label="Dismiss merge notification"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </>
+          )}
         </div>
       )}
     </>

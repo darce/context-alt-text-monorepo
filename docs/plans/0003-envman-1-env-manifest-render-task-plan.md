@@ -132,12 +132,13 @@ Separately, a `class = "secret"` var named `VITE_*` is refused on any target.
 ### `scripts/env/secret_refs.py`
 
 - `class SecretUnavailable(RuntimeError)`. The message contains the var name and the scheme, never a value.
+- `class SecretNotFound(SecretUnavailable)` is raised when the secret is absent (keychain exit 44; `env:` unset or empty); every other failure stays `SecretUnavailable`.
 - `resolve_secret(var_name: str, ref: str, *, environ: Mapping[str, str] | None = None, runner=subprocess.run) -> str`:
   - `keychain:<service>/<account>`:
     - Split on the first `/`. An empty service or account, or no `/`, raises `SecretUnavailable` without calling the runner.
     - Otherwise call `runner(["security", "find-generic-password", "-s", service, "-a", account, "-w"], capture_output=True, text=True, check=False)`.
-    - A non-zero exit or empty output raises `SecretUnavailable`. Strip one trailing newline.
-  - `env:<NAME>` reads `environ` (default `os.environ`). Absent or empty raises `SecretUnavailable`.
+    - Exit 44 raises `SecretNotFound`; any other non-zero exit or empty output raises `SecretUnavailable`. Strip one trailing newline.
+  - `env:<NAME>` reads `environ` (default `os.environ`). An unset or empty value raises `SecretNotFound`; an empty NAME raises `SecretUnavailable`.
   - `vault:` raises `SecretUnavailable` ("vault refs render in ENVMAN-2").
   - Any other or missing scheme raises `SecretUnavailable` without calling the runner.
 
@@ -152,9 +153,8 @@ Separately, a `class = "secret"` var named `VITE_*` is refused on any target.
   - A `required = false` var renders commented, as `# NAME=example`.
   - No resolver is called.
 - **Runtime mode:**
-  - public/config vars render `values[env]`;
-  - secret vars render `resolve(name, secret[env])`;
-  - derive substitutes `${VAR}` with the rendered values;
+  - public/config vars render `values[env]`; secret vars render `resolve(name, secret[env])`; derive substitutes `${VAR}` with the rendered values.
+  - A `required = false` secret whose resolver raises `SecretNotFound` is omitted; any other resolver error, or an absent required secret, raises `SecretUnavailable` without echo.
   - a missing non-required var is omitted, and a missing required var raises `ManifestError`.
 
 **Layout**

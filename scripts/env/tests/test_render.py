@@ -569,6 +569,7 @@ def test_check_runtime_hides_both_secret_values_on_mismatch(write_manifest, tmp_
         manifest, "t", "local", resolve=lambda name, ref: old_secret
     )
     path.write_text(old_text, encoding="utf-8")
+    path.chmod(0o600)
 
     messages = render_module.check_runtime(
         manifest,
@@ -829,6 +830,7 @@ def test_v2_check_uses_effective_var(write_manifest, tmp_path, mode):
         f'# == Other ==\n# overridden\nVALUE={selected}\n')
     path = tmp_path / 't.example'
     path.write_text(expected, encoding='utf-8')
+    path.chmod(0o600)
     messages = (render.check_example(manifest, 't', tmp_path) if env is None else
                 render.check_runtime(manifest, 't', env, path))
     assert messages == []

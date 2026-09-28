@@ -27,6 +27,9 @@ for the multi-environment OCI VM template.'''
 [targets.svc-vm]
 audience = "backend"
 envs = ["dev", "prod", "staging"]
+remote_paths = { dev = "/opt/acx-backend/dev/.env", staging = "/opt/acx-backend/staging/.env", prod = "/opt/acx-backend/prod/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { dev = "dev", staging = "staging", prod = "prod" }
 example = "apps/prototype-description-service/.env.prod.example"
 sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
 doc = '''
@@ -48,6 +51,9 @@ Do NOT commit secrets.'''
 [targets.svc-fir]
 audience = "backend"
 envs = ["fir"]
+remote_paths = { fir = "/opt/acx-backend/dev-fir/.env" }
+preserve = ["ACX_IMAGE_REPO"]
+lease_env = { fir = "dev-fir" }
 example = "apps/prototype-description-service/.env.fir.example"
 sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
 doc = '''
@@ -87,6 +93,7 @@ Do NOT commit secrets.'''
 [targets.demo]
 audience = "backend"
 envs = ["demo"]
+remote_paths = { demo = "/opt/acx-backend/demo/secrets/.env" }
 example = "infra/oci/demo/.env.example"
 sections = ["Compose", "MariaDB", "WordPress", "Generated secrets", "Image description", "GPU lifecycle"]
 doc = '''

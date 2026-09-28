@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -193,6 +194,7 @@ def _validate_targets(targets: Mapping[str, Target], source: str) -> None:
             value = getattr(target, key)
             if value is None:
                 continue
+            value = posixpath.normpath(value)
             if value in owners:
                 _fail(source, key, f"targets {owners[value]} and {target.name} share {key}")
             owners[value] = target.name
@@ -511,8 +513,16 @@ def _validate_public_build(
 
 
 def _validate_public_name(var: Var) -> None:
-    tokens = set(var.name.split("_"))
-    if "PUBLISHABLE" not in tokens and tokens & _PUBLIC_SENSITIVE_TOKENS:
+    tokens = var.name.split("_")
+    remaining = []
+    index = 0
+    while index < len(tokens):
+        if tokens[index:index + 2] == ["PUBLISHABLE", "KEY"]:
+            index += 2
+            continue
+        remaining.append(tokens[index])
+        index += 1
+    if set(remaining) & _PUBLIC_SENSITIVE_TOKENS:
         _fail(var.source, var.name, "sensitive var name cannot target public builds")
 
 

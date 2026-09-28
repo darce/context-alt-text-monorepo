@@ -701,3 +701,133 @@ def test_cli_runtime_secret_fails_closed_then_writes_without_echo(write_manifest
     runtime_path = repo_root / "app/.env"
     assert f"ACX_T_SECRET={fake_secret}" in runtime_path.read_text(encoding="utf-8")
     assert stat.S_IMODE(runtime_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize('env', [None, 'local'])
+def test_v2_target_preamble_exact_layout(write_manifest, env):
+    module, render = _modules()
+    root = write_manifest(_targets() + '\ndoc = "instructions\\n"',
+        **{'10-main': 'version=1\n' + _var('VALUE', example='base', values={'local': 'base'})})
+    manifest = module.load_manifest(root)
+    assert render.render_target(manifest, 't', env) == (
+        f'{HEADER_LINE}\n# target: t env: {env or "example"} digest: '
+        f'{module.target_digest(manifest, "t")}\n\n'
+        '# instructions\n#\n\n# == Database ==\nVALUE=base\n')
+
+
+def test_v2_absent_target_doc_preserves_layout(write_manifest):
+    module, render = _modules()
+    root = write_manifest(_targets(), **{'10-main': 'version=1\n' +
+        _var('VALUE', values={}, doc='doc line')})
+    manifest = module.load_manifest(root)
+    assert manifest.targets['t'].doc is None
+    assert render.render_target(manifest, 't', None) == (
+        f'{HEADER_LINE}\n# target: t env: example digest: '
+        f'{module.target_digest(manifest, "t")}\n\n'
+        '# == Database ==\n# doc line\nVALUE=example-value\n')
+
+
+@pytest.mark.parametrize('doc_owner', ['target', 'var', 'override'])
+def test_v2_doc_lines_preserve_leading_and_strip_trailing_spaces(write_manifest, doc_owner):
+    module, render = _modules()
+    doc = ' install -m 0600 x y  \n\nnext\t'
+    targets = _targets()
+    fragment = 'version=1\n' + _var('VALUE', values={}, doc=doc if doc_owner == 'var' else None)
+    if doc_owner == 'target':
+        targets += '\ndoc = ' + json.dumps(doc)
+    if doc_owner == 'override':
+        fragment += '\n[[override]]\nname="VALUE"\ntarget="t"\ndoc=' + json.dumps(doc)
+    manifest = module.load_manifest(write_manifest(targets, **{'10-main': fragment}))
+    assert '#  install -m 0600 x y\n#\n# next\n' in render.render_target(manifest, 't', None)
+
+
+def _v2_render_manifest(write_manifest, override):
+    module, _ = _modules()
+    targets = '''version=1
+[targets.t]
+audience="backend"
+envs=["local"]
+sections=["Database", "Other"]
+example="t.example"
+[targets.u]
+audience="backend"
+envs=["local"]
+sections=["Database", "Other"]
+example="u.example"
+'''
+    fragment = 'version=1\n' + '\n'.join(
+        _var(name, example='base', values={'local': 'runtime'}).replace(
+            'targets = ["t"]', 'targets = ["t", "u"]')
+        for name in ('FIRST', 'VALUE', 'LAST'))
+    fragment += '\n[[override]]\nname="VALUE"\ntarget="t"\n' + override
+    return module.load_manifest(write_manifest(targets, **{'10-main': fragment}))
+
+
+def test_v2_override_example_is_target_specific(write_manifest):
+    _, render = _modules()
+    manifest = _v2_render_manifest(write_manifest, 'example="custom"')
+    assert 'VALUE=custom' in render.render_target(manifest, 't', None).splitlines()
+    assert 'VALUE=base' in render.render_target(manifest, 'u', None).splitlines()
+
+
+def test_v2_override_required_is_target_specific(write_manifest):
+    _, render = _modules()
+    manifest = _v2_render_manifest(write_manifest, 'required=false')
+    assert '# VALUE=base' in render.render_target(manifest, 't', None).splitlines()
+    assert 'VALUE=base' in render.render_target(manifest, 'u', None).splitlines()
+
+
+@pytest.mark.parametrize('env', [None, 'local'])
+def test_v2_override_section_moves_only_target_var(write_manifest, env):
+    _, render = _modules()
+    manifest = _v2_render_manifest(write_manifest, 'section="Other"')
+    value = 'base' if env is None else 'runtime'
+    assert render.render_target(manifest, 't', env).split('\n\n', 1)[1] == (
+        f'# == Database ==\nFIRST={value}\nLAST={value}\n\n# == Other ==\nVALUE={value}\n')
+    assert render.render_target(manifest, 'u', env).split('\n\n', 1)[1] == (
+        f'# == Database ==\nFIRST={value}\nVALUE={value}\nLAST={value}\n\n# == Other ==\n')
+
+
+@pytest.mark.parametrize('env', [None, 'local'])
+def test_v2_override_keeps_declaration_order(write_manifest, env):
+    _, render = _modules()
+    manifest = _v2_render_manifest(write_manifest, 'section="Database"')
+    lines = render.render_target(manifest, 't', env).splitlines()
+    assert [line.split('=')[0] for line in lines if '=' in line] == ['FIRST', 'VALUE', 'LAST']
+
+
+@pytest.mark.parametrize(('target', 'env', 'value'), [('a', 'local', 'x'), ('b', 'dev', 'y')])
+def test_v2_render_uses_target_env_from_union(write_manifest, target, env, value):
+    module, render = _modules()
+    targets = '''version=1
+[targets.a]
+audience="backend"
+envs=["local"]
+sections=["Database"]
+[targets.b]
+audience="backend"
+envs=["dev"]
+sections=["Database"]
+'''
+    var = _var('VALUE', values={'local': 'x', 'dev': 'y'}).replace(
+        'targets = ["t"]', 'targets = ["a", "b"]')
+    manifest = module.load_manifest(write_manifest(targets, **{'10-main': 'version=1\n' + var}))
+    assert f'VALUE={value}' in render.render_target(manifest, target, env).splitlines()
+
+
+@pytest.mark.parametrize('mode', ['example', 'runtime'])
+def test_v2_check_uses_effective_var(write_manifest, tmp_path, mode):
+    module, render = _modules()
+    manifest = _v2_render_manifest(write_manifest, 'example="custom"\nsection="Other"\ndoc="overridden"')
+    env = None if mode == 'example' else 'local'
+    value = 'base' if env is None else 'runtime'
+    selected = 'custom' if env is None else 'runtime'
+    expected = (f'{HEADER_LINE}\n# target: t env: {env or "example"} digest: '
+        f'{module.target_digest(manifest, "t")}\n\n'
+        f'# == Database ==\nFIRST={value}\nLAST={value}\n\n'
+        f'# == Other ==\n# overridden\nVALUE={selected}\n')
+    path = tmp_path / 't.example'
+    path.write_text(expected, encoding='utf-8')
+    messages = (render.check_example(manifest, 't', tmp_path) if env is None else
+                render.check_runtime(manifest, 't', env, path))
+    assert messages == []

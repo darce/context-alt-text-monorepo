@@ -53,7 +53,7 @@ _VAR_REQUIRED_KEYS = frozenset({"name", "class", "targets", "section", "example"
 _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
     {"doc", "required", "values", "secret", "derive"}
 )
-_DERIVE_REF = re.compile(r"\$\{([^}]+)\}")
+_DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _LITERAL_SECRET = re.compile(
     r"sk_(?:test|live)_|\brk_(?:test|live)_|whsec_|-----BEGIN"
 )
@@ -154,28 +154,9 @@ def _load_targets(path: Path) -> dict[str, Target]:
     return targets
 
 
-def _load_var(raw: object, source: str) -> Var:
-    table = _mapping(raw, source, "var")
-    if "name" in table and isinstance(table["name"], str):
-        name = table["name"]
-    else:
-        name = "var"
-    _check_keys(table, _VAR_REQUIRED_KEYS, _VAR_KEYS, source, f"{name}.")
-
-    name = _string(table["name"], source, "name")
-    cls = _string(table["class"], source, f"{name}.class")
-    if cls not in {"public", "config", "secret"}:
-        _fail(source, f"{name}.class", "unsupported class")
-    targets = _string_list(table["targets"], source, f"{name}.targets")
-    section = _string(table["section"], source, f"{name}.section")
-    example = _string(table["example"], source, f"{name}.example")
-
-    doc_value = table.get("doc", "")
-    doc = _string(doc_value, source, f"{name}.doc")
-    required = table.get("required", True)
-    if not isinstance(required, bool):
-        _fail(source, f"{name}.required", "must be a boolean")
-
+def _load_value_source(
+    table: Mapping[str, object], source: str, name: str, cls: str
+) -> tuple[dict[str, str], dict[str, str], str | None]:
     source_fields = ("values", "secret", "derive")
     present_sources = [key for key in source_fields if key in table]
     if len(present_sources) != 1:
@@ -189,25 +170,44 @@ def _load_var(raw: object, source: str) -> Var:
         secret = _string_map(table["secret"], source, f"{name}.secret")
     else:
         derive = _string(table["derive"], source, f"{name}.derive")
-
     if cls == "secret" and "values" in table:
         _fail(source, f"{name}.values", "secret vars cannot define values")
     if cls != "secret" and "secret" in table:
         _fail(source, f"{name}.secret", "only secret vars can define secret refs")
-    if "secret" in table:
-        for reference in secret.values():
-            scheme, separator, _ = reference.partition(":")
-            if not separator or scheme not in {"keychain", "env", "vault"}:
-                shown_scheme = scheme if separator else "missing"
-                _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
+    for reference in secret.values():
+        scheme, separator, _ = reference.partition(":")
+        if not separator or scheme not in {"keychain", "env", "vault"}:
+            shown_scheme = scheme if separator else "missing"
+            _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
+    return values, secret, derive
 
-    if _LITERAL_SECRET.search(example):
-        _fail(source, f"{name}.example", "literal secret material is not allowed")
-    for value in values.values():
-        if _LITERAL_SECRET.search(value):
-            _fail(source, f"{name}.values", "literal secret material is not allowed")
 
-    return Var(
+def _validate_literal_guard(var: Var) -> None:
+    candidates = [("example", var.example), ("derive", var.derive)]
+    candidates.extend(("values", value) for value in var.values.values())
+    for key, value in candidates:
+        if value is not None and _LITERAL_SECRET.search(value):
+            _fail(var.source, f"{var.name}.{key}", "literal secret material is not allowed")
+
+
+def _load_var(raw: object, source: str) -> Var:
+    table = _mapping(raw, source, "var")
+    name_hint = table.get("name")
+    name_hint = name_hint if isinstance(name_hint, str) else "var"
+    _check_keys(table, _VAR_REQUIRED_KEYS, _VAR_KEYS, source, f"{name_hint}.")
+    name = _string(table["name"], source, "name")
+    cls = _string(table["class"], source, f"{name}.class")
+    if cls not in {"public", "config", "secret"}:
+        _fail(source, f"{name}.class", "unsupported class")
+    targets = _string_list(table["targets"], source, f"{name}.targets")
+    section = _string(table["section"], source, f"{name}.section")
+    example = _string(table["example"], source, f"{name}.example")
+    doc = _string(table.get("doc", ""), source, f"{name}.doc")
+    required = table.get("required", True)
+    if not isinstance(required, bool):
+        _fail(source, f"{name}.required", "must be a boolean")
+    values, secret, derive = _load_value_source(table, source, name, cls)
+    var = Var(
         name=name,
         cls=cls,
         targets=targets,
@@ -220,14 +220,13 @@ def _load_var(raw: object, source: str) -> Var:
         derive=derive,
         source=source,
     )
+    _validate_literal_guard(var)
+    return var
 
 
-def load_manifest(root: Path) -> Manifest:
-    manifest_dir = Path(root) / "manifest.d"
-    targets = _load_targets(manifest_dir / "targets.toml")
+def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
     vars_by_name: dict[str, Var] = {}
     ordered_vars: list[Var] = []
-
     try:
         fragment_paths = sorted(
             path for path in manifest_dir.glob("*.toml") if path.name != "targets.toml"
@@ -251,8 +250,13 @@ def load_manifest(root: Path) -> Manifest:
                 _fail(source, var.name, "duplicate variable name")
             vars_by_name[var.name] = var
             ordered_vars.append(var)
+    return vars_by_name, ordered_vars
 
-    for var in ordered_vars:
+
+def _validate_target_envs(
+    targets: Mapping[str, Target], vars: tuple[Var, ...] | list[Var]
+) -> None:
+    for var in vars:
         for target_name in var.targets:
             target = targets.get(target_name)
             if target is None:
@@ -265,14 +269,46 @@ def load_manifest(root: Path) -> Manifest:
                     if env_name not in targets[target_name].envs:
                         _fail(var.source, var.name, f"{source_name} env {env_name} is not configured")
 
+def _parse_derive_references(var: Var) -> tuple[str, ...]:
+    if var.derive is None:
+        return ()
+    references = []
+    position = 0
+    while True:
+        start = var.derive.find("$", position)
+        if start == -1:
+            return tuple(references)
+        match = _DERIVE_REF.match(var.derive, start)
+        if match is None:
+            _fail(var.source, f"{var.name}.derive", "malformed derive interpolation")
+        references.append(match.group(1))
+        position = match.end()
+
+
+def _validate_derive_references(
+    vars_by_name: Mapping[str, Var],
+) -> dict[str, tuple[str, ...]]:
     references: dict[str, tuple[str, ...]] = {}
-    for var in ordered_vars:
-        names = tuple(_DERIVE_REF.findall(var.derive or ""))
+    for var in vars_by_name.values():
+        names = _parse_derive_references(var)
         references[var.name] = names
         for referenced_name in names:
-            if referenced_name not in vars_by_name:
+            referenced = vars_by_name.get(referenced_name)
+            if referenced is None:
                 _fail(var.source, referenced_name, f"unknown var referenced by {var.name}")
+            for target_name in var.targets:
+                if target_name not in referenced.targets:
+                    _fail(
+                        var.source,
+                        f"{var.name}.{referenced_name}",
+                        f"referenced var does not target {target_name}",
+                    )
+    return references
 
+
+def _validate_derive_cycles(
+    vars_by_name: Mapping[str, Var], references: Mapping[str, tuple[str, ...]]
+) -> None:
     visit_state: dict[str, int] = {}
 
     def visit(name: str) -> None:
@@ -287,9 +323,13 @@ def load_manifest(root: Path) -> Manifest:
             visit(referenced_name)
         visit_state[name] = 2
 
-    for var in ordered_vars:
-        visit(var.name)
+    for name in vars_by_name:
+        visit(name)
 
+
+def _derive_secret_reachability(
+    vars_by_name: Mapping[str, Var], references: Mapping[str, tuple[str, ...]]
+) -> dict[str, bool]:
     secret_reachability: dict[str, bool] = {}
 
     def reaches_secret(name: str) -> bool:
@@ -300,18 +340,51 @@ def load_manifest(root: Path) -> Manifest:
             )
         return secret_reachability[name]
 
-    for var in ordered_vars:
-        if var.derive is not None and var.cls != "secret" and reaches_secret(var.name):
+    for name in vars_by_name:
+        reaches_secret(name)
+    return secret_reachability
+
+
+def _validate_derive_graph(vars_by_name: Mapping[str, Var]) -> dict[str, bool]:
+    references = _validate_derive_references(vars_by_name)
+    _validate_derive_cycles(vars_by_name, references)
+    return _derive_secret_reachability(vars_by_name, references)
+
+
+def _validate_value_sources(
+    vars: tuple[Var, ...] | list[Var], reaches_secret: Mapping[str, bool]
+) -> None:
+    for var in vars:
+        if var.derive is not None and var.cls != "secret" and reaches_secret[var.name]:
             _fail(var.source, var.name, "non-secret derive references secret material")
-        if any(targets[target_name].audience == "public_build" for target_name in var.targets):
-            if var.cls == "secret":
-                _fail(var.source, var.name, "secret vars cannot target public builds")
-            if var.derive is not None and reaches_secret(var.name):
-                _fail(var.source, var.name, "public build derive reaches secret material")
-            if not var.name.startswith("VITE_"):
-                _fail(var.source, var.name, "public build vars must use the VITE_ prefix")
-            if _PUBLIC_SENSITIVE_NAME.search(var.name):
-                _fail(var.source, var.name, "sensitive var name cannot target public builds")
+
+
+def _validate_public_build(
+    targets: Mapping[str, Target],
+    vars: tuple[Var, ...] | list[Var],
+    reaches_secret: Mapping[str, bool],
+) -> None:
+    for var in vars:
+        if not any(targets[name].audience == "public_build" for name in var.targets):
+            continue
+        if var.cls == "secret":
+            _fail(var.source, var.name, "secret vars cannot target public builds")
+        if var.derive is not None and reaches_secret[var.name]:
+            _fail(var.source, var.name, "public build derive reaches secret material")
+        if not var.name.startswith("VITE_"):
+            _fail(var.source, var.name, "public build vars must use the VITE_ prefix")
+        if _PUBLIC_SENSITIVE_NAME.search(var.name):
+            _fail(var.source, var.name, "sensitive var name cannot target public builds")
+
+
+def load_manifest(root: Path) -> Manifest:
+    manifest_dir = Path(root) / "manifest.d"
+    targets = _load_targets(manifest_dir / "targets.toml")
+    vars_by_name, ordered_vars = _load_fragments(manifest_dir)
+    _validate_target_envs(targets, ordered_vars)
+    reaches_secret = _validate_derive_graph(vars_by_name)
+    _validate_value_sources(ordered_vars, reaches_secret)
+    _validate_public_build(targets, ordered_vars, reaches_secret)
 
     return Manifest(MappingProxyType(targets), tuple(ordered_vars))
 

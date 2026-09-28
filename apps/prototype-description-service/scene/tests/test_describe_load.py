@@ -1158,7 +1158,7 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
         monkeypatch.setattr(load_mod, "load_snapshot", gated_load)
 
         async def publisher_a() -> None:
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
 
         async def publisher_b() -> None:
             await a_read.wait()
@@ -1167,7 +1167,7 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
                     tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start
                 )
                 await session.commit()
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
             b_published.set()
 
         await asyncio.wait_for(asyncio.gather(publisher_a(), publisher_b()), timeout=5)
@@ -1181,7 +1181,7 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
             return equal
 
         monkeypatch.setattr(load_mod, "load_snapshot", equal_revision_load)
-        await describe_router._maybe_dump_describe_load(sf)
+        await describe_router.dump_load_snapshot(sf)
         replayed = json.loads(target.read_text())
         assert replayed["revision"] == 2
         assert replayed["lease_demand"] == 2

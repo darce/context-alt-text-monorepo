@@ -956,3 +956,152 @@ def test_target_digest_ignores_changes_to_vars_for_other_targets(write_manifest)
     after = module.target_digest(module.load_manifest(root), "api")
 
     assert after == before
+
+
+def test_literal_guard_rejects_secret_shaped_derive(write_manifest):
+    offending = "sk_" + "live_" + "x"
+    root = write_manifest(
+        BACKEND_TARGETS,
+        **{
+            "literal": f'''
+                version = 1
+                [[var]]
+                name = "DERIVED_LITERAL"
+                class = "config"
+                targets = ["api"]
+                section = "Runtime"
+                example = "safe"
+                derive = "prefix-{offending}"
+            '''
+        },
+    )
+    module = _manifest_module()
+
+    with pytest.raises(module.ManifestError) as raised:
+        module.load_manifest(root)
+
+    message = str(raised.value)
+    assert "literal.toml" in message
+    assert "DERIVED_LITERAL" in message
+    assert "derive" in message
+    assert offending not in message
+
+
+def test_derive_rejects_reference_missing_a_target(write_manifest):
+    root = write_manifest(
+        BACKEND_TARGETS,
+        **{
+            "scope": '''
+                version = 1
+                [[var]]
+                name = "R"
+                class = "config"
+                targets = ["api"]
+                section = "Database"
+                example = "safe"
+                values = { local = "safe" }
+
+                [[var]]
+                name = "D"
+                class = "config"
+                targets = ["api", "worker"]
+                section = "Database"
+                example = "safe"
+                derive = "${R}"
+            '''
+        },
+    )
+    module = _manifest_module()
+
+    with pytest.raises(module.ManifestError) as raised:
+        module.load_manifest(root)
+
+    message = str(raised.value)
+    assert "R" in message
+    assert "D" in message
+    assert "worker" in message
+
+
+def test_derive_accepts_reference_covering_every_target(write_manifest):
+    root = write_manifest(
+        BACKEND_TARGETS,
+        **{
+            "scope": '''
+                version = 1
+                [[var]]
+                name = "R"
+                class = "config"
+                targets = ["api", "worker"]
+                section = "Database"
+                example = "safe"
+                values = { local = "safe" }
+
+                [[var]]
+                name = "D"
+                class = "config"
+                targets = ["api", "worker"]
+                section = "Database"
+                example = "safe"
+                derive = "${R}"
+            '''
+        },
+    )
+    module = _manifest_module()
+
+    manifest = module.load_manifest(root)
+
+    assert [var.name for var in manifest.vars] == ["R", "D"]
+
+
+@pytest.mark.parametrize("derive", ["${PGHOST", "$PGHOST", "${}", "${lower}"])
+def test_derive_rejects_malformed_interpolation(write_manifest, derive):
+    root = write_manifest(
+        BACKEND_TARGETS,
+        **{
+            "malformed": f'''
+                version = 1
+                [[var]]
+                name = "MALFORMED_DERIVE"
+                class = "config"
+                targets = ["api"]
+                section = "Runtime"
+                example = "safe"
+                derive = "{derive}"
+            '''
+        },
+    )
+    module = _manifest_module()
+
+    with pytest.raises(module.ManifestError) as raised:
+        module.load_manifest(root)
+
+    message = str(raised.value)
+    assert "malformed.toml" in message
+    assert "MALFORMED_DERIVE.derive" in message
+
+
+@pytest.mark.parametrize(
+    ("cls", "source"),
+    [("config", "values"), ("secret", "secret")],
+)
+def test_empty_value_source_tables_are_present(write_manifest, cls, source):
+    root = write_manifest(
+        BACKEND_TARGETS,
+        **{
+            "empty": f'''
+                version = 1
+                [[var]]
+                name = "EMPTY_SOURCE"
+                class = "{cls}"
+                targets = ["api"]
+                section = "Database"
+                example = "safe"
+                {source} = {{}}
+            '''
+        },
+    )
+    module = _manifest_module()
+
+    manifest = module.load_manifest(root)
+
+    assert getattr(manifest.vars[0], source) == {}

@@ -127,6 +127,18 @@ def run(manifest_root: Path, *, env: str, target: str, into: str, check: bool = 
 - A present key that is neither managed, preserved nor in `allow_unmanaged`: apply refuses (exit 2), and `check` lists it as `unmanaged`.
 - No value, secret or otherwise, ever reaches `out`, `err` or an exception message.
 
+### Adoption hardening (em2-adopt; closes ENVMAN-1 deferrals EMREV-CLAUDE-09, EMREDS newline case)
+
+- **Backup never overwritten.** When `_preflight_env_file` is adopting an unheaded file and `<path>.pre-envman` already exists (any file type), it raises `ValueError`. The message contains `.pre-envman` and `backup exists`. Nothing is written. Because the check runs in preflight, `--all-examples --adopt` refuses before any file changes.
+- **Runtime renders refuse unmanaged keys.** `write_env_file` and `_preflight_env_file` gain the keyword `runtime: bool = False`.
+  - With `runtime=True` and a headed existing file, a key present in the old file but absent from the new text and not in `allow_unmanaged` raises `ValueError(f"{path}: unmanaged key {first_sorted}")`. Nothing is written.
+  - `allow_unmanaged` permits dropping the key.
+  - `main` passes `runtime=True` when `--env` is given.
+  - Example renders (no `--env`, or `--all-examples`) still regenerate silently, because examples are wholly generated.
+- **CLI.** `--allow-unmanaged` is accepted with `--adopt` or with `--env`. Otherwise it is a parser error containing `--allow-unmanaged requires --adopt or --env`.
+- **Keychain regression.** A stdout of only `"\n"` raises `SecretUnavailable`, as the empty stdout already does.
+- No value from the old file appears in any message.
+
 ### Remote wrapper and make
 
 - `scripts/env/materialize_remote.sh <env> <target> [--check|--apply] [--adopt]`. It forwards `--adopt` to `materialize`, and `--adopt` is refused without `--apply`.

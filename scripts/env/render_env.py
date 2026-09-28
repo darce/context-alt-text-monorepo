@@ -36,12 +36,12 @@ def _target_vars(manifest: Manifest, target_name: str) -> tuple[Var, ...]:
                  for var in manifest.vars if target_name in var.targets)
 
 
-def _format_value(value: str, name: str) -> str:
+def _format_value(value: str, name: str, *, references: bool = True) -> str:
     if "\r" in value or "\n" in value:
         raise ValueError(f"{name}: value cannot be represented portably")
     if re.fullmatch(r"[A-Za-z0-9_./:@,+=%?-]*", value):
         return value
-    if re.fullmatch(r"(?:[A-Za-z0-9_./:@,+=%?-]|\$\{[A-Za-z_][A-Za-z0-9_]*\})+", value):
+    if references and re.fullmatch(r"(?:[A-Za-z0-9_./:@,+=%?-]|\$\{[A-Za-z_][A-Za-z0-9_]*\})+", value):
         return '"' + value + '"'
     if "'" not in value:
         return "'" + value + "'"
@@ -66,6 +66,7 @@ def render_target(
         raise ManifestError(f"{target_name}: unsupported env {env}")
     variables = _target_vars(manifest, target_name)
     values_by_name: dict[str, str | None] = {}
+    literal_values: set[str] = set()
 
     def runtime_value(var: Var, visiting: frozenset[str] = frozenset()) -> str | None:
         if var.name in values_by_name:
@@ -75,6 +76,7 @@ def render_target(
 
         value: str | None
         if var.derive is not None:
+            literal_values.add(var.name)
             missing_reference = False
 
             def replace_reference(match: re.Match[str]) -> str:
@@ -96,6 +98,7 @@ def render_target(
             if missing_reference:
                 value = None
         elif var.cls == "secret":
+            literal_values.add(var.name)
             reference = var.secret.get(env or "")
             if reference is None:
                 value = None
@@ -145,7 +148,7 @@ def render_target(
                 value = runtime_value(var)
             if value is None:
                 continue
-            assignment = f"{var.name}={_format_value(value, var.name)}"
+            assignment = f"{var.name}={_format_value(value, var.name, references=var.name not in literal_values)}"
             if env is None and not var.required:
                 assignment = f"# {assignment}"
             lines.append(assignment)

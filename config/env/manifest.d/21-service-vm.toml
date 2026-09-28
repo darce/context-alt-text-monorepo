@@ -191,7 +191,7 @@ example = ""
 required = true
 doc = "oci_vault: leave this blank and replace the ACX_GPU_ENDPOINT_API_KEY OCID in\nRECOGNITION_VAULT_SECRET_MAP. env: put the direct value here. Never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
 section = "Image description"
-secret = {}
+secret = { dev = "host:", staging = "host:", prod = "host:" }
 
 [[override]]
 name = "ACX_VLM_MAX_IMAGE_EDGE_PX"

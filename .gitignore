@@ -66,6 +66,7 @@ literature/process/product-deploy-agents/
 # WP Playwright creds: apps/prototype-wp-alt-context/.env.local (example shipped).
 .env
 .env.*
+*.envman-tmp-*
 !.env*.example
 !apps/prototype-wp-alt-context/.env.local.example
 apps/prototype-wp-alt-context/.env.local

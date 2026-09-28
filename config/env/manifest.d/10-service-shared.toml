@@ -1,0 +1,447 @@
+version = 1
+
+[[var]]
+name = "POSTGRES_DSN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Database DSNs"
+example = ""
+doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
+required = false
+secret = {}
+
+[[var]]
+name = "POSTGRES_SYNC_DSN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Database DSNs"
+example = ""
+doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
+required = false
+secret = {}
+
+[[var]]
+name = "LOG_LEVEL"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Runtime mode"
+example = "INFO"
+doc = 'domain: infra | source: OCI deploy | consumer: application logging config'
+values = {}
+
+[[var]]
+name = "TENANT_ID"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Runtime mode"
+example = "00000000-0000-7000-8000-000000000000"
+doc = 'domain: infra | source: OCI deploy | consumer: runtime default tenant context (deploy bootstrap)'
+values = {}
+
+[[var]]
+name = "RECOGNITION_SECRET_BACKEND"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Secret backend"
+example = "oci_vault"
+doc = 'domain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_VAULT_SECRET_MAP"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Secret backend"
+example = '{"PGPASSWORD":"ocid1.vaultsecret.oc1..REPLACE","RECOGNITION_ADMIN_TOKEN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_DSN":"ocid1.vaultsecret.oc1..REPLACE","POSTGRES_SYNC_DSN":"ocid1.vaultsecret.oc1..REPLACE","ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"}'
+doc = 'domain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env'
+required = false
+values = {}
+
+[[var]]
+name = "POSTGRES_USER"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Postgres"
+example = "acx_app"
+doc = 'domain: infra | source: OCI Vault (ExecStartPre) / OCI deploy | consumer: docker-compose Postgres bootstrap'
+values = {}
+
+[[var]]
+name = "POSTGRES_PASSWORD"
+class = "secret"
+targets = ["svc-vm", "svc-fir"]
+section = "Postgres"
+example = ""
+doc = 'domain: infra | source: OCI Vault (ExecStartPre) under oci_vault | consumer: docker-compose Postgres bootstrap'
+secret = {}
+
+[[var]]
+name = "POSTGRES_DB"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Postgres"
+example = "alt_context_service"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose Postgres bootstrap (POSTGRES_DB)'
+values = {}
+
+[[var]]
+name = "CACHE_BASE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Cache directories"
+example = "/data/cache"
+doc = 'domain: infra | source: OCI deploy | consumer: runtime cache path resolution'
+values = {}
+
+[[var]]
+name = "HF_HOME"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Cache directories"
+example = "/data/cache/huggingface_cache"
+doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
+values = {}
+
+[[var]]
+name = "HF_HUB_CACHE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Cache directories"
+example = "/data/cache/huggingface_cache"
+doc = 'domain: infra | source: OCI deploy | consumer: HuggingFace hub cache'
+values = {}
+
+[[var]]
+name = "INSIGHTFACE_CACHE_DIR"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Cache directories"
+example = "/data/cache/insightface"
+doc = 'domain: infra | source: OCI deploy | consumer: InsightFace model cache'
+values = {}
+
+[[var]]
+name = "INSIGHTFACE_HOME"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Cache directories"
+example = "/data/cache/insightface"
+doc = 'domain: infra | source: OCI deploy | consumer: InsightFace home path'
+values = {}
+
+[[var]]
+name = "PGVECTOR_DIM"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Database pool tuning"
+example = "512"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/vector settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_POOL_SIZE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Database pool tuning"
+example = "20"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_MAX_OVERFLOW"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Database pool tuning"
+example = "10"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_POOL_TIMEOUT"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Database pool tuning"
+example = "30"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "DB_POOL_RECYCLE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Database pool tuning"
+example = "3600"
+doc = 'domain: infra | source: description-service / DB ops | consumer: db/settings.py pool settings'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ASYNC_ANALYZE_INLINE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Worker behavior"
+example = "0"
+doc = 'domain: infra | source: service operator | consumer: recognition async analyze worker path'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ADMIN_TAILNET_BOUND"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Operator /admin surface"
+example = "1"
+doc = 'domain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config (must be 1 in production when admin on)'
+values = {}
+
+[[var]]
+name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "API security"
+example = "sha256"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: API key hashing (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_RATE_LIMIT_RPM"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "API security"
+example = "60"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: rate-limit middleware (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_RATE_LIMIT_BURST"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "API security"
+example = "10"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: rate-limit middleware (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_MAX_PAGE_SIZE"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "API security"
+example = "500"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: pagination bounds (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ALLOWED_ORIGINS"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "API security"
+example = ""
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: CORS middleware (SecuritySettings)'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_MAX_IMAGE_EDGE_PX"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Image description"
+example = "1024"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Image description"
+example = "20"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_MAX_RSS_MB"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Image description"
+example = "6144"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_VLM_WORKER_CONCURRENCY"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Image description"
+example = "1"
+doc = 'domain: infra | source: service operator | consumer: VLM host runtime caps'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_DESCRIPTION_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Image description"
+example = "180"
+doc = 'domain: infra | source: service operator | consumer: description request timeout'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_AUTH_ENABLED"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "API security"
+example = "true"
+doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings.auth_enabled; HTTP auth deps'
+values = { local = "1" }
+
+[[var]]
+name = "RECOGNITION_API_KEY_HEADER"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "API security"
+example = "X-API-Key"
+doc = 'domain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)'
+values = { local = "X-API-Key" }
+
+[[var]]
+name = "RECOGNITION_ADMIN_ENABLED"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Operator /admin surface"
+example = "false"
+doc = 'domain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount'
+required = false
+values = {}
+
+[[var]]
+name = "RECOGNITION_ADMIN_TOKEN"
+class = "secret"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Operator /admin surface"
+example = ""
+doc = 'domain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)'
+required = false
+secret = {}
+
+[[var]]
+name = "COMPOSE_PROJECT_NAME"
+class = "config"
+targets = ["svc-vm", "svc-fir", "demo"]
+section = "Compose"
+example = "acx-prod"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.env.yml project identity'
+values = {}
+
+[[var]]
+name = "ACX_DESCRIPTION_ADAPTER"
+class = "config"
+targets = ["svc-vm", "svc-fir", "demo"]
+section = "Image description"
+example = "gpu_qwen30b"
+doc = 'domain: infra | source: service operator | consumer: scene description adapter selection'
+required = false
+values = {}
+
+[[var]]
+name = "ACX_GPU_ENDPOINT_URL"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "http://acx-gpu-burst.compute.oraclevcn.com:8000"
+doc = 'domain: infra | source: service operator | consumer: remote GPU description adapter'
+values = {}
+
+[[var]]
+name = "ACX_GPU_SNAPSHOT_DIR"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "/run/acx"
+doc = 'domain: infra | source: OCI deploy | consumer: docker-compose.prod.yml snapshot mount'
+values = {}
+
+[[var]]
+name = "ACX_GPU_STATE_PATH"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "/run/acx/gpu-state.json"
+doc = 'domain: infra | source: OCI deploy | consumer: lifecycle producer and scene GPU-state reader'
+values = {}
+
+[[var]]
+name = "ACX_GPU_STATE_STALE_SECONDS"
+class = "config"
+targets = ["svc-vm", "demo"]
+section = "GPU lifecycle"
+example = "180"
+doc = 'domain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check'
+values = {}
+
+[[var]]
+name = "ACX_ENV"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Compose"
+example = "prod"
+doc = 'domain: infra | source: OCI deploy | consumer: compose / deploy scripts (environment label)'
+values = {}
+
+[[var]]
+name = "ACX_IMAGE_TAG"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Compose"
+example = "latest"
+doc = 'domain: infra | source: OCI deploy | consumer: compose image tag selection'
+values = {}
+
+[[var]]
+name = "ACX_PGDATA_PATH"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Compose"
+example = "/opt/acx-backend/data/prod-pgdata"
+doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for Postgres data'
+values = {}
+
+[[var]]
+name = "ACX_MODELS_PATH"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Compose"
+example = "/opt/acx-backend/data/prod-models"
+doc = 'domain: infra | source: OCI deploy | consumer: compose volume mount for model cache'
+values = {}
+
+[[var]]
+name = "ACX_NETWORK_NAME"
+class = "config"
+targets = ["svc-vm", "svc-fir"]
+section = "Compose"
+example = "acx-prod-net"
+doc = 'domain: infra | source: OCI deploy | consumer: compose network name'
+values = {}
+
+[[var]]
+name = "RECOGNITION_RUNTIME_MODE"
+class = "config"
+targets = ["svc-local", "svc-vm", "svc-fir"]
+section = "Runtime mode"
+example = "production"
+doc = 'domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings / runtime mode gates; validate_required_secrets'
+values = { local = "development" }

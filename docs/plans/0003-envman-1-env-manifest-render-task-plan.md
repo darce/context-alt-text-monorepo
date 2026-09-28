@@ -112,6 +112,7 @@ section = "Embeddings"           # optional; must be in that target's sections
 **Override rules:** refuse an unknown key; a missing `name` or `target`; none of `example`/`required`/`doc`/`section` present; `name` not a declared var; `target` not among that var's targets; a duplicate `(name, target)` across fragments; `section` not in that target's `sections`; or a wrong type.
 
 **Public-build guard** (inside `load_manifest`). For a var that targets any `audience = "public_build"` target, refuse:
+- any `$` in literal `values` or `example`, including overrides for public-build targets; errors name the source and var without echoing the value.
 - `class = "secret"`;
 - a derive that reaches a secret;
 - a name not starting with `VITE_`;
@@ -200,6 +201,7 @@ There is no escaping anywhere. This subset reads identically in python-dotenv, p
 **CLI:** `python3 scripts/env/render_env.py {render,check} [--root config/env] [--repo-root .] [--env ENV] [--target T|--all-examples] [--adopt] [--allow-unmanaged K,...]`
 - Without `--env`, `--target T` renders or checks T's example.
 - `render --all-examples` rewrites every template.
+- `render --all-examples` preflights every destination before the first write, including directory creation and adoption backups.
 - An `--env` that is not in `target.envs` is a usage error naming the target and env.
 - An interpreter older than 3.11 is refused before the `env` imports, with exit 2.
 - Exit codes: 0 ok, 1 drift, 2 manifest or usage error, 3 secret unavailable, 4 unexpected exception (prints the exception type name only).

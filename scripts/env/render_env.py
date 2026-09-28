@@ -246,6 +246,7 @@ def _preflight_env_file(
     *,
     adopt: bool = False,
     allow_unmanaged: frozenset[str] = frozenset(),
+    runtime: bool = False,
 ) -> _WritePlan:
     path = Path(path)
     existing_stat = _inspect_path(path)
@@ -266,20 +267,23 @@ def _preflight_env_file(
         headed = first_line == HEADER_LINE.encode("utf-8")
         if not headed and not adopt:
             raise _path_error(path, "existing file is not generated")
-        if not headed:
+        if not headed or runtime:
             try:
                 old_text = old_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 raise _path_error(path, "existing file is not UTF-8") from None
-            _validate_adoption(path, old_text)
+            if not headed:
+                _validate_adoption(path, old_text)
             new_text = text
             unmanaged = sorted(_keys(old_text) - _keys(new_text) - set(allow_unmanaged))
             if unmanaged:
                 raise ValueError(f"{path}: unmanaged key {unmanaged[0]}")
-            adopting_unheaded = True
+            adopting_unheaded = not headed
 
     if adopting_unheaded and old_bytes is not None:
         backup_path = Path(f"{path}.pre-envman")
+        if os.path.lexists(backup_path):
+            raise ValueError(f"{backup_path}: backup exists")
         _inspect_path(backup_path)
     return _WritePlan(path, text.encode("utf-8"), old_bytes if adopting_unheaded else None)
 
@@ -307,9 +311,10 @@ def write_env_file(
     *,
     adopt: bool = False,
     allow_unmanaged: frozenset[str] = frozenset(),
+    runtime: bool = False,
 ) -> None:
     _apply_env_file(_preflight_env_file(
-        path, text, adopt=adopt, allow_unmanaged=allow_unmanaged,
+        path, text, adopt=adopt, allow_unmanaged=allow_unmanaged, runtime=runtime,
     ))
 
 
@@ -416,8 +421,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide --target or --all-examples")
     if args.command == "check" and (args.adopt or args.allow_unmanaged):
         parser.error("--adopt and --allow-unmanaged are only valid with render")
-    if args.allow_unmanaged and not args.adopt:
-        parser.error("--allow-unmanaged requires --adopt")
+    if args.allow_unmanaged and not args.adopt and args.env is None:
+        parser.error("--allow-unmanaged requires --adopt or --env")
 
     try:
         manifest = load_manifest(args.root)
@@ -474,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
                     render_target(manifest, args.target, args.env),
                     adopt=args.adopt,
                     allow_unmanaged=allow_unmanaged,
+                    runtime=True,
                 )
                 return 0
             messages = check_runtime(manifest, args.target, args.env, path)

@@ -353,6 +353,26 @@ def test_overwriting_generated_file_keeps_mode_600(tmp_path: Path):
     assert path.read_text(encoding="utf-8").endswith("KEY=second\n")
 
 
+def test_failed_write_preserves_existing_file_and_cleans_up_temp_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    _, render_module = _modules()
+    path = tmp_path / "runtime.env"
+    render_module.write_env_file(path, f"{render_module.HEADER_LINE}\nKEY=first\n")
+
+    def boom(*args, **kwargs):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(render_module.os, "replace", boom)
+
+    with pytest.raises(OSError, match="replace failed"):
+        render_module.write_env_file(path, f"{render_module.HEADER_LINE}\nKEY=second\n")
+
+    assert path.read_text(encoding="utf-8").endswith("KEY=first\n")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert [entry.name for entry in tmp_path.iterdir()] == ["runtime.env"]
+
+
 @pytest.mark.parametrize("kind", ("live symlink", "broken symlink", "directory"))
 def test_writer_refuses_symlinks_and_directories_with_path(kind: str, tmp_path: Path):
     _, render_module = _modules()
@@ -371,6 +391,9 @@ def test_writer_refuses_symlinks_and_directories_with_path(kind: str, tmp_path: 
 
     assert type(exc_info.value) is ValueError
     assert str(path) in str(exc_info.value)
+    if kind == "live symlink":
+        assert destination.read_text(encoding="utf-8") == "untouched\n"
+        assert path.is_symlink()
 
 
 def test_writer_refuses_unheaded_file_without_adopt(tmp_path: Path):
@@ -476,7 +499,7 @@ def test_check_example_reports_drift_with_target_or_path(write_manifest, tmp_pat
     messages = render_module.check_example(manifest, "t", repo_root)
 
     assert messages
-    assert any("t" in message or str(example_path) in message for message in messages)
+    assert any(str(example_path) in message or "app/.env.example" in message for message in messages)
 
 
 def test_check_runtime_hides_both_secret_values_on_mismatch(write_manifest, tmp_path: Path):
@@ -513,28 +536,62 @@ def test_check_runtime_hides_both_secret_values_on_mismatch(write_manifest, tmp_
 
 def test_cli_renders_and_checks_all_examples_then_detects_drift(write_manifest, tmp_path: Path):
     _modules()
+    targets = """version = 1
+
+[targets.t]
+audience = "backend"
+envs = ["local"]
+example = "app/.env.example"
+sections = ["Application"]
+
+[targets.u]
+audience = "backend"
+envs = ["local"]
+example = "other/.env.example"
+sections = ["Other"]
+"""
+    fragment = """version = 1
+
+[[var]]
+name = "APP_MODE"
+class = "config"
+targets = ["t"]
+section = "Application"
+example = "dev"
+values = { local = "dev" }
+
+[[var]]
+name = "OTHER_MODE"
+class = "config"
+targets = ["u"]
+section = "Other"
+example = "ready"
+values = { local = "ready" }
+"""
     root = write_manifest(
-        _targets(path="app/.env", example="app/.env.example"),
-        **{
-            "10-cli": f"version = 1\n\n"
-            f"{_var('APP_MODE', example='dev', values={'local': 'dev'})}"
-        },
+        targets,
+        **{"10-cli": fragment},
     )
     repo_root = tmp_path / "repo"
-    (repo_root / "app").mkdir(parents=True)
+    example_paths = (
+        repo_root / "app/.env.example",
+        repo_root / "other/.env.example",
+    )
+    for example_path in example_paths:
+        example_path.parent.mkdir(parents=True)
     child_env = _cli_env(ACX_T_SECRET=None)
 
     rendered = _run_cli(root, repo_root, "render", "--all-examples", env=child_env)
     assert rendered.returncode == 0, rendered.stderr
-    example_path = repo_root / "app/.env.example"
-    assert example_path.is_file()
+    assert all(example_path.is_file() for example_path in example_paths)
 
     checked = _run_cli(root, repo_root, "check", "--all-examples", env=child_env)
     assert checked.returncode == 0, checked.stderr
-    original_bytes = example_path.read_bytes()
-    drifted_bytes = original_bytes.replace(b"APP_MODE=dev", b"APP_MODE=dew")
+    later_example_path = example_paths[1]
+    original_bytes = later_example_path.read_bytes()
+    drifted_bytes = original_bytes.replace(b"OTHER_MODE=ready", b"OTHER_MODE=readx")
     assert drifted_bytes != original_bytes
-    example_path.write_bytes(drifted_bytes)
+    later_example_path.write_bytes(drifted_bytes)
     drifted = _run_cli(root, repo_root, "check", "--all-examples", env=child_env)
     assert drifted.returncode == 1
 

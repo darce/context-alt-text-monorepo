@@ -56,6 +56,10 @@ secret = { local = "keychain:acx-local/PGPASSWORD" }    # secret only
 - `load_manifest(root: Path) -> Manifest`. Raises `ManifestError` for: missing `manifest.d/targets.toml`; `version != 1`; unknown or missing keys; wrong types; duplicate var names across fragments; `targets` naming an unknown target; `section` not in every one of its targets' `sections`; `values`/`secret`/`derive` not exactly one; secret with `values`; non-secret with `secret`; `derive` naming an unknown var or forming a cycle; a derive that references a secret while `class != "secret"`; an env key in `values`/`secret` not in some target's `envs`; secret ref scheme not in `keychain:`, `env:`, `vault:`.
 - **Public-build guard** (inside `load_manifest`): for a var targeting any `audience="public_build"` target → refuse `class="secret"`, a derive that reaches a secret, a name not starting `VITE_`, and a name matching `SECRET|TOKEN|PASSWORD|PRIVATE|(?<!PUBLISHABLE)_KEY$`.
 - **Literal guard** (all targets): refuse any `values`/`example` string matching `sk_(test|live)_`, `\brk_(test|live)_`, `whsec_`, or `-----BEGIN`.
+- Derive strings use the same literal-secret guard patterns and error style as `values` and `example`.
+- Every var referenced by `${NAME}` in a derive must target every target of the deriving var; otherwise loading fails and names both vars and the missing target.
+- Every `$` in a derive must start a complete `${NAME}` interpolation where `NAME` matches `[A-Z][A-Z0-9_]*`.
+- An empty `values = {}` or `secret = {}` table counts as the one present value source and loads without runtime values.
 - `target_digest(manifest, target_name) -> str`: sha256 hex of `json.dumps(..., sort_keys=True, separators=(",", ":"))` over the target and its vars sorted by name, each var without `source` (so moving a var between fragments or renaming a fragment does not change the digest; changing any other field of the target or one of its vars does).
 
 ### `scripts/env/secret_refs.py`

@@ -19,6 +19,82 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_visible_ascii_and_mermaid_mutations_fail_without_canvas(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        mutations = [
+            ("| Workbench  [screen]", "| MUTATED   [screen]"),
+            ("-->|settings health|", "-->|MUTATED flow row|"),
+            ("| ZONES", "| XONES"),
+            ("Settings / service health (exit)", "Xettings / service health (exit)"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            with patch.object(renderer, "MAPS_DIR", maps), patch.object(
+                renderer, "_load_renderer", side_effect=renderer.OptionalRendererUnavailable()
+            ):
+                for before, after in mutations:
+                    with self.subTest(mutation=before):
+                        mutated = original.replace(before, after, 1)
+                        self.assertNotEqual(mutated, original)
+                        (maps / f"{ref}.md").write_text(mutated)
+                        output = io.StringIO()
+                        with contextlib.redirect_stderr(output):
+                            self.assertEqual(renderer.check([ref]), 1)
+                        self.assertIn("visibleProjectionSha256", output.getvalue())
+
+    def test_renderer_backed_retained_contract_mutation_fails(self):
+        ref = "febt-1-job-error-states"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        mutated = original.replace("No job running", "Xo job running", 1)
+        self.assertNotEqual(mutated, original)
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            (maps / f"{ref}.md").write_text(mutated)
+            output = io.StringIO()
+            with patch.object(renderer, "MAPS_DIR", maps), patch.object(
+                renderer, "render", return_value=mutated
+            ), contextlib.redirect_stderr(output):
+                self.assertEqual(renderer.check([ref]), 1)
+            self.assertIn("renderer visibleProjectionSha256", output.getvalue())
+            self.assertIn("source-pinned snapshot", output.getvalue())
+
+    def test_later_render_failure_does_not_replace_any_target(self):
+        def fake_render(ref):
+            if ref == "second":
+                raise ValueError("second render failed")
+            return "new-first"
+
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            (maps / "first.md").write_text("old-first")
+            (maps / "second.md").write_text("old-second")
+            with patch.object(renderer, "MAPS_DIR", maps), patch.object(
+                renderer, "render", side_effect=fake_render
+            ):
+                with self.assertRaisesRegex(ValueError, "second render failed"):
+                    renderer._render_and_write(["first", "second"])
+            self.assertEqual((maps / "first.md").read_text(), "old-first")
+            self.assertEqual((maps / "second.md").read_text(), "old-second")
+
+    def test_kept_sections_restore_original_generated_heading_anchors(self):
+        original = "# T\n\n## Goals\n\ng\n\n## Keep A\n\na\n\n## Screens\n\ns\n\n## Keep B\n\nb\n\n## Actions\n"
+        generated = "# T\n\n## Goals\n\ng2\n\n## Screens\n\ns2\n\n## Actions\n"
+        kept = renderer._extract_kept_text(original, ("## Keep A", "## Keep B"))
+        expected = "# T\n\n## Goals\n\ng2\n\n## Keep A\n\na\n\n## Screens\n\ns2\n\n## Keep B\n\nb\n\n## Actions\n"
+        self.assertEqual(renderer._restore_kept(generated, kept), expected)
+        anchors = {
+            name: [anchor for anchor, _ in renderer._extract_kept(SOURCE.with_name(f"{name}.md"))]
+            for name in ("roster-people", "workbench-operator-loop", "febt-1-job-error-states")
+        }
+        self.assertEqual(anchors, {
+            "roster-people": ["## Screens"],
+            "workbench-operator-loop": ["## Actions"],
+            "febt-1-job-error-states": ["## Actions"],
+        })
+
     def test_markdown_newlines_pass_both_check_paths(self):
         ref = "workbench-operator-loop"
         original = SOURCE.with_name(f"{ref}.md").read_text()

@@ -17,7 +17,6 @@ import { spawnSync as spawnSyncUnbounded } from 'node:child_process';
 import {
   accessSync,
   constants,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -37,9 +36,7 @@ import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
 
 // Synchronous children need OS-enforced deadlines; Vitest timers cannot interrupt them.
 const SHORT_COMMAND_DEADLINE_MS = 55_000;
-// 2026-09-05: the combined suite took up to 310 seconds under review contention.
-// Bound each discovered mutation test separately instead of budgeting the whole suite.
-const BOUNDARY_SHARD_DEADLINE_MS = 120_000;
+const UNICODE_PROBE_DEADLINE_MS = 120_000;
 const vitestBudget = (deadlineMs: number): number => deadlineMs + Math.max(5_000, deadlineMs / 10);
 const spawnSync: typeof spawnSyncUnbounded = ((...args: Parameters<typeof spawnSyncUnbounded>) => {
   const [command, argv, options] = args;
@@ -1128,10 +1125,10 @@ describe('ux-map render parity (owned maps)', () => {
     const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
       // Exhaustive Unicode property mutations take ~63s on the supported laptop.
-      timeout: BOUNDARY_SHARD_DEADLINE_MS,
+      timeout: UNICODE_PROBE_DEADLINE_MS,
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
+  }, vitestBudget(UNICODE_PROBE_DEADLINE_MS));
 
   it('rejects an extra unconditional primary recovery on the same screen', () => {
     const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };
@@ -1768,24 +1765,6 @@ describe('workbench-library footer state contract (z-lib-actions)', () => {
 
 const rendererPath = path.join(uxMapsDir, 'render_ux_maps.py');
 
-const runMutatedRendererCheck = (mapRef: string, mutate: (markdown: string) => string) => {
-  const scratch = mkdtempSync(path.join(tmpdir(), 'uxmap-render-check-'));
-  try {
-    const jsonName = `${mapRef}.uxmap.json`;
-    const markdownName = `${mapRef}.md`;
-    copyFileSync(path.join(uxMapsDir, jsonName), path.join(scratch, jsonName));
-    const original = readFileSync(path.join(uxMapsDir, markdownName), 'utf8');
-    writeFileSync(path.join(scratch, markdownName), mutate(original), 'utf8');
-    return spawnSync(uxMapPython, [rendererPath, '--check', mapRef], {
-      cwd: path.resolve(uxMapsDir, '..'),
-      encoding: 'utf8',
-      env: { ...process.env, UX_MAPS_DIR: scratch },
-    });
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-};
-
 const sectionRows = (markdown: string, heading: string): number => {
   const start = markdown.indexOf(heading);
   if (start < 0) {
@@ -1815,31 +1794,7 @@ const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
 const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 
 describe('ux-map generated-render provenance', () => {
-  const discovery = spawnSync(uxMapPython, ['-c', [
-    'import json, unittest',
-    'def ids(suite):',
-    '    for test in suite:',
-    '        if isinstance(test, unittest.TestSuite): yield from ids(test)',
-    '        else: yield test.id()',
-    'print(json.dumps(list(ids(unittest.defaultTestLoader.discover(".", pattern="test_render_ux_maps.py")))))',
-  ].join('\n')], { cwd: uxMapsDir, encoding: 'utf8' });
-  if (discovery.status !== 0) throw new Error(`Boundary discovery failed: ${discovery.stdout}${discovery.stderr}`);
-  const boundaryTestIds: unknown = JSON.parse(discovery.stdout);
-  if (!Array.isArray(boundaryTestIds) || boundaryTestIds.length === 0
-    || !boundaryTestIds.every((id) => typeof id === 'string' && id.startsWith('test_render_ux_maps.'))) {
-    throw new Error(`Invalid boundary discovery: ${discovery.stdout}`);
-  }
-
-  it.each(boundaryTestIds)('runs renderer boundary mutation probe %s', (testId: string) => {
-    const result = spawnSync(
-      uxMapPython,
-      ['-m', 'unittest', testId],
-      { cwd: uxMapsDir, encoding: 'utf8', timeout: BOUNDARY_SHARD_DEADLINE_MS },
-    );
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    // Exhaustive declarations run in-process; only representatives cross the boundary.
-  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
-
+  // Renderer boundary mutations run directly in test_render_ux_maps.py.
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
     // Bare --check globs every *.uxmap.json, including hand-authored maps the renderer
     // has never written. Name the generated refs so the assertion stays about the renderer.
@@ -1851,93 +1806,6 @@ describe('ux-map generated-render provenance', () => {
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('all UX-map artifacts are current');
   }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
-
-  it('--check rejects any visible ASCII or Mermaid row mutation without the canvas package', () => {
-    const mutations = [
-      (markdown: string) => markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
-      (markdown: string) => markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
-      (markdown: string) => markdown.replace('| ZONES', '| XONES'),
-      (markdown: string) => markdown.replace('Settings / service health (exit)', 'Xettings / service health (exit)'),
-    ];
-    for (const mutate of mutations) {
-      const result = runMutatedRendererCheck('workbench-operator-loop', mutate);
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain('visibleProjectionSha256');
-    }
-  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
-
-  it('renderer-backed --check rejects a mutation inside a retained detailed-contract fence', () => {
-    const probe = [
-      'import importlib.util, pathlib, shutil, sys, tempfile',
-      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
-      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
-      'm = importlib.util.module_from_spec(s)',
-      's.loader.exec_module(m)',
-      'source = p.parent',
-      'scratch = tempfile.TemporaryDirectory()',
-      'm.MAPS_DIR = pathlib.Path(scratch.name)',
-      'ref = "febt-1-job-error-states"',
-      'shutil.copyfile(source / f"{ref}.uxmap.json", m.MAPS_DIR / f"{ref}.uxmap.json")',
-      'original = (source / f"{ref}.md").read_text()',
-      'mutated = original.replace("No job running", "Xo job running", 1)',
-      'assert mutated != original',
-      '(m.MAPS_DIR / f"{ref}.md").write_text(mutated)',
-      'm.render = lambda _: mutated',
-      'status = m.check([ref])',
-      'scratch.cleanup()',
-      'sys.exit(0 if status == 1 else 1)',
-    ].join('\n');
-    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
-
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stderr).toContain('renderer visibleProjectionSha256');
-    expect(result.stderr).toContain('source-pinned snapshot');
-  });
-
-  it('does not replace any target when a later artifact fails to render', () => {
-    const probe = [
-      'import importlib.util, pathlib, sys, tempfile',
-      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
-      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
-      'm = importlib.util.module_from_spec(s)',
-      's.loader.exec_module(m)',
-      'scratch = tempfile.TemporaryDirectory()',
-      'm.MAPS_DIR = pathlib.Path(scratch.name)',
-      '(m.MAPS_DIR / "first.md").write_text("old-first")',
-      '(m.MAPS_DIR / "second.md").write_text("old-second")',
-      'def fake_render(ref):\n    if ref == "second": raise ValueError("second render failed")\n    return "new-first"',
-      'm.render = fake_render',
-      'failed = False',
-      'try:\n    m._render_and_write(["first", "second"])\nexcept ValueError:\n    failed = True',
-      'unchanged = (m.MAPS_DIR / "first.md").read_text() == "old-first" and (m.MAPS_DIR / "second.md").read_text() == "old-second"',
-      'scratch.cleanup()',
-      'sys.exit(0 if failed and unchanged else 1)',
-    ].join('\n');
-    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
-
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  });
-
-  it('restores kept sections at their original generated-heading anchors', () => {
-    const probe = [
-      'import importlib.util, pathlib, sys',
-      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
-      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
-      'm = importlib.util.module_from_spec(s)',
-      's.loader.exec_module(m)',
-      'original = "# T\\n\\n## Goals\\n\\ng\\n\\n## Keep A\\n\\na\\n\\n## Screens\\n\\ns\\n\\n## Keep B\\n\\nb\\n\\n## Actions\\n"',
-      'generated = "# T\\n\\n## Goals\\n\\ng2\\n\\n## Screens\\n\\ns2\\n\\n## Actions\\n"',
-      'kept = m._extract_kept_text(original, ("## Keep A", "## Keep B"))',
-      'actual = m._restore_kept(generated, kept)',
-      'expected = "# T\\n\\n## Goals\\n\\ng2\\n\\n## Keep A\\n\\na\\n\\n## Screens\\n\\ns2\\n\\n## Keep B\\n\\nb\\n\\n## Actions\\n"',
-      'anchors = {name: [anchor for anchor, _ in m._extract_kept(m.MAPS_DIR / f"{name}.md")] for name in ("roster-people", "workbench-operator-loop", "febt-1-job-error-states")}',
-      'wanted = {"roster-people": ["## Screens"], "workbench-operator-loop": ["## Actions"], "febt-1-job-error-states": ["## Actions"]}',
-      'sys.exit(0 if actual == expected and anchors == wanted else 1)',
-    ].join('; ');
-    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
-
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  });
 
   it('every owned md carries the generator parity index, or is a listed un-regenerated map', () => {
     const missing: string[] = [];

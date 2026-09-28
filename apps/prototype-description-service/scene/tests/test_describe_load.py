@@ -1136,8 +1136,14 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
             await session.commit()
         a_read = asyncio.Event()
         b_published = asyncio.Event()
-        real_load = describe_router.load_snapshot
+        real_dump = describe_router.dump_load_snapshot
+        real_load = load_mod.load_snapshot
         calls = 0
+
+        async def fixed_time_dump(session_factory):
+            await real_dump(session_factory, now=start, raise_on_error=True)
+
+        monkeypatch.setattr(describe_router, "dump_load_snapshot", fixed_time_dump)
 
         async def gated_load(session, **kwargs):
             nonlocal calls
@@ -1149,10 +1155,10 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
                 await b_published.wait()
             return snap
 
-        monkeypatch.setattr(describe_router, "load_snapshot", gated_load)
+        monkeypatch.setattr(load_mod, "load_snapshot", gated_load)
 
         async def publisher_a() -> None:
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
 
         async def publisher_b() -> None:
             await a_read.wait()
@@ -1161,7 +1167,7 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
                     tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start
                 )
                 await session.commit()
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
             b_published.set()
 
         await asyncio.wait_for(asyncio.gather(publisher_a(), publisher_b()), timeout=5)
@@ -1174,8 +1180,8 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
         async def equal_revision_load(session, **kwargs):
             return equal
 
-        monkeypatch.setattr(describe_router, "load_snapshot", equal_revision_load)
-        await describe_router._maybe_dump_describe_load(sf)
+        monkeypatch.setattr(load_mod, "load_snapshot", equal_revision_load)
+        await describe_router.dump_load_snapshot(sf)
         replayed = json.loads(target.read_text())
         assert replayed["revision"] == 2
         assert replayed["lease_demand"] == 2

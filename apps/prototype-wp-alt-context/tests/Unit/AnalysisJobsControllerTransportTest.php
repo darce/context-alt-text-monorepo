@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\AnalysisJobsController;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -29,6 +30,7 @@ class AnalysisJobsControllerTransportTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_api_key', 'test-key');
         $this->setOption('acx_tier', 'free');

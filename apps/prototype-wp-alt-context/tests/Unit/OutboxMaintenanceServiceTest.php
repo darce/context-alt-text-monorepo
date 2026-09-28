@@ -567,6 +567,8 @@ class OutboxMaintenanceServiceTest extends TestCase
     {
         global $wpdb;
 
+        // Retention must not delete the row whose orphan classification is under test.
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
         $tenantId = 'tenant-orphan-still-present';
         $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [

@@ -121,13 +121,13 @@ def test_env_ref_returns_value_from_injected_mapping():
 
 
 @pytest.mark.parametrize("environ", [{}, {"DATABASE_URL": ""}], ids=["missing", "empty"])
-def test_env_ref_missing_or_empty_value_is_unavailable(environ):
+def test_env_ref_missing_or_empty_value_is_not_found(environ):
     secret_refs = _secret_refs()
 
     with pytest.raises(secret_refs.SecretUnavailable) as exc_info:
         secret_refs.resolve_secret("DATABASE_URL", "env:DATABASE_URL", environ=environ)
 
-    _assert_unavailable(exc_info, secret_refs)
+    assert type(exc_info.value) is secret_refs.SecretNotFound
     assert "DATABASE_URL" in str(exc_info.value)
     assert "env" in str(exc_info.value)
 

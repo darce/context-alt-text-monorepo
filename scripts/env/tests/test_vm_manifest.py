@@ -236,10 +236,17 @@ def test_keychain_on_local_env_still_loads(write_manifest):
 
 @pytest.mark.parametrize("ref", ["host:", "vault"])
 def test_derive_from_vault_or_host_refused(write_manifest, ref):
-    variables = ([_boot_vars(), _backend(), _map_var()] if ref == "vault" else [
+    targets = (_targets(envs=("prod",), remote_paths={"prod": REMOTE["prod"]})
+               if ref == "vault" else _vm_targets())
+    variables = ([
+        _var("RECOGNITION_SECRET_BACKEND", values={"prod": "oci_vault"}),
+        _map_var(),
+        _var("PGPASSWORD", cls="secret", secret={"prod": "vault:" + OCID}),
+        _var("RECOGNITION_ADMIN_TOKEN", cls="secret", secret={"prod": "vault:" + OTHER_OCID}),
+    ] if ref == "vault" else [
         _var("PGPASSWORD", cls="secret", secret={"dev": "host:", "prod": "host:"}),
     ])
-    root = _root(write_manifest, _vm_targets(), *variables,
+    root = _root(write_manifest, targets, *variables,
                  _var("POSTGRES_DSN", cls="secret", derive="postgresql://u:${PGPASSWORD}@h/db"))
     _refused(root, FRAGMENT, "POSTGRES_DSN")
 

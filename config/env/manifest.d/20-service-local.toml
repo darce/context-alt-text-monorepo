@@ -68,7 +68,7 @@ section = "Aliases"
 example = "${PGPASSWORD}"
 doc = "domain: infra | source: description-service / DB ops | consumer: scripts/reset_dev_db.sh; scripts/db_shell.sh (fallback when PGPASSWORD unset)"
 required = true
-secret = { local = "keychain:acx-local/APP_PGPASSWORD" }
+derive = "${PGPASSWORD}"
 
 [[override]]
 name = "POSTGRES_DSN"

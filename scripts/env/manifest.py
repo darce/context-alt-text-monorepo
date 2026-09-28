@@ -340,6 +340,15 @@ def effective_var(manifest: Manifest, var: Var, target_name: str) -> Var:
 
 def _validate_override(raw: object, source: str, targets, vars_by_name) -> Override:
     table = _mapping(raw, source, "override")
+    name, target = table.get("name"), table.get("target")
+    if (isinstance(name, str) and isinstance(target, str)
+            and name in vars_by_name and target in vars_by_name[name].targets
+            and target in targets and targets[target].audience == "public_build"):
+        values = table.get("values", {})
+        _validate_public_literals(source, name, (
+            table.get("example"),
+            *(values.values() if isinstance(values, dict) else ()),
+        ))
     fields = frozenset({"example", "required", "doc", "section"})
     _check_keys(table, frozenset({"name", "target"}), fields | {"name", "target"}, source)
     name = _string(table["name"], source, "name")
@@ -511,12 +520,19 @@ def _validate_public_build(
         if not var.name.startswith("VITE_"):
             _fail(var.source, var.name, "public build vars must use the VITE_ prefix")
         _validate_public_name(var)
+        _validate_public_literals(var.source, var.name, (var.example, *var.values.values()))
         _validate_public_urls(var)
         for target_name in public_targets:
             override = manifest.overrides.get((var.name, target_name))
             if override is not None and override.example is not None:
+                _validate_public_literals(override.source, var.name, (override.example,))
                 effective = effective_var(manifest, var, target_name)
                 _validate_public_urls(replace(effective, source=override.source))
+
+
+def _validate_public_literals(source: str, name: str, values: tuple[object, ...]) -> None:
+    if any(isinstance(value, str) and "$" in value for value in values):
+        _fail(source, name, "public build values cannot contain $ references")
 
 
 def _validate_public_urls(var: Var) -> None:

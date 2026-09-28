@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * FEBT2-LA-NEW-01 / FEBT2-LC-NEW-03 / FEBT2-W2-P-01 — the js/admin module graph
  * must be a DAG.

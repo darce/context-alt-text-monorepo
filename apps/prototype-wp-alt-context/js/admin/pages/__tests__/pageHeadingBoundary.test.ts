@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 import { describe, expect, it } from 'vitest';
 
@@ -41,18 +42,57 @@ for (const match of appSource.matchAll(ROUTE_ELEMENT_BLOCK)) {
   routedComponentNames.push(componentMatch[1]);
 }
 
-const resolveImportPath = (componentName: string): string => {
+const appSyntax = ts.createSourceFile(appFilePath, appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+const resolveComponent = (componentName: string) => {
   const importPattern = new RegExp(`import\\s*\\{[^}]*\\b${componentName}\\b[^}]*\\}\\s*from\\s*'([^']+)'`);
   const importMatch = appSource.match(importPattern);
-  if (!importMatch) {
-    throw new Error(`No import found for routed component "${componentName}" in App.tsx`);
+  if (importMatch) {
+    const filePath = `${path.resolve(path.dirname(appFilePath), importMatch[1])}.tsx`;
+    return { filePath, componentName, source: readFileSync(filePath, 'utf8'), kind: 'page' };
   }
-  return importMatch[1];
+
+  for (const statement of appSyntax.statements) {
+    const declarations = ts.isVariableStatement(statement) ? statement.declarationList.declarations : [];
+    const declaration = declarations.find((node) => node.name.getText(appSyntax) === componentName);
+    const component = declaration?.initializer;
+    if (!declaration || !component || (!ts.isArrowFunction(component) && !ts.isFunctionExpression(component))) {
+      continue;
+    }
+    const returns: ts.Expression[] = [];
+    const collectReturns = (node: ts.Node): void => {
+      if (ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isReturnStatement(node) && node.expression) {
+        returns.push(node.expression);
+      }
+      ts.forEachChild(node, collectReturns);
+    };
+    if (ts.isBlock(component.body)) {
+      collectReturns(component.body);
+    } else {
+      returns.push(component.body);
+    }
+    const redirectOnly =
+      returns.length > 0 &&
+      returns.every((expression) => {
+        while (ts.isParenthesizedExpression(expression)) {
+          expression = expression.expression;
+        }
+        return ts.isJsxSelfClosingElement(expression) && expression.tagName.getText(appSyntax) === 'Navigate';
+      });
+    return {
+      filePath: appFilePath,
+      componentName,
+      source: declaration.getText(appSyntax),
+      kind: redirectOnly ? 'redirect' : 'page',
+    };
+  }
+  throw new Error(`No import or inline definition found for routed component "${componentName}" in App.tsx`);
 };
 
-const ROUTED_PAGE_FILES = routedComponentNames.map(
-  (componentName) => `${path.resolve(path.dirname(appFilePath), resolveImportPath(componentName))}.tsx`,
-);
+const ROUTED_PAGE_FILES = routedComponentNames.map(resolveComponent);
 
 // Mandatory before it.each (BR-42): if the Route/import parsing above
 // regresses, ROUTED_PAGE_FILES silently empties and it.each never iterates —
@@ -64,9 +104,10 @@ expect(ROUTED_PAGE_FILES).toHaveLength(6);
 const FORBIDDEN_REFERENCE = /acx-page-title/;
 
 describe('routed page headings stay self-contained (no PHP-shell cross-reference)', () => {
-  it.each(ROUTED_PAGE_FILES)('%s never points aria-labelledby at the PHP shell heading id', (filePath) => {
-    const source = readFileSync(filePath, 'utf8');
-
-    expect(source).not.toMatch(FORBIDDEN_REFERENCE);
-  });
+  it.each(ROUTED_PAGE_FILES)(
+    '$filePath:$componentName ($kind) never points aria-labelledby at the PHP shell heading id',
+    ({ source }) => {
+      expect(source).not.toMatch(FORBIDDEN_REFERENCE);
+    },
+  );
 });

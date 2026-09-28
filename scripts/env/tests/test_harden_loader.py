@@ -247,3 +247,45 @@ def test_harden_url_userinfo_guard_scope(write_manifest, audience, value):
         config="version = 1\n" + _var(name, cls=cls, example=value, values={"local": value}),
     )
     assert load_module("manifest").load_manifest(root).vars[0].name == name
+
+
+@pytest.mark.parametrize("field,value", [
+    ("values", "${CI_SECRET}"),
+    ("values", "https://$HOST/api"),
+    ("example", "${CI_SECRET}"),
+])
+def test_harden_public_build_value_reference_refused(write_manifest, field, value):
+    kwargs = {"values": {"local": value}} if field == "values" else {
+        "example": value, "values": {"local": "ok"},
+    }
+    root = write_manifest(
+        _targets(audience="public_build"),
+        config="version = 1\n" + _var("VITE_API_ORIGIN", cls="public", **kwargs),
+    )
+    message = _refused(root, "config.toml", "VITE_API_ORIGIN")
+    assert "CI_SECRET" not in message and "HOST" not in message
+
+
+def test_harden_public_build_override_reference_refused(write_manifest):
+    root = write_manifest(
+        _targets(audience="public_build"),
+        config="version = 1\n" + _var("VITE_API_ORIGIN", cls="public", values={"local": "ok"}),
+        overrides='''version = 1
+var = []
+[[override]]
+name = "VITE_API_ORIGIN"
+target = "t"
+values = { local = "${CI_SECRET}" }
+''',
+    )
+    message = _refused(root, "overrides.toml", "VITE_API_ORIGIN")
+    assert "CI_SECRET" not in message
+
+
+def test_harden_backend_reference_still_loads(write_manifest):
+    root = write_manifest(
+        _targets(audience="backend"),
+        config="version = 1\n" + _var("APP_URL", values={"local": "${APP_HOST}/x"}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    assert manifest.vars[0].values["local"] == "${APP_HOST}/x"

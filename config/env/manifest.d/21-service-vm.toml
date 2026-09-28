@@ -9,13 +9,13 @@ doc = "These vars must differ per environment.\ndomain: infra | source: OCI depl
 name = "RECOGNITION_SECRET_BACKEND"
 target = "svc-vm"
 required = true
-doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch POSTGRES_DSN / POSTGRES_SYNC_DSN / PGPASSWORD /\nRECOGNITION_ADMIN_TOKEN from OCI Vault via the VM's instance principal.\nThose values MUST stay blank here — no app secret ships as host plaintext.\nRunbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
+doc = "env (default): the app reads the secret values in this file directly.\noci_vault: api/worker fetch POSTGRES_DSN / POSTGRES_SYNC_DSN / PGPASSWORD /\n  RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM's instance principal.\n  Those values MUST stay blank here — no app secret ships as host plaintext.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
 
 [[override]]
 name = "RECOGNITION_VAULT_SECRET_MAP"
 target = "svc-vm"
 required = true
-doc = "Non-secret JSON map. KEY = the logical secret name the app requests\n(get_secret(\"PGPASSWORD\"), ...) — the SAME name used everywhere in code, NOT\nthe Vault-side secret path. VALUE = that secret's Vault OCID (an identifier,\nnot a secret). Required when RECOGNITION_SECRET_BACKEND=oci_vault. Single\ncompartment, trust-domain namespacing on the Vault side (decision #1882; see\nthe runbook's path table).\nBoot-REQUIRED keys (eagerly fetched, fail-fast if missing — must be present):\nPGPASSWORD, RECOGNITION_ADMIN_TOKEN.\nOPTIONAL keys (add only if you want them Vault-managed / the provider is on):\nPOSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\nACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n(else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+doc = "Non-secret JSON map. KEY = the logical secret name the app requests\n(get_secret(\"PGPASSWORD\"), ...) — the SAME name used everywhere in code, NOT\nthe Vault-side secret path. VALUE = that secret's Vault OCID (an identifier,\nnot a secret). Required when RECOGNITION_SECRET_BACKEND=oci_vault. Single\ncompartment, trust-domain namespacing on the Vault side (decision #1882; see\nthe runbook's path table).\n  Boot-REQUIRED keys (eagerly fetched, fail-fast if missing — must be present):\n  PGPASSWORD, RECOGNITION_ADMIN_TOKEN.\n  OPTIONAL keys (add only if you want them Vault-managed / the provider is on):\n  POSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\n  ACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n  (else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
 
 [[override]]
 name = "POSTGRES_USER"
@@ -78,7 +78,7 @@ doc = "The /admin router mounts ONLY when RECOGNITION_ADMIN_ENABLED=true. Leave 
 name = "RECOGNITION_ADMIN_TOKEN"
 target = "svc-vm"
 required = true
-doc = "Shared operator admin token. Generate a strong value (>=32 chars):\npython -c \"import secrets; print(secrets.token_urlsafe(32))\"\nUnder RECOGNITION_SECRET_BACKEND=oci_vault this is fetched from Vault (map key\nRECOGNITION_ADMIN_TOKEN) — leave BLANK. Set here only for the env backend.\ndomain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)"
+doc = "Shared operator admin token. Generate a strong value (>=32 chars):\n  python -c \"import secrets; print(secrets.token_urlsafe(32))\"\nUnder RECOGNITION_SECRET_BACKEND=oci_vault this is fetched from Vault (map key\nRECOGNITION_ADMIN_TOKEN) — leave BLANK. Set here only for the env backend.\ndomain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)"
 
 [[override]]
 name = "RECOGNITION_ADMIN_TAILNET_BOUND"
@@ -115,7 +115,7 @@ section = "Operator /admin surface"
 name = "ACX_DESCRIPTION_ADAPTER"
 target = "svc-vm"
 required = true
-doc = "Allowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\nscripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
+doc = "One operator switch selects the description backend. Values:\nseeded deterministic fixture captions; forbidden for demo publish.\nflorence_small Florence-2-base-ft, ~14s/image on the OCI A1 CPU (under budget).\nRequires the [vlm] extra (build the runtime-vlm image; see\ndocs/tasks/19.0/E19-1-florence-large-async-worker-impl-notes.md).\nflorence_large Florence-2-large-ft, ~39s/image — STUB until the async worker\nexists; selecting it returns 503.\ngpu_phi4 Phi-4-multimodal-instruct — GPU-only STUB; returns 503 on CPU.\nDefault seeded keeps the recognition-only image torch-free outside the demo.\n\nAllowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
 
 [[override]]
 name = "ACX_GPU_ENDPOINT_URL"

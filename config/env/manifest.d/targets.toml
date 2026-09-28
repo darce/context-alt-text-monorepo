@@ -1,0 +1,33 @@
+version = 1
+
+[targets.svc-local]
+audience = "backend"
+envs = ["local"]
+path = "apps/prototype-description-service/.env"
+example = "apps/prototype-description-service/.env.example"
+sections = ["Postgres connection", "Aliases", "Database DSNs", "Pool and timeout knobs", "Runtime mode", "API security", "Operator /admin surface"]
+
+[targets.svc-vm]
+audience = "backend"
+envs = ["dev", "prod"]
+example = "apps/prototype-description-service/.env.prod.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
+
+[targets.svc-fir]
+audience = "backend"
+envs = ["fir"]
+example = "apps/prototype-description-service/.env.fir.example"
+sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+
+[targets.demo]
+audience = "backend"
+envs = ["demo"]
+example = "infra/oci/demo/.env.example"
+sections = ["Compose", "MariaDB", "WordPress", "Generated secrets", "Image description", "GPU lifecycle"]
+
+[targets.wp-e2e]
+audience = "test"
+envs = ["local"]
+path = "apps/prototype-wp-alt-context/.env.local"
+example = "apps/prototype-wp-alt-context/.env.local.example"
+sections = ["Playwright auth", "Optional overrides"]

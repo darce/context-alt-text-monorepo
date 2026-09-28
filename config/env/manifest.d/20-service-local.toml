@@ -1,0 +1,219 @@
+version = 1
+
+[[var]]
+name = "PGUSER"
+class = "config"
+targets = ["svc-local"]
+section = "Postgres connection"
+example = "context"
+doc = "Postgres connection (canonical names; consumed by db.settings + reset_dev_db.sh)\ndomain: infra | source: description-service / DB ops | consumer: db/settings.py (get_database_settings, DSN render); scripts/reset_dev_db.sh; scripts/db_shell.sh"
+required = true
+values = { local = "context" }
+
+[[var]]
+name = "PGPASSWORD"
+class = "secret"
+targets = ["svc-local"]
+section = "Postgres connection"
+example = "context"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py (get_database_settings, DSN render); scripts/reset_dev_db.sh; scripts/db_shell.sh"
+required = true
+secret = { local = "keychain:acx-local/PGPASSWORD" }
+
+[[var]]
+name = "PGHOST"
+class = "config"
+targets = ["svc-local"]
+section = "Postgres connection"
+example = "localhost"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py DSN render"
+required = true
+values = { local = "localhost" }
+
+[[var]]
+name = "PGPORT"
+class = "config"
+targets = ["svc-local"]
+section = "Postgres connection"
+example = "5432"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py DSN render"
+required = true
+values = { local = "5432" }
+
+[[var]]
+name = "DB_NAME"
+class = "config"
+targets = ["svc-local"]
+section = "Postgres connection"
+example = "alt_context_service"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py (_resolved_db_name, canonicalize)"
+required = true
+values = { local = "alt_context_service" }
+
+[[var]]
+name = "APP_PGUSER"
+class = "config"
+targets = ["svc-local"]
+section = "Aliases"
+example = "${PGUSER}"
+doc = "Aliases used by reset_dev_db.sh + db_shell.sh as a fallback when PGUSER /\nPGPASSWORD are unset. Default to the canonical values via shell expansion\nso a single edit to PGUSER/PGPASSWORD keeps the local reset flow working.\ndomain: infra | source: description-service / DB ops | consumer: scripts/reset_dev_db.sh; scripts/db_shell.sh (fallback when PGUSER unset)"
+required = true
+values = { local = "${PGUSER}" }
+
+[[var]]
+name = "APP_PGPASSWORD"
+class = "secret"
+targets = ["svc-local"]
+section = "Aliases"
+example = "${PGPASSWORD}"
+doc = "domain: infra | source: description-service / DB ops | consumer: scripts/reset_dev_db.sh; scripts/db_shell.sh (fallback when PGPASSWORD unset)"
+required = true
+derive = "${PGPASSWORD}"
+
+[[override]]
+name = "POSTGRES_DSN"
+target = "svc-local"
+example = "postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}"
+doc = "Optional DSN overrides. Leave commented to let db.settings render defaults\nfrom PG* above.\ndomain: infra | source: description-service / DB ops | consumer: db/settings.py:get_database_settings"
+
+[[override]]
+name = "POSTGRES_SYNC_DSN"
+target = "svc-local"
+example = "postgresql+psycopg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py:get_database_settings"
+
+[[var]]
+name = "DB_STATEMENT_TIMEOUT"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "10s"
+doc = "Pool + timeout knobs (defaults match db.settings.get_database_settings).\ndomain: infra | source: description-service / DB ops | consumer: db/settings.py pool/timeout settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_IDLE_IN_TXN_TIMEOUT"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "30s"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/timeout settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_DISABLE_STMT_CACHE"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "0"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/timeout settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_EMBEDDING_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "30"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py pool/timeout settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_OBSERVABILITY_POOL_SIZE"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "2"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py observability pool"
+required = false
+values = {}
+
+[[var]]
+name = "DB_OBSERVABILITY_MAX_OVERFLOW"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "0"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py observability pool"
+required = false
+values = {}
+
+[[var]]
+name = "DB_OBSERVABILITY_POOL_TIMEOUT"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "5"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py observability pool"
+required = false
+values = {}
+
+[[var]]
+name = "DB_BREAKER_FAILURE_THRESHOLD"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "3"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py breaker settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_BREAKER_WINDOW_SECONDS"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "30"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py breaker settings"
+required = false
+values = {}
+
+[[var]]
+name = "DB_BREAKER_HALF_OPEN_AFTER_SECONDS"
+class = "config"
+targets = ["svc-local"]
+section = "Pool and timeout knobs"
+example = "10"
+doc = "domain: infra | source: description-service / DB ops | consumer: db/settings.py breaker settings"
+required = false
+values = {}
+
+[[override]]
+name = "RECOGNITION_RUNTIME_MODE"
+target = "svc-local"
+example = "development"
+doc = "domain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings / runtime mode gates"
+
+[[override]]
+name = "RECOGNITION_AUTH_ENABLED"
+target = "svc-local"
+example = "1"
+
+[[override]]
+name = "RECOGNITION_API_KEY_HEADER"
+target = "svc-local"
+doc = "Tenant API keys are DB-only (mint via `make dev-mint-key` or /admin).\nThe former env-var allowlist bypass is retired (decision #1882); do not re-add.\ndomain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)"
+
+[[override]]
+name = "RECOGNITION_ADMIN_ENABLED"
+target = "svc-local"
+doc = "Operator /admin surface (optional local; generate token if enabling)\ndomain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount"
+
+[[override]]
+name = "RECOGNITION_ADMIN_TOKEN"
+target = "svc-local"
+doc = "domain: service root-of-trust | source: service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps"
+
+[[var]]
+name = "RECOGNITION_ADMIN_TOKEN_HEADER"
+class = "config"
+targets = ["svc-local"]
+section = "Operator /admin surface"
+example = "X-Admin-Token"
+doc = "domain: service root-of-trust (config) | source: service operator | consumer: admin auth dependency (default X-Admin-Token)"
+required = false
+values = {}

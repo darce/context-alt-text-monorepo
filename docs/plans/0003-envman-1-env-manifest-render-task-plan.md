@@ -168,7 +168,7 @@ Separately, a `class = "secret"` var named `VITE_*` is refused on any target.
 **Quoting (portable).** Given a value v:
 1. v contains CR or LF → `ValueError` naming the var, never the value.
 2. v is empty, or every char is in `[A-Za-z0-9_./:@,+=%?-]` → unquoted.
-3. Every `$` in v begins a complete `${NAME}` reference (`NAME` matches `[A-Za-z_][A-Za-z0-9_]*`), and every other char is in the unquoted set → `"v"`. Double quotes keep the reference live in bash `source`, python-dotenv and compose; single quotes would leave it literal in bash.
+3. Every `$` in v begins a complete `${NAME}` reference (`NAME` matches `[A-Za-z_][A-Za-z0-9_]*`), and every other char is in the unquoted set → `"v"`. Double quotes keep the reference live in bash `source`, python-dotenv and compose; single quotes would leave it literal in bash. Rule 3 applies only to manifest-authored values: a var's `example`, and a non-secret var's literal `values` entry. A value produced by secret resolution, or by `derive` at runtime, skips rule 3, so a resolved `${X}` renders single-quoted and stays literal. Otherwise a credential containing `${...}` would silently change when bash sources the file.
 4. v has no `'` → `'v'`.
 5. v has none of `"`, `\`, `$`, `` ` `` → `"v"`.
 6. Otherwise → `ValueError` naming the var.
@@ -238,6 +238,8 @@ Each lane owns disjoint paths (1–4 files). A lane lands only on a green gate i
 | `em-harden-loader` | 5 | GREEN | `scripts/env/manifest.py`, `scripts/env/tests/test_harden_loader.py` (review fix-up) | `em-contract2`, `em-red-harden` |
 | `em-red-quote2` | 5 | RED | `scripts/env/tests/test_harden_render.py` | `em-red-harden` |
 | `em-harden-render` | 6 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `.gitignore`, `apps/prototype-description-service/.env.example` (re-render) | `em-contract2`, `em-red-harden`, `em-red-quote2`, `em-frag-local` |
+| `em-red-quote3` | 7 | RED | `scripts/env/tests/test_harden_render.py` | `em-harden-render` |
+| `em-quote-literal` | 8 | GREEN | `scripts/env/render_env.py` | `em-red-quote3` |
 | `em-frag-local` | 5 | migrate | `config/env/manifest.d/20-service-local.toml`, `apps/prototype-description-service/.env.example` | `em-contract2` |
 | `em-frag-vm` | 5 | migrate | `config/env/manifest.d/21-service-vm.toml`, `apps/prototype-description-service/.env.prod.example` | `em-contract2` |
 | `em-frag-fir` | 5 | migrate | `config/env/manifest.d/22-service-fir.toml`, `apps/prototype-description-service/.env.fir.example` | `em-contract2` |
@@ -255,6 +257,8 @@ L3    em-frag-shared   em-red-contract2   em-red-svcquote                       
 L4    em-contract2 ◄─(red-contract2, frag-shared)   em-svc-quote ◄─(red-svcquote)   em-red-harden
 L5    em-harden-loader ◄─(contract2, red-harden)   em-red-quote2 ◄─(red-harden)
 L6    em-harden-render ◄─(contract2, red-harden, red-quote2, frag-local)
+L7    em-red-quote3 ◄─(harden-render)
+L8    em-quote-literal ◄─(red-quote3)
       em-frag-local  em-frag-vm  em-frag-fir  em-frag-demo  em-frag-wp   ◄─(contract2)
 ```
 

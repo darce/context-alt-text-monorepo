@@ -1,22 +1,32 @@
 # Plan 0003 - ENVMAN-1. Env manifest and deterministic renderer
 
 - **Task ID:** ENVMAN-1 (Phase A). Phase B = ENVMAN-2, gated on APP-1 merging.
-- **Task Plan Status:** approved for dispatch (operator: "scope and plan … maximize parallelism").
+- **Task Plan Status:** approved for dispatch (operator: "scope and plan … maximize parallelism"); amended 2026-09-28 after the adversarial canon review.
 - **Date:** 2026-09-27.
 - **Target branch:** `feature/envman-1`. **Worktree:** `../context-alt-text-monorepo-envman-1`.
 - **Baseline:** `016789be8ddc25191240a674d5d4ff9b856297bc`.
 - **Intake:** [scope](../scopes/env-manifest-render-scope.md); MCP decisions APP-1 #13960 (proposal) and ENVMAN-1 scope decision.
-- **Routing:** every lane codex-remote `gpt-6-luna`, effort `max`, speed `fast`. RED lanes write tests only; GREEN lanes inherit them.
+- **Routing (operator order 2026-09-28):**
+  - Implement and RED lanes: codex-remote `gpt-6-astra`, effort `low`, speed `standard`.
+  - Review lanes: codex-remote `gpt-6-luna`, effort `max`, speed `fast`.
+  - Every brief inlines prior art from `find_related_prior_work` and codemap snippets for `apps/` symbols.
+  - RED lanes write tests only; GREEN lanes inherit them.
 
 ## Objective
 
-Make `config/env/manifest.d/*.toml` the single hand-edited source for env configuration (secrets stay in Keychain/CI env). `make env-render` produces runtime files; `make env-check` proves every committed template equals its rendered example.
+Make `config/env/manifest.d/*.toml` the single hand-edited source for env configuration. Secrets stay in Keychain or CI env. `make env-render` produces runtime files, and `make env-check` proves every committed template equals its rendered example.
 
 ## Interface contract (pinned; RED and GREEN both code to this)
 
-Package: `scripts/env/` (`__init__.py`, stdlib only, Python ≥3.11, `tomllib`). Import names: `env.manifest`, `env.secret_refs`, `env.render_env` with `scripts/` on `sys.path` (tests: `scripts/env/tests/conftest.py` inserts it; CLI: `render_env.py` inserts `Path(__file__).resolve().parents[1]` before its imports). No module may be named `secrets.py` (the CLI's script dir lands on `sys.path[0]` and would shadow the stdlib). Tests: `scripts/env/tests/`, run with `python3 -m pytest scripts/env/tests -q`. Tests build fixture manifests under `tmp_path`; they never read the real `config/env/`.
+Package: `scripts/env/` (`__init__.py`, stdlib only, Python ≥3.11, `tomllib`).
+- **Import names:** `env.manifest`, `env.secret_refs` and `env.render_env`, with `scripts/` on `sys.path`. Tests get it from `scripts/env/tests/conftest.py`. The CLI `render_env.py` inserts `Path(__file__).resolve().parents[1]` before its imports.
+- **Module names:** no module may be named `secrets.py`. The CLI's script dir lands on `sys.path[0]` and would shadow the stdlib.
+- **Tests:** they live in `scripts/env/tests/` and run with `python3 -m pytest scripts/env/tests -q`. They build fixture manifests under `tmp_path` and never read the real `config/env/`.
 
-**RED rule:** RED test modules import the code under test inside a helper/fixture (`importlib.import_module("env.manifest")`), never at module top level, so the suite collects on a tree without the implementation and every test fails individually. RED lane gate: `python3 -m pytest scripts/env/tests --collect-only -q` (must pass); the coordinator confirms the tests fail before landing.
+**RED rule:**
+- RED test modules import the code under test inside a helper or fixture (`importlib.import_module("env.manifest")`), never at module top level. That way the suite collects on a tree without the implementation, and each test fails on its own.
+- RED lane gate: `python3 -m pytest scripts/env/tests --collect-only -q` must pass.
+- Before landing, the coordinator confirms every new test fails. Amendment RED lanes over landed GREEN code need only their new tests to fail.
 
 ### Manifest format
 
@@ -30,6 +40,9 @@ envs = ["local"]
 path = "apps/prototype-description-service/.env"          # optional; repo-relative
 example = "apps/prototype-description-service/.env.example" # optional; repo-relative
 sections = ["Database", "Security"]                        # render order
+doc = '''
+Template preamble; one line per comment line.
+'''                                                        # optional
 ```
 
 Any other `<root>/manifest.d/*.toml` (loaded in sorted filename order):
@@ -41,52 +54,168 @@ name = "PGPASSWORD"
 class = "secret"                 # public | config | secret
 targets = ["svc-local"]
 section = "Database"
-doc = "Postgres password."       # optional; rendered as '# ' comment lines
+doc = "Postgres password."       # optional
 example = "change-me"            # required
 required = true                  # optional, default true
 secret = { local = "keychain:acx-local/PGPASSWORD" }    # secret only
 # values = { local = "..." }     # public/config only
 # derive = "postgresql://${PGUSER}:${PGPASSWORD}@..."   # alternative to values/secret
+
+[[override]]
+name = "PGVECTOR_DIM"            # required; a var declared in any fragment
+target = "svc-fir"               # required; one of that var's targets
+example = "128"                  # optional
+required = true                  # optional
+doc = "..."                      # optional
+section = "Embeddings"           # optional; must be in that target's sections
 ```
 
 ### `scripts/env/manifest.py`
 
-- `class ManifestError(ValueError)`; message names the fragment file and key.
-- Frozen dataclasses `Target(name, audience, envs: tuple[str, ...], path: str | None, example: str | None, sections: tuple[str, ...])`, `Var(name, cls, targets: tuple[str, ...], section, doc, example, required: bool, values: Mapping[str, str], secret: Mapping[str, str], derive: str | None, source: str)`, `Manifest(targets: Mapping[str, Target], vars: tuple[Var, ...])`.
-- `load_manifest(root: Path) -> Manifest`. Raises `ManifestError` for: missing `manifest.d/targets.toml`; `version != 1`; unknown or missing keys; wrong types; duplicate var names across fragments; `targets` naming an unknown target; `section` not in every one of its targets' `sections`; `values`/`secret`/`derive` not exactly one; secret with `values`; non-secret with `secret`; `derive` naming an unknown var or forming a cycle; a derive that references a secret while `class != "secret"`; an env key in `values`/`secret` not in some target's `envs`; secret ref scheme not in `keychain:`, `env:`, `vault:`.
-- **Public-build guard** (inside `load_manifest`): for a var targeting any `audience="public_build"` target → refuse `class="secret"`, a derive that reaches a secret, a name not starting `VITE_`, and a name matching `SECRET|TOKEN|PASSWORD|PRIVATE|(?<!PUBLISHABLE)_KEY$`.
-- **Literal guard** (all targets): refuse any `values`/`example` string matching `sk_(test|live)_`, `\brk_(test|live)_`, `whsec_`, or `-----BEGIN`.
-- Derive strings use the same literal-secret guard patterns and error style as `values` and `example`.
-- Every var referenced by `${NAME}` in a derive must target every target of the deriving var; otherwise loading fails and names both vars and the missing target.
-- Every `$` in a derive must start a complete `${NAME}` interpolation where `NAME` matches `[A-Z][A-Z0-9_]*`.
-- An empty `values = {}` or `secret = {}` table counts as the one present value source and loads without runtime values.
-- `target_digest(manifest, target_name) -> str`: sha256 hex of `json.dumps(..., sort_keys=True, separators=(",", ":"))` over the target and its vars sorted by name, each var without `source` (so moving a var between fragments or renaming a fragment does not change the digest; changing any other field of the target or one of its vars does).
+**Types**
+- `class ManifestError(ValueError)`. The message names the fragment file and the key.
+- Frozen dataclasses:
+  - `Target(name, audience, envs: tuple[str, ...], path: str | None, example: str | None, sections: tuple[str, ...], doc: str | None = None)`
+  - `Var(name, cls, targets: tuple[str, ...], section, doc, example, required: bool, values: Mapping[str, str], secret: Mapping[str, str], derive: str | None, source: str)`
+  - `Override(name, target, example, required, doc, section, source)`, where `None` means inherit.
+  - `Manifest(targets: Mapping[str, Target], vars: tuple[Var, ...], overrides: Mapping[tuple[str, str], Override] = {})`
+- `effective_var(manifest, var, target_name) -> Var` returns `var` with that target's override fields applied, where they are not `None`.
+
+**`load_manifest(root: Path) -> Manifest` raises `ManifestError` for:**
+- a missing `manifest.d/targets.toml`, or `version != 1`;
+- unknown or missing keys, or wrong types;
+- duplicate var names across fragments;
+- `targets` naming an unknown target;
+- `values`/`secret`/`derive` not exactly one of the three;
+- a secret var with `values`, or a non-secret var with `secret`;
+- a secret ref whose scheme is not `keychain:`, `env:` or `vault:`.
+
+**Rules for targets**
+- A target `doc` must be a string.
+- A target `path`/`example` must be relative and must resolve inside the repo root. An absolute path or a `..` escape is refused before any read or write.
+- Two targets may not share a `path` or an `example`.
+- Section names contain no control characters.
+
+**Rules for vars**
+- A var's `section` must be in the `sections` of every one of its targets, except targets whose override sets `section`.
+- Var and override names match `^[A-Z][A-Z0-9_]*$`.
+- Docs contain no `\r`.
+- **Env union:** each `values`/`secret` env key must be in the union of `envs` across the var's targets. A key in none of them is refused, and the message names the fragment, the var and the env. Rendering target T in env E uses `values[E]` only when E ∈ T.envs.
+
+**Rules for derive**
+- A derive may not name an unknown var or form a cycle.
+- A derive that references a secret is refused unless `class = "secret"`.
+- Every var referenced by `${NAME}` in a derive must target every target of the deriving var. Otherwise loading fails, naming both vars and the missing target.
+- Every `$` in a derive must start a complete `${NAME}` interpolation.
+- An empty `values = {}` or `secret = {}` table counts as the single value source and loads without runtime values.
+
+**Override rules:** refuse an unknown key; a missing `name` or `target`; none of `example`/`required`/`doc`/`section` present; `name` not a declared var; `target` not among that var's targets; a duplicate `(name, target)` across fragments; `section` not in that target's `sections`; or a wrong type.
+
+**Public-build guard** (inside `load_manifest`). For a var that targets any `audience = "public_build"` target, refuse:
+- `class = "secret"`;
+- a derive that reaches a secret;
+- a name not starting with `VITE_`;
+- a name containing any of these `_`-separated tokens: `SECRET`, `SECRETS`, `TOKEN`, `PASSWORD`, `PASSWD`, `PWD`, `PRIVATE`, `CREDENTIAL`, `CREDENTIALS`, or `KEY` when the token before it is not `PUBLISHABLE`.
+
+Separately, a `class = "secret"` var named `VITE_*` is refused on any target.
+
+**Literal guard** (all targets). Refuse any `values`, `example`, `derive`, `doc` or `section` string (var, target or override) that contains:
+- `sk_(test|live)_`, `\brk_(test|live)_`, `whsec_` or `-----BEGIN`;
+- `ghp_`, `gho_`, `ghs_` or `github_pat_`;
+- `AKIA[0-9A-Z]{16}` or `xox[abprs]-`.
+
+**`target_digest(manifest, target_name) -> str`:**
+- The value is the sha256 hex of `json.dumps(..., sort_keys=True, separators=(",", ":"))` over the target, its effective vars sorted by name (without `source`) and its overrides.
+- Moving a var between fragments does not change it. Changing the target, one of its vars, or one of its overrides does.
+- An override for another target does not change it.
 
 ### `scripts/env/secret_refs.py`
 
-- `class SecretUnavailable(RuntimeError)`; message contains var name and scheme, never a value.
+- `class SecretUnavailable(RuntimeError)`. The message contains the var name and the scheme, never a value.
 - `resolve_secret(var_name: str, ref: str, *, environ: Mapping[str, str] | None = None, runner=subprocess.run) -> str`:
-  - `keychain:<service>/<account>` (split on the first `/`; empty service/account or no `/` → `SecretUnavailable` without calling the runner) → `runner(["security", "find-generic-password", "-s", service, "-a", account, "-w"], capture_output=True, text=True, check=False)`; non-zero or empty → `SecretUnavailable`; strip one trailing newline.
-  - `env:<NAME>` → `environ` (default `os.environ`); absent or empty → `SecretUnavailable`.
-  - `vault:` → `SecretUnavailable` ("vault refs render in ENVMAN-2").
-  - Any other or missing scheme → `SecretUnavailable`, runner not called.
+  - `keychain:<service>/<account>`:
+    - Split on the first `/`. An empty service or account, or no `/`, raises `SecretUnavailable` without calling the runner.
+    - Otherwise call `runner(["security", "find-generic-password", "-s", service, "-a", account, "-w"], capture_output=True, text=True, check=False)`.
+    - A non-zero exit or empty output raises `SecretUnavailable`. Strip one trailing newline.
+  - `env:<NAME>` reads `environ` (default `os.environ`). Absent or empty raises `SecretUnavailable`.
+  - `vault:` raises `SecretUnavailable` ("vault refs render in ENVMAN-2").
+  - Any other or missing scheme raises `SecretUnavailable` without calling the runner.
 
 ### `scripts/env/render_env.py`
 
-- `HEADER_LINE = "# GENERATED by make env-render from config/env/manifest.d - do not edit."`; line 2 `# target: <name> env: <env|example> digest: <target_digest>`.
-- `render_target(manifest, target_name, env: str | None, *, resolve=resolve_secret) -> str`. `env=None` = example mode (every var renders `example`; a `required = false` var renders commented as `# NAME=example`; no resolver call). Runtime mode: public/config → `values[env]`; secret → `resolve(name, secret[env])`; derive → `${VAR}` substituted with the rendered values; a missing non-required var is omitted, a missing required var raises `ManifestError`.
-- Layout: header, blank line; per section in `sections` order: `# == <section> ==`, then per var in declaration order its `doc` lines as `# ...` and `NAME=value`; one blank line between sections; single trailing newline. Values containing whitespace, `#`, `"`, `'`, `$` or `\` are double-quoted with `\\`, `\"`, `\$` escaped.
-- `write_env_file(path: Path, text: str, *, adopt: bool = False, allow_unmanaged: frozenset[str] = frozenset()) -> None`: refuse a symlink (`lstat`); refuse an existing file whose first line is not `HEADER_LINE` unless `adopt`; on adopt, back up to `<path>.pre-envman` (0600) and refuse keys present in the old file but absent from `text` unless in `allow_unmanaged`; write temp in the same dir with mode 0600, `fsync`, `os.replace`. Every refusal (symlink, broken symlink, directory, un-headed file, unmanaged keys) raises `ValueError` naming the path or key, never a value.
-- `check_example(manifest, target_name, repo_root) -> list[str]` and `check_runtime(manifest, target_name, env, path, *, resolve=...) -> list[str]`: drift messages; secret mismatches read `NAME: secret differs` and never include a value.
-- CLI `python3 scripts/env/render_env.py {render,check} [--root config/env] [--repo-root .] [--env ENV] [--target T|--all-examples] [--adopt] [--allow-unmanaged K,...]`. Exit: 0 ok, 1 drift, 2 manifest/usage error, 3 secret unavailable. `render --all-examples` rewrites every template.
+**Header:** `HEADER_LINE = "# GENERATED by make env-render from config/env/manifest.d - do not edit."`. Line 2 is `# target: <name> env: <env|example> digest: <target_digest>`.
+
+**`render_target(manifest, target_name, env: str | None, *, resolve=resolve_secret) -> str`**
+- Every per-target use of a var goes through `effective_var`.
+- **Example mode** (`env=None`):
+  - Every var renders its `example`.
+  - A `required = false` var renders commented, as `# NAME=example`.
+  - No resolver is called.
+- **Runtime mode:**
+  - public/config vars render `values[env]`;
+  - secret vars render `resolve(name, secret[env])`;
+  - derive substitutes `${VAR}` with the rendered values;
+  - a missing non-required var is omitted, and a missing required var raises `ManifestError`.
+
+**Layout**
+- Header, then a blank line.
+- If the target has a `doc`: its doc lines, then one blank line.
+- Then, per section in `sections` order: `# == <section> ==`, followed by each var in declaration order, as its doc lines and then `NAME=value`.
+- One blank line between sections, and a single trailing newline.
+
+**Doc lines:** split on `\n`. An empty line renders as `#`. Any other line renders as `# ` + the line with trailing whitespace stripped, keeping leading spaces.
+
+**Quoting (portable).** Given a value v:
+1. v contains CR or LF → `ValueError` naming the var, never the value.
+2. v is empty, or every char is in `[A-Za-z0-9_./:@,+=%?-]` → unquoted.
+3. v has no `'` → `'v'`.
+4. v has none of `"`, `\`, `$`, `` ` `` → `"v"`.
+5. Otherwise → `ValueError` naming the var.
+
+There is no escaping anywhere. This subset reads identically in python-dotenv, pydantic-settings, bash `set -a; source`, npm dotenv and `docker compose config`. The description service's own `.env` loader (`db/settings.py::_load_env_file`) strips these quotes:
+- single-quoted text is verbatim;
+- double-quoted text is expanded as before.
+
+**`write_env_file(path: Path, text: str, *, adopt: bool = False, allow_unmanaged: frozenset[str] = frozenset()) -> None`**
+- Refuse a symlink (`lstat`).
+- Refuse an existing file whose first line is not `HEADER_LINE`, unless `adopt`.
+- On adopt:
+  - Back up to `<path>.pre-envman` (0600).
+  - Refuse keys present in the old file but absent from `text`, unless listed in `allow_unmanaged`. Keys count in every assignment form: `NAME=v`, `export NAME=v` and `NAME = v`.
+  - Refuse a line that is not a comment, a blank or an assignment. The message names the line number, not its content.
+- Write a temp file `<name>.envman-tmp-XXXX` in the same dir, created 0600, then `fsync` and `os.replace`. Root `.gitignore` ignores `*.envman-tmp-*`.
+- Every refusal raises `ValueError` naming the path, key or line, never a value. Refusals cover: symlink, broken symlink, directory, un-headed file, unmanaged keys and an unparseable line.
+
+**`check_example(manifest, target_name, repo_root) -> list[str]`**
+- Returns drift messages.
+
+**`check_runtime(manifest, target_name, env, path, *, resolve=...) -> list[str]`**
+- Reports drift on any byte difference, never printing a value. Messages:
+  - `NAME: differs`, `NAME: secret differs`, `NAME: missing`;
+  - `NAME: unmanaged key`, `NAME: duplicate assignment`;
+  - `<path>: non-assignment lines differ`;
+  - `<path>: mode is not 0600`.
+
+**CLI:** `python3 scripts/env/render_env.py {render,check} [--root config/env] [--repo-root .] [--env ENV] [--target T|--all-examples] [--adopt] [--allow-unmanaged K,...]`
+- Without `--env`, `--target T` renders or checks T's example.
+- `render --all-examples` rewrites every template.
+- An `--env` that is not in `target.envs` is a usage error naming the target and env.
+- An interpreter older than 3.11 is refused before the `env` imports, with exit 2.
+- Exit codes: 0 ok, 1 drift, 2 manifest or usage error, 3 secret unavailable, 4 unexpected exception (prints the exception type name only).
 
 ### Make
 
-`mk/env.mk`: `env-render ENV=… TARGET=… [ADOPT=1]`, `env-examples` (render all templates), `env-check` (all templates), `env-secret-set NAME=… [SERVICE=acx-local]` (`security add-generic-password -U -s … -a … -w` with no value so `security` prompts; never argv). `Makefile` `check-all` runs `env-check`.
+- `mk/env.mk` targets:
+  - `env-render ENV=… TARGET=… [ADOPT=1]`
+  - `env-examples` renders all templates.
+  - `env-check` checks all templates.
+  - `env-secret-set NAME=… [ENV_SECRET_SERVICE=acx-local]` runs `security add-generic-password -U -s … -a … -w` with no value, so `security` prompts; the value is never in argv.
+- The interpreter is `ENV_PYTHON ?= python3`. The Keychain service variable is `ENV_SECRET_SERVICE`, not `SERVICE`, because `mk/logs.mk` already defaults `SERVICE`.
+- The `Makefile` `check-all` target runs `env-check`.
 
 ## Lanes and DAG
 
-Each lane owns disjoint paths (1–3 files). Merge order = layer order.
+Each lane owns disjoint paths (1–4 files). A lane lands only on a green gate in the feature worktree, then retires.
 
 | Lane | Layer | Kind | Owned paths | Depends on |
 |---|---|---|---|---|
@@ -95,41 +224,60 @@ Each lane owns disjoint paths (1–3 files). Merge order = layer order.
 | `em-red-secrets` | 0 | RED | `scripts/env/tests/test_secret_resolvers.py` | — |
 | `em-loader` | 1 | GREEN | `scripts/env/__init__.py`, `scripts/env/manifest.py` | all RED |
 | `em-secrets` | 1 | GREEN | `scripts/env/secret_refs.py` | all RED |
+| `em-loader-fix` | 1 | fix | `scripts/env/manifest.py`, loader tests | `em-loader` |
 | `em-render` | 2 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `Makefile` | `em-loader`, `em-secrets` |
 | `em-docs` | 2 | docs | `docs/runbooks/env-manifest.md`, `apps/prototype-description-service/docs/secrets-inventory.md` | `em-loader` |
+| `em-red-quote` | 2 | RED | `scripts/env/tests/test_render.py` | `em-render` |
 | `em-frag-shared` | 3 | migrate | `config/env/manifest.d/targets.toml`, `config/env/manifest.d/10-service-shared.toml` | `em-render` |
-| `em-frag-local` | 4 | migrate | `config/env/manifest.d/20-service-local.toml`, `apps/prototype-description-service/.env.example` | `em-frag-shared` |
-| `em-frag-vm` | 4 | migrate | `config/env/manifest.d/21-service-vm.toml`, `apps/prototype-description-service/.env.prod.example` | `em-frag-shared` |
-| `em-frag-fir` | 4 | migrate | `config/env/manifest.d/22-service-fir.toml`, `apps/prototype-description-service/.env.fir.example` | `em-frag-shared` |
-| `em-frag-demo` | 4 | migrate | `config/env/manifest.d/40-demo.toml`, `infra/oci/demo/.env.example` | `em-frag-shared` |
-| `em-frag-wp` | 4 | migrate | `config/env/manifest.d/50-wp-e2e.toml`, `apps/prototype-wp-alt-context/.env.local.example` | `em-frag-shared` |
+| `em-red-contract2` | 3 | RED | loader + render tests | `em-red-quote`, `em-loader-fix` |
+| `em-red-svcquote` | 3 | RED | `apps/prototype-description-service/recognition/tests/unit/test_database_settings.py` | — |
+| `em-contract2` | 4 | GREEN | `scripts/env/manifest.py`, `scripts/env/render_env.py`, `config/env/manifest.d/targets.toml` | `em-red-contract2`, `em-frag-shared` |
+| `em-svc-quote` | 4 | GREEN | `apps/prototype-description-service/db/settings.py` | `em-red-svcquote` |
+| `em-red-harden` | 4 | RED | `scripts/env/tests/test_harden_loader.py`, `scripts/env/tests/test_harden_render.py` | — |
+| `em-harden-loader` | 5 | GREEN | `scripts/env/manifest.py` | `em-contract2`, `em-red-harden` |
+| `em-harden-render` | 5 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `.gitignore` | `em-contract2`, `em-red-harden` |
+| `em-frag-local` | 5 | migrate | `config/env/manifest.d/20-service-local.toml`, `apps/prototype-description-service/.env.example` | `em-contract2` |
+| `em-frag-vm` | 5 | migrate | `config/env/manifest.d/21-service-vm.toml`, `apps/prototype-description-service/.env.prod.example` | `em-contract2` |
+| `em-frag-fir` | 5 | migrate | `config/env/manifest.d/22-service-fir.toml`, `apps/prototype-description-service/.env.fir.example` | `em-contract2` |
+| `em-frag-demo` | 5 | migrate | `config/env/manifest.d/40-demo.toml`, `infra/oci/demo/.env.example` | `em-contract2` |
+| `em-frag-wp` | 5 | migrate | `config/env/manifest.d/50-wp-e2e.toml`, `apps/prototype-wp-alt-context/.env.local.example` | `em-contract2` |
 
-Targets live only in `targets.toml`. `em-frag-shared` declares all five targets (`svc-local`, `svc-vm`, `svc-fir`, `demo`, `wp-e2e`) with their `sections` from the current templates, plus the vars shared by the three service templates, so L4 lanes only add vars.
+**Placement rules**
+- Targets live only in `targets.toml`. `em-frag-shared` declares all five targets (`svc-local`, `svc-vm`, `svc-fir`, `demo`, `wp-e2e`) and the vars shared by the three service templates. `em-contract2` adds each target's `doc` preamble.
+- L5 migrate lanes only add fragments and regenerate their template.
+- `em-red-harden` writes new test files, so it runs in parallel with `em-contract2` without sharing a path.
 
 ```
-L0  em-red-loader   em-red-render   em-red-secrets
-        \               |               /
-L1   em-loader  ───────────────  em-secrets
-        |  \                         |
-L2      |  em-docs              em-render ◄─(loader, secrets)
-        |                            |
-L3                            em-frag-shared
-                        /     /      |      \      \
-L4          em-frag-local em-frag-vm em-frag-fir em-frag-demo em-frag-wp
+L0-2  RED loader/render/secrets → em-loader, em-secrets → em-render, em-docs → em-red-quote   (landed)
+L3    em-frag-shared   em-red-contract2   em-red-svcquote                                 (landed)
+L4    em-contract2 ◄─(red-contract2, frag-shared)   em-svc-quote ◄─(red-svcquote)   em-red-harden
+L5    em-harden-loader   em-harden-render   ◄─(contract2, red-harden)
+      em-frag-local  em-frag-vm  em-frag-fir  em-frag-demo  em-frag-wp   ◄─(contract2)
 ```
 
-Critical path: RED → `em-loader` → `em-render` → `em-frag-shared` → any L4 lane (5 layers). Peak width 5 (L4), admitted ≤4 open lane worktrees at a time; a finished lane lands and retires before the next admits.
+Critical path: `em-contract2` → any L5 lane. Up to 4 lane worktrees are open at a time; a finished lane lands and retires before the next is admitted.
 
 ### Migration-lane rule
 
-A migrate lane moves every key of its template into the fragment with the same section order and doc text (comments become `doc`), then runs `python3 scripts/env/render_env.py render --target <t> --all-examples` and commits the regenerated template. Gate: `python3 -m pytest scripts/env/tests -q && python3 scripts/env/render_env.py check --all-examples`. The key set of the regenerated template must equal the baseline template's key set (commented-out `# KEY=` lines count as `required = false` vars); the brief lists the baseline keys and the coordinator re-diffs them at landing. Real values: only public/config values already present in the old template's examples; no secret value is ever written.
+1. A migrate lane moves every key of its template into its fragment:
+   - keep the same section order and doc text (comments become `doc`);
+   - put target-specific examples, docs and sections in `[[override]]` tables, never in a duplicate var.
+2. It then runs `python3 scripts/env/render_env.py render --target <t> --adopt` and commits the regenerated template.
+   - `--adopt` is required because the committed template has no generated header yet.
+   - The `.pre-envman` backup is gitignored by the `.env.*` rule and is not committed.
+3. Gate: `python3 -m pytest scripts/env/tests/test_manifest_loader.py scripts/env/tests/test_render.py scripts/env/tests/test_secret_resolvers.py -q && python3 scripts/env/render_env.py check --target <t>`.
+   - The harden suites are excluded until both harden GREEN lanes land.
+4. The regenerated template's key set must equal the baseline template's key set. Commented-out `# KEY=` lines count as `required = false` vars. The brief lists the baseline keys, and the coordinator re-diffs them at landing (`.task-state/envman1_parity.py <t>`).
+5. Real values: only public/config values already present in the old template's examples. No secret value is ever written. A secret-bearing var is `class = "secret"`, even when the old template showed a placeholder (for example `ACX_GPU_ENDPOINT_API_KEY` in `svc-vm`).
 
 ## Verification
 
-- Per lane: its gate in `test_commands`.
-- Merge candidate: `python3 -m pytest scripts/env/tests -q`, `make env-check`, `make lint-task-plans`.
-- One harmonizing review before `main` (codex-remote luna max fast); highs block, mediums fixed, lows deferred.
+- **Per lane:** the lane's gate, run in the feature worktree at landing. Service tests (`em-red-svcquote`, `em-svc-quote`) run on the VM, and the lane's `self_verify` tail is the evidence.
+- **Merge candidate:** `python3 -m pytest scripts/env/tests -q`, `make env-check` and `make lint-task-plans`.
+  - `env-check` is green only after all five migrate lanes land, because each template is un-headed until its lane regenerates it.
+  - So `feature/envman-1` does not merge to `main` before every L5 lane has landed.
+- **Review:** one harmonizing review before `main` (codex-remote luna max fast). Highs block, mediums are fixed and lows are deferred.
 
 ## Out of scope
 
-See scope § Not doing and § Phase B.
+See scope § Not doing and § Phase B. Prod rendering (vault refs, deploy shipping) is Phase B, so the Phase A renderer has no prod runtime target.

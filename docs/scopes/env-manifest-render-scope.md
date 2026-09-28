@@ -38,7 +38,7 @@ Existing seams this reuses, not replaces: `shared/secrets.py` `SecretProvider` (
 
 ## Assumptions (resolved without operator input)
 
-- **A-1 TOML, not YAML.** `tomllib` is stdlib (Python ≥3.11) so the renderer runs in any `python3` — laptop, VM host, lane sandbox — with zero deps [REF-21]. The proposal said YAML; the format is not load-bearing.
+- **A-1 TOML, not YAML.** `tomllib` is stdlib (Python ≥3.11), so the renderer runs with zero deps on any Python ≥3.11 interpreter: the repo `.venv`, the VM host and the lane sandbox [REF-21]. macOS `/usr/bin/python3` (3.9) is below that floor. The CLI refuses older interpreters with exit 2, and `make` selects the interpreter via `ENV_PYTHON`. The proposal said YAML; the format is not load-bearing.
 - **A-2 Fragments, not one file.** `manifest.d/` lets parallel lanes own disjoint files; the loader merges them in sorted filename order, so output stays deterministic.
 - **A-3 Keychain for local secrets; sops/age deferred.** One local store is enough for one operator [YAGNI]; `env:` covers CI.
 - **A-4 Examples show placeholders only.** Example mode never emits a real value, public or secret, so templates never leak environment identity.

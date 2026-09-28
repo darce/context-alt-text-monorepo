@@ -4,6 +4,33 @@ import path from 'path';
 
 const domTests = [
   'js/**/*.{test,spec}.tsx',
+  // Keep browser-backed imports in jsdom even when a test currently mocks that path.
+  'js/admin/api/__tests__/recognitionApi.test.ts',
+  'js/admin/api/recognition/__tests__/identityActionsApiAcceptMerge.test.ts',
+  'js/admin/api/__tests__/workbenchMediaApi.test.ts',
+  'js/admin/utils/__tests__/adminUrls.test.ts',
+  'js/admin/utils/__tests__/http.test.ts',
+  'js/components/ui/__tests__/cropFaceFromImage.test.ts',
+  'js/admin/api/__tests__/describeApi.test.ts',
+  'js/admin/api/recognition/__tests__/retentionApiExportEnvelope.test.ts',
+  'js/admin/utils/__tests__/retryPolicy.test.ts',
+  'js/admin/api/__tests__/config.test.ts',
+  'js/admin/api/__tests__/personMergeApi.test.ts',
+  'js/admin/api/__tests__/settingsResponseContract.test.ts',
+  'js/admin/api/describeApi.test.ts',
+  'js/admin/api/recognition/__tests__/clusterApiMutationsRevertSignal.test.ts',
+  'js/admin/api/recognition/__tests__/clusterApiMutationsSplitSignal.test.ts',
+  'js/admin/api/recognition/__tests__/clusterApiQueries.repairPending.test.ts',
+  'js/admin/api/recognition/__tests__/envelopeMetadata.test.ts',
+  'js/admin/api/recognition/__tests__/scanApiBatching.test.ts',
+  'js/admin/api/recognition/__tests__/scanApiSignal.test.ts',
+  'js/admin/api/recognition/__tests__/syncApi.reclaimer.test.ts',
+  'js/admin/guidedPrototype/describeRunParse.test.ts',
+  'js/admin/hooks/__tests__/jobStateMachineUtils.test.ts',
+  'js/admin/hooks/__tests__/recognitionJobHistoryUtils.test.ts',
+  'js/admin/utils/__tests__/appError.test.ts',
+  'js/admin/utils/__tests__/logger.test.ts',
+  'js/admin/utils/__tests__/warmingDeadline.test.ts',
   'js/admin/__tests__/routeHelpers.test.ts',
   'js/guide/__tests__/publicGuideWatch.test.ts',
   'js/public/__tests__/demo-describe.test.ts',
@@ -56,6 +83,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     globals: true,
     pool: 'forks',
+    maxWorkers: '50%',
     projects: [
       {
         extends: true,

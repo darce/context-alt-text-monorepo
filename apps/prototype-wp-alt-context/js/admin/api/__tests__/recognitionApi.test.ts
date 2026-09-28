@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';

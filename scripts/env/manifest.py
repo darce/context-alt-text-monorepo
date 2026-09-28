@@ -24,6 +24,9 @@ class Target:
     example: str | None
     sections: tuple[str, ...]
     doc: str | None = None
+    remote_paths: Mapping[str, str] = field(default_factory=dict)
+    preserve: tuple[str, ...] = ()
+    lease_env: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class Var:
     secret: Mapping[str, str]
     derive: str | None
     source: str
+    derive_vault_map: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,11 +65,11 @@ class Manifest:
 
 _TOP_LEVEL_TARGET_KEYS = frozenset({"version", "targets"})
 _TARGET_REQUIRED_KEYS = frozenset({"audience", "envs", "sections"})
-_TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example", "doc"})
+_TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example", "doc", "remote_paths", "preserve", "lease_env"})
 _FRAGMENT_KEYS = frozenset({"version", "var", "override"})
 _VAR_REQUIRED_KEYS = frozenset({"name", "class", "targets", "section", "example"})
 _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
-    {"doc", "required", "values", "secret", "derive"}
+    {"doc", "required", "values", "secret", "derive", "derive_vault_map"}
 )
 _DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _LITERAL_SECRET = re.compile(
@@ -177,13 +181,23 @@ def _load_targets(path: Path) -> dict[str, Target]:
         doc = target_data.get("doc")
         if doc is not None:
             doc = _string(doc, path.name, f"{prefix}doc")
-        targets[name] = Target(name, audience, envs, target_path, example_path, sections, doc)
+        remote_paths = _string_map(target_data.get("remote_paths", {}), path.name, f"{prefix}remote_paths")
+        preserve = _string_list(target_data.get("preserve", []), path.name, f"{prefix}preserve")
+        lease_env = _string_map(target_data.get("lease_env", {}), path.name, f"{prefix}lease_env")
+        targets[name] = Target(name, audience, envs, target_path, example_path, sections, doc,
+                               MappingProxyType(remote_paths), preserve, MappingProxyType(lease_env))
     _validate_targets(targets, path.name)
     return targets
 
 
 def _validate_targets(targets: Mapping[str, Target], source: str) -> None:
     for target in targets.values():
+        for env, remote_path in target.remote_paths.items():
+            if (env not in target.envs or not remote_path.startswith("/opt/acx-backend/")
+                    or posixpath.normpath(remote_path) != remote_path):
+                _fail(source, f"{target.name}.remote_paths", "requires configured envs and normalized paths under /opt/acx-backend/")
+        if not target.lease_env.keys() <= target.remote_paths.keys():
+            _fail(source, f"{target.name}.lease_env", "envs must have remote_paths")
         for section in target.sections:
             _validate_section(section, source, f"{target.name}.sections")
         _validate_doc(target.doc, source, f"{target.name}.doc")
@@ -205,6 +219,13 @@ def _load_value_source(
 ) -> tuple[dict[str, str], dict[str, str], str | None]:
     source_fields = ("values", "secret", "derive")
     present_sources = [key for key in source_fields if key in table]
+    derive_vault_map = table.get("derive_vault_map", False)
+    if not isinstance(derive_vault_map, bool):
+        _fail(source, name, "derive_vault_map must be a boolean")
+    if derive_vault_map:
+        if cls != "config" or present_sources:
+            _fail(source, name, "derive_vault_map requires config class and no other value source")
+        return {}, {}, None
     if len(present_sources) != 1:
         _fail(source, name, "requires exactly one of values, secret, or derive")
     values: dict[str, str] = {}
@@ -221,10 +242,14 @@ def _load_value_source(
     if cls != "secret" and "secret" in table:
         _fail(source, f"{name}.secret", "only secret vars can define secret refs")
     for reference in secret.values():
-        scheme, separator, _ = reference.partition(":")
-        if not separator or scheme not in {"keychain", "env", "vault"}:
+        scheme, separator, remainder = reference.partition(":")
+        if not separator or scheme not in {"keychain", "env", "vault", "host"}:
             shown_scheme = scheme if separator else "missing"
             _fail(source, f"{name}.{shown_scheme}", "unsupported secret scheme")
+        if scheme == "host" and remainder:
+            _fail(source, name, "host ref must have an empty remainder")
+        if scheme == "vault" and re.fullmatch(r"ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}", remainder) is None:
+            _fail(source, name, "vault ref requires a valid vault secret OCID")
     return values, secret, derive
 
 
@@ -295,6 +320,7 @@ def _load_var(raw: object, source: str) -> Var:
         secret=MappingProxyType(secret),
         derive=derive,
         source=source,
+        derive_vault_map=table.get("derive_vault_map", False),
     )
     _validate_var_fields(var)
     return var
@@ -555,6 +581,45 @@ def _validate_public_name(var: Var) -> None:
         _fail(var.source, var.name, "sensitive var name cannot target public builds")
 
 
+def vault_secret_map(manifest: Manifest, target: str, env: str) -> dict[str, str]:
+    return {
+        var.name: var.secret[env].partition(":")[2]
+        for var in sorted(manifest.vars, key=lambda item: item.name)
+        if target in var.targets and var.secret.get(env, "").startswith("vault:")
+    }
+
+
+def _validate_remote_sources(manifest: Manifest) -> None:
+    for target in manifest.targets.values():
+        variables = {var.name: var for var in manifest.vars if target.name in var.targets}
+        for name in target.preserve:
+            if name in variables:
+                _fail("targets.toml", f"{target.name}.preserve.{name}", "preserved key overlaps a target var")
+        for env in target.envs:
+            for var in variables.values():
+                scheme = var.secret.get(env, "").partition(":")[0]
+                if scheme in {"vault", "host"} and target.audience in {"public_build", "test"}:
+                    _fail(var.source, var.name, f"remote secret refs are forbidden on target {target.name}")
+                if scheme in {"keychain", "env"} and env in target.remote_paths:
+                    _fail(var.source, var.name, f"local secret refs are forbidden on remote target {target.name}")
+                for name in _parse_derive_references(var):
+                    if variables[name].secret.get(env, "").partition(":")[0] in {"vault", "host"}:
+                        _fail(var.source, var.name, f"derive references remote secret var {name}")
+            mapping = vault_secret_map(manifest, target.name, env)
+            backend = variables.get("RECOGNITION_SECRET_BACKEND")
+            uses_vault = backend is not None and backend.values.get(env) == "oci_vault"
+            if mapping and (not uses_vault or not any(var.derive_vault_map for var in variables.values())):
+                var = variables[next(iter(mapping))]
+                _fail(var.source, var.name, "vault refs require derive_vault_map and RECOGNITION_SECRET_BACKEND = oci_vault")
+            if uses_vault:
+                if not mapping:
+                    _fail(backend.source, backend.name, "oci_vault requires vault refs")
+                for name in ("PGPASSWORD", "RECOGNITION_ADMIN_TOKEN"):
+                    if name not in mapping:
+                        var = variables.get(name, backend)
+                        _fail(var.source, name, f"oci_vault requires a vault ref on target {target.name}")
+
+
 def load_manifest(root: Path) -> Manifest:
     manifest_dir = Path(root) / "manifest.d"
     targets = _load_targets(manifest_dir / "targets.toml")
@@ -563,6 +628,7 @@ def load_manifest(root: Path) -> Manifest:
     manifest = Manifest(MappingProxyType(targets), tuple(ordered_vars), overrides)
     _validate_target_envs(manifest)
     reaches_secret = _validate_derive_graph(vars_by_name)
+    _validate_remote_sources(manifest)
     _validate_value_sources(ordered_vars, reaches_secret)
     _validate_public_build(manifest, reaches_secret)
 
@@ -580,6 +646,11 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
         "sections": target.sections,
         "doc": target.doc,
     }
+    # Keep existing example digests stable when no remote metadata is configured.
+    for key in ("remote_paths", "preserve", "lease_env"):
+        value = getattr(target, key)
+        if value:
+            target_data[key] = list(value) if key == "preserve" else dict(value)
     var_data = []
     for var in sorted(
         (item for item in manifest.vars if target_name in item.targets),
@@ -600,6 +671,8 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
                 "derive": var.derive,
             }
         )
+        if var.derive_vault_map:
+            var_data[-1]["derive_vault_map"] = True
     encoded = json.dumps(
         {"target": target_data, "vars": var_data, "overrides": [
             {key: value for key, value in vars(override).items() if key != "source"}

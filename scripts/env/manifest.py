@@ -75,8 +75,9 @@ _LITERAL_SECRET = re.compile(
 )
 _PUBLIC_SENSITIVE_TOKENS = frozenset({
     "SECRET", "PASSWORD", "PASSWD", "PWD", "TOKEN", "PRIVATE", "KEY",
-    "CREDENTIAL", "SIGNING",
+    "CREDENTIAL", "SIGNING", "SECRETS", "CREDENTIALS",
 })
+_URL_USERINFO_PASSWORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s@:]+:[^/?#\s@]*@")
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:
@@ -140,9 +141,8 @@ def _target_path(value: object, path: Path, key: str) -> str | None:
     if value is None:
         return None
     value = _string(value, path.name, key)
-    repo_root = path.resolve().parents[2]
-    candidate = Path(value)
-    if candidate.is_absolute() or not (repo_root / candidate).resolve().is_relative_to(repo_root):
+    normalized = posixpath.normpath(value)
+    if Path(value).is_absolute() or normalized == ".." or normalized.startswith("../"):
         _fail(path.name, key, "must be relative and remain inside repo root")
     return value
 
@@ -496,12 +496,13 @@ def _validate_value_sources(
 
 
 def _validate_public_build(
-    targets: Mapping[str, Target],
-    vars: tuple[Var, ...] | list[Var],
+    manifest: Manifest,
     reaches_secret: Mapping[str, bool],
 ) -> None:
-    for var in vars:
-        if not any(targets[name].audience == "public_build" for name in var.targets):
+    for var in manifest.vars:
+        public_targets = [name for name in var.targets
+                          if manifest.targets[name].audience == "public_build"]
+        if not public_targets:
             continue
         if var.cls == "secret":
             _fail(var.source, var.name, "secret vars cannot target public builds")
@@ -510,6 +511,18 @@ def _validate_public_build(
         if not var.name.startswith("VITE_"):
             _fail(var.source, var.name, "public build vars must use the VITE_ prefix")
         _validate_public_name(var)
+        _validate_public_urls(var)
+        for target_name in public_targets:
+            override = manifest.overrides.get((var.name, target_name))
+            if override is not None and override.example is not None:
+                effective = effective_var(manifest, var, target_name)
+                _validate_public_urls(replace(effective, source=override.source))
+
+
+def _validate_public_urls(var: Var) -> None:
+    for value in (var.example, *var.values.values()):
+        if _URL_USERINFO_PASSWORD.search(value):
+            _fail(var.source, var.name, "public build values cannot embed URL credentials")
 
 
 def _validate_public_name(var: Var) -> None:
@@ -535,7 +548,7 @@ def load_manifest(root: Path) -> Manifest:
     _validate_target_envs(manifest)
     reaches_secret = _validate_derive_graph(vars_by_name)
     _validate_value_sources(ordered_vars, reaches_secret)
-    _validate_public_build(targets, ordered_vars, reaches_secret)
+    _validate_public_build(manifest, reaches_secret)
 
     return manifest
 

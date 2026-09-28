@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
+if __name__ == "__main__" and sys.version_info < (3, 11):
+    print("Python 3.11 or newer is required", file=sys.stderr)
+    raise SystemExit(2)
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from env.manifest import Manifest, ManifestError, Target, Var, effective_var, load_manifest, target_digest
@@ -37,6 +41,8 @@ def _format_value(value: str, name: str) -> str:
         raise ValueError(f"{name}: value cannot be represented portably")
     if re.fullmatch(r"[A-Za-z0-9_./:@,+=%?-]*", value):
         return value
+    if re.fullmatch(r"(?:[A-Za-z0-9_./:@,+=%?-]|\$\{[A-Za-z_][A-Za-z0-9_]*\})+", value):
+        return '"' + value + '"'
     if "'" not in value:
         return "'" + value + "'"
     if not any(char in value for char in '\"\\$`'):
@@ -177,7 +183,7 @@ def _inspect_path(path: Path) -> os.stat_result | None:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f"{path.name}.envman-tmp-", dir=path.parent)
     temporary_path = Path(temporary_name)
     try:
         os.fchmod(descriptor, 0o600)
@@ -282,17 +288,17 @@ def check_example(manifest: Manifest, target_name: str, repo_root: Path) -> list
     return []
 
 
-def _runtime_assignments(text: str) -> dict[str, str]:
-    assignments: dict[str, str] = {}
-    for line in text.splitlines():
+def _runtime_assignments(text: str) -> dict[str, list[str]]:
+    assignments: dict[str, list[str]] = {}
+    for line in text.split("\n"):
         match = _ASSIGNMENT.match(line)
         if match is not None:
-            assignments[match.group(1)] = match.group(2)
+            assignments.setdefault(match.group(1), []).append(line)
     return assignments
 
 
 def _without_assignments(text: str) -> tuple[str, ...]:
-    return tuple(line for line in text.splitlines() if _ASSIGNMENT.match(line) is None)
+    return tuple(line for line in text.split("\n") if _ASSIGNMENT.match(line) is None)
 
 
 def check_runtime(
@@ -307,17 +313,14 @@ def check_runtime(
     actual_text = _read_text(Path(path))
     if actual_text is None:
         return [f"{path}: runtime file is missing or unreadable"]
-    if actual_text == rendered:
-        return []
 
     expected_assignments = _runtime_assignments(rendered)
     actual_assignments = _runtime_assignments(actual_text)
-    secret_names = {
-        var.name
-        for var in _target_vars(manifest, target_name)
-        if var.cls == "secret"
-    }
-    messages: list[str] = []
+    secret_names = {var.name for var in _target_vars(manifest, target_name) if var.cls == "secret"}
+    messages = [f"{name}: duplicate assignment"
+                for name, lines in actual_assignments.items() if len(lines) > 1]
+    if stat.S_IMODE(Path(path).stat().st_mode) != 0o600:
+        messages.append(f"{path}: mode is not 0600")
     for name, expected_value in expected_assignments.items():
         actual_value = actual_assignments.get(name)
         if actual_value == expected_value:
@@ -332,7 +335,7 @@ def check_runtime(
         messages.append(f"{name}: unmanaged key")
 
     if _without_assignments(actual_text) != _without_assignments(rendered):
-        messages.append(f"{path}: runtime file differs")
+        messages.append(f"{path}: non-assignment lines differ")
     return messages
 
 
@@ -437,6 +440,10 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         print("filesystem operation failed", file=sys.stderr)
         return 2
+
+    except Exception as error:
+        print(type(error).__name__, file=sys.stderr)
+        return 4
 
 
 if __name__ == "__main__":

@@ -215,7 +215,7 @@ def test_oci_vault_requires_boot_keys(write_manifest, key):
 @pytest.mark.parametrize("audience", ["public_build", "test"])
 @pytest.mark.parametrize("ref", ["vault:" + OCID, "host:"])
 def test_vault_or_host_on_public_or_test_audience_refused(write_manifest, audience, ref):
-    root = _root(write_manifest, _vm_targets(audience=audience),
+    root = _root(write_manifest, _targets(envs=("dev", "prod"), audience=audience),
                  _var("PGPASSWORD", cls="secret", secret={"dev": ref, "prod": ref}))
     _refused(root, FRAGMENT, "PGPASSWORD")
 
@@ -234,9 +234,12 @@ def test_keychain_on_local_env_still_loads(write_manifest):
     assert mod.load_manifest(root).vars[0].secret["local"] == "keychain:acx/PGPASSWORD"
 
 
-def test_derive_from_vault_or_host_refused(write_manifest):
-    root = _root(write_manifest, _vm_targets(),
-                 _var("PGPASSWORD", cls="secret", secret={"dev": "host:", "prod": "host:"}),
+@pytest.mark.parametrize("ref", ["host:", "vault"])
+def test_derive_from_vault_or_host_refused(write_manifest, ref):
+    variables = ([_boot_vars(), _backend(), _map_var()] if ref == "vault" else [
+        _var("PGPASSWORD", cls="secret", secret={"dev": "host:", "prod": "host:"}),
+    ])
+    root = _root(write_manifest, _vm_targets(), *variables,
                  _var("POSTGRES_DSN", cls="secret", derive="postgresql://u:${PGPASSWORD}@h/db"))
     _refused(root, FRAGMENT, "POSTGRES_DSN")
 

@@ -6,24 +6,97 @@ envs = ["local"]
 path = "apps/prototype-description-service/.env"
 example = "apps/prototype-description-service/.env.example"
 sections = ["Postgres connection", "Aliases", "Database DSNs", "Pool and timeout knobs", "Runtime mode", "API security", "Operator /admin surface"]
+doc = '''
+Local development environment template for the prototype description service.
+
+Copy to `apps/prototype-description-service/.env` and adjust as needed:
+  cp apps/prototype-description-service/.env.example apps/prototype-description-service/.env
+Or run `make dev-setup` (copies only if .env is absent, then mints a DB API key).
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: docs/secrets-inventory.md
+
+Consumed by:
+  - db.settings._load_env_file (Python runtime + Alembic + pytest)
+  - scripts/reset_dev_db.sh   (`make reset-local`)
+  - scripts/db_shell.sh       (`make db-shell`)
+
+Production deployments MUST NOT use this file - see `.env.prod.example`
+for the multi-environment OCI VM template.'''
 
 [targets.svc-vm]
 audience = "backend"
 envs = ["dev", "prod"]
 example = "apps/prototype-description-service/.env.prod.example"
 sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
+doc = '''
+Multi-environment deployment template for OCI VM.
+
+Each environment (prod/staging/dev) needs its own copy at:
+  /opt/acx-backend/<env>/.env          owner ubuntu:ubuntu, mode 0600
+(dev-fir uses .env.fir.example instead.) Edit that file in place. Do NOT use a
+secrets/.env + symlink layout: recognition-service.sh rewrites .env with an
+atomic os.replace, which replaces the symlink and strands secrets/.env as a
+stale copy (REF-09). Rotation: docs/secrets-inventory.md
+§ "Per-environment runtime files".
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+Do NOT commit secrets.'''
 
 [targets.svc-fir]
 audience = "backend"
 envs = ["fir"]
 example = "apps/prototype-description-service/.env.fir.example"
 sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Face pipeline", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description"]
+doc = '''
+Isolated FIR/SFace 128d benchmark stack template for OCI VM (acx-dev-fir).
+
+Install at (the ONE runtime file; edit it in place):
+  /opt/acx-backend/dev-fir/.env        owner ubuntu:ubuntu, mode 0600
+  install -d -m 0755 /opt/acx-backend/dev-fir
+  install -m 0600 .env.fir.example /opt/acx-backend/dev-fir/.env
+Then replace every REPLACE_ME_DEV_FIR_PG with one fresh value that is not
+reused by any other env (PG-09), e.g. `openssl rand -hex 24`.
+Do NOT use a secrets/.env + symlink layout: recognition-service.sh rewrites
+.env with an atomic os.replace (image_repo_resource), which replaces the
+symlink with a regular file and leaves secrets/.env a stale copy (REF-09).
+Rotation + OCI Vault opt-in: apps/prototype-description-service/docs/secrets-inventory.md
+  § "Per-environment runtime files".
+
+This stack is intentionally separate from InsightFace acx-dev (512d). SFace is
+128d; media_identities.embedding is dimension-pinned by PGVECTOR_DIM and the
+three-way guard assert_three_way_embedding_dimensions
+(face_pipeline_adapter.py:318-329). Both of the following are MANDATORY:
+  - PGVECTOR_DIM=128
+  - RECOGNITION_FACE_PIPELINE_PROFILE=face_pipeline
+Plus RECOGNITION_FACE_PIPELINE_MODELS_DIR must point under the compose mount
+(${ACX_MODELS_PATH}:/data/cache) so runtime ONNX loads from the volume, not
+the package DEFAULT_MODELS_DIR.
+
+DEV tier: inline plaintext secret placeholders (mirror acx-dev). Uses the env
+secret backend by default; the commented oci_vault block below is the opt-in.
+Auth disabled so LocalWP fir wiring needs no tenant key.
+
+Annotation format: `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+Do NOT commit secrets.'''
 
 [targets.demo]
 audience = "backend"
 envs = ["demo"]
 example = "infra/oci/demo/.env.example"
 sections = ["Compose", "MariaDB", "WordPress", "Generated secrets", "Image description", "GPU lifecycle"]
+doc = '''
+Demo stack secrets template — copy to /opt/acx-backend/demo/secrets/.env (chmod 600).
+Real credentials live on the VM only; never commit populated values.
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+domain: infra | source: demo stack ops | consumer: docker compose project identity'''
 
 [targets.wp-e2e]
 audience = "test"
@@ -31,3 +104,12 @@ envs = ["local"]
 path = "apps/prototype-wp-alt-context/.env.local"
 example = "apps/prototype-wp-alt-context/.env.local.example"
 sections = ["Playwright auth", "Optional overrides"]
+doc = '''
+LocalWP-only Playwright auth bootstrap placeholders for E15-6.
+Copy this file to .env.local and fill in real values before running
+the auth bootstrap described in docs/playwright-localwp-evidence.md.
+
+Annotation format (Slice 4): `# domain: <n> | source: <owner> | consumer: <who reads it>`
+Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md
+
+domain: test creds | source: local developer / CI secret store | consumer: Playwright LocalWP auth bootstrap'''

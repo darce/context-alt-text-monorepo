@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 import db.settings as settings_module
 
 
@@ -427,3 +429,72 @@ def test_database_settings_canonicalize_legacy_db_name_from_environment(monkeypa
 
     assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
     assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ACX_T_Q_A", "'a b#c'", "a b#c"),
+        ("ACX_T_Q_B", "'cash$HOME'", "cash$HOME"),
+        ("ACX_T_Q_C", "'{\"k\":\"v\"}'", '{"k":"v"}'),
+        ("ACX_T_Q_D", '\"it\'s here\"', "it's here"),
+        ("ACX_T_Q_E", '\"${ACX_T_Q_BASE}/x\"', "/base/x"),
+        ("ACX_T_Q_F", "''", ""),
+    ],
+)
+def test_load_env_file_portable_quotes(monkeypatch, tmp_path: Path, key, value, expected) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{key}={value}\n")
+    monkeypatch.setenv(key, "x")
+    monkeypatch.delenv(key)
+    monkeypatch.setenv("ACX_T_Q_BASE", "/base")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module._load_env_file()
+
+    assert os.environ[key] == expected
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ACX_T_Q_G", "plain", "plain"),
+        ("ACX_T_Q_H", "${ACX_T_Q_BASE}/y", "/base/y"),
+        ("ACX_T_Q_I", "'unbalanced", "'unbalanced"),
+    ],
+)
+def test_load_env_file_quote_regression_guards(monkeypatch, tmp_path: Path, key, value, expected) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{key}={value}\n")
+    monkeypatch.setenv(key, "x")
+    monkeypatch.delenv(key)
+    monkeypatch.setenv("ACX_T_Q_BASE", "/base")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module._load_env_file()
+
+    assert os.environ[key] == expected
+
+
+def test_database_settings_strip_env_file_password_quotes(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "PGUSER=context\n"
+        "PGPASSWORD='p#w d'\n"
+        "PGHOST=localhost\n"
+        "PGPORT=5432\n"
+        "DB_NAME=alt_context_service\n"
+        "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}\n"
+    )
+    for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_DSN", "POSTGRES_SYNC_DSN"):
+        monkeypatch.setenv(key, "x")
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("ENV_MODE", "local")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        dsn = settings_module.get_database_settings().postgres_dsn
+        assert "'" not in dsn
+    finally:
+        settings_module.get_database_settings.cache_clear()

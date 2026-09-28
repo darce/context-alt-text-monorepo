@@ -1,0 +1,169 @@
+version = 1
+
+[[override]]
+name = "COMPOSE_PROJECT_NAME"
+target = "svc-fir"
+example = "acx-dev-fir"
+
+[[override]]
+name = "ACX_ENV"
+target = "svc-fir"
+example = "dev-fir"
+
+[[override]]
+name = "ACX_IMAGE_TAG"
+target = "svc-fir"
+example = "dev-fir"
+doc = "domain: infra | source: OCI deploy | consumer: compose image tag selection\nIndependent :dev-fir tag promoted from :dev (SFace ONNX is volume-mounted, not baked in)."
+
+[[override]]
+name = "ACX_PGDATA_PATH"
+target = "svc-fir"
+example = "/opt/acx-backend/data/dev-fir-pgdata"
+
+[[override]]
+name = "ACX_MODELS_PATH"
+target = "svc-fir"
+example = "/opt/acx-backend/data/dev-models"
+
+[[override]]
+name = "ACX_NETWORK_NAME"
+target = "svc-fir"
+example = "acx-dev-fir-net"
+
+[[override]]
+name = "RECOGNITION_SECRET_BACKEND"
+target = "svc-fir"
+example = "env"
+required = true
+
+[[override]]
+name = "RECOGNITION_VAULT_SECRET_MAP"
+target = "svc-fir"
+example = "{\"PGPASSWORD\":\"ocid1.vaultsecret.oc1..REPLACE_DEV_FIR\",\"RECOGNITION_ADMIN_TOKEN\":\"ocid1.vaultsecret.oc1..REPLACE_DEV_FIR\"}"
+doc = "OCI Vault opt-in (runbook: infra/oci/vault-instance-principal-runbook.md).\noci_vault boot eagerly requires PGPASSWORD AND RECOGNITION_ADMIN_TOKEN\n(shared/secrets.py:validate_oci_vault_boot) even with /admin disabled, so both\nneed dev-fir-only Vault secrets (names unique per vault, e.g.\ndev-fir-pg-password / dev-fir-admin-token); never point at prod's OCIDs.\nThen blank POSTGRES_DSN / POSTGRES_SYNC_DSN below and let the ExecStartPre\nhook fetch POSTGRES_PASSWORD (runbook § 4, with --secret-name dev-fir-pg-password).\nRECOGNITION_SECRET_BACKEND=oci_vault\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+
+[[override]]
+name = "POSTGRES_USER"
+target = "svc-fir"
+example = "acx_dev_fir"
+doc = "domain: infra | source: OCI deploy | consumer: docker-compose Postgres bootstrap"
+
+[[override]]
+name = "POSTGRES_PASSWORD"
+target = "svc-fir"
+example = "REPLACE_ME_DEV_FIR_PG"
+doc = "domain: infra | source: OCI deploy (plaintext placeholder — replace on VM) | consumer: docker-compose Postgres bootstrap"
+
+[[override]]
+name = "POSTGRES_DB"
+target = "svc-fir"
+example = "alt_context_dev_fir"
+
+[[override]]
+name = "POSTGRES_DSN"
+target = "svc-fir"
+example = "postgresql+asyncpg://acx_dev_fir:REPLACE_ME_DEV_FIR_PG@postgres:5432/alt_context_dev_fir"
+doc = "domain: infra | source: OCI deploy | consumer: db/settings.py:get_database_settings"
+required = true
+
+[[override]]
+name = "POSTGRES_SYNC_DSN"
+target = "svc-fir"
+example = "postgresql+psycopg://acx_dev_fir:REPLACE_ME_DEV_FIR_PG@postgres:5432/alt_context_dev_fir"
+doc = "domain: infra | source: OCI deploy | consumer: db/settings.py:get_database_settings"
+required = true
+
+[[var]]
+name = "RECOGNITION_FACE_PIPELINE_PROFILE"
+class = "config"
+targets = ["svc-fir"]
+section = "Face pipeline"
+example = "face_pipeline"
+doc = "Both profile + dim are required for the three-way guard\n(face_pipeline_adapter.py:318-329). Models dir must sit under the\nACX_MODELS_PATH -> /data/cache volume mount.\ndomain: recognition | source: OCI deploy | consumer: face_pipeline profile selection"
+required = true
+values = {}
+
+[[override]]
+name = "PGVECTOR_DIM"
+target = "svc-fir"
+section = "Face pipeline"
+example = "128"
+required = true
+
+[[var]]
+name = "RECOGNITION_FACE_PIPELINE_MODELS_DIR"
+class = "config"
+targets = ["svc-fir"]
+section = "Face pipeline"
+example = "/data/cache/face_pipeline"
+doc = "domain: recognition | source: OCI deploy | consumer: face_pipeline settings.resolved_models_dir"
+required = true
+values = {}
+
+[[override]]
+name = "INSIGHTFACE_CACHE_DIR"
+target = "svc-fir"
+doc = "domain: infra | source: OCI deploy | consumer: InsightFace model cache (unused on FIR profile)"
+
+[[override]]
+name = "INSIGHTFACE_HOME"
+target = "svc-fir"
+doc = "domain: infra | source: OCI deploy | consumer: InsightFace home path (unused on FIR profile)"
+
+[[override]]
+name = "RECOGNITION_AUTH_ENABLED"
+target = "svc-fir"
+doc = "fir.dev.api.altcontext.com is a public vhost (Caddyfile): with auth off every\nrecognition route is open to the internet with tenant scoping disabled, and\nFIRDV-1 readiness refuses it (validate_fir_dev_runtime.py: auth_disabled).\nNever set false on a stack behind a public vhost [SECD-05][SEC-01].\ndomain: service root-of-trust (mode flag) | source: service operator | consumer: SecuritySettings.auth_enabled; HTTP auth deps"
+
+[[override]]
+name = "RECOGNITION_API_KEY_HEADER"
+target = "svc-fir"
+doc = "Tenant API keys are DB-only. /admin is off on this stack, so mint inside its\napi container. --env prod is the CLI's DSN-host guard label (the in-container\nDSN host is `postgres`), not the target env; the dev-fir compose project\nselects the dev-fir DB (infra/oci/README.md, reset step 8). The tenant UUID\nmust equal the plugin's X-Tenant-ID; without an explicit ACX_RECOGNITION_TENANT_ID\nit derives from the WordPress site URL. Print it from the repo root:\n  python3 scripts/deploy/_derive_tenant_id.py http://localhost:10028\nThen on the VM (fir LocalWP values; set SITE_URL and T for another site):\n  SITE_URL=http://localhost:10028\n  T=fa22a16e-ec19-5e04-a49c-1f884914c945\n  cd /opt/acx-backend/dev-fir\n  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod tenant create --tenant \"$T\" --site-url \"$SITE_URL\" < /dev/null\n  sudo docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod create --tenant \"$T\" < /dev/null\nThe raw key prints once. Keys live in this stack's DB: a pgdata reset orphans them.\nThere is no env-var allowlist bypass (retired, decision #1882).\ndomain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)"
+
+[[override]]
+name = "RECOGNITION_ADMIN_ENABLED"
+target = "svc-fir"
+required = true
+
+[[override]]
+name = "RECOGNITION_ADMIN_TOKEN"
+target = "svc-fir"
+doc = "domain: service root-of-trust | source: service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps"
+required = true
+
+[[override]]
+name = "RECOGNITION_ADMIN_TAILNET_BOUND"
+target = "svc-fir"
+example = "0"
+doc = "domain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config"
+
+[[override]]
+name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
+target = "svc-fir"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_RATE_LIMIT_RPM"
+target = "svc-fir"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_RATE_LIMIT_BURST"
+target = "svc-fir"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_MAX_PAGE_SIZE"
+target = "svc-fir"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_ALLOWED_ORIGINS"
+target = "svc-fir"
+section = "Operator /admin surface"
+
+[[override]]
+name = "ACX_DESCRIPTION_ADAPTER"
+target = "svc-fir"
+example = "seeded"

@@ -430,3 +430,96 @@ def test_harden_e2e_api_key_has_local_ref():
     var = next(var for var in manifest.vars if var.name == "ACX_E2E_RECOGNITION_API_KEY")
     assert var.required is False
     assert var.secret.get("local", "").startswith("keychain:acx-local/")
+
+
+def _all_examples_manifest(write_manifest, app_mode="new"):
+    targets = '''version = 1
+[targets.t]
+audience = "backend"
+envs = ["local"]
+example = "app/.env.example"
+sections = ["Application"]
+[targets.u]
+audience = "backend"
+envs = ["local"]
+example = "other/.env.example"
+sections = ["Other"]
+'''
+    fragment = '''version = 1
+[[var]]
+name = "APP_MODE"
+class = "config"
+targets = ["t"]
+section = "Application"
+example = APP_MODE_LITERAL
+values = { local = APP_MODE_LITERAL }
+[[var]]
+name = "OTHER_MODE"
+class = "config"
+targets = ["u"]
+section = "Other"
+example = "ready"
+values = { local = "ready" }
+'''.replace("APP_MODE_LITERAL", json.dumps(app_mode))
+    return write_manifest(targets, config=fragment)
+
+
+def test_harden_all_examples_refusal_writes_nothing(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = _all_examples_manifest(write_manifest)
+    repo = tmp_path / "repo"
+    (repo / "app").mkdir(parents=True)
+    (repo / "other").mkdir()
+    other = repo / "other/.env.example"
+    original = b"OTHER_MODE=old\n"
+    other.write_bytes(original)
+
+    status = render.main(["render", "--root", str(root), "--repo-root", str(repo), "--all-examples"])
+
+    assert status == 2
+    assert not (repo / "app/.env.example").exists()
+    assert other.read_bytes() == original
+    assert not list(repo.rglob("*envman-tmp*"))
+
+
+def test_harden_all_examples_refusal_keeps_existing_bytes(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = _all_examples_manifest(write_manifest, app_mode="old")
+    old_manifest = load_module("manifest").load_manifest(root)
+    repo = tmp_path / "repo"
+    (repo / "app").mkdir(parents=True)
+    (repo / "other").mkdir()
+    app = repo / "app/.env.example"
+    render.write_env_file(app, render.render_target(old_manifest, "t", None))
+    original = app.read_bytes()
+    other = repo / "other/.env.example"
+    other_original = b"OTHER_MODE=old\n"
+    other.write_bytes(other_original)
+    root = _all_examples_manifest(write_manifest, app_mode="new")
+    new_manifest = load_module("manifest").load_manifest(root)
+    assert render.render_target(new_manifest, "t", None).encode("utf-8") != original
+
+    status = render.main(["render", "--root", str(root), "--repo-root", str(repo), "--all-examples"])
+
+    assert status == 2
+    assert app.read_bytes() == original
+    assert other.read_bytes() == other_original
+    assert not list(repo.rglob("*envman-tmp*"))
+
+
+def test_harden_all_examples_success_writes_all(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = _all_examples_manifest(write_manifest)
+    manifest = load_module("manifest").load_manifest(root)
+    repo = tmp_path / "repo"
+    (repo / "app").mkdir(parents=True)
+    (repo / "other").mkdir()
+
+    status = render.main(["render", "--root", str(root), "--repo-root", str(repo), "--all-examples"])
+
+    assert status == 0
+    for name, relative in (("t", "app/.env.example"), ("u", "other/.env.example")):
+        path = repo / relative
+        assert path.is_file()
+        assert path.read_text(encoding="utf-8").startswith(render.HEADER_LINE + "\n")
+        assert render.check_example(manifest, name, repo) == []

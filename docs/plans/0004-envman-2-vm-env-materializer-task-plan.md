@@ -99,6 +99,34 @@ Loader API (`scripts/env/manifest.py`; the pinned names lanes code against):
 - A `host:` var missing from the existing file: if required, exit 4, naming the var only. If optional, it is omitted.
 - Exit codes: 0 ok, 1 drift (`--check`), 2 refusal, 4 secret unavailable, 75 lock/lease busy.
 
+Materialize API (`scripts/env/materialize.py`; the pinned names lanes code against). The CLI subcommand is a thin wrapper; tests drive the function:
+
+```python
+def run(manifest_root: Path, *, env: str, target: str, into: str, check: bool = False, adopt: bool = False,
+        allow_unmanaged: Sequence[str] = (), fs_root: Path = Path("/"),
+        backup_root: Path = Path("/opt/acx-backend/.acx-deploy-backups"), lock_timeout: float = 30.0,
+        now: Callable[[], float] = time.time, out: TextIO = sys.stdout, err: TextIO = sys.stderr) -> int
+```
+
+- `into` is compared to `remote_paths[env]` as a string. The file actually touched is `fs_root / into.lstrip("/")`. `fs_root` and `backup_root` are test seams, and the CLI does not expose them.
+- Lease: when the target has `lease_env[env] = L`, the lease files are `backup_root/locks/deploy-L.lease` and `deploy-L.lease.lock`.
+  - The protocol and record are byte-compatible with `deploy_env_lease` in `scripts/deploy/recognition-service.sh`:
+    - `flock` the `.lease.lock`;
+    - the record is `{"transaction","holder","expires_at"}` as compact JSON;
+    - a record with `expires_at > now()` held by another transaction → exit 75;
+    - otherwise write our own record with holder `envman-materialize` and expiry `now()+600`.
+  - Release happens in `finally`. It unlinks the lease only if the transaction is still ours.
+  - A malformed lease → exit 2.
+- Image-repo lock: `flock(LOCK_EX|LOCK_NB)` on `<file>.acx-image-repo.lock`. If it is still busy after `lock_timeout`, exit 75. The lock is held across read, merge and write.
+- Output bytes:
+  - line 1: `HEADER_LINE`;
+  - line 2: `# materialized target=<T> env=<E> digest=<sha256 hex of the managed body>`;
+  - then the managed body exactly as `render_target` renders it. A `vault:` var renders `NAME=`, the map var renders the compact JSON, and a `host:` var copies the existing line's bytes verbatim;
+  - then, if any preserved line exists, a blank line, `# Preserved (host/deploy-owned)`, the owner comment lines (`# ACX_IMAGE_REPO_OWNER=`), and each `preserve` key's line, in `preserve` order and byte-verbatim.
+- `check=True` writes nothing and takes no lease. Its only output on `out` is one line per item: `<group>\t<NAME>`, with the group order `missing`, `unmanaged`, `differs`, `mode` and names sorted within each group. The `mode` group line is `mode\t<into>` (not regular 0600, or line 1 is not `HEADER_LINE`). The digest line is informational and is never compared. Exit 1 if there is any item, else 0.
+- A present key that is neither managed, preserved nor in `allow_unmanaged`: apply refuses (exit 2), and `check` lists it as `unmanaged`.
+- No value, secret or otherwise, ever reaches `out`, `err` or an exception message.
+
 ### Remote wrapper and make
 
 - `scripts/env/materialize_remote.sh <env> <target> [--check|--apply] [--adopt]`. It forwards `--adopt` to `materialize`, and `--adopt` is refused without `--apply`.

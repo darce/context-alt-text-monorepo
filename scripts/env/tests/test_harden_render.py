@@ -260,7 +260,7 @@ def test_harden_derived_value_with_secret_stays_literal(write_manifest):
         + "\n"
         + _var("PGUSER", values={"local": "alice"})
         + "\n"
-        + _var("DSN", derive="postgresql://${PGUSER}:${PGPASSWORD}@db/app"),
+        + _var("DSN", cls="secret", derive="postgresql://${PGUSER}:${PGPASSWORD}@db/app"),
     )
     manifest = load_module("manifest").load_manifest(root)
     rendered = render.render_target(manifest, "t", "local", resolve=lambda name, ref: "p${UNSET_X}s")

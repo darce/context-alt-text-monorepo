@@ -180,3 +180,60 @@ def test_harden_make_variables(args, expected):
     )
     assert result.returncode == 0, result.stderr
     assert expected in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("${PGUSER}", '"${PGUSER}"'),
+        (
+            "postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}",
+            '"postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}"',
+        ),
+        ("${A}${B}", '"${A}${B}"'),
+        ("${lower_ok}", '"${lower_ok}"'),
+        ("cash$value", "'cash$value'"),
+        ("$PGUSER", "'$PGUSER'"),
+        ("${PGUSER", "'${PGUSER'"),
+        ("${PG USER}", "'${PG USER}'"),
+        ("${PGUSER} x", "'${PGUSER} x'"),
+        ("${1X}", "'${1X}'"),
+        ("${}", "'${}'"),
+    ),
+)
+def test_harden_reference_quoting(write_manifest, value: str, expected: str):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n" + _var("VALUE", example=value, values={"local": value}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    rendered = render.render_target(manifest, "t", None)
+    assert f"VALUE={expected}" in rendered.splitlines()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
+def test_harden_reference_expands_under_bash_source(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("PGUSER", values={"local": "alice"})
+        + "\n"
+        + _var("APP_PGUSER", values={"local": "${PGUSER}"}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    path = tmp_path / "x.env"
+    path.write_text(render.render_target(manifest, "t", "local"), encoding="utf-8")
+    result = subprocess.run(
+        [
+            "bash", "--noprofile", "--norc", "-c",
+            'set -a; source "$1"; printf %s "$APP_PGUSER"', "_", str(path),
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "alice"

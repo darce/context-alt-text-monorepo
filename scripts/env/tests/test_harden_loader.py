@@ -167,3 +167,31 @@ def test_harden_public_build_whole_token(write_manifest):
 def test_harden_regression_guards_still_load(write_manifest, name, audience, cls, example):
     root = write_manifest(_targets(audience=audience), config="version = 1\n" + _var(name, cls=cls, example=example, values={"local": "ok"}))
     assert load_module("manifest").load_manifest(root).vars[0].name == name
+
+
+@pytest.mark.parametrize("name,allowed", [
+    ("VITE_CLERK_PUBLISHABLE_KEY", True),
+    ("VITE_PUBLISHABLE_SECRET_TOKEN", False),
+    ("VITE_PUBLISHABLE_KEY_PASSWORD", False),
+    ("VITE_PUBLISHABLE_OTHER_KEY", False),
+    ("VITE_KEY_PUBLISHABLE_KEY", False),
+])
+def test_harden_publishable_key_exemption_is_exact(write_manifest, name, allowed):
+    root = write_manifest(
+        _targets(audience="public_build"),
+        config="version = 1\n" + _var(name, cls="public", values={"local": "ok"}),
+    )
+    if allowed:
+        assert load_module("manifest").load_manifest(root).vars[0].name == name
+    else:
+        _refused(root, "config.toml", name)
+
+
+@pytest.mark.parametrize("key", ["path", "example"])
+@pytest.mark.parametrize("alias", ["apps/x/./.env", "apps/x/../x/.env"])
+def test_harden_normalized_duplicate_target_paths(write_manifest, key, alias):
+    targets = _targets(**{key: "apps/x/.env"}).replace("[targets.t]", "[targets.primary]")
+    second = _targets(**{key: alias}).split("[targets.t]", 1)[1]
+    root = write_manifest(targets + "\n[targets.other]\n" + second)
+    message = _refused(root, "targets.toml", key)
+    assert "primary" in message and "other" in message

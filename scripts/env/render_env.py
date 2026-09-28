@@ -6,6 +6,7 @@ import re
 import stat
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -232,20 +233,27 @@ def _validate_adoption(path: Path, text: str) -> None:
             raise _path_error(path, f"unparseable line {number}")
 
 
-def write_env_file(
+@dataclass(frozen=True)
+class _WritePlan:
+    path: Path
+    data: bytes
+    backup: bytes | None
+
+
+def _preflight_env_file(
     path: Path,
     text: str,
     *,
     adopt: bool = False,
     allow_unmanaged: frozenset[str] = frozenset(),
-) -> None:
+) -> _WritePlan:
     path = Path(path)
-    _inspect_path(path)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        raise _path_error(path, "cannot create parent directory") from None
     existing_stat = _inspect_path(path)
+    parent = path.parent
+    while not parent.exists():
+        parent = parent.parent
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise _path_error(path, "cannot create parent directory")
 
     old_bytes: bytes | None = None
     adopting_unheaded = False
@@ -273,10 +281,36 @@ def write_env_file(
     if adopting_unheaded and old_bytes is not None:
         backup_path = Path(f"{path}.pre-envman")
         _inspect_path(backup_path)
-        _atomic_write(backup_path, old_bytes)
+    return _WritePlan(path, text.encode("utf-8"), old_bytes if adopting_unheaded else None)
 
+
+def _apply_env_file(plan: _WritePlan) -> None:
+    path = plan.path
     _inspect_path(path)
-    _atomic_write(path, text.encode("utf-8"))
+    if plan.backup is not None:
+        _inspect_path(Path(f"{path}.pre-envman"))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise _path_error(path, "cannot create parent directory") from None
+    if plan.backup is not None:
+        backup_path = Path(f"{path}.pre-envman")
+        _inspect_path(backup_path)
+        _atomic_write(backup_path, plan.backup)
+    _inspect_path(path)
+    _atomic_write(path, plan.data)
+
+
+def write_env_file(
+    path: Path,
+    text: str,
+    *,
+    adopt: bool = False,
+    allow_unmanaged: frozenset[str] = frozenset(),
+) -> None:
+    _apply_env_file(_preflight_env_file(
+        path, text, adopt=adopt, allow_unmanaged=allow_unmanaged,
+    ))
 
 
 def _read_text(path: Path) -> str | None:
@@ -391,20 +425,23 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.all_examples:
             messages: list[str] = []
+            plans: list[_WritePlan] = []
             for target_name in sorted(manifest.targets):
                 target = manifest.targets[target_name]
                 if target.example is None:
                     continue
                 path = args.repo_root / target.example
                 if args.command == "render":
-                    write_env_file(
+                    plans.append(_preflight_env_file(
                         path,
                         render_target(manifest, target_name, None),
                         adopt=args.adopt,
                         allow_unmanaged=allow_unmanaged,
-                    )
+                    ))
                 else:
                     messages.extend(check_example(manifest, target_name, args.repo_root))
+            for plan in plans:
+                _apply_env_file(plan)
             for message in messages:
                 print(message)
             return 1 if messages else 0

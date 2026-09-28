@@ -26,7 +26,7 @@ for the multi-environment OCI VM template.'''
 
 [targets.svc-vm]
 audience = "backend"
-envs = ["dev", "prod"]
+envs = ["dev", "prod", "staging"]
 example = "apps/prototype-description-service/.env.prod.example"
 sections = ["Compose", "Runtime mode", "Secret backend", "Postgres", "Database DSNs", "Cache directories", "Database pool tuning", "Worker behavior", "API security", "Operator /admin surface", "Image description", "GPU lifecycle"]
 doc = '''

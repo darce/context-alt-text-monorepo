@@ -222,16 +222,22 @@ def test_owner_preserved_on_file_and_backup(case, monkeypatch):
     case.file.write_bytes(before)
     owner = case.file.stat()
     calls = []
+    real_fstat = os.fstat
+    real_stat = os.stat
 
-    def record(target, uid, gid, *args, **kwargs):
-        calls.append((target, uid, gid))
+    def record_fchown(fd, uid, gid, *args, **kwargs):
+        calls.append((real_fstat(fd).st_ino, uid, gid))
 
-    monkeypatch.setattr(os, "fchown", record)
-    monkeypatch.setattr(os, "chown", record)
+    def record_chown(path, uid, gid, *args, **kwargs):
+        calls.append((real_stat(path, follow_symlinks=False).st_ino, uid, gid))
+
+    monkeypatch.setattr(os, "fchown", record_fchown)
+    monkeypatch.setattr(os, "chown", record_chown)
     assert case.run(mat, adopt=True)[0] == 0
-    assert Path(str(case.file) + ".pre-envman").read_bytes() == before
-    assert sum((uid, gid) == (owner.st_uid, owner.st_gid)
-               for _, uid, gid in calls) >= 2
+    backup = Path(str(case.file) + ".pre-envman")
+    assert backup.read_bytes() == before
+    assert (case.file.stat().st_ino, owner.st_uid, owner.st_gid) in calls
+    assert (backup.stat().st_ino, owner.st_uid, owner.st_gid) in calls
 
 
 def test_unheaded_without_adopt_exits_2(case):

@@ -13,6 +13,13 @@ use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServicePurgeTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Keep default failures inside retention; expiry tests supply explicitly aged rows.
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
+    }
+
     public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
     {
         global $wpdb;

@@ -237,3 +237,72 @@ def test_harden_reference_expands_under_bash_source(write_manifest, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "alice"
+
+
+def test_harden_resolved_secret_stays_literal(write_manifest):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("SERVICE_PASSWORD", cls="secret", secret={"local": "env:ACX_TEST_SECRET"}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    rendered = render.render_target(manifest, "t", "local", resolve=lambda name, ref: "p${UNSET_X}s")
+    assert "SERVICE_PASSWORD='p${UNSET_X}s'" in rendered.splitlines()
+
+
+def test_harden_derived_value_with_secret_stays_literal(write_manifest):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("PGPASSWORD", cls="secret", secret={"local": "env:ACX_TEST_SECRET"})
+        + "\n"
+        + _var("PGUSER", values={"local": "alice"})
+        + "\n"
+        + _var("DSN", cls="secret", derive="postgresql://${PGUSER}:${PGPASSWORD}@db/app"),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    rendered = render.render_target(manifest, "t", "local", resolve=lambda name, ref: "p${UNSET_X}s")
+    assert "DSN='postgresql://alice:p${UNSET_X}s@db/app'" in rendered.splitlines()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
+def test_harden_resolved_secret_literal_under_bash_source(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("SERVICE_PASSWORD", cls="secret", secret={"local": "env:ACX_TEST_SECRET"}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    path = tmp_path / "x.env"
+    path.write_text(
+        render.render_target(manifest, "t", "local", resolve=lambda name, ref: "p${UNSET_X}s"),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "bash", "--noprofile", "--norc", "-c",
+            'set -a; source "$1"; printf %s "$SERVICE_PASSWORD"', "_", str(path),
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == "p${UNSET_X}s"
+
+
+def test_harden_config_runtime_reference_still_double_quoted(write_manifest):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("PGUSER", values={"local": "alice"})
+        + "\n"
+        + _var("APP_PGUSER", values={"local": "${PGUSER}"}),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+    rendered = render.render_target(manifest, "t", "local")
+    assert 'APP_PGUSER="${PGUSER}"' in rendered.splitlines()

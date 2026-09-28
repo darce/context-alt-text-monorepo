@@ -120,6 +120,8 @@ verification only — they are not merged into the tenant API-key system.
 
 ## Deployable env templates (where vars are declared)
 
+The templates listed here are generated from `config/env/manifest.d/`. Update the manifest and regenerate templates using the [environment manifest runbook](../../../docs/runbooks/env-manifest.md); do not hand-edit generated templates.
+
 | Deployable | Template path | Runtime file (gitignored) |
 |---|---|---|
 | description-service (local) | `apps/prototype-description-service/.env.example` | `apps/prototype-description-service/.env` |
@@ -129,6 +131,8 @@ verification only — they are not merged into the tenant API-key system.
 | WP plugin Playwright | `apps/prototype-wp-alt-context/.env.local.example` | `apps/prototype-wp-alt-context/.env.local` |
 
 ## Per-environment runtime files
+
+Local runtime files are rendered from the manifest with `make env-render ENV=local TARGET=svc-local`; see the [environment manifest runbook](../../../docs/runbooks/env-manifest.md).
 
 One file per backend env, edited in place on the VM:
 `/opt/acx-backend/<env>/.env`, owner `ubuntu:ubuntu`, mode `0600`. Compose reads

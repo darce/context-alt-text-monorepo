@@ -84,4 +84,4 @@ section = "Optional overrides"
 example = ""
 doc = '''domain: tenant API keys (test-held copy) | source: local developer / CI secret store | consumer: Playwright workbench evidence (bearer to recognition service)'''
 required = false
-secret = {}
+secret = { local = "keychain:acx-local/ACX_E2E_RECOGNITION_API_KEY" }

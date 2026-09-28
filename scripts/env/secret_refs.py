@@ -10,8 +10,16 @@ class SecretUnavailable(RuntimeError):
     pass
 
 
+class SecretNotFound(SecretUnavailable):
+    pass
+
+
 def _unavailable(var_name: str, scheme: str) -> SecretUnavailable:
     return SecretUnavailable(f"secret {var_name!r} unavailable for scheme {scheme!r}")
+
+
+def _not_found(var_name: str, scheme: str) -> SecretNotFound:
+    return SecretNotFound(f"secret {var_name!r} unavailable for scheme {scheme!r}")
 
 
 def resolve_secret(
@@ -40,6 +48,8 @@ def resolve_secret(
             )
         except Exception:
             raise _unavailable(var_name, scheme) from None
+        if result.returncode == 44:
+            raise _not_found(var_name, scheme)
         if result.returncode != 0 or not isinstance(result.stdout, str):
             raise _unavailable(var_name, scheme)
         value = result.stdout[:-1] if result.stdout.endswith("\n") else result.stdout
@@ -48,10 +58,12 @@ def resolve_secret(
         return value
 
     if scheme == "env":
+        if not location:
+            raise _unavailable(var_name, scheme)
         environment = os.environ if environ is None else environ
         value = environment.get(location)
-        if not location or not value:
-            raise _unavailable(var_name, scheme)
+        if not value:
+            raise _not_found(var_name, scheme)
         return value
 
     if scheme == "vault":

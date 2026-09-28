@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from conftest import load_module
+
+def _toml_table(values: dict[str, str]) -> str:
+    return "{ " + ", ".join(f"{key} = {json.dumps(value)}" for key, value in values.items()) + " }"
+
+
+def _targets(
+    *,
+    sections: tuple[str, ...] = ("Database",),
+    envs: tuple[str, ...] = ("local",),
+    audience: str = "backend",
+    path: str | None = None,
+    example: str | None = None,
+    version: int = 1,
+) -> str:
+    lines = [
+        f"version = {version}",
+        "",
+        "[targets.t]",
+        f"audience = {json.dumps(audience)}",
+        f"envs = {json.dumps(list(envs))}",
+    ]
+    if path is not None:
+        lines.append(f"path = {json.dumps(path)}")
+    if example is not None:
+        lines.append(f"example = {json.dumps(example)}")
+    lines.append(f"sections = {json.dumps(list(sections))}")
+    return "\n".join(lines)
+
+
+def _var(
+    name: str,
+    *,
+    cls: str = "config",
+    section: str = "Database",
+    example: str = "example-value",
+    values: dict[str, str] | None = None,
+    secret: dict[str, str] | None = None,
+    derive: str | None = None,
+    doc: str | None = None,
+    required: bool = True,
+) -> str:
+    lines = [
+        "[[var]]",
+        f"name = {json.dumps(name)}",
+        f"class = {json.dumps(cls)}",
+        'targets = ["t"]',
+        f"section = {json.dumps(section)}",
+    ]
+    if doc is not None:
+        lines.append(f"doc = {json.dumps(doc)}")
+    lines.append(f"example = {json.dumps(example)}")
+    if not required:
+        lines.append("required = false")
+    if values is not None:
+        lines.append(f"values = {_toml_table(values)}")
+    if secret is not None:
+        lines.append(f"secret = {_toml_table(secret)}")
+    if derive is not None:
+        lines.append(f"derive = {json.dumps(derive)}")
+    return "\n".join(lines)
+
+
+def _refused(root, fragment, key):
+    manifest = load_module("manifest")
+    with pytest.raises(manifest.ManifestError) as caught:
+        manifest.load_manifest(root)
+    message = str(caught.value)
+    assert fragment in message
+    assert key in message
+    return message
+
+
+@pytest.mark.parametrize("name", ["lower", "1ABC", "A-B", "A B"])
+def test_harden_invalid_var_name(write_manifest, name):
+    root = write_manifest(_targets(), config="version = 1\n" + _var(name, values={"local": "ok"}))
+    _refused(root, "config.toml", name)
+
+
+def test_harden_control_character_section(write_manifest):
+    section = "Data\x07base"
+    root = write_manifest(
+        _targets(sections=(section,)),
+        config="version = 1\n" + _var("NAME", section=section, values={"local": "ok"}),
+    )
+    manifest = load_module("manifest")
+    with pytest.raises(manifest.ManifestError) as caught:
+        manifest.load_manifest(root)
+    message = str(caught.value)
+    assert ("targets.toml" in message and "sections" in message) or (
+        "config.toml" in message and "NAME" in message
+    )
+
+
+@pytest.mark.parametrize("doc", ["first\rsecond", "sk_" + "live_" + "x" * 8], ids=["carriage-return", "literal"])
+def test_harden_var_doc(write_manifest, doc):
+    root = write_manifest(_targets(), config="version = 1\n" + _var("NAME", doc=doc, values={"local": "ok"}))
+    _refused(root, "config.toml", "NAME")
+
+
+def test_harden_target_doc_literal(write_manifest):
+    doc = "sk_" + "live_" + "x" * 8
+    root = write_manifest(
+        _targets() + "\ndoc = " + json.dumps(doc),
+        config="version = 1\n" + _var("NAME", values={"local": "ok"}),
+    )
+    message = _refused(root, "targets.toml", "doc")
+    assert "unknown" not in message.lower(), "target doc must be checked for literal material"
+
+
+@pytest.mark.parametrize("example", [
+    "gh" + "p_" + "a" * 36,
+    "gh" + "o_" + "a" * 36,
+    "gh" + "s_" + "a" * 36,
+    "github_" + "pat_" + "a" * 22,
+    "AK" + "IA" + "A1" * 8,
+    "xox" + "b-" + "123456789",
+], ids=["github-personal", "github-oauth", "github-server", "github-fine-grained", "aws", "slack"])
+def test_harden_literal_patterns(write_manifest, example):
+    root = write_manifest(_targets(), config="version = 1\n" + _var("NAME", example=example, values={"local": "ok"}))
+    _refused(root, "config.toml", "NAME")
+
+
+def test_harden_backend_vite_secret(write_manifest):
+    root = write_manifest(_targets(), config="version = 1\n" + _var("VITE_SESSION", cls="secret", secret={"local": "env:SESSION"}))
+    _refused(root, "config.toml", "VITE_SESSION")
+
+
+@pytest.mark.parametrize("key", ["path", "example"])
+def test_harden_duplicate_target_paths(write_manifest, key):
+    targets = _targets(**{key: "shared.env"})
+    second = targets.split("[targets.t]", 1)[1]
+    root = write_manifest(targets.replace("[targets.t]", "[targets.primary]") + "\n[targets.other]\n" + second)
+    message = _refused(root, "targets.toml", key)
+    assert "primary" in message and "other" in message
+
+
+@pytest.mark.parametrize("name", ["VITE_PASSWD", "VITE_DB_PWD", "VITE_CREDENTIAL", "VITE_KEY_ID", "VITE_SIGNING_KEY_B64"])
+def test_harden_public_build_denylist(write_manifest, name):
+    root = write_manifest(_targets(audience="public_build"), config="version = 1\n" + _var(name, cls="public", values={"local": "ok"}))
+    _refused(root, "config.toml", name)
+
+
+def test_harden_public_build_whole_token(write_manifest):
+    root = write_manifest(_targets(audience="public_build"), config="version = 1\n" + _var("VITE_TOKENIZER_URL", cls="public", values={"local": "ok"}))
+    manifest = load_module("manifest")
+    try:
+        loaded = manifest.load_manifest(root)
+    except manifest.ManifestError as error:
+        pytest.fail(f"whole-token guard rejected TOKENIZER: {error}")
+    assert loaded.vars[0].name == "VITE_TOKENIZER_URL"
+
+
+@pytest.mark.parametrize("name,audience,cls,example", [
+    ("VITE_CLERK_PUBLISHABLE_KEY", "public_build", "public", "example"),
+    ("VITE_MONKEY_MODE", "public_build", "public", "example"),
+    ("NAME", "backend", "config", "AK" + "IA" + "SHORT"),
+    ("ACX_SECRET_ROTATION_DAYS", "backend", "config", "30"),
+], ids=["publishable-key", "monkey", "short-aws", "backend-config"])
+def test_harden_regression_guards_still_load(write_manifest, name, audience, cls, example):
+    root = write_manifest(_targets(audience=audience), config="version = 1\n" + _var(name, cls=cls, example=example, values={"local": "ok"}))
+    assert load_module("manifest").load_manifest(root).vars[0].name == name

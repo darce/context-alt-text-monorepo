@@ -442,6 +442,8 @@
   }
 
   &__lightbox-gallery {
+    --acx-face-lightbox-tile-size: 10rem;
+
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
@@ -452,10 +454,10 @@
 
     img {
       display: block;
-      width: var(--acx-guide-lightbox-tile-size, 10rem);
-      height: var(--acx-guide-lightbox-tile-size, 10rem);
-      max-width: var(--acx-guide-lightbox-tile-size, 10rem);
-      max-height: var(--acx-guide-lightbox-tile-size, 10rem);
+      width: var(--acx-face-lightbox-tile-size);
+      height: var(--acx-face-lightbox-tile-size);
+      max-width: var(--acx-face-lightbox-tile-size);
+      max-height: var(--acx-face-lightbox-tile-size);
       object-fit: cover;
       border-radius: var(--acx-radius-md);
       background: var(--acx-color-data-placeholder);

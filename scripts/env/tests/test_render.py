@@ -6,6 +6,7 @@ import os
 import stat
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -146,7 +147,7 @@ def test_example_render_has_exact_bytes_and_layout(write_manifest, tmp_path: Pat
         "\n"
         "# == Database ==\n"
         "# doc line\n"
-        'DATABASE_URL="https://db.example.test/name with space"\n'
+        "DATABASE_URL='https://db.example.test/name with space'\n"
         "\n"
         "# == Security ==\n"
         "# OPTIONAL_FEATURE=placeholder\n"
@@ -156,15 +157,31 @@ def test_example_render_has_exact_bytes_and_layout(write_manifest, tmp_path: Pat
 @pytest.mark.parametrize(
     ("value", "expected"),
     (
-        ("has space", '"has space"'),
-        ("has#hash", '"has#hash"'),
-        ('with"quote', '"with\\\"quote"'),
+        ("has space", "'has space'"),
+        ("has#hash", "'has#hash'"),
+        ('with"quote', "'with\"quote'"),
         ("it's quoted", '"it\'s quoted"'),
-        ("cash$value", '"cash\\$value"'),
-        ("slash\\value", '"slash\\\\value"'),
+        ("cash$value", "'cash$value'"),
+        ("slash\\value", "'slash\\value'"),
         ("https://example.test/path?x=1", "https://example.test/path?x=1"),
+        ('{"k":"v","x":"y"}', "'{\"k\":\"v\",\"x\":\"y\"}'"),
+        ("", ""),
+        ("tilde~home", "'tilde~home'"),
+        ("define('A', true);", '"define(\'A\', true);"'),
     ),
-    ids=("space", "hash", "double-quote", "single-quote", "dollar", "backslash", "plain-url"),
+    ids=(
+        "space",
+        "hash",
+        "double-quote",
+        "single-quote",
+        "dollar",
+        "backslash",
+        "plain-url",
+        "json",
+        "empty",
+        "tilde",
+        "php-single-quotes",
+    ),
 )
 def test_values_use_contract_quoting(write_manifest, value: str, expected: str):
     _, render_module = _modules()
@@ -175,6 +192,37 @@ def test_values_use_contract_quoting(write_manifest, value: str, expected: str):
     )
 
     assert f"VALUE={expected}" in rendered.splitlines()
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        'it\'s "both"',
+        "it's $cash",
+        "it's back\\slash",
+        "it's `tick`",
+        "line\nbreak",
+        "cr\rreturn",
+    ),
+    ids=("both-quotes", "dollar", "backslash", "backtick", "newline", "carriage-return"),
+)
+def test_unrepresentable_values_are_refused(write_manifest, value: str):
+    _, render_module = _modules()
+    runtime = "\n" in value or "\r" in value
+    example = "plain-example" if runtime else value
+    fragment = f"version = 1\n\n{_var('VALUE', example=example, values={'local': value})}"
+    parsed = tomllib.loads(fragment)
+    assert parsed["var"][0]["example"] == example
+    assert parsed["var"][0]["values"]["local"] == value
+    root = write_manifest(_targets(), **{"10-values": fragment})
+
+    manifest = importlib.import_module("env.manifest").load_manifest(root)
+    with pytest.raises(ValueError) as exc_info:
+        render_module.render_target(manifest, "t", "local" if runtime else None)
+
+    assert type(exc_info.value) is ValueError
+    assert "VALUE" in str(exc_info.value)
+    assert value not in str(exc_info.value)
 
 
 def test_example_mode_uses_secret_example_without_resolving(write_manifest):

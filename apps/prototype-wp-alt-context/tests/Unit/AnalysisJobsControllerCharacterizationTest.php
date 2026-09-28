@@ -10,6 +10,7 @@ use AltContext\Api\Services\BatchRunService;
 use AltContext\Api\Services\JobProgressStreamService;
 use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Request;
@@ -34,6 +35,7 @@ class AnalysisJobsControllerCharacterizationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         $GLOBALS['__ac_connection_aborted_call_count'] = 0;
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_source', 'service');

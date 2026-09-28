@@ -86,6 +86,19 @@ use SplFileInfo;
  */
 class RecognitionTransportRequireOnceGuardTest extends TestCase
 {
+    /** @var array<string, string>|null */
+    private static ?array $sourceIndex = null;
+
+    /** @var array<string, array> */
+    private static array $tokenIndex = [];
+
+    public static function tearDownAfterClass(): void
+    {
+        self::$sourceIndex = null;
+        self::$tokenIndex = [];
+        parent::tearDownAfterClass();
+    }
+
     /**
      * Temp fixtures written under the pin scan root; unlinked in tearDown.
      *
@@ -595,20 +608,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
 
         $offenders = [];
 
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($resolved, RecursiveDirectoryIterator::SKIP_DOTS)
-        );
-
-        /** @var SplFileInfo $file */
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || 'php' !== $file->getExtension()) {
-                continue;
-            }
-
-            $path = $file->getPathname();
-            $contents = (string) file_get_contents($path);
-            $relative = str_replace('\\', '/', substr($path, strlen($resolved) + 1));
-
+        foreach ($this->scanIndex($resolved, null === $scanRoot) as $relative => $contents) {
             foreach (self::classChecks() as $label => $check) {
                 if (!$this->fileReferencesClass($contents, $check['short'], $check['fqcn'])) {
                     continue;
@@ -636,6 +636,38 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
         }
 
         return $offenders;
+    }
+
+    /** @return array<string, string> */
+    private function scanIndex(string $root, bool $production): array
+    {
+        if ($production && null !== self::$sourceIndex) {
+            return self::$sourceIndex;
+        }
+
+        $index = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($root, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if ($file->isFile() && 'php' === $file->getExtension()) {
+                $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1));
+                $index[$relative] = (string) file_get_contents($file->getPathname());
+            }
+        }
+
+        // Pin roots can change between assertions and must always be read afresh.
+        if ($production) {
+            self::$sourceIndex = $index;
+        }
+
+        return $index;
+    }
+
+    private function tokensFor(string $contents): array
+    {
+        return self::$tokenIndex[$contents] ??= token_get_all($contents);
     }
 
     /**
@@ -736,7 +768,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
      */
     private function fileReferencesClass(string $contents, string $short, string $fqcn): bool
     {
-        $tokens = token_get_all($contents);
+        $tokens = $this->tokensFor($contents);
         $count = count($tokens);
         $fqcnFullyQualified = '\\' . $fqcn;
 
@@ -1059,7 +1091,7 @@ class RecognitionTransportRequireOnceGuardTest extends TestCase
      */
     private function containsRequireOnceFor(string $contents, string $requireFile): bool
     {
-        $tokens = token_get_all($contents);
+        $tokens = $this->tokensFor($contents);
         $count = count($tokens);
 
         for ($i = 0; $i < $count; $i++) {
@@ -1165,20 +1197,12 @@ PHP;
         $this->assertIsString($srcRoot);
 
         $defs = [];
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
-        );
-        /** @var SplFileInfo $file */
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || 'php' !== $file->getExtension()) {
-                continue;
-            }
-            $base = $file->getFilename();
+        $index = $this->scanIndex($srcRoot, true);
+        foreach ($index as $relative => $contents) {
+            $base = basename($relative);
             if (!preg_match('/^(class|interface|trait)-.+\.php$/', $base)) {
                 continue;
             }
-            $contents = (string) file_get_contents($file->getPathname());
-            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($srcRoot) + 1));
             if (!preg_match('/namespace\s+([^;]+);/', $contents, $nsMatch)) {
                 continue;
             }
@@ -1203,16 +1227,7 @@ PHP;
         }
 
         $count = 0;
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS)
-        );
-        /** @var SplFileInfo $file */
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || 'php' !== $file->getExtension()) {
-                continue;
-            }
-            $contents = (string) file_get_contents($file->getPathname());
-            $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($srcRoot) + 1));
+        foreach ($index as $relative => $contents) {
             foreach ($defs as $check) {
                 if ($relative === $check['file']) {
                     continue;

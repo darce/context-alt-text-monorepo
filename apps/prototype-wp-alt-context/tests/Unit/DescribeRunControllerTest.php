@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Api\AltTextWriteStatus;
 use AltContext\Api\DescribeController;
 use AltContext\Tests\TestCase;
+use AltContext\Settings\RecognitionPolicy;
 use WP_REST_Request;
 
 use function glob;
@@ -29,6 +30,7 @@ class DescribeRunControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         // Option-write harness state is not cleared by the base TestCase; reset
         // here so a forced-failure test cannot leak into later submits.
         $GLOBALS['__ac_update_option_fail'] = [];
@@ -100,7 +102,7 @@ class DescribeRunControllerTest extends TestCase
         $this->assertStringContainsString('name="media_ids"', $body);
         $this->assertStringContainsString('[101,202]', $body);
 
-        // HARM-F1: default ON (option absent) forwards recognition_enabled=true.
+        // HARM-F1: explicit opt-in forwards recognition_enabled=true.
         $this->assertMatchesRegularExpression(
             '/name="recognition_enabled"\r\n\r\ntrue\r\n/',
             $body

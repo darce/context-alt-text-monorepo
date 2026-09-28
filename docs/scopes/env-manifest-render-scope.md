@@ -28,7 +28,7 @@ Existing seams this reuses, not replaces: `shared/secrets.py` `SecretProvider` (
 
 1. **Manifest** `config/env/manifest.d/*.toml`: one `targets.toml` plus per-group var fragments. Each var declares `class` (`public` | `config` | `secret`), `targets`, `section`, `doc`, `example`, per-env `values` (non-secret) or per-env `secret` refs (secret), or `derive` (`${VAR}` template, e.g. DSNs from PG parts).
 2. **Strict loader** `scripts/env/manifest.py`: refuses unknown/missing/wrong-type keys, duplicate names across fragments, unknown targets, derive cycles, and every secret-into-public path (see Guard) [rg-008, SECD-05].
-3. **Secret refs** `scripts/env/secrets.py`: `keychain:<service>/<account>` (macOS `security`) and `env:<NAME>` (CI). Fail closed; errors name the var and scheme, never the value.
+3. **Secret refs** `scripts/env/secret_refs.py`: `keychain:<service>/<account>` (macOS `security`) and `env:<NAME>` (CI). Fail closed; errors name the var and scheme, never the value.
 4. **Renderer** `scripts/env/render_env.py` + `mk/env.mk`:
    - `make env-render ENV=local TARGET=svc-local` writes the runtime file: generated header, 0600, atomic replace, symlink refused (matches deploy's O_NOFOLLOW rule).
    - `make env-check` byte-compares every committed template against its rendered example (CI, no secrets needed); wired into `check-all`.

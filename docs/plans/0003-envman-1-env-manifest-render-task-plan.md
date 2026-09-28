@@ -14,7 +14,9 @@ Make `config/env/manifest.d/*.toml` the single hand-edited source for env config
 
 ## Interface contract (pinned; RED and GREEN both code to this)
 
-Package: `scripts/env/` (`__init__.py`, stdlib only, Python ≥3.11, `tomllib`). Tests: `scripts/env/tests/`, run with `python3 -m pytest scripts/env/tests -q`. Tests build fixture manifests under `tmp_path`; they never read the real `config/env/`.
+Package: `scripts/env/` (`__init__.py`, stdlib only, Python ≥3.11, `tomllib`). Import names: `env.manifest`, `env.secret_refs`, `env.render_env` with `scripts/` on `sys.path` (tests: `scripts/env/tests/conftest.py` inserts it; CLI: `render_env.py` inserts `Path(__file__).resolve().parents[1]` before its imports). No module may be named `secrets.py` (the CLI's script dir lands on `sys.path[0]` and would shadow the stdlib). Tests: `scripts/env/tests/`, run with `python3 -m pytest scripts/env/tests -q`. Tests build fixture manifests under `tmp_path`; they never read the real `config/env/`.
+
+**RED rule:** RED test modules import the code under test inside a helper/fixture (`importlib.import_module("env.manifest")`), never at module top level, so the suite collects on a tree without the implementation and every test fails individually. RED lane gate: `python3 -m pytest scripts/env/tests --collect-only -q` (must pass); the coordinator confirms the tests fail before landing.
 
 ### Manifest format
 
@@ -56,7 +58,7 @@ secret = { local = "keychain:acx-local/PGPASSWORD" }    # secret only
 - **Literal guard** (all targets): refuse any `values`/`example` string matching `sk_(test|live)_`, `\brk_(test|live)_`, `whsec_`, or `-----BEGIN`.
 - `target_digest(manifest, target_name) -> str`: sha256 hex of a canonical JSON of the target and its vars (order-independent of fragment filenames).
 
-### `scripts/env/secrets.py`
+### `scripts/env/secret_refs.py`
 
 - `class SecretUnavailable(RuntimeError)`; message contains var name and scheme, never a value.
 - `resolve_secret(var_name: str, ref: str, *, environ: Mapping[str, str] | None = None, runner=subprocess.run) -> str`:
@@ -83,11 +85,11 @@ Each lane owns disjoint paths (1–3 files). Merge order = layer order.
 
 | Lane | Layer | Kind | Owned paths | Depends on |
 |---|---|---|---|---|
-| `em-red-loader` | 0 | RED | `scripts/env/tests/test_manifest_loader.py`, `scripts/env/tests/conftest.py` | — |
+| `em-red-loader` | 0 | RED | `scripts/env/tests/test_manifest_loader.py` | — |
 | `em-red-render` | 0 | RED | `scripts/env/tests/test_render.py` | — |
 | `em-red-secrets` | 0 | RED | `scripts/env/tests/test_secret_resolvers.py` | — |
 | `em-loader` | 1 | GREEN | `scripts/env/__init__.py`, `scripts/env/manifest.py` | all RED |
-| `em-secrets` | 1 | GREEN | `scripts/env/secrets.py` | all RED |
+| `em-secrets` | 1 | GREEN | `scripts/env/secret_refs.py` | all RED |
 | `em-render` | 2 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `Makefile` | `em-loader`, `em-secrets` |
 | `em-docs` | 2 | docs | `docs/runbooks/env-manifest.md`, `apps/prototype-description-service/docs/secrets-inventory.md` | `em-loader` |
 | `em-frag-shared` | 3 | migrate | `config/env/manifest.d/targets.toml`, `config/env/manifest.d/10-service-shared.toml` | `em-render` |

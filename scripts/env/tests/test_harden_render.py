@@ -306,3 +306,127 @@ def test_harden_config_runtime_reference_still_double_quoted(write_manifest):
     manifest = load_module("manifest").load_manifest(root)
     rendered = render.render_target(manifest, "t", "local")
     assert 'APP_PGUSER="${PGUSER}"' in rendered.splitlines()
+
+
+def test_harden_optional_secret_absent_omitted(write_manifest):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("NAME", values={"local": "ok"})
+        + "\n"
+        + _var("E2E_KEY", cls="secret", secret={"local": "env:ACX_TEST_OPT_KEY"}, required=False),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+
+    def resolve(name, ref):
+        raise refs.SecretNotFound(f"secret {name!r} unavailable")
+
+    rendered = render.render_target(manifest, "t", "local", resolve=resolve)
+    assert not any(line.startswith("E2E_KEY=") for line in rendered.splitlines())
+    assert "NAME=ok" in rendered.splitlines()
+
+
+def test_harden_optional_secret_backend_error_propagates(write_manifest):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("NAME", values={"local": "ok"})
+        + "\n"
+        + _var("E2E_KEY", cls="secret", secret={"local": "env:ACX_TEST_OPT_KEY"}, required=False),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+
+    def resolve(name, ref):
+        raise refs.SecretUnavailable(f"secret {name!r} unavailable")
+
+    with pytest.raises(refs.SecretUnavailable):
+        render.render_target(manifest, "t", "local", resolve=resolve)
+
+
+def test_harden_required_secret_absent_still_fails(write_manifest):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    not_found = refs.SecretNotFound
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("NAME", values={"local": "ok"})
+        + "\n"
+        + _var("E2E_KEY", cls="secret", secret={"local": "env:ACX_TEST_OPT_KEY"}, required=True),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+
+    def resolve(name, ref):
+        raise not_found(f"secret {name!r} unavailable")
+
+    with pytest.raises(refs.SecretUnavailable) as excinfo:
+        render.render_target(manifest, "t", "local", resolve=resolve)
+    assert "ACX_TEST_OPT_KEY" not in str(excinfo.value)
+
+
+def test_harden_optional_secret_resolved_renders(write_manifest):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("NAME", values={"local": "ok"})
+        + "\n"
+        + _var("E2E_KEY", cls="secret", secret={"local": "env:ACX_TEST_OPT_KEY"}, required=False),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+
+    rendered = render.render_target(manifest, "t", "local", resolve=lambda name, ref: "k1")
+    assert "E2E_KEY=k1" in rendered.splitlines()
+
+
+def test_harden_optional_absent_check_runtime_clean(write_manifest, tmp_path):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(),
+        config="version = 1\n"
+        + _var("NAME", values={"local": "ok"})
+        + "\n"
+        + _var("E2E_KEY", cls="secret", secret={"local": "env:ACX_TEST_OPT_KEY"}, required=False),
+    )
+    manifest = load_module("manifest").load_manifest(root)
+
+    def resolve(name, ref):
+        raise refs.SecretNotFound(f"secret {name!r} unavailable")
+
+    rendered = render.render_target(manifest, "t", "local", resolve=resolve)
+    path = tmp_path / "rt.env"
+    path.write_text(rendered, encoding="utf-8")
+    path.chmod(0o600)
+    assert render.check_runtime(manifest, "t", "local", path, resolve=resolve) == []
+
+
+@pytest.mark.parametrize(
+    "ref, rc, expected",
+    [
+        ("keychain:acx-local/X", 44, True),
+        ("keychain:acx-local/X", 1, False),
+        ("env:ACX_TEST_UNSET_VAR", None, True),
+    ],
+)
+def test_harden_secret_not_found_classification(ref, rc, expected):
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    runner = lambda *a, **k: subprocess.CompletedProcess(a[0], rc, "", "")
+    with pytest.raises(refs.SecretUnavailable) as excinfo:
+        refs.resolve_secret("E2E_KEY", ref, environ={}, runner=runner)
+    assert isinstance(excinfo.value, refs.SecretNotFound) is expected
+
+
+def test_harden_e2e_api_key_has_local_ref():
+    refs = load_module("secret_refs")
+    render = load_module("render_env")
+    manifest = load_module("manifest").load_manifest(REPO / "config" / "env")
+    var = next(var for var in manifest.vars if var.name == "ACX_E2E_RECOGNITION_API_KEY")
+    assert var.required is False
+    assert var.secret.get("local", "").startswith("keychain:acx-local/")

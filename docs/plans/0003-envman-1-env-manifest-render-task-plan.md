@@ -168,9 +168,10 @@ Separately, a `class = "secret"` var named `VITE_*` is refused on any target.
 **Quoting (portable).** Given a value v:
 1. v contains CR or LF → `ValueError` naming the var, never the value.
 2. v is empty, or every char is in `[A-Za-z0-9_./:@,+=%?-]` → unquoted.
-3. v has no `'` → `'v'`.
-4. v has none of `"`, `\`, `$`, `` ` `` → `"v"`.
-5. Otherwise → `ValueError` naming the var.
+3. Every `$` in v begins a complete `${NAME}` reference (`NAME` matches `[A-Za-z_][A-Za-z0-9_]*`), and every other char is in the unquoted set → `"v"`. Double quotes keep the reference live in bash `source`, python-dotenv and compose; single quotes would leave it literal in bash.
+4. v has no `'` → `'v'`.
+5. v has none of `"`, `\`, `$`, `` ` `` → `"v"`.
+6. Otherwise → `ValueError` naming the var.
 
 There is no escaping anywhere. This subset reads identically in python-dotenv, pydantic-settings, bash `set -a; source`, npm dotenv and `docker compose config`. The description service's own `.env` loader (`db/settings.py::_load_env_file`) strips these quotes:
 - single-quoted text is verbatim;
@@ -234,8 +235,9 @@ Each lane owns disjoint paths (1–4 files). A lane lands only on a green gate i
 | `em-contract2` | 4 | GREEN | `scripts/env/manifest.py`, `scripts/env/render_env.py`, `config/env/manifest.d/targets.toml` | `em-red-contract2`, `em-frag-shared` |
 | `em-svc-quote` | 4 | GREEN | `apps/prototype-description-service/db/settings.py` | `em-red-svcquote` |
 | `em-red-harden` | 4 | RED | `scripts/env/tests/test_harden_loader.py`, `scripts/env/tests/test_harden_render.py` | — |
-| `em-harden-loader` | 5 | GREEN | `scripts/env/manifest.py` | `em-contract2`, `em-red-harden` |
-| `em-harden-render` | 5 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `.gitignore` | `em-contract2`, `em-red-harden` |
+| `em-harden-loader` | 5 | GREEN | `scripts/env/manifest.py`, `scripts/env/tests/test_harden_loader.py` (review fix-up) | `em-contract2`, `em-red-harden` |
+| `em-red-quote2` | 5 | RED | `scripts/env/tests/test_harden_render.py` | `em-red-harden` |
+| `em-harden-render` | 6 | GREEN | `scripts/env/render_env.py`, `mk/env.mk`, `.gitignore`, `apps/prototype-description-service/.env.example` (re-render) | `em-contract2`, `em-red-harden`, `em-red-quote2`, `em-frag-local` |
 | `em-frag-local` | 5 | migrate | `config/env/manifest.d/20-service-local.toml`, `apps/prototype-description-service/.env.example` | `em-contract2` |
 | `em-frag-vm` | 5 | migrate | `config/env/manifest.d/21-service-vm.toml`, `apps/prototype-description-service/.env.prod.example` | `em-contract2` |
 | `em-frag-fir` | 5 | migrate | `config/env/manifest.d/22-service-fir.toml`, `apps/prototype-description-service/.env.fir.example` | `em-contract2` |
@@ -251,7 +253,8 @@ Each lane owns disjoint paths (1–4 files). A lane lands only on a green gate i
 L0-2  RED loader/render/secrets → em-loader, em-secrets → em-render, em-docs → em-red-quote   (landed)
 L3    em-frag-shared   em-red-contract2   em-red-svcquote                                 (landed)
 L4    em-contract2 ◄─(red-contract2, frag-shared)   em-svc-quote ◄─(red-svcquote)   em-red-harden
-L5    em-harden-loader   em-harden-render   ◄─(contract2, red-harden)
+L5    em-harden-loader ◄─(contract2, red-harden)   em-red-quote2 ◄─(red-harden)
+L6    em-harden-render ◄─(contract2, red-harden, red-quote2, frag-local)
       em-frag-local  em-frag-vm  em-frag-fir  em-frag-demo  em-frag-wp   ◄─(contract2)
 ```
 
@@ -260,7 +263,7 @@ Critical path: `em-contract2` → any L5 lane. Up to 4 lane worktrees are open a
 ### Migration-lane rule
 
 1. A migrate lane moves every key of its template into its fragment:
-   - keep the same section order and doc text (comments become `doc`);
+   - keep the same section order and doc text (comments become `doc`); every baseline comment line survives verbatim, with no length cap, except `# ----` rules and the titles between them;
    - put target-specific examples, docs and sections in `[[override]]` tables, never in a duplicate var.
 2. It then runs `python3 scripts/env/render_env.py render --target <t> --adopt` and commits the regenerated template.
    - `--adopt` is required because the committed template has no generated header yet.

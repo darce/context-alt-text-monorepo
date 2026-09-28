@@ -60,7 +60,7 @@ ln -sf secrets/.env .env
 # WORDPRESS_CONFIG_EXTRA value (unquoted define(...) line) is a bash syntax
 # error under `source`. Parse the keys we need instead of sourcing.
 env_get() {
-  grep -m1 "^${1}=" secrets/.env | cut -d= -f2- || true
+  acx_env_literal_value "$(grep -m1 "^${1}=" secrets/.env | cut -d= -f2- || true)"
 }
 
 WP_ADMIN_USER="$(env_get WP_ADMIN_USER)"
@@ -69,7 +69,7 @@ WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
 WP_CI_USER="$(env_get WP_CI_USER)"
 WP_CI_PASSWORD="$(env_get WP_CI_PASSWORD)"
 WP_CI_EMAIL="$(env_get WP_CI_EMAIL)"
-WORDPRESS_CONFIG_EXTRA="$(acx_env_literal_value "$(env_get WORDPRESS_CONFIG_EXTRA)")"
+WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
 
 for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WP_CI_USER WP_CI_PASSWORD WP_CI_EMAIL WORDPRESS_CONFIG_EXTRA; do
   if [[ -z "${!var:-}" ]]; then

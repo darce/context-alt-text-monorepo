@@ -793,7 +793,8 @@ def test_v2_override_keeps_declaration_order(write_manifest, env):
     _, render = _modules()
     manifest = _v2_render_manifest(write_manifest, 'section="Database"')
     lines = render.render_target(manifest, 't', env).splitlines()
-    assert [line.split('=')[0] for line in lines if '=' in line] == ['FIRST', 'VALUE', 'LAST']
+    names = [line.split('=')[0] for line in lines if '=' in line and not line.startswith('#')]
+    assert names == ['FIRST', 'VALUE', 'LAST']
 
 
 @pytest.mark.parametrize(('target', 'env', 'value'), [('a', 'local', 'x'), ('b', 'dev', 'y')])

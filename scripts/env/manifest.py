@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, NoReturn
@@ -22,6 +22,7 @@ class Target:
     path: str | None
     example: str | None
     sections: tuple[str, ...]
+    doc: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,15 +41,27 @@ class Var:
 
 
 @dataclass(frozen=True)
+class Override:
+    name: str
+    target: str
+    example: str | None
+    required: bool | None
+    doc: str | None
+    section: str | None
+    source: str
+
+
+@dataclass(frozen=True)
 class Manifest:
     targets: Mapping[str, Target]
     vars: tuple[Var, ...]
+    overrides: Mapping[tuple[str, str], Override] = field(default_factory=dict)
 
 
 _TOP_LEVEL_TARGET_KEYS = frozenset({"version", "targets"})
 _TARGET_REQUIRED_KEYS = frozenset({"audience", "envs", "sections"})
-_TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example"})
-_FRAGMENT_KEYS = frozenset({"version", "var"})
+_TARGET_KEYS = _TARGET_REQUIRED_KEYS | frozenset({"path", "example", "doc"})
+_FRAGMENT_KEYS = frozenset({"version", "var", "override"})
 _VAR_REQUIRED_KEYS = frozenset({"name", "class", "targets", "section", "example"})
 _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
     {"doc", "required", "values", "secret", "derive"}
@@ -119,6 +132,17 @@ def _string_map(value: object, source: str, key: str) -> dict[str, str]:
     return dict(value)
 
 
+def _target_path(value: object, path: Path, key: str) -> str | None:
+    if value is None:
+        return None
+    value = _string(value, path.name, key)
+    repo_root = path.resolve().parents[2]
+    candidate = Path(value)
+    if candidate.is_absolute() or not (repo_root / candidate).resolve().is_relative_to(repo_root):
+        _fail(path.name, key, "must be relative and remain inside repo root")
+    return value
+
+
 def _load_targets(path: Path) -> dict[str, Target]:
     if not path.exists():
         _fail(path.name, "targets", "targets file is missing")
@@ -144,13 +168,12 @@ def _load_targets(path: Path) -> dict[str, Target]:
             _fail(path.name, f"{prefix}audience", "unsupported audience")
         envs = _string_list(target_data["envs"], path.name, f"{prefix}envs")
         sections = _string_list(target_data["sections"], path.name, f"{prefix}sections")
-        target_path = target_data.get("path")
-        if target_path is not None:
-            target_path = _string(target_path, path.name, f"{prefix}path")
-        example_path = target_data.get("example")
-        if example_path is not None:
-            example_path = _string(example_path, path.name, f"{prefix}example")
-        targets[name] = Target(name, audience, envs, target_path, example_path, sections)
+        target_path = _target_path(target_data.get("path"), path, f"{prefix}path")
+        example_path = _target_path(target_data.get("example"), path, f"{prefix}example")
+        doc = target_data.get("doc")
+        if doc is not None:
+            doc = _string(doc, path.name, f"{prefix}doc")
+        targets[name] = Target(name, audience, envs, target_path, example_path, sections, doc)
     return targets
 
 
@@ -237,11 +260,11 @@ def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
     for fragment_path in fragment_paths:
         source = fragment_path.name
         raw = _read_toml(fragment_path)
-        _check_keys(raw, _FRAGMENT_KEYS, _FRAGMENT_KEYS, source)
+        _check_keys(raw, frozenset({"version"}), _FRAGMENT_KEYS, source)
         version = raw["version"]
         if type(version) is not int or version != 1:
             _fail(source, "version", "unsupported manifest version")
-        raw_vars = raw["var"]
+        raw_vars = raw.get("var", [])
         if not isinstance(raw_vars, list):
             _fail(source, "var", "must be an array of tables")
         for raw_var in raw_vars:
@@ -253,21 +276,73 @@ def _load_fragments(manifest_dir: Path) -> tuple[dict[str, Var], list[Var]]:
     return vars_by_name, ordered_vars
 
 
-def _validate_target_envs(
-    targets: Mapping[str, Target], vars: tuple[Var, ...] | list[Var]
-) -> None:
-    for var in vars:
+def effective_var(manifest: Manifest, var: Var, target_name: str) -> Var:
+    override = manifest.overrides.get((var.name, target_name))
+    if override is None:
+        return var
+    return replace(var, **{key: getattr(override, key) for key in
+                           ("example", "required", "doc", "section")
+                           if getattr(override, key) is not None})
+
+
+def _validate_override(raw: object, source: str, targets, vars_by_name) -> Override:
+    table = _mapping(raw, source, "override")
+    fields = frozenset({"example", "required", "doc", "section"})
+    _check_keys(table, frozenset({"name", "target"}), fields | {"name", "target"}, source)
+    name = _string(table["name"], source, "name")
+    target = _string(table["target"], source, "target")
+    if not fields.intersection(table):
+        _fail(source, name, "override requires a field")
+    if name not in vars_by_name:
+        _fail(source, name, "unknown var")
+    if target not in vars_by_name[name].targets:
+        _fail(source, target, "override target is not a var target")
+    for key in fields.intersection(table):
+        if key == "required":
+            if type(table[key]) is not bool:
+                _fail(source, key, "must be a boolean")
+        else:
+            _string(table[key], source, key)
+    if "section" in table and (target not in targets or table["section"] not in targets[target].sections):
+        _fail(source, "section", "override section is not configured")
+    if "example" in table and _LITERAL_SECRET.search(table["example"]):
+        _fail(source, "example", "literal secret material is not allowed")
+    return Override(name, target, *(table.get(key) for key in
+                                   ("example", "required", "doc", "section")), source)
+
+
+def _load_overrides(manifest_dir, targets, vars_by_name):
+    overrides = {}
+    for path in sorted(manifest_dir.glob("*.toml")):
+        if path.name == "targets.toml":
+            continue
+        rows = _read_toml(path).get("override", [])
+        if not isinstance(rows, list):
+            _fail(path.name, "override", "must be an array of tables")
+        for row in rows:
+            override = _validate_override(row, path.name, targets, vars_by_name)
+            key = (override.name, override.target)
+            if key in overrides:
+                _fail(path.name, f"{override.name}.{override.target}", "duplicate override")
+            overrides[key] = override
+    return MappingProxyType(overrides)
+
+
+def _validate_target_envs(manifest: Manifest) -> None:
+    for var in manifest.vars:
+        envs = set()
         for target_name in var.targets:
-            target = targets.get(target_name)
+            target = manifest.targets.get(target_name)
             if target is None:
                 _fail(var.source, var.name, f"unknown target {target_name}")
-            if var.section not in target.sections:
+            if effective_var(manifest, var, target_name).section not in target.sections:
                 _fail(var.source, var.name, f"section is not configured on target {target_name}")
+            envs.update(target.envs)
         for source_name, env_map in (("values", var.values), ("secret", var.secret)):
             for env_name in env_map:
-                for target_name in var.targets:
-                    if env_name not in targets[target_name].envs:
-                        _fail(var.source, var.name, f"{source_name} env {env_name} is not configured")
+                if env_name not in envs:
+                    _fail(var.source, var.name, f"{source_name} env {env_name} is not configured")
+
 
 def _parse_derive_references(var: Var) -> tuple[str, ...]:
     if var.derive is None:
@@ -381,12 +456,14 @@ def load_manifest(root: Path) -> Manifest:
     manifest_dir = Path(root) / "manifest.d"
     targets = _load_targets(manifest_dir / "targets.toml")
     vars_by_name, ordered_vars = _load_fragments(manifest_dir)
-    _validate_target_envs(targets, ordered_vars)
+    overrides = _load_overrides(manifest_dir, targets, vars_by_name)
+    manifest = Manifest(MappingProxyType(targets), tuple(ordered_vars), overrides)
+    _validate_target_envs(manifest)
     reaches_secret = _validate_derive_graph(vars_by_name)
     _validate_value_sources(ordered_vars, reaches_secret)
     _validate_public_build(targets, ordered_vars, reaches_secret)
 
-    return Manifest(MappingProxyType(targets), tuple(ordered_vars))
+    return manifest
 
 
 def target_digest(manifest: Manifest, target_name: str) -> str:
@@ -398,12 +475,14 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
         "path": target.path,
         "example": target.example,
         "sections": target.sections,
+        "doc": target.doc,
     }
     var_data = []
     for var in sorted(
         (item for item in manifest.vars if target_name in item.targets),
         key=lambda item: item.name,
     ):
+        var = effective_var(manifest, var, target_name)
         var_data.append(
             {
                 "name": var.name,
@@ -419,7 +498,10 @@ def target_digest(manifest: Manifest, target_name: str) -> str:
             }
         )
     encoded = json.dumps(
-        {"target": target_data, "vars": var_data},
+        {"target": target_data, "vars": var_data, "overrides": [
+            {key: value for key, value in vars(override).items() if key != "source"}
+            for (name, target), override in sorted(manifest.overrides.items())
+            if target == target_name]},
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")

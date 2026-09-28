@@ -34,10 +34,11 @@ Make the five VM runtime files (`/opt/acx-backend/{dev,staging,prod,dev-fir}/.en
   - It holds `<.env>.acx-image-repo.lock` (the `image_repo_resource` inode lock) across read, merge and write.
   - It releases both on exit.
   - The dev-fir lease key is `dev-fir`. Demo has no deploy lease, so it takes only its own `.env.acx-image-repo.lock`-style lock.
-- **D-5 Check before write.** `--check` prints only key names in three groups:
+- **D-5 Check before write.** `--check` prints only key names and file metadata in four groups:
   - `missing` (required and absent);
   - `unmanaged` (present, neither managed nor preserved);
-  - `differs` (managed value differs).
+  - `differs` (managed value differs);
+  - `mode` (existing file is not a regular 0600 file, or it lacks the materialized header).
 
   It exits 1 on drift, prints no values and writes nothing. Rollout is check-first on every env.
 
@@ -67,7 +68,7 @@ Loader refusals (`ManifestError`, fragment and var named, never the value):
 - `remote_paths` entries must be absolute, normalized, under `/opt/acx-backend/`, and cover a subset of the target's `envs`.
 - `preserve` must not overlap the target's var names.
 - An OCID must match `^ocid1\.vaultsecret\.oc1\.[a-z0-9-]*\.[a-z0-9]{20,}$`.
-- A (target, env) with any `vault:` ref must also have `derive_vault_map` and `RECOGNITION_SECRET_BACKEND = "oci_vault"` for that env. The reverse also holds: `oci_vault` with no `vault:` refs is refused.
+- A (target, env) with any `vault:` ref must also have `derive_vault_map` and `RECOGNITION_SECRET_BACKEND = "oci_vault"` for that env. The reverse also holds: `oci_vault` with no `vault:` refs is refused. `oci_vault` also requires `vault:` refs for both boot-required keys, `PGPASSWORD` and `RECOGNITION_ADMIN_TOKEN` (`validate_oci_vault_boot` in `shared/secrets.py`).
 - `vault:`/`host:` refs are refused on `public_build` and `test` audiences. `keychain:`/`env:` refs are refused on any env listed in `remote_paths`.
 - `derive` expressions referencing a `vault:` or `host:` var are refused. For example, `POSTGRES_DSN` must itself be `vault:` or `host:` on those envs.
 
@@ -77,19 +78,24 @@ Loader refusals (`ManifestError`, fragment and var named, never the value):
 
 - `PATH` must equal the target's `remote_paths[E]`. Otherwise exit 2.
 - Output = the generated header (with a `materialized` marker and the managed digest), then the managed sections, then the preserved block.
-- Adoption, backup and atomic 0600 writes behave as in `write_env_file`: `<path>.pre-envman`, no overwrite of an existing backup, owner and group kept.
+- Adoption and backup behave as in `write_env_file`: `<path>.pre-envman`, and an existing backup is never overwritten.
+- Ownership: `_atomic_write` does not chown, and materialize runs under `sudo`. `materialize.py` therefore owns an owner-preserving atomic write:
+  - `fchown` the 0600 temp file to the existing file's uid/gid, then `fsync` and `os.replace`.
+  - The `.pre-envman` backup gets the same uid/gid.
+  - With no existing file, it refuses (exit 2). The first materialize of an env is always an adoption.
 - A `host:` var missing from the existing file: if required, exit 4, naming the var only. If optional, it is omitted.
 - Exit codes: 0 ok, 1 drift (`--check`), 2 refusal, 4 secret unavailable, 75 lock/lease busy.
 
 ### Remote wrapper and make
 
-- `scripts/env/materialize_remote.sh <env> <target> [--check|--apply]`.
+- `scripts/env/materialize_remote.sh <env> <target> [--check|--apply] [--adopt]`. It forwards `--adopt` to `materialize`, and `--adopt` is refused without `--apply`.
 - Uses `OCI_USER`/`OCI_HOST` with the same defaults as `recognition-service.sh`.
 - Ships a tar of `scripts/env/*.py` + `config/env/` via ssh stdin, runs the command under `sudo`, and always removes the temp dir.
 - Never passes a value in argv.
-- `make env-materialize ENV=<env> TARGET=<target> [APPLY=1] [CONFIRM=<env>]`:
+- `make env-materialize ENV=<env> TARGET=<target> [APPLY=1] [ADOPT=1] [CONFIRM=<env>]`:
   - check-only by default;
   - `APPLY=1` writes;
+  - `ADOPT=1` (with `APPLY=1`) passes `--adopt`;
   - `prod` also requires `CONFIRM=prod`.
 
 ## Lanes and DAG
@@ -104,7 +110,7 @@ Loader refusals (`ManifestError`, fragment and var named, never the value):
 | em2-red-mat | RED | `scripts/env/tests/test_materialize.py` (new) | — |
 | em2-mat | GREEN | `scripts/env/render_env.py`, `scripts/env/materialize.py` (new: lease, lock, merge) | em2-red-mat, em2-adopt, em2-vault |
 | em2-remote | GREEN | `scripts/env/materialize_remote.sh`, `mk/env.mk`, `scripts/env/tests/test_materialize_remote.py` | em2-mat |
-| em2-frag | GREEN (migration) | `config/env/manifest.d/21-service-vm.toml`, `22-service-fir.toml`, `40-demo.toml`, `targets.toml` (remote_paths/preserve/lease_env) + regenerated examples | em2-vault |
+| em2-frag | GREEN (migration) | `config/env/manifest.d/21-service-vm.toml`, `22-service-fir.toml`, `40-demo.toml`, `targets.toml` (remote_paths/preserve/lease_env) + regenerated examples | em2-vault, em2-lows (shared `targets.toml`) |
 
 - Wave 1: em2-lows, em2-red-adopt, em2-red-vault, em2-red-mat.
 - Wave 2: em2-adopt, em2-vault.
@@ -118,7 +124,7 @@ The em2-frag refs start as `host:` for every VM secret, which is behaviour-neutr
 ## Rollout (after merge; operator-visible, VM writes)
 
 1. `make env-materialize ENV=<e> TARGET=<t>` (check) for dev, staging, prod, fir and demo. Reconcile the manifest until every env reports only expected `differs`.
-2. dev: `APPLY=1` (first run `ADOPT=1`), then restart and verify health. Then staging.
+2. dev: `APPLY=1 ADOPT=1` on the first run (then `APPLY=1`), then restart and verify health. Then staging.
 3. prod: `APPLY=1 CONFIRM=prod` only after dev and staging are healthy for one deploy cycle.
 4. fir and demo last. For demo, EMW8-DEMO-01's quote fix must be live first.
 5. Per env, opt secrets into `vault:` with `_vault_put_secret.py` (value via stdin), then flip `RECOGNITION_SECRET_BACKEND`. Each flip is its own check, apply and verify.
@@ -131,7 +137,9 @@ The em2-frag refs start as `host:` for every VM secret, which is behaviour-neutr
   - lock contention;
   - a preserved owner comment round-trips;
   - `host:` missing → 4;
-  - `--check` names only.
+  - `--check` names only;
+  - `--check` reports `mode` for a 0644 file;
+  - uid/gid kept on the file and on the backup (tests use `os.chown` monkeypatched to record calls).
 - Remote wrapper test: an ssh shim records argv and stdin. Assert no value in argv, temp-dir cleanup on failure, and that prod refuses without `CONFIRM=prod`.
 
 ## Out of scope

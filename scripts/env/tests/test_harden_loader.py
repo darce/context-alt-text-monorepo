@@ -195,3 +195,55 @@ def test_harden_normalized_duplicate_target_paths(write_manifest, key, alias):
     root = write_manifest(targets + "\n[targets.other]\n" + second)
     message = _refused(root, "targets.toml", key)
     assert "primary" in message and "other" in message
+
+
+@pytest.mark.parametrize("key", ["path", "example"])
+def test_harden_target_path_escape_in_repo_layout(tmp_path, key):
+    root = tmp_path / "repo" / "config" / "env"
+    mdir = root / "manifest.d"
+    mdir.mkdir(parents=True)
+    (mdir / "targets.toml").write_text(_targets(**{key: "../config/runtime.env"}), encoding="utf-8")
+    (mdir / "config.toml").write_text("version = 1\n" + _var("NAME", values={"local": "ok"}), encoding="utf-8")
+    _refused(root, "targets.toml", key)
+
+
+def test_harden_target_path_inside_repo_layout_loads(tmp_path):
+    root = tmp_path / "repo" / "config" / "env"
+    mdir = root / "manifest.d"
+    mdir.mkdir(parents=True)
+    (mdir / "targets.toml").write_text(_targets(path="apps/x/.env"), encoding="utf-8")
+    (mdir / "config.toml").write_text("version = 1\n" + _var("NAME", values={"local": "ok"}), encoding="utf-8")
+    assert "t" in load_module("manifest").load_manifest(root).targets
+
+
+@pytest.mark.parametrize("name", ["VITE_SECRETS", "VITE_CREDENTIALS", "VITE_APP_CREDENTIALS"])
+def test_harden_public_build_plural_tokens(write_manifest, name):
+    root = write_manifest(_targets(audience="public_build"), config="version = 1\n" + _var(name, cls="public", values={"local": "ok"}))
+    _refused(root, "config.toml", name)
+
+
+@pytest.mark.parametrize("field", ["values", "example"])
+def test_harden_public_build_url_userinfo_refused(write_manifest, field):
+    v = "https://alice:pw@api.example.com/v1"
+    kwargs = {"values": {"local": v}} if field == "values" else {"example": v, "values": {"local": "ok"}}
+    root = write_manifest(
+        _targets(audience="public_build"),
+        config="version = 1\n" + _var("VITE_API_URL", cls="public", **kwargs),
+    )
+    message = _refused(root, "config.toml", "VITE_API_URL")
+    assert "pw@" not in message
+
+
+@pytest.mark.parametrize("audience,value", [
+    ("public_build", "https://api.example.com/v1"),
+    ("public_build", "https://alice@api.example.com"),
+    ("backend", "postgresql://acx:acx@localhost/db"),
+])
+def test_harden_url_userinfo_guard_scope(write_manifest, audience, value):
+    name = "VITE_API_URL" if audience == "public_build" else "APP_DSN"
+    cls = "public" if audience == "public_build" else "config"
+    root = write_manifest(
+        _targets(audience=audience),
+        config="version = 1\n" + _var(name, cls=cls, example=value, values={"local": value}),
+    )
+    assert load_module("manifest").load_manifest(root).vars[0].name == name

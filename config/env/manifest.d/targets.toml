@@ -77,7 +77,7 @@ the package DEFAULT_MODELS_DIR.
 
 DEV tier: inline plaintext secret placeholders (mirror acx-dev). Uses the env
 secret backend by default; the commented oci_vault block below is the opt-in.
-Auth disabled so LocalWP fir wiring needs no tenant key.
+Auth is enabled, so LocalWP fir wiring needs a tenant key.
 
 Annotation format: `# domain: <n> | source: <owner> | consumer: <who reads it>`
 Cross-ref: apps/prototype-description-service/docs/secrets-inventory.md

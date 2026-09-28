@@ -191,6 +191,29 @@ converge_wp_user_password "acx-demo-admin" "delta" >/dev/null 2>/dev/null || con
 assert_eq "update-without-converge exits 2" "2" "$converge_rc"
 assert_eq "update-without-converge still called update" "1" "$UPDATE_CALLS"
 
+# Renderer-written credentials carry a dotenv quote envelope, not password bytes.
+quoted_password_result=$(
+    fixture_dir=$(mktemp -d)
+    trap 'rm -rf "$fixture_dir"' EXIT
+    source "${script_dir}/../../../../scripts/deploy/lib/gpu-env-contract.sh"
+    eval "$(sed -n '/^env_get() {$/,/^}$/p' "$bootstrap_file")"
+    cd "$fixture_dir"
+    mkdir secrets
+    printf '%s\n' "WP_ADMIN_PASSWORD='p@ss word\"x'" > secrets/.env
+    WP_ADMIN_PASSWORD="$(env_get WP_ADMIN_PASSWORD)"
+    wpcli() {
+        [[ "$1 $2 $3" == 'wp user check-password' ]] &&
+            [[ "$5" == 'p@ss word"x' ]]
+    }
+    if wp_user_password_matches "acx-demo-admin" "$WP_ADMIN_PASSWORD"; then
+        printf 'decoded'
+    else
+        printf 'incorrect'
+    fi
+)
+assert_eq "quoted dotenv password reaches WordPress without envelope" \
+    "decoded" "$quoted_password_result"
+
 echo
 if [ "$failures" -gt 0 ]; then
     echo "${failures} assertion(s) failed"

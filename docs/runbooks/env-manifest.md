@@ -68,7 +68,19 @@ derive = "postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}/${DB_NAME}"
 - `env:<NAME>` reads a value from the process environment, for example in CI.
 - `vault:` is reserved for ENVMAN-2 and currently refuses to render.
 
-Store a secret with `make env-secret-set NAME=PGPASSWORD [SERVICE=acx-local]`. The command prompts through `security`; the secret value is not an argument and does not enter shell history.
+Store a secret in the default Keychain service (`acx-local`):
+
+```sh
+make env-secret-set NAME=PGPASSWORD
+```
+
+For a non-default Keychain service, replace `<service>` with its name:
+
+```sh
+make env-secret-set NAME=PGPASSWORD ENV_SECRET_SERVICE='<service>'
+```
+
+The command prompts through `security`; the secret value is not an argument and does not enter shell history.
 
 ## Commands
 

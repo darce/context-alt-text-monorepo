@@ -84,6 +84,17 @@ _README_PATH_TEXT_SNIPPETS = (
 )
 
 
+@pytest.fixture(scope="module")
+def cli_tree() -> ast.Module:
+    return ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def run_wrap_raw_gate() -> subprocess.CompletedProcess[bytes]:
+    # Both wire checks only read the same child's captured output.
+    return _run_python_bytes(_RUN_WRAP_RAW_GATE)
+
+
 @pytest.fixture(autouse=True)
 def _surrogate_argv_gate(request: pytest.FixtureRequest) -> None:
     apply_surrogate_argv_gate(request)
@@ -171,23 +182,23 @@ def test_printable_message_is_idempotent_and_non_marking() -> None:
     assert _printable_message(mixed) == mixed
 
 
-def test_score_gate_fail_uses_message_encoder_not_path_encoder() -> None:
+def test_score_gate_fail_uses_message_encoder_not_path_encoder(cli_tree: ast.Module) -> None:
     """MUT: `_score_gate_fail` calling `_printable_path` must go red (TEST-15)."""
-    tree = ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
+    tree = cli_tree
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_score_gate_fail")
     names = [n.id for n in ast.walk(fn) if isinstance(n, ast.Name)]
     assert "_printable_message" in names, names
     assert "_printable_path" not in names, names
 
 
-def test_score_gate_fail_json_path_slots_go_through_printable_path() -> None:
+def test_score_gate_fail_json_path_slots_go_through_printable_path(cli_tree: ast.Module) -> None:
     """MUT: a raw `{json_path}` inside `_score_gate_fail` must go red (TEST-15).
 
     A wrapped call sitting next to a raw interpolation is still a leak
     (VLM6-RV18-09). Every ``json_path`` Name in the first arg must be an
     argument of ``_printable_path(...)`` — existence of one wrap is not enough.
     """
-    tree = ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
+    tree = cli_tree
     offenders: list[str] = []
 
     def _call_name(func: ast.AST) -> str | None:
@@ -284,9 +295,9 @@ def test_standalone_score_gate_error_exit_pins_absolute_latin1_wire() -> None:
     assert _BACKSLASHREPLACE_XE9 in payload
 
 
-def test_main_score_gate_handler_calls_printable_exception_encoder() -> None:
+def test_main_score_gate_handler_calls_printable_exception_encoder(cli_tree: ast.Module) -> None:
     """The main score-gate handler must preserve the path-aware boundary."""
-    tree = ast.parse(_CLI_PATH.read_text(encoding="utf-8"))
+    tree = cli_tree
     handlers = [
         node
         for node in ast.walk(tree)
@@ -318,9 +329,11 @@ def test_main_manifest_error_handler_encodes_embedded_path() -> None:
     assert b"/tmp/main-caf\\xe9.json" in proc.stderr
 
 
-def test_run_wrapper_print_pins_absolute_latin1_gate_payload() -> None:
+def test_run_wrapper_print_pins_absolute_latin1_gate_payload(
+    run_wrap_raw_gate: subprocess.CompletedProcess[bytes],
+) -> None:
     """MUT cli.py:2018 unwrap ``_printable_exc(exc)`` -> ``str(exc)`` (VLM6-W18-F2-02)."""
-    proc = _run_python_bytes(_RUN_WRAP_RAW_GATE)
+    proc = run_wrap_raw_gate
     assert proc.returncode != 0
     rec_lines = [
         ln
@@ -333,9 +346,11 @@ def test_run_wrapper_print_pins_absolute_latin1_gate_payload() -> None:
     assert _SURROGATE_LEAK not in rec_lines[0]
 
 
-def test_run_wrapper_summary_pins_absolute_latin1_gate_payload() -> None:
+def test_run_wrapper_summary_pins_absolute_latin1_gate_payload(
+    run_wrap_raw_gate: subprocess.CompletedProcess[bytes],
+) -> None:
     """MUT cli.py:2015 unwrap ``_printable_exc(exc)`` -> ``str(exc)`` (VLM6-W18-F2-02)."""
-    proc = _run_python_bytes(_RUN_WRAP_RAW_GATE)
+    proc = run_wrap_raw_gate
     assert proc.returncode != 0
     sum_lines = [
         ln

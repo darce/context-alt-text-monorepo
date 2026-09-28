@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -1397,27 +1399,35 @@ def test_cmd_score_quality_floor_breach_exits_nonzero(tmp_path, monkeypatch):
     assert any("quality-floor" in r for r in report["verdict"]["reasons"])
 
 
-def test_cli_score_check_determinism_runs_cross_process_guard(tmp_path, monkeypatch, capsys):
+@pytest.fixture(scope="module")
+def clean_certified_score(tmp_path_factory):
+    work = tmp_path_factory.mktemp("clean-certified-score")
+    manifest_path, record_path = _clean_score_manifest_and_record(work)
+    output = StringIO()
+    with pytest.MonkeyPatch.context() as patch, _stdio_encoding_guard(), redirect_stdout(output):
+        patch.chdir(work)
+        main(
+            [
+                "score",
+                "--manifest",
+                str(manifest_path),
+                "--run-record",
+                str(record_path),
+                "--check-determinism",
+            ]
+        )
+    return work, output.getvalue()
+
+
+def test_cli_score_check_determinism_runs_cross_process_guard(clean_certified_score):
     """--check-determinism on score drives the SHIPPED cross-process guard (VLM-6 S2A item 3).
 
     Clean case: re-score from the persisted run-record under varied PYTHONHASHSEED
     must pass. Reaching report write without SystemExit means the guard ran and
     matched — not the old same-process double build_reports call.
     """
-    manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
-    monkeypatch.chdir(tmp_path)
-    main(
-        [
-            "score",
-            "--manifest",
-            str(manifest_path),
-            "--run-record",
-            str(record_path),
-            "--check-determinism",
-        ]
-    )
+    tmp_path, out = clean_certified_score
     assert (tmp_path / "run-det-report.json").exists()
-    out = capsys.readouterr().out
     assert "cross-process" in out
     assert "determinism check passed" in out
 
@@ -2054,6 +2064,15 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     assert json.loads(skip_json)["verdict"]["rubric_gate"] == "skip"
     assert default_json != skip_json  # the certified-vs-written gap at base
 
+    certified = []
+    real_guard = cli_mod._check_score_determinism_cross_process
+
+    def _capture_certified(*args, **kwargs):
+        result = real_guard(*args, **kwargs)
+        certified.append(result)
+        return result
+
+    monkeypatch.setattr(cli_mod, "_check_score_determinism_cross_process", _capture_certified)
     main(
         [
             "score",
@@ -2071,13 +2090,7 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     written = json.loads((tmp_path / "run-det-report.json").read_text())
     assert written["verdict"]["rubric_gate"] == "skip"
     # Certified baseline returned by the guard must equal the written bytes.
-    certified_json, _ = cli_mod._check_score_determinism_cross_process(
-        record_path,
-        str(manifest_path),
-        rubric_gate="skip",
-        audience=Audience.LOCAL,
-        label="score",
-    )
+    ((certified_json, _),) = certified
     assert json.loads(certified_json)["verdict"]["rubric_gate"] == "skip"
     assert certified_json == (tmp_path / "run-det-report.json").read_text()
 
@@ -5299,23 +5312,14 @@ def test_score_freeze_certification_exits_zero_when_bytes_match_despite_wrong_na
     assert "not" in out.lower() and ("adoption" in out.lower() or "model quality" in out.lower())
 
 
-def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(tmp_path, monkeypatch):
+def test_score_freeze_certification_exits_nonzero_on_anchor_mismatch(tmp_path, monkeypatch, clean_certified_score):
     """TEST-15: freeze-certification still goes red on byte mismatch."""
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    # Produce a correct freeze first.
-    main(
-        [
-            "score",
-            "--manifest",
-            str(manifest_path),
-            "--run-record",
-            str(record_path),
-            "--check-determinism",
-        ]
-    )
-    written = tmp_path / "run-det-report.json"
+    # Reuse only the clean anchor; the tampered comparison still runs its own children.
+    certified_dir, _ = clean_certified_score
+    written = certified_dir / "run-det-report.json"
     expect = tmp_path / "freeze-expect-bad.json"
     # Perturb one byte of the committed-shape freeze (tmp copy only).
     body = written.read_text(encoding="utf-8")

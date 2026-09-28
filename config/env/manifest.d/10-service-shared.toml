@@ -8,7 +8,7 @@ section = "Database DSNs"
 example = ""
 doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
 required = false
-secret = {}
+secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
 
 [[var]]
 name = "POSTGRES_SYNC_DSN"
@@ -18,7 +18,7 @@ section = "Database DSNs"
 example = ""
 doc = 'domain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings'
 required = false
-secret = {}
+secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
 
 [[var]]
 name = "LOG_LEVEL"
@@ -74,7 +74,7 @@ targets = ["svc-vm", "svc-fir"]
 section = "Postgres"
 example = ""
 doc = 'domain: infra | source: OCI Vault (ExecStartPre) under oci_vault | consumer: docker-compose Postgres bootstrap'
-secret = {}
+secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
 
 [[var]]
 name = "POSTGRES_DB"
@@ -335,7 +335,7 @@ section = "Operator /admin surface"
 example = ""
 doc = 'domain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)'
 required = false
-secret = {}
+secret = { dev = "host:", staging = "host:", prod = "host:", fir = "host:" }
 
 [[var]]
 name = "COMPOSE_PROJECT_NAME"

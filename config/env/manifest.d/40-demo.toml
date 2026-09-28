@@ -49,7 +49,7 @@ targets = ["demo"]
 section = "MariaDB"
 example = "replace-me"
 doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
-secret = {}
+secret = { demo = "host:" }
 
 [[var]]
 name = "MARIADB_ROOT_PASSWORD"
@@ -58,7 +58,7 @@ targets = ["demo"]
 section = "MariaDB"
 example = "replace-me-root"
 doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
-secret = {}
+secret = { demo = "host:" }
 
 [[var]]
 name = "WORDPRESS_DB_NAME"
@@ -85,7 +85,7 @@ targets = ["demo"]
 section = "WordPress"
 example = "replace-me"
 doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
-secret = {}
+secret = { demo = "host:" }
 
 [[var]]
 name = "WP_ADMIN_USER"
@@ -103,7 +103,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "replace-me-admin"
 doc = "domain: human accounts | source: demo / site operator | consumer: demo WP bootstrap; WordPress user store — never commit real passwords"
-secret = {}
+secret = { demo = "host:" }
 
 [[var]]
 name = "WP_ADMIN_EMAIL"
@@ -130,7 +130,7 @@ targets = ["demo"]
 section = "Generated secrets"
 example = "replace-me-ci"
 doc = "domain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
-secret = {}
+secret = { demo = "host:" }
 
 [[var]]
 name = "WP_CI_EMAIL"
@@ -174,4 +174,4 @@ targets = ["demo"]
 section = "WordPress"
 example = "define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_SOURCE','service'); define('ACX_RECOGNITION_API_KEY','replace-with-tenant-api-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001'); define('WP_AUTO_UPDATE_CORE', true);"
 doc = "The define() values inside WORDPRESS_CONFIG_EXTRA below are the ONLY operative\nplugin config — the plugin reads PHP constants, not env vars. There are no\nstandalone ACX_RECOGNITION_*/WP_AUTO_UPDATE_CORE vars here on purpose: a second\ncopy would drift from the constants at cutover. Edit the define() values directly.\n\nConstants to set (staged rollout: staging.api first, then api.altcontext.com at launch):\n  ACX_RECOGNITION_URL        https://staging.api.altcontext.com -> https://api.altcontext.com\n  ACX_RECOGNITION_SOURCE     service\n  ACX_RECOGNITION_API_KEY    minted key (tenant-mint-runbook.md) — never commit\n  ACX_RECOGNITION_TENANT_ID  explicit tenant UUID — NEVER URL-derived/JIT\n  WP_AUTO_UPDATE_CORE        true\n\nSet WORDPRESS_CONFIG_EXTRA in secrets/.env as a single line (env-file values are not\ncompose-interpolated). Replace the API key and tenant UUID on the VM; these\ndefines satisfy the preflight's operative recognition-config checks.\ndomain: tenant API keys / plugin config | source: demo / site operator | consumer: WordPress container (WORDPRESS_CONFIG_EXTRA → PHP define); plugin constants"
-secret = {}
+secret = { demo = "host:" }

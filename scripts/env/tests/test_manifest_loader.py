@@ -382,12 +382,12 @@ PUBLIC_TARGETS = '''
                     targets = ["api"]
                     section = "Runtime"
                     example = "safe"
-                    values = { ci = "safe" }
+                    values = { prod = "safe" }
                 '''
             },
             False,
             "bad.toml",
-            ("BAD_ENV_MAPPING", "ci"),
+            ("BAD_ENV_MAPPING", "prod"),
             id="env-not-in-target",
         ),
         pytest.param(
@@ -482,7 +482,7 @@ def test_load_manifest_returns_ordered_typed_manifest_and_default_required(write
         envs=("local",),
         path="apps/worker/.env",
         example="apps/worker/.env.example",
-        sections=("Runtime", "Database", "Security"),
+        sections=("Database", "Security"),
     )
     assert [var.name for var in manifest.vars] == ["ZETA", "ALPHA", "MIDDLE"]
     assert manifest.vars[0] == module.Var(

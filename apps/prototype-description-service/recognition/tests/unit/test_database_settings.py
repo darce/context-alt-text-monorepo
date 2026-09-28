@@ -214,8 +214,16 @@ def test_env_example_defines_reset_prerequisites() -> None:
     assert "PGUSER=" in content
     assert "PGPASSWORD=" in content
     assert "DB_NAME=" in content
-    assert "APP_PGUSER=${PGUSER}" in content
-    assert "APP_PGPASSWORD=${PGPASSWORD}" in content
+    values = {}
+    for line in content.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key] = value
+    assert values["APP_PGUSER"] == "${PGUSER}"
+    assert values["APP_PGPASSWORD"] == "${PGPASSWORD}"
 
 
 def test_database_settings_default_to_canonical_local_database_name(monkeypatch, tmp_path: Path) -> None:

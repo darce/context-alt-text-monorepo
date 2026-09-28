@@ -72,6 +72,19 @@ Loader refusals (`ManifestError`, fragment and var named, never the value):
 - `vault:`/`host:` refs are refused on `public_build` and `test` audiences. `keychain:`/`env:` refs are refused on any env listed in `remote_paths`.
 - `derive` expressions referencing a `vault:` or `host:` var are refused. For example, `POSTGRES_DSN` must itself be `vault:` or `host:` on those envs.
 
+Loader API (`scripts/env/manifest.py`; the pinned names lanes code against):
+
+- `Target` gains three fields, all with empty defaults:
+  - `remote_paths: Mapping[str, str]`;
+  - `preserve: tuple[str, ...]`;
+  - `lease_env: Mapping[str, str]`.
+
+  `lease_env` keys must be a subset of the `remote_paths` keys.
+- `Var` gains `derive_vault_map: bool = False`. A var with `derive_vault_map = true` must be `class = "config"` and must have no `values`, `secret` or `derive`.
+- `secret` refs accept the schemes `keychain`, `env`, `vault` and `host`. `host:` must have an empty remainder, and `vault:` must match the OCID regex.
+- `vault_secret_map(manifest, target, env) -> dict[str, str]` returns a logical name → OCID map of the `vault:` refs for that target and env, with keys sorted. It returns `{}` when there are none. The rendered value is `json.dumps(map, separators=(",", ":"), sort_keys=True)`.
+- Every refusal is a `ManifestError`. Its message names `targets.toml` plus the target for target-level rules, or the fragment file plus the var for var-level rules.
+
 ### `render_env.py materialize`
 
 `materialize --root R --env E --target T --into PATH [--check] [--adopt] [--allow-unmanaged K,...]`
@@ -127,7 +140,8 @@ The em2-frag refs start as `host:` for every VM secret, which is behaviour-neutr
 2. dev: `APPLY=1 ADOPT=1` on the first run (then `APPLY=1`), then restart and verify health. Then staging.
 3. prod: `APPLY=1 CONFIRM=prod` only after dev and staging are healthy for one deploy cycle.
 4. fir and demo last. For demo, EMW8-DEMO-01's quote fix must be live first.
-5. Per env, opt secrets into `vault:` with `_vault_put_secret.py` (value via stdin), then flip `RECOGNITION_SECRET_BACKEND`. Each flip is its own check, apply and verify.
+5. Before the first apply on an env, check whether `acx-<env>.service` enables `ExecStartPre=.../fetch-vault-bootstrap.sh` (it is commented out in `systemd/acx-env.service.template`). If it is enabled, that hook is a second writer of `POSTGRES_PASSWORD` into the same `.env`. `POSTGRES_PASSWORD` stays `host:`, and making the hook take the image-repo lock is B1b.
+6. Per env, opt secrets into `vault:` with `_vault_put_secret.py` (value via stdin), then flip `RECOGNITION_SECRET_BACKEND`. Each flip is its own check, apply and verify.
 
 ## Verification
 

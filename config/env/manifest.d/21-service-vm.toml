@@ -1,0 +1,239 @@
+version = 1
+
+[[override]]
+name = "COMPOSE_PROJECT_NAME"
+target = "svc-vm"
+doc = "These vars must differ per environment.\ndomain: infra | source: OCI deploy | consumer: docker-compose.env.yml project identity"
+
+[[override]]
+name = "RECOGNITION_SECRET_BACKEND"
+target = "svc-vm"
+required = true
+doc = "  RECOGNITION_ADMIN_TOKEN from OCI Vault via the VM's instance principal.\n  Those values MUST stay blank here — no app secret ships as host plaintext.\n  Runbook: infra/oci/vault-instance-principal-runbook.md.\ndomain: infra (backend selector) | source: service operator | consumer: shared/secrets.py:get_secret_provider"
+
+[[override]]
+name = "RECOGNITION_VAULT_SECRET_MAP"
+target = "svc-vm"
+required = true
+doc = "    POSTGRES_DSN, POSTGRES_SYNC_DSN (else the DSN is rendered from PGPASSWORD),\n    ACX_GPU_ENDPOINT_API_KEY, ACX_HOSTED_PROVIDER_API_KEY, ACX_EVAL_API_KEY\n    (else they stay env-only; only needed when those providers are enabled).\ndomain: infra (OCID map) | source: OCI deploy | consumer: shared/secrets.py:OciVaultSecretProvider.from_env"
+
+[[override]]
+name = "POSTGRES_USER"
+target = "svc-vm"
+doc = "systemd ExecStartPre hook fetches it into the runtime .env before compose up\n(see acx-env.service.template + the runbook) — never commit a real value.\nThis is the accepted two-fetch-mechanism trade-off (ADR-013, [ARCH-06]).\ndomain: infra | source: OCI Vault (ExecStartPre) / OCI deploy | consumer: docker-compose Postgres bootstrap"
+
+[[var]]
+name = "ACX_PG_HEADROOM_PROBE_PATH"
+class = "config"
+targets = ["svc-vm"]
+example = "/run/acx-pg-headroom"
+required = false
+doc = "WHY: the 2026-09-02 prod outage exhausted the filesystem during REFRESH MATERIALIZED VIEW CONCURRENTLY.\nThe compose template supplies the probe mount path to api/worker; leave this\nunset outside compose to preserve local/test parity.\ndomain: infra | source: service operator / docker-compose.env.yml | consumer: shared/disk_headroom.py"
+section = "Postgres"
+values = {}
+
+[[var]]
+name = "ACX_PG_HEADROOM_MIN_BYTES"
+class = "config"
+targets = ["svc-vm"]
+example = "2147483648"
+required = false
+doc = "domain: infra | source: service operator | consumer: shared/disk_headroom.py minimum free bytes"
+section = "Postgres"
+values = {}
+
+[[var]]
+name = "ACX_PG_DISK_MAX_USED_PCT"
+class = "config"
+targets = ["svc-vm"]
+example = "90"
+required = false
+doc = "domain: infra | source: service operator | consumer: docker-compose.env.yml Postgres healthcheck"
+section = "Postgres"
+values = {}
+
+[[override]]
+name = "POSTGRES_DSN"
+target = "svc-vm"
+required = true
+doc = "Under RECOGNITION_SECRET_BACKEND=oci_vault these are fetched from Vault (keys\nabove) — leave BLANK. Set them ONLY for the env backend (local/staging without\nVault). Do not commit real passwords.\ndomain: infra | source: OCI Vault (oci_vault) / env | consumer: db/settings.py:get_database_settings"
+
+[[override]]
+name = "POSTGRES_SYNC_DSN"
+target = "svc-vm"
+required = true
+
+[[override]]
+name = "RECOGNITION_API_KEY_HEADER"
+target = "svc-vm"
+doc = "Tenant API keys are DB-only via /admin (or scripts/manage_api_keys.py).\nThere is no env-var allowlist bypass (retired, decision #1882).\ndomain: service root-of-trust (config) | source: service operator | consumer: HTTP auth dependency (API key header name)"
+
+[[override]]
+name = "RECOGNITION_ADMIN_ENABLED"
+target = "svc-vm"
+required = true
+doc = "still required on top. Startup fails closed (validate_admin_config) when\nenabled with an empty/<32-char token, or in production without the\nRECOGNITION_ADMIN_TAILNET_BOUND ack below.\ndomain: service root-of-trust (flag) | source: service operator | consumer: SecuritySettings.admin_enabled; /admin router mount"
+
+[[override]]
+name = "RECOGNITION_ADMIN_TOKEN"
+target = "svc-vm"
+required = true
+doc = "  python -c \"import secrets; print(secrets.token_urlsafe(32))\"\nUnder RECOGNITION_SECRET_BACKEND=oci_vault this is fetched from Vault (map key\nRECOGNITION_ADMIN_TOKEN) — leave BLANK. Set here only for the env backend.\ndomain: service root-of-trust | source: OCI Vault (oci_vault) / service operator | consumer: SecuritySettings.admin_token; validate_admin_config; /admin deps (admin_auth)"
+
+[[override]]
+name = "RECOGNITION_ADMIN_TAILNET_BOUND"
+target = "svc-vm"
+doc = "Required production acknowledgement that /admin is reachable only over the\ntailnet and denied on the public vhost. Must be 1 when admin is enabled in\nproduction, or startup refuses.\ndomain: service root-of-trust (ack) | source: service operator | consumer: validate_admin_config (must be 1 in production when admin on)"
+
+[[override]]
+name = "RECOGNITION_API_KEY_HASH_ALGORITHM"
+target = "svc-vm"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_RATE_LIMIT_RPM"
+target = "svc-vm"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_RATE_LIMIT_BURST"
+target = "svc-vm"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_MAX_PAGE_SIZE"
+target = "svc-vm"
+section = "Operator /admin surface"
+
+[[override]]
+name = "RECOGNITION_ALLOWED_ORIGINS"
+target = "svc-vm"
+doc = "permitted to make cross-origin requests. Default empty = no browser CORS\n(deny-all). Wildcard '*' is rejected at startup. List explicit origins only,\ne.g. \"https://admin.example.com,https://demo.example.com\".\ndomain: service root-of-trust (config) | source: service operator | consumer: CORS middleware (SecuritySettings)"
+section = "Operator /admin surface"
+
+[[override]]
+name = "ACX_DESCRIPTION_ADAPTER"
+target = "svc-vm"
+required = true
+doc = "Allowed live demo values: florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env\ndomain: infra | source: service operator | consumer: scene description adapter selection"
+
+[[override]]
+name = "ACX_GPU_ENDPOINT_URL"
+target = "svc-vm"
+doc = "Private A10 endpoint; http(s) is required for gpu_* adapters.\ndomain: infra | source: service operator | consumer: remote GPU description adapter"
+section = "Image description"
+
+[[var]]
+name = "ACX_GPU_ENDPOINT_ALLOWLIST"
+class = "config"
+targets = ["svc-vm"]
+example = "acx-gpu-burst,*.oraclevcn.com"
+required = true
+doc = "Optional comma-separated hostname policy. Defaults shown here match the service."
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_CONNECT_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm"]
+example = "5"
+required = true
+doc = "Finite request budgets and concurrency consumed by scene/config/settings.py."
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_READ_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm"]
+example = "175"
+required = true
+doc = ""
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_MAX_CONCURRENT_CALLS"
+class = "config"
+targets = ["svc-vm"]
+example = "4"
+required = true
+doc = ""
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_WARMUP_TIMEOUT_SECONDS"
+class = "config"
+targets = ["svc-vm"]
+example = "510"
+required = true
+doc = "Startup may include instance boot, model load, and readiness probing; max 3600."
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_PROMPT_VERSION"
+class = "config"
+targets = ["svc-vm"]
+example = "3"
+required = true
+doc = "Bump when the remote GPU prompt/task contract changes."
+section = "Image description"
+values = {}
+
+[[var]]
+name = "ACX_GPU_ENDPOINT_API_KEY"
+class = "secret"
+targets = ["svc-vm"]
+example = ""
+required = true
+doc = "oci_vault: leave this blank and replace the ACX_GPU_ENDPOINT_API_KEY OCID in\nRECOGNITION_VAULT_SECRET_MAP. env: put the direct value here. Never commit it.\ndomain: service secret | source: OCI Vault / service operator | consumer: remote GPU description adapter"
+section = "Image description"
+secret = {}
+
+[[override]]
+name = "ACX_VLM_MAX_IMAGE_EDGE_PX"
+target = "svc-vm"
+doc = "\nHost runtime caps for the local-CPU Florence path (defaults shown; model id/\nrevision/decode-params live in scene/config/profiles.py, not env):\ndomain: infra | source: service operator | consumer: VLM host runtime caps"
+
+[[override]]
+name = "ACX_GPU_SNAPSHOT_DIR"
+target = "svc-vm"
+doc = "Host lifecycle units publish gpu-state.json under /run/acx; the API compose\nservice mounts that host-owned directory read-only at the identical path.\ndomain: infra | source: OCI deploy | consumer: docker-compose.prod.yml snapshot mount"
+
+[[override]]
+name = "ACX_GPU_STATE_STALE_SECONDS"
+target = "svc-vm"
+doc = "State older than this is unknown to the API and fails the deployment check.\ndomain: infra | source: service operator | consumer: scene GPU-state reader / snapshot check"
+
+[[var]]
+name = "ACX_DESCRIBE_LOAD_DIR"
+class = "config"
+targets = ["svc-vm"]
+example = "/run/acx-write/prod"
+required = true
+doc = "The API publishes DB-derived load in its own writable environment directory;\nlifecycle units aggregate /run/acx-write/*/describe-load.json without granting\nthe container write access to host-owned GPU state.\ndomain: infra | source: OCI deploy | consumer: docker-compose.prod.yml load mount"
+section = "GPU lifecycle"
+values = {}
+
+[[var]]
+name = "ACX_DESCRIBE_LOAD_PATH"
+class = "config"
+targets = ["svc-vm"]
+example = "/run/acx-write/prod/describe-load.json"
+required = true
+doc = "domain: infra | source: OCI deploy | consumer: scene load writer / lifecycle units"
+section = "GPU lifecycle"
+values = {}
+
+[[var]]
+name = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+class = "config"
+targets = ["svc-vm"]
+example = "45"
+required = true
+doc = "Keep two refresh opportunities inside the lifecycle reader's 120s stale guard.\ndomain: infra | source: service operator | consumer: scene load snapshot refresher"
+section = "GPU lifecycle"
+values = {}

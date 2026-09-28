@@ -1,0 +1,177 @@
+version = 1
+
+[[override]]
+name = "COMPOSE_PROJECT_NAME"
+target = "demo"
+example = "acx-demo"
+doc = "domain: infra | source: demo stack ops | consumer: docker compose project identity"
+
+[[var]]
+name = "ACX_DEMO_WPDATA_PATH"
+class = "config"
+targets = ["demo"]
+section = "Compose"
+example = "/opt/acx-backend/data/demo-wpdata"
+doc = "domain: infra | source: demo stack ops | consumer: compose volume mount for WordPress data"
+values = {}
+
+[[var]]
+name = "ACX_DEMO_DBDATA_PATH"
+class = "config"
+targets = ["demo"]
+section = "Compose"
+example = "/opt/acx-backend/data/demo-dbdata"
+doc = "domain: infra | source: demo stack ops | consumer: compose volume mount for MariaDB data"
+values = {}
+
+[[var]]
+name = "MARIADB_DATABASE"
+class = "config"
+targets = ["demo"]
+section = "MariaDB"
+example = "acx_demo"
+doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
+values = {}
+
+[[var]]
+name = "MARIADB_USER"
+class = "config"
+targets = ["demo"]
+section = "MariaDB"
+example = "acx_demo"
+doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
+values = {}
+
+[[var]]
+name = "MARIADB_PASSWORD"
+class = "secret"
+targets = ["demo"]
+section = "MariaDB"
+example = "replace-me"
+doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
+secret = {}
+
+[[var]]
+name = "MARIADB_ROOT_PASSWORD"
+class = "secret"
+targets = ["demo"]
+section = "MariaDB"
+example = "replace-me-root"
+doc = "domain: infra | source: demo stack ops | consumer: demo compose / MariaDB container bootstrap"
+secret = {}
+
+[[var]]
+name = "WORDPRESS_DB_NAME"
+class = "config"
+targets = ["demo"]
+section = "WordPress"
+example = "acx_demo"
+doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
+values = {}
+
+[[var]]
+name = "WORDPRESS_DB_USER"
+class = "config"
+targets = ["demo"]
+section = "WordPress"
+example = "acx_demo"
+doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
+values = {}
+
+[[var]]
+name = "WORDPRESS_DB_PASSWORD"
+class = "secret"
+targets = ["demo"]
+section = "WordPress"
+example = "replace-me"
+doc = "domain: infra | source: demo stack ops | consumer: WordPress container DB connection"
+secret = {}
+
+[[var]]
+name = "WP_ADMIN_USER"
+class = "config"
+targets = ["demo"]
+section = "Generated secrets"
+example = "acx-demo-admin"
+doc = "Strong generated values — required before bootstrap-wp.sh runs.\ndomain: human accounts | source: demo / site operator | consumer: demo WP bootstrap (bootstrap-wp.sh); WordPress user store"
+values = {}
+
+[[var]]
+name = "WP_ADMIN_PASSWORD"
+class = "secret"
+targets = ["demo"]
+section = "Generated secrets"
+example = "replace-me-admin"
+doc = "domain: human accounts | source: demo / site operator | consumer: demo WP bootstrap; WordPress user store — never commit real passwords"
+secret = {}
+
+[[var]]
+name = "WP_ADMIN_EMAIL"
+class = "config"
+targets = ["demo"]
+section = "Generated secrets"
+example = "ops@altcontext.com"
+doc = "domain: human accounts | source: demo / site operator | consumer: demo WP bootstrap"
+values = {}
+
+[[var]]
+name = "WP_CI_USER"
+class = "config"
+targets = ["demo"]
+section = "Generated secrets"
+example = "acx-demo-ci"
+doc = "Dedicated CI account. The GitHub Environment secrets map to these VM keys:\n  ACX_E2E_WP_CI_USER -> WP_CI_USER\n  ACX_E2E_WP_CI_PASS -> WP_CI_PASSWORD\ndeploy-demo.yml passes the same values to Playwright through its existing\nACX_E2E_WP_ADMIN_* environment names; those names do not make this account an admin.\ndomain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
+values = {}
+
+[[var]]
+name = "WP_CI_PASSWORD"
+class = "secret"
+targets = ["demo"]
+section = "Generated secrets"
+example = "replace-me-ci"
+doc = "domain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
+secret = {}
+
+[[var]]
+name = "WP_CI_EMAIL"
+class = "config"
+targets = ["demo"]
+section = "Generated secrets"
+example = "ci@altcontext.com"
+doc = "domain: demo-wp | source: operator secret | consumer: bootstrap-wp.sh WP CI account"
+values = {}
+
+[[override]]
+name = "ACX_DESCRIPTION_ADAPTER"
+target = "demo"
+doc = "--- GPU burst profile (demo) ---\nThis is the complete, preflighted flip contract. Allowed adapter values:\n  florence_small | gpu_qwen30b | gpu_qwen30b_ensemble\nThe demo copy is an operator assertion used by preflight; the running\ndescription service remains the producer and is independently probed below.\nFrom the repository root, validate both live files together before every deploy:\n  scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env"
+required = true
+
+[[override]]
+name = "ACX_GPU_ENDPOINT_URL"
+target = "demo"
+doc = "Use a private IP or a hostname allowed by the producer's allowlist.\nLoopback, unspecified and link-local addresses (including mapped IPv6) are\nrejected even when allowlisted; http(s) is required for gpu_* adapters."
+
+[[override]]
+name = "ACX_GPU_SNAPSHOT_DIR"
+target = "demo"
+doc = "The GPU endpoint credential belongs only to the producer (direct env or OCI\nVault). WordPress does not consume it, so do not duplicate it in this file.\nThe state file must live directly inside the snapshot directory."
+
+[[override]]
+name = "ACX_GPU_STATE_PATH"
+target = "demo"
+doc = ""
+
+[[override]]
+name = "ACX_GPU_STATE_STALE_SECONDS"
+target = "demo"
+doc = ""
+
+[[var]]
+name = "WORDPRESS_CONFIG_EXTRA"
+class = "secret"
+targets = ["demo"]
+section = "WordPress"
+example = "define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_SOURCE','service'); define('ACX_RECOGNITION_API_KEY','replace-with-tenant-api-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001'); define('WP_AUTO_UPDATE_CORE', true);"
+doc = "The define() values inside WORDPRESS_CONFIG_EXTRA below are the ONLY operative\nplugin config — the plugin reads PHP constants, not env vars. There are no\nstandalone ACX_RECOGNITION_*/WP_AUTO_UPDATE_CORE vars here on purpose: a second\ncopy would drift from the constants at cutover. Edit the define() values directly.\n\nConstants to set (staged rollout: staging.api first, then api.altcontext.com at launch):\n  ACX_RECOGNITION_URL        https://staging.api.altcontext.com -> https://api.altcontext.com\n  ACX_RECOGNITION_SOURCE     service\n  ACX_RECOGNITION_API_KEY    minted key (tenant-mint-runbook.md) — never commit\n  ACX_RECOGNITION_TENANT_ID  explicit tenant UUID — NEVER URL-derived/JIT\n  WP_AUTO_UPDATE_CORE        true\n\nSet WORDPRESS_CONFIG_EXTRA in secrets/.env as a single line (env-file values are not\ncompose-interpolated). Replace the API key and tenant UUID on the VM; these\ndefines satisfy the preflight's operative recognition-config checks.\ndomain: tenant API keys / plugin config | source: demo / site operator | consumer: WordPress container (WORDPRESS_CONFIG_EXTRA → PHP define); plugin constants"
+secret = {}

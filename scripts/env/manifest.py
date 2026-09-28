@@ -69,10 +69,13 @@ _VAR_KEYS = _VAR_REQUIRED_KEYS | frozenset(
 _DERIVE_REF = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 _LITERAL_SECRET = re.compile(
     r"sk_(?:test|live)_|\brk_(?:test|live)_|whsec_|-----BEGIN"
+    r"|gh[pos]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}"
+    r"|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]+"
 )
-_PUBLIC_SENSITIVE_NAME = re.compile(
-    r"SECRET|TOKEN|PASSWORD|PRIVATE|(?<!PUBLISHABLE)_KEY$"
-)
+_PUBLIC_SENSITIVE_TOKENS = frozenset({
+    "SECRET", "PASSWORD", "PASSWD", "PWD", "TOKEN", "PRIVATE", "KEY",
+    "CREDENTIAL", "SIGNING",
+})
 
 
 def _fail(source: str, key: str, detail: str) -> NoReturn:
@@ -174,7 +177,25 @@ def _load_targets(path: Path) -> dict[str, Target]:
         if doc is not None:
             doc = _string(doc, path.name, f"{prefix}doc")
         targets[name] = Target(name, audience, envs, target_path, example_path, sections, doc)
+    _validate_targets(targets, path.name)
     return targets
+
+
+def _validate_targets(targets: Mapping[str, Target], source: str) -> None:
+    for target in targets.values():
+        for section in target.sections:
+            _validate_section(section, source, f"{target.name}.sections")
+        _validate_doc(target.doc, source, f"{target.name}.doc")
+        _validate_literal_guard(source, target.name, [("doc", target.doc)])
+    for key in ("path", "example"):
+        owners: dict[str, str] = {}
+        for target in targets.values():
+            value = getattr(target, key)
+            if value is None:
+                continue
+            if value in owners:
+                _fail(source, key, f"targets {owners[value]} and {target.name} share {key}")
+            owners[value] = target.name
 
 
 def _load_value_source(
@@ -205,12 +226,42 @@ def _load_value_source(
     return values, secret, derive
 
 
-def _validate_literal_guard(var: Var) -> None:
-    candidates = [("example", var.example), ("derive", var.derive)]
-    candidates.extend(("values", value) for value in var.values.values())
+def _validate_literal_guard(
+    source: str, name: str, candidates: list[tuple[str, str | None]]
+) -> None:
     for key, value in candidates:
         if value is not None and _LITERAL_SECRET.search(value):
-            _fail(var.source, f"{var.name}.{key}", "literal secret material is not allowed")
+            _fail(source, f"{name}.{key}", "literal secret material is not allowed")
+
+
+def _validate_name(name: str, source: str) -> None:
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None:
+        _fail(source, name, "invalid variable name")
+
+
+def _validate_section(section: str, source: str, key: str) -> None:
+    if re.search(r"[\x00-\x1f\x7f]", section):
+        _fail(source, key, "section contains a control character")
+
+
+def _validate_doc(doc: str | None, source: str, key: str) -> None:
+    if doc is not None and "\r" in doc:
+        _fail(source, key, "doc contains a carriage return")
+
+
+def _validate_var_fields(var: Var) -> None:
+    _validate_name(var.name, var.source)
+    _validate_section(var.section, var.source, f"{var.name}.section")
+    _validate_doc(var.doc, var.source, f"{var.name}.doc")
+    _validate_vite_secret(var)
+    candidates = [(key, getattr(var, key)) for key in ("example", "derive", "doc", "section")]
+    candidates.extend(("values", value) for value in var.values.values())
+    _validate_literal_guard(var.source, var.name, candidates)
+
+
+def _validate_vite_secret(var: Var) -> None:
+    if var.cls == "secret" and var.name.startswith("VITE_"):
+        _fail(var.source, var.name, "secret vars cannot use the VITE_ prefix")
 
 
 def _load_var(raw: object, source: str) -> Var:
@@ -243,7 +294,7 @@ def _load_var(raw: object, source: str) -> Var:
         derive=derive,
         source=source,
     )
-    _validate_literal_guard(var)
+    _validate_var_fields(var)
     return var
 
 
@@ -291,6 +342,7 @@ def _validate_override(raw: object, source: str, targets, vars_by_name) -> Overr
     _check_keys(table, frozenset({"name", "target"}), fields | {"name", "target"}, source)
     name = _string(table["name"], source, "name")
     target = _string(table["target"], source, "target")
+    _validate_name(name, source)
     if not fields.intersection(table):
         _fail(source, name, "override requires a field")
     if name not in vars_by_name:
@@ -305,10 +357,17 @@ def _validate_override(raw: object, source: str, targets, vars_by_name) -> Overr
             _string(table[key], source, key)
     if "section" in table and (target not in targets or table["section"] not in targets[target].sections):
         _fail(source, "section", "override section is not configured")
-    if "example" in table and _LITERAL_SECRET.search(table["example"]):
-        _fail(source, "example", "literal secret material is not allowed")
+    _validate_override_fields(table, source, name)
     return Override(name, target, *(table.get(key) for key in
                                    ("example", "required", "doc", "section")), source)
+
+
+def _validate_override_fields(table: Mapping[str, object], source: str, name: str) -> None:
+    candidates = [(key, table[key]) for key in ("example", "doc", "section") if key in table]
+    _validate_literal_guard(source, name, candidates)
+    if "section" in table:
+        _validate_section(table["section"], source, f"{name}.section")
+    _validate_doc(table.get("doc"), source, f"{name}.doc")
 
 
 def _load_overrides(manifest_dir, targets, vars_by_name):
@@ -448,8 +507,13 @@ def _validate_public_build(
             _fail(var.source, var.name, "public build derive reaches secret material")
         if not var.name.startswith("VITE_"):
             _fail(var.source, var.name, "public build vars must use the VITE_ prefix")
-        if _PUBLIC_SENSITIVE_NAME.search(var.name):
-            _fail(var.source, var.name, "sensitive var name cannot target public builds")
+        _validate_public_name(var)
+
+
+def _validate_public_name(var: Var) -> None:
+    tokens = set(var.name.split("_"))
+    if "PUBLISHABLE" not in tokens and tokens & _PUBLIC_SENSITIVE_TOKENS:
+        _fail(var.source, var.name, "sensitive var name cannot target public builds")
 
 
 def load_manifest(root: Path) -> Manifest:

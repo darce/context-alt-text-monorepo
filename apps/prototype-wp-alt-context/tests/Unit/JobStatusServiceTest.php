@@ -9,6 +9,7 @@ use AltContext\Api\Services\BatchRunService;
 use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
 use AltContext\Tests\TestCase;
+use AltContext\Settings\RecognitionPolicy;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -23,6 +24,7 @@ class JobStatusServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $host = new AnalysisJobsController();
         $batch = new BatchRunService($host);

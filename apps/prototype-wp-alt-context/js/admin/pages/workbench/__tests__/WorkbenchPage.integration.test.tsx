@@ -495,7 +495,22 @@ describe('WorkbenchPage (integration-lite)', () => {
         queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
         baseMediaResponse,
       );
-      client.setQueryData(queryKeys.sync.status(), syncStatus);
+      client.setQueryData(queryKeys.sync.status(), {
+        ...syncStatus,
+        // Unknown cleanup health outranks healthy/queued sync presentation.
+        reclaimer: {
+          state: 'healthy',
+          scheduler_mode: 'action_scheduler',
+          effective_period_seconds: 3600,
+          last_attempt_at: '2026-03-11T10:00:00Z',
+          last_success_at: '2026-03-11T10:00:00Z',
+          last_outcome: 'success',
+          last_purged_count: 0,
+          backlog_remaining: 0,
+          backlog_oldest_age_seconds: null,
+          batch_cap_reached: false,
+        },
+      } satisfies SyncStatusResponse);
       client.setQueryData(queryKeys.media.identitiesByIds([11]), {
         identities_by_media: { '11': [] },
       });

@@ -204,6 +204,127 @@ async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(datab
 
 
 @pytest.mark.asyncio
+async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted(database) -> None:
+    session_factory, tenant_id, period_start = database
+    stale_id = uuid4()
+    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-direct-commit", 1)
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=stale_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key=stale_ticket.idempotency_key,
+                job_id="stale-job",
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+                reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        await UsageAdmissionService(session).commit(stale_ticket)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, stale_id)
+        assert row.status == UsageReservationStatus.EXPIRED
+        assert row.settled_at is not None
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
+        assert await repository.used_jobs(tenant_id, period_start) == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_reservation_release_without_sweep_expires_and_is_not_counted(database) -> None:
+    session_factory, tenant_id, period_start = database
+    stale_id = uuid4()
+    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-direct-release", 1)
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=stale_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key=stale_ticket.idempotency_key,
+                job_id="stale-job",
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+                reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        await UsageAdmissionService(session).release(stale_ticket)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, stale_id)
+        assert row.status == UsageReservationStatus.EXPIRED
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
+        assert await repository.used_jobs(tenant_id, period_start) == 0
+
+
+@pytest.mark.asyncio
+async def test_fresh_reservation_commit_remains_chargeable(database) -> None:
+    session_factory, tenant_id, period_start = database
+    async with session_factory() as session:
+        ticket = await UsageAdmissionService(session).reserve(
+            tenant_id,
+            idempotency_key="fresh-direct-commit",
+            job_id="fresh-job",
+            cost_units=1,
+        )
+        await UsageAdmissionService(session).commit(ticket)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, ticket.reservation_id)
+        assert row.status == UsageReservationStatus.COMMITTED
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
+        assert await repository.used_jobs(tenant_id, period_start) == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_same_key_retry_cannot_charge_expired_ticket(database) -> None:
+    session_factory, tenant_id, period_start = database
+    stale_id = uuid4()
+    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-retry", 1)
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=stale_id,
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key=stale_ticket.idempotency_key,
+                job_id="stale-job",
+                status=UsageReservationStatus.RESERVED,
+                cost_units=1,
+                reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        retry = await UsageAdmissionService(session).reserve(
+            tenant_id,
+            idempotency_key=stale_ticket.idempotency_key,
+            job_id="retry-job",
+            cost_units=1,
+        )
+        assert retry.reservation_id == stale_id
+        await UsageAdmissionService(session).commit(retry)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = await _reservation(session, stale_id)
+        assert row.status == UsageReservationStatus.EXPIRED
+        repository = SqlAlchemyTenantEntitlementRepository(session, plan_allowances={"paid": 1})
+        assert await repository.used_jobs(tenant_id, period_start) == 0
+
+
+@pytest.mark.asyncio
 async def test_used_jobs_ignores_expired_reservations_by_lease_age(database) -> None:
     session_factory, tenant_id, period_start = database
     async with session_factory() as session:

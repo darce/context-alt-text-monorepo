@@ -117,6 +117,7 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.cost_units == ticket.cost_units,
             )
             .limit(1)
+            .execution_options(populate_existing=True)
         )
         result = await _with_timeout(
             self._session.execute(stmt),
@@ -151,6 +152,8 @@ class SqlAlchemyUsageRepository:
 
         existing = await self._get_by_idempotency_key(tenant_id, idempotency_key)
         if existing is not None:
+            # A stale RESERVED retry can be returned here, but _settle applies
+            # this same lease before charging it, so replay cannot extend it.
             return existing
 
         now = datetime.now(tz=UTC)
@@ -264,6 +267,17 @@ class SqlAlchemyUsageRepository:
         if current_status is not UsageReservationStatus.RESERVED:
             return
 
+        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
+        reserved_at = reservation.reserved_at
+        if reserved_at.tzinfo is None:
+            reserved_at = reserved_at.replace(tzinfo=UTC)
+        stale_reservation = reserved_at < lease_cutoff
+        settled_status = UsageReservationStatus.EXPIRED if stale_reservation else target_status
+        lease_guard = (
+            UsageReservation.reserved_at < lease_cutoff
+            if stale_reservation
+            else UsageReservation.reserved_at >= lease_cutoff
+        )
         stmt = (
             update(UsageReservation)
             .where(
@@ -272,9 +286,11 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.idempotency_key == ticket.idempotency_key,
                 UsageReservation.cost_units == ticket.cost_units,
                 UsageReservation.status == UsageReservationStatus.RESERVED,
+                lease_guard,
             )
-            .values(status=target_status, settled_at=func.now())
+            .values(status=settled_status, settled_at=func.now())
             .returning(UsageReservation.id)
+            .execution_options(synchronize_session=False)
         )
         result = await _with_timeout(
             self._session.execute(stmt),

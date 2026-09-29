@@ -19,6 +19,25 @@ from env.manifest import load_manifest
 from env.secret_refs import SecretUnavailable
 
 
+class _InvalidLeaseEnv(ValueError):
+    pass
+
+
+def _lease_path(backup_root: Path, lease_env: str | None) -> Path | None:
+    if lease_env is None:
+        return None
+    if (not isinstance(lease_env, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", lease_env) is None
+            or ".." in lease_env):
+        raise _InvalidLeaseEnv("invalid lease_env")
+    lease = backup_root / "locks" / f"deploy-{lease_env}.lease"
+    try:
+        lease.resolve().relative_to(backup_root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        raise _InvalidLeaseEnv("lease_env resolves outside backup root") from None
+    return lease
+
+
 @contextmanager
 def _lock(path: Path, timeout: float, *, create: bool = True):
     render._inspect_path(path)
@@ -121,14 +140,15 @@ def run(
         spec = render._target(manifest, target)
         if spec.remote_paths.get(env) != into:
             raise ValueError("target path mismatch")
+        lease = _lease_path(backup_root, spec.lease_env.get(env))
+        if check:
+            lease = None
         path = fs_root / into.lstrip("/")
         if check and path.exists() and not stat.S_ISREG(path.lstat().st_mode):
             print(f"mode\t{into}", file=out)
             return 1
         if render._inspect_path(path) is None:
             raise ValueError("existing file required")
-        lease_env = spec.lease_env.get(env)
-        lease = backup_root / "locks" / f"deploy-{lease_env}.lease" if lease_env and not check else None
         lock_path = Path(f"{path}.acx-image-repo.lock")
         # A read-only check must not create a lock on an unmaterialized host.
         image_lock = _lock(lock_path, lock_timeout, create=not check) if not check or lock_path.exists() else nullcontext()
@@ -177,6 +197,9 @@ def run(
     except SecretUnavailable as exc:
         print(str(exc), file=err)
         return 4
+    except _InvalidLeaseEnv as exc:
+        print(f"materialize refused: {exc}", file=err)
+        return 2
     except TimeoutError:
         print("materialize lock or lease busy", file=err)
         return 75

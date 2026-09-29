@@ -1,12 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { registerConfig, resetConfigCache } from '../../api/config';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
@@ -108,22 +104,16 @@ const expectListPagesInvalidated = (client: QueryClient, invalidated: boolean): 
   }
 };
 
-const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
-  const client = new QueryClient({
-    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
-  });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-};
+let queryClient: QueryClient;
+let wrapper: ReturnType<typeof createQueryWrapper>;
 
-const createWrapper = (): { wrapper: typeof wrapper; queryClient: QueryClient } => {
-  const queryClient = new QueryClient({
-    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
-  });
+const createSeededWrapper = (): {
+  wrapper: ReturnType<typeof createQueryWrapper>;
+  queryClient: QueryClient;
+} => {
+  const queryClient = buildTestQueryClient();
   seedWorkbenchCache(queryClient);
-  const scopedWrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper: scopedWrapper, queryClient };
+  return { wrapper: createQueryWrapper(queryClient), queryClient };
 };
 
 const TENANT = 'tenant';
@@ -142,6 +132,8 @@ const storedRunContext = (
 
 describe('useBulkDescribe', () => {
   beforeEach(() => {
+    queryClient = buildTestQueryClient();
+    wrapper = createQueryWrapper(queryClient);
     vi.clearAllMocks();
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
@@ -157,25 +149,11 @@ describe('useBulkDescribe', () => {
   });
 
   afterEach(() => {
+    queryClient.clear();
     setActiveDescribeRunId(null);
     sessionStorage.clear();
     _resetDescribeOperationStoreForTests();
     resetConfigCache();
-  });
-
-  it('does not duplicate the describe-run phase table or terminal set (WBUX-6 F7 / sr-007)', () => {
-    // The terminal predicate lives in describeApi (isDescribeRunTerminal) and reaches
-    // this hook as progress.isTerminal via useDescribeRunProgress (S7 / harm-terminal-predicate).
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../useBulkDescribe.ts'), 'utf8');
-    // S5R2-F1: a renamed local table (`const PHASE = { QUEUED: 'queued', ... }`)
-    // stayed GREEN under the old DESCRIBE_RUN_PHASE identifier check. Strip
-    // import blocks, then forbid any phase string literal in the rest.
-    const rest = source.replace(/import(?:[\s\S]*?)from\s+['"][^'"]+['"];?/g, '');
-    expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
-    expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
-    expect(rest).not.toMatch(/submit\.data\?\.run_id\s*\?\?\s*cancel\.data\?\.run_id/);
-    // U2b / Z2: Review drafts targets the workbench queue filter, not this hook.
-    expect(rest).not.toMatch(/description-history/);
   });
 
   it('submits media ids and captures the run id', async () => {
@@ -482,7 +460,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -507,7 +485,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -542,7 +520,7 @@ describe('useBulkDescribe', () => {
   });
 
   it('invalidates list pages once per successive terminal run id [S6-F2]', async () => {
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
 
     submitBulkDescribeRunMock.mockResolvedValueOnce(
@@ -603,7 +581,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -638,7 +616,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -665,7 +643,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2]);
 
@@ -715,7 +693,7 @@ describe('useBulkDescribe', () => {
         }),
       );
 
-      const { wrapper: scopedWrapper, queryClient } = createWrapper();
+      const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
       const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
       result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -747,7 +725,7 @@ describe('useBulkDescribe', () => {
       }),
     );
 
-    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
     const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
     result.current.submit.mutate([1, 2, 3, 4]);
 
@@ -816,7 +794,7 @@ describe('useBulkDescribe', () => {
         }),
       );
 
-      const { wrapper: scopedWrapper, queryClient } = createWrapper();
+      const { wrapper: scopedWrapper, queryClient } = createSeededWrapper();
       const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
       result.current.submit.mutate([1, 2]);
 

@@ -72,8 +72,16 @@ exit 1
 
 
 def test_make_serve_preserves_skip_install_fast_path() -> None:
-    makefile = (APP_ROOT / "Makefile").read_text()
-    serve_block_match = re.search(r"^serve: dev-ready\n(?P<body>(?:\t.*\n)+)", makefile, re.MULTILINE)
+    result = subprocess.run(
+        ["make", "--no-print-directory", "--dry-run", "serve"],
+        cwd=APP_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
 
-    assert serve_block_match is not None
-    assert "SKIP_INSTALL=1" in serve_block_match.group("body")
+    assert result.returncode == 0, result.stderr
+    assert re.search(
+        r"(?m)^SKIP_INSTALL=1 \\\nnohup ./scripts/start_prototype_local\.sh start\b",
+        result.stdout,
+    ), "expanded serve recipe must pass SKIP_INSTALL=1 to the startup script"

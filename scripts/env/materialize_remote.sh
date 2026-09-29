@@ -51,8 +51,14 @@ remote_command='set -eu; tmp=$(mktemp -d); trap '\''rm -rf -- "$tmp"'\'' EXIT; t
 remote_command+=$arguments
 
 # tarfile maps an arbitrary manifest directory without platform-specific tar transforms.
+ssh_options=(
+    -o "ConnectTimeout=${ENV_MATERIALIZE_SSH_CONNECT_TIMEOUT:-15}"
+    -o "ServerAliveInterval=${ENV_MATERIALIZE_SSH_SERVER_ALIVE_INTERVAL:-15}"
+    -o "ServerAliveCountMax=${ENV_MATERIALIZE_SSH_SERVER_ALIVE_COUNT_MAX:-4}"
+    -o "BatchMode=yes"
+)
 set +e
-python3 - "$repo_root" "$manifest_root" <<'PY' | ssh "${OCI_USER:-ubuntu}@${OCI_HOST:-acx-backend.tail1a44b8.ts.net}" "$remote_command"
+python3 - "$repo_root" "$manifest_root" <<'PY' | ssh "${ssh_options[@]}" "${OCI_USER:-ubuntu}@${OCI_HOST:-acx-backend.tail1a44b8.ts.net}" "$remote_command"
 import sys
 import tarfile
 from pathlib import Path
@@ -64,4 +70,8 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
     archive.add(sys.argv[2], arcname="config/env")
 PY
 statuses=("${PIPESTATUS[@]}")
+if (( statuses[0] != 0 )); then
+    printf 'materialize_remote.sh: tar producer failed with status %d\n' "${statuses[0]}" >&2
+    exit "${statuses[0]}"
+fi
 exit "${statuses[1]}"

@@ -364,6 +364,8 @@ def test_auraface_space_hash_mismatch_reason_differs_from_missing(
 def test_auraface_space_verified_artifacts_reach_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from recognition.application.health import ModelSpace, check_model_space
 
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
     _pin_auraface_ok_dimensions(monkeypatch)
     _install_synthetic_auraface(tmp_path, monkeypatch)
     _stub_ort_session_classes(monkeypatch)

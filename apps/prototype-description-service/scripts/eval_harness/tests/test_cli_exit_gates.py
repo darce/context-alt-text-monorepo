@@ -48,6 +48,7 @@ def _manifest_doc(*, mode: str, boxed: bool, n: int = 1) -> dict[str, Any]:
     return {
         "manifest_version": 3,
         "annotation_mode": mode,
+        "iou_threshold": 0.5,
         "roster": ["Alice Example", "Zed Zeta"],
         "entries": [
             {
@@ -584,7 +585,9 @@ def test_score_exits_1_when_run_record_is_aborted(
     record = _run_record(face_count=1)
     record["aborted"] = True
     man_path, rec_path = _write_score_inputs(
-        tmp_path, mode="exhaustive", boxed=True, record=record
+        # This run-record has identity rows but no detector localization rows;
+        # use roster-only so the fixture isolates the aborted-record gate.
+        tmp_path, mode="roster_only", boxed=True, record=record
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:

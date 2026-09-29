@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { __ } from '@wordpress/i18n';
 import type { ReactElement } from 'react';
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueueDraftCell } from '../QueueDraftCell';
 import { applyDescribeRunDrafts, correctDescriptionHistoryItem } from '../../../api/describeApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 
 vi.mock('@wordpress/i18n', () => ({
   __: vi.fn((text: string) => text),
@@ -33,17 +34,9 @@ vi.mock('../../../api/describeApi', async () => {
 const correctMock = vi.mocked(correctDescriptionHistoryItem);
 const applyRunMock = vi.mocked(applyDescribeRunDrafts);
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-const renderCell = (element: ReactElement, client = buildClient()) => ({
+const renderCell = (element: ReactElement, client = buildTestQueryClient()) => ({
   client,
-  ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
+  ...render(element, { wrapper: createQueryWrapper(client) }),
 });
 
 describe('QueueDraftCell', () => {
@@ -51,7 +44,7 @@ describe('QueueDraftCell', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    client = buildClient();
+    client = buildTestQueryClient();
     correctMock.mockImplementation((mediaId, altText) =>
       Promise.resolve({
         media_id: mediaId,

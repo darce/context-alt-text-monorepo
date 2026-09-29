@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { createElement, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GPU_STATE } from '../../api/describeApi';
 import { GPU_INTENT_ACTION, GPU_INTENT_STATUS, type GpuStatusResponse } from '../../api/gpuApi';
 import * as gpuApi from '../../api/gpuApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import {
   getGpuServiceStatusPollInterval,
   GPU_SERVICE_STATUS_ERROR_BACKOFF_MS,
@@ -57,15 +57,6 @@ const statusResponse = ({
 
 let queryClient: QueryClient;
 
-const createWrapper = () => {
-  queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
-  return wrapper;
-};
-
 describe('useGpuServiceStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -91,8 +82,9 @@ describe('useGpuServiceStatus', () => {
   });
 
   it('polls fetchGpuStatus while idle', async () => {
+    queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useGpuServiceStatus({ isRunPending: false }), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(queryClient),
     });
 
     await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
@@ -102,9 +94,10 @@ describe('useGpuServiceStatus', () => {
   });
 
   it('pauses polling while a run is pending and resumes after terminal status', async () => {
+    queryClient = buildTestQueryClient();
     const { rerender, result } = renderHook(
       ({ isRunPending }: { isRunPending: boolean }) => useGpuServiceStatus({ isRunPending }),
-      { wrapper: createWrapper(), initialProps: { isRunPending: false } },
+      { wrapper: createQueryWrapper(queryClient), initialProps: { isRunPending: false } },
     );
 
     await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
@@ -120,8 +113,9 @@ describe('useGpuServiceStatus', () => {
   });
 
   it('does not start idle polls while a run is already pending', async () => {
+    queryClient = buildTestQueryClient();
     const { result } = renderHook(() => useGpuServiceStatus({ isRunPending: true }), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(queryClient),
     });
 
     await waitFor(() => expect(result.current.isPolling).toBe(false));

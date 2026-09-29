@@ -1,27 +1,13 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useBulkRetryOperations } from '../useBulkRetryOperations';
 import * as recognitionApi from '../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('../../api/recognition', () => ({
   bulkRetryFailedOperations: vi.fn(),
 }));
-
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
 
 describe('useBulkRetryOperations', () => {
   beforeEach(() => {
@@ -32,7 +18,8 @@ describe('useBulkRetryOperations', () => {
     const bulkRetryMock = vi.mocked(recognitionApi.bulkRetryFailedOperations);
     bulkRetryMock.mockResolvedValue({ requeued: 3, failed_remaining: 0 });
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(() => useBulkRetryOperations(), { wrapper });
@@ -51,7 +38,8 @@ describe('useBulkRetryOperations', () => {
     const bulkRetryMock = vi.mocked(recognitionApi.bulkRetryFailedOperations);
     bulkRetryMock.mockRejectedValue(new Error('boom'));
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(() => useBulkRetryOperations(), { wrapper });

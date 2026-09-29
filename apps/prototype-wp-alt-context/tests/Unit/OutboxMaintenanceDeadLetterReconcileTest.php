@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxStatus;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
@@ -174,6 +175,50 @@ class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
         $this->assertStringContainsString("tenant_id = '{$tenantId}'", $labelQuery);
         $this->assertStringContainsString('FOR UPDATE', $labelQuery);
         $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+    }
+
+    public function testPurgeFailsWhenTenantScopedClusterLabelLookupHasDatabaseError(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-cluster-label-lookup-error';
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildDeadLetteredLabelRow(405, $tenantId, 'cluster-live', 'Current label'),
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-live',
+                'tenant_id' => $tenantId,
+                'label' => 'Current label',
+            ],
+        ];
+        $wpdb->onGetResults = static function (string $sql) use ($wpdb): ?array {
+            if (str_contains($sql, 'SELECT label FROM `wp_acx_clusters`')) {
+                $wpdb->last_error = 'simulated cluster label lookup failure';
+
+                return [];
+            }
+
+            return null;
+        };
+        $liveness = new ReclaimerLiveness(static fn(): int => $GLOBALS['__ac_current_time']);
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts',
+            $liveness
+        );
+
+        $purged = $service->purge_terminal_rows($tenantId);
+        $state = $liveness->read($tenantId);
+
+        $this->assertFalse($purged);
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+        $this->assertNotContains('COMMIT', $wpdb->queries);
+        $this->assertSame(OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertSame(ReclaimerLiveness::OUTCOME_FAILED, $state['last_outcome']);
+        $this->assertNull($state['last_success_at']);
     }
 
     /**

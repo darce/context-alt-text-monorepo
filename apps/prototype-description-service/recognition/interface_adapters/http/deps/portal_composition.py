@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 from collections.abc import AsyncIterator, Collection, Mapping
@@ -34,6 +35,7 @@ from recognition.interface_adapters.http.routers.billing_webhooks import get_bil
 from shared.secrets import get_secret_provider
 
 _MISSING = object()
+logger = logging.getLogger(__name__)
 _DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
 _MAX_TENANT_LOOKUP_BODY_BYTES = 25 * 1024 * 1024
@@ -466,8 +468,25 @@ async def admit_usage(
             await usage_admission_service.release(ticket)
         raise
     else:
-        with anyio.CancelScope(shield=True):
-            await usage_admission_service.commit(ticket)
+        try:
+            with anyio.CancelScope(shield=True):
+                await usage_admission_service.commit(ticket)
+        except BaseException as commit_error:
+            try:
+                with anyio.CancelScope(shield=True):
+                    await usage_admission_service.release(ticket)
+            except BaseException as release_error:
+                logger.error(
+                    "usage admission commit failed: %r",
+                    commit_error,
+                    exc_info=(type(commit_error), commit_error, commit_error.__traceback__),
+                )
+                logger.error(
+                    "usage admission ticket release also failed: %r",
+                    release_error,
+                    exc_info=(type(release_error), release_error, release_error.__traceback__),
+                )
+            raise
 
 
 def install_usage_admission_composition(app: FastAPI) -> None:

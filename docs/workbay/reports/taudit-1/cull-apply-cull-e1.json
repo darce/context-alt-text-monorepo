@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py::test_precision_only_predicate_would_miss_leftover",
+    "verdict": "deleted",
+    "reason": "The end-to-end leftover test checks the scanner flags the same precision-null, recall-zero populated identity report.",
+    "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py::test_precision_null_recall_zero_populated_table_is_flagged"
+  },
+  {
+    "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py::test_markdown_renders_scored_detection_line",
+    "verdict": "deleted",
+    "reason": "The deterministic build test asserts the same scored-detection Markdown line and expected counts on the same default fixtures.",
+    "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py::test_build_reports_scored_detection_is_deterministic"
+  },
+  {
+    "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py::test_lazy_precision_predicate_misses_leftover_and_cannot_pass",
+    "verdict": "deleted",
+    "reason": "The classifier test asserts the same leftover is SCORED and that scan_payload emits the same scored hit with its metrics.",
+    "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py::test_classifier_flags_leftover_as_scored"
+  }
+]

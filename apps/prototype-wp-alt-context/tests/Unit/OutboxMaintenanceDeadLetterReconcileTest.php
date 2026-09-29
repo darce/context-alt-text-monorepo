@@ -36,10 +36,105 @@ class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
         $purged = $service->purge_terminal_rows($tenantId);
 
         $this->assertSame(1, $purged['orphaned']);
+        $this->assertSame('', $wpdb->last_error);
         $this->assertSame(OutboxStatus::DISCARDED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
         $audits = $this->actionsNamed('acx_sync_outbox_orphan_discarded');
         $this->assertCount(1, $audits);
         $this->assertSame('auto_retry_exhausted', $audits[0]['args'][0]['last_error_code']);
+    }
+
+    public function testPurgeKeepsDeadLetteredRowWhenEntityLookupHasDatabaseError(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-entity-lookup-error';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildDeadLetteredLabelRow(403, $tenantId, 'cluster-live', 'Current label'),
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-live',
+                'tenant_id' => $tenantId,
+                'label' => 'Current label',
+            ],
+        ];
+        $wpdb->onGetResults = static function (string $sql) use ($wpdb): ?array {
+            if (str_contains($sql, 'SELECT cluster_uuid FROM `wp_acx_clusters`')) {
+                $wpdb->last_error = 'Lock wait timeout exceeded';
+
+                return [];
+            }
+
+            return null;
+        };
+
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts'
+        );
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['orphaned']);
+        $this->assertSame(OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
+    }
+
+    public function testPurgeKeepsDeadLetteredRowWhenEntityLookupReturnsNull(): void
+    {
+        global $wpdb;
+
+        $wpdb = new class() extends \WPDBStub {
+            public bool $returnNullForClusterLookup = false;
+
+            public function get_results($query, $output = OBJECT)
+            {
+                $normalizedSql = trim((string) $query);
+                if (
+                    $this->returnNullForClusterLookup
+                    && str_contains($normalizedSql, 'SELECT cluster_uuid FROM `wp_acx_clusters`')
+                ) {
+                    $this->queries[] = $normalizedSql;
+
+                    return null;
+                }
+
+                return parent::get_results($query, $output);
+            }
+
+            public function reset(): void
+            {
+                parent::reset();
+                $this->returnNullForClusterLookup = false;
+            }
+        };
+        $wpdb->returnNullForClusterLookup = true;
+        $tenantId = 'tenant-entity-lookup-null';
+        $wpdb->defaultQueryResult = 0;
+        $wpdb->tableRows['wp_acx_sync_outbox'] = [
+            $this->buildDeadLetteredLabelRow(404, $tenantId, 'cluster-live', 'Current label'),
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-live',
+                'tenant_id' => $tenantId,
+                'label' => 'Current label',
+            ],
+        ];
+
+        $service = new OutboxMaintenanceService(
+            null,
+            $this->trackingSyncStateRepository(),
+            'wp_acx_sync_outbox',
+            'wp_acx_sync_conflicts'
+        );
+        $purged = $service->purge_terminal_rows($tenantId);
+
+        $this->assertSame(0, $purged['orphaned']);
+        $this->assertSame(OutboxStatus::FAILED, $wpdb->tableRows['wp_acx_sync_outbox'][0]['status']);
+        $this->assertSame([], $this->actionsNamed('acx_sync_outbox_orphan_discarded'));
     }
 
     public function testPurgeDiscardsDeadLetteredLabelWhenTenantCurrentLabelSupersedesPayload(): void

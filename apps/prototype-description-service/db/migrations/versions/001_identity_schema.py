@@ -531,7 +531,7 @@ def _repair_describe_demand_lease_retention(op) -> None:
             "FROM describe_operations AS operation "
             "WHERE lease.tenant_id = operation.tenant_id "
             "AND lease.operation_id = operation.operation_id "
-            "AND (lease.retain_until > operation.retain_until "
+            "AND (lease.retain_until <> operation.retain_until "
             "OR lease.expires_at > operation.retain_until)"
         )
     )

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import tempfile
@@ -128,6 +129,16 @@ def _owned_write(path: Path, data: bytes, owner: os.stat_result, *, backup: bool
         staged.unlink(missing_ok=True)
 
 
+def _assignment_has_value(line: str) -> bool:
+    match = render._ASSIGNMENT.match(line)
+    if match is None:
+        return False
+    try:
+        return any(shlex.split(match.group(2), comments=False))
+    except ValueError:
+        return False
+
+
 def run(
     manifest_root: Path, *, env: str, target: str, into: str,
     check: bool = False, adopt: bool = False, allow_unmanaged: Sequence[str] = (),
@@ -160,8 +171,11 @@ def run(
             actual = render._runtime_assignments(old)
             variables = render._target_vars(manifest, target)
             managed = {var.name for var in variables}
-            missing_host = {var.name for var in variables if var.secret.get(env) == "host:"
-                            and var.required and var.name not in actual}
+            missing_host = {
+                var.name for var in variables
+                if var.secret.get(env) == "host:" and var.required
+                and not any(_assignment_has_value(line) for line in actual.get(var.name, ()))
+            }
             if missing_host and not check:
                 raise SecretUnavailable("missing host key " + sorted(missing_host)[0])
             rendered = render.render_target(
@@ -170,10 +184,12 @@ def run(
             )
             body = rendered.split("\n", 2)[2]
             expected = render._runtime_assignments(body)
+            stale_managed = (actual.keys() & managed) - expected.keys()
             unmanaged = actual.keys() - managed - set(spec.preserve) - set(allow_unmanaged)
             if check:
                 groups = {
                     "missing": expected.keys() - actual.keys() | missing_host,
+                    "stale": stale_managed - set(spec.preserve) - set(allow_unmanaged),
                     "unmanaged": unmanaged,
                     "differs": {key for key in expected.keys() & actual.keys() if expected[key] != actual[key]},
                     "mode": {into} if stat.S_IMODE(owner.st_mode) != 0o600 or old.split("\n", 1)[0] != render.HEADER_LINE else set(),
@@ -192,7 +208,7 @@ def run(
             if preserved:
                 text += "\n# Preserved (host/deploy-owned)\n" + "\n".join(preserved) + "\n"
             plan = render._preflight_env_file(path, text, adopt=adopt, runtime=True,
-                                               allow_unmanaged=frozenset(allow_unmanaged))
+                                               allow_unmanaged=frozenset(allow_unmanaged) | frozenset(stale_managed))
             if plan.backup is not None:
                 _owned_write(Path(f"{path}.pre-envman"), plan.backup, owner, backup=True)
             _owned_write(path, plan.data, owner)

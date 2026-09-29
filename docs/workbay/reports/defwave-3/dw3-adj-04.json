@@ -1,0 +1,18 @@
+{
+  "lane": "dw3-adj-04",
+  "base": "c003e8de5c76a61e0d38b30aade1c23930178d50",
+  "results": [
+    {
+      "id": "UX0924-04",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx:483 renders each row's age from created_at. apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-maintenance-service.php:183,887-888,933-941 runs a terminal-failure purge with 7-day defaults; :999-1005 excludes auto_retry_exhausted from retry candidates; :759-763 and :1081-1086 only discard absent entities when the error code is entity-gone. apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-read-repository.php:409-414 exposes a tenant-scoped current label, but the failed-row reclaimer does not compare it.",
+      "severity": "medium",
+      "remaining_gap": "Dead-lettered cluster_label_updated rows are not reconciled against the current cluster label. Exhausted rows also bypass entity-gone cleanup because their error code is auto_retry_exhausted, so a vanished cluster is cleared only by retention rather than immediately.",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-maintenance-service.php"
+      ],
+      "size": "M",
+      "fix_hint": "Reconcile exhausted cluster label updates against tenant-scoped cluster state and resolve rows whose label already matches or whose cluster no longer exists."
+    }
+  ]
+}

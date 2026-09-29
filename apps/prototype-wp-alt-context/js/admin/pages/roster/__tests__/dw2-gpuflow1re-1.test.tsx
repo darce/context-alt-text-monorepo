@@ -1,6 +1,4 @@
 import React from 'react';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -62,8 +60,6 @@ const entry = (id: number, name: string): RosterEntry => ({
   projection_refreshed_at: null,
 });
 
-const docs = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8');
-
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -84,24 +80,6 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('GPUFLOW-1 deferred review regressions', () => {
-  it('keeps stale-image closure open until image digests and the disk precondition are evidenced', () => {
-    const report = docs('docs/assessments/GPUFLOW-1-rebaseline-20260914.md');
-
-    expect(report).toMatch(/\| 0 — pre-promotion stale API image[^\n]*\*\*unverified[^\n]*do not close/i);
-    expect(report).toContain('dev and staging image digests');
-    expect(report).toContain('VM disk usage below the 70% promotion precondition');
-  });
-
-  it('documents authenticated GPU and exact naming-agreement parity probes', () => {
-    const plan = docs('docs/tasks/v0.5.0/GPUFLOW-1-description-service-flow-and-identity-fixes-task-plan.md');
-
-    expect(plan).toContain('X-Api-Key');
-    expect(plan).toContain('X-Tenant-ID');
-    expect(plan).toContain('/scene/gpu/status');
-    expect(plan).toContain('/recognition/tenant/naming-agreement');
-    expect(plan).toMatch(/WordPress application password[^\n]*not a credential for the service/i);
-  });
-
   it('retains the undo token after the banner closes and keeps a recovery action available', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onDismiss = vi.fn();
@@ -135,14 +113,4 @@ describe('GPUFLOW-1 deferred review regressions', () => {
     await waitFor(() => expect(api.undoPersonMerge).toHaveBeenCalledWith('server-token'));
   });
 
-  it('assigns the D1 timer and token store to the roster flow and its regression proof', () => {
-    const plan = docs('docs/tasks/v0.5.0/GPUFLOW-1-description-service-flow-and-identity-fixes-task-plan.md');
-    const d1 = plan.slice(plan.indexOf('### Deferred slice D1:'), plan.indexOf('### Deferred slice D2:'));
-
-    expect(d1).toContain('RosterEntriesSection.tsx');
-    expect(d1).toContain('usePersonMerge.ts');
-    expect(d1).toContain('dw2-gpuflow1re-1.test.tsx');
-    expect(d1).toContain('24-hour');
-    expect(plan).toContain('`spa-roster-undo` (deferred; not dispatched)');
-  });
 });

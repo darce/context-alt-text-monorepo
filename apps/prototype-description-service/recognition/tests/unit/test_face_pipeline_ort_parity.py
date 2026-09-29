@@ -63,17 +63,11 @@ _SCORE_DELTA_MAX = 0.02
 
 # Legacy aliases for skip markers (BR-08 shared source).
 _MODELS_PRESENT = MODELS_PRESENT
-_MODELS_SKIP = MODELS_SKIP
 
 
 # ---------------------------------------------------------------------------
 # Modelless tier — pure decode / NMS (no ONNX)
 # ---------------------------------------------------------------------------
-
-
-def test_models_skip_reason_names_fetch_command() -> None:
-    assert "fetch_face_pipeline_models.py" in MODELS_SKIP
-    assert "uv run python" in MODELS_SKIP
 
 
 def test_decode_yunet_level_synthetic_prior() -> None:

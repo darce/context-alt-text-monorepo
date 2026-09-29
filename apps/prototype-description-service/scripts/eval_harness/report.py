@@ -1342,6 +1342,18 @@ def _validate_record_kind(run_record: dict[str, Any]) -> None:
             raise ReportError(f"items[{index}].face_count must be a non-negative integer")
         identities = item["identities"]
         _validate_identities_element_types(identities, context=f"items[{index}].identities")
+        if "detection_boxes" in item:
+            detection_boxes = item["detection_boxes"]
+            if not isinstance(detection_boxes, list):
+                raise ReportError(
+                    f"items[{index}].detection_boxes must be a list, got {type(detection_boxes).__name__}"
+                )
+            for box_index, bbox in enumerate(detection_boxes):
+                if bbox is not None and not isinstance(bbox, Mapping):
+                    raise ReportError(
+                        f"items[{index}].detection_boxes[{box_index}] must be a bbox object or null, "
+                        f"got {type(bbox).__name__}"
+                    )
 
 
 def _validate_identities_element_types(identities: Any, *, context: str) -> None:
@@ -2254,11 +2266,16 @@ def score_run_record(
             )
         stranger_faces = face_count - n_labeled
         identities_raw = item.get("identities") or []
-        # Preserve available pixel boxes and leave missing boxes visible to the
-        # strict geometry gate instead of silently scoring counts alone.
+        # Detection geometry follows every wire face, while identities remain
+        # filtered to confirmed labels for recognition scoring.
+        raw_detection_boxes = item.get("detection_boxes")
+        if "detection_boxes" not in item:
+            raw_detection_boxes = [
+                identity.get("bbox") if isinstance(identity, Mapping) else None
+                for identity in identities_raw
+            ]
         detection_boxes: list[tuple[Any, ...]] = []
-        for identity in identities_raw:
-            bbox = identity.get("bbox") if isinstance(identity, Mapping) else None
+        for bbox in raw_detection_boxes:
             if isinstance(bbox, Mapping):
                 detection_boxes.append(
                     (bbox.get("x"), bbox.get("y"), bbox.get("width"), bbox.get("height"))

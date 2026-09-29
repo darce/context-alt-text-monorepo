@@ -38,6 +38,7 @@ const { bulkDescribeState, fetchGpuStatusMock, fetchSettingsMock } = vi.hoisted(
     },
     runId: null,
     activeRunId: null,
+    unreadableMediaIds: [],
   } as Record<string, any>,
   fetchGpuStatusMock: vi.fn(),
   fetchSettingsMock: vi.fn(),
@@ -242,6 +243,7 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
       },
       runId: null,
       activeRunId: null,
+      unreadableMediaIds: [],
     });
   });
 

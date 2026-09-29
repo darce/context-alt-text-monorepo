@@ -188,11 +188,6 @@ def test_sessionmaker_survives_cancelled_in_flight_query():
     asyncio.run(body())
 
 
-def test_worker_module_importable():
-    """RED baseline: module must exist for Slice 2."""
-    from scene.application.describe_async_worker import run_async_describe_job  # noqa: F401
-
-
 def test_worker_records_cpu_provisional_then_gpu_final():
     """Supersede ordering: tier + result_generation 1→2; envelope keys; FINAL cached."""
 

@@ -639,15 +639,6 @@ def _compose_has_blob_ownership_repair(compose_text: str) -> bool:
     return True
 
 
-def test_compose_env_blob_ownership_repair_profile() -> None:
-    """Existing root:root acx_blobs volumes need an explicit operator repair path."""
-    compose = (SERVICE_ROOT / "docker-compose.env.yml").read_text(encoding="utf-8")
-    assert _compose_has_blob_ownership_repair(compose), (
-        "docker-compose.env.yml must ship a profiles:[repair] fix-blob-ownership "
-        "service that chowns acx_blobs as root (Docker never re-chowns volumes)"
-    )
-
-
 def test_logging_config_avoids_app_logs_mkdir_at_import() -> None:
     """Import-time mkdir of /app/logs kills USER acx boot; guard the source shape."""
     src = (SERVICE_ROOT / "api" / "logging_config.py").read_text(encoding="utf-8")

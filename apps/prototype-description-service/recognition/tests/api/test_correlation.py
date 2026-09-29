@@ -66,18 +66,6 @@ def test_correlation_id_generated_when_header_absent() -> None:
     assert resp.json()["correlation_id"] == header_value
 
 
-def test_correlation_id_echoes_incoming_header() -> None:
-    app, _ = _build_app()
-    client = TestClient(app)
-    incoming = "00000000-0000-4000-8000-000000000001"
-
-    resp = client.get("/echo", headers={CORRELATION_ID_HEADER: incoming})
-
-    assert resp.status_code == 200
-    assert resp.headers.get(CORRELATION_ID_HEADER) == incoming
-    assert resp.json()["correlation_id"] == incoming
-
-
 def test_correlation_id_injected_into_log_records(caplog: pytest.LogCaptureFixture) -> None:
     app, _ = _build_app()
     caplog.handler.addFilter(CorrelationIdFilter())

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, select, update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
 from db.base import Base
@@ -109,11 +110,68 @@ def test_service_satisfies_published_runtime_protocol() -> None:
     assert isinstance(UsageAdmissionService.__new__(UsageAdmissionService), UsageAdmissionServiceProtocol)
 
 
-def test_reservation_path_locks_entitlement_before_check_and_insert() -> None:
-    source = inspect.getsource(SqlAlchemyUsageRepository.reserve)
-    assert "with_for_update" in source
-    assert "UsageReservationStatus.RESERVED" in source
-    assert "_CHARGEABLE_RESERVATION_STATUSES" in source
+@pytest.mark.asyncio
+async def test_reservation_path_locks_entitlement_before_check_and_insert() -> None:
+    tenant_id = uuid4()
+    period_start = datetime.now(tz=UTC)
+    entitlement = SimpleNamespace(period_start=period_start, allowance_jobs=1)
+
+    class _Result:
+        def __init__(self, *, row=None, scalar=None) -> None:
+            self._row = row
+            self._scalar = scalar
+
+        def scalar_one_or_none(self):
+            return self._row
+
+        def scalar_one(self):
+            return self._scalar
+
+    class _RecordingSession:
+        def __init__(self) -> None:
+            self.actions: list[str] = []
+            self.entitlement_statement = None
+
+        async def execute(self, statement):
+            if statement.selected_columns[0].name == "coalesce":
+                self.actions.append("usage check")
+                return _Result(scalar=0)
+            entity = statement.column_descriptions[0].get("entity")
+            if entity is UsageReservation:
+                self.actions.append("reservation lookup")
+                return _Result(row=None)
+            if entity is TenantEntitlement:
+                self.actions.append("entitlement lock")
+                self.entitlement_statement = statement
+                return _Result(row=entitlement)
+            raise AssertionError(f"unexpected repository query: {statement!r}")
+
+        def add(self, _reservation) -> None:
+            self.actions.append("insert")
+
+        async def flush(self) -> None:
+            self.actions.append("flush")
+
+    session = _RecordingSession()
+    await SqlAlchemyUsageRepository(session).reserve(
+        tenant_id,
+        idempotency_key="request-1",
+        job_id="job-1",
+        cost_units=1,
+    )
+
+    assert session.actions == [
+        "reservation lookup",
+        "entitlement lock",
+        "reservation lookup",
+        "usage check",
+        "insert",
+        "flush",
+    ]
+    assert session.entitlement_statement is not None
+    assert "FOR UPDATE" in str(session.entitlement_statement.compile(dialect=postgresql.dialect())), (
+        "the executed entitlement query must compile with FOR UPDATE"
+    )
 
 
 @pytest.mark.asyncio

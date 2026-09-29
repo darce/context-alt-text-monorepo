@@ -532,7 +532,3 @@ async def test_failed_audit_does_not_commit_grant(database) -> None:
         ).scalar_one_or_none()
 
     assert row is None
-
-
-def test_repository_is_the_sqlalchemy_implementation() -> None:
-    assert SqlAlchemyTenantEntitlementRepository.__name__ == "SqlAlchemyTenantEntitlementRepository"

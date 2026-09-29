@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { availableParallelism } from 'node:os';
 import path from 'path';
 
 const domTests = [
@@ -83,7 +84,8 @@ export default defineConfig(({ mode }) => ({
   test: {
     globals: true,
     pool: 'forks',
-    maxWorkers: '50%',
+    // Keep forks below laptop memory pressure while retaining parallelism on constrained hosts.
+    maxWorkers: Math.max(2, Math.floor(availableParallelism() / 2)),
     projects: [
       {
         extends: true,

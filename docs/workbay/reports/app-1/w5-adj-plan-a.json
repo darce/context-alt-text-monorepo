@@ -1,0 +1,38 @@
+{
+  "lane": "w5-adj-plan-a",
+  "base": "0ffa68c15ac14e5ef4380ae463c0fc7518acf20a",
+  "results": [
+    {
+      "id": "APP1-CONT-P02",
+      "verdict": "PARTIAL",
+      "evidence": "docs/assessments/current/app1-offline-evidence-reconciliation-20260922.md:20 - the scene compute routes and covered operator controls are offline-addressed, but the residual census remains pending; docs/assessments/current/app-1-s0-route-metering-inventory.md:68 - /roster/curation/sync is still marked unauthenticated and unmetered; apps/prototype-description-service/api/main.py:601 and apps/prototype-description-service/roster/interface_adapters/http/curation_router.py:49-53 - the mounted handler derives tenant_id from get_tenant_id; apps/prototype-description-service/recognition/interface_adapters/http/deps/tenant_common.py:19-27 - that dependency accepts X-Tenant-ID or query tenant_id and only validates its format.",
+      "severity": "high",
+      "remaining_gap": "The three scene compute POSTs and covered paid-only operator controls have source-and-receipt coverage, but residual OPEN-Q paths remain unclassified; /roster/curation/sync remains an unauthenticated, caller-tenant-selected mutation without durable usage admission, so complete dispatch coverage and tenant isolation are not established.",
+      "fix_files": [
+        "apps/prototype-description-service/roster/interface_adapters/http/curation_router.py",
+        "apps/prototype-description-service/recognition/interface_adapters/http/deps/tenant_common.py",
+        "apps/prototype-description-service/recognition/interface_adapters/http/deps/usage_admission.py",
+        "docs/assessments/current/app-1-s0-route-metering-inventory.md",
+        "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md"
+      ],
+      "size": "M",
+      "fix_hint": "Complete the OPEN-Q census, replace caller-supplied tenant selection on /roster/curation/sync with authenticated tenant binding, and assign bounded admission or an explicit free-control budget to every remaining costly handler before refreshing W4 ownership."
+    },
+    {
+      "id": "APP1-CONT-P04",
+      "verdict": "PARTIAL",
+      "evidence": "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:28 - the billing spec now exists and the plan says S0 route/E16-7 documents retain pre-implementation claims; docs/assessments/current/app-1-s0-e16-7-disposition-matrix.md:14 - still says create_app mounts no portal router; apps/prototype-description-service/api/main.py:606-609 - create_app conditionally installs and mounts portal_router and billing_webhooks_router; docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:225 - says to refresh the old manifest before dispatch.",
+      "severity": "medium",
+      "remaining_gap": "The missing-spec and precedence headline is addressed, but the E16-7 matrix still contains contradicted no-portal-router claims and other pre-implementation dispositions; the old W4 manifest's dependencies and shared-file ownership are still called out for refresh before dispatch.",
+      "fix_files": [
+        "docs/assessments/current/app-1-s0-e16-7-disposition-matrix.md",
+        "docs/assessments/current/app-1-s0-route-metering-inventory.md",
+        "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md",
+        "docs/specs/app-portal-account-billing-spec.md",
+        "config/lane-orchestration/APP-1.json"
+      ],
+      "size": "M",
+      "fix_hint": "Replace the stale E16-7 and route claims with source-matched dispositions, then refresh the W4 manifest's dependencies and shared-file owners before dispatch."
+    }
+  ]
+}

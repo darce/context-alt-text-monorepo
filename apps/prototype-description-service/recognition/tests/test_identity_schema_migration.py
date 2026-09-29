@@ -545,7 +545,7 @@ def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_
         )
         patch.setattr(identity_schema, "_ensure_index", lambda *args, **kw: None)
         patch.setattr(identity_schema, "ensure_identity_vector_typmods", lambda op: None)
-        identity_schema.ensure_tables(None)
+        identity_schema.ensure_tables(_RecordingOp())
     elements, kw = captured[table_name]
     timing_columns = {
         "queue_ms",

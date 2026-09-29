@@ -1,6 +1,7 @@
 """Service tests for suggestion refresh logic."""
 
 import uuid
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
@@ -193,6 +194,7 @@ class TestRefreshForCluster:
         )
         suggestion_repo = AsyncMock()
         suggestion_repo.get_by_cluster.return_value = [suggestion]
+        suggestion_repo.update_status.return_value = replace(suggestion, status=SuggestionStatus.EXPIRED)
         cluster_repo = AsyncMock()
         cluster_repo.get_by_id.return_value = MagicMock(id=cluster_id)
         cluster_repo.get_members.return_value = [MagicMock(identity_id=identity_id)]

@@ -50,6 +50,10 @@ class InvalidUsageRequestError(ValueError):
     """The caller supplied an invalid usage request or ticket."""
 
 
+class ExpiredUsageReservationError(InvalidUsageRequestError):
+    """The idempotency key identifies an expired reservation."""
+
+
 class AllowanceExceededError(UsageAdmissionError):
     """No active entitlement has enough remaining allowance."""
 
@@ -152,6 +156,8 @@ class SqlAlchemyUsageRepository:
 
         existing = await self._get_by_idempotency_key(tenant_id, idempotency_key)
         if existing is not None:
+            if existing.status == UsageReservationStatus.EXPIRED:
+                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
             # A stale RESERVED retry can be returned here, but _settle applies
             # this same lease before charging it, so replay cannot extend it.
             return existing
@@ -192,6 +198,8 @@ class SqlAlchemyUsageRepository:
         # first lookup while this request waits for the entitlement lock.
         existing = await self._get_by_idempotency_key(tenant_id, idempotency_key)
         if existing is not None:
+            if existing.status == UsageReservationStatus.EXPIRED:
+                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
             return existing
 
         lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
@@ -328,6 +336,7 @@ SqlAlchemyUsageAdmissionRepository = SqlAlchemyUsageRepository
 
 __all__ = [
     "AllowanceExceededError",
+    "ExpiredUsageReservationError",
     "InvalidUsageRequestError",
     "ReservationNotFoundError",
     "SqlAlchemyUsageRepository",

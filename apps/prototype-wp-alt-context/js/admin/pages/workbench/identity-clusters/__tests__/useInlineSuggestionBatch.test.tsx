@@ -71,7 +71,7 @@ describe('useInlineSuggestionBatch', () => {
     });
 
     const identityIds = Array.from({ length: 201 }, (_, index) => `identity-${index}`);
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -93,7 +93,7 @@ describe('useInlineSuggestionBatch', () => {
     });
 
     const identityIds = Array.from({ length: 901 }, (_, index) => `identity-${index}`);
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));

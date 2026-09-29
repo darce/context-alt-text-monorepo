@@ -212,3 +212,39 @@ async def test_admit_usage_yields_once_when_admission_is_disabled() -> None:
     with pytest.raises(StopAsyncIteration):
         await anext(dependency)
     await dependency.aclose()
+
+
+@pytest.mark.asyncio
+async def test_admit_usage_maps_expired_idempotency_key_to_conflict() -> None:
+    from fastapi import HTTPException
+    from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
+    from recognition.interface_adapters.http.deps.portal_composition import admit_usage
+
+    class _ExpiredReservationService:
+        def __init__(self) -> None:
+            self.commits: list[object] = []
+            self.releases: list[object] = []
+
+        async def reserve(self, tenant_id: UUID, **_kwargs: object) -> object:
+            raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
+
+        async def commit(self, ticket: object) -> None:
+            self.commits.append(ticket)
+
+        async def release(self, ticket: object) -> None:
+            self.releases.append(ticket)
+
+    service = _ExpiredReservationService()
+    dependency = admit_usage(
+        _request(path="/recognition/analyze", body=b"{}", content_type="application/json"),
+        service,
+        SimpleNamespace(tenant_claim=str(uuid4())),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await anext(dependency)
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "idempotency key expired; retry with a new key"
+    assert service.commits == []
+    assert service.releases == []

@@ -1,22 +1,22 @@
 {
   "schema_version": 2,
   "source_kind": "package",
-  "package_version": "0.4.11",
+  "package_version": "0.4.13",
   "gitonly_closure_url": "https://github.com/darce/workbay.git",
-  "gitonly_closure_ref": "v0.1.69",
+  "gitonly_closure_ref": "v0.1.70",
   "stack_distribution": "workbay",
-  "stack_version": "0.3.57",
+  "stack_version": "0.3.59",
   "stack_members": {
-    "mcp-workbay-handoff": "0.3.7",
-    "mcp-workbay-orchestrator": "0.3.10",
-    "workbay-bootstrap": "0.4.11",
-    "workbay-protocol": "0.3.2",
-    "workbay-system": "0.4.11"
+    "mcp-workbay-handoff": "0.3.8",
+    "mcp-workbay-orchestrator": "0.3.11",
+    "workbay-bootstrap": "0.4.13",
+    "workbay-protocol": "0.3.3",
+    "workbay-system": "0.4.13"
   },
   "stack_source": {
     "resolved_from": "git",
-    "ref": "v0.1.69",
-    "sha": "29453638a125c56d228d5f316bbcb80f99ec29e0"
+    "ref": "v0.1.70",
+    "sha": "7ed83ffff0a4cbeb3363eb709ea249339d6aec4e"
   },
   "profile": "all",
   "surfaces": [
@@ -43,27 +43,27 @@
     {
       "path": "Makefile.d/ace.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/check.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/lane-gate.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -72,27 +72,27 @@
     {
       "path": "Makefile.d/review-pipeline.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "scripts/workbay/check_all_cache.py",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "scripts/workbay/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "scripts/workbay/wb",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": ".codex/hooks.json",
@@ -101,33 +101,21 @@
     {
       "path": "scripts/remote_agent.sh",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "scripts/review_pipeline.py",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": "scripts/assert_gate_interpreter.sh",
       "source": "shared",
-      "provenance_key": "package:0.4.11"
+      "provenance_key": "package:0.4.13"
     },
     {
       "path": ".github/prompts",
       "source": "generated"
-    },
-    {
-      "path": "scripts/generate_agent_workflows.py",
-      "source": "shared"
-    },
-    {
-      "path": "config/agent-workflows/portable_commands.json",
-      "source": "shared"
-    },
-    {
-      "path": "skills",
-      "source": "shared"
     },
     {
       "path": ".workbay/generated/plugins/workbay-system/base",
@@ -135,10 +123,6 @@
     },
     {
       "path": ".workbay/generated/plugins/workbay-system/effective",
-      "source": "generated"
-    },
-    {
-      "path": ".cursor/hooks.json",
       "source": "generated"
     },
     {
@@ -190,7 +174,7 @@
     },
     {
       "path": ".cursor",
-      "action": "updated",
+      "action": "applied",
       "kind": "cursor_native_surfaces"
     },
     {
@@ -284,19 +268,19 @@
   "gitonly_mcp_tools": [
     {
       "name": "mcp-workbay-handoff",
-      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.69#subdirectory=packages/mcp-workbay-handoff"
+      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.70#subdirectory=packages/mcp-workbay-handoff"
     },
     {
       "name": "mcp-workbay-orchestrator",
-      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.69#subdirectory=packages/mcp-workbay-orchestrator"
+      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.70#subdirectory=packages/mcp-workbay-orchestrator"
     }
   ],
-  "codemap_mode": "available",
   "embeddings_operator_policy": {
     "embeddings_policy": "preferred",
     "reinjection_policy": "on",
     "policy_revision": 1,
     "origin": "migrated",
     "intent": "known"
-  }
+  },
+  "codemap_mode": "available"
 }

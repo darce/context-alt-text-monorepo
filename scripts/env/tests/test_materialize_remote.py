@@ -110,8 +110,15 @@ def test_wrapper_uses_oci_destination(remote, overrides, destination):
     result = run(remote, "dev", "t")
     assert result.returncode == 0, result.stderr
     args = ssh_args(remote)
-    assert len(args) == 2
-    assert args[0] == destination
+    destination_index = args.index(destination)
+    assert destination_index == len(args) - 2
+    option_indices = [index for index, argument in enumerate(args) if argument == "-o"]
+    assert option_indices
+    assert all(index < destination_index for index in option_indices)
+    assert "BatchMode=yes" in args
+    assert "ConnectTimeout=15" in args
+    assert "ServerAliveInterval=15" in args
+    assert "ServerAliveCountMax=4" in args
 
 
 @pytest.mark.parametrize("environment", ["dev", "prod"])

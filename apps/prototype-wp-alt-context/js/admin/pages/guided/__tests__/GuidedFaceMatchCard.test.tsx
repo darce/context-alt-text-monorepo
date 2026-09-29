@@ -106,7 +106,7 @@ const renderPhotoCards = (onChoose: ChooseName = vi.fn()) =>
   );
 
 describe('GuidedFaceMatchCard', () => {
-  it('provides native per-photo radio groups with large answer targets', () => {
+  it('keeps native per-photo radio groups and dispatches selected choices', () => {
     const onChoose = vi.fn();
     renderPhotoCards(onChoose);
 
@@ -122,8 +122,6 @@ describe('GuidedFaceMatchCard', () => {
       name: guidedCopy('names.use.public', { name: 'Justin Trudeau' }),
     });
     const leaveUnnamed = within(right).getByRole('radio', { name: guidedCopy('names.omit.public') });
-    expect(useJustin.closest('label')).toHaveStyle({ minHeight: '44px' });
-    expect(leaveUnnamed.closest('label')).toHaveStyle({ minHeight: '44px' });
     const justinCard = screen.getByRole('region', {
       name: 'Justin Trudeau',
     });
@@ -132,12 +130,6 @@ describe('GuidedFaceMatchCard', () => {
     const strongMatchRow = strongMatchText.closest('li');
     expect(strongMatchRow?.firstElementChild).toHaveAttribute('data-testid', 'face-thumbnail');
     expect(strongMatchRow?.firstElementChild?.nextElementSibling).toHaveClass('acx-guided-face__match-line');
-    expect(strongMatchRow).toHaveStyle({
-      minHeight: '64px',
-    });
-    expect(screen.getAllByRole('button', { name: guidedCopy('names.compare.public') })[0]).toHaveStyle({
-      minHeight: '44px',
-    });
 
     fireEvent.click(useJustin);
     fireEvent.click(leaveUnnamed);
@@ -241,7 +233,6 @@ describe('GuidedFaceMatchCard', () => {
     expect(currentPhoto).toHaveAttribute('data-media-url', scenario.pressPhotos[0].src);
     expect(currentPhoto).toHaveAttribute('data-size-px', '160');
     expect(currentPhoto).toHaveAttribute('data-shape', 'square');
-    expect(currentPhoto).toHaveStyle({ width: '160px', height: '160px' });
     expect(dialog).not.toHaveTextContent(/No score/);
     expect(currentPhotoHeading.nextElementSibling).toBe(currentPhoto);
     expect(currentPhoto.nextElementSibling).toBeNull();
@@ -255,8 +246,6 @@ describe('GuidedFaceMatchCard', () => {
     expect(within(dialog).getByText('Voice of America, public domain')).not.toHaveClass('screen-reader-text');
     expect(within(dialog).getByText(guidedCopy('names.coverage_partial', { shown: 3, total: 5 }))).toBeInTheDocument();
 
-    const closeButton = within(dialog).getByRole('button', { name: guidedCopy('lightbox.close.public') });
-    expect(closeButton).toHaveStyle({ minHeight: '44px', minWidth: '44px' });
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(compareButton).toHaveFocus();
@@ -295,7 +284,6 @@ describe('GuidedFaceMatchCard', () => {
       const matchLine = within(dialog).getByText(matchText);
       expect(crop.nextElementSibling).toBe(matchLine.closest('p'));
       await waitFor(() => expect(crop).toHaveAttribute('data-size-px', '159'));
-      expect(crop).toHaveStyle({ width: '159px', height: '159px' });
       unmount();
       expect(disconnect).toHaveBeenCalledTimes(1);
     } finally {

@@ -50,3 +50,28 @@ def test_invalid_env_literal_values_fail(value: str) -> None:
     assert result.returncode != 0
     assert "ERROR:" in result.stderr
     assert value not in result.stdout + result.stderr
+
+
+def test_preflight_accepts_interpolation_markers_inside_single_quoted_value(tmp_path: Path) -> None:
+    from test_preflight_gpu_env import run_preflight, valid_demo_env, valid_env
+
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_API_KEY"] = "'p$ss #x'"
+
+    result = run_preflight(tmp_path, producer=producer, demo=valid_demo_env())
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("value", ["p$ss", '"p$ss"'])
+def test_preflight_still_rejects_interpolation_in_contract_values(tmp_path: Path, value: str) -> None:
+    from test_preflight_gpu_env import run_preflight, valid_demo_env, valid_env
+
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_API_KEY"] = value
+
+    result = run_preflight(tmp_path, producer=producer, demo=valid_demo_env())
+
+    assert result.returncode != 0
+    assert "ERROR [7]" in result.stderr
+    assert "interpolation" in result.stderr

@@ -5,23 +5,12 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 class OutboxQueryRepositoryTest extends TestCase
 {
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-    }
+    use FindsSqlQueries;
 
     public function testFindFailedOperationsReturnsDecodedRowsOrderedByDate(): void
     {

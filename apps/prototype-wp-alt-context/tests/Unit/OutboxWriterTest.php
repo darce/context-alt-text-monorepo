@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 class OutboxWriterTest extends TestCase
 {
+	use FindsSqlQueries;
+
 	public function testEnqueuePersistsPendingOutboxOperation(): void
 	{
 		global $wpdb;
@@ -59,21 +62,6 @@ class OutboxWriterTest extends TestCase
 		$this->assertFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
 		$this->assertNotEmpty($wpdb->queries);
-	}
-
-	/**
-	 * @param array<int,string> $queries
-	 */
-	private function findQueryContaining(array $queries, string $needle): string
-	{
-		foreach ($queries as $query) {
-			if (str_contains($query, $needle)) {
-				return $query;
-			}
-		}
-
-		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
-		return '';
 	}
 
 	private function isHookScheduled(string $hook): bool

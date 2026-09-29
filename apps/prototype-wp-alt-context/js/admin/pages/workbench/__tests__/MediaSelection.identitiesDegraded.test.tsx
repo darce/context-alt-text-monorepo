@@ -129,6 +129,7 @@ vi.mock('../../../hooks/useBulkDescribe', () => ({
       isFrozen: false,
     },
     runId: null,
+    unreadableMediaIds: [],
   }),
 }));
 

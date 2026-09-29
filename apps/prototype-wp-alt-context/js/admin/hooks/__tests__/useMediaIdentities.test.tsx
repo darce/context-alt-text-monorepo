@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +5,7 @@ import { RECOVERY_DELAY_FLOOR_MS, useMediaIdentities } from '../useMediaIdentiti
 import * as recognitionApi from '../../api/recognition';
 import { HTTPError } from '../../utils/errorTaxonomy';
 import { RETRY_AFTER_MAX_MS } from '../../utils/retryAfter';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import {
   _resetCooldownForTests,
   DEFAULT_COOLDOWN_SECONDS,
@@ -39,16 +38,6 @@ const identityHttpError = (status: number, retryAfterSeconds?: number): HTTPErro
 const identitySuccess: recognitionApi.MediaIdentitiesResponse = { identities_by_media: {} };
 
 describe('useMediaIdentities', () => {
-  const createWrapper = () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-    return { wrapper, queryClient };
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
     _resetCooldownForTests();
@@ -60,7 +49,8 @@ describe('useMediaIdentities', () => {
   });
 
   it('fetches identities when enabled and media IDs exist', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
     fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
@@ -80,7 +70,8 @@ describe('useMediaIdentities', () => {
   });
 
   it('does not issue a fetch when disabled or when IDs are empty', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
 
     renderHook(() => useMediaIdentities([], true), { wrapper });
     renderHook(() => useMediaIdentities([3], false), { wrapper });
@@ -93,7 +84,8 @@ describe('useMediaIdentities', () => {
   it('retries a 503 before exposing an error and waits out the shared cooldown', async () => {
     vi.useFakeTimers();
     openCooldown(5);
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock
       .mockRejectedValueOnce(identityHttpError(503))
@@ -125,7 +117,8 @@ describe('useMediaIdentities', () => {
 
   it('exhausts two retries for repeated 429s before entering the error state', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(identityHttpError(429));
 
@@ -149,7 +142,8 @@ describe('useMediaIdentities', () => {
 
   it('waits for a 120-second Retry-After before retrying', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock
       .mockRejectedValueOnce(identityHttpError(429, 120))
@@ -179,7 +173,8 @@ describe('useMediaIdentities', () => {
 
   it('surfaces a 429 without retrying when Retry-After exceeds the shared bound', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(
       identityHttpError(429, RETRY_AFTER_MAX_MS / 1000 + 1),
@@ -198,7 +193,8 @@ describe('useMediaIdentities', () => {
   });
 
   it('does not retry a 403 auth error', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(identityHttpError(403));
 
@@ -216,7 +212,8 @@ describe('useMediaIdentities', () => {
     ['timeout', Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })],
   ])('retries a transient %s failure', async (_kind, transientError) => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock
       .mockRejectedValueOnce(transientError)
@@ -242,7 +239,8 @@ describe('useMediaIdentities', () => {
 
   it('S3-T5: one-shot recovery latch — arms once per error episode, floor delay, no re-arm on second error', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
 
@@ -286,7 +284,8 @@ describe('useMediaIdentities', () => {
     vi.setSystemTime(new Date('2026-07-16T12:00:00.000Z'));
     openCooldown(DEFAULT_COOLDOWN_SECONDS + 30); // 60s cooldown > floor
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
 
@@ -320,7 +319,8 @@ describe('useMediaIdentities', () => {
 
   it('S3-T5: unmount cancels pending recovery; success resets the latch for a later episode', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
 
@@ -375,7 +375,8 @@ describe('useMediaIdentities', () => {
     // Cooldown longer than floor so runAfterCooldown defers past the outer timer.
     openCooldown(DEFAULT_COOLDOWN_SECONDS + 30);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
 
@@ -435,7 +436,8 @@ describe('useMediaIdentities', () => {
 
   it('BR-04: single-instance latch reset — error → recovery → success → error arms again', async () => {
     vi.useFakeTimers();
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     fetchMediaIdentitiesMock.mockRejectedValue(new Error('timeout'));
 

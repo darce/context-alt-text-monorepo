@@ -1,7 +1,6 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { fetchRecentBatchRuns, fetchScanStatus, type RecentBatchRunsResponse } from '../../api/recognition';
 import { useRecognitionJobHistory } from '../useRecognitionJobHistory';
 
@@ -28,16 +27,6 @@ describe('useRecognitionJobHistory', () => {
   const fetchScanStatusMock = vi.mocked(fetchScanStatus);
   const fetchRecentBatchRunsMock = vi.mocked(fetchRecentBatchRuns);
 
-  const createWrapper = () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-    return { wrapper, queryClient };
-  };
-
   beforeEach(() => {
     window.localStorage.clear();
     fetchScanStatusMock.mockReset();
@@ -45,7 +34,8 @@ describe('useRecognitionJobHistory', () => {
   });
 
   it('prefers durable recent batch runs and fetches their latest job statuses', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const recentBatchRunsDeferred = createDeferred<RecentBatchRunsResponse>();
     const statusDeferred = createDeferred<{
       id: string;
@@ -118,7 +108,8 @@ describe('useRecognitionJobHistory', () => {
   });
 
   it('falls back to browser-local history when durable activity is unavailable', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
     const recentBatchRunsDeferred = createDeferred<never>();
     fetchRecentBatchRunsMock.mockReturnValue(recentBatchRunsDeferred.promise);
@@ -174,7 +165,8 @@ describe('useRecognitionJobHistory', () => {
   });
 
   it('reports unavailable when durable activity cannot load and no local history exists', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const recentBatchRunsDeferred = createDeferred<never>();
     fetchRecentBatchRunsMock.mockReturnValue(recentBatchRunsDeferred.promise);
 
@@ -198,7 +190,8 @@ describe('useRecognitionJobHistory', () => {
   });
 
   it('does not revive browser-local history when durable activity loads successfully but is empty', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
     fetchRecentBatchRunsMock.mockResolvedValue({ items: [] });
 
@@ -219,7 +212,8 @@ describe('useRecognitionJobHistory', () => {
   });
 
   it('does not poll terminal durable job IDs through transient job-status endpoints', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     fetchRecentBatchRunsMock.mockResolvedValue({
       items: [
         {

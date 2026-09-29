@@ -47,7 +47,7 @@ PY
 printf -v arguments ' --env %q --target %q --into %q' "$environment" "$target" "$remote_path"
 [[ $mode != --check ]] || arguments+=' --check'
 [[ $adopt != true ]] || arguments+=' --adopt'
-remote_command='set -eu; tmp=$(mktemp -d); trap '\''rm -rf -- "$tmp"'\'' EXIT; tar -xf - -C "$tmp"; sudo python3 "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
+remote_command='set -eu; tmp=$(mktemp -d); trap '\''rm -rf -- "$tmp"'\'' EXIT; tar -xf - -C "$tmp"; sudo python3 -B "$tmp/scripts/env/render_env.py" materialize --root "$tmp/config/env"'
 remote_command+=$arguments
 
 # tarfile maps an arbitrary manifest directory without platform-specific tar transforms.

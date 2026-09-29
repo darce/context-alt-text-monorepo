@@ -119,7 +119,7 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
     )
 
 
-def _build_florence_small_adapter(settings: DescriptionSettings) -> DescriptionAdapter:
+def _build_florence_small_adapter(settings: DescriptionSettings | None) -> DescriptionAdapter:
     from scene.application.settings.vlm import VlmSettings
     from scene.infrastructure.vlm import get_shared_local_cpu_adapter
 
@@ -139,6 +139,16 @@ def _build_florence_small_adapter(settings: DescriptionSettings) -> DescriptionA
         num_beams=spec.num_beams or 3,
         max_new_tokens=spec.max_new_tokens or 512,
     )
+
+
+def local_cpu_adapter_is_usable() -> bool:
+    """Check Florence adapter construction without reading secrets or loading weights."""
+    try:
+        _build_florence_small_adapter(None)
+    except (ImportError, RuntimeError, ValueError) as exc:
+        logger.warning("local CPU description adapter readiness failed: %s", exc, exc_info=True)
+        return False
+    return True
 
 
 def get_cpu_description_adapter() -> DescriptionAdapter:

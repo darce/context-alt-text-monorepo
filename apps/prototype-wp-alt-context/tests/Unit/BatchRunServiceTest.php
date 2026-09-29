@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\Services\BatchRunService;
 use AltContext\Tests\TestCase;
+use AltContext\Settings\RecognitionPolicy;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -20,6 +21,7 @@ class BatchRunServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->service = new BatchRunService(new AnalysisJobsController());
     }

@@ -1,0 +1,18 @@
+{
+  "lane": "cull-js-other-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 40,
+  "tests_in_partition": 591,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineUtils.test.ts::keeps the processed image count monotonic when clustering progress replaces scan progress",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineProgress.test.ts::keeps completed scan totals when clustering starts before the fallback scan payload catches up; assertion at apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineProgress.test.ts:41",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobStateMachineUtils.test.ts:22,32 - same buildScanProgress seam and clustering phase; the expected completed 10/10 snapshot matches the covering assertion.",
+      "canon": "REF-26",
+      "confidence": "medium",
+      "cost": "cheap"
+    }
+  ]
+}

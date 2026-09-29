@@ -9,6 +9,7 @@ use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Tests\TestCase;
+use AltContext\Settings\RecognitionPolicy;
 use PHPUnit\Framework\Attributes\DataProvider;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -26,6 +27,7 @@ class ProxyRequestTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
 
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_recognition_source', 'service');

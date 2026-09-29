@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { extractRouteFromHash, ensureHashInitialized } from '../utils/routeHelpers';
 
 describe('routeHelpers', () => {

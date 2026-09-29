@@ -9,6 +9,7 @@ use AltContext\Api\Services\BatchRunService;
 use AltContext\Api\Services\JobProgressStreamService;
 use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\TestCase;
@@ -24,6 +25,7 @@ class AnalysisJobsControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->setOption('acx_tier', 'free');
         $this->controller = new AnalysisJobsController();

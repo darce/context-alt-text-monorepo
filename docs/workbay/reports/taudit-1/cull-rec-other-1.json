@@ -1,0 +1,18 @@
+{
+  "lane": "cull-rec-other-1",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 39,
+  "tests_in_partition": 498,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/api/test_correlation.py::test_correlation_id_echoes_incoming_header",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/recognition/tests/api/test_request_id.py::test_valid_v4_is_preserved_and_echoed (assertions at apps/prototype-description-service/recognition/tests/api/test_request_id.py:121 and :122)",
+      "evidence": "apps/prototype-description-service/recognition/tests/api/test_correlation.py:77 asserts the incoming valid UUIDv4 is returned in the response header; :78 asserts the body carries the same ID; apps/prototype-description-service/recognition/tests/api/test_request_id.py:121 and :122 assert the same through the same CorrelationIdMiddleware seam with raw ASGI header bytes",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

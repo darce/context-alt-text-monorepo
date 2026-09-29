@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\Api;
 use AltContext\Api\Services\PersonResolutionService;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -25,6 +26,8 @@ use WP_REST_Response;
  */
 class PersonDedupeRebindTest extends TestCase
 {
+	use FindsSqlQueries;
+
 	private Api $api;
 
 	protected function setUp(): void
@@ -226,18 +229,4 @@ class PersonDedupeRebindTest extends TestCase
 		$this->assertNotContains('COMMIT', $wpdb->queries);
 	}
 
-	/**
-	 * @param array<int,string> $queries
-	 */
-	private function findQueryContaining(array $queries, string $needle): string
-	{
-		foreach ($queries as $query) {
-			if (str_contains($query, $needle)) {
-				return $query;
-			}
-		}
-
-		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
-		return '';
-	}
 }

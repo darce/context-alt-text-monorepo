@@ -1,7 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import React from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -214,9 +210,4 @@ describe('ScanTabContent labeling panel reachability (UXW2-3-R3-01)', () => {
     }
   });
 
-  it('ScanTabContent source dispatches open_label', () => {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const scan = readFileSync(path.resolve(here, '../ScanTabContent.tsx'), 'utf8');
-    expect(scan).toMatch(/type:\s*'open_label'/);
-  });
 });

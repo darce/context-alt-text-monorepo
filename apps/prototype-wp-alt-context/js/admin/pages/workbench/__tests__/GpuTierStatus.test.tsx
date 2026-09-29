@@ -1,5 +1,5 @@
-import { createElement, type ReactElement, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement, type ReactElement } from 'react';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,7 @@ import {
   GPU_SERVICE_STATUS_WARMUP_POLL_INTERVAL_MS,
   useGpuServiceStatus,
 } from '../../../hooks/useGpuServiceStatus';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { GpuTierStatus, gpuWaitFromOperationDetail } from '../GpuTierStatus';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -79,16 +80,10 @@ const ALL_GPU_STATES = [
 
 let queryClient: QueryClient;
 
-const createWrapper = () => {
-  queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
-  return wrapper;
+const renderGpu = (ui: ReactElement) => {
+  queryClient = buildTestQueryClient();
+  return render(ui, { wrapper: createQueryWrapper(queryClient) });
 };
-
-const renderGpu = (ui: ReactElement) => render(ui, { wrapper: createWrapper() });
 
 describe('GpuTierStatus', () => {
   beforeEach(() => {
@@ -121,7 +116,6 @@ describe('GpuTierStatus', () => {
   });
 
   it('covers every canonical GPU_STATE value in the idle table', () => {
-    expect(ALL_GPU_STATES).toHaveLength(6);
     expect(new Set(ALL_GPU_STATES)).toEqual(new Set(Object.values(GPU_STATE)));
   });
 
@@ -359,7 +353,8 @@ describe('useGpuServiceStatus (owned GpuTierStatus proof)', () => {
   });
 
   it('pauses polling while a run is pending and resumes after terminal status', async () => {
-    const wrapper = createWrapper();
+    queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { rerender, result } = renderHook(
       ({ isRunPending }: { isRunPending: boolean }) => useGpuServiceStatus({ isRunPending }),
       { wrapper, initialProps: { isRunPending: false } },

@@ -9,10 +9,6 @@ import { deriveIdentitiesPresentationSource } from '../deriveIdentitiesPresentat
  * unit pins the client-error → UNAVAILABLE mapping (never ENDPOINT_ERROR).
  */
 describe('deriveIdentitiesPresentationSource (Slice 3)', () => {
-  it('S3-T1/cell1: isError with no cached data maps to UNAVAILABLE', () => {
-    expect(deriveIdentitiesPresentationSource(true, undefined)).toBe(DATA_SOURCE.UNAVAILABLE);
-  });
-
   it('S3-T2: client error maps to UNAVAILABLE, never ENDPOINT_ERROR', () => {
     const derived = deriveIdentitiesPresentationSource(true, undefined);
     expect(derived).toBe(DATA_SOURCE.UNAVAILABLE);

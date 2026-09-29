@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * FEBT1-LC-01 / RES-04: `commitClusterToRosterEntry` used to accept no `AbortSignal`, so a
  * caller-side deadline abandoned the caller while the POST kept running server-side — a

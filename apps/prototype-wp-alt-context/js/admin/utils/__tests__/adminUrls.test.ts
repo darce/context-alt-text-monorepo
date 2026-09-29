@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * E21-9 Slice 6: roster URL retarget + no tab=clusters producer.
  */

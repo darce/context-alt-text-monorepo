@@ -87,13 +87,13 @@ final class PublicGuideRouteTest extends TestCase
     {
         $route = new PublicGuideRoute($this->nullResolver());
         $this->simulateRewriteMatch();
-        $this->setOption('acx_public_guide_enabled', true);
+        update_option('acx_public_guide_enabled', true);
         self::assertFalse($route->filter_admin_bar(true));
         self::assertFalse($route->filter_admin_bar(false));
         unset($GLOBALS['wp']);
         self::assertTrue($route->filter_admin_bar(true));
         $this->simulateRewriteMatch();
-        $this->setOption('acx_public_guide_enabled', false);
+        update_option('acx_public_guide_enabled', false);
         self::assertTrue($route->filter_admin_bar(true));
     }
 
@@ -679,16 +679,16 @@ final class PublicGuideRouteTest extends TestCase
     {
         self::assertFalse(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', true);
+        update_option('acx_public_guide_enabled', true);
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', 1);
+        update_option('acx_public_guide_enabled', 1);
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', '1');
+        update_option('acx_public_guide_enabled', '1');
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', 'true');
+        update_option('acx_public_guide_enabled', 'true');
         self::assertFalse(PublicGuideRoute::is_enabled());
     }
 

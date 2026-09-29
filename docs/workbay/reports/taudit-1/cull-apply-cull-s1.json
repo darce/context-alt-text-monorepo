@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_ort_parity.py::test_models_skip_reason_names_fetch_command",
+    "verdict": "deleted",
+    "reason": "The same two actionable skip-string substrings from the shared MODELS_SKIP value are asserted by the OpenCV reference test.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_opencv_ref.py::test_models_skip_reason_names_fetch_command"
+  },
+  {
+    "test": "apps/prototype-description-service/scene/tests/test_describe_async_worker.py::test_worker_module_importable",
+    "verdict": "deleted",
+    "reason": "The worker completion test imports and invokes run_async_describe_job, then asserts the resulting item is completed and final.",
+    "covered_by": "apps/prototype-description-service/scene/tests/test_describe_async_worker.py::test_worker_records_cpu_provisional_then_gpu_final"
+  },
+  {
+    "test": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py::test_draw_empty_half_is_provisional_with_reason",
+    "verdict": "deleted",
+    "reason": "The closed-fraction round-trip test checks the same empty spanning set, provisional empty_half state, and successful verification for fractions 0.0 and 1.0.",
+    "covered_by": "apps/prototype-description-service/scene/tests/test_eval_harness_eval_split.py::test_draw_verify_closed_fraction_round_trip"
+  }
+]

@@ -285,6 +285,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $first = $acquire->invoke($this->controller, $option, 5);
         self::assertIsString($first);
         $GLOBALS['__ac_options'][$option]['expires_at'] = time() - 1;
+        wp_cache_delete($option, 'options');
 
         $second = $acquire->invoke($this->controller, $option, 5);
 
@@ -403,6 +404,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $this->pipeline->status = 'completed';
         $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
         $replacement = null;
         // Pause the old status request after its ownership read, immediately
         // before deletion, and let a second request replace the expired lease.
@@ -428,6 +430,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $this->enable([41]);
         $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
         $replacement = null;
         // Interleave at the write boundary for both update_option and SQL CAS.
         $GLOBALS['__ac_option_before_update']['acx_public_demo_inflight'] = function () use (&$replacement): void {
@@ -437,6 +440,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
             self::assertSame(200, $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']))->get_status());
             // The backend status request outlived the five-second guard.
             $GLOBALS['__ac_options']['acx_public_demo_inflight_reconcile']['expires_at'] = time() - 1;
+            wp_cache_delete('acx_public_demo_inflight_reconcile', 'options');
             $second = new PublicDemoDescribeController($this->pipeline);
             self::assertSame(202, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
             $replacement = $GLOBALS['__ac_options']['acx_public_demo_inflight'];
@@ -470,7 +474,11 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $bound = null;
 
         // Request two holds the reconciliation guard when request one resumes.
-        $GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight'] = function () use ($bind, $runId, &$bound): void {
+        $GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight'] = function (string $key, int $read) use ($bind, $runId, &$bound): void {
+            // add_option() reads once before the reconciliation guard is acquired.
+            if (1 === $read) {
+                return;
+            }
             unset($GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight']);
             self::assertGreaterThan(time(), $GLOBALS['__ac_options']['acx_public_demo_inflight_reconcile']['expires_at']);
             $bound = $bind->invoke($this->controller, $runId);
@@ -483,6 +491,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame($runId, $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
         self::assertSame(200, $this->controller->status($this->authorizedRequest('GET', ['run_id' => $runId]))->get_status());
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
         self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
         self::assertCount(1, $this->pipeline->submissions);
 
@@ -553,6 +562,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
             self::assertSame(429, $result->get_status());
             self::assertSame('accepted-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
             $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+            wp_cache_delete('acx_public_demo_inflight', 'options');
             self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
             self::assertSame(1, $pipeline->accepted);
 
@@ -721,6 +731,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
         self::assertSame(true, $GLOBALS['__ac_options']['acx_public_demo_inflight']['submission_started']);
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
         $second = new PublicDemoDescribeController($this->pipeline);
         self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
         self::assertCount(1, $this->pipeline->submissions);
@@ -764,6 +775,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertTrue($acquire->invoke($first, 41));
         $firstToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
 
         self::assertTrue($acquire->invoke($second, 41));
         $secondToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
@@ -772,6 +784,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame('pending', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
 
         $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        wp_cache_delete('acx_public_demo_inflight', 'options');
         self::assertTrue($acquire->invoke($third, 41));
         $thirdToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
         self::assertNotSame($secondToken, $thirdToken);

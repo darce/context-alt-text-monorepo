@@ -275,7 +275,7 @@ def test_same_key_with_a_different_recognition_switch_still_conflicts(monkeypatc
         assert first.status_code == 202, first.text
 
         data, files = _multipart([70])
-        data["recognition_enabled"] = "false"
+        data["recognition_enabled"] = "true"
         conflict = client.post("/scene/describe/run", data=data, files=files)
         assert conflict.status_code == 409, conflict.text
         assert _run_rows(sf, TENANT_A) == 1

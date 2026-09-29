@@ -182,7 +182,7 @@ export const GuidedFaceMatchCard = ({
       <div className="acx-guided-face__matches" data-testid={`face-matches-${person.key}`}>
         <ul className="acx-guided-face__match-list">
           {matches.map((match) => (
-            <li key={match.face.id} className="acx-guided-face__match" style={{ minHeight: 64 }}>
+            <li key={match.face.id} className="acx-guided-face__match">
               {thumbnail(match)}
               {matchEvidence(match)}
             </li>
@@ -194,7 +194,6 @@ export const GuidedFaceMatchCard = ({
           type="button"
           className="acx-button acx-button--tertiary acx-guided-face__enlarge"
           onClick={() => setComparisonOpen(true)}
-          style={{ minHeight: 44 }}
         >
           {guidedCopy('names.compare.public')}
         </button>
@@ -212,7 +211,6 @@ export const GuidedFaceMatchCard = ({
             <label
               htmlFor={includeId}
               className="acx-guided-face__choice-option"
-              style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}
             >
               <input
                 id={includeId}
@@ -227,7 +225,6 @@ export const GuidedFaceMatchCard = ({
             <label
               htmlFor={omitId}
               className="acx-guided-face__choice-option"
-              style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}
             >
               <input
                 id={omitId}
@@ -287,9 +284,8 @@ export const GuidedFaceMatchCard = ({
             <div className="acx-dialog__actions">
               <button
                 type="button"
-                className="acx-button acx-button--secondary"
+                className="acx-button acx-button--secondary acx-guided-face__lightbox-close"
                 onClick={() => setComparisonOpen(false)}
-                style={{ minHeight: 44, minWidth: 44 }}
               >
                 {guidedCopy('lightbox.close.public')}
               </button>

@@ -9,15 +9,11 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEPLOY = REPO_ROOT / "scripts/deploy/recognition-service.sh"
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
-
-
-def _write_executable(path: Path, source: str) -> None:
-    path.write_text(source, encoding="utf-8")
-    path.chmod(0o755)
 
 
 def _run_lifecycle(

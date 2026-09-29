@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 from scripts.deploy.tests.test_gpu_lifecycle_contract_ownership import _api_runtime_ids
 from scripts.deploy.tests.test_gpu_lifecycle_deploy_wiring import _run_lifecycle
@@ -293,11 +294,6 @@ def test_idle_seconds_cli_type_rejects_non_positive_values(idle_seconds: str) ->
 
     assert result.returncode != 0
     assert "positive integer" in result.stderr
-
-
-def _write_executable(path: Path, source: str) -> None:
-    path.write_text(source, encoding="utf-8")
-    path.chmod(0o755)
 
 
 def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Path) -> None:

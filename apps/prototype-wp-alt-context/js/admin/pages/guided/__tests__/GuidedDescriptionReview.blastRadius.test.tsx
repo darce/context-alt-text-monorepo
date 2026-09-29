@@ -60,6 +60,79 @@ const reviewActions = (): GuidedDescriptionReviewActions => ({
 });
 
 describe('GuidedDescriptionReview editor', () => {
+  it('remeasures height from content after edits, window resizes, and description changes', () => {
+    let contentHeight = 0;
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    const { rerender } = render(
+      <GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />,
+    );
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      get: () => contentHeight,
+    });
+    Object.assign(editor.style, {
+      boxSizing: 'border-box',
+      borderTop: '2px solid black',
+      borderBottom: '3px solid black',
+    });
+    const borderHeight =
+      Number.parseFloat(window.getComputedStyle(editor).borderTopWidth) +
+      Number.parseFloat(window.getComputedStyle(editor).borderBottomWidth);
+
+    contentHeight = 180;
+    fireEvent.input(editor);
+    expect(editor.style.height).toBe(`${editor.scrollHeight + borderHeight}px`);
+
+    contentHeight = 420;
+    fireEvent(window, new Event('resize'));
+    expect(editor.style.height).toBe(`${editor.scrollHeight + borderHeight}px`);
+
+    contentHeight = 640;
+    rerender(
+      <GuidedDescriptionReview
+        scenario={scenario}
+        state={readyState('A replacement saved description.')}
+        actions={actions}
+      />,
+    );
+    expect(editor.style.height).toBe(`${editor.scrollHeight + borderHeight}px`);
+    expect(actions.onPreview).not.toHaveBeenCalled();
+  });
+
+  it('includes computed border widths in the content height', () => {
+    const scenario = createGuidedScenario();
+    const actions = reviewActions();
+    render(
+      <GuidedDescriptionReview scenario={scenario} state={readyState('A saved draft.')} actions={actions} />,
+    );
+    const editor = within(screen.getByTestId('guided-description-review-tribeca')).getByRole('textbox', {
+      name: guidedCopy('draft.label'),
+    });
+    const contentHeight = 220;
+    Object.defineProperty(editor, 'scrollHeight', {
+      configurable: true,
+      value: contentHeight,
+    });
+    Object.assign(editor.style, {
+      boxSizing: 'border-box',
+      borderTop: '2px solid black',
+      borderBottom: '3px solid black',
+    });
+    const computedStyle = window.getComputedStyle(editor);
+    const expectedHeight =
+      editor.scrollHeight +
+      Number.parseFloat(computedStyle.borderTopWidth) +
+      Number.parseFloat(computedStyle.borderBottomWidth);
+
+    fireEvent.input(editor);
+
+    expect(editor.style.height).toBe(`${expectedHeight}px`);
+  });
+
   it('uses a supplied label only for recorded samples, keeping edited origin distinct', () => {
     const scenario = createGuidedScenario();
     const actions = reviewActions();

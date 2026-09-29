@@ -1,0 +1,37 @@
+[
+  {
+    "status": 402,
+    "error": "allowance_exhausted",
+    "retry_after": "when_period_known"
+  },
+  {
+    "status": 409,
+    "error": "usage_fingerprint_conflict",
+    "retry_after": "never"
+  },
+  {
+    "status": 503,
+    "error": "usage_admission_stopped",
+    "retry_after": "never"
+  },
+  {
+    "status": 503,
+    "error": "usage_admission_limited",
+    "retry_after": "never"
+  },
+  {
+    "status": 503,
+    "error": "usage_admission_unavailable",
+    "retry_after": "never"
+  },
+  {
+    "status": 503,
+    "error": "reservation_timeout",
+    "retry_after": "always"
+  },
+  {
+    "status": 503,
+    "error": "Usage admission unavailable",
+    "retry_after": "never"
+  }
+]

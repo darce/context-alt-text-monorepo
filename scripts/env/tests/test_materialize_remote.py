@@ -119,6 +119,7 @@ def test_wrapper_builds_remote_command(remote, environment):
     result = run(remote, environment, "t")
     assert result.returncode == 0, result.stderr
     command = ssh_args(remote)[-1]
+    assert "sudo python3 -B" in command
     for token in ("mktemp -d", "trap", "EXIT", "rm -rf", "tar", "sudo python3",
                   "/scripts/env/render_env.py", "materialize", "--root",
                   "/config/env", "--env", environment, "--target", "t", "--into",

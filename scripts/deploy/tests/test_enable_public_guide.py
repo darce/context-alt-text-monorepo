@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import os
 import shlex
-import stat
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "deploy" / "enable-public-guide.sh"
@@ -28,11 +28,6 @@ FALLBACK_ONLY_BODY = (
     "</p>"
     "</main>"
 )
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 def _wp_stub_body(

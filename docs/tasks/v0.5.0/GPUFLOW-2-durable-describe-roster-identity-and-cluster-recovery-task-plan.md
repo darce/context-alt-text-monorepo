@@ -569,3 +569,7 @@ Only after both reviews and the freeze: materialize, re-pin `config/lane-orchest
 - People page passes the walkthrough: one heading, quality avatar fed from the snapshot (not computed in PHP), row action, unranked pick then ranked merge, undo.
 - Watson triple resolved server-side; no automatic merge across two named people; no residual member moved without its own pairwise support; every automatic merge reversible in LIFO order within the undo window.
 - Failed outbox rows reclaimed within the purge window; no raw upstream error string rendered.
+
+## Errata (DEFWAVE-2)
+
+- This supersedes the Release gate live engagement proof checklist's `model_id` comparison: compare response `model_id` and `model_version` with their corresponding health identity fields. Check the configured adapter profile separately against `description_adapter.profile` and host `ACX_DESCRIPTION_ADAPTER`.

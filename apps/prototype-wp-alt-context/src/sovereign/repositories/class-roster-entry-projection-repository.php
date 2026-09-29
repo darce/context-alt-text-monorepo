@@ -334,7 +334,7 @@ class RosterEntryProjectionRepository {
 					$representative_identity['quality_components']     = $quality_components;
 				}
 
-				return array(
+				$cluster = array(
 					'cluster_id'                 => $cluster_uuid,
 					'identity_count'             => isset( $row['identity_count'] ) ? (int) $row['identity_count'] : \count( $instances ),
 					'representative_identity'    => $representative_identity,
@@ -342,6 +342,13 @@ class RosterEntryProjectionRepository {
 					'representative_media_id'    => $this->normalize_representative_media_id( $row['representative_media_id'] ?? null ),
 					'undoable_merge_receipt_id'  => $this->normalize_optional_string( $row['undoable_merge_receipt_id'] ?? null ),
 				);
+
+				if ( null === $representative_identity ) {
+					$cluster['representative_quality'] = $representative_quality;
+					$cluster['quality_components']     = $quality_components;
+				}
+
+				return $cluster;
 			},
 			$cluster_rows
 		);

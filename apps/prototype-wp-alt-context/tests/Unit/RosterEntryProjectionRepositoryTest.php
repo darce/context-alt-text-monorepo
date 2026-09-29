@@ -259,6 +259,54 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		);
 	}
 
+	public function testListEntriesPreservesRepresentativeMetadataWhenIdentityIsUnresolved(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 0,
+				'representative_id' => '',
+				'representative_quality' => '0.82',
+				'quality_components' => '{"confidence":0.91,"sharpness":0.72}',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 55,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$cluster = $data[0]['clusters'][0];
+
+		$this->assertNull($cluster['representative_identity']);
+		$this->assertSame(0.82, $cluster['representative_quality'] ?? null);
+		$this->assertSame(
+			[
+				'confidence' => 0.91,
+				'sharpness' => 0.72,
+			],
+			$cluster['quality_components'] ?? null
+		);
+	}
+
 	public function testListEntriesRewritesBlobThumbPathWhenAttachmentUrlMissing(): void
 	{
 		global $wpdb;

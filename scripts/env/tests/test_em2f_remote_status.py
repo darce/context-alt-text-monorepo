@@ -40,7 +40,9 @@ def remote(tmp_path):
     bindir.mkdir()
     (bindir / "ssh").write_text('''#!/bin/bash
 printf '%s\\0' "$@" > "$SHIM_ARGV"
-cat > "$SHIM_STDIN"
+if [[ ${SHIM_READ_STDIN:-1} == 1 ]]; then
+    cat > "$SHIM_STDIN"
+fi
 exit "${SHIM_RC:-0}"
 ''')
     (bindir / "ssh").chmod(0o755)
@@ -53,6 +55,7 @@ exit "${SHIM_RC:-0}"
         "ENV_MATERIALIZE_SSH_CONNECT_TIMEOUT",
         "ENV_MATERIALIZE_SSH_SERVER_ALIVE_INTERVAL",
         "ENV_MATERIALIZE_SSH_SERVER_ALIVE_COUNT_MAX",
+        "SHIM_READ_STDIN",
     ):
         env.pop(key, None)
     env.update(
@@ -124,3 +127,14 @@ exec "$REAL_PYTHON" "$@"
     assert Path(remote["SHIM_STDIN"]).stat().st_size > 0
     assert result.returncode == 23
     assert "tar producer failed with status 23" in result.stderr
+
+
+def test_wrapper_reports_ssh_failure_when_ssh_closes_stdin(remote):
+    remote["SHIM_RC"] = "255"
+    remote["SHIM_READ_STDIN"] = "0"
+
+    result = run(remote)
+
+    assert result.returncode == 255
+    assert "ssh failed with status 255" in result.stderr
+    assert "tar producer failed" not in result.stderr

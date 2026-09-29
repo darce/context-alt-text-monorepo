@@ -21,13 +21,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import TenantEntitlement, UsageReservation
 from recognition.domain.portal_contracts import EntitlementStatus, UsageReservationStatus
+from recognition.infrastructure.repositories.usage_repository import USAGE_RESERVATION_LEASE
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
 _BILLING_SOURCE = "billing"
@@ -188,12 +189,19 @@ class SqlAlchemyTenantEntitlementRepository:
         """Return chargeable usage for one tenant and one entitlement period."""
         tenant_uuid = _validate_tenant_id(tenant_id)
         normalized_period_start = _as_utc(period_start)
+        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
         stmt = (
             select(func.coalesce(func.sum(UsageReservation.cost_units), 0))
             .where(
                 UsageReservation.tenant_id == tenant_uuid,
                 UsageReservation.period_start == normalized_period_start,
-                UsageReservation.status.in_((UsageReservationStatus.RESERVED, UsageReservationStatus.COMMITTED)),
+                or_(
+                    UsageReservation.status == UsageReservationStatus.COMMITTED,
+                    and_(
+                        UsageReservation.status == UsageReservationStatus.RESERVED,
+                        UsageReservation.reserved_at >= lease_cutoff,
+                    ),
+                ),
             )
             .limit(1)
         )

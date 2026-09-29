@@ -11,6 +11,12 @@ use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
+    }
+
     public function testPurgeDiscardsDeadLetteredRowsForMissingClusters(): void
     {
         global $wpdb;
@@ -80,7 +86,7 @@ class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
      */
     private function buildDeadLetteredLabelRow(int $id, string $tenantId, string $clusterUuid, string $label): array
     {
-        $stamp = '2026-09-16 00:00:00';
+        $stamp = gmdate('Y-m-d H:i:s', $GLOBALS['__ac_current_time'] - 86400);
 
         return [
             'id' => $id,
@@ -122,5 +128,20 @@ class OutboxMaintenanceDeadLetterReconcileTest extends TestCase
         }
 
         $this->fail(sprintf('Unable to find query containing "%s".', $needle));
+    }
+
+    /**
+     * @return array<int,array{hook:string,args:array<int,mixed>}>
+     */
+    private function actionsNamed(string $hook): array
+    {
+        $matches = [];
+        foreach ($GLOBALS['__ac_do_action_log'] ?? [] as $entry) {
+            if (is_array($entry) && ($entry['hook'] ?? '') === $hook) {
+                $matches[] = $entry;
+            }
+        }
+
+        return $matches;
     }
 }

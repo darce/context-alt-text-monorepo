@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Tests\TestCase;
+use AltContext\Tests\Support\FindsSqlQueries;
 
 /**
  * Characterization safety net for identity-members repository methods.
@@ -28,6 +29,8 @@ use AltContext\Tests\TestCase;
  */
 class IdentityMembersRepositoryTest extends TestCase
 {
+    use FindsSqlQueries;
+
     private IdentityMembersRepository $repository;
 
     protected function setUp(): void
@@ -526,17 +529,4 @@ class IdentityMembersRepositoryTest extends TestCase
         ];
     }
 
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-    }
 }

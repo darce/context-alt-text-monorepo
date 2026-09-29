@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +11,7 @@ import { DATA_SOURCE } from '../../api/recognition/types';
 import { deriveIdentitiesPresentationSource } from '../../pages/workbench/deriveIdentitiesPresentationSource';
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
 import * as recognitionApi from '../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('../../api/workbenchMediaApi', () => ({
   fetchWorkbenchMedia: vi.fn(),
@@ -34,22 +33,13 @@ const createDeferred = <T,>() => {
 };
 
 describe('useWorkbenchMedia', () => {
-  const createWrapper = () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-    return { wrapper, queryClient };
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('merges fetched identities into each media item', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const mediaResponse: WorkbenchMediaResponse = {
       items: [
         {
@@ -168,7 +158,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('skips fetching when disabled', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
     const fetchWorkbenchMediaDetailMock = vi.mocked(fetchWorkbenchMediaDetail);
 
@@ -184,7 +175,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('exposes isPlaceholderData and isFetching on identitiesSurface (Slice 3 contract)', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const mediaResponse: WorkbenchMediaResponse = {
       items: [
         {
@@ -253,7 +245,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S3-T3: failed refetch on the same key retains previously merged labels', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const mediaResponse: WorkbenchMediaResponse = {
       items: [
         {
@@ -320,7 +313,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S3-T4: placeholder rows never coexist with error; error drops placeholder (cell 3→1)', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const page1: WorkbenchMediaResponse = {
       items: [
         {
@@ -467,7 +461,8 @@ describe('useWorkbenchMedia', () => {
     });
 
   it('S4-T1: no speculative next-page prefetch while stage-2 isFetching; exactly one after settle', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const page1: WorkbenchMediaResponse = {
       items: [pageMediaItem(101, 'P1')],
       total: 3,
@@ -527,7 +522,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S4-T2: page-change with placeholder held + stage-2 in flight → no N+2 prefetch until isFetching clears', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const page1: WorkbenchMediaResponse = {
       items: [pageMediaItem(201, 'P1')],
       total: 3,
@@ -636,7 +632,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S4-T3: after settle, effect re-runs (identities isFetching flip) do not issue additional page N+1 fetches', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const page1: WorkbenchMediaResponse = {
       items: [pageMediaItem(301, 'P1')],
       total: 2,
@@ -699,7 +696,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S4: disabled hook issues no media or next-page prefetch', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
 
     renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }), { wrapper });
@@ -712,7 +710,8 @@ describe('useWorkbenchMedia', () => {
   });
 
   it('S4: empty mediaIds (no stage-2) still prefetches next page after media settle', async () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const page1: WorkbenchMediaResponse = {
       items: [],
       total: 0,

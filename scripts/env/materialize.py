@@ -164,7 +164,10 @@ def run(
                             and var.required and var.name not in actual}
             if missing_host and not check:
                 raise SecretUnavailable("missing host key " + sorted(missing_host)[0])
-            rendered = render.render_target(manifest, target, env, host_lines=actual)
+            rendered = render.render_target(
+                manifest, target, env, host_lines=actual,
+                missing_host_keys=missing_host if check else None,
+            )
             body = rendered.split("\n", 2)[2]
             expected = render._runtime_assignments(body)
             unmanaged = actual.keys() - managed - set(spec.preserve) - set(allow_unmanaged)

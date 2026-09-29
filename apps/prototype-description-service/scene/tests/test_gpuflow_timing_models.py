@@ -10,6 +10,19 @@ import sqlalchemy as sa
 from db.models import scene
 
 
+class _EmptyCatalogOp:
+    def get_bind(self):
+        class Result:
+            def scalar(self):
+                return None
+
+        class Bind:
+            def execute(self, *_args, **_kwargs):
+                return Result()
+
+        return Bind()
+
+
 @pytest.fixture
 def storage():
     metadata = sa.MetaData()
@@ -109,7 +122,7 @@ def test_canonical_schema_matches_models(monkeypatch):
     monkeypatch.setattr(migration, "_ensure_table", lambda op, name, *elements, **kw: captured.update({name: elements}))
     monkeypatch.setattr(migration, "_ensure_index", lambda *args, **kwargs: None)
     monkeypatch.setattr(migration, "ensure_identity_vector_typmods", lambda op: None)
-    migration.ensure_tables(None)
+    migration.ensure_tables(_EmptyCatalogOp())
     for model in (
         scene.DescribeStartup,
         scene.DescribeOperation,
@@ -293,15 +306,20 @@ def test_preexisting_describe_tables_heal_checks_idempotently(monkeypatch, table
     monkeypatch.setattr(migration, "_ensure_table", capture)
     monkeypatch.setattr(migration, "_ensure_index", lambda *args, **kwargs: None)
     monkeypatch.setattr(migration, "ensure_identity_vector_typmods", lambda op: None)
-    migration.ensure_tables(None)
+    migration.ensure_tables(_EmptyCatalogOp())
 
     elements, kw = captured[table_name]
     checks = [element for element in elements if isinstance(element, sa.CheckConstraint)]
     check_names = {check.name for check in checks}
     assert check_names
-    assert set(kw.get("heal_constraints", ())) == check_names
+    expected_additional_constraints = {
+        "describe_operations": {"uq_describe_operations_retention_target"},
+        "describe_startups": set(),
+        "describe_demand_leases": {"fk_describe_demand_leases_operation_retention"},
+    }
+    assert set(kw.get("heal_constraints", ())) == check_names | expected_additional_constraints[table_name]
 
-    existing = set()
+    existing = expected_additional_constraints[table_name].copy()
     probes = []
     added = []
 
@@ -338,5 +356,5 @@ def test_preexisting_describe_tables_heal_checks_idempotently(monkeypatch, table
         heal()
         heal()
         assert added == sorted(check_names)
-        assert existing == check_names
+        assert existing == check_names | expected_additional_constraints[table_name]
         assert len(probes) == len(check_names)

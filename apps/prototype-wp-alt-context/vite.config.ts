@@ -84,7 +84,8 @@ export default defineConfig(({ mode }) => ({
   test: {
     globals: true,
     pool: 'forks',
-    maxWorkers: availableParallelism(),
+    // Keep forks below laptop memory pressure while retaining parallelism on constrained hosts.
+    maxWorkers: Math.max(2, Math.floor(availableParallelism() / 2)),
     projects: [
       {
         extends: true,

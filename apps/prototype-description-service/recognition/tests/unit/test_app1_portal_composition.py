@@ -125,6 +125,7 @@ async def _run_admission_dependency(
     dependency = admit_usage(Request(scope), service, SimpleNamespace(tenant_claim=str(tenant_id)))
     if hasattr(dependency, "asend"):
         await anext(dependency)
+        assert service.events == ["reserve"]
         if route_error is None:
             with pytest.raises(StopAsyncIteration):
                 await anext(dependency)
@@ -169,10 +170,10 @@ def _multipart_request(
     declared_length: int | None = None,
 ) -> Request:
     headers = [(b"content-type", b"multipart/form-data; boundary=tenant-test")]
-    if receive is None:
-        length = len(body) if declared_length is None else declared_length
+    length = len(body) if declared_length is None else declared_length
+    if receive is None or declared_length is not None:
         headers.append((b"content-length", str(length).encode("ascii")))
-
+    if receive is None:
         async def receive():
             return {"type": "http.request", "body": body, "more_body": False}
 
@@ -233,6 +234,31 @@ async def test_multipart_tenant_lookup_rejects_body_over_its_byte_limit(
         await _request_tenant_id(request)
 
     assert error.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_multipart_tenant_lookup_rejects_declared_oversize_before_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.deps.portal_composition._MAX_TENANT_LOOKUP_BODY_BYTES",
+        128,
+        raising=False,
+    )
+    body = _multipart_envelope_and_image(b"")
+    receive_calls: list[bool] = []
+
+    async def receive():
+        receive_calls.append(True)
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = _multipart_request(body, receive=receive, declared_length=129)
+
+    with pytest.raises(HTTPException) as error:
+        await _request_tenant_id(request)
+
+    assert error.value.status_code == 413
+    assert receive_calls == []
 
 
 @pytest.mark.asyncio

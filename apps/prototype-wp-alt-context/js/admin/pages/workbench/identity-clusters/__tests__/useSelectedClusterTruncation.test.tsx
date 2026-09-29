@@ -103,7 +103,7 @@ describe('useSelectedClusterTruncation', () => {
       total: 5,
       truncated: true,
     });
-    wrapper.queryClient.setQueryData(queryKeys.clusters.memberList('cluster-cached'), envelope);
+    queryClient.setQueryData(queryKeys.clusters.memberList('cluster-cached'), envelope);
 
     const { result } = renderHook(() => useSelectedClusterTruncation(['cluster-cached']), {
       wrapper,

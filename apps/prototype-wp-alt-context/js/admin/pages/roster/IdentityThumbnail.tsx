@@ -36,6 +36,11 @@ export interface IdentityThumbnailProps {
 }
 
 const PADDING_RATIO = 0.15;
+const thumbnailHostStyle: React.CSSProperties = {
+  display: 'inline-block',
+  verticalAlign: 'middle',
+  flexShrink: 0,
+};
 
 interface OwnedCrop {
   ownerId: string;
@@ -252,7 +257,7 @@ export const IdentityThumbnail = ({
     };
     if (loudError) {
       return (
-        <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+        <span ref={hostRef} style={thumbnailHostStyle}>
           <div
             className="acx-cluster-card__face--placeholder"
             role="img"
@@ -267,7 +272,7 @@ export const IdentityThumbnail = ({
     }
     if (onClick && namedPending) {
       return (
-        <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+        <span ref={hostRef} style={thumbnailHostStyle}>
           <button
             type="button"
             className="acx-cluster-card__face--placeholder"
@@ -289,7 +294,7 @@ export const IdentityThumbnail = ({
     // Non-interactive placeholder: decorative, genuinely-missing, or pending
     // crop without onClick. Same markup either way — never a hidden button.
     return (
-      <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+      <span ref={hostRef} style={thumbnailHostStyle}>
         <div
           className="acx-cluster-card__face--placeholder"
           role={namedPending ? 'img' : undefined}
@@ -304,7 +309,7 @@ export const IdentityThumbnail = ({
   }
 
   return (
-    <span ref={hostRef} style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+    <span ref={hostRef} style={thumbnailHostStyle}>
       <img
         src={resolvedSrc}
         alt={resolvedAlt}

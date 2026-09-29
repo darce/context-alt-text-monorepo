@@ -6,15 +6,14 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\AbstractRecognitionProxyController;
 use AltContext\Api\AnalysisJobsController;
-use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
+use AltContext\Api\RecognitionController;
 use AltContext\Settings\RecognitionPolicy;
 use AltContext\Tests\TestCase;
-use AltContext\Settings\RecognitionPolicy;
 use PHPUnit\Framework\Attributes\DataProvider;
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
-use WP_Error;
 
 /**
  * Tests for RecognitionController proxy_request behavior.

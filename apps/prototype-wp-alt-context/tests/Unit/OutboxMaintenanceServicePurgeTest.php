@@ -9,10 +9,20 @@ use AltContext\Sovereign\Sync\ConflictResolutionStatus;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxStatus;
 use AltContext\Sovereign\Sync\ReclaimerLiveness;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServicePurgeTest extends TestCase
 {
+    use FindsSqlQueries;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Keep default failures inside retention; expiry tests supply explicitly aged rows.
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
+    }
+
     public function testListTerminalPurgeTenantIdsUsesDefaultPageSizeWithZeroArgCall(): void
     {
         global $wpdb;
@@ -989,17 +999,4 @@ class OutboxMaintenanceServicePurgeTest extends TestCase
         return false;
     }
 
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-    }
 }

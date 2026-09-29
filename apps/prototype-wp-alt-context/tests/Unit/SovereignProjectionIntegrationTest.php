@@ -8,6 +8,7 @@ use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 /**
@@ -18,6 +19,8 @@ use AltContext\Tests\TestCase;
  */
 class SovereignProjectionIntegrationTest extends TestCase
 {
+    use FindsSqlQueries;
+
     public function testFixtureSnapshotProjectionWritesExpectedReadModelRowPayloads(): void
     {
         $projector = new SnapshotProjector(
@@ -407,17 +410,4 @@ class SovereignProjectionIntegrationTest extends TestCase
         $this->assertStringContainsString("c.tenant_id = 'tenant-rebuild'", $deleteQuery);
     }
 
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-    }
 }

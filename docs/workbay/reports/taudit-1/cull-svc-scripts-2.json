@@ -1,0 +1,48 @@
+{
+  "lane": "cull-svc-scripts-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 28,
+  "tests_in_partition": 321,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py::test_markdown_renders_scored_detection_line",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py::test_build_reports_scored_detection_is_deterministic (apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py:337)",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py:322 calls the same markdown assertion on the same default fixtures; line 337 repeats it in test_build_reports_scored_detection_is_deterministic.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py::test_lazy_precision_predicate_misses_leftover_and_cannot_pass",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py::test_classifier_flags_leftover_as_scored (apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:174)",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py:529 asserts classify_identification(_leftover_ident()) is SCORED; line 174 asserts the same result for the same helper-produced fixture, and lines 172-182 also cover scan_payload.",
+      "canon": "REF-26",
+      "confidence": "medium",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py::test_extract_head_shas_is_not_defined",
+      "class": "OBSOLETE",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py:37 guards the removed helper's absence; grep -rn \"extract_head_shas\" apps scripts --exclude='test_*.py' returned no production references.",
+      "canon": "TEST-11",
+      "confidence": "medium",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py::test_extract_head_shas_is_absent_from_source",
+      "class": "OBSOLETE",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py:55 parses the production script only to assert the retired helper has no FunctionDef or Assign; grep -rn \"extract_head_shas\" apps scripts --exclude='test_*.py' returned no production references.",
+      "canon": "TEST-11",
+      "confidence": "medium",
+      "cost": "cheap"
+    }
+  ]
+}

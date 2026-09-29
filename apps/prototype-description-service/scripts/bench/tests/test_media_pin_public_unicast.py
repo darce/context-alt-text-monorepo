@@ -152,59 +152,6 @@ def test_nat64_of_rfc1918_is_refused() -> None:
     assert _is_non_public("64:ff9b::8.8.8.8") is True
 
 
-def test_https_get_pinned_connects_to_pinned_ip(monkeypatch: pytest.MonkeyPatch) -> None:
-    from scripts.bench import corpus as corpus_mod
-
-    connects: list[tuple[str, int]] = []
-
-    class FakeHTTPS:
-        def __init__(self, host: str, port: int = 443, timeout: float | None = None, context=None) -> None:
-            self.host = host
-            self.port = port
-            self.sock = None
-
-        def request(self, method: str, path: str, headers: dict | None = None) -> None:
-            if self.sock is None:
-                self.connect()
-
-        def getresponse(self):
-            class _Resp:
-                status = 200
-                _body = b"ok"
-
-                def read(self, amt: int | None = None) -> bytes:
-                    data, self._body = self._body, b""
-                    return data
-
-                def read1(self, n: int = -1) -> bytes:
-                    if not self._body:
-                        return b""
-                    if n is None or n < 0:
-                        return self.read()
-                    chunk, self._body = self._body[:n], self._body[n:]
-                    return chunk
-
-                def getheaders(self) -> list:
-                    return []
-
-            return _Resp()
-
-        def close(self) -> None:
-            return None
-
-    def fake_create_connection(address: tuple, timeout: object = None):
-        connects.append(address)
-        return object()
-
-    monkeypatch.setattr(corpus_mod, "HTTPSConnection", FakeHTTPS)
-    monkeypatch.setattr(corpus_mod.socket, "create_connection", fake_create_connection)
-    monkeypatch.setattr(corpus_mod.ssl.SSLContext, "wrap_socket", lambda self, sock, server_hostname=None: sock)
-    status, _headers, body = corpus_mod._https_get_pinned("media.example.com", 443, "/x", "203.0.113.10")
-    assert status == 200
-    assert body == b"ok"
-    assert connects == [("203.0.113.10", 443)]
-
-
 def test_redirect_second_hop_connects_to_re_pinned_ip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Connect-level two-hop: second host is re-pinned, not reused from hop 1."""
     from scripts.bench import corpus as corpus_mod

@@ -761,14 +761,14 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_alt_style'));
     }
 
-    public function testGetSettingsReturnsRecognitionEnabledDefault(): void
+    public function testGetSettingsReturnsRecognitionDisabledByDefault(): void
     {
         $this->setUserCapability('manage_options', true);
 
         $request = new WP_REST_Request('GET', '/acx/v1/settings');
         $response = $this->controller->get_settings($request);
 
-        $this->assertTrue($response->get_data()['recognition_enabled']);
+        $this->assertFalse($response->get_data()['recognition_enabled']);
     }
 
     public function testSaveSettingsWritesRecognitionEnabled(): void
@@ -896,7 +896,7 @@ class SettingsControllerTest extends TestCase
             $this->assertNotSame('0', $stored);
             $this->assertNull(
                 $stored,
-                'write failure must leave acx_recognition_enabled absent (distinguishable from stored falsey / DEFAULT-on)'
+                'write failure must leave acx_recognition_enabled absent (distinguishable from a stored value)'
             );
         }
     }

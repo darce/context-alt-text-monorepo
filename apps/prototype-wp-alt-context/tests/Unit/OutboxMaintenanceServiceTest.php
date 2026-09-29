@@ -10,10 +10,13 @@ use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\OutboxStatus;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServiceTest extends TestCase
 {
+    use FindsSqlQueries;
+
     public function testRetryFailedOperationResetsStateRefreshesMetricsAndSchedulesDrain(): void
     {
         global $wpdb;
@@ -567,6 +570,8 @@ class OutboxMaintenanceServiceTest extends TestCase
     {
         global $wpdb;
 
+        // Retention must not delete the row whose orphan classification is under test.
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
         $tenantId = 'tenant-orphan-still-present';
         $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
@@ -721,20 +726,6 @@ class OutboxMaintenanceServiceTest extends TestCase
             $tenantId,
             'open'
         )] = $conflicts;
-    }
-
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
     }
 
     private function isHookScheduled(string $hook): bool

@@ -8,6 +8,7 @@ use AltContext\Api\Services\PersonLabelBackfillService;
 use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Support\LifecycleManager;
 use AltContext\Tests\TestCase;
+use AltContext\Tests\Support\FindsSqlQueries;
 
 /**
  * Tests for LifecycleManager.
@@ -16,6 +17,8 @@ use AltContext\Tests\TestCase;
  */
 class LifecycleManagerTest extends TestCase
 {
+    use FindsSqlQueries;
+
     private LifecycleManager $manager;
 
     protected function setUp(): void
@@ -1260,16 +1263,5 @@ class LifecycleManagerTest extends TestCase
         }
 
         return null;
-    }
-
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(\sprintf('Could not find query containing "%s".', $needle));
     }
 }

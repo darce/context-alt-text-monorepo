@@ -1,0 +1,18 @@
+{
+  "lane": "cull-rec-unit-2",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 41,
+  "tests_in_partition": 350,
+  "results": [
+    {
+      "test": "apps/prototype-description-service/recognition/tests/unit/test_embedding_generator.py::TestStubEmbeddingGenerator::test_respects_custom_dimension",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_embedding_generator.py::TestStubEmbeddingGenerator::test_outputs_expected_dimension",
+      "evidence": "apps/prototype-description-service/recognition/tests/unit/test_embedding_generator.py:116 - passes the configured _EMBEDDING_DIM, and :120 asserts that same output width; the covering test uses the same value at :61 and asserts output width at :66.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

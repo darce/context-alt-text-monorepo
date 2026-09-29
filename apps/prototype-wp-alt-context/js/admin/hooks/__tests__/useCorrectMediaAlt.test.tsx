@@ -1,8 +1,9 @@
-import React from 'react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { useCorrectMediaAlt } from '../useCorrectMediaAlt';
 import {
   mediaStatsMissingQueryKey,
@@ -143,21 +144,6 @@ const assertEnvelopeHonest = (
   }
 };
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-const createWrapper = (client: QueryClient) => {
-  const Wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
-  return Wrapper;
-};
-
 const statsEnvelope = (total: number): WorkbenchMediaResponse => ({
   items: [],
   total,
@@ -236,9 +222,9 @@ describe('useCorrectMediaAlt', () => {
       return Promise.resolve(statsEnvelope(0));
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
     const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
     const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
@@ -296,9 +282,9 @@ describe('useCorrectMediaAlt', () => {
       return Promise.resolve(statsEnvelope(0));
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
     const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
     const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
@@ -331,9 +317,9 @@ describe('useCorrectMediaAlt', () => {
       return Promise.resolve(statsEnvelope(20));
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
     const { result: statsResult } = renderHook(() => useMediaStats(), { wrapper });
     const { result: correctResult } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
@@ -355,10 +341,10 @@ describe('useCorrectMediaAlt', () => {
 
   it('patches the corrected row from the server response and does not invalidate media.all', async () => {
     correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
 
@@ -390,9 +376,9 @@ describe('useCorrectMediaAlt', () => {
   it('full success with non-empty alt patches status to complete [WBUX-5-BR-112]', async () => {
     // Discrimination: before the fix only altText was patched; status stayed 'missing'.
     correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null, { total: 5, totalPages: 3 });
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -412,9 +398,9 @@ describe('useCorrectMediaAlt', () => {
     // Server is_decorative true must land on the cached row — status alone is not
     // enough (altText null + complete is the same shape as a refetch race).
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', true));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, 'Prior alt', { total: 5, totalPages: 2 });
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: true });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -432,9 +418,9 @@ describe('useCorrectMediaAlt', () => {
     // must produce a literal two-argument API call — tests pin no third arg.
     // [TEST-15]: goes RED if mutationFn always passes a third options object.
     correctMock.mockResolvedValue(successHistoryItem(42, 'Saved alt', 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Saved alt' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -448,9 +434,9 @@ describe('useCorrectMediaAlt', () => {
     // Un-mark: decorative must be defined so the API sends explicit false.
     // [TEST-15]: goes RED if mutationFn only forwards when decorative === true.
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', false));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: false });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -468,11 +454,11 @@ describe('useCorrectMediaAlt', () => {
         is_decorative: false,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, 'Prior alt', { total: 3, totalPages: 1 });
     page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt', isDecorative: false };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: true });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -494,7 +480,7 @@ describe('useCorrectMediaAlt', () => {
         is_decorative: true,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 3, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -503,7 +489,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: true });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -519,7 +505,7 @@ describe('useCorrectMediaAlt', () => {
     // Kills sticky `decorative || item.isDecorative` — describing a decorative
     // image must flip isDecorative false and status complete with alt set.
     correctMock.mockResolvedValue(successHistoryItem(42, 'Now described', 'Bridge', false));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 5, totalPages: 2 });
     page.items[0] = {
       ...page.items[0],
@@ -528,7 +514,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: true,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Now described' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -547,7 +533,7 @@ describe('useCorrectMediaAlt', () => {
     // Seed prior FALSE so sticky `decorative || prior` and collapsed
     // `decorative === true` both leave false — only reading server flips true.
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', true));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -556,7 +542,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -573,7 +559,7 @@ describe('useCorrectMediaAlt', () => {
     // preserves a prior decorative marker — server reports is_decorative:true.
     // Prior false: sticky/collapsed client re-derive cannot invent true [TEST-15].
     correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge', true));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 4, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -582,7 +568,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '   ' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -605,7 +591,7 @@ describe('useCorrectMediaAlt', () => {
         is_decorative: true,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 6, totalPages: 2 });
     page.items[0] = {
       ...page.items[0],
@@ -614,7 +600,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -631,7 +617,7 @@ describe('useCorrectMediaAlt', () => {
     // always true. Server reports is_decorative:false (plant refused / marker
     // absent) — client must patch false, not re-derive true from request [rg-015].
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge', false));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, 'Prior alt', { total: 4, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -640,7 +626,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: true });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -665,7 +651,7 @@ describe('useCorrectMediaAlt', () => {
         is_decorative: true,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 3, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -674,7 +660,7 @@ describe('useCorrectMediaAlt', () => {
       isDecorative: false,
     };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '', decorative: true });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -691,7 +677,7 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt' }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, null, { total: 5, totalPages: 1 });
     page.items[0] = {
       ...page.items[0],
@@ -701,7 +687,7 @@ describe('useCorrectMediaAlt', () => {
     };
     client.setQueryData(missingPageKey, page);
     const before = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt', decorative: true });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -715,12 +701,12 @@ describe('useCorrectMediaAlt', () => {
     // Empty string is a legitimate stored value. A naive hard-code of
     // status: 'complete' would pass the non-empty case and fail here.
     correctMock.mockResolvedValue(successHistoryItem(42, '', 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     // Seed complete so "back to missing" is observable (not a no-op stay).
     const page = seedWorkbench(client, 'Prior alt', { total: 4, totalPages: 2 });
     page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt' };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -742,11 +728,11 @@ describe('useCorrectMediaAlt', () => {
     // (no status patch, or hard-coded complete) fails the assertion.
     // Whitespace-only trims to empty → null on the wire (class-api.php:346).
     correctMock.mockResolvedValue(successHistoryItem(42, '   ', 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, 'Prior alt', { total: 8, totalPages: 4 });
     page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior alt' };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '   ' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -765,9 +751,9 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null, { total: 6, totalPages: 2 });
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -785,11 +771,11 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '', is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, 'Prior honest alt', { total: 3, totalPages: 1 });
     page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior honest alt' };
     client.setQueryData(missingPageKey, page);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '   ' });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -808,12 +794,12 @@ describe('useCorrectMediaAlt', () => {
 
   it('partial without stored_alt_text leaves cache status and alt untouched [WBUX-5-BR-112]', async () => {
     correctMock.mockRejectedValueOnce(partialError(PARTIAL_MESSAGE, { status: 500 }));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const page = seedWorkbench(client, 'Prior honest alt', { total: 7, totalPages: 3 });
     page.items[0] = { ...page.items[0], status: 'complete', altText: 'Prior honest alt' };
     client.setQueryData(missingPageKey, page);
     const before = client.getQueryData<WorkbenchMediaResponse>(missingPageKey);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Would fabricate' });
     await waitFor(() => expect(result.current.isError).toBe(true));
@@ -860,9 +846,9 @@ describe('useCorrectMediaAlt', () => {
       return Promise.resolve(statsEnvelope(20));
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
 
     // Active list observer with a real queryFn so invalidateQueries would refetch.
     // Seeded setQueryData is already in cache; do not refetch on mount — only an
@@ -924,10 +910,10 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(partialMessage, { status: 500, stored_alt_text: 'Partial-saved alt', is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Partial-saved alt' });
 
@@ -959,9 +945,9 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: stored, is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, 'Prior alt');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: submitted });
 
@@ -981,9 +967,9 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: '', is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, 'Prior honest alt');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '   ' });
 
@@ -1002,9 +988,9 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500 }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, 'Prior honest alt');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: '  <em>Would fabricate</em>  ' });
 
@@ -1024,10 +1010,10 @@ describe('useCorrectMediaAlt', () => {
 
   it('does not reconcile cache on a total correction failure', async () => {
     correctMock.mockRejectedValueOnce(totalFailureError());
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Would-be alt' });
 
@@ -1045,9 +1031,9 @@ describe('useCorrectMediaAlt', () => {
     const deceptiveMessage =
       'Could not save the alt text correction: the human-edit record could not be stored either.';
     correctMock.mockRejectedValueOnce(totalFailureError(deceptiveMessage));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Must-not-appear-in-cache' });
 
@@ -1068,9 +1054,9 @@ describe('useCorrectMediaAlt', () => {
     correctMock.mockRejectedValueOnce(
       partialError(unrelatedMessage, { status: 500, stored_alt_text: 'Code-gated partial alt', is_decorative: false }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: 'Code-gated partial alt' });
 
@@ -1089,9 +1075,9 @@ describe('useCorrectMediaAlt', () => {
     // standalone renderHook that the workbench cache cannot unmount. Replaced
     // by the component-level MediaAltInlineEditor sibling test for alert+draft.
     // This hook-level check only asserts the cache/invalidation contract.
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
     const { result: rowA } = renderHook(() => useCorrectMediaAlt(), { wrapper });
     const { result: rowB } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
@@ -1130,9 +1116,9 @@ describe('useCorrectMediaAlt', () => {
     const submitted = '  <b>Bridge</b>  ';
     const stored = 'Bridge';
     correctMock.mockResolvedValueOnce(successHistoryItem(42, stored, 'Bridge'));
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client) });
 
     result.current.mutate({ mediaId: 42, altText: submitted });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -1148,9 +1134,9 @@ describe('useCorrectMediaAlt', () => {
    * (The deleted pin store required _resetPinnedPartialsForTests in beforeEach.)
    */
   it('sequential partial then success do not leave phantom rows for a later client [no module state]', async () => {
-    const client1 = buildClient();
+    const client1 = buildTestQueryClient();
     seedWorkbench(client1, null);
-    const { result: r1 } = renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client1) });
+    const { result: r1 } = renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client1) });
     correctMock.mockRejectedValueOnce(
       partialError(PARTIAL_MESSAGE, { status: 500, stored_alt_text: 'Pinned-would-leak', is_decorative: false }),
     );
@@ -1159,7 +1145,7 @@ describe('useCorrectMediaAlt', () => {
 
     // Fresh client, no shared registry. Seeding a page without 42 must stay
     // without 42 — a module-level pin subscriber would re-splice it in.
-    const client2 = buildClient();
+    const client2 = buildTestQueryClient();
     client2.setQueryData<WorkbenchMediaResponse>(missingPageKey, {
       items: [
         {
@@ -1177,7 +1163,7 @@ describe('useCorrectMediaAlt', () => {
       totalPages: 1,
     });
     // Mount the hook so any render-time subscriber would install (old design).
-    renderHook(() => useCorrectMediaAlt(), { wrapper: createWrapper(client2) });
+    renderHook(() => useCorrectMediaAlt(), { wrapper: createQueryWrapper(client2) });
     // Trigger a cache write the old QueryCache subscriber watched.
     client2.setQueryData<WorkbenchMediaResponse>(missingPageKey, {
       items: [
@@ -1203,9 +1189,9 @@ describe('useCorrectMediaAlt', () => {
   });
 
   it('envelope stays honest after partial then success on the same page [rg-015]', async () => {
-    const client = buildClient();
+    const client = buildTestQueryClient();
     seedWorkbench(client, null);
-    const wrapper = createWrapper(client);
+    const wrapper = createQueryWrapper(client);
     const { result } = renderHook(() => useCorrectMediaAlt(), { wrapper });
 
     correctMock.mockRejectedValueOnce(

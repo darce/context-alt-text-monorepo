@@ -552,7 +552,8 @@ lint-ux-maps:
 	@set -eu; cd apps/prototype-wp-alt-context; \
 	py="$${ACX_UXMAP_PYTHON:-$(ROOT_MAKEFILE_DIR)/.venv/bin/python}"; [ -x "$$py" ] || py=python3; \
 	"$$py" docs/ux-maps/render_ux_maps.py --check; \
-	"$$py" docs/ux-maps/sync_unicode_width.py --check
+	"$$py" docs/ux-maps/sync_unicode_width.py --check; \
+	"$$py" -m unittest docs/ux-maps/test_render_ux_maps.py
 
 # LINTGATE-1. eslint and ruff both failed on main (77 and 408 violations), so
 # neither could serve as a merge gate (sr-002: a declared gate must succeed on

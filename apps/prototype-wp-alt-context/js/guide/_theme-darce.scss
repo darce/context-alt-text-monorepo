@@ -3,17 +3,17 @@
   --acx-color-surface: #e7eaef;
   --acx-color-surface-alt: #f2f4f7;
   --acx-color-panel: #dde1e8;
-  --acx-color-panel-border: #171920;
-  --acx-color-border: #171920;
-  --acx-color-frame-muted: #171920;
-  --acx-color-data-placeholder: #dde1e8;
-  --acx-color-text: #171920;
+  --acx-color-panel-border: var(--acx-guide-ink);
+  --acx-color-border: var(--acx-guide-ink);
+  --acx-color-frame-muted: var(--acx-guide-ink);
+  --acx-color-data-placeholder: var(--acx-color-panel);
+  --acx-color-text: var(--acx-guide-ink);
   --acx-color-text-muted: #4a4d57;
   --acx-color-accent: #3c00f7;
   --acx-color-accent-contrast: #ffffff;
-  --acx-color-accent-soft: #dde1e8;
-  --acx-color-primary: #3c00f7;
-  --acx-color-primary-subtle: #dde1e8;
+  --acx-color-accent-soft: var(--acx-color-panel);
+  --acx-color-primary: var(--acx-color-accent);
+  --acx-color-primary-subtle: var(--acx-color-panel);
 
   // Depth
   --acx-shadow-1: none;
@@ -66,7 +66,7 @@
 
   // Guide-scoped
   --acx-guide-ink: #171920;
-  // WHY: coral #e03a50 on #e7eaef measures 3.57:1 and fails WCAG AA 4.5:1 for normal text, so coral is for borders/underlines/rules/markers only, never text; this matches darce.xyz, whose own link hover keeps the blue and raises font weight instead.
+  // WHY: coral on the guide surface fails WCAG AA for normal text, so it is reserved for borders, underlines, rules, and markers; this matches darce.xyz, whose own link hover keeps the blue and raises font weight instead.
   --acx-guide-hover-accent: #e03a50;
   --acx-guide-border-width: 1px;
   --acx-guide-border-strong: 2px;

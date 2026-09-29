@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -80,9 +79,14 @@ def test_required_names_present_in_shipped_env_prod_example_map() -> None:
     # than only in prod (SEC-RP-05).
     example = Path(__file__).resolve().parents[3] / ".env.prod.example"
     text = example.read_text(encoding="utf-8")
-    match = re.search(r"^RECOGNITION_VAULT_SECRET_MAP=(\{.*\})\s*$", text, re.MULTILINE)
-    assert match, "RECOGNITION_VAULT_SECRET_MAP not found in .env.prod.example"
-    shipped_map = json.loads(match.group(1))
+    value = next(
+        (line.split("=", 1)[1].strip() for line in text.splitlines() if line.startswith("RECOGNITION_VAULT_SECRET_MAP=")),
+        None,
+    )
+    assert value is not None, "RECOGNITION_VAULT_SECRET_MAP not found in .env.prod.example"
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    shipped_map = json.loads(value)
     missing = [n for n in REQUIRED_OCI_VAULT_SECRET_NAMES if n not in shipped_map]
     assert not missing, f"boot-required names missing from shipped vault map: {missing}"
 

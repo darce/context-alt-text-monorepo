@@ -1,0 +1,28 @@
+{
+  "lane": "cull-js-other-1",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 40,
+  "tests_in_partition": 407,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-parity.test.ts::gpu-operator-control render documents every zone, state, and action id",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts::gpu-operator-control.md is structurally equal to its JSON render projection",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-parity.test.ts:45 - loops every GPU map zone, state, and action ID and asserts none are missing from Markdown; apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:90,875,1015 - gpu-operator-control is required in the generated-map sweep, where the Markdown projection is compared with JSON; apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts:518,522,526 - projection includes zone IDs, zone states, and actions.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-parity.test.ts::workbench-2pane render documents every zone id, state, and action id",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts::workbench-2pane.md is structurally equal to its JSON render projection",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-parity.test.ts:70 - loops every workbench-2pane zone, state, and action ID and asserts none are missing from Markdown; apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:92,875,1015 - workbench-2pane is required in the generated-map sweep, where the Markdown projection is compared with JSON; apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts:518,522,526 - projection includes zone IDs, zone states, and actions.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

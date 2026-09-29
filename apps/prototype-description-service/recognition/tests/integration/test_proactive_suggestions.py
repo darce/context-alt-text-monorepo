@@ -915,7 +915,7 @@ async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_cluster
         session=db_session,
     )
 
-    by_id = {cluster.id: cluster for cluster in top_unlabeled}
+    by_id = {cluster.id: cluster for cluster in top_unlabeled.clusters}
     assert set(expected_labels_by_unlabeled_id).issubset(set(by_id))
 
     for cluster_id, expected_label in expected_labels_by_unlabeled_id.items():

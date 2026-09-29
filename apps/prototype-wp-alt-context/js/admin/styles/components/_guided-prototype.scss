@@ -388,6 +388,10 @@
     min-width: 0;
   }
 
+  &__match {
+    min-height: calc(var(--acx-space-48) + var(--acx-space-16));
+  }
+
   &__match-line,
   &__weak-match {
     margin: 0;
@@ -422,6 +426,12 @@
 
   &__enlarge {
     justify-self: start;
+    min-height: var(--acx-space-48);
+  }
+
+  &__lightbox-close {
+    min-width: var(--acx-space-48);
+    min-height: var(--acx-space-48);
   }
 
   &__lightbox {
@@ -442,6 +452,8 @@
   }
 
   &__lightbox-gallery {
+    --acx-face-lightbox-tile-size: 10rem;
+
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
@@ -452,10 +464,10 @@
 
     img {
       display: block;
-      width: var(--acx-guide-lightbox-tile-size, 10rem);
-      height: var(--acx-guide-lightbox-tile-size, 10rem);
-      max-width: var(--acx-guide-lightbox-tile-size, 10rem);
-      max-height: var(--acx-guide-lightbox-tile-size, 10rem);
+      width: var(--acx-face-lightbox-tile-size);
+      height: var(--acx-face-lightbox-tile-size);
+      max-width: var(--acx-face-lightbox-tile-size);
+      max-height: var(--acx-face-lightbox-tile-size);
       object-fit: cover;
       border-radius: var(--acx-radius-md);
       background: var(--acx-color-data-placeholder);
@@ -572,11 +584,15 @@
   }
 
   &__choice label {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--acx-space-8);
     color: var(--acx-color-text);
     font-size: var(--acx-text-sm);
+  }
+
+  &__choice-option {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    min-height: var(--acx-space-48);
   }
 
   &__evidence {

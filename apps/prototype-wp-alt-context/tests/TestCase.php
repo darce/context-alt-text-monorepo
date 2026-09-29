@@ -113,6 +113,17 @@ abstract class TestCase extends PHPUnitTestCase
     protected function setOption(string $key, mixed $value): void
     {
         $GLOBALS['__ac_options'][$key] = $value;
+        $alloptions = wp_cache_get('alloptions', 'options');
+        if (is_array($alloptions) && array_key_exists($key, $alloptions)) {
+            $alloptions[$key] = $value;
+            wp_cache_set('alloptions', $alloptions, 'options');
+        }
+        wp_cache_delete($key, 'options');
+        $notoptions = wp_cache_get('notoptions', 'options');
+        if (is_array($notoptions) && array_key_exists($key, $notoptions)) {
+            unset($notoptions[$key]);
+            wp_cache_set('notoptions', $notoptions, 'options');
+        }
     }
 
     /**

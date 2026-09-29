@@ -6,7 +6,6 @@
  * these mount MediaSelectionTableBody (the real row surface) so the defect and
  * the naive-lift trap are both observable.
  */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { VisualFactsResponse } from '../../../api/describeApi';
 import type { WorkbenchMediaItem } from '../../../hooks/useWorkbenchMedia';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { MediaSelectionTableBody } from '../MediaSelectionTableBody';
 import { RECOMMENDED_ALT_TEXT_MAX_LENGTH } from '../MediaAltSuggest';
 
@@ -78,18 +78,13 @@ const mediaItem: WorkbenchMediaItem = {
   updatedAt: '2026-07-28T12:00:00Z',
 };
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-const renderRow = (element: ReactElement, client = buildClient()) => ({
-  client,
-  ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
-});
+const renderRow = (element: ReactElement, client = buildTestQueryClient()) => {
+  const QueryWrapper = createQueryWrapper(client);
+  return {
+    client,
+    ...render(<QueryWrapper>{element}</QueryWrapper>),
+  };
+};
 
 const renderMediaRow = () =>
   renderRow(
@@ -262,14 +257,5 @@ describe('MediaSelectionTableBody — one polite region per row [S2c-4a]', () =>
     await waitFor(() => expect(status).toHaveTextContent(''));
 
     expect(getPoliteLiveRegions()[0]).toBe(status);
-  });
-
-  it('detail-meta is not a live region after chips load', () => {
-    renderMediaRow();
-    const detailMeta = document.querySelector('.acx-media-selection__detail-meta');
-    expect(detailMeta).not.toBeNull();
-    expect(detailMeta).not.toHaveAttribute('aria-live');
-    // Chips still render as metadata.
-    expect(detailMeta).toHaveTextContent(/image\/jpeg/i);
   });
 });

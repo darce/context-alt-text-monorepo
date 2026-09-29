@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx::gives each case its own default spies (pair 2 of 2)",
+    "verdict": "deleted",
+    "reason": "It repeats pair 1's default onSubmit click-count assertion with the same setup.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/BulkDescribeCta.test.tsx::gives each case its own default spies (pair 1 of 2)"
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx::ScanTabContent source dispatches open_label",
+    "verdict": "deleted",
+    "reason": "The source-string check does not establish reachable behavior; the existing interaction test clicks the labeling control and asserts the Name combobox appears.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx::curate control mounts the labeling panel Name combobox"
+  },
+  {
+    "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts::S3-T1/cell1: isError with no cached data maps to UNAVAILABLE",
+    "verdict": "deleted",
+    "reason": "It repeats the exact error-without-cache input and UNAVAILABLE expectation asserted by S3-T2.",
+    "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts::S3-T2: client error maps to UNAVAILABLE, never ENDPOINT_ERROR"
+  }
+]

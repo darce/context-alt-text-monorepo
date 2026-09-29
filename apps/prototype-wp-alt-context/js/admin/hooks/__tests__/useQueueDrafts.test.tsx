@@ -1,5 +1,4 @@
-import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +15,7 @@ import type {
   DescribeRunItem,
   DescribeRunItemsResponse,
 } from '../../api/describeApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('../../api/describeApi', async () => {
   const actual = await vi.importActual<typeof import('../../api/describeApi')>('../../api/describeApi');
@@ -71,24 +71,14 @@ const historyResponse = (
   items,
 });
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-
-const createWrapper = (client: QueryClient) => {
-  const Wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
-  return Wrapper;
-};
-
 describe('useQueueDrafts', () => {
   let client: QueryClient;
+  let wrapper: ReturnType<typeof createQueryWrapper>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    client = buildClient();
+    client = buildTestQueryClient();
+    wrapper = createQueryWrapper(client);
   });
 
   afterEach(() => {
@@ -98,8 +88,8 @@ describe('useQueueDrafts', () => {
   });
 
   it('does not fetch when no media ids are provided', () => {
-    renderHook(() => useQueueDrafts([]), { wrapper: createWrapper(client) });
-    renderHook(() => useQueueDrafts([], 'run-abc'), { wrapper: createWrapper(client) });
+    renderHook(() => useQueueDrafts([]), { wrapper });
+    renderHook(() => useQueueDrafts([], 'run-abc'), { wrapper });
 
     expect(fetchRunItemsMock).not.toHaveBeenCalled();
     expect(fetchHistoryMock).not.toHaveBeenCalled();
@@ -108,7 +98,7 @@ describe('useQueueDrafts', () => {
   });
 
   it('keeps historyTruncated false when no media ids are provided', () => {
-    const { result } = renderHook(() => useQueueDrafts([]), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useQueueDrafts([]), { wrapper });
     expect(result.current.historyTruncated).toBe(false);
   });
 
@@ -124,7 +114,7 @@ describe('useQueueDrafts', () => {
     );
 
     const { result } = renderHook(() => useQueueDrafts([71, 70, 72, 73], 'run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -175,7 +165,7 @@ describe('useQueueDrafts', () => {
     );
 
     const { result } = renderHook(() => useQueueDrafts([71, 70, 74, 75, 76]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -216,7 +206,7 @@ describe('useQueueDrafts', () => {
     );
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
@@ -227,7 +217,7 @@ describe('useQueueDrafts', () => {
     fetchRunItemsMock.mockResolvedValue(runResponse([runItem()]));
 
     const { result } = renderHook(() => useQueueDrafts([71], 'run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
@@ -255,7 +245,7 @@ describe('useQueueDrafts', () => {
     });
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
@@ -291,7 +281,7 @@ describe('useQueueDrafts', () => {
     });
 
     const { result } = renderHook(() => useQueueDrafts([71, 70]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[70]).toBeDefined());
@@ -320,7 +310,7 @@ describe('useQueueDrafts', () => {
     });
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -345,7 +335,7 @@ describe('useQueueDrafts', () => {
     });
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -365,7 +355,7 @@ describe('useQueueDrafts', () => {
     );
 
     const { result } = renderHook(() => useQueueDrafts([71]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -396,7 +386,7 @@ describe('useQueueDrafts', () => {
     });
 
     const { result } = renderHook(() => useQueueDrafts([71, 70]), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[70]).toBeDefined());
@@ -423,7 +413,7 @@ describe('useQueueDrafts', () => {
 
     const { result, rerender } = renderHook(
       ({ mediaIds }: { mediaIds: number[] }) => useQueueDrafts(mediaIds),
-      { wrapper: createWrapper(client), initialProps: { mediaIds: [71] } },
+      { wrapper, initialProps: { mediaIds: [71] } },
     );
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());
@@ -443,7 +433,7 @@ describe('useQueueDrafts', () => {
     fetchHistoryMock.mockResolvedValue(historyResponse([historyItem()], 500));
 
     const { result } = renderHook(() => useQueueDrafts([71], 'run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.draftsByMediaId[71]).toBeDefined());

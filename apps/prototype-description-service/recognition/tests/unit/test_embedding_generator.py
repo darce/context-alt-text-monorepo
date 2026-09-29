@@ -110,15 +110,6 @@ class TestStubEmbeddingGenerator:
         for result in results:
             assert result.embedding.shape[0] == _EMBEDDING_DIM
 
-    @pytest.mark.asyncio
-    async def test_respects_custom_dimension(self) -> None:
-        """Should respect the configured embedding dimension."""
-        generator = StubEmbeddingGenerator(embedding_dim=_EMBEDDING_DIM)
-
-        results = await generator.generate([b"face"])
-
-        assert results[0].embedding.shape[0] == _EMBEDDING_DIM
-
     def test_default_dim_reads_settings(self) -> None:
         """Default embedding_dim comes from recognition settings."""
         generator = StubEmbeddingGenerator()

@@ -130,6 +130,21 @@ strip_trailing_slashes() {
   printf '%s' "$_value"
 }
 
+path_is_same_or_inside() {
+  local _path="$1"
+  local _parent="$2"
+  case "$_path" in
+    "$_parent"|"$_parent"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+paths_overlap() {
+  local _first="$1"
+  local _second="$2"
+  path_is_same_or_inside "$_first" "$_second" || path_is_same_or_inside "$_second" "$_first"
+}
+
 assert_lexical_path() {
   _name="$1"
   _value="$2"
@@ -330,6 +345,20 @@ OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
 ROLLBACK_DIR="${APP_ROOT}/rollback"
 ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"
 DEPLOY_LOCK="${ACTIVATION_JOURNAL}.lock"
+for _reserved_path in "$ACTIVATION_JOURNAL" "$DEPLOY_LOCK" "$OVERLAY_DEST"; do
+  if paths_overlap "$APP_WWW" "$_reserved_path"; then
+    refuse "APP_WWW collides with activation paths"
+  fi
+  if paths_overlap "${APP_WWW}.prev" "$_reserved_path"; then
+    refuse "APP_WWW.prev collides with activation paths"
+  fi
+done
+if path_is_same_or_inside "$APP_ROOT" "$APP_WWW"; then
+  refuse "APP_WWW collides with activation paths"
+fi
+if path_is_same_or_inside "$APP_ROOT" "${APP_WWW}.prev"; then
+  refuse "APP_WWW.prev collides with activation paths"
+fi
 case "$CADDYFILE" in
   "$APP_WWW"|"$APP_WWW"/*) refuse "CADDYFILE is inside APP_WWW" ;;
 esac

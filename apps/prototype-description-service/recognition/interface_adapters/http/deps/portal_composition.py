@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import math
 import os
-from collections.abc import Collection, Mapping
+from collections.abc import AsyncIterator, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+import anyio
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +36,8 @@ from shared.secrets import get_secret_provider
 _MISSING = object()
 _DEFAULT_POLAR_BASE_URL = "https://api.polar.sh"
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
+_MAX_TENANT_LOOKUP_BODY_BYTES = 25 * 1024 * 1024
+_TENANT_LOOKUP_READ_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,8 +372,7 @@ async def get_usage_admission_service(
 async def _request_tenant_id(request: Request) -> UUID:
     content_type = request.headers.get("content-type", "").lower()
     if content_type.startswith("multipart/form-data"):
-        # Cache the body so the bounded multipart parser in the route can replay it.
-        await request.body()
+        await _cache_bounded_request_body(request)
         form = await request.form()
         try:
             request_part = form.get("request")
@@ -398,11 +400,39 @@ async def _request_tenant_id(request: Request) -> UUID:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
 
 
+async def _cache_bounded_request_body(request: Request) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request body") from exc
+        if declared_length < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request body")
+        if declared_length > _MAX_TENANT_LOOKUP_BODY_BYTES:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="request body too large")
+
+    body = bytearray()
+    try:
+        with anyio.fail_after(_TENANT_LOOKUP_READ_TIMEOUT_SECONDS):
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > _MAX_TENANT_LOOKUP_BODY_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="request body too large",
+                    )
+                body.extend(chunk)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="request body read timed out") from exc
+
+    request._body = bytes(body)
+
+
 async def admit_usage(
     request: Request,
     usage_admission_service: UsageAdmissionService | None = Depends(get_usage_admission_service),
     auth=Depends(require_write_access),
-) -> None:
+) -> AsyncIterator[None]:
     """Reserve one unit before an analysis submission reaches its route handler."""
     if usage_admission_service is None:
         return
@@ -418,7 +448,7 @@ async def admit_usage(
     else:
         tenant_id = await _request_tenant_id(request)
     try:
-        await usage_admission_service.reserve(
+        ticket = await usage_admission_service.reserve(
             tenant_id,
             idempotency_key=idempotency_key,
             job_id=None,
@@ -428,6 +458,16 @@ async def admit_usage(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="usage allowance exhausted") from exc
     except (UsageAdmissionError, UsageAdmissionTimeoutError) as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="usage admission unavailable") from exc
+
+    try:
+        yield
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            await usage_admission_service.release(ticket)
+        raise
+    else:
+        with anyio.CancelScope(shield=True):
+            await usage_admission_service.commit(ticket)
 
 
 def install_usage_admission_composition(app: FastAPI) -> None:

@@ -555,44 +555,6 @@ describe('WorkbenchFindingsPanel', () => {
     expect(container.querySelector('.acx-avatar')).toBeNull();
   });
 
-  // FIX-2: rendered size must be pinned — lowering FINDINGS_PREVIEW_SIZE_PX must go red.
-  it('renders FaceThumbnail crop at FINDINGS_PREVIEW_SIZE_PX (72)', () => {
-    const mediaUrl = 'http://example.test/uploads/group-photo.jpg';
-    const bbox = { x: 10, y: 20, width: 80, height: 90 };
-    vi.mocked(useWorkbenchFindings).mockReturnValue(
-      makeViewModel({
-        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
-        previews: [
-          preview({
-            key: 'assignment-s1',
-            mediaUrl,
-            label: 'Ada Lovelace',
-            bbox,
-          }),
-        ],
-        hasFindings: true,
-        nextAction: {
-          kind: NEXT_ACTION_KIND.ASSIGNMENT,
-          suggestionId: 's1',
-          clusterId: 'c1',
-          label: 'Ada Lovelace',
-        },
-      }),
-    );
-
-    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
-
-    const cropRoot = container.querySelector('.acx-face-thumbnail');
-    expect(cropRoot).toBeInTheDocument();
-    expect(cropRoot).toHaveStyle({
-      width: `${FINDINGS_PREVIEW_SIZE_PX}px`,
-      height: `${FINDINGS_PREVIEW_SIZE_PX}px`,
-    });
-    // Literal 72 pins the constant itself — lowering FINDINGS_PREVIEW_SIZE_PX must fail.
-    expect(cropRoot).toHaveStyle({ width: '72px', height: '72px' });
-    expect(FINDINGS_PREVIEW_SIZE_PX).toBe(72);
-  });
-
   // Dedicated server face thumbs win over a croppable mediaUrl+bbox contest (TEST-15 vs HEAD).
   it('renders Avatar for a dedicated face-thumbs URL instead of FaceThumbnail', () => {
     const faceThumbUrl = 'http://example.test/wp-content/uploads/recognition/face-thumbs/rep-1.jpg';

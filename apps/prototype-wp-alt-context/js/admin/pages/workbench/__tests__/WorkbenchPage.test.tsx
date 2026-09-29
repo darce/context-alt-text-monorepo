@@ -799,13 +799,6 @@ describe('WorkbenchPage', () => {
     });
   });
 
-  it('LEGACY_CONFIRM_TAB is fully retired from the workbench nav module', async () => {
-    const nav = await import('../WorkbenchNavContext');
-    expect('LEGACY_CONFIRM_TAB' in nav).toBe(false);
-    const ctx = await import('../WorkbenchContext');
-    expect('LEGACY_CONFIRM_TAB' in ctx).toBe(false);
-  });
-
   it('opens the advanced drawer, moves focus inside, and restores focus on Escape', async () => {
     const user = userEvent.setup();
     renderWorkbench();

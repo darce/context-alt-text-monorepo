@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections import Counter
 from pathlib import Path
 
-import conftest as service_conftest
+service_conftest_spec = importlib.util.spec_from_file_location(
+    "acx_service_root_conftest", Path(__file__).resolve().parents[3] / "conftest.py"
+)
+if service_conftest_spec is None or service_conftest_spec.loader is None:
+    raise ImportError("Could not load the service-root conftest")
+service_conftest = importlib.util.module_from_spec(service_conftest_spec)
+service_conftest_spec.loader.exec_module(service_conftest)
 
 
 def test_nested_collection_cache_is_not_reused_without_xdist(

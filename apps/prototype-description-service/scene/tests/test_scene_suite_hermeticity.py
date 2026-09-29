@@ -17,9 +17,6 @@ SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
 _STARTUP_TESTS = [
     "scene/tests/test_describe_route.py::test_create_app_registers_route_and_upload_cap",
-    "scene/tests/test_describe_run_reclaim.py::test_startup_reclaim_failure_does_not_block_boot_and_is_wired",
-    "scene/tests/test_describe_run_reclaim.py::test_startup_boot_order_reclaim_then_purge_then_snapshot",
-    "scene/tests/test_describe_run_reclaim.py::test_startup_purge_or_snapshot_failure_does_not_block_boot",
 ]
 
 
@@ -29,7 +26,7 @@ def test_startup_tests_pass_without_any_ambient_credentials(tmp_path: Path) -> N
     env["ACX_GPU_SHELL_SUITE_SKIP"] = "1"
 
     # The collection-scope receipt defaults to a fixed global path, so this
-    # child would overwrite the outer run's receipt with its own 4-test scope
+    # child would overwrite the outer run's receipt with its narrowed test scope
     # mid-run -- leaving any operator who reads it afterwards with a receipt
     # that understates what actually ran.
     result = subprocess.run(

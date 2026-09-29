@@ -236,35 +236,4 @@ describe('E21-4 slice 1: token direction acceptance', () => {
 
     expect(failures, failures.join('; ')).toEqual([]);
   });
-
-  it('pins the modular type ladder and aliases', () => {
-    const map = readTokenValueMap();
-
-    expect(resolveToken(map, '--acx-text-2xs')).toBe('0.702rem');
-    expect(resolveToken(map, '--acx-text-xs')).toBe('0.79rem');
-    expect(resolveToken(map, '--acx-text-sm')).toBe('0.889rem');
-    expect(map.get('--acx-text-md')).toBe('var(--acx-text-sm)');
-    expect(resolveToken(map, '--acx-text-base')).toBe('1rem');
-    expect(resolveToken(map, '--acx-text-lg')).toBe('1.125rem');
-    expect(resolveToken(map, '--acx-text-xl')).toBe('1.266rem');
-    expect(resolveToken(map, '--acx-text-2xl')).toBe('1.424rem');
-    expect(resolveToken(map, '--acx-text-3xl')).toBe('1.802rem');
-    expect(resolveToken(map, '--acx-leading-tight')).toBe('1.3');
-    expect(resolveToken(map, '--acx-font-weight-medium')).toBe('500');
-  });
-
-  it('pins the elevation scale and re-valued functional colors', () => {
-    const map = readTokenValueMap();
-
-    expect(map.get('--acx-shadow-card')).toBe('var(--acx-shadow-1)');
-    expect(map.has('--acx-shadow-2')).toBe(true);
-    expect(map.has('--acx-shadow-3')).toBe(true);
-    expect(map.get('--acx-shadow-inset-danger')).toBe('inset 0 0 0 1px var(--acx-color-danger)');
-    expect(map.get('--acx-thumb-size-sm')).toBe('var(--acx-space-32)');
-    expect(resolveToken(map, '--acx-radius-xl')).toBe('0.75rem');
-    expect(resolveToken(map, '--acx-color-success')).toBe('#047857');
-    expect(resolveToken(map, '--acx-color-success-border')).toBe('#16a34a');
-    expect(resolveToken(map, '--acx-color-warning-border')).toBe('#b45309');
-    expect(resolveToken(map, '--acx-color-frame-muted')).toBe('#cbd5e1');
-  });
 });

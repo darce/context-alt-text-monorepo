@@ -182,3 +182,17 @@ def test_unknown_or_missing_scheme_is_unavailable_without_runner(ref, message_pa
 def test_secret_unavailable_is_a_runtime_error_subclass():
     secret_refs = _secret_refs()
     assert issubclass(secret_refs.SecretUnavailable, RuntimeError)
+
+
+def test_keychain_newline_only_stdout_is_unavailable():
+    secret_refs = _secret_refs()
+
+    def runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout="\n", stderr="")
+
+    with pytest.raises(secret_refs.SecretUnavailable) as exc_info:
+        secret_refs.resolve_secret("PGPASSWORD", "keychain:acx-local/PGPASSWORD", runner=runner)
+
+    _assert_unavailable(exc_info, secret_refs)
+    assert "PGPASSWORD" in str(exc_info.value)
+    assert "keychain" in str(exc_info.value)

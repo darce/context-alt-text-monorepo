@@ -101,7 +101,8 @@ PY
                     echo "ERROR [7] ${role} env ${key} has invalid dotenv quoting (value redacted)." >&2
                     exit 1
                 fi
-                if [[ "$value" == *'$'* || "$value" =~ [[:space:]]# ]]; then
+                if [[ "$value" == *'$'* || "$value" =~ [[:space:]]# ]] &&
+                    [[ "${value:0:1}" != "'" || "${value: -1}" != "'" ]]; then
                     echo "ERROR [7] ${role} env ${key} must not use interpolation or an inline comment. Store the exact deployed value." >&2
                     exit 1
                 fi

@@ -51,6 +51,7 @@ def _run_lifecycle(
     partial_reaper_write: bool = False,
     api_gid: str = "10001",
     api_container_gid: str | None = None,
+    api_container_ids: tuple[str, ...] = ("running-api-container",),
     group_present: bool = False,
     groupadd_rc: int = 0,
     groupadd_noop: bool = False,
@@ -391,10 +392,13 @@ printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
 case "${1:-}" in
   ps)
-    printf 'running-api-container\n'
+    printf '%s\n' "$FAKE_API_CONTAINER_IDS"
     ;;
   exec)
-    [ "${2:-}" = running-api-container ] || exit 2
+    case $'\n'"$FAKE_API_CONTAINER_IDS"$'\n' in
+      *$'\n'"${2:-}"$'\n'*) ;;
+      *) exit 2 ;;
+    esac
     [ "${3:-}" = id ] || exit 2
     [ "${4:-}" = -g ] || exit 2
     printf '%s\n' "$FAKE_API_CONTAINER_GID"
@@ -431,6 +435,7 @@ esac
             "FAKE_GROUPADD_NOOP": "1" if groupadd_noop else "0",
             "ACX_API_GID": api_gid,
             "FAKE_API_CONTAINER_GID": api_container_gid or api_gid,
+            "FAKE_API_CONTAINER_IDS": "\n".join(api_container_ids),
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
@@ -976,6 +981,23 @@ def test_mismatched_running_api_gid_refuses_before_lifecycle_mutation(tmp_path: 
     )
     assert not (tmp_path / "host/opt-acx-gpu/current").is_symlink()
     assert (tmp_path / "fake-etc-group").read_text(encoding="utf-8") == ""
+
+
+def test_every_running_api_container_gid_is_checked_before_lifecycle_mutation(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        api_container_ids=("running-api-container", "second-running-api-container"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls.count("docker <exec> <running-api-container> <id> <-g>") == 1
+    assert calls.count("docker <exec> <second-running-api-container> <id> <-g>") == 1
+    assert calls.index("docker <exec> <second-running-api-container> <id> <-g>") < calls.index(
+        "systemctl <disable> <--now> <acx-gpu-intent.path>"
+    )
 
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:

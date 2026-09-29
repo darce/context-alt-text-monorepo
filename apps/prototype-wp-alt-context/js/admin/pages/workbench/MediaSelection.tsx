@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { useIsMutating, useMutationState, useQuery } from '@tanstack/react-query';
+import { useMutationState, useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertTriangle,
@@ -99,7 +99,6 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
   const remoteGate = useRemoteActionGate(offline);
-  const pendingMutationCount = useIsMutating();
   const describeOperationErrors = useMutationState({
     filters: { status: 'error' },
     select: (mutation) => mutation.state.error,
@@ -189,7 +188,7 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   const isDescribeRunning =
     bulkDescribe.submit.isPending ||
     (activeDescribeRunId !== null && !describeProgress.isTerminal && !describeProgress.isError);
-  const isGpuServiceStatusPending = isDescribeRunning || identify.pending || pendingMutationCount > 0;
+  const isGpuServiceStatusPending = isDescribeRunning || identify.pending;
   const gpuOperationError =
     describeOperationErrors.find(
       (error) =>

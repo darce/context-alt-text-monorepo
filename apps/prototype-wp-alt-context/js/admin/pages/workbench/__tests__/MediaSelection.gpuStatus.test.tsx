@@ -207,8 +207,7 @@ const progressFromRun = (run: DescribeRunResponse): DescribeRunProgress => ({
   timing: run.timing ?? null,
 });
 
-const renderSelection = () => {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const renderSelection = (queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) => {
   return render(
     <QueryClientProvider client={queryClient}>
       <MediaSelection />
@@ -308,5 +307,23 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
     expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
     expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps idle GPU lifecycle detail visible while an unrelated mutation is pending', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const gpuStatus = statusResponse();
+    fetchGpuStatusMock.mockResolvedValue({
+      ...gpuStatus,
+      gpu_state: { ...gpuStatus.gpu_state, state: GPU_STATE.DEGRADED, reason: 'degraded' },
+    });
+    const unrelatedMutation = queryClient.getMutationCache().build(queryClient, {
+      mutationKey: ['unrelated-work'],
+      mutationFn: () => new Promise<void>(() => undefined),
+    });
+    void unrelatedMutation.execute();
+
+    renderSelection(queryClient);
+
+    expect(await screen.findByText('Description Service reported a degraded state.')).toBeInTheDocument();
   });
 });

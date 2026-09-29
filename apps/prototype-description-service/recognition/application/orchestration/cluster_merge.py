@@ -103,15 +103,15 @@ async def _ensure_same_space_merge(
     if session is not None:
         source_models = await _cluster_full_embedding_models(session, source_cluster_id)
         target_models = await _cluster_full_embedding_models(session, target_cluster_id)
-        source_spaces = source_models or {None}
-        target_spaces = target_models or {None}
+        source_spaces = source_models - {None}
+        target_spaces = target_models - {None}
         if len(source_spaces | target_spaces) <= 1:
             return
         raise CrossSpaceMergeError(
             source_cluster_id=source_cluster_id,
             target_cluster_id=target_cluster_id,
-            source_model=_model_description(source_spaces),
-            target_model=_model_description(target_spaces),
+            source_model=_model_description(source_models or {None}),
+            target_model=_model_description(target_models or {None}),
         )
 
     source_model, source_representatives_match = await _cluster_gallery_space(cluster_repo, source_cluster_id)
@@ -119,7 +119,11 @@ async def _ensure_same_space_merge(
     if (
         source_representatives_match
         and target_representatives_match
-        and models_are_same_space(source_model, target_model)
+        and (
+            source_model is None
+            or target_model is None
+            or models_are_same_space(source_model, target_model)
+        )
     ):
         return
     raise CrossSpaceMergeError(

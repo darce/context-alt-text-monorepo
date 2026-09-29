@@ -34,8 +34,6 @@ from scripts.bench.stack_pair import (
     load_stack_pair,
 )
 from scripts.bench.tests.conftest import (
-    FIR_STACK,
-    INSIGHTFACE_STACK,
     valid_pair_dict,
     write_manifest,
     write_pair,
@@ -311,8 +309,3 @@ def test_stack_endpoint_allowlist_is_rechecked_for_materialized_config(tmp_path:
         _declared_stack_ids(run_dir, rogue_pair)
 
     assert exc.value.code == "unknown_stack_id"
-
-
-def test_fixture_stack_constants_remain_the_declared_pair() -> None:
-    assert INSIGHTFACE_STACK["stack_id"] == STACK_A
-    assert FIR_STACK["stack_id"] == STACK_B

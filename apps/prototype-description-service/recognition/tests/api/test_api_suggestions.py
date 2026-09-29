@@ -17,7 +17,7 @@ from recognition.infrastructure.repositories.merge_suggestion_repository import 
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSessionResult, FakeSuggestion
+from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSuggestion
 
 
 def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
@@ -473,6 +473,7 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion_id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -560,6 +561,7 @@ async def test_accept_merge_suggestion_response_carries_source_and_target_ids(
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion_id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -1243,6 +1245,7 @@ def _bind_merge_repo(monkeypatch, suggestion, *, delete_error: Exception | None 
 
 @pytest.mark.asyncio
 async def test_accept_merge_suggestion_returns_conflict_if_update_matches_no_pending_row(
+    api_client,
     tenant_id,
     fake_cluster_service,
     fake_cluster_repository,
@@ -1261,10 +1264,7 @@ async def test_accept_merge_suggestion_returns_conflict_if_update_matches_no_pen
     suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
     _bind_merge_repo(monkeypatch, suggestion)
 
-    fake_session = FakeSession()
-    fake_session.default_execute_result = FakeSessionResult(
-        rowcount=0,
-    )
+    fake_session = api_client.app.state.fake_session
     commits_before = fake_session.commit_calls
 
     async def cluster_service_builder(_tenant_id: str):
@@ -1316,6 +1316,7 @@ async def test_accept_merge_suggestion_returns_moved_identity_ids(
         identity_id=str(uuid.uuid4()),
     )
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion.id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -1359,7 +1360,7 @@ async def test_accept_merge_suggestion_rolls_back_merge_when_accept_marking_fail
     _bind_merge_repo(monkeypatch, suggestion, delete_error=RuntimeError("accept marking failed"))
 
     fake_session = FakeSession()
-    fake_session.default_execute_result = FakeSessionResult(rowcount=1)
+    fake_session.queue_execute_result(rowcount=1)
     commits_before = fake_session.commit_calls
 
     async def cluster_service_builder(_tenant_id: str):
@@ -1392,6 +1393,7 @@ async def test_accept_merge_suggestion_honours_operator_chosen_survivor(
     suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
     _bind_merge_repo(monkeypatch, suggestion)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion.id}/accept",
         headers={"X-Tenant-ID": tenant_id},

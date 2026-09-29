@@ -773,7 +773,7 @@ def api_client(
     # Resolve every tenant-record lookup to the seeded tenant for the lifetime of the client so the
     # provisioning gate never silently 403s a contract test that performs more lookups than a fixed
     # queue depth would cover.
-    fake_session.default_execute_result = FakeSessionResult(scalar_one_or_none_value=seeded_tenant, rowcount=1)
+    fake_session.default_execute_result = FakeSessionResult(scalar_one_or_none_value=seeded_tenant)
     fake_cluster_service.fake_cluster_repository = fake_cluster_repository
     fake_job_service.cluster_repository = fake_cluster_repository
     fake_suggestion_service.tenant_id = tenant_id
@@ -832,6 +832,8 @@ def api_client(
         return fake_media_identity_service
 
     app.dependency_overrides[media_router.get_media_identity_service] = _fake_media_identity_service
+
+    app.state.fake_session = fake_session
 
     return TestClient(app)
 

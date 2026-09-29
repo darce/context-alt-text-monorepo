@@ -61,6 +61,27 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def _explicitly_selected_eval_harness_paths(
+    config: pytest.Config, eval_items: list[pytest.Item]
+) -> set[Path]:
+    item_paths = {Path(str(item.path)).resolve() for item in eval_items}
+    invocation = config.invocation_params
+    roots = {Path(invocation.dir).resolve(), config.rootpath.resolve()}
+    selected_paths: set[Path] = set()
+    args = (*config.args, *invocation.args)
+    for arg in args:
+        path_arg = str(arg).partition("::")[0]
+        if not path_arg or path_arg.startswith("-"):
+            continue
+        path = Path(path_arg)
+        candidates = (path,) if path.is_absolute() else (root / path for root in roots)
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in item_paths:
+                selected_paths.add(resolved)
+    return selected_paths
+
+
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
@@ -80,14 +101,23 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.eval_harness)
             eval_items.append(item)
 
-    if eval_items and not explicitly_selected:
-        deselected_ids = {id(item) for item in eval_items}
+    explicitly_selected_paths = _explicitly_selected_eval_harness_paths(
+        config, eval_items
+    )
+    deselected_items = [
+        item
+        for item in eval_items
+        if not explicitly_selected
+        and Path(str(item.path)).resolve() not in explicitly_selected_paths
+    ]
+    if deselected_items:
+        deselected_ids = {id(item) for item in deselected_items}
         items[:] = [item for item in items if id(item) not in deselected_ids]
         config._eval_harness_deselected_paths = tuple(  # type: ignore[attr-defined]
-            Path(str(item.path)).resolve() for item in eval_items
+            Path(str(item.path)).resolve() for item in deselected_items
         )
-        config._eval_harness_deselected_count = len(eval_items)  # type: ignore[attr-defined]
-        config.hook.pytest_deselected(items=eval_items)
+        config._eval_harness_deselected_count = len(deselected_items)  # type: ignore[attr-defined]
+        config.hook.pytest_deselected(items=deselected_items)
 
     yield
 

@@ -103,19 +103,18 @@ def test_zero_dimension_ok_record_rejected(tmp_path: Path) -> None:
 
     path = tmp_path / "items.jsonl"
     store = ItemOutcomeStore(path)
-    store.append(
-        {
-            "manifest_media_id": 1,
-            "phase": "analyze",
-            "outcome": "ok",
-            "image_width": 0,
-            "image_height": 16,
-            "stack_media_id": 1,
-        }
-    )
+    record = {
+        "manifest_media_id": 1,
+        "phase": "analyze",
+        "outcome": "ok",
+        "image_width": 0,
+        "image_height": 16,
+        "stack_media_id": 1,
+    }
     with pytest.raises(BenchError) as exc:
-        store.read_all()
+        store.append(record)
     assert exc.value.code == "image_dimensions_missing"
+    assert path.read_text(encoding="utf-8") == ""
 
 
 def test_cli_and_harness_shas_are_distinct_or_explicit(tmp_path: Path) -> None:

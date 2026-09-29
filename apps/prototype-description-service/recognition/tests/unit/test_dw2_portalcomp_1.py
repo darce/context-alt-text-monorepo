@@ -196,3 +196,19 @@ async def test_admission_releases_ticket_when_commit_fails_and_propagates_error(
 
     assert raised.value is service.commit_error
     assert service.events == ["reserve", "commit", "release"]
+
+
+@pytest.mark.asyncio
+async def test_admit_usage_yields_once_when_admission_is_disabled() -> None:
+    from recognition.interface_adapters.http.deps.portal_composition import admit_usage
+
+    dependency = admit_usage(
+        _request(path="/recognition/analyze", body=b"", content_type="application/json"),
+        usage_admission_service=None,
+        auth=SimpleNamespace(tenant_claim=None),
+    )
+
+    assert await anext(dependency) is None
+    with pytest.raises(StopAsyncIteration):
+        await anext(dependency)
+    await dependency.aclose()

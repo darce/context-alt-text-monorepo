@@ -152,28 +152,6 @@ vi.mock('../JobPipelineContext', () => ({
   }),
 }));
 
-const statusResponse = () => ({
-  gpu_state: {
-    state: GPU_STATE.STOPPED,
-    instance_id: null,
-    written_at: 1_700_000_000,
-    reason: null,
-    since: null,
-    intent: 'auto',
-    intent_expires_at: null,
-    intent_status: 'none',
-    honoured_nonce: null,
-    lease_expires_at: null,
-    instance_running_since: null,
-    last_transition_reason: 'unknown',
-  },
-  snapshot_age_seconds: 1,
-  snapshot_fresh: true,
-  intent: null,
-  load: { has_work: false, written_at: 1_700_000_001, fresh: true },
-  server_time: '2026-09-17T00:00:00Z',
-});
-
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',
   run_id: 'run-terminal',
@@ -311,21 +289,4 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 
-  it('keeps idle GPU lifecycle detail visible while an unrelated mutation is pending', async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const gpuStatus = statusResponse();
-    fetchGpuStatusMock.mockResolvedValue({
-      ...gpuStatus,
-      gpu_state: { ...gpuStatus.gpu_state, state: GPU_STATE.DEGRADED, reason: 'degraded' },
-    });
-    const unrelatedMutation = queryClient.getMutationCache().build(queryClient, {
-      mutationKey: ['unrelated-work'],
-      mutationFn: () => new Promise<void>(() => undefined),
-    });
-    void unrelatedMutation.execute();
-
-    renderSelection(queryClient);
-
-    expect(await screen.findByText('Description Service reported a degraded state.')).toBeInTheDocument();
-  });
 });

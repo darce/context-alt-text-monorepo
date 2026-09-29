@@ -2,11 +2,10 @@
 # Bounded app.altcontext.com edge prep for the existing OCI host.
 #
 # Default is dry-run. --apply validates a real frontend build, stages every
-# artifact, snapshots rollback state, then promotes with a failure trap.
-# Caddyfile content is replaced in place to keep a bind-mount inode
-# (GUIDEDEPLOY-1-BR-04); www and the compose overlay use same-directory
-# atomic rename. Reload and health run under the trap; failures restore
-# Caddyfile, static root, and overlay, then attempt a rollback reload.
+# artifact, snapshots rollback state, and journals activation before promotion.
+# The Caddyfile keeps its inode for single-file bind mounts; www and overlay
+# promotion use same-directory atomic rename. Interrupted activation is restored
+# from its durable journal at the start of the next --apply run.
 # This script does not open a remote shell and does not mint Clerk/Polar
 # credentials.
 #
@@ -46,6 +45,7 @@ Environment:
   APP_SNIPPET          vhost snippet (default infra/oci/app/Caddyfile.app)
   APP_OVERLAY          compose overlay (default infra/oci/app/docker-compose.app.yml)
   APP_APPROVED_ROOTS   colon-separated host dest roots (default /opt/acx-backend)
+  APP_DEPLOY_LOCK_WAIT seconds to wait for another deploy (default 30)
   APP_RELOAD_CMD       optional absolute executable run after host promote
   APP_HEALTH_CMD       optional absolute executable run after reload
 EOF
@@ -325,6 +325,11 @@ if [ "$APP_FRONTEND_ROOT" != "$DEFAULT_FRONTEND_ROOT" ]; then
   refuse "APP_FRONTEND_ROOT must be ${DEFAULT_FRONTEND_ROOT} (got: ${APP_FRONTEND_ROOT})"
 fi
 guard_dest_path CADDYFILE "$CADDYFILE" file
+STAGING_DIR="${APP_ROOT}/staging"
+OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
+ROLLBACK_DIR="${APP_ROOT}/rollback"
+ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"
+DEPLOY_LOCK="${ACTIVATION_JOURNAL}.lock"
 case "$CADDYFILE" in
   "$APP_WWW"|"$APP_WWW"/*) refuse "CADDYFILE is inside APP_WWW" ;;
 esac
@@ -385,6 +390,188 @@ validate_frontend() {
   fi
 }
 
+sync_path() {
+  sync -f "$1"
+}
+
+atomic_copy_file() {
+  _source="$1"
+  _dest="$2"
+  _tmp="${_dest}.new.$$"
+  if ! cp -a "$_source" "$_tmp"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if ! sync_path "$_tmp"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if ! mv -f "$_tmp" "$_dest"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  sync_path "$(dirname -- "$_dest")"
+}
+
+copy_file_in_place() {
+  _source="$1"
+  _dest="$2"
+  if ! sync_path "$_source"; then
+    return 1
+  fi
+  if ! cat "$_source" > "$_dest"; then
+    return 1
+  fi
+  sync_path "$_dest"
+}
+
+write_activation_journal() {
+  _phase="$1"
+  _tmp="${ACTIVATION_JOURNAL}.new.$$"
+  if ! (
+    umask 077
+    printf 'version=1\nphase=%s\ncaddyfile=%s\napp_www=%s\noverlay=%s\nrollback_caddy=%s\nrollback_www=%s\nrollback_overlay=%s\n' \
+      "$_phase" "$CADDYFILE" "$APP_WWW" "$OVERLAY_DEST" \
+      "$ROLLBACK_CADDY" "$ROLLBACK_WWW" "$ROLLBACK_OVERLAY" > "$_tmp"
+  ); then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if ! sync_path "$_tmp"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  if ! mv -f "$_tmp" "$ACTIVATION_JOURNAL"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  sync_path "$APP_ROOT"
+}
+
+read_journal_field() {
+  IFS= read -r _journal_line <&3 || return 1
+  case "$_journal_line" in
+    "$1="*) JOURNAL_VALUE="${_journal_line#*=}" ;;
+    *) return 1 ;;
+  esac
+}
+
+load_activation_journal() {
+  if [ -L "$ACTIVATION_JOURNAL" ] || [ ! -f "$ACTIVATION_JOURNAL" ]; then
+    echo "ERROR: activation journal is not a regular file: ${ACTIVATION_JOURNAL}" >&2
+    return 1
+  fi
+  exec 3< "$ACTIVATION_JOURNAL" || return 1
+  IFS= read -r _journal_line <&3 && [ "$_journal_line" = "version=1" ] || {
+    exec 3<&-
+    echo "ERROR: unsupported activation journal: ${ACTIVATION_JOURNAL}" >&2
+    return 1
+  }
+  read_journal_field phase || { exec 3<&-; return 1; }
+  JOURNAL_PHASE="$JOURNAL_VALUE"
+  read_journal_field caddyfile || { exec 3<&-; return 1; }
+  JOURNAL_CADDYFILE="$JOURNAL_VALUE"
+  read_journal_field app_www || { exec 3<&-; return 1; }
+  JOURNAL_WWW="$JOURNAL_VALUE"
+  read_journal_field overlay || { exec 3<&-; return 1; }
+  JOURNAL_OVERLAY="$JOURNAL_VALUE"
+  read_journal_field rollback_caddy || { exec 3<&-; return 1; }
+  ROLLBACK_CADDY="$JOURNAL_VALUE"
+  read_journal_field rollback_www || { exec 3<&-; return 1; }
+  ROLLBACK_WWW="$JOURNAL_VALUE"
+  read_journal_field rollback_overlay || { exec 3<&-; return 1; }
+  ROLLBACK_OVERLAY="$JOURNAL_VALUE"
+  if IFS= read -r _journal_line <&3; then
+    exec 3<&-
+    echo "ERROR: extra data in activation journal: ${ACTIVATION_JOURNAL}" >&2
+    return 1
+  fi
+  exec 3<&-
+
+  case "$JOURNAL_PHASE" in
+    prepared|caddy_promoted|www_promoted|overlay_promoted) ;;
+    *) echo "ERROR: invalid activation journal phase: ${JOURNAL_PHASE}" >&2; return 1 ;;
+  esac
+  if [ "$JOURNAL_CADDYFILE" != "$CADDYFILE" ] || [ "$JOURNAL_WWW" != "$APP_WWW" ] || [ "$JOURNAL_OVERLAY" != "$OVERLAY_DEST" ]; then
+    echo "ERROR: activation journal paths do not match this deploy configuration" >&2
+    return 1
+  fi
+  _journal_stamp="${ROLLBACK_CADDY##*.}"
+  case "$_journal_stamp" in
+    ''|*[!0-9]*) echo "ERROR: invalid Caddy snapshot path in activation journal" >&2; return 1 ;;
+  esac
+  if [ "$ROLLBACK_CADDY" != "${ROLLBACK_DIR}/Caddyfile.${_journal_stamp}" ] || [ -L "$ROLLBACK_CADDY" ] || [ ! -f "$ROLLBACK_CADDY" ]; then
+    echo "ERROR: Caddy snapshot is missing or invalid: ${ROLLBACK_CADDY}" >&2
+    return 1
+  fi
+  if [ "$ROLLBACK_WWW" != "-" ] && { [ "$ROLLBACK_WWW" != "${ROLLBACK_DIR}/www.${_journal_stamp}" ] || [ -L "$ROLLBACK_WWW" ] || [ ! -d "$ROLLBACK_WWW" ]; }; then
+    echo "ERROR: frontend snapshot is missing or invalid: ${ROLLBACK_WWW}" >&2
+    return 1
+  fi
+  if [ "$ROLLBACK_OVERLAY" != "-" ] && { [ "$ROLLBACK_OVERLAY" != "${ROLLBACK_DIR}/docker-compose.app.yml.${_journal_stamp}" ] || [ -L "$ROLLBACK_OVERLAY" ] || [ ! -f "$ROLLBACK_OVERLAY" ]; }; then
+    echo "ERROR: overlay snapshot is missing or invalid: ${ROLLBACK_OVERLAY}" >&2
+    return 1
+  fi
+}
+
+clear_activation_journal() {
+  rm -f "$ACTIVATION_JOURNAL" "${ACTIVATION_JOURNAL}.new."*
+  sync_path "$APP_ROOT"
+}
+
+restore_from_rollback() {
+  echo "restoring Caddyfile, static root, and overlay from activation snapshot"
+  if ! cmp -s "$ROLLBACK_CADDY" "$CADDYFILE"; then
+    if ! copy_file_in_place "$ROLLBACK_CADDY" "$CADDYFILE"; then
+      echo "ERROR: could not restore Caddyfile from ${ROLLBACK_CADDY}" >&2
+      return 1
+    fi
+  fi
+  if [ "$ROLLBACK_WWW" != "-" ]; then
+    assert_rm_safe APP_WWW "$APP_WWW" || return 1
+    if ! rm -rf "$APP_WWW" || ! cp -a "$ROLLBACK_WWW" "$APP_WWW" || ! sync_path "$APP_ROOT"; then
+      echo "ERROR: could not restore static root from ${ROLLBACK_WWW}" >&2
+      return 1
+    fi
+  elif [ -e "$APP_WWW" ]; then
+    assert_rm_safe APP_WWW "$APP_WWW" || return 1
+    if ! rm -rf "$APP_WWW" || ! sync_path "$APP_ROOT"; then
+      echo "ERROR: could not remove uncommitted static root ${APP_WWW}" >&2
+      return 1
+    fi
+  fi
+  if [ "$ROLLBACK_OVERLAY" != "-" ]; then
+    if ! atomic_copy_file "$ROLLBACK_OVERLAY" "$OVERLAY_DEST"; then
+      echo "ERROR: could not restore overlay from ${ROLLBACK_OVERLAY}" >&2
+      return 1
+    fi
+  elif [ -e "$OVERLAY_DEST" ]; then
+    if ! rm -f "$OVERLAY_DEST" || ! sync_path "$APP_ROOT"; then
+      echo "ERROR: could not remove uncommitted overlay ${OVERLAY_DEST}" >&2
+      return 1
+    fi
+  fi
+  if ! rm -rf "${APP_WWW}.prev" "$STAGING_DIR" || ! sync_path "$APP_ROOT"; then
+    echo "ERROR: could not finish activation rollback cleanup" >&2
+    return 1
+  fi
+  if ! reload_caddy; then
+    echo "ERROR: rollback reload failed; activation journal retained for retry" >&2
+    return 1
+  fi
+}
+
+recover_interrupted_activation() {
+  if ! load_activation_journal; then
+    return 1
+  fi
+  echo "recovering interrupted activation from ${ACTIVATION_JOURNAL}"
+  if ! restore_from_rollback; then
+    return 1
+  fi
+  clear_activation_journal
+}
+
 list_live_hosts() {
   if [ -f "$CADDYFILE" ]; then
     grep -E '^[A-Za-z0-9._-]+(,[ ]*[A-Za-z0-9._-]+)*[[:space:]]*\{' "$CADDYFILE" || true
@@ -411,8 +598,8 @@ plan:
   live hosts:
 $(list_live_hosts | sed 's/^/    /')
   stage Caddyfile, static root, and overlay; validate before activation
-  atomic rename for www/overlay; in-place Caddyfile promote (bind-mount inode)
-  failure trap restores Caddyfile/www/overlay and reloads rollback
+  durable activation journal precedes atomic Caddyfile, www, and overlay promotion
+  failure trap or next run restores snapshots and reloads rollback
   retain rollback under ${APP_ROOT}/rollback
   render overlay APP_WWW=${APP_WWW} -> /srv/app-portal
   env ownership: Clerk/Polar stay in /opt/acx-backend/prod/.env; VITE_CLERK_* is baked into FRONTEND_DIST
@@ -484,11 +671,11 @@ validate_staged_caddy() {
 
 reload_caddy() {
   if [ -n "$APP_RELOAD_CMD" ]; then
-    "$APP_RELOAD_CMD"
+    "$APP_RELOAD_CMD" 9>&-
     return $?
   fi
   if command -v caddy >/dev/null 2>&1; then
-    caddy reload --config "$CADDYFILE" --adapter caddyfile
+    caddy reload --config "$CADDYFILE" --adapter caddyfile 9>&-
     return $?
   fi
   echo "reload skipped: set APP_RELOAD_CMD or install caddy; host files are activated, edge process not reloaded"
@@ -506,11 +693,42 @@ default_health() {
 
 run_health() {
   if [ -n "$APP_HEALTH_CMD" ]; then
-    "$APP_HEALTH_CMD"
+    "$APP_HEALTH_CMD" 9>&-
     return $?
   fi
   default_health
 }
+
+if [ "$APPLY" -eq 1 ]; then
+  APP_DEPLOY_LOCK_WAIT="${APP_DEPLOY_LOCK_WAIT:-30}"
+  case "$APP_DEPLOY_LOCK_WAIT" in
+    ''|*[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;
+  esac
+  mkdir -p "$APP_ROOT"
+  if ! command -v flock >/dev/null 2>&1; then
+    refuse "flock is required for deploy lock ${DEPLOY_LOCK}"
+  fi
+  if ! exec 9>>"$DEPLOY_LOCK"; then
+    refuse "could not open deployment lock ${DEPLOY_LOCK}"
+  fi
+  if ! flock -w "$APP_DEPLOY_LOCK_WAIT" 9; then
+    exec 9>&-
+    refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s"
+  fi
+fi
+
+if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
+  if [ "$APPLY" -eq 1 ]; then
+    if ! recover_interrupted_activation; then
+      refuse "could not recover interrupted activation from ${ACTIVATION_JOURNAL}"
+    fi
+  else
+    if ! load_activation_journal; then
+      refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
+    fi
+    echo "recovery pending: journal=${ACTIVATION_JOURNAL} phase=${JOURNAL_PHASE}; rerun with --apply"
+  fi
+fi
 
 print_plan
 
@@ -527,12 +745,9 @@ if [ -L "$CADDYFILE" ] || [ ! -f "$CADDYFILE" ]; then
 fi
 validate_frontend
 
-STAGING_DIR="${APP_ROOT}/staging"
 STAGED_CADDY="${STAGING_DIR}/Caddyfile"
 STAGED_WWW="${STAGING_DIR}/www"
 STAGED_OVERLAY="${STAGING_DIR}/docker-compose.app.yml"
-OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
-ROLLBACK_DIR="${APP_ROOT}/rollback"
 mkdir -p "$APP_ROOT" "$STAGING_DIR"
 
 {
@@ -562,57 +777,38 @@ ROLLBACK_OVERLAY="${ROLLBACK_DIR}/docker-compose.app.yml.${ts}"
 cp -a "$CADDYFILE" "$ROLLBACK_CADDY"
 if [ -d "$APP_WWW" ]; then
   cp -a "$APP_WWW" "$ROLLBACK_WWW"
+else
+  ROLLBACK_WWW="-"
 fi
 if [ -f "$OVERLAY_DEST" ]; then
   cp -a "$OVERLAY_DEST" "$ROLLBACK_OVERLAY"
+else
+  ROLLBACK_OVERLAY="-"
 fi
-
-restore_from_rollback() {
-  set +e
-  echo "ERROR: restoring Caddyfile, static root, and overlay from rollback" >&2
-  if [ -n "${ROLLBACK_CADDY:-}" ] && [ -f "$ROLLBACK_CADDY" ]; then
-    cat "$ROLLBACK_CADDY" > "$CADDYFILE"
-  fi
-  assert_rm_safe APP_WWW "$APP_WWW"
-  if [ -n "${ROLLBACK_WWW:-}" ] && [ -d "$ROLLBACK_WWW" ]; then
-    rm -rf "$APP_WWW"
-    cp -a "$ROLLBACK_WWW" "$APP_WWW"
-  else
-    rm -rf "$APP_WWW"
-  fi
-  if [ -n "${ROLLBACK_OVERLAY:-}" ] && [ -f "$ROLLBACK_OVERLAY" ]; then
-    _ot="${OVERLAY_DEST}.restore.$$"
-    cp -a "$ROLLBACK_OVERLAY" "$_ot"
-    mv -f "$_ot" "$OVERLAY_DEST"
-  else
-    rm -f "$OVERLAY_DEST"
-  fi
-  rm -rf "${APP_WWW}.prev" "$STAGING_DIR"
-  if command -v caddy >/dev/null 2>&1; then
-    if ! caddy reload --config "$CADDYFILE" --adapter caddyfile; then
-      echo "ERROR: rollback reload failed; host files restored, edge process may still be stale" >&2
-    fi
-  fi
-  set -e
-}
+sync_path "$ROLLBACK_DIR"
+sync_path "$APP_ROOT"
 
 activation_fail() {
   echo "ERROR: ${1:-activation step failed}" >&2
   trap - ERR INT TERM
-  restore_from_rollback
+  if ! restore_from_rollback; then
+    echo "ERROR: activation rollback is incomplete; journal retained for next run" >&2
+    exit 5
+  fi
+  if ! clear_activation_journal; then
+    echo "ERROR: activation rollback completed but journal cleanup failed" >&2
+  fi
   exit 5
 }
 
 trap 'activation_fail "interrupted during activation"' INT TERM
 trap 'activation_fail "activation step failed"' ERR
 
-CADDY_TMP="${CADDYFILE}.new.$$"
-cp -a "$STAGED_CADDY" "$CADDY_TMP"
-if ! cat "$CADDY_TMP" > "$CADDYFILE"; then
-  rm -f "$CADDY_TMP"
+write_activation_journal prepared
+if ! copy_file_in_place "$STAGED_CADDY" "$CADDYFILE"; then
   activation_fail "Caddyfile promote failed"
 fi
-rm -f "$CADDY_TMP"
+write_activation_journal caddy_promoted
 
 assert_rm_safe APP_WWW "$APP_WWW"
 if [ -e "$APP_WWW" ]; then
@@ -621,10 +817,13 @@ if [ -e "$APP_WWW" ]; then
 fi
 mv "$STAGED_WWW" "$APP_WWW"
 rm -rf "${APP_WWW}.prev"
+sync_path "$APP_ROOT"
+write_activation_journal www_promoted
 
-OVERLAY_TMP="${OVERLAY_DEST}.new.$$"
-cp -a "$STAGED_OVERLAY" "$OVERLAY_TMP"
-mv -f "$OVERLAY_TMP" "$OVERLAY_DEST"
+if ! atomic_copy_file "$STAGED_OVERLAY" "$OVERLAY_DEST"; then
+  activation_fail "overlay promote failed"
+fi
+write_activation_journal overlay_promoted
 rm -rf "$STAGING_DIR"
 
 if ! reload_caddy; then
@@ -634,6 +833,7 @@ if ! run_health; then
   activation_fail "health check failed after reload"
 fi
 
+clear_activation_journal
 trap - ERR INT TERM
 
 echo "applied: ${APP_HOSTNAME} -> ${APP_UPSTREAM}; frontend ${APP_WWW}; overlay ${OVERLAY_DEST}; rollback ${ROLLBACK_CADDY}; reload=ok health=ok"

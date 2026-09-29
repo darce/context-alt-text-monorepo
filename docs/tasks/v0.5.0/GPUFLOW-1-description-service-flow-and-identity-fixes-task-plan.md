@@ -651,3 +651,8 @@ Deferred from this wave pending API-R-23 contract acceptance; it does not block 
 - [ ] Settings shows "Description Service", the naming toggle is usable, and retention loads after describe failures.
 - [ ] The name listbox is closed on load, suggestion cards never duplicate an avatar, and representatives prefer clear faces.
 - [ ] All five IDCHIP-1 deferred mediums are closed.
+
+## Errata (DEFWAVE-2)
+
+- The Slice 0 checklist items for route/readiness status and the rebaseline evidence artifact do not clear the BLOCKED gate by themselves. Before clearing it, require image digests, a fresh dev-fir probe, and authenticated protected-route results.
+- This supersedes the final Success Criteria checklist item requiring all five IDCHIP-1 deferred mediums: GPUFLOW-1 retains three IDCHIP-1 mediums; D1 and D2 are excluded from this wave's success gate.

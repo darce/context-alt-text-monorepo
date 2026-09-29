@@ -13,7 +13,8 @@ import json
 
 import pytest
 
-from scripts.eval_harness.manifest import ScoreInvariant, compute_corpus_coverage_gaps
+from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identities
+from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
 from scripts.eval_harness.report import Audience, build_reports, score_run_record
 
 _LINEAGE = {
@@ -493,6 +494,78 @@ def test_stranger_faces_are_not_detection_fps() -> None:
     _assert_scored_detection(scored["faces"]["detection"], tp=3, fp=0, fn=0)
     _assert_scored_detection_markdown(md, tp=3, fp=0, fn=0)
     assert scored["faces"]["identification"]["true_rejections"] == 1
+
+
+def test_strict_detection_uses_wire_boxes_for_unrecognized_faces() -> None:
+    confirmed_bbox = {"x": 40, "y": 25, "width": 20, "height": 30}
+    unrecognized_bbox = {"x": 10, "y": 25, "width": 20, "height": 30}
+    wire_rows = [
+        {
+            "media_id": 1,
+            "cluster_label": "Alice Example",
+            "is_auto_label": False,
+            "bbox": confirmed_bbox,
+        },
+        {
+            "media_id": 1,
+            "cluster_label": None,
+            "is_auto_label": False,
+            "bbox": unrecognized_bbox,
+        },
+    ]
+    identities, face_count, _ordering = _extract_identities(
+        wire_rows, 1, image_width=100, image_height=100
+    )
+    detection_boxes = _extract_detection_boxes(wire_rows, 1)
+    assert [identity["name"] for identity in identities] == ["Alice Example"]
+    assert face_count == 2
+    assert detection_boxes == [confirmed_bbox, unrecognized_bbox]
+    record = {
+        "schema": "acx-eval/v1",
+        "kind": "run_record",
+        "provenance": {
+            "manifest_sha256": "m" * 64,
+            "base_url": "x",
+            "head_sha": "0" * 40,
+            "started_at": "t",
+        },
+        "items": [
+            {
+                "media_id": 1,
+                "path": "mock_images/group.jpg",
+                "describe": {"alt_text_draft": "Alice Example and a friend.", "visual_facts": {"objects": []}},
+                "identities": identities,
+                "detection_boxes": detection_boxes,
+                "face_count": face_count,
+                "image_width": 100,
+                "image_height": 100,
+                "error": None,
+            }
+        ],
+    }
+    entry = _stamp_entry(
+        {
+            "path": "mock_images/group.jpg",
+            "media_id": 1,
+            "face_count": 2,
+            "present_identities": ["Alice Example"],
+            "must_right": [],
+            "easy_wrong": [],
+            "policy": {"recognition_enabled": True},
+            "face_boxes": [_named_box("Alice Example"), _named_box(None, x=0.2)],
+        },
+        "exhaustive",
+    )
+
+    try:
+        scored = score_run_record(record, [entry], run_manifest={"iou_threshold": 0.5})
+    except ManifestError as exc:
+        pytest.fail(f"strict detection refused mixed recognized/unrecognized faces: {exc}", pytrace=False)
+
+    detection = scored["faces"]["detection"]
+    _assert_scored_detection(detection, tp=2, fp=0, fn=0)
+    assert detection["tp"] + detection["fp"] == 2
+    assert len(record["items"][0]["identities"]) == 1
 
 
 def test_wrong_name_markdown_alongside_scored_detection() -> None:

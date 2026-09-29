@@ -27,8 +27,10 @@ class _EmptyCatalogOp:
 
 
 class _ConstraintHealingOp:
-    def __init__(self):
-        self.catalog = {}
+    def __init__(self, *, table_name, columns, constraints):
+        self.tables = {table_name}
+        self.columns = {column.name for column in columns if isinstance(column, sa.Column)}
+        self.catalog = {table_name: set(constraints)}
         self.statements = []
 
     def get_bind(self):
@@ -37,11 +39,30 @@ class _ConstraintHealingOp:
         class Dialect:
             name = "postgresql"
 
+        class Result:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def scalar(self):
+                return self.rows[0][0] if self.rows else None
+
+            def __iter__(self):
+                return iter(self.rows)
+
         class Bind:
             dialect = Dialect()
 
-            def execute(self, _statement, params):
-                return [(name,) for name in op.catalog.get(params["t"], set())]
+            def execute(self, statement, params):
+                sql = str(statement).lower()
+                if "pg_constraint" in sql:
+                    rows = [(name,) for name in sorted(op.catalog.get(params["t"], set()))]
+                elif "pg_class" in sql:
+                    rows = [("r",)] if params["name"] in op.tables else []
+                elif "information_schema.columns" in sql:
+                    rows = [(name,) for name in sorted(op.columns)] if params["t"] in op.tables else []
+                else:
+                    rows = []
+                return Result(rows)
 
         return Bind()
 
@@ -50,6 +71,20 @@ class _ConstraintHealingOp:
         name = statement.split("ADD CONSTRAINT ", 1)[1].split('"', 2)[1]
         table = statement.split('ALTER TABLE "', 1)[1].split('"', 1)[0]
         self.catalog.setdefault(table, set()).add(name)
+
+
+def _capture_migration_table_declaration(monkeypatch, table_name):
+    captured = {}
+
+    def capture(_op, name, *elements, **kwargs):
+        captured[name] = (elements, kwargs)
+
+    monkeypatch.setattr(_IDENTITY_SCHEMA, "_ensure_table", capture)
+    monkeypatch.setattr(_IDENTITY_SCHEMA, "_ensure_index", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_IDENTITY_SCHEMA, "ensure_identity_vector_typmods", lambda op: None)
+    _IDENTITY_SCHEMA.ensure_tables(_EmptyCatalogOp())
+    monkeypatch.undo()
+    return captured[table_name]
 
 
 @pytest.fixture
@@ -174,43 +209,77 @@ def test_canonical_schema_matches_models(monkeypatch):
 
 @pytest.mark.parametrize(
     ("table_name", "constraint_name", "columns"),
-    _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS,
-    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS],
+    tuple(entry for entry in _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS if entry[0] == "describe_operations"),
+    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS if entry[0] == "describe_operations"],
 )
-def test_missing_opted_in_unique_constraints_are_healed(table_name, constraint_name, columns):
-    op = _ConstraintHealingOp()
-    constraint = sa.UniqueConstraint(*columns, name=constraint_name)
+def test_missing_opted_in_unique_constraints_are_healed(monkeypatch, table_name, constraint_name, columns):
+    elements, kwargs = _capture_migration_table_declaration(monkeypatch, table_name)
+    assert any(
+        isinstance(element, sa.UniqueConstraint) and element.name == constraint_name for element in elements
+    )
+    assert constraint_name in kwargs["heal_constraints"]
+    declared_constraints = {
+        element.name
+        for element in elements
+        if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)) and element.name
+    }
+    op = _ConstraintHealingOp(
+        table_name=table_name,
+        columns=elements,
+        constraints=declared_constraints - {constraint_name},
+    )
 
-    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    _IDENTITY_SCHEMA._ensure_table(op, table_name, *elements, **kwargs)
 
     assert constraint_name in op.catalog[table_name]
-    assert len(op.statements) == 1
-    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    alters = [statement for statement in op.statements if "ADD CONSTRAINT" in statement]
+    assert len(alters) == 1
+    assert constraint_name in alters[0]
+    assert table_name in alters[0]
+    assert all(f'"{column}"' in alters[0] for column in columns)
+    _IDENTITY_SCHEMA._ensure_table(op, table_name, *elements, **kwargs)
     assert constraint_name in op.catalog[table_name]
     assert len(op.statements) == 1
 
 
 @pytest.mark.parametrize(
     ("table_name", "constraint_name", "local_columns", "target_table", "target_columns", "ondelete"),
-    _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS,
-    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS],
+    tuple(entry for entry in _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS if entry[0] == "describe_demand_leases"),
+    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS if entry[0] == "describe_demand_leases"],
 )
 def test_missing_opted_in_foreign_keys_are_healed(
-    table_name, constraint_name, local_columns, target_table, target_columns, ondelete
+    monkeypatch, table_name, constraint_name, local_columns, target_table, target_columns, ondelete
 ):
-    op = _ConstraintHealingOp()
-    constraint = sa.ForeignKeyConstraint(
-        local_columns,
-        [f"{target_table}.{column}" for column in target_columns],
-        ondelete=ondelete,
-        name=constraint_name,
+    elements, kwargs = _capture_migration_table_declaration(monkeypatch, table_name)
+    assert any(
+        isinstance(element, sa.ForeignKeyConstraint) and element.name == constraint_name for element in elements
+    )
+    assert constraint_name in kwargs["heal_constraints"]
+    declared_constraints = {
+        element.name
+        for element in elements
+        if isinstance(element, (sa.UniqueConstraint, sa.ForeignKeyConstraint, sa.CheckConstraint)) and element.name
+    }
+    op = _ConstraintHealingOp(
+        table_name=table_name,
+        columns=elements,
+        constraints=declared_constraints - {constraint_name},
     )
 
-    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    _IDENTITY_SCHEMA._ensure_table(op, table_name, *elements, **kwargs)
 
     assert constraint_name in op.catalog[table_name]
-    assert len(op.statements) == 1
-    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    alters = [statement for statement in op.statements if "ADD CONSTRAINT" in statement]
+    assert len(alters) == 1
+    assert constraint_name in alters[0]
+    assert table_name in alters[0]
+    assert "FOREIGN KEY" in alters[0]
+    assert all(f'"{column}"' in alters[0] for column in local_columns)
+    assert f'REFERENCES "{target_table}"' in alters[0]
+    assert all(f'"{column}"' in alters[0] for column in target_columns)
+    if ondelete:
+        assert f"ON DELETE {ondelete}" in alters[0]
+    _IDENTITY_SCHEMA._ensure_table(op, table_name, *elements, **kwargs)
     assert constraint_name in op.catalog[table_name]
     assert len(op.statements) == 1
 

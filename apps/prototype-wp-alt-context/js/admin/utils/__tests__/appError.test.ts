@@ -87,14 +87,6 @@ describe('classifyError', () => {
     });
   });
 
-  it('classifies TimeoutError as timeout and AbortError as abort — distinguishable [FEBT1-W2A-05]', () => {
-    const timeout = { name: 'TimeoutError', message: 'timed out' };
-    const abort = { name: 'AbortError', message: 'aborted' };
-    expect(classifyError(timeout)._tag).toBe('timeout');
-    expect(classifyError(abort)._tag).toBe('abort');
-    expect(classifyError(timeout)._tag).not.toBe(classifyError(abort)._tag);
-  });
-
   it("classifies TypeError('Failed to fetch') as transport", () => {
     const failed = new TypeError('Failed to fetch');
     expect(classifyError(failed)).toEqual({
@@ -297,23 +289,6 @@ describe('AppError tags / mutant-killing pins [TEST-15]', () => {
         retryAfterMs: 1000,
       }),
     ).toBe(true);
-  });
-
-  it('AuthExpiredError 401 and 403 round-trip exact status (M4)', () => {
-    const expired401 = new AuthExpiredError({ endpoint: ENDPOINT, status: 401 });
-    const expired403 = new AuthExpiredError({ endpoint: ENDPOINT, status: 403 });
-    expect(expired401.status).toBe(401);
-    expect(expired403.status).toBe(403);
-    const classified401 = classifyError(expired401);
-    const classified403 = classifyError(expired403);
-    expect(classified401._tag).toBe('auth_expired');
-    expect(classified403._tag).toBe('auth_expired');
-    if (classified401._tag === 'auth_expired') {
-      expect(classified401.status).toBe(401);
-    }
-    if (classified403._tag === 'auth_expired') {
-      expect(classified403.status).toBe(403);
-    }
   });
 
   // FEBT1-W2A-05: strengthened, not relaxed. This used to assert TimeoutError

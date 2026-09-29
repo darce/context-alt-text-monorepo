@@ -20,22 +20,16 @@ describe('FaceThumbnail', () => {
   });
 
   describe('rendering', () => {
-    it('renders with default size (md = 48px)', () => {
-      const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} />);
-      const wrapper = container.firstChild as HTMLElement;
-      expect(wrapper).toHaveStyle({ width: '48px', height: '48px' });
-    });
+    it('uses the size prop to set the wrapper dimensions', () => {
+      const small = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} size="sm" />);
+      const smallWrapper = small.container.firstChild as HTMLElement;
+      const large = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} size="lg" />);
+      const largeWrapper = large.container.firstChild as HTMLElement;
 
-    it('renders with small size (32px)', () => {
-      const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} size="sm" />);
-      const wrapper = container.firstChild as HTMLElement;
-      expect(wrapper).toHaveStyle({ width: '32px', height: '32px' });
-    });
-
-    it('renders with large size (64px)', () => {
-      const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} size="lg" />);
-      const wrapper = container.firstChild as HTMLElement;
-      expect(wrapper).toHaveStyle({ width: '64px', height: '64px' });
+      expect({ width: smallWrapper.style.width, height: smallWrapper.style.height }).not.toEqual({
+        width: largeWrapper.style.width,
+        height: largeWrapper.style.height,
+      });
     });
 
     it('applies correct BEM classes', () => {

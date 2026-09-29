@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -8,6 +9,7 @@ from sqlalchemy import select
 
 from db.models import IdentityMember, Tenant
 from db.models import MediaIdentity as MediaIdentityModel
+from db.models.identity import ClusterMergeReceipt
 from recognition.application.orchestration.cluster_merge import _ensure_same_space_merge
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.scan.service import ScanService
@@ -50,6 +52,37 @@ async def test_merge_space_guard_rejects_two_stamped_spaces() -> None:
 
     assert exc_info.value.source_model == "space-a"
     assert exc_info.value.target_model == "space-b"
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_rejects_unstamped_source() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _embedding_models_result([None]),
+        _embedding_models_result(["space-a"]),
+    ]
+
+    with pytest.raises(CrossSpaceMergeError) as exc_info:
+        await _ensure_same_space_merge(AsyncMock(), source_id, target_id, session=session)
+
+    assert exc_info.value.source_model is None
+    assert exc_info.value.target_model == "space-a"
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_rejects_unstamped_source_representatives() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.side_effect = [
+        [SimpleNamespace(embedding_model=None, embedding=[0.1])],
+        [SimpleNamespace(embedding_model="space-a", embedding=[0.2])],
+    ]
+
+    with pytest.raises(CrossSpaceMergeError):
+        await _ensure_same_space_merge(cluster_repo, source_id, target_id)
 
 
 @pytest.mark.asyncio
@@ -182,6 +215,10 @@ async def test_merge_flow_records_moved_member_provenance(
     refreshed_identity = await db_session.get(MediaIdentityModel, identity_id)
     assert refreshed_identity is not None
     assert refreshed_identity.moved_by_merge_id == uuid.UUID(moved_by_merge_id)
+
+    receipt = await db_session.get(ClusterMergeReceipt, uuid.UUID(moved_by_merge_id))
+    assert receipt is not None
+    assert [str(moved_id) for moved_id in receipt.moved_identity_ids] == [str(identity_id)]
 
     moved_members = await member_repository.get_by_cluster(target.id)
     assert [member.identity_id for member in moved_members] == [str(identity_id)]

@@ -59,12 +59,12 @@ logger = logging.getLogger(__name__)
 async def _cluster_gallery_space(
     cluster_repo: ClusterRepository,
     cluster_id: str,
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool, bool]:
     """Resolve a cluster's representative space and whether all reps use it."""
     reps = list(await cluster_repo.get_all_representatives(cluster_id))
     model, _vectors = same_space_representative_vectors(reps)
     all_representatives_match = all(models_are_same_space(representative_embedding_model(rep), model) for rep in reps)
-    return model, all_representatives_match
+    return model, all_representatives_match, bool(reps)
 
 
 async def _cluster_full_embedding_models(session: AsyncSession, cluster_id: str) -> set[str | None]:
@@ -103,9 +103,8 @@ async def _ensure_same_space_merge(
     if session is not None:
         source_models = await _cluster_full_embedding_models(session, source_cluster_id)
         target_models = await _cluster_full_embedding_models(session, target_cluster_id)
-        source_spaces = source_models - {None}
-        target_spaces = target_models - {None}
-        if len(source_spaces | target_spaces) <= 1:
+        all_models = source_models | target_models
+        if None not in all_models and len(all_models) <= 1:
             return
         raise CrossSpaceMergeError(
             source_cluster_id=source_cluster_id,
@@ -114,11 +113,17 @@ async def _ensure_same_space_merge(
             target_model=_model_description(target_models or {None}),
         )
 
-    source_model, source_representatives_match = await _cluster_gallery_space(cluster_repo, source_cluster_id)
-    target_model, target_representatives_match = await _cluster_gallery_space(cluster_repo, target_cluster_id)
+    source_model, source_representatives_match, source_has_representatives = await _cluster_gallery_space(
+        cluster_repo, source_cluster_id
+    )
+    target_model, target_representatives_match, target_has_representatives = await _cluster_gallery_space(
+        cluster_repo, target_cluster_id
+    )
     if (
         source_representatives_match
         and target_representatives_match
+        and (not source_has_representatives or source_model is not None)
+        and (not target_has_representatives or target_model is not None)
         and (
             source_model is None
             or target_model is None
@@ -468,7 +473,7 @@ async def merge_cluster(
                 survivor_cluster_id=uuid.UUID(str(target.id)),
                 source_cluster_id=uuid.UUID(str(source.id)),
                 source_label=source.label,
-                moved_identity_ids=moved_identity_ids,
+                moved_identity_ids=[str(identity_id) for identity_id in moved_identity_ids],
                 rule_version="operator-v1",
                 kind=ClusterMergeKind.OPERATOR.value,
                 created_at=created_at,

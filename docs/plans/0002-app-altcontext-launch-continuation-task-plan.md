@@ -25,7 +25,7 @@ Semantic retrieval used `find_related_prior_work`: `embeddings_mode=verified`, m
 
 APP-1 currently has 34 deferred findings: 6 high, 19 medium, 9 low. Zero *open* findings does not mean launch-ready. The latest user-requested harmonizing gate supersedes the older request for a clean planning review before dispatch; do not repeat that older review. The coordinator records gate state and supported dispositions.
 
-The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. Its S0 route inventory and E16-7 disposition matrix retain some pre-implementation claims; the current source and supplied receipts are reconciled in [the offline evidence report](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). Do not redo the original discovery program or a second fixwave review.
+The old plan called implemented surfaces new. The previously absent `docs/specs/app-portal-account-billing-spec.md` now exists and was amended at `662114f7c` for tenant-scoped idempotency, typed checkout identity and existing-installation upgrades. The S0 route inventory and E16-7 disposition matrix were source-refreshed on 2026-09-29 for APP1-CONT-P02/P04; the supplied historical receipts remain in [the offline evidence report](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). Do not redo the original discovery program or a second fixwave review.
 
 ## Offline evidence reconciliation — 2026-09-22
 
@@ -33,7 +33,7 @@ This is a documentation-only classification. The current checkout is the source 
 
 - W4 usage findings 15849–15852 are offline-addressed by the landed G1/G2/G3 source and receipts. The exact matrix, including residual evidence, is in [app1-offline-evidence-reconciliation-20260922.md](../assessments/current/app1-offline-evidence-reconciliation-20260922.md). A new operation remains independently chargeable even for identical bytes; a terminal ticket cannot mint work. Post-start compute failures remain conservatively chargeable under the accepted cost contract; “all failures free” is not the contract.
 - P01 enumeration and recovery are implemented in the current provider, reconciliation worker, and fenced repository. The supplied R1 receipt is green offline; the initial R1 review remains pending, and Polar sandbox/live evidence is external.
-- P02 now adjudicates the scene compute paths and covered operator controls from source. Operator GPU/clustering/revert mutations are paid-only through durable `TenantEntitlement(PAID_ACTIVE)` plus the existing write/auth guard; beta/demo markers are not authority. The `/recognition/jobs/{id}` tenant census and other intentionally open-Q control-plane decisions remain pending.
+- P02's source census is complete in the 103-row route inventory. Scene compute and `/roster/curation/sync` use durable usage admission; 15 high-cost paths without a per-run work/byte cap are marked `GAP`, including tenant-wide clustering/recovery and unbounded retention/topology operations. `PAID_ACTIVE` operator authorization and request-rate limits remain useful guards but do not cap per-call work.
 - P03 is not closed as a whole: durable checkout-attempt identity, recovery/enumeration, and full-header verifier code are landed and receipted offline, but genuine webhook sandbox compatibility remains unproven. Keep the finding open until V has that evidence.
 - P05 is split: the evaluator now fail-closes untyped/partial evidence, zero/failed/skipped JUnit, missing or mismatched parametrized cases, missing evidence-only artifacts, and release-mode partial selection. The supplied evaluator receipt is green offline; the full current manifest plus real PostgreSQL, restore, Clerk, Polar, browser, and alert/telemetry rehearsals remain V work.
 - HOST-RV01 still blocks main after the host single-fix wave; no extra host fix is authorized here. N1 recovery work remains queued/running under coordinator control, B1’s remaining UI is incomplete, and user accounts are not provisioned.
@@ -104,7 +104,7 @@ These are point-in-time observations. Consult MCP pass state before recovery; an
 | K — keys/hooks | Integrated; no duplicate implementation | Preserve `8f12a1e8`; check cross-slice contracts at the final gate |
 | D — app host preparation | Bounded implementation candidate | Freeze host allowlist/env names in P and record a planning pass; DNS/secrets are staging inputs, not grounds to fabricate a deploy pass |
 | C — checkout/provider/schema | Provider integrated; persistence executing remotely | Consume typed provider results and tenant-scoped attempt repository in a subsequent checkout-service slice |
-| U — usage and cost | Offline-landed for the G1/G2/G3 route set; residual census/evidence pending | Preserve global bounds, exact operation/fingerprint/job/fence identity, conservative post-start charging, and classify remaining OPEN-Q routes |
+| U — usage and cost | G1/G2/G3 route admission is offline-landed; source census complete; 15 cost gaps remain | Preserve global bounds, exact operation/fingerprint/job/fence identity and conservative post-start charging; resolve the inventory's explicit `GAP` paths and complete release evidence |
 | R — reconciliation | Offline implementation and receipts present; initial R1 review pending | Retain bounded provider enumeration, cursor/lease fencing, quarantine/retry, and obtain the initial review plus external provider evidence |
 | H — portal HTTP | Dependency blocked | Consume reviewed C interfaces; one owner for claim, checkout and manage routes |
 | B — browser UI | Dependency blocked for integration | Freeze HTTP schemas and Clerk browser contract; consume H and U, serialize app mount ownership |
@@ -117,7 +117,7 @@ Paths below are relative to `apps/prototype-description-service/` unless prefixe
 
 ### P — contract and ownership refresh
 
-Own this plan, the epic's active APP-1 section, the now-present `docs/specs/app-portal-account-billing-spec.md`, S0 route/metering inventory and E16-7 matrix, and a later revision of the W4 manifest. The operator has authorized execution; update the manifest only after preserving finished lanes and validating disjoint ownership.
+Own this plan, the epic's active APP-1 section, the now-present `docs/specs/app-portal-account-billing-spec.md`, and the S0 route/metering inventory and E16-7 matrix. The W4 usage lanes, W5 usage contract (`fa2469d7e`), W5 usage sweeper (`8de6c0002`), and W6 curation authentication (`59e4e6c74`) have landed. This source pass refreshes the inventory and dispositions; the historical W4 manifest is no longer a pre-dispatch task. Admit remaining work from current lane ownership and evidence.
 
 - Record endpoint schemas, error/status vocabulary, verified pre-tenant identity versus tenant-bound principal, invitation claim plus beta grant transaction, and replay behavior.
 - Define durable checkout attempt lifecycle, tenant/catalog/environment binding, customer mapping, ambiguous result recovery and a new attempt after a completed/expired purchase. Pin supported vendor behavior with official documentation and sanitized sandbox fixtures before C implementation.
@@ -188,7 +188,7 @@ These assignments deduplicate work; this offline document classification does no
 
 | Owner | Existing finding rows |
 | --- | --- |
-| P | 15388, 15391, 15392, 15393; refresh E16-7 matrix instead of importing its entire backlog |
+| P | 15388, 15391, 15392, 15393; source-refresh the E16-7 matrix and route inventory, then keep only unresolved source/external evidence work |
 | C | 15546, 15525, 15537, 15587, 15476 |
 | U | 15550, 15581, 15580, 15576, 15493, 15488, 15586, 15574; residual usage part of 15487 |
 | R | 15548, 15584, 15524, 15523 |
@@ -222,7 +222,7 @@ flowchart LR
   F --> L["L: authorized paid activation"]
 ```
 
-Use a maximum of four workers when later authorized and admitted by the harness. After P, C/U/D can implement while K's existing checkpoint is reviewed. After C, R/H/K final integration are eligible. B integrates after H/U. A topology-only longest chain is P → C → H → B → V → beta → paid; durations are not estimated, so this is not a wall-clock critical-path claim. Shared schema/protocol belongs to C, composition to U, portal routes to H, app mount to B. Refresh the old manifest before any dispatch; its current independence claims are not this graph.
+Use a maximum of four workers when later authorized and admitted by the harness. After P, C/U/D can implement while K's existing checkpoint is reviewed. After C, R/H/K final integration are eligible. B integrates after H/U. A topology-only longest chain is P → C → H → B → V → beta → paid; durations are not estimated, so this is not a wall-clock critical-path claim. Shared schema/protocol belongs to C, composition to U, portal routes to H, app mount to B. The W4 usage lanes and the W5/W6 continuation commits listed above have landed; do not refresh the historical W4 manifest as a pre-dispatch step. Use current branch state, lane ownership, and receipts for any remaining admission.
 
 ## Review readiness and remaining decisions
 

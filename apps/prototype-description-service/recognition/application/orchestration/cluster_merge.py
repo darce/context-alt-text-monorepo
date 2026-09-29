@@ -473,7 +473,7 @@ async def merge_cluster(
                 survivor_cluster_id=uuid.UUID(str(target.id)),
                 source_cluster_id=uuid.UUID(str(source.id)),
                 source_label=source.label,
-                moved_identity_ids=[str(identity_id) for identity_id in moved_identity_ids],
+                moved_identity_ids=moved_identity_ids,
                 rule_version="operator-v1",
                 kind=ClusterMergeKind.OPERATOR.value,
                 created_at=created_at,

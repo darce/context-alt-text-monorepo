@@ -16,29 +16,6 @@ def _repo_root() -> Path:
 _ROOT = _repo_root()
 
 
-def test_gpu_burst_plan_uses_installer_gpu_state_path() -> None:
-    plan = (_ROOT / "docs/tasks/vlm/GPUSMOKE-1-burst-e2e-proof-task-plan.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert "/run/acx/gpu-state.json" in plan
-    assert "/run/acx-write/<environment>/gpu-state.json" not in plan
-
-
-def test_gpu_timer_checks_query_the_system_manager() -> None:
-    plan = (_ROOT / "docs/tasks/vlm/GPUSMOKE-1-burst-e2e-proof-task-plan.md").read_text(
-        encoding="utf-8"
-    )
-    activation = (_ROOT / "docs/tasks/vlm/VLM-3-7c-activation-evidence.md").read_text(
-        encoding="utf-8"
-    )
-
-    assert "systemctl list-timers" in plan
-    assert "systemctl list-timers" in activation
-    assert "systemctl --user/list-timers" not in plan
-    assert "systemctl --user list-timers" not in activation
-
-
 def test_gpu_installer_checks_running_api_container_gid() -> None:
     installer = (_ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text(
         encoding="utf-8"

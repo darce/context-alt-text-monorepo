@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import time
 from pathlib import Path
@@ -342,6 +343,35 @@ async def test_local_cpu_readiness_does_not_resolve_secret_settings(monkeypatch:
 
     assert readiness["usable"] is True
     assert readiness["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_local_cpu_readiness_logs_adapter_build_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from api import main as main_module
+    from scene.config.profiles import DescriptionProfile
+    from scene.interface_adapters.http import deps as scene_http_deps
+
+    monkeypatch.setattr(scene_http_deps, "_missing_vlm_dependencies", lambda: ())
+
+    def _construction_failure(_settings):
+        raise RuntimeError("adapter construction diagnostic")
+
+    monkeypatch.setattr(scene_http_deps, "_build_florence_small_adapter", _construction_failure)
+    caplog.set_level(logging.WARNING, logger="api.main")
+
+    readiness = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+
+    assert readiness["usable"] is False
+    assert readiness["reason"] == main_module.AdapterReadinessReason.LOCAL_ADAPTER_UNAVAILABLE.value
+    assert any(
+        record.name == "api.main"
+        and "local CPU description adapter" in record.getMessage()
+        and record.exc_info is not None
+        and "adapter construction diagnostic" in str(record.exc_info[1])
+        for record in caplog.records
+    ), "local adapter readiness failures must preserve the cause for operators"
 
 
 def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

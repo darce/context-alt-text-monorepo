@@ -554,7 +554,9 @@ do_restart() { record do_restart "$@"; }
 _ship_selected_env dev aggregate
 """,
     )
-    assert result.returncode == 130, result.stdout + result.stderr
+    output = result.stdout + result.stderr
+    assert "Deploy submitted. Verifying..." not in output, output
+    assert result.returncode == 130, output
     records = result.records  # type: ignore[attr-defined]
     assert "restore_env_tag_to_rollback dev 0" in records
     assert "do_restart dev repo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not in records

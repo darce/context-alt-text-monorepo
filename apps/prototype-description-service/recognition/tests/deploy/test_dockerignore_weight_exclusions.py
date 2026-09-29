@@ -959,14 +959,20 @@ def test_image_tag_derivation_mutation_would_collide(tmp_path: Path) -> None:
     )
 
     original = DEPLOY_SCRIPT.read_text()
-    mutant_text, subs = re.subn(
-        r"^\s*runtime-vlm\|builder-vlm\)\s*printf.*$",
-        "    runtime-vlm|builder-vlm) printf '%s\\\\n' \"${IMAGE_NAME}\" ;;",
-        original,
+    function_match = re.search(r"(?ms)^resolve_image_repo_name\s*\(\s*\)\s*\{.*?^\}", original)
+    assert function_match is not None, "could not locate resolve_image_repo_name function"
+    mutant_function, subs = re.subn(
+        r"""(?m)^([ \t]*(?:runtime-vlm[ \t]*\|[ \t]*builder-vlm|builder-vlm[ \t]*\|[ \t]*runtime-vlm)[ \t]*\)[ \t]*printf[ \t]+(['"])%s)-vlm\\n\2""",
+        r"\1%s\\n\2",
+        function_match.group(),
         count=1,
-        flags=re.MULTILINE,
     )
-    assert subs == 1, "could not locate the vlm case arm to mutate (arm renamed?)"
+    assert subs == 1, "could not locate the vlm repository suffix arm to mutate"
+    mutant_text = (
+        original[: function_match.start()]
+        + mutant_function
+        + original[function_match.end() :]
+    )
     mutant = tmp_path / "recognition-service.sh"
     mutant.write_text(mutant_text)
 

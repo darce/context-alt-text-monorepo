@@ -1182,7 +1182,10 @@ class OutboxMaintenanceService {
 			$this->related_table_name( 'acx_clusters' ),
 			array( $cluster_uuid, trim( $tenant_id ) )
 		);
-		if ( null === $clusters || array() === $clusters ) {
+		if ( null === $clusters ) {
+			throw new RuntimeException( 'Could not read tenant cluster label while reconciling a dead-lettered outbox row.' );
+		}
+		if ( array() === $clusters ) {
 			return 'skipped';
 		}
 

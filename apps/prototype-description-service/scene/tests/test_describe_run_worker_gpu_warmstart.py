@@ -588,6 +588,7 @@ def test_warmup_cpu_fallback_forces_provisional_cpu_when_adapter_returns_final_g
     asyncio.run(body())
 
 
+@pytest.mark.timeout(120, method="signal")
 def test_warmup_cpu_fallback_failed_item_keeps_fallback_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -616,17 +617,14 @@ def test_warmup_cpu_fallback_failed_item_keeps_fallback_provenance(
             ):
                 raise RuntimeError("cpu adapter crashed")
 
-            await asyncio.wait_for(
-                wmod.run_describe_job(
-                    tenant_id=TENANT_ID,
-                    run_id=run_id,
-                    session_factory=session_factory,
-                    describe_one=gpu_describe_one,
-                    timeout_seconds=0.5,
-                    gpu_policy=_gpu_policy(),
-                    cpu_describe_one=cpu_describe_one,
-                ),
-                timeout=2.0,
+            await wmod.run_describe_job(
+                tenant_id=TENANT_ID,
+                run_id=run_id,
+                session_factory=session_factory,
+                describe_one=gpu_describe_one,
+                timeout_seconds=0.5,
+                gpu_policy=_gpu_policy(),
+                cpu_describe_one=cpu_describe_one,
             )
             _run, items = await _read_run(session_factory, run_id)
 

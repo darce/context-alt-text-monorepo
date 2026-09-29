@@ -114,3 +114,8 @@ GPUW-1 implemented the gate; this slice proves the *composed* behaviour (enqueue
 ## Open threads
 - `oci` binary and vaulted key live only on acx-backend as `ubuntu`; the gate user cannot actuate. S3 live mode documents this and refuses elsewhere.
 - Whether the demo stack (frozen container env) can ever point at the burst endpoint is out of scope; the target is dev/staging on acx-backend.
+
+## Errata (DEFWAVE-2)
+
+- This supersedes the timer query in the Slice 4 Preflight checklist item: query the system manager with `systemctl list-timers`, not `systemctl --user list-timers`.
+- This supersedes the GPU-state path in the Slice 3 Assertions checklist item and objective flow: use `/run/acx/gpu-state.json`. The describe-load snapshot remains at `/run/acx-write/<environment>/describe-load.json`.

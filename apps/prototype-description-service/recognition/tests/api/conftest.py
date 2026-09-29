@@ -54,6 +54,7 @@ class FakeSession:
         scalar_one_or_none: object | None = None,
         scalar: object = 0,
         all_rows: list[object] | None = None,
+        rowcount: int = 0,
     ) -> None:
         """Queue a deterministic execute result for the next `execute()` call."""
         self._execute_results.append(
@@ -61,6 +62,7 @@ class FakeSession:
                 scalar_one_or_none_value=scalar_one_or_none,
                 scalar_value=scalar,
                 all_rows=all_rows or [],
+                rowcount=rowcount,
             )
         )
 
@@ -182,10 +184,12 @@ class FakeSessionResult:
         scalar_one_or_none_value: object | None = None,
         scalar_value: object = 0,
         all_rows: list[object] | None = None,
+        rowcount: int = 0,
     ) -> None:
         self._scalar_one_or_none_value = scalar_one_or_none_value
         self._scalar_value = scalar_value
         self._all_rows = all_rows or []
+        self.rowcount = rowcount
 
     def scalar_one_or_none(self):  # noqa: ANN001
         return self._scalar_one_or_none_value
@@ -769,7 +773,7 @@ def api_client(
     # Resolve every tenant-record lookup to the seeded tenant for the lifetime of the client so the
     # provisioning gate never silently 403s a contract test that performs more lookups than a fixed
     # queue depth would cover.
-    fake_session.default_execute_result = FakeSessionResult(scalar_one_or_none_value=seeded_tenant)
+    fake_session.default_execute_result = FakeSessionResult(scalar_one_or_none_value=seeded_tenant, rowcount=1)
     fake_cluster_service.fake_cluster_repository = fake_cluster_repository
     fake_job_service.cluster_repository = fake_cluster_repository
     fake_suggestion_service.tenant_id = tenant_id

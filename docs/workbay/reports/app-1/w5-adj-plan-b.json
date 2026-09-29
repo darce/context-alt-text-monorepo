@@ -1,0 +1,35 @@
+{
+  "lane": "w5-adj-plan-b",
+  "base": "0ffa68c15ac14e5ef4380ae463c0fc7518acf20a",
+  "results": [
+    {
+      "id": "APP1-CONT-P03",
+      "verdict": "PARTIAL",
+      "evidence": "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:37 - durable checkout-attempt identity, recovery/enumeration and full-header verifier code are receipted offline, but genuine webhook sandbox compatibility remains unproven; docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:123 and :125 - official vendor behavior and sanitized sandbox fixtures are still required and genuine Polar delivery compatibility is not claimed; apps/prototype-description-service/recognition/application/services/checkout_service.py:281 and apps/prototype-description-service/recognition/infrastructure/billing/polar_provider.py:235 - a generated attempt key is persisted into the attempt and forwarded as Polar's Idempotency-Key.",
+      "severity": "medium",
+      "remaining_gap": "Official Polar support for ambiguous checkout recovery and genuine-format Polar webhook sandbox compatibility still need vendor documentation and V rehearsal evidence; the plan keeps P03 open pending that evidence.",
+      "fix_files": [
+        "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md",
+        "apps/prototype-description-service/recognition/infrastructure/billing/polar_provider.py",
+        "apps/prototype-description-service/recognition/interface_adapters/http/routers/billing_webhooks.py",
+        "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_webhook_router.py"
+      ],
+      "size": "M",
+      "fix_hint": "Pin Polar's supported ambiguous-checkout recovery and webhook signing behavior with official documentation and sanitized genuine sandbox fixtures, then record the V review."
+    },
+    {
+      "id": "APP1-CONT-P05",
+      "verdict": "PARTIAL",
+      "evidence": "apps/prototype-description-service/scripts/run_app_portal_evals.py:914 and :929-930 - missing declared JUnit cases and artifact errors add failure reasons; apps/prototype-description-service/scripts/run_app_portal_evals.py:1077-1079 - release disposition fails when selection is partial; docs/plans/0002-app-altcontext-launch-continuation-task-plan.md:38 and :179-183 - offline enforcement is addressed, but the full current manifest and real beta rehearsals remain V work.",
+      "severity": "medium",
+      "remaining_gap": "The full current manifest and declared test scope have not been proven as a release packet, and retained evidence is still required for real PostgreSQL isolation/concurrency, restore, Clerk/Polar sandbox, the two-tenant browser journey, and alert/telemetry rehearsals.",
+      "fix_files": [
+        "docs/plans/0002-app-altcontext-launch-continuation-task-plan.md",
+        "apps/prototype-description-service/scripts/run_app_portal_evals.py",
+        "apps/prototype-description-service/recognition/tests/unit/test_run_app_portal_evals.py"
+      ],
+      "size": "L",
+      "fix_hint": "Complete V by running the full declared scope with required PostgreSQL/security settings and retaining artifacts for restore, Clerk/Polar, browser, alert, and telemetry rehearsals before claiming beta readiness."
+    }
+  ]
+}

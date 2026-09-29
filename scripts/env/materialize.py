@@ -125,8 +125,14 @@ def _owned_write(path: Path, data: bytes, owner: os.stat_result, *, backup: bool
             try:
                 os.link(staged, path)
             except FileExistsError:
-                if render._inspect_path(path) is None or path.read_bytes() != data:
-                    raise
+                with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as existing:
+                    metadata = os.fstat(existing.fileno())
+                    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                        raise ValueError("invalid backup file")
+                    if existing.read() != data:
+                        raise ValueError("backup exists")
+                    os.fchown(existing.fileno(), owner.st_uid, owner.st_gid)
+                    os.fchmod(existing.fileno(), 0o600)
         else:
             os.replace(staged, path)
     finally:

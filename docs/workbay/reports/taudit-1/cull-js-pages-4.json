@@ -1,0 +1,48 @@
+{
+  "lane": "cull-js-pages-4",
+  "base": "ccb3e015a2b426e7a5fa762d51ff59d336487143",
+  "files_in_partition": 37,
+  "tests_in_partition": 605,
+  "results": [
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts::S3-T1/cell1: isError with no cached data maps to UNAVAILABLE",
+      "class": "REDUNDANT",
+      "action": "DELETE",
+      "covered_by": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts::S3-T2: client error maps to UNAVAILABLE, never ENDPOINT_ERROR (apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts:18)",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/deriveIdentitiesPresentationSource.test.ts:13 - S3-T1 calls deriveIdentitiesPresentationSource(true, undefined) and expects UNAVAILABLE; line 18 repeats that same call and expectation, while line 19 adds the ENDPOINT_ERROR exclusion.",
+      "canon": "REF-26",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/phasePresentation.test.ts::both records source the clustering label from SYNC_VOCABULARY",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/phasePresentation.test.ts:59 compares the displayed value to the current vocabulary value; replacing the SYNC_VOCABULARY references in phasePresentation.ts:93, phasePresentation.ts:135, and phasePresentation.ts:137 with the same literals would leave this test green despite violating its source-of-truth claim. The matching strings are in syncVocabulary.ts:68 and syncVocabulary.ts:103.",
+      "canon": "TEST-15",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx::has no dead duplicateMatch / 409 Is-this branch references",
+      "class": "SPURIOUS",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.test.tsx:442 names the branch-absence test, :444 only renders the default panel, and :445 checks that 'Is this' is absent; :166 supplies an empty cluster list by default. It would miss reintroducing the old question UI only after a duplicate lookup receives HTTP 409.",
+      "canon": "TEST-15",
+      "confidence": "high",
+      "cost": "cheap"
+    },
+    {
+      "test": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx::LEGACY_CONFIRM_TAB is fully retired from the workbench nav module",
+      "class": "OBSOLETE",
+      "action": "DELETE",
+      "covered_by": "",
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx:802 names the retired-symbol test, :804 and :806 assert that LEGACY_CONFIRM_TAB is absent from the two modules. grep -rn LEGACY_CONFIRM_TAB apps/prototype-wp-alt-context/js/admin/pages/workbench/WorkbenchNavContext.tsx apps/prototype-wp-alt-context/js/admin/pages/workbench/WorkbenchContext.tsx returned no matches; WorkbenchNavContext.tsx:47 says the tab=confirm shim was deleted.",
+      "canon": "TEST-11",
+      "confidence": "high",
+      "cost": "cheap"
+    }
+  ]
+}

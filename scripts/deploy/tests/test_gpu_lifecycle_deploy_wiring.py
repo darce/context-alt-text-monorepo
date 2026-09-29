@@ -49,6 +49,9 @@ def _run_lifecycle(
     empty_rollback_artifact: str | None = None,
     damaged_rollback_unit: str | None = None,
     partial_reaper_write: bool = False,
+    api_gid: str = "10001",
+    api_container_gid: str | None = None,
+    api_container_ids: tuple[str, ...] = ("running-api-container",),
     group_present: bool = False,
     groupadd_rc: int = 0,
     groupadd_noop: bool = False,
@@ -380,6 +383,30 @@ printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
 """,
     )
+    _write_executable(
+        fake_bin / "docker",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+case "${1:-}" in
+  ps)
+    printf '%s\n' "$FAKE_API_CONTAINER_IDS"
+    ;;
+  exec)
+    case $'\n'"$FAKE_API_CONTAINER_IDS"$'\n' in
+      *$'\n'"${2:-}"$'\n'*) ;;
+      *) exit 2 ;;
+    esac
+    [ "${3:-}" = id ] || exit 2
+    [ "${4:-}" = -g ] || exit 2
+    printf '%s\n' "$FAKE_API_CONTAINER_GID"
+    ;;
+  *) exit 2 ;;
+esac
+""",
+    )
 
     environment = os.environ.copy()
     for name in ("ACX_DEPLOY_GPU_LIFECYCLE", "ACX_GPU_READY_URL"):
@@ -406,6 +433,9 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_GROUP_DB": str(group_db),
             "FAKE_GROUPADD_RC": str(groupadd_rc),
             "FAKE_GROUPADD_NOOP": "1" if groupadd_noop else "0",
+            "ACX_API_GID": api_gid,
+            "FAKE_API_CONTAINER_GID": api_container_gid or api_gid,
+            "FAKE_API_CONTAINER_IDS": "\n".join(api_container_ids),
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
@@ -925,6 +955,49 @@ def test_install_fails_closed_when_the_gid_is_unresolvable_after_groupadd(
     assert calls.count("getent <group> <10001>") >= 2
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
     assert "does not resolve GID 10001" in result.stderr
+
+
+def test_mismatched_running_api_gid_refuses_before_lifecycle_mutation(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        api_gid="10001",
+        api_container_gid="10002",
+    )
+
+    assert result.returncode != 0
+    assert (
+        "ERROR gpu-lifecycle: running api container gid 10002 does not match ACX_API_GID 10001; refusing deploy"
+        in result.stderr
+    )
+    assert "docker <ps>" in calls
+    assert "docker <exec> <running-api-container> <id> <-g>" in calls
+    assert "groupadd <-r>" not in calls
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+    assert calls.index("docker <exec> <running-api-container> <id> <-g>") < calls.index(
+        "systemctl <disable> <--now> <acx-gpu-intent.path>"
+    )
+    assert not (tmp_path / "host/opt-acx-gpu/current").is_symlink()
+    assert (tmp_path / "fake-etc-group").read_text(encoding="utf-8") == ""
+
+
+def test_every_running_api_container_gid_is_checked_before_lifecycle_mutation(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        api_container_ids=("running-api-container", "second-running-api-container"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls.count("docker <exec> <running-api-container> <id> <-g>") == 1
+    assert calls.count("docker <exec> <second-running-api-container> <id> <-g>") == 1
+    assert calls.index("docker <exec> <second-running-api-container> <id> <-g>") < calls.index(
+        "systemctl <disable> <--now> <acx-gpu-intent.path>"
+    )
 
 
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:

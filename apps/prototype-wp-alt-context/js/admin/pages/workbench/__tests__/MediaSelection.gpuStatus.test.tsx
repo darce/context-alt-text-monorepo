@@ -197,7 +197,6 @@ const renderSelection = (queryClient = new QueryClient({ defaultOptions: { queri
 describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchGpuStatusMock.mockResolvedValue(statusResponse());
     fetchSettingsMock.mockResolvedValue({ recognition_enabled: false });
     Object.assign(bulkDescribeState, {
       submit: { isPending: false, mutate: vi.fn(), error: null },

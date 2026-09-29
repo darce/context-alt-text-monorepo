@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -13,7 +14,6 @@ from pathlib import Path
 from time import time_ns
 
 import pytest
-from filelock import FileLock
 
 _RECEIPT_DIRECTORY = Path("/tmp")
 _RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
@@ -208,20 +208,31 @@ def _cached_nested_collection(
 ) -> tuple[tuple[str, ...], str]:
     project_root = Path(__file__).resolve().parent
     shared_directory = tmp_path_factory.getbasetemp().parent
-    cache_path = shared_directory / f"nested-{name}-collection.json"
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        receipt_path = shared_directory / f"nested-{name}-receipt.json"
+        return _run_nested_collection(project_root, receipt_path, *paths)
+
+    test_run_uid = os.environ["PYTEST_XDIST_TESTRUNUID"]
+    cache_path = shared_directory / f"nested-{test_run_uid}-{name}-collection.json"
     lock_path = cache_path.with_suffix(".lock")
-    with FileLock(str(lock_path)):
-        if cache_path.exists():
-            payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        else:
-            receipt_path = shared_directory / f"nested-{name}-receipt.json"
-            items, output = _run_nested_collection(project_root, receipt_path, *paths)
-            payload = {"items": items, "output": output}
-            temporary_path = cache_path.with_name(
-                f"{cache_path.name}.{os.getpid()}.tmp"
-            )
-            temporary_path.write_text(json.dumps(payload), encoding="utf-8")
-            os.replace(temporary_path, cache_path)
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if cache_path.exists():
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            else:
+                receipt_path = shared_directory / (
+                    f"nested-{test_run_uid}-{name}-receipt.json"
+                )
+                items, output = _run_nested_collection(project_root, receipt_path, *paths)
+                payload = {"items": items, "output": output}
+                temporary_path = cache_path.with_name(
+                    f"{cache_path.name}.{os.getpid()}.tmp"
+                )
+                temporary_path.write_text(json.dumps(payload), encoding="utf-8")
+                os.replace(temporary_path, cache_path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     return tuple(payload["items"]), payload["output"]
 
 

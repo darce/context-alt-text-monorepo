@@ -4,6 +4,35 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import conftest as service_conftest
+
+
+def test_nested_collection_cache_is_not_reused_without_xdist(
+    tmp_path_factory, monkeypatch
+) -> None:
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    shared_directory = tmp_path_factory.getbasetemp().parent
+    stale_cache = shared_directory / "nested-default-collection.json"
+    stale_cache.write_text(
+        json.dumps({"items": ["stale::test"], "output": "stale output"}),
+        encoding="utf-8",
+    )
+    fresh_collection = (("fresh::test",), "fresh output")
+    runs: list[tuple[Path, tuple[str, ...]]] = []
+
+    def run_nested_collection(project_root: Path, receipt_path: Path, *paths: str):
+        runs.append((receipt_path, paths))
+        return fresh_collection
+
+    monkeypatch.setattr(
+        service_conftest, "_run_nested_collection", run_nested_collection
+    )
+
+    result = service_conftest._cached_nested_collection(tmp_path_factory, "default")
+
+    assert result == fresh_collection
+    assert len(runs) == 1
+
 
 def test_nested_collection_does_not_replace_outer_receipt(
     tmp_path: Path, monkeypatch, nested_collection_runner

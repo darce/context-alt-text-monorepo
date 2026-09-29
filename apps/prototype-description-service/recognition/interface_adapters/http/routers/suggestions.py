@@ -560,17 +560,23 @@ async def accept_merge_suggestion(
         request.tenant_id, str(suggestion.id)
     )
 
-    await session.execute(
+    acceptance_result = await session.execute(
         update(MergeSuggestionModel)
         .where(
             MergeSuggestionModel.tenant_id == UUID(request.tenant_id),
             MergeSuggestionModel.id == UUID(str(suggestion.id)),
+            MergeSuggestionModel.resolution == SuggestionStatus.PENDING.value,
         )
         .values(
             resolution=SuggestionStatus.ACCEPTED.value,
             resolved_at=datetime.now(tz=UTC),
         )
     )
+    if acceptance_result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Merge suggestion is no longer pending",
+        )
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
     suggestion.status = SuggestionStatus.ACCEPTED

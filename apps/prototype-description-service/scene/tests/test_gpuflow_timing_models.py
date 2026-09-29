@@ -10,6 +10,9 @@ import sqlalchemy as sa
 from db.models import scene
 
 
+_IDENTITY_SCHEMA = import_module("db.migrations.versions.001_identity_schema")
+
+
 class _EmptyCatalogOp:
     def get_bind(self):
         class Result:
@@ -21,6 +24,32 @@ class _EmptyCatalogOp:
                 return Result()
 
         return Bind()
+
+
+class _ConstraintHealingOp:
+    def __init__(self):
+        self.catalog = {}
+        self.statements = []
+
+    def get_bind(self):
+        op = self
+
+        class Dialect:
+            name = "postgresql"
+
+        class Bind:
+            dialect = Dialect()
+
+            def execute(self, _statement, params):
+                return [(name,) for name in op.catalog.get(params["t"], set())]
+
+        return Bind()
+
+    def execute(self, statement):
+        self.statements.append(statement)
+        name = statement.split("ADD CONSTRAINT ", 1)[1].split('"', 2)[1]
+        table = statement.split('ALTER TABLE "', 1)[1].split('"', 1)[0]
+        self.catalog.setdefault(table, set()).add(name)
 
 
 @pytest.fixture
@@ -141,6 +170,49 @@ def test_canonical_schema_matches_models(monkeypatch):
         assert table.name in migration.DOWNGRADE_TABLE_ORDER
     assert "describe_startups" not in migration.TENANT_TABLES
     assert {"describe_operations", "describe_demand_leases"} <= set(migration.TENANT_TABLES)
+
+
+@pytest.mark.parametrize(
+    ("table_name", "constraint_name", "columns"),
+    _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS,
+    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_UNIQUE_CONSTRAINTS],
+)
+def test_missing_opted_in_unique_constraints_are_healed(table_name, constraint_name, columns):
+    op = _ConstraintHealingOp()
+    constraint = sa.UniqueConstraint(*columns, name=constraint_name)
+
+    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+
+    assert constraint_name in op.catalog[table_name]
+    assert len(op.statements) == 1
+    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    assert constraint_name in op.catalog[table_name]
+    assert len(op.statements) == 1
+
+
+@pytest.mark.parametrize(
+    ("table_name", "constraint_name", "local_columns", "target_table", "target_columns", "ondelete"),
+    _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS,
+    ids=[entry[1] for entry in _IDENTITY_SCHEMA.HEAL_FOREIGN_KEY_CONSTRAINTS],
+)
+def test_missing_opted_in_foreign_keys_are_healed(
+    table_name, constraint_name, local_columns, target_table, target_columns, ondelete
+):
+    op = _ConstraintHealingOp()
+    constraint = sa.ForeignKeyConstraint(
+        local_columns,
+        [f"{target_table}.{column}" for column in target_columns],
+        ondelete=ondelete,
+        name=constraint_name,
+    )
+
+    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+
+    assert constraint_name in op.catalog[table_name]
+    assert len(op.statements) == 1
+    _IDENTITY_SCHEMA._ensure_table_constraints(op, table_name, constraint, heal_constraints=(constraint_name,))
+    assert constraint_name in op.catalog[table_name]
+    assert len(op.statements) == 1
 
 
 @pytest.mark.parametrize("invalid", ["tenant", "state", "retention", "ready"])

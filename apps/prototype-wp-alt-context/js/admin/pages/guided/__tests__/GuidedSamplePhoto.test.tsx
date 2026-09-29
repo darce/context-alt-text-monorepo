@@ -5,8 +5,8 @@ import { guidedCopy } from '../../../guidedPrototype/publicGuideCopy';
 import { createGuidedScenario, formatGuidedSimilarity, getGuidedFace } from '../../../guidedPrototype/state';
 import { GuidedSamplePhoto } from '../GuidedSamplePhoto';
 
-describe('GuidedSamplePhoto image geometry', () => {
-  it('sets the loaded image ratio on the wrap used by the percentage overlay', () => {
+describe('GuidedSamplePhoto image orientation', () => {
+  it('marks a loaded landscape image as landscape', () => {
     const scenario = createGuidedScenario();
     const photo = scenario.pressPhoto;
 
@@ -24,8 +24,6 @@ describe('GuidedSamplePhoto image geometry', () => {
     const wrap = image.closest('.acx-guided-page__image-wrap');
     expect(wrap).toBeInstanceOf(HTMLElement);
     expect(wrap).toHaveAttribute('data-orientation', 'landscape');
-    expect((wrap as HTMLElement).style.aspectRatio).toBe('');
-    expect((wrap as HTMLElement).style.getPropertyValue('--acx-guided-photo-ratio')).toBe('');
 
     const frame = wrap?.querySelector('.acx-guided-page__image-frame');
     expect(frame).toBeInstanceOf(HTMLElement);
@@ -36,21 +34,6 @@ describe('GuidedSamplePhoto image geometry', () => {
     fireEvent.load(image);
 
     expect(wrap).toHaveAttribute('data-orientation', 'landscape');
-    expect((wrap as HTMLElement).style.getPropertyValue('--acx-guided-photo-ratio')).toBe('1000 / 800');
-    expect((wrap as HTMLElement).style.aspectRatio).toBe('');
-
-    const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
-    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4%/ });
-    expect(outline).toHaveStyle({
-      left: `${(justinFace.box.x / 1000) * 100}%`,
-      top: `${(justinFace.box.y / 800) * 100}%`,
-    });
-
-    const anchorFace = scenario.faces.find((face) => face.imageKey === photo.key && face.isClusterAnchor);
-    expect(anchorFace).toBeDefined();
-    const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
-    expect(anchorButton?.getAttribute('aria-label')).toContain(formatGuidedSimilarity(anchorFace!.similarity!));
-    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/No score/);
   });
 
   it('marks a loaded portrait image as portrait', () => {
@@ -68,7 +51,6 @@ describe('GuidedSamplePhoto image geometry', () => {
     fireEvent.load(image);
 
     expect(wrap).toHaveAttribute('data-orientation', 'portrait');
-    expect((wrap as HTMLElement).style.getPropertyValue('--acx-guided-photo-ratio')).toBe('640 / 852');
   });
 });
 

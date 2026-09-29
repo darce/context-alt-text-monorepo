@@ -172,6 +172,7 @@ def test_start_intent_allows_start_without_work_and_suppresses_idle_stop(tmp_pat
 
 
 def test_stop_intent_suppresses_start_even_when_work_waits(tmp_path: Path) -> None:
+    """Covers Stop with arriving work in gpu-lifecycle.md § Operator intent."""
     actuator = RecordingActuator([], [])
 
     result = run_start_cycle(
@@ -186,7 +187,11 @@ def test_stop_intent_suppresses_start_even_when_work_waits(tmp_path: Path) -> No
     assert result.decided == []
     assert result.actuated == []
     assert actuator.started == []
-    assert result.intent_status is IntentStatus.PENDING
+    assert result.intent_status is IntentStatus.STOPPED_WITH_WORK
+    assert [
+        (fallback.action.value, fallback.profile, fallback.reason)
+        for fallback in result.fallbacks
+    ] == [("FALLBACK", "florence_small", "operator_stop_with_work")]
 
 
 def test_stop_intent_stops_idle_instance_and_reports_operator_reason(tmp_path: Path) -> None:

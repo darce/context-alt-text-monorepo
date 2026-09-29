@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import HTTPException
 
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models.identity import ClusterMergeReceipt
@@ -197,8 +198,9 @@ async def test_accept_merge_persists_accepted_status_before_pending_cleanup(
     cluster_service.merge_cluster = AsyncMock(return_value=cluster_b)
     session = AsyncMock()
 
-    async def execute(statement: object) -> None:
+    async def execute(statement: object) -> SimpleNamespace:
         order.append(("status", statement))
+        return SimpleNamespace(rowcount=1)
 
     session.execute.side_effect = execute
 
@@ -220,3 +222,59 @@ async def test_accept_merge_persists_accepted_status_before_pending_cleanup(
         ("delete", response.target_cluster_id),
     ]
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_returns_conflict_when_acceptance_cas_updates_no_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = str(uuid.uuid4())
+    cluster_a = _cluster(uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), uuid.UUID(tenant_id), "A")
+    cluster_b = _cluster(uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), uuid.UUID(tenant_id), "B")
+    suggestion = MergeSuggestion(
+        id=str(uuid.uuid4()),
+        cluster_a_id=str(cluster_a.id),
+        cluster_b_id=str(cluster_b.id),
+        similarity=0.91,
+        status=SuggestionStatus.PENDING,
+    )
+    order: list[tuple[str, object]] = []
+    get_by_id = AsyncMock(return_value=suggestion)
+
+    async def delete_by_cluster(
+        _repo: SqlAlchemyMergeSuggestionRepository,
+        _tenant_id: str,
+        cluster_id: str,
+    ) -> int:
+        order.append(("delete", cluster_id))
+        return 1
+
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "__init__", lambda self, _session: None)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", get_by_id)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", delete_by_cluster)
+    cluster_repo = AsyncMock()
+    cluster_repo.get_by_id.side_effect = [cluster_a, cluster_b]
+    cluster_service = AsyncMock()
+    cluster_service.assignment_writer = SimpleNamespace(cluster_repository=cluster_repo)
+    cluster_service.merge_cluster = AsyncMock(return_value=cluster_b)
+    session = AsyncMock()
+
+    async def execute(statement: object) -> SimpleNamespace:
+        order.append(("status", statement))
+        return SimpleNamespace(rowcount=0)
+
+    session.execute.side_effect = execute
+
+    with pytest.raises(HTTPException) as excinfo:
+        await accept_merge_suggestion(
+            suggestion_id=suggestion.id,
+            request=AcceptMergeSuggestionRequest(tenant_id=tenant_id),
+            auth=SimpleNamespace(tenant_claim=tenant_id),
+            session=session,
+            cluster_service_builder=AsyncMock(return_value=cluster_service),
+        )
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == "Merge suggestion is no longer pending"
+    assert [event[0] for event in order] == ["status"]
+    session.commit.assert_not_awaited()

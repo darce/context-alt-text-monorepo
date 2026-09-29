@@ -88,6 +88,7 @@ def render_target(
     *,
     resolve: Callable[[str, str], str] = resolve_secret,
     host_lines: dict[str, list[str]] | None = None,
+    missing_host_keys: set[str] | None = None,
 ) -> str:
     target = _target(manifest, target_name)
     if env is not None and env not in target.envs:
@@ -160,7 +161,12 @@ def render_target(
             if var.doc:
                 lines.extend(_doc_lines(var.doc))
             if env is not None and var.secret.get(env) == "host:":
-                lines.extend((host_lines or {}).get(var.name, []))
+                rendered_host_lines = (host_lines or {}).get(var.name, [])
+                if var.required and not rendered_host_lines:
+                    if missing_host_keys is None:
+                        raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
+                    missing_host_keys.add(var.name)
+                lines.extend(rendered_host_lines)
                 continue
             if env is None:
                 value = var.example

@@ -65,11 +65,14 @@ class TestS1MergeCore:
         # face fails the 0.5 ratio against tight (0.0416 > 0.03) but passes vs scene.
         assert containment_match([face], [tight, scene]) == []
 
-    def test_br07_zero_area_face_never_matches(self):
-        caption = "A man stands."
-        face = _face("Daniel", w=0.0, h=0.0)
-        person = _pb("A man", caption, NormalizedBox(x=0.3, y=0.1, width=0.3, height=0.7))
-        assert containment_match([face], [person]) == []
+    @pytest.mark.parametrize(("width", "height"), [(0.0, 0.08), (0.05, 0.0), (0.0, 0.0)])
+    def test_br07_zero_area_face_rejected_before_matching(self, width, height):
+        with pytest.raises(ValueError, match="box dimensions must be positive"):
+            _face("Daniel", w=width, h=height)
+
+    def test_br07_out_of_bounds_box_rejected(self):
+        with pytest.raises(ValueError, match="box must fit within normalized image bounds"):
+            NormalizedBox(x=0.75, y=0.2, width=0.3, height=0.3)
 
 
 class TestS2Realizer:

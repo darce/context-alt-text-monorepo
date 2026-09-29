@@ -1,8 +1,7 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { queryKeys } from '../../api/queryKeys';
 import * as recognitionApi from '../../api/recognition';
 import { useSyncTrigger } from '../useSyncTrigger';
@@ -10,19 +9,6 @@ import { useSyncTrigger } from '../useSyncTrigger';
 vi.mock('../../api/recognition', () => ({
   triggerSync: vi.fn(),
 }));
-
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
 
 const failedSyncResponse: recognitionApi.SyncTriggerResponse = {
   synced: false,
@@ -58,7 +44,8 @@ describe('useSyncTrigger', () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(failedSyncResponse);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     renderHook(() => useSyncTrigger(true), { wrapper });
 
     await act(async () => {
@@ -73,7 +60,8 @@ describe('useSyncTrigger', () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(failedSyncResponse);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     renderHook(() => useSyncTrigger(true, true), { wrapper });
 
     await act(async () => {
@@ -94,7 +82,8 @@ describe('useSyncTrigger', () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(successfulSyncResponse);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { rerender } = renderHook(({ isStale }) => useSyncTrigger(isStale, true), {
       wrapper,
       initialProps: { isStale: true },
@@ -128,7 +117,8 @@ describe('useSyncTrigger', () => {
       value: 'hidden',
     });
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     renderHook(() => useSyncTrigger(true, true), { wrapper });
 
     await act(async () => {
@@ -156,7 +146,8 @@ describe('useSyncTrigger', () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(successfulSyncResponse);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderHook(() => useSyncTrigger(false), { wrapper });
 

@@ -970,10 +970,18 @@ class GoldenManifest(BaseModel):
 
     manifest_version: int
     annotation_mode: AnnotationMode
+    iou_threshold: float | None = Field(default=None, exclude_if=lambda value: value is None)
     roster: list[str]
     entries: list[GoldenEntry]
     # FIR-5 S1: roster-name -> demographic cohort; keys validated ⊆ roster at load.
     roster_cohorts: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("iou_threshold", mode="before")
+    @classmethod
+    def _iou_threshold_is_real_number(cls, value: object) -> object:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError("iou_threshold must be a real number")
+        return value
 
     @field_validator("manifest_version")
     @classmethod

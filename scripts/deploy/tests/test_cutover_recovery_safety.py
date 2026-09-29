@@ -24,19 +24,14 @@ from __future__ import annotations
 
 import os
 import shlex
-import stat
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 def _install_fail_closed_shims(

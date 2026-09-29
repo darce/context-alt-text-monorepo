@@ -34,6 +34,22 @@ describe('GuidedSamplePhoto image orientation', () => {
     fireEvent.load(image);
 
     expect(wrap).toHaveAttribute('data-orientation', 'landscape');
+    expect((wrap as HTMLElement).style.getPropertyValue('--acx-guided-photo-ratio')).toBe('1000 / 800');
+
+    const justinFace = getGuidedFace(scenario, 'tribeca-justin-trudeau');
+    const outline = screen.getByRole('button', { name: /Justin Trudeau, 89\.4%/ });
+    expect(outline).toHaveStyle({
+      left: `${(justinFace.box.x / 1000) * 100}%`,
+      top: `${(justinFace.box.y / 800) * 100}%`,
+      width: `${(justinFace.box.width / 1000) * 100}%`,
+      height: `${(justinFace.box.height / 800) * 100}%`,
+    });
+
+    const anchorFace = scenario.faces.find((face) => face.imageKey === photo.key && face.isClusterAnchor);
+    expect(anchorFace).toBeDefined();
+    const anchorButton = screen.getByTestId('guided-face-overlay').querySelector(`[data-face-id="${anchorFace?.id}"]`);
+    expect(anchorButton?.getAttribute('aria-label')).toContain(formatGuidedSimilarity(anchorFace!.similarity!));
+    expect(anchorButton?.getAttribute('aria-label')).not.toMatch(/No score/);
   });
 
   it('marks a loaded portrait image as portrait', () => {
@@ -51,6 +67,7 @@ describe('GuidedSamplePhoto image orientation', () => {
     fireEvent.load(image);
 
     expect(wrap).toHaveAttribute('data-orientation', 'portrait');
+    expect((wrap as HTMLElement).style.getPropertyValue('--acx-guided-photo-ratio')).toBe('640 / 852');
   });
 });
 

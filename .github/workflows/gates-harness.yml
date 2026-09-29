@@ -59,6 +59,7 @@ jobs:
         run: |
           python docs/ux-maps/render_ux_maps.py --check
           python docs/ux-maps/sync_unicode_width.py --check
+          python -m unittest docs/ux-maps/test_render_ux_maps.py
 
       - name: Run gates harness tests
         env:

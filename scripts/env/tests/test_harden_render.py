@@ -523,3 +523,135 @@ def test_harden_all_examples_success_writes_all(write_manifest, tmp_path):
         assert path.is_file()
         assert path.read_text(encoding="utf-8").startswith(render.HEADER_LINE + "\n")
         assert render.check_example(manifest, name, repo) == []
+
+
+@pytest.fixture
+def adopt_case(write_manifest, tmp_path):
+    render = load_module("render_env")
+    root = write_manifest(
+        _targets(path="rt.env", example="ex.env"),
+        **{"10-config": "version = 1\n" + _var("NAME", values={"local": "ok"})},
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    manifest = load_module("manifest").load_manifest(root)
+    rendered = render.render_target(manifest, "t", "local")
+    argv = ["render", "--root", str(root), "--repo-root", str(repo), "--target", "t"]
+    return render, repo, rendered, argv
+
+
+def test_adopt_refuses_existing_backup(adopt_case, capsys):
+    render, repo, rendered, _ = adopt_case
+    path = repo / "rt.env"
+    path.write_bytes(b"NAME=x\n")
+    backup = repo / "rt.env.pre-envman"
+    backup.write_bytes(b"OLD=1\n")
+    with pytest.raises(ValueError) as exc_info:
+        render.write_env_file(path, rendered, adopt=True)
+    assert type(exc_info.value) is ValueError
+    assert ".pre-envman" in str(exc_info.value)
+    assert "backup exists" in str(exc_info.value)
+    assert path.read_bytes() == b"NAME=x\n"
+    assert backup.read_bytes() == b"OLD=1\n"
+
+
+def test_adopt_all_examples_refuses_existing_backup_before_any_write(write_manifest, tmp_path, capsys):
+    render = load_module("render_env")
+    root = write_manifest(
+        '''
+        version = 1
+        [targets.a]
+        audience = "backend"
+        envs = ["local"]
+        example = "a.env"
+        sections = ["Database"]
+        [targets.b]
+        audience = "backend"
+        envs = ["local"]
+        example = "b.env"
+        sections = ["Database"]
+        ''',
+        **{"10-config": "version = 1\n" + _var("NAME", values={"local": "ok"}).replace(
+            'targets = ["t"]', 'targets = ["a", "b"]'
+        )},
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for name in ("a", "b"):
+        (repo / f"{name}.env").write_bytes(b"NAME=x\n")
+    backup = repo / "b.env.pre-envman"
+    backup.write_bytes(b"OLD=1\n")
+    rc = render.main(["render", "--root", str(root), "--repo-root", str(repo), "--all-examples", "--adopt"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "b.env.pre-envman" in captured.err
+    assert "backup exists" in captured.err
+    for name in ("a", "b"):
+        assert (repo / f"{name}.env").read_bytes() == b"NAME=x\n"
+    assert not (repo / "a.env.pre-envman").exists()
+    assert backup.read_bytes() == b"OLD=1\n"
+
+
+def test_adopt_runtime_headed_unmanaged_key_refused(adopt_case, capsys):
+    render, repo, rendered, _ = adopt_case
+    path = repo / "rt.env"
+    original = (render.HEADER_LINE + "\nNAME=old\nEXTRA=s3cr3t-value\n").encode()
+    path.write_bytes(original)
+    with pytest.raises(ValueError) as exc_info:
+        render.write_env_file(path, rendered, runtime=True)
+    captured = capsys.readouterr()
+    assert type(exc_info.value) is ValueError
+    assert "unmanaged key EXTRA" in str(exc_info.value)
+    assert "s3cr3t-value" not in str(exc_info.value) + repr(exc_info.value) + captured.out + captured.err
+    assert path.read_bytes() == original
+
+
+def test_adopt_runtime_allow_unmanaged_drops_key(adopt_case, capsys):
+    render, repo, rendered, _ = adopt_case
+    path = repo / "rt.env"
+    path.write_text(render.HEADER_LINE + "\nNAME=old\nEXTRA=s3cr3t-value\n", encoding="utf-8")
+    render.write_env_file(path, rendered, allow_unmanaged=frozenset({"EXTRA"}), runtime=True)
+    captured = capsys.readouterr()
+    assert "s3cr3t-value" not in captured.out + captured.err
+    assert path.read_bytes() == rendered.encode()
+
+
+def test_adopt_cli_runtime_refuses_unmanaged(adopt_case, capsys):
+    render, repo, _, argv = adopt_case
+    path = repo / "rt.env"
+    original = (render.HEADER_LINE + "\nNAME=old\nEXTRA=s3cr3t-value\n").encode()
+    path.write_bytes(original)
+    rc = render.main(argv + ["--env", "local"])
+    captured = capsys.readouterr()
+    assert "s3cr3t-value" not in captured.out + captured.err
+    assert rc == 2
+    assert "unmanaged key EXTRA" in captured.err
+    assert path.read_bytes() == original
+
+
+def test_adopt_cli_allow_unmanaged_with_env_no_adopt(adopt_case, capsys):
+    render, repo, rendered, argv = adopt_case
+    path = repo / "rt.env"
+    path.write_text(render.HEADER_LINE + "\nNAME=old\nEXTRA=s3cr3t-value\n", encoding="utf-8")
+    rc = render.main(argv + ["--env", "local", "--allow-unmanaged", "EXTRA"])
+    captured = capsys.readouterr()
+    assert "s3cr3t-value" not in captured.out + captured.err
+    assert rc == 0
+    assert path.read_bytes() == rendered.encode()
+
+
+def test_adopt_cli_allow_unmanaged_on_example_without_adopt_errors(adopt_case, capsys):
+    render, _, _, argv = adopt_case
+    with pytest.raises(SystemExit) as exc_info:
+        render.main(argv + ["--allow-unmanaged", "EXTRA"])
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "--allow-unmanaged requires --adopt or --env" in captured.err
+
+
+def test_adopt_example_headed_extra_key_still_regenerated(adopt_case, capsys):
+    render, repo, _, argv = adopt_case
+    path = repo / "ex.env"
+    path.write_text(render.HEADER_LINE + "\nNAME=old\nEXTRA=1\n", encoding="utf-8")
+    assert render.main(argv) == 0
+    assert "EXTRA=" not in path.read_text(encoding="utf-8")

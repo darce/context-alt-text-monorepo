@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import stat
@@ -16,7 +17,7 @@ if __name__ == "__main__" and sys.version_info < (3, 11):
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from env.manifest import Manifest, ManifestError, Target, Var, effective_var, load_manifest, target_digest
+from env.manifest import Manifest, ManifestError, Target, Var, effective_var, load_manifest, target_digest, vault_secret_map
 from env.secret_refs import SecretNotFound, SecretUnavailable, resolve_secret
 
 
@@ -86,6 +87,8 @@ def render_target(
     env: str | None,
     *,
     resolve: Callable[[str, str], str] = resolve_secret,
+    host_lines: dict[str, list[str]] | None = None,
+    missing_host_keys: set[str] | None = None,
 ) -> str:
     target = _target(manifest, target_name)
     if env is not None and env not in target.envs:
@@ -101,7 +104,9 @@ def render_target(
             raise ManifestError(f"{var.source}: {var.name}: derive cycle")
 
         value: str | None
-        if var.derive is not None:
+        if var.derive_vault_map:
+            value = json.dumps(vault_secret_map(manifest, target_name, env), separators=(",", ":"), sort_keys=True)
+        elif var.derive is not None:
             literal_values.add(var.name)
             missing_reference = False
 
@@ -128,6 +133,8 @@ def render_target(
             reference = var.secret.get(env or "")
             if reference is None:
                 value = None
+            elif reference.startswith("vault:"):
+                value = ""
             else:
                 value = _resolve_runtime_secret(var, reference, resolve)
         else:
@@ -153,13 +160,22 @@ def render_target(
                 continue
             if var.doc:
                 lines.extend(_doc_lines(var.doc))
+            if env is not None and var.secret.get(env) == "host:":
+                rendered_host_lines = (host_lines or {}).get(var.name, [])
+                if var.required and not rendered_host_lines:
+                    if missing_host_keys is None:
+                        raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
+                    missing_host_keys.add(var.name)
+                lines.extend(rendered_host_lines)
+                continue
             if env is None:
                 value = var.example
             else:
                 value = runtime_value(var)
             if value is None:
                 continue
-            assignment = f"{var.name}={_format_value(value, var.name, references=var.name not in literal_values)}"
+            formatted = value if env is not None and var.derive_vault_map else _format_value(value, var.name, references=var.name not in literal_values)
+            assignment = f"{var.name}={formatted}"
             if env is None and not var.required:
                 assignment = f"# {assignment}"
             lines.append(assignment)
@@ -246,6 +262,7 @@ def _preflight_env_file(
     *,
     adopt: bool = False,
     allow_unmanaged: frozenset[str] = frozenset(),
+    runtime: bool = False,
 ) -> _WritePlan:
     path = Path(path)
     existing_stat = _inspect_path(path)
@@ -266,21 +283,29 @@ def _preflight_env_file(
         headed = first_line == HEADER_LINE.encode("utf-8")
         if not headed and not adopt:
             raise _path_error(path, "existing file is not generated")
-        if not headed:
+        if not headed or runtime:
             try:
                 old_text = old_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 raise _path_error(path, "existing file is not UTF-8") from None
-            _validate_adoption(path, old_text)
+            if not headed:
+                _validate_adoption(path, old_text)
             new_text = text
             unmanaged = sorted(_keys(old_text) - _keys(new_text) - set(allow_unmanaged))
             if unmanaged:
                 raise ValueError(f"{path}: unmanaged key {unmanaged[0]}")
-            adopting_unheaded = True
+            adopting_unheaded = not headed
 
     if adopting_unheaded and old_bytes is not None:
         backup_path = Path(f"{path}.pre-envman")
-        _inspect_path(backup_path)
+        backup_stat = _inspect_path(backup_path)
+        if backup_stat is not None:
+            try:
+                backup_bytes = backup_path.read_bytes()
+            except OSError:
+                raise _path_error(backup_path, "cannot read existing file") from None
+            if backup_bytes != old_bytes:
+                raise ValueError(f"{backup_path}: backup exists")
     return _WritePlan(path, text.encode("utf-8"), old_bytes if adopting_unheaded else None)
 
 
@@ -307,9 +332,10 @@ def write_env_file(
     *,
     adopt: bool = False,
     allow_unmanaged: frozenset[str] = frozenset(),
+    runtime: bool = False,
 ) -> None:
     _apply_env_file(_preflight_env_file(
-        path, text, adopt=adopt, allow_unmanaged=allow_unmanaged,
+        path, text, adopt=adopt, allow_unmanaged=allow_unmanaged, runtime=runtime,
     ))
 
 
@@ -389,6 +415,13 @@ def check_runtime(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="render_env.py")
     commands = parser.add_subparsers(dest="command", required=True)
+    materialize = commands.add_parser("materialize")
+    materialize.add_argument("--root", type=Path, required=True)
+    for name in ("env", "target", "into"):
+        materialize.add_argument(f"--{name}", required=True)
+    materialize.add_argument("--check", action="store_true")
+    materialize.add_argument("--adopt", action="store_true")
+    materialize.add_argument("--allow-unmanaged", default="")
     for command in ("render", "check"):
         command_parser = commands.add_parser(command)
         command_parser.add_argument("--root", type=Path, default=Path("config/env"))
@@ -408,6 +441,11 @@ def _allow_unmanaged(value: str) -> frozenset[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "materialize":
+        from env.materialize import run
+        return run(args.root, env=args.env, target=args.target, into=args.into,
+                   check=args.check, adopt=args.adopt,
+                   allow_unmanaged=_allow_unmanaged(args.allow_unmanaged))
     if args.all_examples and (args.target is not None or args.env is not None):
         parser.error("--all-examples cannot be combined with --target or --env")
     if args.env is not None and args.target is None:
@@ -416,8 +454,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide --target or --all-examples")
     if args.command == "check" and (args.adopt or args.allow_unmanaged):
         parser.error("--adopt and --allow-unmanaged are only valid with render")
-    if args.allow_unmanaged and not args.adopt:
-        parser.error("--allow-unmanaged requires --adopt")
+    if args.allow_unmanaged and not args.adopt and args.env is None:
+        parser.error("--allow-unmanaged requires --adopt or --env")
 
     try:
         manifest = load_manifest(args.root)
@@ -474,6 +512,7 @@ def main(argv: list[str] | None = None) -> int:
                     render_target(manifest, args.target, args.env),
                     adopt=args.adopt,
                     allow_unmanaged=allow_unmanaged,
+                    runtime=True,
                 )
                 return 0
             messages = check_runtime(manifest, args.target, args.env, path)

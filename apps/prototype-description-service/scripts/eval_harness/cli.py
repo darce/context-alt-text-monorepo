@@ -545,6 +545,7 @@ def fetch_run_record(
             "path": entry.path,
             "describe": None,
             "identities": [],
+            "detection_boxes": [],
             "face_count": 0,
             "error": None,
             "latency_s": None,
@@ -586,6 +587,7 @@ def fetch_run_record(
                 image_height=item.get("image_height"),
             )
             item["identities"] = identities
+            item["detection_boxes"] = _extract_detection_boxes(identities_payload, entry.media_id)
             item["face_count"] = face_count
             item["identity_ordering"] = ordering_source
         except Exception as exc:  # noqa: BLE001 — per-item isolation is the contract (rg-007)
@@ -664,6 +666,20 @@ def _identity_row_from_wire(row: dict[str, Any], *, name: str, bbox: dict[str, i
     if "identity_id" in row:
         stored["identity_id"] = row["identity_id"]
     return stored
+
+
+def _extract_detection_boxes(payload: Any, media_id: int) -> list[dict[str, int | float] | None]:
+    """Keep one parsed localization slot per detected wire face, including unrecognized faces."""
+    if not isinstance(payload, list):
+        raise RemoteClientError(
+            f"media_identities returned {type(payload).__name__}, expected a list of "
+            "identity rows (rg-015) — per-item isolation records this as an item error"
+        )
+    return [
+        _parse_identity_bbox(row.get("bbox"))
+        for row in payload
+        if isinstance(row, dict) and int(row.get("media_id", -1)) == media_id
+    ]
 
 
 def _extract_identities(

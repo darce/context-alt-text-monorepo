@@ -171,9 +171,7 @@ _ship_selected_env dev aggregate
 
 
 @pytest.mark.parametrize("verify_optional", ["0", "1"])
-def test_ship_expectation_error_exits_2_without_rollback(
-    tmp_path: Path, verify_optional: str
-) -> None:
+def test_ship_expectation_error_exits_2_without_rollback(tmp_path: Path, verify_optional: str) -> None:
     result = _run_ship(tmp_path, verify_status=2, verify_optional=verify_optional)
     combined = result.stdout + result.stderr
     records = (tmp_path / "ship-record.log").read_text()
@@ -204,4 +202,3 @@ def test_verify_callers_keep_status_classes_separate() -> None:
     for function_name in ("_ship_selected_env", "do_promote"):
         body = _function_body(function_name)
         assert "if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify" not in body
-

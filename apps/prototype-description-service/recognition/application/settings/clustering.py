@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -38,6 +38,11 @@ class QualitySettings(BaseModel):
     min_face_size: float = Field(
         default=80.0,
         description="Minimum face dimension (pixels) for full size_factor.",
+    )
+    min_bbox_area: float = Field(
+        default=6400.0,
+        gt=0.0,
+        description="Minimum representative bounding-box area (pixels squared) for a full bbox term.",
     )
 
     # Quality adjustment thresholds
@@ -443,6 +448,12 @@ class CalibrationPolicyStatus(StrEnum):
     ACCEPTED = "accepted"
 
 
+class CalibrationStratumSelection(StrEnum):
+    """selection vocabulary for abstained calibration strata (sr-007)."""
+
+    CARTESIAN_PRODUCT = "cartesian_product"
+
+
 class _ForbidModel(BaseModel):
     """Strict nested policy node: unknown keys fail closed (CALIBR-M-06)."""
 
@@ -512,27 +523,50 @@ class PolicyAcceptance(_ForbidModel):
     apply_mode_exit_requires: str
 
 
+class CalibrationAbstainClause(StrEnum):
+    QUALITY_STRATUM_ABSTAINED = "quality_stratum_abstained"
+    INSUFFICIENT_LABELLED_PAIRS = "insufficient_labelled_pairs"
+    CELL_PAIR_FLOOR_NOT_MET = "cell_pair_floor_not_met"
+    INSUFFICIENT_DISTINCT_MEDIA_EXEMPLARS = "insufficient_distinct_media_exemplars"
+    INTRA_SIMILARITY_BELOW_TAU = "intra_similarity_below_tau"
+    RECOVERY_MARGIN_BELOW_FLOOR = "recovery_margin_below_floor"
+    CONFIRMED_NAMED_IDENTITY_CONFLICT = "confirmed_named_identity_conflict"
+
+
 class PolicyAbstain(_ForbidModel):
-    rule: str
+    clauses: list[CalibrationAbstainClause]
+
+    @model_validator(mode="after")
+    def require_all_supported_clauses(self) -> PolicyAbstain:
+        supported = set(CalibrationAbstainClause)
+        if len(self.clauses) != len(supported) or set(self.clauses) != supported:
+            raise ValueError("abstain.clauses must list every supported residual rejection clause exactly once")
+        return self
 
 
 class AbstainedStrata(_ForbidModel):
     key_format: str
-    selection: str
+    selection: CalibrationStratumSelection
     quality_bands: list[str]
     operating_conditions: list[str]
 
 
 class FalseNameInterval(_ForbidModel):
-    method: str
-    confidence: float
+    method: Literal["Wilson"]
+    confidence: float = Field(gt=0.0, lt=1.0)
 
 
 class FalseNameAcceptanceGate(_ForbidModel):
-    max_automatic_false_name_accepts: int
-    max_observed_rate: float
+    max_automatic_false_name_accepts: int = Field(ge=0)
+    max_observed_rate: float = Field(ge=0.0, le=1.0)
     interval: FalseNameInterval
-    fail_if: str
+    require_interval_for_every_non_abstained_stratum: bool
+
+
+class FalseNameAcceptanceEvidence(_ForbidModel):
+    automatic_false_name_accepts: int = Field(ge=0)
+    observed_rate: float = Field(ge=0.0, le=1.0)
+    every_non_abstained_stratum_has_interval: bool
 
 
 class RepresentativeWeights(_ForbidModel):
@@ -591,11 +625,11 @@ class ClusterRecoveryCalibrationPolicy(_ForbidModel):
     def abstained_cells(self) -> frozenset[str]:
         """Return the closed set of abstained ``<quality_band>×<operating_condition>`` cells."""
         strata = self.abstained_strata
-        if strata.selection != "cartesian_product":
-            return frozenset()
-        return frozenset(
-            f"{band}×{condition}" for band in strata.quality_bands for condition in strata.operating_conditions
-        )
+        if strata.selection is CalibrationStratumSelection.CARTESIAN_PRODUCT:
+            return frozenset(
+                f"{band}×{condition}" for band in strata.quality_bands for condition in strata.operating_conditions
+            )
+        raise ValueError(f"Unsupported abstained strata selection: {strata.selection!r}")
 
 
 class EmbeddingSpaceBinding(_ForbidModel):
@@ -697,13 +731,15 @@ CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK: dict[str, Any] = {
     },
     "min_pairs": 2,
     "abstain": {
-        "rule": (
-            "abstain the whole residual when any member is in an abstained "
-            "<quality_band>×<operating_condition> cell, has fewer than min_pairs "
-            "labelled pairs, fails its cell floor, lacks k distinct-media exemplars, "
-            "fails tau_intra, misses recovery_margin against the runner-up, or "
-            "conflicts with a confirmed named identity"
-        ),
+        "clauses": [
+            "quality_stratum_abstained",
+            "insufficient_labelled_pairs",
+            "cell_pair_floor_not_met",
+            "insufficient_distinct_media_exemplars",
+            "intra_similarity_below_tau",
+            "recovery_margin_below_floor",
+            "confirmed_named_identity_conflict",
+        ],
     },
     "abstained_strata": {
         "key_format": "<quality_band>×<operating_condition>",
@@ -725,7 +761,7 @@ CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK: dict[str, Any] = {
         "max_automatic_false_name_accepts": 0,
         "max_observed_rate": 0.0,
         "interval": {"method": "Wilson", "confidence": 0.95},
-        "fail_if": ("any non-abstained stratum has an observed automatic false-name acceptance or lacks its interval"),
+        "require_interval_for_every_non_abstained_stratum": True,
     },
     "k_occ": 0.0,
     "representative": {
@@ -771,6 +807,22 @@ def load_cluster_recovery_calibration_policy(
 def default_cluster_recovery_calibration_policy() -> ClusterRecoveryCalibrationPolicy:
     """Return the verbatim C1 policy block as a typed object."""
     return load_cluster_recovery_calibration_policy(CLUSTER_RECOVERY_CALIBRATION_POLICY_BLOCK)
+
+
+def false_name_acceptance_passes(
+    policy: ClusterRecoveryCalibrationPolicy,
+    evidence: FalseNameAcceptanceEvidence,
+) -> bool:
+    """Enforce the policy's false-name limits and interval coverage requirement."""
+    gate = policy.false_name_acceptance_gate
+    return (
+        evidence.automatic_false_name_accepts <= gate.max_automatic_false_name_accepts
+        and evidence.observed_rate <= gate.max_observed_rate
+        and (
+            not gate.require_interval_for_every_non_abstained_stratum
+            or evidence.every_non_abstained_stratum_has_interval
+        )
+    )
 
 
 def _binding_field_matches(policy_value: str | int, runtime_value: str | int) -> bool:
@@ -849,7 +901,10 @@ def stratum_is_abstained(
     operating_condition: str,
     policy: ClusterRecoveryCalibrationPolicy,
 ) -> bool:
-    return stratum_cell_key(quality_band, operating_condition) in policy.abstained_cells()
+    return (
+        CalibrationAbstainClause.QUALITY_STRATUM_ABSTAINED in policy.abstain.clauses
+        and stratum_cell_key(quality_band, operating_condition) in policy.abstained_cells()
+    )
 
 
 def stratum_pair_floor(

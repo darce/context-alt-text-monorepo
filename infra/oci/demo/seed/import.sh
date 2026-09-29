@@ -26,7 +26,7 @@ if [[ ! -d "$SEED_MEDIA_DIR" ]]; then
 fi
 
 shopt -s nullglob
-media_files=("$SEED_MEDIA_DIR"/*.{jpg,jpeg,png,JPG,JPEG,PNG})
+media_files=("$SEED_MEDIA_DIR"/*.{jpg,jpeg,png,webp,JPG,JPEG,PNG,WEBP})
 shopt -u nullglob
 
 if ((${#media_files[@]} == 0)); then

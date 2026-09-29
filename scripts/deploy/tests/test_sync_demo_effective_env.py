@@ -94,8 +94,7 @@ def _preflight_tokens(records: list[dict[str, object]]) -> list[str]:
     matches = [
         rec
         for rec in records
-        if rec.get("tool") == "ssh"
-        and any("--check-reaper" in str(arg) for arg in rec.get("argv", []))
+        if rec.get("tool") == "ssh" and any("--check-reaper" in str(arg) for arg in rec.get("argv", []))
     ]
     assert matches, "preflight ssh with --check-reaper was not invoked"
     assert len(matches) == 1, "GPU preflight must run once"
@@ -142,15 +141,10 @@ def test_sync_demo_preflight_reads_effective_prod_env(tmp_path: Path) -> None:
 
     # Intended RED while sync-demo.sh still passes prod/secrets/.env.
     assert producer == EFFECTIVE_PROD_ENV, (
-        "effective prod env mismatch: "
-        f"expected {EFFECTIVE_PROD_ENV!r}, got {producer!r}; "
-        f"exit={result.returncode}"
+        f"effective prod env mismatch: expected {EFFECTIVE_PROD_ENV!r}, got {producer!r}; exit={result.returncode}"
     )
 
-    assert result.returncode == 4, (
-        "preflight failure must abort fail-closed with exit 4; "
-        f"got {result.returncode}"
-    )
+    assert result.returncode == 4, f"preflight failure must abort fail-closed with exit 4; got {result.returncode}"
     assert "GPU environment preflight failed" in result.stderr
 
     joined = "\n".join(

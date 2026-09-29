@@ -297,6 +297,18 @@ class PersonMergeServiceTest extends TestCase {
         }
     }
 
+    public function testUndoRejectsClusterCountAboveUnsignedIntMaximum(): void {
+        $record = ['loser' => $this->person(2), 'survivor_id' => 1, 'survivor_tags' => null,
+            'merged_tags' => '[]', 'clusters' => [], 'expires_at' => time() + 100];
+        $record['loser']['cluster_count'] = 4294967296;
+        $repo = $this->createMock(PersonMergeRepository::class);
+        $repo->method('load_undo')->willReturn($record);
+        $repo->expects($this->never())->method('restore_person');
+        $repo->expects($this->once())->method('consume_undo');
+        $result = (new PersonMergeService($repo))->undo('tenant', '00000001-0000-4000-8000-000000000001');
+        $this->assertSame('person_merge_undo_corrupt', $result->get_error_code());
+    }
+
     public function testApplyTypeErrorRollsBackWithoutConsumingToken(): void {
         global $wpdb;
         $repo = $this->createMock(PersonMergeRepository::class);

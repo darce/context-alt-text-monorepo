@@ -93,6 +93,7 @@ deploy-help:
 	@echo "    DRY_RUN=1 make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
 	@echo "    Sets acx_public_guide_enabled, flushes rewrites, signed-out GET /guide/ must be 200 with the guide module script."
 	@echo "    acx_public_demo_enabled (public demo describe) stays off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1."
+	@echo "    Host wp is limited to loopback or .test SITE_URLs; use the compose runner for remote sites."
 	@echo "    make demo-public-guide-e2e SITE_URL=https://demo.altcontext.com"
 	@echo "    make demo-public-guide-e2e ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/"
 	@echo "    Exports ACX_PUBLIC_GUIDE_URL and runs npm run e2e:public-guide (Playwright public-guide project)."
@@ -247,6 +248,7 @@ deploy-demo:
 # Deliberate per-site enable of the signed-out public guide. Requires WP_PATH and
 # SITE_URL; DRY_RUN=1 prints the plan and mutates nothing. Does not turn on
 # acx_public_demo_enabled unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1 is set.
+# Host wp is for LocalWP loopback or .test URLs; remote SITE_URLs require compose.
 demo-enable-public-guide:
 	@if [ -z "$(WP_PATH)" ] || [ -z "$(SITE_URL)" ]; then \
 		echo "ERROR: WP_PATH and SITE_URL are required (no default site)." >&2; \

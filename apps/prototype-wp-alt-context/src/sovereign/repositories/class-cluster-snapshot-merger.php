@@ -142,10 +142,10 @@ class ClusterSnapshotMerger {
 				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id, representative_quality, quality_components, representative_media_id, undoable_merge_receipt_id)
 				VALUES (%s, %s, NULLIF(%s, \'\'), %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
-					label = IF(is_user_confirmed = 1, label, VALUES(label)),
-					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, VALUES(label_cleared_label)),
-					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, VALUES(label_cleared_revision)),
-					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
+					label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label)),
+					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label_cleared_label), label_cleared_label)),
+					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label_cleared_revision), label_cleared_revision)),
+					curation_state = IF(is_user_confirmed = 1, curation_state, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(curation_state), curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
 					local_revision = IF(is_user_confirmed = 1, local_revision, local_revision),
@@ -153,17 +153,17 @@ class ClusterSnapshotMerger {
 					representative_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_id), representative_id),
 					is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned),
 					identity_count = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(identity_count), identity_count),
-					snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
 					updated_at = VALUES(updated_at),
 					last_synced_at = VALUES(last_synced_at),
 					suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label),
 					suggested_label_source = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_source), suggested_label_source),
 					suggested_label_confidence = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label_confidence), suggested_label_confidence),
 					suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id),
-					representative_quality = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_quality), representative_quality),
-					quality_components = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(quality_components), quality_components),
-					representative_media_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_media_id), representative_media_id),
-					undoable_merge_receipt_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)',
+					representative_quality = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_quality), representative_quality),
+					quality_components = IF(VALUES(snapshot_version) > snapshot_version, VALUES(quality_components), quality_components),
+					representative_media_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_media_id), representative_media_id),
+					undoable_merge_receipt_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id),
+					snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))',
 				array(
 					$this->table_name,
 					$cluster_uuid,
@@ -311,7 +311,7 @@ class ClusterSnapshotMerger {
 
 			return array(
 				'clusters'    => is_array( $nested ) ? $nested : array(),
-				'is_complete' => $this->payload_declares_complete( $clusters ),
+				'is_complete' => $has_nested_clusters && $this->payload_declares_complete( $clusters ),
 			);
 		}
 

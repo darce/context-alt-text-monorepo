@@ -87,8 +87,7 @@ class GalleryProvenanceStats:
             return f"representative embedding_model provenance unavailable (active={self.active_embedding_model})"
         if self.representatives_excluded_unresolvable > 0:
             return (
-                "legacy unstamped gallery excluded while active model is known "
-                f"(active={self.active_embedding_model})"
+                f"legacy unstamped gallery excluded while active model is known (active={self.active_embedding_model})"
             )
         return None
 

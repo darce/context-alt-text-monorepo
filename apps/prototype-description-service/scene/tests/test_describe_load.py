@@ -23,9 +23,11 @@ from typing import cast
 
 import pytest
 from sqlalchemy import Table, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import scene.application.describe_load as load_mod
+import scene.application.describe_run_repository as run_repo_mod
 from db.models.base_imports import Base
 from db.models.scene import (
     DescribeDemandLease,
@@ -214,6 +216,46 @@ def test_load_snapshot_requires_rls_bypass_on_non_sqlite(monkeypatch):
     monkeypatch.setattr(load_mod, "is_sqlite", lambda _session: False)
     with pytest.raises(RuntimeError, match="RLS-bypassed"):
         asyncio.run(load_snapshot(_NotBypassedSession()))  # type: ignore[arg-type]
+
+
+def test_active_demand_count_requires_bypass_and_reads_cross_tenant_leases(monkeypatch):
+    class _Result:
+        def __init__(self, value: object):
+            self._value = value
+
+        def scalar(self):
+            return self._value
+
+    class _Session:
+        def __init__(self, bypass_value: object, tenant_b: uuid.UUID, tenant_a_lease: object):
+            self.bypass_value = bypass_value
+            self.current_tenant = tenant_b
+            self.tenant_a_lease = tenant_a_lease
+            self.aggregate_statement = None
+
+        async def execute(self, statement, *_args, **_kwargs):
+            if "current_setting('app.bypass_rls', true)" in str(statement):
+                return _Result(self.bypass_value)
+            return _Result(None)
+
+        async def scalar(self, statement):
+            self.aggregate_statement = statement
+            return 1 if self.tenant_a_lease is not None else 0
+
+    monkeypatch.setattr(run_repo_mod, "is_sqlite", lambda _session: False)
+    tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
+    tenant_a_lease = (tenant_a, "tenant-a-operation")
+    rejected = _Session("off", tenant_b, tenant_a_lease)
+    with pytest.raises(RuntimeError, match="RLS-bypassed"):
+        asyncio.run(DescribeOperationRepository(rejected, lease_seconds=180).active_demand_count())  # type: ignore[arg-type]
+    assert rejected.aggregate_statement is None
+
+    bypassed = _Session("on", tenant_b, tenant_a_lease)
+    assert asyncio.run(DescribeOperationRepository(bypassed, lease_seconds=180).active_demand_count()) == 1  # type: ignore[arg-type]
+    assert bypassed.current_tenant == tenant_b
+    aggregate_sql = str(bypassed.aggregate_statement.compile(dialect=postgresql.dialect())).lower()
+    where_clause = aggregate_sql.partition(" where ")[2]
+    assert "tenant_id" not in where_clause
 
 
 def test_require_rls_bypass_fails_closed_unless_pg_setting_is_truthy(monkeypatch):
@@ -737,6 +779,23 @@ def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting(
             assert counted["in_flight"] == 2
             assert counted["lease_demand"] == 2
             assert _has_work(counted) is True
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            one_held_demand = await repo.active_demand_count(
+                now=start,
+                stop_requested=True,
+                stop_held_leases={(tenant_a, first_id)},
+            )
+            one_held_in_flight = one_held_demand
+            assert one_held_demand == 1
+            assert one_held_in_flight == 1
+            both_held_demand = await repo.active_demand_count(
+                now=start,
+                stop_requested=True,
+                stop_held_leases={(tenant_a, first_id), (tenant_b, second_id)},
+            )
+            both_held_in_flight = both_held_demand
+            assert both_held_demand == 0
+            assert both_held_in_flight == 0
             global_stop = await load_snapshot(session, now=start, stop_requested=True)
             assert global_stop["in_flight"] == 0
             assert global_stop["lease_demand"] == 0

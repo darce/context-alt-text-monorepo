@@ -22,9 +22,9 @@ from recognition.interface_adapters.http.routers.suggestions import (
 from recognition.interface_adapters.http.schemas.responses import MergeSuggestionResponse
 
 
-def _cluster(cluster_id: str, *, identity_count: int = 1) -> IdentityCluster:
+def _cluster(cluster_id: str, tenant_id: str, *, identity_count: int = 1) -> IdentityCluster:
     return IdentityCluster(
-        tenant_id=str(uuid4()),
+        tenant_id=tenant_id,
         is_labeled=False,
         identity_count=identity_count,
         id=cluster_id,
@@ -49,8 +49,9 @@ def test_accept_merge_response_includes_moved_identity_ids() -> None:
 
 
 def test_resolve_merge_pair_honours_operator_target() -> None:
-    smaller = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", identity_count=1)
-    larger = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", identity_count=9)
+    tenant_id = str(uuid4())
+    smaller = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id, identity_count=1)
+    larger = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id, identity_count=9)
 
     source_id, target_id, _label = _resolve_merge_pair(
         smaller,
@@ -63,8 +64,9 @@ def test_resolve_merge_pair_honours_operator_target() -> None:
 
 
 def test_resolve_merge_pair_rejects_unrelated_target() -> None:
-    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    tenant_id = str(uuid4())
+    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id)
+    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id)
 
     with pytest.raises(HTTPException) as exc:
         _resolve_merge_pair(
@@ -101,8 +103,8 @@ async def test_accept_merge_cross_space_returns_409_and_moves_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = str(uuid4())
-    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", identity_count=2)
-    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", identity_count=4)
+    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id, identity_count=2)
+    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id, identity_count=4)
     suggestion = _pending_suggestion(cluster_a.id or "", cluster_b.id or "")
     _bind_merge_repo(monkeypatch, suggestion)
 
@@ -141,8 +143,8 @@ async def test_accept_merge_moved_identity_ids_match_session_stamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = str(uuid4())
-    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", identity_count=2)
-    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", identity_count=4)
+    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id, identity_count=2)
+    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id, identity_count=4)
     suggestion = _pending_suggestion(cluster_a.id or "", cluster_b.id or "")
     _bind_merge_repo(monkeypatch, suggestion)
 
@@ -154,16 +156,18 @@ async def test_accept_merge_moved_identity_ids_match_session_stamp(
     cluster_service.assignment_writer = SimpleNamespace(cluster_repository=cluster_repo)
     cluster_service.merge_cluster = AsyncMock(return_value=cluster_b)
     session = AsyncMock()
+    service_builder = AsyncMock(return_value=cluster_service)
 
     response = await accept_merge_suggestion(
         suggestion_id=suggestion.id,
         request=AcceptMergeSuggestionRequest(tenant_id=tenant_id),
         auth=SimpleNamespace(tenant_claim=tenant_id),
         session=session,
-        cluster_service_builder=AsyncMock(return_value=cluster_service),
+        cluster_service_builder=service_builder,
     )
 
     assert response.moved_identity_ids == moved
+    service_builder.assert_awaited_once_with(tenant_id)
     cluster_repo.list_identity_ids_moved_by_merge.assert_awaited_once_with(tenant_id, suggestion.id)
     session.commit.assert_awaited_once()
     cluster_service.merge_cluster.assert_awaited_once()
@@ -174,8 +178,8 @@ async def test_accept_merge_accepted_replay_returns_empty_moved_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant_id = str(uuid4())
-    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", identity_count=2)
-    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", identity_count=4)
+    cluster_a = _cluster("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id, identity_count=2)
+    cluster_b = _cluster("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id, identity_count=4)
     suggestion = _pending_suggestion(cluster_a.id or "", cluster_b.id or "")
     suggestion.status = SuggestionStatus.ACCEPTED
     _bind_merge_repo(monkeypatch, suggestion)

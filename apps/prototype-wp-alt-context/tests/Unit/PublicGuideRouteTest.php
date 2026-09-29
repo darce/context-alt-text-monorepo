@@ -537,6 +537,46 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
     }
 
+    /**
+     * @dataProvider provideBundleResolutionFailures
+     */
+    public function testBundleResolutionFailuresEmitBootstrapFailureAction(callable $resolver, string $reason): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+
+        $route = new PublicGuideRoute($resolver);
+        $route->enqueue_assets();
+
+        $events = array_values(array_filter(
+            $GLOBALS['__ac_do_action_log'],
+            static fn (array $event): bool => ($event['hook'] ?? '') === 'acx_admin_asset_bootstrap_failure'
+        ));
+
+        self::assertCount(1, $events);
+        self::assertSame($reason, $events[0]['args'][1]['reason'] ?? null);
+        self::assertSame(PublicGuideRoute::ENTRY_POINT, $events[0]['args'][1]['entry_point'] ?? null);
+        self::assertStringContainsString($reason, (string) ($events[0]['args'][0] ?? ''));
+        self::assertSame([$reason], $this->getErrorLog());
+    }
+
+    /**
+     * @return array<string, array{0: callable(string): ?array, 1: string}>
+     */
+    public static function provideBundleResolutionFailures(): array
+    {
+        return [
+            'missing resolver result' => [
+                static fn (string $entry): ?array => null,
+                'Missing or invalid build manifest entry for ' . PublicGuideRoute::ENTRY_POINT . '.',
+            ],
+            'empty JavaScript URL' => [
+                static fn (string $entry): ?array => array('js' => '', 'css' => array()),
+                'Missing JavaScript URL for build manifest entry ' . PublicGuideRoute::ENTRY_POINT . '.',
+            ],
+        ];
+    }
+
     public function testSuccessPathEnqueuesModuleScriptAndCssUrls(): void
     {
         $this->setOption('acx_public_guide_enabled', true);

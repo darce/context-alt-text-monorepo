@@ -10,7 +10,11 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { AlertTriangle, CircleHelp, CircleStop, Flame, Loader2, Zap } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { GPU_STATE, type GpuState } from '../../api/describeApi';
+import {
+  GPU_STATE,
+  resolveDescribeErrorDetailNumberField,
+  type GpuState,
+} from '../../api/describeApi';
 import { useGpuServiceStatus } from '../../hooks/useGpuServiceStatus';
 import {
   GPU_STATE_ICON,
@@ -181,6 +185,8 @@ export interface GpuTierStatusProps {
   startupBudgetSeconds?: number | null;
   computeTier?: string | null;
   modelId?: string | null;
+  /** Failed describe-operation response that may disclose service wait metadata. */
+  operationError?: unknown;
 }
 
 interface GpuIdleStatusView {
@@ -202,17 +208,46 @@ interface GpuIdleRunInput {
 interface GpuIdlePollInput {
   gpuState: GpuState;
   snapshotFresh: boolean;
+  reason: string | null;
   isLoading: boolean;
   isError: boolean;
   hasPayload: boolean;
 }
 
+const lifecycleReasonCopy = (reason: string | null): string | null => {
+  switch (reason) {
+    case 'readiness_timeout':
+      return __('Description Service startup timed out.', 'alt-context');
+    case 'readiness_stall':
+      return __('Description Service startup is taking longer than expected.', 'alt-context');
+    case 'endpoint_not_private':
+      return __('The Description Service endpoint must be private.', 'alt-context');
+    case 'endpoint_resolution_pending':
+      return __('The Description Service endpoint is still being prepared.', 'alt-context');
+    case 'state_missing':
+      return __('Description Service status is missing.', 'alt-context');
+    case 'state_stale':
+      return __('Description Service status needs refreshing.', 'alt-context');
+    case 'degraded':
+      return __('Description Service reported a degraded state.', 'alt-context');
+    case 'operator_stop':
+      return __('Description Service was stopped by an operator.', 'alt-context');
+    case 'circuit_open':
+      return __('Description Service is paused during a failure cooldown.', 'alt-context');
+    case 'auth_rejected':
+      return __('Description Service rejected its credentials.', 'alt-context');
+    default:
+      return null;
+  }
+};
+
 const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInput): GpuIdleStatusView => {
+  const detail = run.isRunPending ? null : lifecycleReasonCopy(poll.reason);
   if (poll.isError && !run.isRunPending) {
     return {
       displayedState: GPU_STATE.UNKNOWN,
       headline: __('Description Service idle — status not checked', 'alt-context'),
-      detail: null,
+      detail,
       action: GPU_IDLE_STATUS_ACTION.RETRY,
     };
   }
@@ -223,20 +258,22 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
       headline: poll.isLoading
         ? __('Description Service: checking status…', 'alt-context')
         : __('Description Service idle — status not checked', 'alt-context'),
-      detail: null,
+      detail,
       action: poll.isLoading ? GPU_IDLE_STATUS_ACTION.NONE : GPU_IDLE_STATUS_ACTION.RETRY,
     };
   }
 
   const idleState: GpuState = poll.snapshotFresh ? poll.gpuState : GPU_STATE.UNKNOWN;
-  const displayedState: GpuState = run.isRunPending ? (run.gpuState ?? GPU_STATE.UNKNOWN) : idleState;
-  const treatAsStale = !run.isRunPending && displayedState === GPU_STATE.UNKNOWN;
+  const runState = run.isRunPending ? run.gpuState : null;
+  const runOwnsState = runState !== null;
+  const displayedState: GpuState = runState ?? idleState;
+  const treatAsStale = !runOwnsState && displayedState === GPU_STATE.UNKNOWN;
 
   if (treatAsStale) {
     return {
       displayedState,
       headline: __('Description Service status is out of date', 'alt-context'),
-      detail: null,
+      detail,
       action: GPU_IDLE_STATUS_ACTION.REFRESH,
     };
   }
@@ -268,14 +305,14 @@ const resolveIdleServiceStatusView = (run: GpuIdleRunInput, poll: GpuIdlePollInp
       return {
         displayedState,
         headline: __('Description Service is unavailable', 'alt-context'),
-        detail: null,
+        detail,
         action: GPU_IDLE_STATUS_ACTION.NONE,
       };
     case GPU_STATE.UNKNOWN:
       return {
         displayedState,
         headline: __('Description Service status is out of date', 'alt-context'),
-        detail: null,
+        detail,
         action: GPU_IDLE_STATUS_ACTION.REFRESH,
       };
     default: {
@@ -292,20 +329,26 @@ export const GpuTierStatus = ({
   startupBudgetSeconds = null,
   computeTier = null,
   modelId = null,
+  operationError = null,
 }: GpuTierStatusProps): JSX.Element => {
   const status = useGpuServiceStatus({ isRunPending });
+  const operationWait = gpuWaitFromOperationDetail({
+    warmup_eta_seconds: resolveDescribeErrorDetailNumberField(operationError, 'warmup_eta_seconds'),
+    startup_budget_seconds: resolveDescribeErrorDetailNumberField(operationError, 'startup_budget_seconds'),
+  });
   const view = resolveIdleServiceStatusView(
     {
       isRunPending,
       gpuState: runGpuState,
-      warmupEtaSeconds,
-      startupBudgetSeconds,
+      warmupEtaSeconds: operationWait?.warmupEtaSeconds ?? warmupEtaSeconds,
+      startupBudgetSeconds: operationWait?.startupBudgetSeconds ?? startupBudgetSeconds,
       computeTier,
       modelId,
     },
     {
       gpuState: status.gpuState,
       snapshotFresh: status.snapshotFresh,
+      reason: status.reason,
       isLoading: status.isLoading,
       isError: status.isError,
       hasPayload: status.data !== undefined,
@@ -343,6 +386,7 @@ export const GpuTierStatus = ({
         role="status"
         aria-live="off"
         aria-label={view.headline}
+        aria-describedby={view.detail ? 'acx-gpu-service-status-detail' : undefined}
         data-gpu-state={view.displayedState}
         data-gpu-terminal={presentation.terminal}
       >
@@ -350,7 +394,11 @@ export const GpuTierStatus = ({
           <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
           {view.headline}
         </span>
-        {view.detail ? <span className="acx-sync-status__label">{view.detail}</span> : null}
+        {view.detail ? (
+          <span id="acx-gpu-service-status-detail" className="acx-sync-status__label">
+            {view.detail}
+          </span>
+        ) : null}
         {actionLabel ? (
           <button type="button" className="button" onClick={status.refetch}>
             {actionLabel}

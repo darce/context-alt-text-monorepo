@@ -14,9 +14,7 @@ import pytest
 
 _RECEIPT_DIRECTORY = Path("/tmp")
 _RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
-_LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / (
-    "prototype-description-service-pytest-collection-scope.json"
-)
+_LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / ("prototype-description-service-pytest-collection-scope.json")
 _SERVICE_PYPROJECT = Path(__file__).with_name("pyproject.toml").resolve()
 _EVAL_HARNESS_TEST_DIRECTORY = Path(__file__).parent / "scene" / "tests"
 
@@ -43,9 +41,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def _session_receipt_identity() -> tuple[str, Path]:
     """Return the session timestamp and a path partitioned by this process."""
     started_at = datetime.now(UTC).isoformat()
-    return started_at, _RECEIPT_DIRECTORY / (
-        f"{_RECEIPT_PREFIX}-{os.getpid()}-{time_ns()}.json"
-    )
+    return started_at, _RECEIPT_DIRECTORY / (f"{_RECEIPT_PREFIX}-{os.getpid()}-{time_ns()}.json")
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
@@ -162,9 +158,7 @@ def _refresh_canonical_receipt(payload: str) -> None:
     authoritative.
     """
     try:
-        tmp = _LEGACY_RECEIPT_PATH.with_name(
-            f"{_LEGACY_RECEIPT_PATH.name}.{os.getpid()}.{time_ns()}.tmp"
-        )
+        tmp = _LEGACY_RECEIPT_PATH.with_name(f"{_LEGACY_RECEIPT_PATH.name}.{os.getpid()}.{time_ns()}.tmp")
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, _LEGACY_RECEIPT_PATH)
     except OSError:

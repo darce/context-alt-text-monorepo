@@ -89,8 +89,7 @@ def _require_git_primary(primary: Path) -> None:
         raise RuntimeError(f"explicit --primary {primary} does not exist; refusing to provision")
     if not _git_metadata_present(primary):
         raise RuntimeError(
-            f"explicit --primary {primary} is not a Git checkout; "
-            "pass --fixture-mode only for hermetic tests"
+            f"explicit --primary {primary} is not a Git checkout; pass --fixture-mode only for hermetic tests"
         )
 
 
@@ -372,9 +371,7 @@ def _require_sidecar_entry(sidecar: Path, name: object, entry: object) -> None:
         raise RuntimeError(f"{sidecar}: {name} must be an object; refusing to provision")
     missing = [key for key in SIDECAR_ENTRY_KEYS if key not in entry]
     if missing:
-        raise RuntimeError(
-            f"{sidecar}: {name} missing {', '.join(missing)}; refusing to provision"
-        )
+        raise RuntimeError(f"{sidecar}: {name} missing {', '.join(missing)}; refusing to provision")
     lockfile = entry["lockfile"]
     digest = entry["sha256"]
     cache = entry["cache"]
@@ -525,10 +522,7 @@ def provision_dependency_trees(*, primary: Path, worktree: Path) -> list[str]:
         _evict_stale_dep_caches(worktree, rel, keep_digests=_sidecar_digests(_read_sidecar(dest)))
         linked.append(rel)
     if mismatches:
-        raise RuntimeError(
-            "dependency lockfile mismatch; install dependencies in the lane: "
-            + ", ".join(mismatches)
-        )
+        raise RuntimeError("dependency lockfile mismatch; install dependencies in the lane: " + ", ".join(mismatches))
     return linked
 
 
@@ -552,9 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.primary is not None:
             primary = args.primary.expanduser()
             if not primary.exists():
-                raise RuntimeError(
-                    f"explicit --primary {primary} does not exist; refusing to provision"
-                )
+                raise RuntimeError(f"explicit --primary {primary} does not exist; refusing to provision")
             primary = primary.resolve()
             if not args.fixture_mode:
                 _require_git_primary(primary)

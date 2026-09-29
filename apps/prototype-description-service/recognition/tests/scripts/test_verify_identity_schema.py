@@ -710,17 +710,13 @@ def test_collect_and_validate_missing_source_table_is_heal_repairable_not_infra(
 def test_validate_schema_state_missing_unique_constraint_is_heal_repairable() -> None:
     script = _import_script()
     kwargs = _complete_kwargs(script)
-    kwargs["unique_constraint_gaps"] = [
-        "image_description_runs.uq_image_description_runs_idempotency_key"
-    ]
+    kwargs["unique_constraint_gaps"] = ["image_description_runs.uq_image_description_runs_idempotency_key"]
 
     report = script._validate_schema_state(**kwargs)
 
     assert report["ok"] is False
     assert report["exit_code"] == script.EXIT_HEAL_REPAIRABLE
-    assert report["unique_constraint_gaps"] == [
-        "image_description_runs.uq_image_description_runs_idempotency_key"
-    ]
+    assert report["unique_constraint_gaps"] == ["image_description_runs.uq_image_description_runs_idempotency_key"]
 
 
 def test_collect_and_validate_missing_unique_constraint_is_heal_repairable(monkeypatch) -> None:

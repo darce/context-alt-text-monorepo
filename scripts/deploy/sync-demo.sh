@@ -151,7 +151,7 @@ $SCP "$ENV_EXAMPLE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/secrets/.env
 $SSH "chmod +x '${REMOTE_DEMO_DIR}/bootstrap-wp.sh' '${REMOTE_DEMO_DIR}/seed/import.sh'"
 
 seed_media_files=()
-while IFS= read -r f; do seed_media_files+=("$f"); done < <(find "$SEED_MEDIA_DIR" -maxdepth 1 \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null)
+while IFS= read -r f; do seed_media_files+=("$f"); done < <(find "$SEED_MEDIA_DIR" -maxdepth 1 \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null)
 if ((${#seed_media_files[@]} > 0)); then
   echo "==> Rsync ${#seed_media_files[@]} seed media file(s)"
   $SCP "${seed_media_files[@]}" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/seed/media/"
@@ -244,8 +244,38 @@ docker run --rm \
 # container start, so a mv'd promote never reaches the running proxy: the deploy
 # reports success while Caddy keeps serving the pre-promote config
 # (GUIDEDEPLOY-1-BR-04). Truncate in place so the mounted inode is the one we
-# just wrote.
-cat Caddyfile.new > Caddyfile
+# just wrote. Keep a copy in case the non-atomic write or its validation fails.
+rollback_file=""
+if [[ -e Caddyfile ]]; then
+  rollback_file="$(mktemp)"
+  cp -p Caddyfile "$rollback_file"
+fi
+restore_caddyfile() {
+  if [[ -n "$rollback_file" ]]; then
+    if cat "$rollback_file" > Caddyfile; then
+      rm -f "$rollback_file"
+    else
+      printf 'ERROR: Failed to restore Caddyfile; rollback file retained at %s\n' "$rollback_file" >&2
+      return 1
+    fi
+  else
+    rm -f Caddyfile
+  fi
+}
+if ! cat Caddyfile.new > Caddyfile; then
+  restore_caddyfile
+  echo "ERROR: Failed to promote Caddyfile; prior contents restored" >&2
+  exit 1
+fi
+if ! docker run --rm \
+  -v /opt/acx-backend/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:2-alpine \
+  caddy validate --config /etc/caddy/Caddyfile; then
+  restore_caddyfile
+  echo "ERROR: Promoted Caddyfile failed validation; prior contents restored" >&2
+  exit 1
+fi
+if [[ -n "$rollback_file" ]]; then rm -f "$rollback_file"; fi
 rm -f Caddyfile.new
 mv docker-compose.caddy.yml.new docker-compose.caddy.yml
 EOF
@@ -269,7 +299,7 @@ docker compose -f docker-compose.caddy.yml up -d
 # compare host and container copies and recreate when they diverge. Reload
 # otherwise: it applies the new config without dropping in-flight TLS sessions.
 want_config="$(sha256sum Caddyfile | cut -d' ' -f1)"
-have_config="$(docker compose -f docker-compose.caddy.yml exec -T caddy sha256sum /etc/caddy/Caddyfile | cut -d' ' -f1)"
+have_config="$(docker compose -f docker-compose.caddy.yml exec -T caddy sha256sum /etc/caddy/Caddyfile | cut -d' ' -f1)" || have_config=""
 if [ "$want_config" != "$have_config" ]; then
   echo "    caddy mount diverged from /opt/acx-backend/Caddyfile; recreating"
   docker compose -f docker-compose.caddy.yml up -d --force-recreate caddy

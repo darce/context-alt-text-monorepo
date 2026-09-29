@@ -93,8 +93,7 @@ def test_overlay_ignore_probe_holds_when_overlay_is_a_symlink(tmp_path: Path) ->
     subprocess.run(["git", "init", str(repo)], capture_output=True, text=True, check=True)
 
     ignore_rule = next(
-        line for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
-        if line == "/Makefile.d"
+        line for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines() if line == "/Makefile.d"
     )
     (repo / ".gitignore").write_text(f"{ignore_rule}\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], capture_output=True, text=True, check=True)
@@ -146,6 +145,4 @@ def test_no_tracked_overlay_fragment_defines_plan_accept() -> None:
     ).stdout.split()
     for rel in tracked:
         contents = (REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
-        assert "\nplan-accept:" not in f"\n{contents}", (
-            f"{rel} defines plan-accept; it belongs in mk/lane-lifecycle.mk"
-        )
+        assert "\nplan-accept:" not in f"\n{contents}", f"{rel} defines plan-accept; it belongs in mk/lane-lifecycle.mk"

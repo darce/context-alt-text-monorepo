@@ -13,6 +13,7 @@ use AltContext\Api\Services\ClusterResponseEnvelopeService;
 use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Sovereign\Repositories\RosterEntryProjectionRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Tests\Stubs\NullClustersRepository;
@@ -34,6 +35,99 @@ class ClusterReadServiceTest extends TestCase
 
     /** @var (ClusterProjectionSyncService&object{repairCalls: list<array<int,mixed>>})|null */
     private ?ClusterProjectionSyncService $countingSync = null;
+
+    public function testListClustersPublishesSnapshotExportFieldsAndNullsWhenMissing(): void
+    {
+        $qualityComponents = ['confidence' => 0.91, 'bbox_area' => 0.12];
+        $clustersRepo = new class($qualityComponents) extends NullClustersRepository {
+            public function __construct(private array $qualityComponents)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-export',
+                        'identity_count' => 0,
+                        'representative_quality' => '0.82',
+                        'quality_components' => json_encode($this->qualityComponents),
+                        'representative_media_id' => '501',
+                        'undoable_merge_receipt_id' => 'receipt-1',
+                    ],
+                    ['cluster_uuid' => 'cluster-no-export', 'identity_count' => 0],
+                ];
+            }
+        };
+
+        $service = $this->makeService($this->localHost(), use_local_projection: true, clusters_repository: $clustersRepo);
+        $response = $service->list_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters'));
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $clusters = $response->get_data()['clusters'];
+        $this->assertSame(0.82, $clusters[0]['representative_quality']);
+        $this->assertSame($qualityComponents, $clusters[0]['quality_components']);
+        $this->assertSame(501, $clusters[0]['representative_media_id']);
+        $this->assertSame('receipt-1', $clusters[0]['undoable_merge_receipt_id']);
+        foreach (['representative_quality', 'quality_components', 'representative_media_id', 'undoable_merge_receipt_id'] as $field) {
+            $this->assertArrayHasKey($field, $clusters[1]);
+            $this->assertNull($clusters[1][$field]);
+        }
+    }
+
+    public function testRosterEntriesPublishSnapshotExportFieldsAndNullsWhenMissing(): void
+    {
+        global $wpdb;
+
+        $qualityComponents = ['confidence' => 0.91, 'bbox_area' => 0.12];
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 1,
+                'person_uuid' => 'person-1',
+                'name' => 'Alice',
+                'tags' => '[]',
+                'updated_at' => '2026-05-07 14:00:00',
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-export',
+                'person_id' => 1,
+                'identity_count' => 0,
+                'representative_id' => '',
+                'representative_quality' => '0.82',
+                'quality_components' => json_encode($qualityComponents),
+                'representative_media_id' => '501',
+                'undoable_merge_receipt_id' => 'receipt-1',
+                'updated_at' => '2026-05-07 14:30:00',
+            ],
+            [
+                'cluster_uuid' => 'cluster-no-export',
+                'person_id' => 1,
+                'identity_count' => 0,
+                'representative_id' => '',
+                'updated_at' => '2026-05-07 14:31:00',
+            ],
+        ];
+
+        $repository = new RosterEntryProjectionRepository(new NullSyncStateRepository());
+        $entries = $repository->list_entries(self::currentTenantId());
+        $clusters = array_column($entries[0]['clusters'], null, 'cluster_id');
+
+        $this->assertSame(0.82, $clusters['cluster-export']['representative_quality'] ?? null);
+        $this->assertSame($qualityComponents, $clusters['cluster-export']['quality_components'] ?? null);
+        $this->assertSame(501, $clusters['cluster-export']['representative_media_id'] ?? null);
+        $this->assertSame('receipt-1', $clusters['cluster-export']['undoable_merge_receipt_id'] ?? null);
+        foreach (['representative_quality', 'quality_components', 'representative_media_id', 'undoable_merge_receipt_id'] as $field) {
+            $this->assertArrayHasKey($field, $clusters['cluster-no-export']);
+            $this->assertNull($clusters['cluster-no-export'][$field] ?? null);
+        }
+    }
 
     public function testListTopUnlabeledSchedulesRepairFromMapperRequestedIds(): void
     {

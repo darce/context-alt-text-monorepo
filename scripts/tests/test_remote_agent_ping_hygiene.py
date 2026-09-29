@@ -7,6 +7,7 @@ import stat
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -523,22 +524,16 @@ os.waitpid(pid, 0)
         if reaper.poll() is not None:
             break
         time.sleep(0.02)
-    try:
+    with suppress(ProcessLookupError):
         os.killpg(reaper.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     raise AssertionError("managed child did not start")
 
 
 def _reap_managed(reaper: subprocess.Popen[bytes], child: int) -> None:
-    try:
+    with suppress(ProcessLookupError):
         os.kill(child, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    try:
+    with suppress(ProcessLookupError):
         os.killpg(reaper.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     reaper.wait(timeout=2)
 
 
@@ -745,9 +740,7 @@ exec sleep 30
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and _pid_is_alive(child):
         time.sleep(0.02)
-    assert not _pid_is_alive(child), (
-        f"job-control ping leftover pid {child} still alive (ppid=1 leak)"
-    )
+    assert not _pid_is_alive(child), f"job-control ping leftover pid {child} still alive (ppid=1 leak)"
 
 
 def test_help_ignores_invalid_unrelated_knobs() -> None:

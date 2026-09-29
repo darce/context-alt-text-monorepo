@@ -29,7 +29,7 @@ def _run_shell(driver: str, **extra_env: str) -> subprocess.CompletedProcess[str
 
 
 def _promote_driver(record: Path, source_sha: str, source_rc: int = 0) -> str:
-    return f'''
+    return f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORD={shlex.quote(str(record))}
@@ -60,7 +60,7 @@ image_digest_ref() {{ printf '%s\\n' "$DIGEST"; }}
 pin_deploy_sha() {{ record pin_deploy_sha; DEPLOY_SHA="$A"; }}
 remote_image_commit_sha() {{ record remote_image_commit_sha; printf '%s\\n' "$SOURCE_SHA"; return "$SOURCE_RC"; }}
 do_promote staging prod
-'''
+"""
 
 
 def _records(path: Path) -> list[str]:
@@ -107,7 +107,7 @@ def test_local_mode_reads_commit_from_local_inspect(tmp_path: Path) -> None:
     docker = fake_bin / "docker"
     docker.write_text(f"#!/bin/sh\nprintf '%s\\n' 'APP_GIT_COMMIT_SHA={SOURCE_SHA}'\n")
     docker.chmod(0o755)
-    driver = f'''
+    driver = f"""
 source {shlex.quote(str(SCRIPT))}
 GREEN=; YELLOW=; RED=; RESET=
 RECORD={shlex.quote(str(record))}
@@ -120,7 +120,7 @@ preflight_ocir_auth() {{ record preflight_ocir_auth; }}
 remote_image_commit_sha() {{ record remote_image_commit_sha; return 98; }}
 actual="$(image_commit_sha {shlex.quote(DIGEST)})" || exit $?
 test "$actual" = {shlex.quote(SOURCE_SHA)}
-'''
+"""
     result = _run_shell(driver)
 
     assert result.returncode == 0, result.stdout + result.stderr

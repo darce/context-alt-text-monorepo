@@ -73,7 +73,7 @@ remove_guided_owned() {
     ''|*[!0-9]*) _count=0 ;;
   esac
   while [ "$_i" -le "$_count" ]; do
-    for _ext in jpg jpeg png JPG JPEG PNG; do
+    for _ext in jpg jpeg png webp JPG JPEG PNG WEBP; do
       _path="$OUT/${_slug}_${_i}.$_ext"
       if [ -e "$_path" ]; then
         rm -f "$_path" || { echo "ERROR: failed to remove owned guided file: $_path" >&2; exit 1; }
@@ -107,7 +107,7 @@ while IFS='|' read -r _src _slug _label _lic; do
     _n=0
   fi
   _n=$((_n + 1))
-  for _ext in jpg jpeg png JPG JPEG PNG; do
+  for _ext in jpg jpeg png webp JPG JPEG PNG WEBP; do
     _path="$OUT/${_slug}_${_n}.$_ext"
     if [ -e "$_path" ]; then
       rm -f "$_path" || { echo "ERROR: failed to remove guided target: $_path" >&2; exit 1; }
@@ -124,8 +124,9 @@ while IFS='|' read -r src slug label lic; do
     prev="$slug"; n=0
   fi
   n=$((n + 1)); total=$((total + 1))
-  cp "$SRC/$src" "$OUT/${slug}_${n}.jpg"
-  printf '| %s | %s | %s | %s |\n' "${slug}_${n}.jpg" "$label" "$lic" "$ADDED" >> "$tmp_rows"
+  ext=${src##*.}
+  cp "$SRC/$src" "$OUT/${slug}_${n}.${ext}"
+  printf '| %s | %s | %s | %s |\n' "${slug}_${n}.${ext}" "$label" "$lic" "$ADDED" >> "$tmp_rows"
 done <<< "$ROWS"
 [ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest"
 sort "$tmp_manifest" > "$MANIFEST"

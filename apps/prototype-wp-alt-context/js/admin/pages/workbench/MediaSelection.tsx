@@ -334,6 +334,21 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             onDismiss={() => setDismissedRunId(terminalDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
+          {bulkDescribe.unreadableMediaIds.length > 0 ? (
+            <div className="acx-media-selection__unreadable-media" role="status">
+              <p>
+                {__(
+                  'These selected media attachments could not be read and were skipped. Check their file access or re-upload them, then select them again:',
+                  'alt-context',
+                )}
+              </p>
+              <ul>
+                {bulkDescribe.unreadableMediaIds.map((mediaId) => (
+                  <li key={mediaId}>{mediaId}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       </div>
       {detailAuthExpired ? (

@@ -19,6 +19,7 @@ import {
   submitBulkDescribeRun,
 } from '../api/describeApi';
 import type { DescribeRunItemsResponse, DescribeRunResponse } from '../api/describeApi';
+import { parseWpErrorPayload } from '../api/wpErrorMessage';
 import { isFrozenPollFailure } from '../hooks/useDescribeRunProgress';
 import { createLogger } from '../utils/logger';
 import {
@@ -183,6 +184,37 @@ const draftOf = (
   return { text: item.alt_text_draft ?? null, tier: item.tier ?? null };
 };
 
+const strandedRunIdOf = (error: unknown): string | null => {
+  const visited = new Set<object>();
+
+  const find = (value: unknown): string | null => {
+    if (typeof value === 'string') {
+      const payload = parseWpErrorPayload(value);
+      return payload === null ? null : find(payload);
+    }
+    if (typeof value !== 'object' || value === null || visited.has(value)) {
+      return null;
+    }
+    visited.add(value);
+    const record = value as Record<string, unknown>;
+    for (const key of ['run_id', 'runId']) {
+      const runId = record[key];
+      if (typeof runId === 'string' && runId.trim() !== '') {
+        return runId;
+      }
+    }
+    for (const key of ['cause', 'data', 'detail', 'response', 'body', 'error', 'message']) {
+      const runId = find(record[key]);
+      if (runId !== null) {
+        return runId;
+      }
+    }
+    return null;
+  };
+
+  return find(error);
+};
+
 export const useGuidedLiveDescription = ({
   mediaId,
   client = defaultClient,
@@ -191,6 +223,7 @@ export const useGuidedLiveDescription = ({
   // cancel or a new request must not write into the run that replaced it.
   const generationRef = useRef(0);
   const attemptRef = useRef(0);
+  const requestInFlightRef = useRef(false);
   // Set by the tick that crosses the client deadline. Distinct from `waiting`
   // so an in-flight submit that resolves before the queued re-render is not
   // mistaken for a timed-out wait (GR-201).
@@ -209,6 +242,12 @@ export const useGuidedLiveDescription = ({
 
   const waiting = isGuidedLiveWaiting(state.status);
   const runId = state.runId;
+
+  useLayoutEffect(() => {
+    if (!waiting) {
+      requestInFlightRef.current = false;
+    }
+  }, [waiting]);
 
   // Losing the media id while a run is in flight invalidates that run. The
   // reducer stops the screen; the burst it started keeps costing money until
@@ -269,9 +308,10 @@ export const useGuidedLiveDescription = ({
   );
 
   const request = useCallback(() => {
-    if (blockedReason !== null || waiting || mediaId === null) {
+    if (blockedReason !== null || waiting || mediaId === null || requestInFlightRef.current) {
       return;
     }
+    requestInFlightRef.current = true;
     // A timed-out run is stopped on screen only; the server may still be
     // burning GPU on it. Retrying without cancelling first is how one learner
     // gesture ends up paying for two live runs.
@@ -336,7 +376,11 @@ export const useGuidedLiveDescription = ({
           atMs: Date.now(),
         });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        const strandedRunId = strandedRunIdOf(error);
+        if (strandedRunId !== null) {
+          void releaseRun(client, strandedRunId, 'submit_failed_after_acceptance');
+        }
         if (generationRef.current === generation) {
           dispatch({ kind: 'failed', reason: GUIDED_LIVE_REASON.SUBMIT_FAILED });
         }

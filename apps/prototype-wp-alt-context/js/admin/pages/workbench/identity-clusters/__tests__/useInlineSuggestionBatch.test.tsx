@@ -60,6 +60,47 @@ describe('useInlineSuggestionBatch', () => {
     expect(fetchMock).toHaveBeenCalledWith(['a', 'b', 'c'], PROJECTION_TOP_K);
   });
 
+  it('surfaces a failed chunk as a query error when other chunks succeed', async () => {
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    fetchMock.mockImplementation(async (ids) => {
+      if (ids[0] === 'identity-100') {
+        throw new Error('chunk unavailable');
+      }
+      const firstId = ids[0];
+      return { matches: firstId ? { [firstId]: [match(firstId)] } : {} };
+    });
+
+    const identityIds = Array.from({ length: 201 }, (_, index) => `identity-${index}`);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.getMatch('identity-0')?.label).toBe('identity-0');
+    expect(result.current.getMatch('identity-100')).toBeUndefined();
+    expect(result.current.getMatch('identity-200')?.label).toBe('identity-200');
+  });
+
+  it('limits concurrent chunk requests to four', async () => {
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    fetchMock.mockImplementation(async () => {
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      activeRequests -= 1;
+      return { matches: {} };
+    });
+
+    const identityIds = Array.from({ length: 901 }, (_, index) => `identity-${index}`);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(maxActiveRequests).toBe(4);
+  });
+
   it('fetches nothing for an empty id set', async () => {
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({ matches: {} });

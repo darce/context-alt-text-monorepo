@@ -284,6 +284,7 @@ class ReclaimerLiveness {
 		if ( $affected <= 0 ) {
 			return null;
 		}
+		$this->invalidate_option_caches( $option_name );
 
 		$this->register_tenant_key( $this->safe_tenant_key( $tenant_id ) );
 
@@ -296,6 +297,7 @@ class ReclaimerLiveness {
 
 			$lease_value = $stored_lease_value;
 			$fencing_token = $parsed_lease['fencing_token'];
+			$this->cache_option_value( $option_name, $stored_lease_value );
 		} else {
 			$fencing_token = $fallback_token;
 		}
@@ -347,6 +349,7 @@ class ReclaimerLiveness {
 		if ( $affected <= 0 ) {
 			return false;
 		}
+		$this->cache_option_value( $option_name, $owner . '|' . $fencing_token . '|0' );
 
 		unset( $this->lease_values[ $tenant_id ][ $owner ] );
 		unset( $this->lease_tokens[ $tenant_id ][ $owner ] );
@@ -560,7 +563,7 @@ class ReclaimerLiveness {
 		if ( array() === $previous ) {
 			$inserted = add_option( $option_name, $state, '', false );
 			if ( $inserted ) {
-				$this->invalidate_option_caches( $option_name );
+				$this->cache_option_value( $option_name, $state );
 				return array(
 					'committed' => true,
 					'status' => $fence_available
@@ -586,8 +589,8 @@ class ReclaimerLiveness {
 		);
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
-		$this->invalidate_option_caches( $option_name );
 		if ( $affected > 0 ) {
+			$this->cache_option_value( $option_name, $state );
 			return array(
 				'committed' => true,
 				'status' => $fence_available
@@ -595,6 +598,7 @@ class ReclaimerLiveness {
 					: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
 			);
 		}
+		$this->invalidate_option_caches( $option_name );
 
 		// Re-check before the adapter-compatible CAS fallback. Production MySQL
 		// uses the joined UPDATE above; the second form is for lightweight
@@ -616,8 +620,8 @@ class ReclaimerLiveness {
 		);
 		$result = $wpdb->query( $query );
 		$affected = is_numeric( $result ) ? (int) $result : (int) ( $wpdb->rows_affected ?? 0 );
-		$this->invalidate_option_caches( $option_name );
 		if ( $affected > 0 ) {
+			$this->cache_option_value( $option_name, $state );
 			return array(
 				'committed' => true,
 				'status' => $fence_available
@@ -625,9 +629,11 @@ class ReclaimerLiveness {
 					: self::WRITE_STATUS_COMMITTED_WITHOUT_FENCE,
 			);
 		}
+		$this->invalidate_option_caches( $option_name );
 
 		$current = $this->load_state( $tenant_id );
 		if ( serialize( $current ) === serialize( $state ) ) {
+			$this->cache_option_value( $option_name, $current );
 			return array(
 				'committed' => true,
 				'status' => $fence_available
@@ -645,25 +651,15 @@ class ReclaimerLiveness {
 	private function invalidate_option_caches( string $option_name ): void {
 		if ( function_exists( 'wp_cache_delete' ) ) {
 			wp_cache_delete( $option_name, 'options' );
+			wp_cache_delete( 'alloptions', 'options' );
+			wp_cache_delete( 'notoptions', 'options' );
 		}
-		if ( ! function_exists( 'wp_cache_get' ) ) {
-			return;
-		}
+	}
 
-		$alloptions = wp_cache_get( 'alloptions', 'options' );
-		if ( is_array( $alloptions ) && array_key_exists( $option_name, $alloptions ) ) {
-			unset( $alloptions[ $option_name ] );
-			if ( function_exists( 'wp_cache_set' ) ) {
-				wp_cache_set( 'alloptions', $alloptions, 'options' );
-			}
-		}
-
-		$notoptions = wp_cache_get( 'notoptions', 'options' );
-		if ( is_array( $notoptions ) && isset( $notoptions[ $option_name ] ) ) {
-			unset( $notoptions[ $option_name ] );
-			if ( function_exists( 'wp_cache_set' ) ) {
-				wp_cache_set( 'notoptions', $notoptions, 'options' );
-			}
+	private function cache_option_value( string $option_name, mixed $value ): void {
+		$this->invalidate_option_caches( $option_name );
+		if ( function_exists( 'wp_cache_set' ) ) {
+			wp_cache_set( $option_name, $value, 'options' );
 		}
 	}
 
@@ -676,9 +672,7 @@ class ReclaimerLiveness {
 		$stored_lease_value = $this->read_lease_value( $wpdb, $this->lease_option_name( $tenant_id ) );
 		$fence_available = null !== $stored_lease_value;
 		if ( null === $stored_lease_value ) {
-			// Some test and migration adapters cannot read raw option rows. The
-			// conditional state CAS still fences already-committed newer writers.
-			return true;
+			return false;
 		}
 
 		return $stored_lease_value === $lease_value;

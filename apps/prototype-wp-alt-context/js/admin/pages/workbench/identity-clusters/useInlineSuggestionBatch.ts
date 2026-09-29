@@ -29,7 +29,10 @@ export interface InlineSuggestionBatchResult {
   /** Top server-ranked eligible match for an identity, or undefined when none applies. */
   getMatch: (identityId: string | undefined) => ProjectedSuggestion | undefined;
   isLoading: boolean;
+  isError: boolean;
 }
+
+const MAX_CONCURRENT_SUGGESTION_BATCHES = 4;
 
 /**
  * Issues bounded batched calls to `GET /identities/suggestions` with
@@ -41,7 +44,8 @@ export interface InlineSuggestionBatchResult {
  *
  * The caller derives `identityIds` with the same predicate as the render gate,
  * so an empty set (e.g. label-only mode, no unlabeled cards) fetches nothing.
- * A failed chunk does not discard successful chunks.
+ * Any failed chunk leaves the query in an error state so missing matches are
+ * not reported as a clean no-suggestion result.
  */
 export const useInlineSuggestionBatch = (identityIds: string[]): InlineSuggestionBatchResult => {
   const queryClient = useQueryClient();
@@ -51,45 +55,62 @@ export const useInlineSuggestionBatch = (identityIds: string[]): InlineSuggestio
   // key would fragment the cache on client identity rather than on data. `identityIds`, the real
   // request input, is already in the key.
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading } = useQuery<IdentityBatchSuggestionsResponse>({
-    queryKey: queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(identityIds)),
+  const batchQueryKey = queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(identityIds));
+  const { data, isLoading, isError } = useQuery<IdentityBatchSuggestionsResponse>({
+    queryKey: batchQueryKey,
     queryFn: async () => {
       const batches: string[][] = [];
       for (let offset = 0; offset < identityIds.length; offset += IDENTITY_SUGGESTIONS_MAX_BATCH_SIZE) {
         batches.push(identityIds.slice(offset, offset + IDENTITY_SUGGESTIONS_MAX_BATCH_SIZE));
       }
 
-      const outcomes = await Promise.all(
-        batches.map(async (batch) => {
-          try {
-            return {
-              identityIds: batch,
-              response: await fetchIdentitiesSuggestions(batch, PROJECTION_TOP_K),
-            };
-          } catch {
-            return null;
-          }
-        }),
-      );
+      type BatchOutcome =
+        | { succeeded: true; identityIds: string[]; response: IdentityBatchSuggestionsResponse }
+        | { succeeded: false };
+      const outcomes: BatchOutcome[] = batches.map(() => ({ succeeded: false }));
+      let nextBatchIndex = 0;
+      const workers = Array.from(
+        { length: Math.min(MAX_CONCURRENT_SUGGESTION_BATCHES, batches.length) },
+        async () => {
+          while (true) {
+            const batchIndex = nextBatchIndex;
+            nextBatchIndex += 1;
+            const batch = batches[batchIndex];
+            if (!batch) {
+              return;
+            }
 
+            try {
+              outcomes[batchIndex] = {
+                succeeded: true,
+                identityIds: batch,
+                response: await fetchIdentitiesSuggestions(batch, PROJECTION_TOP_K),
+              };
+            } catch {
+              outcomes[batchIndex] = { succeeded: false };
+            }
+          }
+        },
+      );
+      await Promise.all(workers);
+
+      const hasFailedBatch = outcomes.some((outcome) => !outcome?.succeeded);
       const matches: IdentityBatchSuggestionsResponse['matches'] = {};
       const successfulIdentityIds: string[] = [];
-      let succeeded = false;
       for (const outcome of outcomes) {
-        if (!outcome) {
+        if (!outcome?.succeeded) {
           continue;
         }
-        succeeded = true;
         successfulIdentityIds.push(...outcome.identityIds);
         Object.assign(matches, outcome.response.matches);
       }
 
-      if (!succeeded) {
-        throw new Error('All identity suggestion batches failed.');
-      }
-
       const response = { matches };
       seedIdentityBatchSingles(queryClient, response, successfulIdentityIds);
+      if (hasFailedBatch) {
+        queryClient.setQueryData(batchQueryKey, response);
+        throw new Error('One or more identity suggestion batches failed.');
+      }
       return response;
     },
     enabled: identityIds.length > 0,
@@ -108,5 +129,5 @@ export const useInlineSuggestionBatch = (identityIds: string[]): InlineSuggestio
     [data],
   );
 
-  return { getMatch, isLoading };
+  return { getMatch, isLoading, isError };
 };

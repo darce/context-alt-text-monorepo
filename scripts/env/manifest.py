@@ -4,6 +4,7 @@ import hashlib
 import json
 import posixpath
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -141,6 +142,15 @@ def _string_map(value: object, source: str, key: str) -> dict[str, str]:
     return dict(value)
 
 
+def _validate_lease_env_label(value: str) -> None:
+    scripts_root = str(Path(__file__).resolve().parent.parent)
+    if scripts_root not in sys.path:
+        sys.path.insert(0, scripts_root)
+    from env.materialize import _lease_path
+
+    _lease_path(Path("/"), value)
+
+
 def _target_path(value: object, path: Path, key: str) -> str | None:
     if value is None:
         return None
@@ -198,6 +208,8 @@ def _validate_targets(targets: Mapping[str, Target], source: str) -> None:
                 _fail(source, f"{target.name}.remote_paths", "requires configured envs and normalized paths under /opt/acx-backend/")
         if not target.lease_env.keys() <= target.remote_paths.keys():
             _fail(source, f"{target.name}.lease_env", "envs must have remote_paths")
+        for lease_env in target.lease_env.values():
+            _validate_lease_env_label(lease_env)
         for section in target.sections:
             _validate_section(section, source, f"{target.name}.sections")
         _validate_doc(target.doc, source, f"{target.name}.doc")

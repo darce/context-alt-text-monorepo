@@ -25,6 +25,7 @@ from recognition.application.services.usage_admission_service import (
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.billing_repository import BillingRepository
+from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
 from recognition.interface_adapters.http.deps.auth import require_write_access
 from recognition.interface_adapters.http.deps.portal_auth import (
     PortalAuthSettings,
@@ -457,6 +458,11 @@ async def admit_usage(
             job_id=None,
             cost_units=1,
         )
+    except ExpiredUsageReservationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="idempotency key expired; retry with a new key",
+        ) from exc
     except AllowanceExceededError as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="usage allowance exhausted") from exc
     except (UsageAdmissionError, UsageAdmissionTimeoutError) as exc:

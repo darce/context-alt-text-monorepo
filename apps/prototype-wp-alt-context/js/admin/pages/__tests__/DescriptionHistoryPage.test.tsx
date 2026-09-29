@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,7 @@ import {
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../../hooks/useMediaStats';
 import { queryKeys } from '../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -42,25 +43,16 @@ vi.mock('../../api/describeApi', async () => {
   };
 });
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
 const renderPage = (
   initialEntries: string[] = ['/description-history'],
-  queryClient: QueryClient = buildClient(),
+  queryClient: QueryClient = buildTestQueryClient(),
 ) => ({
   queryClient,
   ...render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <DescriptionHistoryPage />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={initialEntries}>
+      <DescriptionHistoryPage />
+    </MemoryRouter>,
+    { wrapper: createQueryWrapper(queryClient) },
   ),
 });
 
@@ -368,7 +360,7 @@ describe('DescriptionHistoryPage', () => {
    *   (or status expected 'complete' / received 'missing')
    */
   it('patches workbench media cache altText and status on successful history correction [TEST-06][WBUX-5-BR-75]', async () => {
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
     const before = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
     expect(before?.items.find((item) => item.id === 42)?.altText).toBe('Bridge at dusk');
@@ -477,7 +469,7 @@ describe('DescriptionHistoryPage', () => {
   });
 
   it('retains the last good list and distinguishes a failed refresh [DUX-L9-RV-02][D-19][HAI-15][RLSE-04]', async () => {
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     fetchHistoryMock
       .mockResolvedValueOnce({ total: 1, items: [historyItem] })
       .mockRejectedValueOnce(new Error('GET /description-history returned database host details'));
@@ -1008,7 +1000,7 @@ describe('DescriptionHistoryPage', () => {
       ),
     );
 
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     renderPage(['/description-history'], queryClient);
 
     const textarea = await screen.findByLabelText('Alt text correction for Bridge');
@@ -1245,7 +1237,7 @@ describe('DescriptionHistoryPage', () => {
       ),
     );
 
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
     renderPage(['/description-history'], queryClient);
 
@@ -1290,7 +1282,7 @@ describe('DescriptionHistoryPage', () => {
       ),
     );
 
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
     const workbenchBefore = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
     renderPage(['/description-history'], queryClient);
@@ -1326,7 +1318,7 @@ describe('DescriptionHistoryPage', () => {
       ),
     );
 
-    const queryClient = buildClient();
+    const queryClient = buildTestQueryClient();
     seedWorkbenchCache(queryClient, 'Bridge at dusk', 'missing');
     const workbenchBefore = queryClient.getQueryData<WorkbenchMediaResponse>(workbenchMissingPageKey);
     renderPage(['/description-history'], queryClient);

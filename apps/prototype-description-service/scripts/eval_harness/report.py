@@ -2253,11 +2253,39 @@ def score_run_record(
                 "(present_identities_fit_face_count)"
             )
         stranger_faces = face_count - n_labeled
+        identities_raw = item.get("identities") or []
+        # Preserve available pixel boxes and leave missing boxes visible to the
+        # strict geometry gate instead of silently scoring counts alone.
+        detection_boxes: list[tuple[Any, ...]] = []
+        for identity in identities_raw:
+            bbox = identity.get("bbox") if isinstance(identity, Mapping) else None
+            if isinstance(bbox, Mapping):
+                detection_boxes.append(
+                    (bbox.get("x"), bbox.get("y"), bbox.get("width"), bbox.get("height"))
+                )
+            else:
+                detection_boxes.append(())
+        image_width = item.get("image_width")
+        image_height = item.get("image_height")
+        image_size = None
+        if (
+            isinstance(image_width, int)
+            and not isinstance(image_width, bool)
+            and image_width > 0
+            and isinstance(image_height, int)
+            and not isinstance(image_height, bool)
+            and image_height > 0
+        ):
+            image_size = (image_width, image_height)
         detections.append(
             ImageDetection(
                 image=path,
                 pred_faces=int(item.get("face_count", 0)),
                 labeled_faces=face_count,
+                detections_bbox_px=tuple(detection_boxes),
+                gt_boxes=tuple(entry.get("face_boxes") or []),
+                image_size=image_size,
+                detection_frame_size=image_size,
             )
         )
         # item["identities"] are positional dict rows from _extract_identities
@@ -2271,7 +2299,6 @@ def score_run_record(
         # VLM6-R2-04: never feed alphabetical present_identities as labeled when
         # order is unknown — that was a dead/no-op path (excluded anyway) that
         # invited accidental re-enablement of alphabetical scoring.
-        identities_raw = item.get("identities") or []
         try:
             predicted_names = identity_names(identities_raw)
         except (TypeError, ValueError) as exc:

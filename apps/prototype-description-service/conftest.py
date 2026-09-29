@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -165,6 +168,93 @@ def _refresh_canonical_receipt(payload: str) -> None:
         pass
 
 
+def _run_nested_collection(
+    project_root: Path, receipt_path: Path, *paths: str
+) -> tuple[tuple[str, ...], str]:
+    env = os.environ.copy()
+    env.pop("ACX_STRICT_GATE", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--collection-scope-receipt",
+            str(receipt_path),
+            *paths,
+        ],
+        cwd=project_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout + result.stderr
+    if result.returncode:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            result.args,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    return tuple(line.strip() for line in result.stdout.splitlines() if "::" in line), output
+
+
+def _cached_nested_collection(
+    tmp_path_factory: pytest.TempPathFactory, name: str, *paths: str
+) -> tuple[tuple[str, ...], str]:
+    project_root = Path(__file__).resolve().parent
+    shared_directory = tmp_path_factory.getbasetemp().parent
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        receipt_path = shared_directory / f"nested-{name}-receipt.json"
+        return _run_nested_collection(project_root, receipt_path, *paths)
+
+    test_run_uid = os.environ["PYTEST_XDIST_TESTRUNUID"]
+    cache_path = shared_directory / f"nested-{test_run_uid}-{name}-collection.json"
+    lock_path = cache_path.with_suffix(".lock")
+    with lock_path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            if cache_path.exists():
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            else:
+                receipt_path = shared_directory / (
+                    f"nested-{test_run_uid}-{name}-receipt.json"
+                )
+                items, output = _run_nested_collection(project_root, receipt_path, *paths)
+                payload = {"items": items, "output": output}
+                temporary_path = cache_path.with_name(
+                    f"{cache_path.name}.{os.getpid()}.tmp"
+                )
+                temporary_path.write_text(json.dumps(payload), encoding="utf-8")
+                os.replace(temporary_path, cache_path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    return tuple(payload["items"]), payload["output"]
+
+
+@pytest.fixture(scope="session")
+def nested_collection_runner():
+    return _run_nested_collection
+
+
+@pytest.fixture(scope="session")
+def nested_default_collection(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[tuple[str, ...], str]:
+    return _cached_nested_collection(tmp_path_factory, "default")
+
+
+@pytest.fixture(scope="session")
+def nested_broad_collection(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[tuple[str, ...], str]:
+    return _cached_nested_collection(tmp_path_factory, "broad", ".")
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     config = session.config
     root = config.rootpath.resolve()
@@ -199,7 +289,8 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(receipt, indent=2) + "\n"
     receipt_path.write_text(payload, encoding="utf-8")
-    _refresh_canonical_receipt(payload)
+    if not config.getoption("--collection-scope-receipt"):
+        _refresh_canonical_receipt(payload)
 
     config._collection_scope_receipt = receipt  # type: ignore[attr-defined]
     config._collection_scope_receipt_path = receipt_path  # type: ignore[attr-defined]

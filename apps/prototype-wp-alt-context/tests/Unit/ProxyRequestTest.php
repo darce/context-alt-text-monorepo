@@ -434,6 +434,8 @@ PHP;
 
     public function testAnalyzeRequestReturnsErrorWhenRecognitionIsDisabledByDefault(): void
     {
+        delete_option(RecognitionPolicy::OPTION);
+
         $this->assertNull(get_option(RecognitionPolicy::OPTION, null));
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');

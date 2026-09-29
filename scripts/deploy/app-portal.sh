@@ -3,8 +3,9 @@
 #
 # Default is dry-run. --apply validates a real frontend build, stages every
 # artifact, snapshots rollback state, and journals activation before promotion.
-# All live files use same-directory atomic rename. An interrupted activation is
-# restored from its durable journal at the start of the next run.
+# The Caddyfile keeps its inode for single-file bind mounts; www and overlay
+# promotion use same-directory atomic rename. Interrupted activation is restored
+# from its durable journal at the start of the next --apply run.
 # This script does not open a remote shell and does not mint Clerk/Polar
 # credentials.
 #
@@ -410,6 +411,18 @@ atomic_copy_file() {
   sync_path "$(dirname -- "$_dest")"
 }
 
+copy_file_in_place() {
+  _source="$1"
+  _dest="$2"
+  if ! sync_path "$_source"; then
+    return 1
+  fi
+  if ! cat "$_source" > "$_dest"; then
+    return 1
+  fi
+  sync_path "$_dest"
+}
+
 write_activation_journal() {
   _phase="$1"
   _tmp="${ACTIVATION_JOURNAL}.new.$$"
@@ -507,7 +520,7 @@ clear_activation_journal() {
 restore_from_rollback() {
   echo "restoring Caddyfile, static root, and overlay from activation snapshot"
   if ! cmp -s "$ROLLBACK_CADDY" "$CADDYFILE"; then
-    if ! atomic_copy_file "$ROLLBACK_CADDY" "$CADDYFILE"; then
+    if ! copy_file_in_place "$ROLLBACK_CADDY" "$CADDYFILE"; then
       echo "ERROR: could not restore Caddyfile from ${ROLLBACK_CADDY}" >&2
       return 1
     fi
@@ -544,10 +557,9 @@ restore_from_rollback() {
     echo "ERROR: could not finish activation rollback cleanup" >&2
     return 1
   fi
-  if command -v caddy >/dev/null 2>&1; then
-    if ! caddy reload --config "$CADDYFILE" --adapter caddyfile; then
-      echo "ERROR: rollback reload failed; host files restored, edge process may still be stale" >&2
-    fi
+  if ! reload_caddy; then
+    echo "ERROR: rollback reload failed; activation journal retained for retry" >&2
+    return 1
   fi
 }
 
@@ -690,8 +702,15 @@ run_health() {
 }
 
 if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
-  if ! recover_interrupted_activation; then
-    refuse "could not recover interrupted activation from ${ACTIVATION_JOURNAL}"
+  if [ "$APPLY" -eq 1 ]; then
+    if ! recover_interrupted_activation; then
+      refuse "could not recover interrupted activation from ${ACTIVATION_JOURNAL}"
+    fi
+  else
+    if ! load_activation_journal; then
+      refuse "could not inspect interrupted activation journal ${ACTIVATION_JOURNAL}"
+    fi
+    echo "recovery pending: journal=${ACTIVATION_JOURNAL} phase=${JOURNAL_PHASE}; rerun with --apply"
   fi
 fi
 
@@ -770,7 +789,7 @@ trap 'activation_fail "interrupted during activation"' INT TERM
 trap 'activation_fail "activation step failed"' ERR
 
 write_activation_journal prepared
-if ! atomic_copy_file "$STAGED_CADDY" "$CADDYFILE"; then
+if ! copy_file_in_place "$STAGED_CADDY" "$CADDYFILE"; then
   activation_fail "Caddyfile promote failed"
 fi
 write_activation_journal caddy_promoted

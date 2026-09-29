@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +7,7 @@ import { ClusterLabelLookupError, lookupClusterByLabel, CLUSTER_LABEL_LOOKUP_STA
 import * as recognitionApi from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 import { classifyError } from '../../../../utils/appError';
 import { HTTPError } from '../../../../utils/http';
 import { setLogSink, type LogRecord } from '../../../../utils/logger';
@@ -23,16 +22,6 @@ vi.mock('../../../../hooks/useRosterHooks', () => ({
 }));
 
 describe('useClusterSuggestionsLoader', () => {
-  const createWrapper = () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-    return { wrapper, queryClient };
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(useRosterEntries).mockReturnValue(
@@ -62,7 +51,8 @@ describe('useClusterSuggestionsLoader', () => {
   };
 
   const renderLoader = () => {
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const hook = renderHook(
       () =>
         useClusterSuggestionsLoader({
@@ -78,7 +68,8 @@ describe('useClusterSuggestionsLoader', () => {
 
   it('caps at-rest namingOptions at NAMING_OPTIONS_LIMIT when the labelled page is larger', async () => {
     // Predicted first failure (limit: null): namingOptions has length 40.
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     vi.mocked(recognitionApi.fetchIdentitiesSuggestions).mockResolvedValue({
       matches: { 'identity-1': [] },
     });

@@ -298,9 +298,14 @@ def _preflight_env_file(
 
     if adopting_unheaded and old_bytes is not None:
         backup_path = Path(f"{path}.pre-envman")
-        if os.path.lexists(backup_path):
-            raise ValueError(f"{backup_path}: backup exists")
-        _inspect_path(backup_path)
+        backup_stat = _inspect_path(backup_path)
+        if backup_stat is not None:
+            try:
+                backup_bytes = backup_path.read_bytes()
+            except OSError:
+                raise _path_error(backup_path, "cannot read existing file") from None
+            if backup_bytes != old_bytes:
+                raise ValueError(f"{backup_path}: backup exists")
     return _WritePlan(path, text.encode("utf-8"), old_bytes if adopting_unheaded else None)
 
 

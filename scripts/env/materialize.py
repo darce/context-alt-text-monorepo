@@ -122,7 +122,11 @@ def _owned_write(path: Path, data: bytes, owner: os.stat_result, *, backup: bool
             os.fsync(stream.fileno())
         if backup:
             # Linking publishes the complete backup without overwriting a prior adoption.
-            os.link(staged, path)
+            try:
+                os.link(staged, path)
+            except FileExistsError:
+                if render._inspect_path(path) is None or path.read_bytes() != data:
+                    raise
         else:
             os.replace(staged, path)
     finally:

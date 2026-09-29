@@ -178,9 +178,7 @@ def hf_modules_cache_outside_hf_home(stage_text: str) -> bool:
     home_n = home.rstrip("/")
     if modules_n == home_n:
         return False
-    if modules_n.startswith(home_n + "/"):
-        return False
-    return True
+    return not modules_n.startswith(home_n + "/")
 
 
 def _load_compose(path: Path = COMPOSE_ENV) -> dict:
@@ -248,9 +246,7 @@ def tmpfs_contract_ok(opts: dict[str, str], *, uid: int, gid: int | None = None)
     if opts.get("uid") != str(uid):
         return False
     expected_gid = str(gid if gid is not None else uid)
-    if opts.get("gid") != expected_gid:
-        return False
-    return True
+    return opts.get("gid") == expected_gid
 
 
 # ---- positive: live tree -------------------------------------------------
@@ -338,9 +334,7 @@ def _compose_has_blob_ownership_repair(compose_text: str) -> bool:
         return False
     if not re.search(r'profiles:\s*\[\s*["\']repair["\']\s*\]', compose_text):
         return False
-    if not re.search(r"acx_blobs:/var/lib/acx-blobs", compose_text):
-        return False
-    return True
+    return bool(re.search(r"acx_blobs:/var/lib/acx-blobs", compose_text))
 
 
 def test_compose_env_and_prod_blob_ownership_repair_profile() -> None:
@@ -361,9 +355,7 @@ def _fn_body(script_text: str, name: str) -> str:
     while True:
         end = script_text.index("\n}\n", search_at) + len("\n}\n")
         body = script_text[start:end]
-        parsed = subprocess.run(
-            ["bash", "-n"], input=body, capture_output=True, text=True, timeout=5, check=False
-        )
+        parsed = subprocess.run(["bash", "-n"], input=body, capture_output=True, text=True, timeout=5, check=False)
         if parsed.returncode == 0:
             return body
         search_at = end - 1
@@ -590,13 +582,10 @@ def test_discriminator_image_variant_bake_mutations() -> None:
         "later chmod": good + "RUN chmod 0644 /app/.image-variant\n",
         "later write": good + "RUN printf 'vlm\\n' > /app/.image-variant\n",
         "chmod before bake": (
-            "RUN chmod 0444 /app/.image-variant\n"
-            "RUN printf 'recognition\\n' > /app/.image-variant\n"
+            "RUN chmod 0444 /app/.image-variant\nRUN printf 'recognition\\n' > /app/.image-variant\n"
         ),
     }
-    accepted = [
-        name for name, stage in mutations.items() if stage_bakes_image_variant(stage, "recognition")
-    ]
+    accepted = [name for name, stage in mutations.items() if stage_bakes_image_variant(stage, "recognition")]
     assert not accepted, f"accepted final-state image-variant mutations: {accepted!r}"
 
 
@@ -699,7 +688,7 @@ def test_ssh_identity_refuses_leading_dash() -> None:
 
 
 _SSH_IDENTITY_ALLOWLIST: dict[re.Pattern[str], str] = {}
-_SSH_INVOCATION_RE = re.compile(r'(?:^|[\s(;&|!])(?P<invocation>ssh\s+(?:-|\"))')
+_SSH_INVOCATION_RE = re.compile(r"(?:^|[\s(;&|!])(?P<invocation>ssh\s+(?:-|\"))")
 _SSH_USER_TOKEN_RE = re.compile(r'(?<!\S)-l\s+"\$\{OCI_USER\}"')
 _SSH_HOST_TOKEN_RE = re.compile(r'(?<!\S)--\s+"\$\{OCI_HOST\}"')
 _SSH_HOST_ARGUMENT_RE = re.compile(r'(?<!\S)--\s+(?P<host>"[^"]+"|\'[^\']+\'|\S+)')
@@ -725,7 +714,7 @@ def _live_ssh_invocations(script: str) -> list[tuple[str, str]]:
             continue
         match = _SSH_INVOCATION_RE.search(line)
         if match:
-            invocations.append((line, line[match.start("invocation"):]))
+            invocations.append((line, line[match.start("invocation") :]))
     return invocations
 
 
@@ -763,7 +752,7 @@ def test_ssh_invocations_use_l_and_double_dash() -> None:
 def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
     """HARM-A-04: expected_image_variant + do_verify parses /health image_variant."""
     # Unit: expected_image_variant / variant_from_image_repo via sourced functions.
-    proc = _source_and_run(
+    _source_and_run(
         textwrap.dedent(
             """\
             ACX_BUILD_TARGET=runtime-vlm
@@ -781,7 +770,6 @@ def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
         env={"ACX_BUILD_TARGET": "runtime-vlm"},
     )
     # Sourcing with ACX_BUILD_TARGET=runtime-vlm already sets is_vlm at load.
-    out = (proc.stdout or "") + (proc.stderr or "")
     # Direct probe of helpers under a clean source with vlm target:
     proc2 = subprocess.run(
         [

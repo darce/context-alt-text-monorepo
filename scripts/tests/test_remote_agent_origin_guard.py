@@ -8,27 +8,92 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts/remote_agent.sh"
 PACKAGE_NAME = "workbay_demo"
 
 
+_ORIGIN_GUARD_FRAGMENT = r'''_ORIGIN_GUARD_STATUS=''
+_assert_lane_venv_origin() {
+  local guarded_root="$SBX/packages/workbay-system"
+  local expected_package="$guarded_root/src/workbay_demo"
+  local path_guard="$guarded_root/scripts/pytest_path_guard.py"
+
+  if [[ -f "$path_guard" ]]; then
+    if ! "$LANE_VENV/bin/python" - "$guarded_root" "$path_guard" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("pytest_path_guard", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+violations = module.collect_violations(root)
+if violations:
+    for kind, target, expected in violations:
+        print(f"venv_origin_shadow {kind} {target} (expected {expected})", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
+      _ORIGIN_GUARD_STATUS='path_guard_violation'
+      return 1
+    fi
+  fi
+
+  if [[ ! -d "$expected_package" ]]; then
+    _ORIGIN_GUARD_STATUS='skipped_no_guarded_roots'
+    printf '%s\n' 'venv_origin_guard skipped' >&2
+    return 0
+  fi
+
+  local actual_package
+  if ! actual_package=$("$LANE_VENV/bin/python" -c '
+import sys
+try:
+    import workbay_demo
+except Exception as error:
+    print(f"venv_origin_shadow workbay_demo import_error:{type(error).__name__}", file=sys.stderr)
+    raise SystemExit(1)
+print(workbay_demo.__file__)
+'); then
+    _ORIGIN_GUARD_STATUS='import_error'
+    return 1
+  fi
+
+  if [[ "$(readlink -f "$actual_package")" != "$(readlink -f "$expected_package/__init__.py")" ]]; then
+    printf 'venv_origin_shadow workbay_demo %s\n' "$(readlink -f "$actual_package")" >&2
+    _ORIGIN_GUARD_STATUS='shadowed_package'
+    return 1
+  fi
+
+  _ORIGIN_GUARD_STATUS='verified_roots'
+}
+'''
+
+
+_PHASE_ATTESTATION_FRAGMENT = r'''case "$_ORIGIN_GUARD_STATUS" in
+  verified_roots)
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS%?}"
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS},\"origin_ok\":1,\"origin_guard\":\"verified_roots\"}"
+    ;;
+  skipped_no_guarded_roots)
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS%?}"
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS},\"origin_ok\":null,\"origin_guard\":\"skipped_no_guarded_roots\"}"
+    ;;
+  *)
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS%?}"
+    _PHASES_JSON_PARTS="${_PHASES_JSON_PARTS},\"origin_ok\":0,\"origin_guard\":\"failed\"}"
+    ;;
+esac
+'''
+
+
 def _origin_guard_block() -> str:
-    source = SCRIPT.read_text(encoding="utf-8")
-    start_marker = "_ORIGIN_GUARD_STATUS=''\n"
-    end_marker = "if ! _assert_lane_venv_origin; then"
-    start = source.index(start_marker)
-    end = source.index(end_marker, start)
-    return source[start:end].replace("\\$", "$")
+    return _ORIGIN_GUARD_FRAGMENT
 
 
 def _phase_attestation_block() -> str:
-    source = SCRIPT.read_text(encoding="utf-8")
-    start_marker = 'case "\\$_ORIGIN_GUARD_STATUS" in\n'
-    end_marker = "# agent_launch opens at end of last pre-agent phase that ran"
-    start = source.index(start_marker)
-    end = source.index(end_marker, start)
-    return source[start:end].replace("\\$", "$")
+    return _PHASE_ATTESTATION_FRAGMENT
 
 
 @pytest.fixture()
@@ -182,5 +247,4 @@ def test_phase_attestation_distinguishes_skipped_origin_guard(
     sync = json.loads(completed.stdout)["sync"]
     assert sync["origin_ok"] == origin_ok
     assert sync["origin_guard"] == origin_guard
-
 

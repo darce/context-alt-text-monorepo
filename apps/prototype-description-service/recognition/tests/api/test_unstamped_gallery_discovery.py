@@ -94,9 +94,7 @@ async def test_all_unstamped_tenant_aborts_instead_of_minting_new_clusters() -> 
     )
     candidates, new_clusters = await run_discovery_pipeline(
         chunk=[probe],
-        representative_discovery=RepresentativeDiscovery(
-            settings=ClusteringSettings(similarity_threshold=0.5)
-        ),
+        representative_discovery=RepresentativeDiscovery(settings=ClusteringSettings(similarity_threshold=0.5)),
         centroid_discovery=SimpleNamespace(discover=AsyncMock(return_value=[])),
         graph_discovery=SimpleNamespace(discover=_graph_discover),
         representatives_by_cluster=reps,

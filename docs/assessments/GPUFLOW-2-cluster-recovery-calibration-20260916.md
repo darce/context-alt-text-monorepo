@@ -204,6 +204,9 @@ decimals [apps/prototype-description-service/recognition/application/assignment/
 threshold-adjustment input [apps/prototype-description-service/recognition/application/assignment/quality.py:39-44]. The four score strata below therefore
 use the existing quality thresholds, not an invented occlusion score
 [apps/prototype-description-service/recognition/application/settings/clustering.py:31-61].
+Representative composite scoring uses its separate `min_bbox_area` setting
+(default `6400` pixels squared), so representative-area calibration does not
+change the assignment `min_face_size` threshold.
 
 ### Quality-score strata
 
@@ -441,7 +444,14 @@ acceptance:
 
 min_pairs: 2
 abstain:
-  rule: "abstain the whole residual when any member is in an abstained <quality_band>×<operating_condition> cell, has fewer than min_pairs labelled pairs, fails its cell floor, lacks k distinct-media exemplars, fails tau_intra, misses recovery_margin against the runner-up, or conflicts with a confirmed named identity"
+  clauses:
+    - quality_stratum_abstained
+    - insufficient_labelled_pairs
+    - cell_pair_floor_not_met
+    - insufficient_distinct_media_exemplars
+    - intra_similarity_below_tau
+    - recovery_margin_below_floor
+    - confirmed_named_identity_conflict
 
 abstained_strata:
   key_format: "<quality_band>×<operating_condition>"
@@ -466,7 +476,7 @@ false_name_acceptance_gate:
   max_automatic_false_name_accepts: 0
   max_observed_rate: 0.0
   interval: {method: "Wilson", confidence: 0.95}
-  fail_if: "any non-abstained stratum has an observed automatic false-name acceptance or lacks its interval"
+  require_interval_for_every_non_abstained_stratum: true
 
 # OACT remains dark until an impostor/unknown-probe experiment proves its sign.
 # This policy field is not the current runtime name; see the mapping table.

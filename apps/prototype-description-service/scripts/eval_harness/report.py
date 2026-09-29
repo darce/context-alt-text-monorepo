@@ -63,6 +63,7 @@ from .face_metrics import (
     clustering_sweep,
     demographic_rollup,
     detection_pr,
+    detection_pr_strict,
     face_identification_pr,
     face_unknown_rejection,
     identification_pr,
@@ -2434,7 +2435,14 @@ def score_run_record(
                     det = None
                     detection_invariant = DETECTION_EMPTY_OBSERVATIONS_INVARIANT
                 else:
-                    det = detection_pr(detections, annotation_mode=mode)
+                    if run_manifest is not None:
+                        det = detection_pr_strict(
+                            detections,
+                            annotation_mode=mode,
+                            run_manifest=run_manifest,
+                        )
+                    else:
+                        det = detection_pr(detections, annotation_mode=mode)
                     detection_invariant = None
         elif mode is AnnotationMode.ROSTER_ONLY:
             det = None
@@ -3513,6 +3521,7 @@ def build_reports(
     *,
     score_manifest_sha256: str | None = None,
     manifest_roster: list[str] | None = None,
+    run_manifest: Mapping[str, Any] | None = None,
     annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
     rubric_gate: str = "enforce",
@@ -3545,6 +3554,7 @@ def build_reports(
         ignore_list=ignore_list,
         score_manifest_sha256=score_manifest_sha256,
         manifest_roster=manifest_roster,
+        run_manifest=run_manifest,
         rubric_gate=rubric_gate,
         annotation_mode=annotation_mode,
     )
@@ -3556,6 +3566,7 @@ def build_reports(
             ignore_list=ignore_list,
             score_manifest_sha256=score_manifest_sha256,
             manifest_roster=manifest_roster,
+            run_manifest=run_manifest,
             rubric_gate=rubric_gate,
             annotation_mode=annotation_mode,
         )

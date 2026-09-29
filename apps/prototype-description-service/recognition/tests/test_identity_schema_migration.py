@@ -606,6 +606,7 @@ def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_
 def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
     """M-03: PostgreSQL NaN equals itself, so the upper bound is essential."""
     import sqlalchemy as sa
+
     from db.models import scene
 
     with pg_empty_engine.begin() as connection:
@@ -619,11 +620,10 @@ def test_timing_checks_reject_nonfinite_sql_on_postgres(pg_empty_engine):
                     f"CHECK ({check.sqltext})) ON COMMIT DROP"
                 )
                 for value in ("Infinity", "-Infinity", "NaN"):
-                    with pytest.raises(sa.exc.IntegrityError):
-                        with connection.begin_nested():
-                            connection.execute(
-                                sa.text(f"INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
-                                {"value": value},
-                            )
+                    with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
+                        connection.execute(
+                            sa.text("INSERT INTO timing_finite_probe VALUES (CAST(:value AS double precision))"),
+                            {"value": value},
+                        )
                 connection.exec_driver_sql("INSERT INTO timing_finite_probe VALUES (NULL), (0), (42)")
                 connection.exec_driver_sql("DROP TABLE timing_finite_probe")

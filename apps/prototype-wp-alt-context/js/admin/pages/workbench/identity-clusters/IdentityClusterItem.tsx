@@ -374,7 +374,9 @@ export const IdentityClusterItem = ({
   const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
   // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
   // that are not already showing a merge twin (INT-03: one confirm cluster).
-  const showInlinePrompt = Boolean(!showTwinChip && !cluster.label && anchorIdentityId && canMutate);
+  const showInlinePrompt = Boolean(
+    !showTwinChip && (!cluster.label || cluster.isAutoLabel) && anchorIdentityId && canMutate,
+  );
 
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
@@ -575,6 +577,16 @@ export const IdentityClusterItem = ({
                   <legend>{__('Face group', 'alt-context')}</legend>
                   {splittableGroups.map(([id, members], index) => {
                     const preview = members[0];
+                    const representativeFace = members.find(
+                      (member) =>
+                        member.representative_face?.bbox &&
+                        (member.representative_face.media_url || member.representative_face.attachment_url),
+                    )?.representative_face;
+                    const representativeFaceUrl =
+                      representativeFace?.media_url || representativeFace?.attachment_url;
+                    const previewMediaUrl = representativeFaceUrl || preview.media_url || preview.attachment_url;
+                    const previewBbox =
+                      representativeFaceUrl && representativeFace?.bbox ? representativeFace.bbox : preview.bbox;
                     return (
                       <label key={id}>
                         <input
@@ -584,8 +596,8 @@ export const IdentityClusterItem = ({
                           checked={splitGroupId === id}
                           onChange={() => setSplitGroupId(id)}
                         />
-                        {preview.media_url && preview.bbox && (
-                          <FaceThumbnail mediaUrl={preview.media_url} bbox={preview.bbox} size="lg" alt="" />
+                        {previewMediaUrl && previewBbox && (
+                          <FaceThumbnail mediaUrl={previewMediaUrl} bbox={previewBbox} size="lg" alt="" />
                         )}
                         {sprintf(__('Face group %d · %d faces', 'alt-context'), index + 1, members.length)}
                       </label>

@@ -46,7 +46,10 @@ class ClusterSnapshotMergerTest extends TestCase
             $query
         );
         $this->assertStringContainsString("NULLIF('', ''), NULLIF('', ''), NULLIF('', ''), NULLIF('', '')", $query);
-        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $query
+        );
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
     }
 
@@ -108,14 +111,74 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('is_pinned = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(is_pinned), is_pinned)', $query);
         $this->assertStringContainsString('suggested_label = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_label), suggested_label)', $query);
         $this->assertStringContainsString('suggested_target_cluster_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(suggested_target_cluster_id), suggested_target_cluster_id)', $query);
-        $this->assertStringContainsString('representative_quality = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_quality), representative_quality)', $query);
-        $this->assertStringContainsString('quality_components = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(quality_components), quality_components)', $query);
-        $this->assertStringContainsString('representative_media_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
-        $this->assertStringContainsString('undoable_merge_receipt_id = IF(VALUES(snapshot_version) >= snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
+        $this->assertStringContainsString('representative_quality = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_quality), representative_quality)', $query);
+        $this->assertStringContainsString('quality_components = IF(VALUES(snapshot_version) > snapshot_version, VALUES(quality_components), quality_components)', $query);
+        $this->assertStringContainsString('representative_media_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(representative_media_id), representative_media_id)', $query);
+        $this->assertStringContainsString('undoable_merge_receipt_id = IF(VALUES(snapshot_version) > snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)', $query);
+        $this->assertTrue(
+            strpos($query, 'representative_quality = IF') < strpos($query, 'snapshot_version = GREATEST'),
+            'export fields must compare against the stored version before it is updated'
+        );
         // The monotonic version column itself stays GREATEST and the curation
         // guard on label is preserved.
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $query);
-        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $query);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $query
+        );
+    }
+
+    public function testOlderSnapshotAfterNewerPreservesLabelAndCurationState(): void
+    {
+        global $wpdb;
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-out-of-order',
+                    'label' => 'Current Label',
+                    'curation_state' => 'dismissed',
+                    'identity_count' => 8,
+                ],
+            ],
+            20
+        );
+        $this->merger->merge_snapshot_batch_for_tenant(
+            'tenant-merge',
+            [
+                [
+                    'cluster_uuid' => 'cluster-out-of-order',
+                    'label' => 'Stale Label',
+                    'curation_state' => 'uncurated',
+                    'identity_count' => 2,
+                ],
+            ],
+            19
+        );
+
+        $upserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO `wp_acx_clusters`')
+            )
+        );
+        $this->assertCount(2, $upserts);
+        $this->assertStringContainsString("NULLIF('Current Label', ''), '', 0, 'dismissed'", $upserts[0]);
+        $this->assertStringContainsString('20, 0,', $upserts[0]);
+        $olderUpsert = $upserts[1];
+        $this->assertStringContainsString("VALUES ('cluster-out-of-order', 'tenant-merge', NULLIF('Stale Label', '')", $olderUpsert);
+        $this->assertStringContainsString("NULLIF('Stale Label', ''), '', 0, 'uncurated'", $olderUpsert);
+        $this->assertStringContainsString('19, 0,', $olderUpsert);
+        $this->assertStringContainsString(
+            'label = IF(is_user_confirmed = 1, label, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(label), label))',
+            $olderUpsert
+        );
+        $this->assertStringContainsString(
+            'curation_state = IF(is_user_confirmed = 1, curation_state, IF(VALUES(snapshot_version) >= snapshot_version, VALUES(curation_state), curation_state))',
+            $olderUpsert
+        );
+        $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $olderUpsert);
     }
 
     public function testMergeBatchCoercesActiveCurationStateToUncurated(): void
@@ -753,6 +816,57 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertSame(0, $result['preserved_curated']);
         $this->assertSame(array('cluster-keep'), $this->clusterIdsForTenant('tenant-tombstone'));
         $this->assertSame(array('version_conflict:cluster-keep'), $this->conflictKeys());
+    }
+
+    public function testCompleteEnvelopeWithoutArrayClustersDoesNotTombstone(): void
+    {
+        $malformedPayloads = array(
+            array('is_complete' => true),
+            array(
+                'clusters' => 'invalid',
+                'is_complete' => true,
+            ),
+        );
+
+        foreach ($malformedPayloads as $index => $payload) {
+            $tenant = 'tenant-malformed-' . $index;
+            $this->seedTombstoneProjection($tenant);
+
+            $result = $this->merger->merge_snapshot_for_tenant($tenant, $payload, 21);
+
+            global $wpdb;
+            $this->assertSame(
+                array(
+                    'tombstoned_clusters' => 0,
+                    'tombstoned_members' => 0,
+                    'preserved_curated' => 0,
+                ),
+                $result
+            );
+            $this->assertSame(
+                array('cluster-keep', 'cluster-stale-a', 'cluster-stale-b'),
+                $this->clusterIdsForTenant($tenant)
+            );
+            $this->assertCount(3, $wpdb->tableRows['wp_acx_identity_members']);
+        }
+    }
+
+    public function testExplicitCompleteEmptySnapshotTombstonesAbsentClusters(): void
+    {
+        $this->seedTombstoneProjection('tenant-empty-snapshot');
+
+        $result = $this->merger->merge_snapshot_for_tenant(
+            'tenant-empty-snapshot',
+            array(
+                'clusters' => array(),
+                'is_complete' => true,
+            ),
+            21
+        );
+
+        $this->assertSame(3, $result['tombstoned_clusters']);
+        $this->assertSame(3, $result['tombstoned_members']);
+        $this->assertSame(array(), $this->clusterIdsForTenant('tenant-empty-snapshot'));
     }
 
     public function testUpsertQueryFailureThrowsAndDoesNotTombstone(): void

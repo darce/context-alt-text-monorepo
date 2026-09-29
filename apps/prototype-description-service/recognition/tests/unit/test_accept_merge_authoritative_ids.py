@@ -8,6 +8,7 @@ Accept responses must return those ids as ``source_cluster_id`` (retired) /
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -15,13 +16,16 @@ from fastapi import HTTPException
 
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import SuggestionStatus
+from recognition.infrastructure.repositories import SqlAlchemyMergeSuggestionRepository
 from recognition.interface_adapters.http.routers.suggestions import (
+    AcceptMergeSuggestionRequest,
     AcceptMergeSuggestionResponse,
     _is_meaningful_label,
     _resolve_merge_pair,
     _select_merge_target,
     _to_accept_merge_response,
     _to_merge_response,
+    accept_merge_suggestion,
 )
 from recognition.interface_adapters.http.schemas.responses import MergeSuggestionResponse
 
@@ -29,12 +33,13 @@ from recognition.interface_adapters.http.schemas.responses import MergeSuggestio
 def _cluster(
     *,
     cluster_id: str,
+    tenant_id: str | None = None,
     user_confirmed: bool = False,
     label: str | None = None,
     identity_count: int = 1,
 ) -> IdentityCluster:
     return IdentityCluster(
-        tenant_id=str(uuid4()),
+        tenant_id=tenant_id or str(uuid4()),
         is_labeled=bool(label),
         identity_count=identity_count,
         label=label,
@@ -418,3 +423,61 @@ def test_accept_merge_response_carries_moved_identity_ids() -> None:
     widened = _to_accept_merge_response(_to_merge_response(suggestion), moved_identity_ids=moved)
 
     assert widened.moved_identity_ids == moved
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_conflicts_when_suggestion_is_no_longer_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tenant_id = str(uuid4())
+    cluster_a = _cluster(cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", tenant_id=tenant_id)
+    cluster_b = _cluster(cluster_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", tenant_id=tenant_id)
+    suggestion = SimpleNamespace(
+        id=str(uuid4()),
+        cluster_a_id=cluster_a.id,
+        cluster_b_id=cluster_b.id,
+        similarity=0.9,
+        status=SuggestionStatus.PENDING,
+        confidence_score=0.9,
+        expires_at=None,
+        source_job_id=None,
+    )
+    cleanup = AsyncMock(return_value=0)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "__init__", lambda self, _session: None)
+    monkeypatch.setattr(
+        SqlAlchemyMergeSuggestionRepository,
+        "get_by_id",
+        AsyncMock(return_value=suggestion),
+    )
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", cleanup)
+
+    cluster_repo = SimpleNamespace(
+        get_by_id=AsyncMock(side_effect=[cluster_a, cluster_b]),
+        list_identity_ids_moved_by_merge=AsyncMock(return_value=[]),
+    )
+    cluster_service = SimpleNamespace(
+        assignment_writer=SimpleNamespace(cluster_repository=cluster_repo),
+        merge_cluster=AsyncMock(return_value=cluster_b),
+    )
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(rowcount=0)),
+        commit=AsyncMock(),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await accept_merge_suggestion(
+            suggestion_id=suggestion.id,
+            request=AcceptMergeSuggestionRequest(tenant_id=tenant_id),
+            auth=SimpleNamespace(tenant_claim=tenant_id),
+            session=session,
+            cluster_service_builder=AsyncMock(return_value=cluster_service),
+        )
+
+    assert excinfo.value.status_code == 409
+    update_statement = session.execute.await_args.args[0]
+    compiled_update = update_statement.compile()
+    assert "resolution =" in str(compiled_update).lower()
+    assert SuggestionStatus.PENDING.value in compiled_update.params.values()
+    assert suggestion.status == SuggestionStatus.PENDING
+    cleanup.assert_not_awaited()
+    session.commit.assert_not_awaited()

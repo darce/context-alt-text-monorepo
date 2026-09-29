@@ -403,7 +403,7 @@ Canon: [HAI-05] [HAI-13] [PERC-02] [VIZ-07] [INT-04]
 | Suggested match                             role=group     |
 | Candidate: [face] Alex                                     |
 | Representative: [face] Jamie                               |
-| Evidence: two different people; representative is a crop   |
+| Suggestion to review; crop does not verify identity        |
 | Suggestion: Alex                                           |
 | [Review] [Accept suggestion] [Reject] [Dismiss]            |
 +------------------------------------------------------------+
@@ -441,7 +441,7 @@ Canon: [FORM-05] [PERC-05] [PERC-07] [VIZ-07] [HAI-05]
 | Public demo - Describe an image            data-state=error|
 | [X] Description service error (502)                        |
 | The image could not be described. Try again.               |
-| Code: description_service_error                            |
+| Code: acx_public_demo_pipeline_failed                      |
 | [Describe selected image]  same-page retry; key retained   |
 | gpu_state is telemetry only; it does not label the result  |
 +------------------------------------------------------------+

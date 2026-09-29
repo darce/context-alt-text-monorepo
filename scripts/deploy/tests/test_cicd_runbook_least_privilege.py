@@ -69,9 +69,7 @@ def test_runbook_documents_a_machine_checked_policy_test() -> None:
     )
     deny = re.search(r'"deny":\s*\[([^\]]*)\]', section)
     assert deny, "the policy test asserts nothing about what tag:ci must not reach"
-    assert '"tag:oci-vm:443"' in deny.group(1), (
-        "the policy test does not deny tag:ci -> TCP/443"
-    )
+    assert '"tag:oci-vm:443"' in deny.group(1), "the policy test does not deny tag:ci -> TCP/443"
     assert '"tag:oci-vm:55432"' in deny.group(1), (
         "the policy test does not deny tag:ci -> the database listener on TCP/55432"
     )

@@ -114,13 +114,13 @@ describe('FaceThumbnail', () => {
   describe('loading states', () => {
     it('paints loading on the first commit after a loaded source changes', () => {
       const observations: string[] = [];
-      function Probe({ source }: { source: string }) {
+      const Probe = ({ source }: { source: string }) => {
         const ref = React.useRef<HTMLDivElement>(null);
         React.useLayoutEffect(() => {
           observations.push(ref.current?.querySelector('img')?.style.opacity ?? 'missing');
         }, [source]);
         return <FaceThumbnail ref={ref} mediaUrl={source} bbox={mockBbox} />;
-      }
+      };
       const { rerender } = render(<Probe source={mockMediaUrl} />);
       fireEvent.load(screen.getByRole('img'));
       rerender(<Probe source="/recognition/next.jpg" />);

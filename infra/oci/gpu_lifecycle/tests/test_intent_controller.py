@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.intent import (
     DeferredStopRecord,
@@ -173,6 +172,7 @@ def test_start_intent_allows_start_without_work_and_suppresses_idle_stop(tmp_pat
 
 
 def test_stop_intent_suppresses_start_even_when_work_waits(tmp_path: Path) -> None:
+    """Covers Stop with arriving work in gpu-lifecycle.md § Operator intent."""
     actuator = RecordingActuator([], [])
 
     result = run_start_cycle(
@@ -187,7 +187,11 @@ def test_stop_intent_suppresses_start_even_when_work_waits(tmp_path: Path) -> No
     assert result.decided == []
     assert result.actuated == []
     assert actuator.started == []
-    assert result.intent_status is IntentStatus.PENDING
+    assert result.intent_status is IntentStatus.STOPPED_WITH_WORK
+    assert [
+        (fallback.action.value, fallback.profile, fallback.reason)
+        for fallback in result.fallbacks
+    ] == [("FALLBACK", "florence_small", "operator_stop_with_work")]
 
 
 def test_stop_intent_stops_idle_instance_and_reports_operator_reason(tmp_path: Path) -> None:
@@ -236,26 +240,38 @@ def test_malformed_authority_number_preserves_hard_lease_stop(tmp_path: Path) ->
     runtime_dir = tmp_path / "runtime"
     state_dir = tmp_path / "durable"
     _write_persisted_intent(
-        runtime_dir, action="start", requested_at=NOW,
-        expires_at=NOW + timedelta(minutes=5), requested_by="operator",
-        sequence=1, nonce=VALID_NONCE,
+        runtime_dir,
+        action="start",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="operator",
+        sequence=1,
+        nonce=VALID_NONCE,
     )
     run_start_cycle(
-        controller=GpuLifecycleController(idle_seconds=60), instances=[],
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[],
         load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
-        actuator=RecordingActuator([], []), intent_dir=runtime_dir,
-        durable_state_dir=state_dir, now=NOW,
+        actuator=RecordingActuator([], []),
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
     )
     authority_path = state_dir / "intent-authority.json"
     state = json.loads(authority_path.read_text())
-    state["intents"][VALID_NONCE]["monotonic_expires_at"] = 10 ** 400
+    state["intents"][VALID_NONCE]["monotonic_expires_at"] = 10**400
     authority_path.write_text(json.dumps(state), encoding="utf-8")
     actuator = RecordingActuator([], [])
     result = run_reap_cycle(
-        controller=GpuLifecycleController(idle_seconds=60), instances=[_running()],
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running()],
         load_source=StaticJobLoadSource(queue_depth=5, in_flight=1),
-        actuator=actuator, intent_dir=runtime_dir, durable_state_dir=state_dir,
-        now=NOW, fence_delay_seconds=0, max_lease_seconds=1,
+        actuator=actuator,
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+        fence_delay_seconds=0,
+        max_lease_seconds=1,
         use_recorded_lease_age=False,
     )
     assert result.intent.action is IntentAction.AUTO
@@ -268,15 +284,23 @@ def test_rejected_equal_sequence_drops_deferred_stop(tmp_path: Path) -> None:
     runtime_dir = tmp_path / "runtime"
     state_dir = tmp_path / "durable"
     original = _write_persisted_intent(
-        runtime_dir, action="stop", requested_at=NOW,
-        expires_at=NOW + timedelta(minutes=5), requested_by="operator",
-        sequence=7, nonce=VALID_NONCE,
+        runtime_dir,
+        action="stop",
+        requested_at=NOW,
+        expires_at=NOW + timedelta(minutes=5),
+        requested_by="operator",
+        sequence=7,
+        nonce=VALID_NONCE,
     )
     blocked = run_reap_cycle(
-        controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
         load_source=StaticJobLoadSource(queue_depth=0, in_flight=1),
-        actuator=RecordingActuator([], []), intent_dir=runtime_dir,
-        durable_state_dir=state_dir, now=NOW, fence_delay_seconds=0,
+        actuator=RecordingActuator([], []),
+        intent_dir=runtime_dir,
+        durable_state_dir=state_dir,
+        now=NOW,
+        fence_delay_seconds=0,
     )
     assert blocked.intent_status is IntentStatus.BLOCKED_WORK_IN_FLIGHT
     conflicting = json.loads(original.read_text())
@@ -287,18 +311,26 @@ def test_rejected_equal_sequence_drops_deferred_stop(tmp_path: Path) -> None:
     for seconds in (1, 2):
         actuator = RecordingActuator([], [])
         result = run_reap_cycle(
-            controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[_running(age=0)],
             load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
-            actuator=actuator, intent_dir=runtime_dir, durable_state_dir=state_dir,
-            now=NOW + timedelta(seconds=seconds), fence_delay_seconds=0,
+            actuator=actuator,
+            intent_dir=runtime_dir,
+            durable_state_dir=state_dir,
+            now=NOW + timedelta(seconds=seconds),
+            fence_delay_seconds=0,
         )
         assert result.intent.action is IntentAction.AUTO
         assert actuator.stopped == []
     assert not (state_dir / "deferred-stop.json").exists()
     records = [json.loads(line) for line in (state_dir / "decision-log.jsonl").read_text().splitlines()]
-    assert any(row.get("event") == "dropped" and row.get("reason") == "rejected_by_authority_token"
-               and row.get("nonce") == VALID_NONCE and row.get("requested_by") == "operator"
-               for row in records)
+    assert any(
+        row.get("event") == "dropped"
+        and row.get("reason") == "rejected_by_authority_token"
+        and row.get("nonce") == VALID_NONCE
+        and row.get("requested_by") == "operator"
+        for row in records
+    )
 
 
 @pytest.mark.parametrize("audit_fails", [False, True])
@@ -307,11 +339,19 @@ def test_direct_deferred_supersession_audits_before_clear(tmp_path, monkeypatch,
 
     state_dir = tmp_path / "durable"
     store = DeferredStopStore(state_dir / "deferred-stop.json")
-    store.write(DeferredStopRecord(
-        action=IntentAction.STOP, requested_at=NOW, expires_at=NOW + timedelta(minutes=5),
-        nonce=VALID_NONCE, requested_by="original-operator", ttl_seconds=300, sequence=1,
-        deferred_until=NOW + timedelta(minutes=5), deferred_reason="in-flight work",
-    ))
+    store.write(
+        DeferredStopRecord(
+            action=IntentAction.STOP,
+            requested_at=NOW,
+            expires_at=NOW + timedelta(minutes=5),
+            nonce=VALID_NONCE,
+            requested_by="original-operator",
+            ttl_seconds=300,
+            sequence=1,
+            deferred_until=NOW + timedelta(minutes=5),
+            deferred_reason="in-flight work",
+        )
+    )
     original_append = DecisionLogStore.append
     observed = []
 
@@ -324,11 +364,14 @@ def test_direct_deferred_supersession_audits_before_clear(tmp_path, monkeypatch,
 
     monkeypatch.setattr(DecisionLogStore, "append", append)
     result = run_reap_cycle(
-        controller=GpuLifecycleController(idle_seconds=60), instances=[_running(age=0)],
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[_running(age=0)],
         load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
-        actuator=RecordingActuator([], []), durable_state_dir=state_dir,
+        actuator=RecordingActuator([], []),
+        durable_state_dir=state_dir,
         intent=_intent(IntentAction.START, nonce=SECOND_NONCE, sequence=2),
-        now=NOW, fence_delay_seconds=0,
+        now=NOW,
+        fence_delay_seconds=0,
     )
     assert observed == [True]
     if audit_fails:
@@ -338,8 +381,7 @@ def test_direct_deferred_supersession_audits_before_clear(tmp_path, monkeypatch,
     else:
         assert not store.path.exists()
         rows = [json.loads(line) for line in (state_dir / "decision-log.jsonl").read_text().splitlines()]
-        assert any(row.get("event") == "dropped" and row.get("requested_by") == "original-operator"
-                   for row in rows)
+        assert any(row.get("event") == "dropped" and row.get("requested_by") == "original-operator" for row in rows)
 
 
 def test_stop_with_work_is_deferred_then_re_evaluated(tmp_path: Path) -> None:

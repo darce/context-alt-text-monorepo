@@ -302,9 +302,7 @@ async def test_two_sequential_requests_in_one_context_do_not_inherit_the_previou
                     "type": "http",
                     "method": "GET",
                     "path": "/echo",
-                    "headers": [
-                        (CORRELATION_ID_HEADER.lower().encode("latin-1"), request_id.encode("latin-1"))
-                    ],
+                    "headers": [(CORRELATION_ID_HEADER.lower().encode("latin-1"), request_id.encode("latin-1"))],
                 }
                 await middleware(scope, receive, send)
 

@@ -1,8 +1,8 @@
 """VLM-6 S1: spatial-relation placement correctness metric."""
 
-import scripts.eval_harness.placement_metrics as placement_metrics_mod
 import pytest
 
+import scripts.eval_harness.placement_metrics as placement_metrics_mod
 from scripts.eval_harness.manifest import SpatialFact, SpatialRelation
 from scripts.eval_harness.placement_metrics import (
     PlacementScores,

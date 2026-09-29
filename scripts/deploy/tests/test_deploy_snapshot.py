@@ -82,7 +82,9 @@ def test_local_build_uses_snapshot_after_live_checkout_changes(tmp_path: Path) -
     )
     docker.chmod(0o755)
     tmpdir = _private_tmp(tmp_path)
-    driver = _source(repo) + r'''
+    driver = (
+        _source(repo)
+        + r"""
 pin_deploy_sha
 materialize_deploy_snapshot build
 printf 'SNAPSHOT=%s\n' "$DEPLOY_SNAPSHOT_DIR"
@@ -95,7 +97,8 @@ printf 'ignored\n' > "$REPO_ROOT/apps/prototype-description-service/out/sentinel
 printf 'ignored\n' > "$REPO_ROOT/apps/prototype-description-service/w.onnx.partial"
 preflight_docker() { :; }
 do_build dev
-'''
+"""
+    )
     result = _run_shell(
         driver,
         PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
@@ -122,7 +125,9 @@ def test_remote_build_rsyncs_snapshot_service_directory(tmp_path: Path) -> None:
     repo, _ = _repo(tmp_path)
     tmpdir = _private_tmp(tmp_path)
     args_path = tmp_path / "rsync-args"
-    driver = _source(repo) + f'''
+    driver = (
+        _source(repo)
+        + f"""
 pin_deploy_sha
 materialize_deploy_snapshot build-remote
 printf 'SNAPSHOT=%s\\n' "$DEPLOY_SNAPSHOT_DIR"
@@ -143,7 +148,8 @@ run_with_deadline() {{
 remote_rc=0
 do_build_remote dev || remote_rc=$?
 test "$remote_rc" = 1
-'''
+"""
+    )
     result = _run_shell(driver, TMPDIR=str(tmpdir))
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -210,11 +216,14 @@ def test_archive_failure_keeps_live_service_dir_and_removes_partial_snapshot(
     tar = fake_bin / "tar"
     tar.write_text("#!/bin/sh\nexit 1\n")
     tar.chmod(0o755)
-    driver = _source(repo) + r'''
+    driver = (
+        _source(repo)
+        + r"""
 pin_deploy_sha
 trap 'printf "SERVICE=%s\n" "$SERVICE_DIR"' EXIT
 materialize_deploy_snapshot build
-'''
+"""
+    )
     result = _run_shell(
         driver,
         PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
@@ -234,7 +243,7 @@ def test_dispatch_materializes_only_shipping_commands_after_sha_pin() -> None:
     case = dispatch.index('case "$cmd" in')
     guard_start = dispatch.rfind("if [[", 0, materialize)
     guarded_call = re.match(
-        r'if \[\[ (?P<condition>.*?) \]\]; then\s+'
+        r"if \[\[ (?P<condition>.*?) \]\]; then\s+"
         r'materialize_deploy_snapshot "\$cmd" "\$\{1:-\}"\s+fi',
         dispatch[guard_start:],
         re.DOTALL,
@@ -273,5 +282,5 @@ def test_gpu_gate_inputs_come_from_snapshot(tmp_path: Path) -> None:
     assert f"SNAPSHOT_CONF={committed_conf.replace(chr(10), ',').rstrip(',')}" in result.stdout
 
     source = SCRIPT.read_text()
-    assert '${SCRIPT_DIR}/gpu-snapshot-deployments.conf' not in source
-    assert '${SCRIPT_DIR}/check-gpu-snapshots.sh' not in source
+    assert "${SCRIPT_DIR}/gpu-snapshot-deployments.conf" not in source
+    assert "${SCRIPT_DIR}/check-gpu-snapshots.sh" not in source

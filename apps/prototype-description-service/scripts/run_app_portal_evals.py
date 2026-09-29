@@ -20,6 +20,8 @@ import argparse
 import json
 import os
 import re
+import shlex
+import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -57,7 +59,8 @@ _REQUIRED_MANIFEST_KEYS = frozenset(
 _REQUIRED_THRESHOLD_KEYS = frozenset({"kind", "max_failures", "max_skipped"})
 _REQUIRED_CASE_KEYS = frozenset({"id", "group", "criterion", "status"})
 _REQUIRED_RELEASE_GATES = ("beta", "expansion", "paid")
-_GATE_ENV_KEYS = frozenset({"CI", "GITHUB_ACTIONS", "PYTEST_ADDOPTS"})
+_GATE_ENV_KEYS = frozenset({"CI", "GITHUB_ACTIONS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
+_PYTEST_FILTER_ENV_KEYS = frozenset({"PYTEST_ADDOPTS", "PYTEST_PLUGINS"})
 _SENSITIVE_ENV_PARTS = ("SECRET", "TOKEN", "PASSWORD", "PRIVATE_KEY", "API_KEY")
 
 
@@ -78,6 +81,8 @@ class ManifestCase:
     criterion: str
     status: str
     test: str | None
+    artifact: str | None
+    additional_evidence_required: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +120,7 @@ class JunitCounts:
     skip_count: int
     error_count: int
     failure_element_count: int
+    passed_testcases: frozenset[tuple[str, str]] = frozenset()
     report_error: str | None = None
 
 
@@ -158,6 +164,8 @@ def _validate_release_gates(
         required_cases = gate.get("required_cases")
         if not isinstance(required_cases, list):
             raise _manifest_error(f"{gate_path}.required_cases", "must be an array")
+        if not required_cases:
+            raise _manifest_error(f"{gate_path}.required_cases", "must not be empty")
         for index, case_id in enumerate(required_cases):
             case_id = _require_nonempty_string(
                 case_id,
@@ -217,6 +225,12 @@ def load_manifest(path: str | Path) -> EvalManifest:
     owner = _require_nonempty_string(raw["owner"], path=f"{manifest_path}.owner")
     description = _require_nonempty_string(raw["description"], path=f"{manifest_path}.description")
     command = _require_nonempty_string(raw["command"], path=f"{manifest_path}.command")
+    try:
+        command_parts = shlex.split(command)
+    except ValueError as exc:
+        raise _manifest_error(f"{manifest_path}.command", f"cannot parse command: {exc}") from exc
+    if not command_parts:
+        raise _manifest_error(f"{manifest_path}.command", "must contain an executable")
     evidence_sink = _require_nonempty_string(
         raw["evidence_sink"],
         path=f"{manifest_path}.evidence_sink",
@@ -278,13 +292,15 @@ def load_manifest(path: str | Path) -> EvalManifest:
             if "test" in case
             else None
         )
-        if "additional_evidence_required" in case and type(case["additional_evidence_required"]) is not bool:
+        additional_evidence_required = case.get("additional_evidence_required", False)
+        if type(additional_evidence_required) is not bool:
             raise _manifest_error(
                 f"{case_path}.additional_evidence_required",
                 "must be a boolean",
             )
+        artifact = None
         if "artifact" in case:
-            _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
+            artifact = _require_nonempty_string(case["artifact"], path=f"{case_path}.artifact")
         cases.append(
             ManifestCase(
                 case_id=case_id,
@@ -292,6 +308,8 @@ def load_manifest(path: str | Path) -> EvalManifest:
                 criterion=criterion,
                 status=status,
                 test=test,
+                artifact=artifact,
+                additional_evidence_required=additional_evidence_required,
             )
         )
 
@@ -331,6 +349,21 @@ def _selected_groups(manifest: EvalManifest, requested: Sequence[str] | None) ->
     return selected
 
 
+def _selected_gates(manifest: EvalManifest, requested: Sequence[str] | None) -> list[str]:
+    if not requested:
+        return []
+    selected: list[str] = []
+    for gate_name in requested:
+        if gate_name not in manifest.release_gates:
+            raise ManifestValidationError(
+                f"manifest {manifest.path}: unknown release gate {gate_name!r}; "
+                f"known gates: {sorted(manifest.release_gates)}"
+            )
+        if gate_name not in selected:
+            selected.append(gate_name)
+    return selected
+
+
 def _safe_filename_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
 
@@ -365,10 +398,64 @@ def _head_sha(command_runner: CommandRunner, *, repository_root: Path) -> str:
     return sha
 
 
+def _git_dirty_state(
+    command_runner: CommandRunner,
+    *,
+    repository_root: Path,
+) -> tuple[bool | None, list[str]]:
+    try:
+        completed = command_runner(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=repository_root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return None, []
+    if getattr(completed, "returncode", None) != 0:
+        return None, []
+    output = getattr(completed, "stdout", None)
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, []
+    if not isinstance(output, str):
+        return None, []
+
+    paths: list[str] = []
+    for line in output.splitlines():
+        status = line[:2]
+        if (
+            len(line) < 4
+            or line[2] != " "
+            or status == "  "
+            or any(character not in " MADRCTU?" for character in status)
+            or not line[3:]
+        ):
+            return None, []
+        paths.append(line[3:])
+    return bool(paths), paths[:20]
+
+
 def _local_tag(tag: object) -> str:
     if not isinstance(tag, str):
         return ""
     return tag.rsplit("}", 1)[-1]
+
+
+def _junit_testcase_identity(node_id: str) -> tuple[str, str] | None:
+    parts = node_id.split("::")
+    if len(parts) < 2 or not parts[0] or not parts[-1]:
+        return None
+    module = parts[0].replace("/", ".")
+    if module.endswith(".py"):
+        module = module[:-3]
+    classname = ".".join([module, *parts[1:-1]])
+    return classname, parts[-1]
 
 
 def _read_junit(path: Path) -> JunitCounts:
@@ -402,6 +489,7 @@ def _read_junit(path: Path) -> JunitCounts:
     error_count = 0
     failure_element_count = 0
     fail_count = 0
+    passed_testcases: set[tuple[str, str]] = set()
     for testcase in testcases:
         child_tags = {_local_tag(child.tag) for child in testcase}
         if "skipped" in child_tags:
@@ -414,6 +502,11 @@ def _read_junit(path: Path) -> JunitCounts:
             error_count += 1
         if has_failure or has_error:
             fail_count += 1
+        if not child_tags.intersection({"failure", "error", "skipped"}):
+            classname = testcase.attrib.get("classname")
+            name = testcase.attrib.get("name")
+            if classname and name:
+                passed_testcases.add((classname, name))
     pass_count = max(0, len(testcases) - skip_count - fail_count)
     return JunitCounts(
         report_found=True,
@@ -423,6 +516,7 @@ def _read_junit(path: Path) -> JunitCounts:
         skip_count=skip_count,
         error_count=error_count,
         failure_element_count=failure_element_count,
+        passed_testcases=frozenset(passed_testcases),
     )
 
 
@@ -463,6 +557,62 @@ def _normalise_status(value: object, *, fallback: int = 1) -> int:
     return 128 + abs(status) if status < 0 else status
 
 
+def _manifest_command(command: str) -> tuple[list[str], Path, dict[str, str]]:
+    """Build a safe argv from a manifest command, retaining its execution envelope."""
+
+    parts = shlex.split(command)
+    working_directory = SERVICE_ROOT
+    command_environment: dict[str, str] = {}
+    if len(parts) >= 4 and parts[0] == "cd" and parts[2] == "&&":
+        working_directory = (REPOSITORY_ROOT / parts[1]).resolve()
+        parts = parts[3:]
+
+    while parts and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", parts[0]):
+        key, value = parts.pop(0).split("=", 1)
+        command_environment[key] = value
+
+    if len(parts) >= 2 and parts[:2] == ["uv", "run"]:
+        uv_arguments = parts[:2]
+        parts = parts[2:]
+        options_with_values = {"--directory", "--extra", "--with", "--python", "--project"}
+        while parts and parts[0].startswith("-"):
+            option = parts.pop(0)
+            uv_arguments.append(option)
+            if option in options_with_values and parts:
+                uv_arguments.append(parts.pop(0))
+        if parts:
+            executable = Path(parts[0]).name
+            if executable in {"python", "python3"} and (
+                "scripts/run_app_portal_evals.py" in parts[1:]
+                or parts[1:3] == ["-m", "scripts.run_app_portal_evals"]
+            ):
+                parts = ["pytest"]
+        parts = [*uv_arguments, *parts]
+    elif parts == ["pytest"]:
+        parts = [sys.executable, "-m", "pytest"]
+
+    return parts, working_directory, command_environment
+
+
+def _case_artifact_path(case: ManifestCase) -> Path | None:
+    if case.artifact is None:
+        return None
+    artifact = Path(case.artifact).expanduser()
+    if not artifact.is_absolute():
+        artifact = REPOSITORY_ROOT / artifact
+    return artifact.resolve()
+
+
+def _artifact_is_present(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        metadata = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and metadata.st_size > 0
+
+
 def _run_group(
     manifest: EvalManifest,
     *,
@@ -474,27 +624,42 @@ def _run_group(
     command_runner: CommandRunner,
 ) -> dict[str, Any]:
     test_nodes = [case.test for case in cases if case.test is not None]
-    command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "-q",
-        *test_nodes,
-        f"--junitxml={xml_path}",
-    ]
+    evidence_only_group = not test_nodes and all(
+        _artifact_is_present(_case_artifact_path(case))
+        for case in cases
+    )
+    command, working_directory, command_environment = _manifest_command(manifest.command)
+    command.extend(
+        [
+            "-q",
+            *test_nodes,
+            f"--junitxml={xml_path}",
+        ]
+    )
+    subprocess_environment = {**environment, **command_environment}
+    stripped_env_keys = (
+        sorted(_PYTEST_FILTER_ENV_KEYS.intersection(subprocess_environment))
+        if test_nodes
+        else []
+    )
+    for key in stripped_env_keys:
+        subprocess_environment.pop(key, None)
     raw_exit_status = 1
     timed_out = False
     execution_error: str | None = None
     with log_path.open("w", encoding="utf-8") as log_file:
         if not test_nodes:
-            raw_exit_status = 1
-            execution_error = "group has no executable test cases"
+            if evidence_only_group:
+                raw_exit_status = 0
+            else:
+                raw_exit_status = 1
+                execution_error = "group has no executable test cases"
         else:
             try:
                 completed = command_runner(
                     command,
-                    cwd=SERVICE_ROOT,
-                    env=dict(environment),
+                    cwd=working_directory,
+                    env=subprocess_environment,
                     check=False,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
@@ -521,9 +686,9 @@ def _run_group(
     status = _normalise_status(raw_exit_status)
     if raw_exit_status != 0:
         reasons.append(f"pytest exited with status {raw_exit_status}")
-    if not junit.report_found:
+    if not junit.report_found and not evidence_only_group:
         reasons.append("JUnit report is missing")
-    if junit.case_count == 0:
+    if junit.case_count == 0 and not evidence_only_group:
         reasons.append("group produced zero test cases")
     if junit.fail_count > threshold_failures:
         reasons.append(
@@ -531,7 +696,7 @@ def _run_group(
         )
     if junit.skip_count > threshold_skipped:
         reasons.append(f"skip count {junit.skip_count} exceeds max_skipped {threshold_skipped}")
-    if junit.report_error:
+    if junit.report_error and not evidence_only_group:
         reasons.append(junit.report_error)
     if execution_error:
         reasons.append(execution_error)
@@ -553,6 +718,12 @@ def _run_group(
         "exit_status": status,
         "timed_out": timed_out,
         "junit_report_found": junit.report_found,
+        "evidence_only_group": evidence_only_group,
+        "passed_testcases": [
+            {"classname": classname, "name": name}
+            for classname, name in sorted(junit.passed_testcases)
+        ],
+        "stripped_env_keys": stripped_env_keys,
         "artifact_paths": [str(xml_path.resolve()), str(log_path.resolve())],
         "output_capture": {
             "path": str(log_path.resolve()),
@@ -586,7 +757,9 @@ def run_evals(
     manifest_path: str | Path,
     *,
     groups: Sequence[str] | None = None,
+    gates: Sequence[str] | None = None,
     out_dir: str | Path | None = None,
+    live_charge_authorized_by: str | None = None,
     environment: Mapping[str, str] | None = None,
     command_runner: CommandRunner | None = None,
 ) -> int:
@@ -594,8 +767,16 @@ def run_evals(
 
     manifest = load_manifest(manifest_path)
     selected = _selected_groups(manifest, groups)
+    selected_gates = _selected_gates(manifest, gates)
     effective_environment = dict(os.environ if environment is None else environment)
+    _, _, command_environment = _manifest_command(manifest.command)
+    effective_environment.update(command_environment)
     runner = subprocess.run if command_runner is None else command_runner
+    authorization = (
+        live_charge_authorized_by.strip()
+        if isinstance(live_charge_authorized_by, str)
+        else ""
+    ) or None
     artifact_dir = (
         REPOSITORY_ROOT / ".task-state" / "evals"
         if out_dir is None
@@ -616,6 +797,7 @@ def run_evals(
 
     started_at = datetime.now(UTC)
     head_sha = _head_sha(runner, repository_root=REPOSITORY_ROOT)
+    git_dirty, git_dirty_paths = _git_dirty_state(runner, repository_root=REPOSITORY_ROOT)
     group_results: list[dict[str, Any]] = []
     worst_status = 0
     available_groups = manifest.groups
@@ -633,23 +815,118 @@ def run_evals(
         group_results.append(result)
         worst_status = max(worst_status, int(result["exit_status"]))
 
+    group_passed_testcases = {
+        result["group"]: {
+            (testcase["classname"], testcase["name"])
+            for testcase in result["passed_testcases"]
+        }
+        for result in group_results
+    }
+    case_results: dict[str, dict[str, Any]] = {}
+    release_gate_failures: list[str] = []
+    cases_by_id = {case.case_id: case for case in manifest.cases}
+    for case in manifest.cases:
+        artifact_path = _case_artifact_path(case)
+        artifact_present = _artifact_is_present(artifact_path)
+        testcase_identity = (
+            _junit_testcase_identity(case.test) if case.test is not None else None
+        )
+        test_passed = (
+            testcase_identity is not None
+            and testcase_identity in group_passed_testcases.get(case.group, set())
+        )
+        if case.test is not None:
+            execution_status = "passed" if test_passed else "not_executed_or_failed"
+        elif artifact_present:
+            execution_status = "evidence_present"
+        else:
+            execution_status = "evidence_missing"
+        case_results[case.case_id] = {
+            "case_id": case.case_id,
+            "declared_status": case.status,
+            "execution_status": execution_status,
+            "additional_evidence_required": case.additional_evidence_required,
+            "artifact_path": str(artifact_path) if artifact_path is not None else None,
+            "artifact_present": artifact_present if artifact_path is not None else None,
+        }
+    release_gate_results: dict[str, dict[str, Any]] = {}
+    for gate_name, gate in manifest.release_gates.items():
+        reasons: list[str] = []
+        for case_id in gate["required_cases"]:
+            case = cases_by_id[case_id]
+            result = case_results[case_id]
+            artifact_path = _case_artifact_path(case)
+            if case.test is not None:
+                if result["execution_status"] != "passed":
+                    reasons.append(
+                        f"release gate {gate_name!r} required case {case_id!r} "
+                        "was not executed or did not pass"
+                    )
+                if gate.get("require_sandbox_and_operational_evidence") and case.additional_evidence_required:
+                    if artifact_path is None:
+                        reasons.append(
+                            f"release gate {gate_name!r} required case {case_id!r} "
+                            "requires additional evidence but has no artifact path"
+                        )
+                    elif not result["artifact_present"]:
+                        reasons.append(
+                            f"release gate {gate_name!r} required case {case_id!r} "
+                            f"additional evidence artifact is missing, empty, or not a regular file: {artifact_path}"
+                        )
+                continue
+            if artifact_path is None:
+                reasons.append(
+                    f"release gate {gate_name!r} required evidence-only case "
+                    f"{case_id!r} has no artifact path"
+                )
+            elif not result["artifact_present"]:
+                reasons.append(
+                    f"release gate {gate_name!r} required evidence-only case "
+                    f"{case_id!r} artifact is missing, empty, or not a regular file: {artifact_path}"
+                )
+        if gate.get("requires_explicit_live_charge_authorization") and authorization is None:
+            reasons.append("explicit live-charge authorization not given")
+        if gate_name in selected_gates and git_dirty is not False:
+            if git_dirty:
+                reasons.append("repository working tree is dirty")
+            else:
+                reasons.append("repository dirty state could not be determined")
+        release_gate_results[gate_name] = {
+            "status": "failed" if reasons else "passed",
+            "reasons": reasons,
+            "live_charge_authorized_by": authorization,
+        }
+        release_gate_failures.extend(reasons)
+        if gate_name in selected_gates and reasons:
+            worst_status = max(worst_status, 1)
+
     finished_at = datetime.now(UTC)
     artifact_paths = [
         artifact_path
         for result in group_results
         for artifact_path in result["artifact_paths"]
     ]
+    artifact_paths.extend(
+        result["artifact_path"]
+        for result in case_results.values()
+        if result["artifact_present"]
+    )
     evidence = {
         "schema_version": 1,
         "suite_id": manifest.suite_id,
         "owner": manifest.owner,
         "manifest_path": str(manifest.path),
         "git_sha": head_sha,
+        "git_dirty": git_dirty,
+        "git_dirty_paths": git_dirty_paths,
         "environment": _gate_environment(effective_environment),
         "gate_environment": _gate_environment(effective_environment),
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "groups": group_results,
+        "case_results": list(case_results.values()),
+        "release_gate_results": release_gate_results,
+        "release_gate_failures": release_gate_failures,
         "artifact_paths": artifact_paths,
         "captured_output_tail_limit_bytes": CAPTURED_TAIL_BYTES,
         "runner_exit_status": worst_status,
@@ -669,6 +946,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="run only this group; repeat for multiple groups (default: all)",
     )
     parser.add_argument(
+        "--gate",
+        action="append",
+        choices=_REQUIRED_RELEASE_GATES,
+        default=None,
+        help="enforce only this release gate; repeat for multiple gates (default: report all)",
+    )
+    parser.add_argument(
+        "--live-charge-authorized-by",
+        default=None,
+        help="operator explicitly authorizing a live charge for a paid release gate",
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -682,7 +971,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _build_parser().parse_args(argv)
     try:
-        status = run_evals(args.manifest, groups=args.group, out_dir=args.out)
+        status = run_evals(
+            args.manifest,
+            groups=args.group,
+            gates=args.gate,
+            out_dir=args.out,
+            live_charge_authorized_by=args.live_charge_authorized_by,
+        )
     except (ManifestValidationError, EvalRunnerError) as exc:
         print(f"run_app_portal_evals: {exc}", file=sys.stderr)
         return 2

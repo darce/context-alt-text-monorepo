@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/recognition-cluster-merge-candidates-response.schema.json",
   "title": "Recognition Cluster Merge Candidates Response",
-  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Candidate similarity is max(centroid cosine, latest pending ClusterMergeSuggestion similarity) over the canonical unordered pair (min uuid, max uuid); only pending suggestions not older than the latest cluster mutation. The band rule applies after that max. Band cuts come from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Same shape family as GET /recognition/clusters/{cluster_id}/roster-candidates. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
+  "description": "GET /recognition/clusters/{cluster_id}/merge-candidates. Ranked other clusters for a probe cluster. Candidate similarity is max(centroid cosine, latest pending ClusterMergeSuggestion similarity) over the canonical unordered pair (min uuid, max uuid); only pending suggestions not older than the latest cluster mutation. The band rule applies after that max. Band cuts come from the accepted calibration policy block in settings/clustering.py — no literal thresholds in the route. Consumers MUST render in payload order and MUST NOT re-sort (rg-015).",
   "type": "object",
   "required": ["cluster_id", "candidates"],
   "additionalProperties": false,

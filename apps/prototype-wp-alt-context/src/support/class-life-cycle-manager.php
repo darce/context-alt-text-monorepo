@@ -744,7 +744,7 @@ class LifecycleManager {
 			tenant_id varchar(64) NOT NULL,
 			name varchar(255) NOT NULL,
 			normalized_name varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-			tags text DEFAULT '',
+			tags text DEFAULT NULL,
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			reference_thumb_path varchar(512) DEFAULT NULL,
 			cluster_count int(11) unsigned DEFAULT 0,
@@ -937,6 +937,7 @@ class LifecycleManager {
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_idempotency (idempotency_key),
+			KEY idx_tenant_status_created (tenant_id, status, created_at),
 			KEY idx_status_created (status, created_at),
 			KEY idx_entity (entity_type, entity_key)
 		) {$charset_collate};";

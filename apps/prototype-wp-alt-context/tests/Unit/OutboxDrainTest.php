@@ -11,11 +11,14 @@ use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\ReclaimerLiveness;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 use RuntimeException;
 
 class OutboxDrainTest extends TestCase
 {
+	use FindsSqlQueries;
+
 	public function testRegisterRegistersHookAndSchedulesWhenPendingExists(): void
 	{
 		global $wpdb;
@@ -1605,20 +1608,6 @@ class OutboxDrainTest extends TestCase
 				'next_attempt_at' => gmdate('Y-m-d H:i:s', time() + 3600),
 			]
 		);
-	}
-
-	/**
-	 * @param array<int,string> $queries
-	 */
-	private function findQueryContaining(array $queries, string $needle): string
-	{
-		foreach ($queries as $query) {
-			if (str_contains($query, $needle)) {
-				return $query;
-			}
-		}
-
-		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
 	}
 
 	private function extractDatetimeColumn(string $query, string $column): string

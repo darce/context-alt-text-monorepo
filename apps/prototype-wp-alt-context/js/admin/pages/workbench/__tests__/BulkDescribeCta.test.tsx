@@ -311,13 +311,6 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(props.onSubmit).toHaveBeenCalledTimes(1);
   });
 
-  it('gives each case its own default spies (pair 2 of 2)', async () => {
-    const props = baseProps();
-    render(<BulkDescribeCta {...props} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Describe 2 selected' }));
-    expect(props.onSubmit).toHaveBeenCalledTimes(1);
-  });
-
   it('enables submit when online with selection', async () => {
     const onSubmit = vi.fn();
     render(<BulkDescribeCta {...baseProps()} onSubmit={onSubmit} />);

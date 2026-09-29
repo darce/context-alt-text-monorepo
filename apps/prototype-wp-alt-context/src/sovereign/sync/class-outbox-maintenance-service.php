@@ -1109,7 +1109,8 @@ class OutboxMaintenanceService {
 		) {
 			return 'skipped';
 		}
-		if ( $this->local_entity_exists_for_tenant( $tenant_id, $locked ) ) {
+		$entity_exists = $this->local_entity_exists_for_tenant( $tenant_id, $locked );
+		if ( null === $entity_exists || $entity_exists ) {
 			return 'skipped';
 		}
 
@@ -1181,7 +1182,7 @@ class OutboxMaintenanceService {
 			$this->related_table_name( 'acx_clusters' ),
 			array( $cluster_uuid, trim( $tenant_id ) )
 		);
-		if ( array() === $clusters ) {
+		if ( null === $clusters || array() === $clusters ) {
 			return 'skipped';
 		}
 
@@ -1245,7 +1246,7 @@ class OutboxMaintenanceService {
 	/**
 	 * @param array<string,mixed> $row
 	 */
-	private function local_entity_exists_for_tenant( string $tenant_id, array $row ): bool {
+	private function local_entity_exists_for_tenant( string $tenant_id, array $row ): ?bool {
 		$entity_type = strtolower( trim( (string) ( $row['entity_type'] ?? '' ) ) );
 		$entity_key = trim( (string) ( $row['entity_key'] ?? '' ) );
 		if ( '' === $entity_key ) {
@@ -1253,7 +1254,11 @@ class OutboxMaintenanceService {
 		}
 
 		if ( '' === $entity_type || 'cluster' === $entity_type ) {
-			if ( $this->locked_cluster_exists_for_tenant( $entity_key, $tenant_id ) ) {
+			$cluster_exists = $this->locked_cluster_exists_for_tenant( $entity_key, $tenant_id );
+			if ( null === $cluster_exists ) {
+				return null;
+			}
+			if ( $cluster_exists ) {
 				return true;
 			}
 			if ( 'cluster' === $entity_type ) {
@@ -1262,7 +1267,11 @@ class OutboxMaintenanceService {
 		}
 
 		if ( '' === $entity_type || 'member' === $entity_type ) {
-			if ( $this->locked_member_exists_for_tenant( $entity_key, $tenant_id ) ) {
+			$member_exists = $this->locked_member_exists_for_tenant( $entity_key, $tenant_id );
+			if ( null === $member_exists ) {
+				return null;
+			}
+			if ( $member_exists ) {
 				return true;
 			}
 			if ( 'member' === $entity_type ) {
@@ -1277,7 +1286,7 @@ class OutboxMaintenanceService {
 		return false;
 	}
 
-	private function locked_cluster_exists_for_tenant( string $cluster_uuid, string $tenant_id ): bool {
+	private function locked_cluster_exists_for_tenant( string $cluster_uuid, string $tenant_id ): ?bool {
 		return $this->locked_identifier_exists(
 			$this->related_table_name( 'acx_clusters' ),
 			'SELECT cluster_uuid FROM %i WHERE cluster_uuid = %s AND tenant_id = %s LIMIT 1 FOR UPDATE',
@@ -1285,12 +1294,15 @@ class OutboxMaintenanceService {
 		);
 	}
 
-	private function locked_member_exists_for_tenant( string $identity_uuid, string $tenant_id ): bool {
+	private function locked_member_exists_for_tenant( string $identity_uuid, string $tenant_id ): ?bool {
 		$member_rows = $this->select_locked_rows(
 			'SELECT cluster_uuid FROM %i WHERE identity_uuid = %s LIMIT 1 FOR UPDATE',
 			$this->related_table_name( 'acx_identity_members' ),
 			array( $identity_uuid )
 		);
+		if ( null === $member_rows ) {
+			return null;
+		}
 		if ( array() === $member_rows ) {
 			return false;
 		}
@@ -1303,7 +1315,7 @@ class OutboxMaintenanceService {
 		return $this->locked_cluster_exists_for_tenant( $cluster_uuid, $tenant_id );
 	}
 
-	private function locked_person_exists_for_tenant( string $person_key, string $tenant_id ): bool {
+	private function locked_person_exists_for_tenant( string $person_key, string $tenant_id ): ?bool {
 		if ( is_numeric( $person_key ) && (int) $person_key > 0 ) {
 			return $this->locked_identifier_exists(
 				$this->related_table_name( 'acx_persons' ),
@@ -1322,15 +1334,20 @@ class OutboxMaintenanceService {
 	/**
 	 * @param array<int,mixed> $values
 	 */
-	private function locked_identifier_exists( string $table_name, string $sql, array $values ): bool {
-		return array() !== $this->select_locked_rows( $sql, $table_name, $values );
+	private function locked_identifier_exists( string $table_name, string $sql, array $values ): ?bool {
+		$rows = $this->select_locked_rows( $sql, $table_name, $values );
+		if ( null === $rows ) {
+			return null;
+		}
+
+		return array() !== $rows;
 	}
 
 	/**
 	 * @param array<int,mixed> $values
-	 * @return array<int,array<string,mixed>>
+	 * @return array<int,array<string,mixed>>|null
 	 */
-	private function select_locked_rows( string $sql, string $table_name, array $values ): array {
+	private function select_locked_rows( string $sql, string $table_name, array $values ): ?array {
 		global $wpdb;
 
 		if (
@@ -1339,8 +1356,11 @@ class OutboxMaintenanceService {
 			|| ! method_exists( $wpdb, 'prepare' )
 			|| ! method_exists( $wpdb, 'get_results' )
 		) {
-			return array();
+			return null;
 		}
+		$last_error_before = isset( $wpdb->last_error ) && is_string( $wpdb->last_error )
+			? $wpdb->last_error
+			: '';
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- $sql is a private literal from callers.
 		$rows = $wpdb->get_results(
@@ -1348,7 +1368,13 @@ class OutboxMaintenanceService {
 			ARRAY_A
 		);
 		if ( ! is_array( $rows ) ) {
-			return array();
+			return null;
+		}
+		$last_error_after = isset( $wpdb->last_error ) && is_string( $wpdb->last_error )
+			? $wpdb->last_error
+			: '';
+		if ( '' !== $last_error_after && $last_error_after !== $last_error_before ) {
+			return null;
 		}
 
 		$matched = array();

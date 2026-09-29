@@ -5,6 +5,8 @@ import stat
 import time
 from pathlib import Path
 
+import pytest
+
 from test_app_portal_deploy import (
     OVERLAY,
     _log,
@@ -280,3 +282,54 @@ def test_rollback_restores_overlay_mode_when_contents_match(tmp_path: Path) -> N
     assert "health check failed" in output.lower(), output
     assert overlay.read_text(encoding="utf-8") == original_overlay
     assert stat.S_IMODE(overlay.stat().st_mode) == original_mode
+
+
+@pytest.mark.parametrize(
+    ("alias", "message"),
+    [
+        ("journal", "APP_WWW collides with activation paths"),
+        ("lock", "APP_WWW collides with activation paths"),
+        ("overlay", "APP_WWW collides with activation paths"),
+        ("nested_journal", "APP_WWW collides with activation paths"),
+        ("ancestor", "APP_WWW collides with activation paths"),
+        ("prev_root", "APP_WWW.prev collides with activation paths"),
+    ],
+)
+def test_app_www_cannot_collide_with_activation_paths(
+    tmp_path: Path, alias: str, message: str
+) -> None:
+    backend_root = tmp_path / "opt" / "acx-backend"
+    app_root = backend_root / "app"
+    app_www = {
+        "journal": app_root / "activation.journal",
+        "lock": app_root / "activation.journal.lock",
+        "overlay": app_root / "docker-compose.app.yml",
+        "nested_journal": app_root / "activation.journal" / "www",
+        "ancestor": backend_root / "nested",
+        "prev_root": backend_root / "reserved",
+    }[alias]
+    if alias == "ancestor":
+        app_root = app_www / "app"
+    elif alias == "prev_root":
+        app_root = backend_root / "reserved.prev"
+
+    result = _run(
+        tmp_path,
+        args=["--apply"],
+        extra_env={"APP_ROOT": str(app_root), "APP_WWW": str(app_www)},
+    )
+    output = result.stdout + result.stderr
+    journal = app_root / "activation.journal"
+    lock_path = Path(f"{journal}.lock")
+
+    assert result.returncode != 0, output
+    assert message in output, output
+    assert not journal.exists()
+    assert not lock_path.exists()
+
+
+def test_default_app_www_passes_activation_path_preflight(tmp_path: Path) -> None:
+    result = _run(tmp_path, args=["--apply"])
+    output = result.stdout + result.stderr
+
+    assert result.returncode == 0, output

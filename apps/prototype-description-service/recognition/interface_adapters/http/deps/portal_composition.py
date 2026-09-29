@@ -437,6 +437,7 @@ async def admit_usage(
 ) -> AsyncIterator[None]:
     """Reserve one unit before an analysis submission reaches its route handler."""
     if usage_admission_service is None:
+        yield
         return
     idempotency_key = request.headers.get("Idempotency-Key", "").strip()
     if not idempotency_key:

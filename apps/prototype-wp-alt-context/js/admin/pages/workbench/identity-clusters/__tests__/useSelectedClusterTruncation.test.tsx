@@ -3,8 +3,6 @@
  * Consumes query-cache first-page envelope only — never isFullyLoaded.
  */
 
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +10,7 @@ import { fetchClusterMembers } from '../../../../api/recognition';
 import type { ClusterIdentity, ClusterMembersResponse } from '../../../../api/recognition';
 import { queryKeys } from '../../../../api/queryKeys';
 import { useSelectedClusterTruncation } from '../useSelectedClusterTruncation';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 
 vi.mock('../../../../api/recognition', async () => {
   const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
@@ -42,16 +41,6 @@ const makeEnvelope = (
   truncated: overrides.truncated ?? false,
 });
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return Object.assign(wrapper, { queryClient });
-};
-
 describe('useSelectedClusterTruncation', () => {
   afterEach(() => {
     vi.resetAllMocks();
@@ -59,7 +48,7 @@ describe('useSelectedClusterTruncation', () => {
 
   it('is not gated when selection has no target clusters', () => {
     const { result } = renderHook(() => useSelectedClusterTruncation([]), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
     expect(result.current.isTruncationGated).toBe(false);
     expect(result.current.targetClusterIds).toEqual([]);
@@ -76,7 +65,7 @@ describe('useSelectedClusterTruncation', () => {
     );
 
     const { result } = renderHook(() => useSelectedClusterTruncation(['cluster-trunc']), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -95,7 +84,7 @@ describe('useSelectedClusterTruncation', () => {
     );
 
     const { result } = renderHook(() => useSelectedClusterTruncation(['cluster-full']), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -107,7 +96,8 @@ describe('useSelectedClusterTruncation', () => {
   });
 
   it('reads from query-cache envelope (memberList key) without show-all expansion', async () => {
-    const wrapper = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const envelope = makeEnvelope([makeMember('m1')], {
       limit: 1,
       total: 5,
@@ -135,7 +125,7 @@ describe('useSelectedClusterTruncation', () => {
 
     const { result } = renderHook(
       () => useSelectedClusterTruncation(['c1', 'c1', null, 'c2', undefined]),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {
@@ -149,7 +139,7 @@ describe('useSelectedClusterTruncation', () => {
     vi.mocked(fetchClusterMembers).mockRejectedValueOnce(new Error('network down'));
 
     const { result } = renderHook(() => useSelectedClusterTruncation(['cluster-err']), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {

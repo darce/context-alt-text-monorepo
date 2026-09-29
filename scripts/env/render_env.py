@@ -160,7 +160,10 @@ def render_target(
             if var.doc:
                 lines.extend(_doc_lines(var.doc))
             if env is not None and var.secret.get(env) == "host:":
-                lines.extend((host_lines or {}).get(var.name, []))
+                rendered_host_lines = (host_lines or {}).get(var.name, [])
+                if var.required and not rendered_host_lines:
+                    raise ManifestError(f"{var.source}: {var.name}: host secret unavailable for env {env}")
+                lines.extend(rendered_host_lines)
                 continue
             if env is None:
                 value = var.example

@@ -1,10 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReactNode } from 'react';
 
 import { fetchClusterMembers } from '../../../../api/recognition';
 import type { ClusterIdentity, ClusterMembersResponse } from '../../../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 import { useShowAllClusterMembers } from '../useShowAllClusterMembers';
 
 vi.mock('../../../../api/recognition', async () => {
@@ -36,16 +35,6 @@ const makeEnvelope = (
   truncated: overrides.truncated ?? false,
 });
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return Object.assign(wrapper, { queryClient });
-};
-
 describe('useShowAllClusterMembers', () => {
   afterEach(() => {
     vi.resetAllMocks();
@@ -72,7 +61,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-show-all'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -137,7 +126,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result, rerender } = renderHook(({ clusterId }) => useShowAllClusterMembers(clusterId), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
       initialProps: { clusterId: 'cluster-a' },
     });
 
@@ -183,7 +172,8 @@ describe('useShowAllClusterMembers', () => {
       return Promise.resolve(makeEnvelope([makeMember('m3')], { limit: 1, total: 3, truncated: false }));
     });
 
-    const wrapper = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-refetch'), { wrapper });
 
     await waitFor(() => {
@@ -198,7 +188,7 @@ describe('useShowAllClusterMembers', () => {
     // Mutation invalidates + refetch returns the member-removed envelope.
     removed = true;
     await act(async () => {
-      await wrapper.queryClient.refetchQueries();
+      await queryClient.refetchQueries();
     });
 
     await waitFor(() => {
@@ -221,7 +211,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-empty-page'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -253,7 +243,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-reject'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -277,7 +267,7 @@ describe('useShowAllClusterMembers', () => {
     );
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-full'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -309,7 +299,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-dedup'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -348,7 +338,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-shortfall'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {
@@ -383,7 +373,7 @@ describe('useShowAllClusterMembers', () => {
     });
 
     const { result } = renderHook(() => useShowAllClusterMembers('cluster-cap'), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     await waitFor(() => {

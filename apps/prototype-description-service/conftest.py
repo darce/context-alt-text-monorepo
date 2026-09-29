@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from time import time_ns
@@ -16,6 +18,7 @@ _LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / (
     "prototype-description-service-pytest-collection-scope.json"
 )
 _SERVICE_PYPROJECT = Path(__file__).with_name("pyproject.toml").resolve()
+_EVAL_HARNESS_TEST_DIRECTORY = Path(__file__).parent / "scene" / "tests"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -50,6 +53,73 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     config = session.config
     config._collection_scope_receipt_started_at = started_at  # type: ignore[attr-defined]
     config._collection_scope_receipt_default_path = default_path  # type: ignore[attr-defined]
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "eval_harness: tests for the offline evaluation harness"
+    )
+
+
+def _explicitly_selected_eval_harness_paths(
+    config: pytest.Config, eval_items: list[pytest.Item]
+) -> set[Path]:
+    item_paths = {Path(str(item.path)).resolve() for item in eval_items}
+    invocation = config.invocation_params
+    roots = {Path(invocation.dir).resolve(), config.rootpath.resolve()}
+    selected_paths: set[Path] = set()
+    args = (*config.args, *invocation.args)
+    for arg in args:
+        path_arg = str(arg).partition("::")[0]
+        if not path_arg or path_arg.startswith("-"):
+            continue
+        path = Path(path_arg)
+        candidates = (path,) if path.is_absolute() else (root / path for root in roots)
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved in item_paths:
+                selected_paths.add(resolved)
+    return selected_paths
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> Generator[None, None, None]:
+    mark_expression = config.option.markexpr or ""
+    explicitly_selected = re.search(
+        r"(?:^|[^A-Za-z0-9_])eval_harness(?:$|[^A-Za-z0-9_])", mark_expression
+    ) is not None
+    eval_directory = _EVAL_HARNESS_TEST_DIRECTORY.resolve()
+    eval_items: list[pytest.Item] = []
+    for item in items:
+        item_path = Path(str(item.path)).resolve()
+        if (
+            item_path.name.startswith("test_eval_harness")
+            and item_path.is_relative_to(eval_directory)
+        ):
+            item.add_marker(pytest.mark.eval_harness)
+            eval_items.append(item)
+
+    explicitly_selected_paths = _explicitly_selected_eval_harness_paths(
+        config, eval_items
+    )
+    deselected_items = [
+        item
+        for item in eval_items
+        if not explicitly_selected
+        and Path(str(item.path)).resolve() not in explicitly_selected_paths
+    ]
+    if deselected_items:
+        deselected_ids = {id(item) for item in deselected_items}
+        items[:] = [item for item in items if id(item) not in deselected_ids]
+        config._eval_harness_deselected_paths = tuple(  # type: ignore[attr-defined]
+            Path(str(item.path)).resolve() for item in deselected_items
+        )
+        config._eval_harness_deselected_count = len(deselected_items)  # type: ignore[attr-defined]
+        config.hook.pytest_deselected(items=deselected_items)
+
+    yield
 
 
 def _receipt_path(config: pytest.Config, root: Path) -> Path:
@@ -109,8 +179,9 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     existing = [(label, path) for label, path in declared_paths if path.exists()]
 
     collected: set[str] = set()
-    for item in session.items:
-        item_path = Path(str(item.path)).resolve()
+    item_paths = [Path(str(item.path)).resolve() for item in session.items]
+    item_paths.extend(getattr(config, "_eval_harness_deselected_paths", ()))
+    for item_path in item_paths:
         for label, declared_path in existing:
             if item_path.is_relative_to(declared_path):
                 collected.add(label)
@@ -138,6 +209,9 @@ def pytest_collection_finish(session: pytest.Session) -> None:
 
     config._collection_scope_receipt = receipt  # type: ignore[attr-defined]
     config._collection_scope_receipt_path = receipt_path  # type: ignore[attr-defined]
+    config._collection_scope_receipt_deselected_count = getattr(
+        config, "_eval_harness_deselected_count", 0
+    )  # type: ignore[attr-defined]
     strict_gate = os.environ.get("ACX_STRICT_GATE", "").strip() == "1"
     require_full = config.getoption("--require-full-collection")
     if (require_full or strict_gate) and scope != "full":
@@ -164,10 +238,12 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
         )
         return
     path = config._collection_scope_receipt_path  # type: ignore[attr-defined]
+    deselected_count = config._collection_scope_receipt_deselected_count  # type: ignore[attr-defined]
     terminalreporter.write_sep(
         "=",
         "collection scope: "
         f"{receipt['scope']}; declared={receipt['declared_roots']}; "
-        f"collected={receipt['collected_roots']}; count={receipt['collected_count']}; "
+        f"collected={receipt['collected_roots']}; selected={receipt['collected_count']}; "
+        f"eval_harness_deselected={deselected_count}; "
         f"receipt={path}",
     )

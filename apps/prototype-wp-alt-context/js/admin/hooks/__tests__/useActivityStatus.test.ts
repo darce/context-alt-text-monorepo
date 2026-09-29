@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-import { createElement, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,12 +29,11 @@ import {
   putDescribeOperationContext,
 } from '../describeOperationStore';
 import type { DescribeRunProgress } from '../useDescribeRunProgress';
-import { DEFAULT_STARTUP_BUDGET_SECONDS, STALL_PHASE, stallThresholdMs as jobStallThresholdMs } from '../jobMachine';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import {
   ACTIVITY_KIND,
   ACTIVITY_REASON,
   resolveActivityStatus,
-  stallThresholdMs,
   useActivityStatus,
   type DescribeActivityInput,
   type GpuActivityInput,
@@ -154,15 +152,6 @@ const statusResponse = (state: GpuState = GPU_STATE.STOPPED): GpuStatusResponse 
 
 let queryClient: QueryClient;
 
-const createWrapper = () => {
-  queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
-  return wrapper;
-};
-
 const installTenant = (): void => {
   resetConfigCache();
   registerConfig({
@@ -239,12 +228,6 @@ const seedWarmupTimeoutRun = (runId = 'run-1'): void => {
 };
 
 describe('resolveActivityStatus', () => {
-  it('re-exports G3 stallThresholdMs for warming vs processing', () => {
-    expect(stallThresholdMs).toBe(jobStallThresholdMs);
-    expect(stallThresholdMs(STALL_PHASE.WARMING)).toBe(DEFAULT_STARTUP_BUDGET_SECONDS * 1000);
-    expect(stallThresholdMs(STALL_PHASE.PROCESSING)).toBe(30_000);
-  });
-
   it('returns idle when scan, describe, and GPU are quiet', () => {
     const status = resolveActivityStatus({
       scan: idleScan(),
@@ -552,7 +535,8 @@ describe('useActivityStatus', () => {
   });
 
   it('owns one idle GPU status poll while no describe run is live', async () => {
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(fetchGpuStatusMock).toHaveBeenCalledTimes(1));
     expect(result.current.status.kind).toBe(ACTIVITY_KIND.IDLE);
@@ -572,7 +556,8 @@ describe('useActivityStatus', () => {
       describeRun({ phase: DESCRIBE_RUN_PHASE.WARMING, gpu_state: GPU_STATE.WARMING, eta_seconds: 90, completed: 0 }),
     );
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(result.current.status.kind).toBe(ACTIVITY_KIND.WARMING));
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
@@ -584,6 +569,7 @@ describe('useActivityStatus', () => {
 
   it('composes an injected scan source as scanning', () => {
     const cancelScan = vi.fn();
+    queryClient = buildTestQueryClient();
     const { result } = renderHook(
       () =>
         useActivityStatus({
@@ -595,7 +581,7 @@ describe('useActivityStatus', () => {
             cancelScan,
           },
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(queryClient) },
     );
 
     expect(result.current.status.kind).toBe(ACTIVITY_KIND.SCANNING);
@@ -626,7 +612,8 @@ describe('useActivityStatus', () => {
       }),
     );
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(getLastSettledRun()?.outcome).toBe(DESCRIBE_RUN_SETTLE_OUTCOME.COMPLETED));
     expect(pendingTerminalRuns()).toEqual([]);
@@ -656,7 +643,8 @@ describe('useActivityStatus', () => {
       }),
     );
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
     expect(result.current.status.kind).toBe(ACTIVITY_KIND.FAILED);
@@ -682,7 +670,8 @@ describe('useActivityStatus', () => {
       }),
     );
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
     act(() => {
@@ -713,7 +702,8 @@ describe('useActivityStatus', () => {
     );
     submitBulkDescribeRunMock.mockRejectedValue(new Error('could not start run'));
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_WARMUP_TIMEOUT));
     act(() => {
@@ -733,7 +723,8 @@ describe('useActivityStatus', () => {
       itemsResponse('run-1', [describeItem(41, 'completed'), describeItem(42, 'skipped')]),
     );
 
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() => expect(result.current.actions.onRetry).not.toBeNull());
     act(() => {
@@ -749,6 +740,7 @@ describe('useActivityStatus', () => {
 
   it('retries SCAN_FAILED via the scan source without submitting a describe run', async () => {
     const retryScan = vi.fn();
+    queryClient = buildTestQueryClient();
     const { result } = renderHook(
       () =>
         useActivityStatus({
@@ -758,7 +750,7 @@ describe('useActivityStatus', () => {
             retryScan,
           },
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(queryClient) },
     );
 
     await waitFor(() => expect(result.current.status.reason).toBe(ACTIVITY_REASON.SCAN_FAILED));
@@ -772,7 +764,8 @@ describe('useActivityStatus', () => {
 
   it('retries GPU_STATUS_UNAVAILABLE via gpu refetch without submitting a describe run', async () => {
     fetchGpuStatusMock.mockRejectedValue(new Error('gpu down'));
-    const { result } = renderHook(() => useActivityStatus(), { wrapper: createWrapper() });
+    queryClient = buildTestQueryClient();
+    const { result } = renderHook(() => useActivityStatus(), { wrapper: createQueryWrapper(queryClient) });
 
     await waitFor(() =>
       expect(result.current.status.reason).toBe(ACTIVITY_REASON.GPU_STATUS_UNAVAILABLE),

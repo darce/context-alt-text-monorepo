@@ -160,14 +160,11 @@ describe('DEFWAVE-2 workbench deferred findings', () => {
     expect(status.textContent).not.toContain(reason);
   });
 
-  it('mounts the GPU status in MediaSelection and wires submit wait metadata and pending state', () => {
+  it('keeps GPU status out of MediaSelection and preserves unreadable media wiring', () => {
     const source = mediaSelectionSource();
 
-    expect(source.includes("import { GpuTierStatus } from './GpuTierStatus';")).toBe(true);
-    expect(source.includes('<GpuTierStatus')).toBe(true);
-    expect(source.includes('isRunPending={isGpuServiceStatusPending}')).toBe(true);
-    expect(source.includes('useMutationState')).toBe(true);
-    expect(source.includes('operationError={gpuOperationError}')).toBe(true);
+    expect(source.includes("import { GpuTierStatus } from './GpuTierStatus';")).toBe(false);
+    expect(source.includes('<GpuTierStatus')).toBe(false);
     expect(source.includes('unreadableMediaIds')).toBe(true);
   });
 

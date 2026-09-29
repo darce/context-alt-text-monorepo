@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import { MemoryRouter, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { useIsMutating, useMutationState, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertTriangle,
@@ -19,7 +19,6 @@ import { queryKeys } from '../../api/queryKeys';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { useJobPipeline } from './JobPipelineContext';
-import { GpuTierStatus } from './GpuTierStatus';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -31,7 +30,6 @@ import { useSyncOffline } from '../../hooks/useSyncOffline';
 import {
   DESCRIBE_RUN_PHASE,
   DESCRIBE_RUN_STATUS,
-  resolveDescribeErrorDetailNumberField,
   type DescribeRunStatus,
   type DescribeRunTiming,
 } from '../../api/describeApi';
@@ -99,11 +97,6 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   // RES-15: container owns offline signal; BulkDescribeCta is pure presentational.
   const offline = useSyncOffline();
   const remoteGate = useRemoteActionGate(offline);
-  const pendingMutationCount = useIsMutating();
-  const describeOperationErrors = useMutationState({
-    filters: { status: 'error' },
-    select: (mutation) => mutation.state.error,
-  });
   const { selection, toggleRow, toggleAll } = mediaSelection;
   const {
     searchQuery,
@@ -189,13 +182,6 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
   const isDescribeRunning =
     bulkDescribe.submit.isPending ||
     (activeDescribeRunId !== null && !describeProgress.isTerminal && !describeProgress.isError);
-  const isGpuServiceStatusPending = isDescribeRunning || identify.pending || pendingMutationCount > 0;
-  const gpuOperationError =
-    describeOperationErrors.find(
-      (error) =>
-        resolveDescribeErrorDetailNumberField(error, 'warmup_eta_seconds') !== null ||
-        resolveDescribeErrorDetailNumberField(error, 'startup_budget_seconds') !== null,
-    ) ?? bulkDescribe.submit.error;
   // The result panel stays visible through the terminal state so the operator
   // sees the outcome, until they explicitly dismiss that run (FE-01).
   const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
@@ -286,11 +272,6 @@ const MediaSelectionRouted = ({ reviewActive = false }: MediaSelectionProps): Re
             onPerPageChange={onPerPageChange}
             onPageChange={onPageChange}
             labelId="acx-media-page-size-label"
-          />
-          <GpuTierStatus
-            isRunPending={isGpuServiceStatusPending}
-            gpuState={activeDescribeRunId !== null ? describeProgress.gpuState : null}
-            operationError={gpuOperationError}
           />
           <BulkDescribeCta
             selectedCount={selectedMediaIds.length}

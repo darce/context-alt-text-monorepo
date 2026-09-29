@@ -128,10 +128,12 @@ def _run_record(*, face_count: int = 3, n: int = 1) -> dict[str, Any]:
                 "identities": [
                     {
                         "name": "Alice Example",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
+                        "bbox": {"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0},
                         "unpositioned": False,
                     }
                 ],
+                "image_width": 100,
+                "image_height": 100,
                 # VLM6-DELTA-03: clears identity_ordering category-vacuity
                 # (report.py score_run_record counts ordering_positional only
                 # when this equals IdentityOrdering.POSITIONAL).
@@ -202,11 +204,20 @@ def test_score_gate_exits_0_when_scored_and_published_report_agree_clean(
 
     # n=5 clears SCORE_PASS_MIN_SCORED_IMAGES (branch-only category-vacuity
     # gate); exhaustive + boxed GT is genuinely clean (no refusal at all).
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="exhaustive", boxed=True, n=5)
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_run_record(face_count=1, n=5),
+        n=5,
+    )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
     published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
     assert published["faces"]["detection"].get("refused") is not True
+    assert published["faces"]["detection"]["tp"] == 5
+    assert published["faces"]["detection"]["fp"] == 0
+    assert published["faces"]["detection"]["fn"] == 0
     assert published["verdict"]["verdict"] == "pass"
 
 

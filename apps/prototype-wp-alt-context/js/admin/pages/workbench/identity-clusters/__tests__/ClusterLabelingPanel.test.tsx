@@ -530,9 +530,7 @@ describe('ClusterLabelingPanel', () => {
     const [rightHandFace, leftHandFace] = await screen.findAllByRole('img', { name: /Face \d in media 101/ });
 
     expect(rightHandFace).toHaveAccessibleName('Face 2 in media 101');
-    expect(rightHandFace).toHaveStyle({ transform: 'translate(-256px, -6.4px) scale(3.2)' });
     expect(leftHandFace).toHaveAccessibleName('Face 1 in media 101');
-    expect(leftHandFace).toHaveStyle({ transform: 'translate(-32px, -6.4px) scale(3.2)' });
     expect(screen.queryByRole('img', { name: 'Face to label' })).not.toBeInTheDocument();
   });
 

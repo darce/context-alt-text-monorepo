@@ -6,7 +6,8 @@
  * — these mount MediaSelectionTableBody with items driven from the workbench
  * cache so useCorrectMediaAlt's row patch is live committed truth.
  */
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,7 @@ import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/d
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 import type { WorkbenchMediaItem } from '../../../hooks/useWorkbenchMedia';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { MediaSelectionTableBody, useRowCommitLock } from '../MediaSelectionTableBody';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -95,14 +97,6 @@ const successItem = (mediaId: number, altText: string): DescriptionHistoryItem =
     run_status: null,
   }) as unknown as DescriptionHistoryItem;
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
 /**
  * Real row surface with items observed from the workbench cache so a successful
  * correction (editor or Suggest) re-renders both surfaces with live item.altText.
@@ -137,16 +131,17 @@ const LiveWorkbenchRow = ({ initialItem }: { initialItem: WorkbenchMediaItem }):
 };
 
 const renderLiveRow = (initialItem: WorkbenchMediaItem = seedItem()) => {
-  const client = buildClient();
+  const client = buildTestQueryClient();
   client.setQueryData<WorkbenchMediaResponse>(workbenchKey, {
     items: [initialItem],
     total: 1,
     totalPages: 1,
   });
+  const QueryWrapper = createQueryWrapper(client);
   const view = render(
-    <QueryClientProvider client={client}>
+    <QueryWrapper>
       <LiveWorkbenchRow initialItem={initialItem} />
-    </QueryClientProvider>,
+    </QueryWrapper>,
   );
   return { client, ...view };
 };

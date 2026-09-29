@@ -45,6 +45,7 @@ Environment:
   APP_SNIPPET          vhost snippet (default infra/oci/app/Caddyfile.app)
   APP_OVERLAY          compose overlay (default infra/oci/app/docker-compose.app.yml)
   APP_APPROVED_ROOTS   colon-separated host dest roots (default /opt/acx-backend)
+  APP_DEPLOY_LOCK_WAIT seconds to wait for another deploy (default 30)
   APP_RELOAD_CMD       optional absolute executable run after host promote
   APP_HEALTH_CMD       optional absolute executable run after reload
 EOF
@@ -328,6 +329,7 @@ STAGING_DIR="${APP_ROOT}/staging"
 OVERLAY_DEST="${APP_ROOT}/docker-compose.app.yml"
 ROLLBACK_DIR="${APP_ROOT}/rollback"
 ACTIVATION_JOURNAL="${APP_ROOT}/activation.journal"
+DEPLOY_LOCK="${ACTIVATION_JOURNAL}.lock"
 case "$CADDYFILE" in
   "$APP_WWW"|"$APP_WWW"/*) refuse "CADDYFILE is inside APP_WWW" ;;
 esac
@@ -526,12 +528,10 @@ restore_from_rollback() {
     fi
   fi
   if [ "$ROLLBACK_WWW" != "-" ]; then
-    if [ ! -d "$APP_WWW" ] || ! diff -qr "$ROLLBACK_WWW" "$APP_WWW" >/dev/null 2>&1; then
-      assert_rm_safe APP_WWW "$APP_WWW" || return 1
-      if ! rm -rf "$APP_WWW" || ! cp -a "$ROLLBACK_WWW" "$APP_WWW" || ! sync_path "$APP_ROOT"; then
-        echo "ERROR: could not restore static root from ${ROLLBACK_WWW}" >&2
-        return 1
-      fi
+    assert_rm_safe APP_WWW "$APP_WWW" || return 1
+    if ! rm -rf "$APP_WWW" || ! cp -a "$ROLLBACK_WWW" "$APP_WWW" || ! sync_path "$APP_ROOT"; then
+      echo "ERROR: could not restore static root from ${ROLLBACK_WWW}" >&2
+      return 1
     fi
   elif [ -e "$APP_WWW" ]; then
     assert_rm_safe APP_WWW "$APP_WWW" || return 1
@@ -541,11 +541,9 @@ restore_from_rollback() {
     fi
   fi
   if [ "$ROLLBACK_OVERLAY" != "-" ]; then
-    if [ ! -f "$OVERLAY_DEST" ] || ! cmp -s "$ROLLBACK_OVERLAY" "$OVERLAY_DEST"; then
-      if ! atomic_copy_file "$ROLLBACK_OVERLAY" "$OVERLAY_DEST"; then
-        echo "ERROR: could not restore overlay from ${ROLLBACK_OVERLAY}" >&2
-        return 1
-      fi
+    if ! atomic_copy_file "$ROLLBACK_OVERLAY" "$OVERLAY_DEST"; then
+      echo "ERROR: could not restore overlay from ${ROLLBACK_OVERLAY}" >&2
+      return 1
     fi
   elif [ -e "$OVERLAY_DEST" ]; then
     if ! rm -f "$OVERLAY_DEST" || ! sync_path "$APP_ROOT"; then
@@ -673,11 +671,11 @@ validate_staged_caddy() {
 
 reload_caddy() {
   if [ -n "$APP_RELOAD_CMD" ]; then
-    "$APP_RELOAD_CMD"
+    "$APP_RELOAD_CMD" 9>&-
     return $?
   fi
   if command -v caddy >/dev/null 2>&1; then
-    caddy reload --config "$CADDYFILE" --adapter caddyfile
+    caddy reload --config "$CADDYFILE" --adapter caddyfile 9>&-
     return $?
   fi
   echo "reload skipped: set APP_RELOAD_CMD or install caddy; host files are activated, edge process not reloaded"
@@ -695,11 +693,29 @@ default_health() {
 
 run_health() {
   if [ -n "$APP_HEALTH_CMD" ]; then
-    "$APP_HEALTH_CMD"
+    "$APP_HEALTH_CMD" 9>&-
     return $?
   fi
   default_health
 }
+
+if [ "$APPLY" -eq 1 ]; then
+  APP_DEPLOY_LOCK_WAIT="${APP_DEPLOY_LOCK_WAIT:-30}"
+  case "$APP_DEPLOY_LOCK_WAIT" in
+    ''|*[!0-9]*) refuse "APP_DEPLOY_LOCK_WAIT must be a non-negative integer" ;;
+  esac
+  mkdir -p "$APP_ROOT"
+  if ! command -v flock >/dev/null 2>&1; then
+    refuse "flock is required for deploy lock ${DEPLOY_LOCK}"
+  fi
+  if ! exec 9>>"$DEPLOY_LOCK"; then
+    refuse "could not open deployment lock ${DEPLOY_LOCK}"
+  fi
+  if ! flock -w "$APP_DEPLOY_LOCK_WAIT" 9; then
+    exec 9>&-
+    refuse "could not acquire deployment lock ${DEPLOY_LOCK} within ${APP_DEPLOY_LOCK_WAIT}s"
+  fi
+fi
 
 if [ -e "$ACTIVATION_JOURNAL" ] || [ -L "$ACTIVATION_JOURNAL" ]; then
   if [ "$APPLY" -eq 1 ]; then

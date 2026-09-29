@@ -70,8 +70,17 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
     archive.add(sys.argv[2], arcname="config/env")
 PY
 statuses=("${PIPESTATUS[@]}")
+if (( statuses[1] != 0 )); then
+    if (( statuses[0] != 0 )); then
+        printf 'materialize_remote.sh: ssh failed with status %d (tar producer also exited with status %d)\n' \
+            "${statuses[1]}" "${statuses[0]}" >&2
+    else
+        printf 'materialize_remote.sh: ssh failed with status %d\n' "${statuses[1]}" >&2
+    fi
+    exit "${statuses[1]}"
+fi
 if (( statuses[0] != 0 )); then
     printf 'materialize_remote.sh: tar producer failed with status %d\n' "${statuses[0]}" >&2
     exit "${statuses[0]}"
 fi
-exit "${statuses[1]}"
+exit 0

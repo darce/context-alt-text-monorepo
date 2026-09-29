@@ -1,8 +1,7 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { queryKeys } from '../../api/queryKeys';
 import type { RosterEntry } from '../../api/rosterApi';
 import * as rosterApi from '../../api/rosterApi';
@@ -57,19 +56,6 @@ const personsRowBody = {
   updated_at: '2026-01-02T00:00:00Z',
 } as unknown as RosterEntry;
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
-
 describe('useRosterHooks cache merge on person mutation [S4-BR-02]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -78,7 +64,8 @@ describe('useRosterHooks cache merge on person mutation [S4-BR-02]', () => {
   it('useUpdatePerson onSuccess merges into previous entry so needs-review is preserved', async () => {
     vi.mocked(rosterApi.updatePerson).mockResolvedValue(personsRowBody);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, [projectedNeedsReview]);
 
     // Sanity: pre-update cache derives needs-review from hard-examples membership.
@@ -110,7 +97,8 @@ describe('useRosterHooks cache merge on person mutation [S4-BR-02]', () => {
   it('useUpdatePerson invalidates label surfaces after a successful rename', async () => {
     vi.mocked(rosterApi.updatePerson).mockResolvedValue(personsRowBody);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const identitiesKey = queryKeys.media.identities();
     const clustersKey = queryKeys.clusters.all;
     queryClient.setQueryData(identitiesKey, { identities_by_media: {} });
@@ -141,7 +129,8 @@ describe('useRosterHooks cache merge on person mutation [S4-BR-02]', () => {
 
     vi.mocked(rosterApi.createPerson).mockResolvedValue(sparseCreateBody);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     // Seed an unrelated needs-review peer so create path cannot clobber the whole list.
     queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, [projectedNeedsReview]);
 

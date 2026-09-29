@@ -24,7 +24,7 @@ from recognition.application.services.usage_admission_service import (
     UsageFingerprintConflictError,
 )
 from recognition.domain.portal_contracts import UsageAdmissionService, UsageTicket
-from recognition.interface_adapters.http.deps.session import get_optional_session
+from recognition.interface_adapters.http.deps.session import get_optional_session, get_session
 
 logger = logging.getLogger(__name__)
 _RESERVATION_TIMEOUT_RETRY_AFTER_S = 5
@@ -68,6 +68,35 @@ def get_usage_admission_service(
     return cast(UsageAdmissionService, service)
 
 
+async def get_required_usage_admission_service(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> UsageAdmissionService:
+    """Resolve required admission in the route's transaction and fail closed if absent."""
+    configured = getattr(request.app.state, "usage_admission_service", None)
+    if configured is None:
+        raise _admission_unavailable("usage_admission_unavailable")
+    if _is_usage_service(configured):
+        return cast(UsageAdmissionService, configured)
+    if isinstance(session, DependsMarker):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    if session is None or not callable(configured):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    service = configured(session)
+    if not _is_usage_service(service):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Usage admission unavailable",
+        )
+    return cast(UsageAdmissionService, service)
+
+
 def build_usage_idempotency_key(
     tenant_id: object,
     media_ids: Sequence[object],
@@ -88,6 +117,27 @@ def build_usage_idempotency_key(
         "media_sources_sha256": source_digest,
     }
     return hashlib.sha256(json.dumps(fingerprint, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def build_usage_operation_id(tenant_id: object, *, route: str, idempotency_keys: Sequence[object]) -> str:
+    """Build a bounded, retry-stable operation ID from the client's idempotency keys."""
+    identity = {
+        "tenant_id": str(tenant_id),
+        "route": route,
+        "idempotency_keys": [str(key) for key in idempotency_keys],
+    }
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_usage_request_fingerprint(tenant_id: object, *, route: str, payload: object) -> str:
+    """Fingerprint the normalized request body under its authenticated tenant and route."""
+    canonical = json.dumps(
+        {"tenant_id": str(tenant_id), "route": route, "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _retry_after_seconds(period_end: object) -> int | None:
@@ -215,5 +265,8 @@ async def admit_usage(
 __all__ = [
     "admit_usage",
     "build_usage_idempotency_key",
+    "build_usage_operation_id",
+    "build_usage_request_fingerprint",
     "get_usage_admission_service",
+    "get_required_usage_admission_service",
 ]

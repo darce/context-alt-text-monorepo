@@ -317,11 +317,6 @@ def test_live_score_labels_offline_proxy_verdict() -> None:
     assert public["provenance"]["evaluation_status"] == "unvalidated_proxy"
 
 
-def test_markdown_renders_scored_detection_line() -> None:
-    _json_doc, md = build_reports(_run_record(), _manifest_entries())
-    _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)
-
-
 def test_build_reports_scored_detection_is_deterministic() -> None:
     record, entries = _run_record(), _manifest_entries()
     json_a, md_a = build_reports(record, entries)

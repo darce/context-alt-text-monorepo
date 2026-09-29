@@ -12,6 +12,23 @@ vi.mock('../../../api/personMergeApi', async importOriginal => ({
 }));
 
 describe('usePersonMerge', () => {
+  it('sweeps expired undo tokens from scopes that are no longer mounted', () => {
+    const expiredKey = 'acx:person-merge-undo:abandoned-scope';
+    const activeKey = 'acx:person-merge-undo:active-scope';
+    localStorage.clear();
+    localStorage.setItem(expiredKey, JSON.stringify({ token: 'expired-token', expiresAt: Date.now() - 1 }));
+    localStorage.setItem(activeKey, JSON.stringify({ token: 'active-token', expiresAt: Date.now() + 60_000 }));
+
+    const client = new QueryClient();
+    const { result } = renderHook(() => usePersonMerge('current-scope'), {
+      wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    });
+
+    expect(result.current.undoToken).toBeNull();
+    expect(localStorage.getItem(expiredKey)).toBeNull();
+    expect(localStorage.getItem(activeKey)).not.toBeNull();
+  });
+
   it('calls the APIs, retains the token, and invalidates both caches on commit and undo', async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const invalidate = vi.spyOn(client, 'invalidateQueries');

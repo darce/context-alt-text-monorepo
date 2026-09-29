@@ -56,6 +56,9 @@ def test_usage_admission_mounts_without_the_portal(monkeypatch: pytest.MonkeyPat
 class _UsageAdmissionStub:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, str, str | None, int]] = []
+        self.ticket = object()
+        self.commits: list[object] = []
+        self.releases: list[object] = []
 
     async def reserve(
         self,
@@ -64,8 +67,15 @@ class _UsageAdmissionStub:
         idempotency_key: str,
         job_id: str | None,
         cost_units: int,
-    ) -> None:
+    ) -> object:
         self.calls.append((tenant_id, idempotency_key, job_id, cost_units))
+        return self.ticket
+
+    async def commit(self, ticket: object) -> None:
+        self.commits.append(ticket)
+
+    async def release(self, ticket: object) -> None:
+        self.releases.append(ticket)
 
 
 def _request(*, path: str, body: bytes, content_type: str) -> Request:
@@ -120,13 +130,18 @@ async def test_admit_usage_reserves_analysis_request(multipart: bool) -> None:
 
     service = _UsageAdmissionStub()
     request = _request(path=path, body=body, content_type=content_type)
-    await admit_usage(
+    dependency = admit_usage(
         request,
         usage_admission_service=service,
         auth=SimpleNamespace(tenant_claim=None if multipart else str(tenant_id)),
     )
+    await anext(dependency)
 
     assert service.calls == [(tenant_id, "request-123", None, 1)]
+    with pytest.raises(StopAsyncIteration):
+        await anext(dependency)
+    assert service.commits == [service.ticket]
+    assert service.releases == []
     if multipart:
         from recognition.interface_adapters.http.routers.analyze_multipart import _parse_multipart_form
 

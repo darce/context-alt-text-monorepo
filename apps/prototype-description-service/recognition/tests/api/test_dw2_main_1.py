@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
 from time import perf_counter
 
 import pytest
 
 
-def test_upload_rejection_has_correlation_header_and_access_record(caplog) -> None:
+def test_upload_rejection_has_correlation_header_and_access_record() -> None:
     from api import main as main_module
     from recognition.interface_adapters.http.middleware.correlation import (
         ACCESS_LOGGER_NAME,
@@ -16,10 +18,17 @@ def test_upload_rejection_has_correlation_header_and_access_record(caplog) -> No
     from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 
     request_id = "de305d54-75b4-431b-adb2-eb6b9e546014"
-    caplog.set_level(logging.INFO, logger=ACCESS_LOGGER_NAME)
     root_logger = logging.getLogger()
-    if caplog.handler not in root_logger.handlers:
-        root_logger.addHandler(caplog.handler)
+    console_handlers = [
+        handler
+        for handler in root_logger.handlers
+        if type(handler) is logging.StreamHandler
+    ]
+    assert len(console_handlers) == 1, "application must emit access logs through one configured console handler"
+    console_handler = console_handlers[0]
+    original_stream = console_handler.stream
+    captured_stream = io.StringIO()
+    console_handler.setStream(captured_stream)
     upload_layer = next(item for item in main_module.app.user_middleware if item.cls is UploadSizeLimitMiddleware)
     content_length = upload_layer.kwargs["max_bytes"] + 1
 
@@ -49,23 +58,23 @@ def test_upload_rejection_has_correlation_header_and_access_record(caplog) -> No
     async def _send(message):
         messages.append(message)
 
-    asyncio.run(main_module.app.build_middleware_stack()(scope, _receive, _send))
+    try:
+        asyncio.run(main_module.app.build_middleware_stack()(scope, _receive, _send))
+    finally:
+        console_handler.setStream(original_stream)
     response = next(message for message in messages if message["type"] == "http.response.start")
     response_headers = dict(response["headers"])
 
     assert response["status"] == 413
     assert response_headers[CORRELATION_ID_HEADER.lower().encode("ascii")] == request_id.encode("ascii")
-    access_records = [
-        record
-        for record in caplog.records
-        if record.name == ACCESS_LOGGER_NAME
-        and getattr(record, "correlation_id", None) == request_id
-        and getattr(record, "status_code", None) == 413
-    ]
-    assert len(access_records) == 1, (
-        "upload rejection must emit exactly one correlated access record; "
-        f"got {len(access_records)}"
+    emitted_entries = [json.loads(line) for line in captured_stream.getvalue().splitlines() if line]
+    access_entries = [entry for entry in emitted_entries if entry.get("name") == ACCESS_LOGGER_NAME]
+    assert len(access_entries) == 1, (
+        "upload rejection must emit exactly one JSON access log through the configured console handler; "
+        f"got {len(access_entries)}"
     )
+    assert access_entries[0]["correlation_id"] == request_id
+    assert access_entries[0]["status_code"] == 413
 
 
 @pytest.mark.asyncio

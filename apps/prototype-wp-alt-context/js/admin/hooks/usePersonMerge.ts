@@ -13,6 +13,39 @@ interface StoredUndoToken {
 
 const undoTokenStorageKey = (scope: string): string => `${UNDO_TOKEN_STORAGE_PREFIX}${encodeURIComponent(scope)}`;
 
+const sweepExpiredPersonMergeUndoTokens = (storage: Storage, now: number): void => {
+  try {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (key === null || !key.startsWith(UNDO_TOKEN_STORAGE_PREFIX)) {
+        continue;
+      }
+      const raw = storage.getItem(key);
+      if (raw === null) {
+        continue;
+      }
+      let stored: unknown;
+      try {
+        stored = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (
+        typeof stored === 'object' &&
+        stored !== null &&
+        'expiresAt' in stored &&
+        typeof stored.expiresAt === 'number' &&
+        Number.isFinite(stored.expiresAt) &&
+        stored.expiresAt <= now
+      ) {
+        storage.removeItem(key);
+      }
+    }
+  } catch {
+    // Continue with the requested scope if browser storage becomes unavailable during the sweep.
+  }
+};
+
 const browserStorage = (): Storage | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -29,6 +62,7 @@ export const readPersonMergeUndoToken = (scope: string, now = Date.now()): Store
   if (!storage) {
     return null;
   }
+  sweepExpiredPersonMergeUndoTokens(storage, now);
   const key = undoTokenStorageKey(scope);
   try {
     const raw = storage.getItem(key);

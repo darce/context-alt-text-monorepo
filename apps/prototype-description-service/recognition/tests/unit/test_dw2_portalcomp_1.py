@@ -56,6 +56,9 @@ def test_usage_admission_mounts_without_the_portal(monkeypatch: pytest.MonkeyPat
 class _UsageAdmissionStub:
     def __init__(self) -> None:
         self.calls: list[tuple[UUID, str, str | None, int]] = []
+        self.ticket = object()
+        self.commits: list[object] = []
+        self.releases: list[object] = []
 
     async def reserve(
         self,
@@ -64,8 +67,15 @@ class _UsageAdmissionStub:
         idempotency_key: str,
         job_id: str | None,
         cost_units: int,
-    ) -> None:
+    ) -> object:
         self.calls.append((tenant_id, idempotency_key, job_id, cost_units))
+        return self.ticket
+
+    async def commit(self, ticket: object) -> None:
+        self.commits.append(ticket)
+
+    async def release(self, ticket: object) -> None:
+        self.releases.append(ticket)
 
 
 def _request(*, path: str, body: bytes, content_type: str) -> Request:
@@ -120,16 +130,69 @@ async def test_admit_usage_reserves_analysis_request(multipart: bool) -> None:
 
     service = _UsageAdmissionStub()
     request = _request(path=path, body=body, content_type=content_type)
-    await admit_usage(
+    dependency = admit_usage(
         request,
         usage_admission_service=service,
         auth=SimpleNamespace(tenant_claim=None if multipart else str(tenant_id)),
     )
+    await anext(dependency)
 
     assert service.calls == [(tenant_id, "request-123", None, 1)]
+    with pytest.raises(StopAsyncIteration):
+        await anext(dependency)
+    assert service.commits == [service.ticket]
+    assert service.releases == []
     if multipart:
         from recognition.interface_adapters.http.routers.analyze_multipart import _parse_multipart_form
 
         parsed_form = await _parse_multipart_form(request)
         assert parsed_form.get("request") == json.dumps({"tenant_id": str(tenant_id)})
         await parsed_form.close()
+
+
+class _FailingCommitAdmissionService:
+    def __init__(self) -> None:
+        self.ticket = object()
+        self.commit_error = RuntimeError("commit failed")
+        self.events: list[str] = []
+
+    async def reserve(self, tenant_id: UUID, **_kwargs: object) -> object:
+        self.events.append("reserve")
+        return self.ticket
+
+    async def commit(self, ticket: object) -> None:
+        assert ticket is self.ticket
+        self.events.append("commit")
+        raise self.commit_error
+
+    async def release(self, ticket: object) -> None:
+        assert ticket is self.ticket
+        self.events.append("release")
+
+
+@pytest.mark.asyncio
+async def test_admission_releases_ticket_when_commit_fails_and_propagates_error() -> None:
+    from recognition.interface_adapters.http.deps.portal_composition import admit_usage
+
+    service = _FailingCommitAdmissionService()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/recognition/analyze",
+        "raw_path": b"/recognition/analyze",
+        "query_string": b"",
+        "headers": [(b"idempotency-key", b"analysis-1")],
+        "client": ("test", 123),
+        "server": ("test", 80),
+    }
+    dependency = admit_usage(Request(scope), service, SimpleNamespace(tenant_claim=str(uuid4())))
+
+    await anext(dependency)
+    with pytest.raises(RuntimeError, match="commit failed") as raised:
+        await anext(dependency)
+
+    assert raised.value is service.commit_error
+    assert service.events == ["reserve", "commit", "release"]

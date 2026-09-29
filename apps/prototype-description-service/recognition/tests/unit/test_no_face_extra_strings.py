@@ -97,19 +97,22 @@ def _iter_scan_files(repo_root: Path) -> list[Path]:
         if base.is_file():
             files.append(base)
             continue
-        for path in sorted(base.rglob("*")):
-            if not path.is_file():
-                continue
-            if any(part in _SKIP_DIR_NAMES for part in path.parts):
-                continue
-            if path.name == "uv.lock":
-                continue
-            if path.suffix.lower() not in _TEXT_SUFFIXES and path.name not in {
-                "Dockerfile",
-                "Makefile",
-            }:
-                continue
-            files.append(path)
+        root_files: list[Path] = []
+        for directory, dirnames, filenames in base.walk(top_down=True):
+            dirnames[:] = sorted(name for name in dirnames if name not in _SKIP_DIR_NAMES)
+            for filename in filenames:
+                path = directory / filename
+                if not path.is_file():
+                    continue
+                if path.name == "uv.lock":
+                    continue
+                if path.suffix.lower() not in _TEXT_SUFFIXES and path.name not in {
+                    "Dockerfile",
+                    "Makefile",
+                }:
+                    continue
+                root_files.append(path)
+        files.extend(sorted(root_files))
     return files
 
 

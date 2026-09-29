@@ -325,6 +325,25 @@ def test_health_detailed_does_not_read_secrets(tmp_path: Path, monkeypatch: pyte
     assert adapter["reason"] is None
 
 
+@pytest.mark.asyncio
+async def test_local_cpu_readiness_does_not_resolve_secret_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import main as main_module
+    from scene.config.profiles import DescriptionProfile
+    from scene.interface_adapters.http import deps as scene_http_deps
+
+    def _raise_provider() -> None:
+        raise RuntimeError("health path must not construct DescriptionSettings or read secrets")
+
+    monkeypatch.setattr("shared.secrets.get_secret_provider", _raise_provider)
+    monkeypatch.setattr("scene.config.settings.get_secret_provider", _raise_provider)
+    monkeypatch.setattr(scene_http_deps, "_missing_vlm_dependencies", lambda: ())
+
+    readiness = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+
+    assert readiness["usable"] is True
+    assert readiness["reason"] is None
+
+
 def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from api.main import AdapterReadinessReason
 

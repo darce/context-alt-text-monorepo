@@ -318,10 +318,11 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
     )
     local_cpu_adapter_unavailable = False
     if spec.available and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU and not vlm_dependencies_missing:
-        local_cpu_adapter_unavailable = isinstance(
-            scene_http_deps.get_description_adapter(profile),
-            scene_http_deps.UnavailableDescriptionAdapter,
-        )
+        try:
+            # This builder uses host VlmSettings only; DescriptionSettings may resolve secrets.
+            scene_http_deps._build_florence_small_adapter(None)  # type: ignore[arg-type]
+        except Exception:
+            local_cpu_adapter_unavailable = True
     if not spec.available:
         usable = False
         reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value

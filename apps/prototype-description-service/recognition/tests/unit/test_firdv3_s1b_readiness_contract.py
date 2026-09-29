@@ -66,14 +66,20 @@ def _synthetic_auraface_entry(
 
 
 def _pin_auraface_ok_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the 512D AuraFace pair and drop cached settings (HEALTH-RECOVERY-4)."""
-    monkeypatch.setenv("PGVECTOR_DIM", "512")
-    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "512")
+    """Pin the actual dimension accessors used by the probe, independent of env."""
     from db.settings import get_database_settings
     from recognition.config import get_settings
 
-    get_settings.cache_clear()
-    get_database_settings.cache_clear()
+    fpa = _live_face_pipeline_adapter()
+    database_settings = replace(get_database_settings(), pgvector_dimension=512)
+
+    def pinned_recognition_settings() -> Any:
+        settings = get_settings()
+        identity_detection = settings.identity_detection.model_copy(update={"embedding_dimension": 512})
+        return settings.model_copy(update={"identity_detection": identity_detection})
+
+    monkeypatch.setattr(fpa, "get_database_settings", lambda: database_settings)
+    monkeypatch.setattr(fpa, "get_settings", pinned_recognition_settings)
 
 
 def _unverified_auraface_preprocessing() -> InputPreprocessing:
@@ -477,6 +483,27 @@ def test_auraface_dimension_is_per_space_not_global_pgvector_dim(
     aura_result = check_model_space(ModelSpace.AURAFACE, aura_dir)
     assert aura_result.status is HealthStatus.UNHEALTHY
     assert "auraface" in aura_result.detail.lower()
+
+
+def test_auraface_ok_dimension_pin_is_independent_of_ambient_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The AuraFace probe must see its pinned 512D pair despite later env drift."""
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+    monkeypatch.setenv("RECOGNITION_EMBEDDING_DIMENSION", "128")
+    from db.settings import get_database_settings
+    from recognition.config import get_settings
+
+    get_database_settings.cache_clear()
+    get_settings.cache_clear()
+    assert get_database_settings().pgvector_dimension == 128
+    assert get_settings().identity_detection.embedding_dimension == 128
+
+    _pin_auraface_ok_dimensions(monkeypatch)
+    monkeypatch.setenv("PGVECTOR_DIM", "128")
+
+    fpa = _live_face_pipeline_adapter()
+    fpa.assert_three_way_embedding_dimensions(fpa.auraface_embedding_model_manifest())
 
 
 # Keep literals at collection time so a missing ModelSpace fails in the test

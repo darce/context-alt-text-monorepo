@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from time import perf_counter
 
 import pytest
 
 
-def test_upload_rejection_has_correlation_header_and_access_record(capfd) -> None:
+def test_upload_rejection_has_correlation_header_and_access_record(caplog) -> None:
     from api import main as main_module
     from recognition.interface_adapters.http.middleware.correlation import (
         ACCESS_LOGGER_NAME,
@@ -15,6 +16,10 @@ def test_upload_rejection_has_correlation_header_and_access_record(capfd) -> Non
     from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 
     request_id = "de305d54-75b4-431b-adb2-eb6b9e546014"
+    caplog.set_level(logging.INFO, logger=ACCESS_LOGGER_NAME)
+    root_logger = logging.getLogger()
+    if caplog.handler not in root_logger.handlers:
+        root_logger.addHandler(caplog.handler)
     upload_layer = next(item for item in main_module.app.user_middleware if item.cls is UploadSizeLimitMiddleware)
     content_length = upload_layer.kwargs["max_bytes"] + 1
 
@@ -50,12 +55,17 @@ def test_upload_rejection_has_correlation_header_and_access_record(capfd) -> Non
 
     assert response["status"] == 413
     assert response_headers[CORRELATION_ID_HEADER.lower().encode("ascii")] == request_id.encode("ascii")
-    assert any(
-        f'"name": "{ACCESS_LOGGER_NAME}"' in line
-        and f'"correlation_id": "{request_id}"' in line
-        and '"status_code": 413' in line
-        for line in capfd.readouterr().out.splitlines()
-    ), "upload rejection must emit one correlated access record"
+    access_records = [
+        record
+        for record in caplog.records
+        if record.name == ACCESS_LOGGER_NAME
+        and getattr(record, "correlation_id", None) == request_id
+        and getattr(record, "status_code", None) == 413
+    ]
+    assert len(access_records) == 1, (
+        "upload rejection must emit exactly one correlated access record; "
+        f"got {len(access_records)}"
+    )
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,9 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import inspect as inspect_instance
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm.exc import DetachedInstanceError
+from sqlalchemy.types import TypeDecorator
 
 from db.models.base_imports import (
     _DB_SETTINGS,
@@ -51,9 +53,28 @@ def _jsonb_compatible() -> JSONB:
     return JSONB().with_variant(JSON(), "sqlite")
 
 
+class _UUIDArrayJSON(TypeDecorator[list[uuid.UUID]]):
+    """Store UUID arrays as JSON strings in SQLite and restore UUID values on load."""
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(
+        self, value: list[uuid.UUID | str] | None, dialect: Dialect
+    ) -> list[str] | None:
+        if value is None:
+            return None
+        return [str(identity_id) for identity_id in value]
+
+    def process_result_value(self, value: list[str] | None, dialect: Dialect) -> list[uuid.UUID] | None:
+        if value is None:
+            return None
+        return [uuid.UUID(identity_id) for identity_id in value]
+
+
 def _uuid_array_compatible() -> ARRAY:
-    """UUID[] on Postgres, JSON on sqlite (test) — a fresh type per column."""
-    return ARRAY(UUID(as_uuid=True)).with_variant(JSON(), "sqlite")
+    """UUID[] on Postgres, UUID-aware JSON on sqlite (test)."""
+    return ARRAY(UUID(as_uuid=True)).with_variant(_UUIDArrayJSON(), "sqlite")
 
 
 class ClusterMergeKind(StrEnum):

@@ -1,0 +1,18 @@
+{
+  "lane": "w5-adj-host",
+  "base": "0ffa68c15ac14e5ef4380ae463c0fc7518acf20a",
+  "results": [
+    {
+      "id": "APP1-HOST-RV01",
+      "verdict": "PARTIAL",
+      "evidence": "scripts/deploy/app-portal.sh:570,599-606,611,622,630-634; scripts/deploy/tests/test_app_portal_deploy.py:586-628 - activation snapshots the prior files, traps ERR/INT/TERM, restores after reload or health failures, and tests those failures; however Caddyfile promotion is an in-place write and the trap cannot recover SIGKILL or host failure between promotions.",
+      "severity": "high",
+      "remaining_gap": "No durable activation journal or startup recovery handles SIGKILL or host failure; an interrupted Caddyfile write or static-root swap can leave live artifacts partially promoted until an operator restores the snapshots.",
+      "fix_files": [
+        "scripts/deploy/app-portal.sh"
+      ],
+      "size": "M",
+      "fix_hint": "Add a durable activation journal and idempotent recovery that restores all snapshots before another apply, including after an uncatchable process or host failure."
+    }
+  ]
+}

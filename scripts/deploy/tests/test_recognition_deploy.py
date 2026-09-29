@@ -7,7 +7,6 @@ import re
 import shutil
 import signal
 import socket
-import stat
 import subprocess
 import sys
 import threading
@@ -16,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
@@ -310,11 +310,6 @@ def _boot_smoke_heredoc() -> str:
     start = source.index("\n", start) + 1
     end = source.index("\nSMOKE\n", start)
     return _sanitize_deploy_diagnostic_src() + "\n" + source[start:end]
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body)
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 def _path_without_timeout(prepend: Path, tmp_path: Path) -> str:

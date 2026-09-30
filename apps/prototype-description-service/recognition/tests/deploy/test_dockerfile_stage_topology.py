@@ -19,6 +19,7 @@ asserting the current tree is clean.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -51,33 +52,66 @@ def _dockerfile_stages(dockerfile: Path = DOCKERFILE) -> dict[str, str]:
 
 def _env_map(body: str) -> dict[str, str]:
     out: dict[str, str] = {}
-    for ln in body.splitlines():
-        match = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
-        if match:
-            out[match.group(1)] = match.group(2).strip().strip("'\"")
+    for ln in join_continued_lines(body):
+        match = re.match(r"^\s*ENV\s+(.+?)\s*$", ln, re.IGNORECASE)
+        if not match:
+            continue
+        fields = shlex.split(match.group(1))
+        if not fields:
+            continue
+        if all("=" in field for field in fields):
+            for field in fields:
+                name, value = field.split("=", 1)
+                if re.fullmatch(r"[A-Za-z_][\w]*", name):
+                    out[name] = value
+        elif len(fields) >= 2 and re.fullmatch(r"[A-Za-z_][\w]*", fields[0]):
+            # Legacy Docker syntax: ENV name value (the remaining words form
+            # one value, rather than additional key/value pairs).
+            out[fields[0]] = " ".join(fields[1:])
     return out
 
 
-def _runtime_base_disables_telemetry(dockerfile: Path = DOCKERFILE) -> bool:
+def _runtime_stages_disable_telemetry(dockerfile: Path = DOCKERFILE) -> bool:
     stages = _dockerfile_stages(dockerfile)
     runtime_stages = {DEFAULT_STAGE, VLM_STAGE}
     if "runtime-base" not in stages or not runtime_stages.issubset(stages):
         return False
-    runtime_base_env = _env_map(stages["runtime-base"])
-    if (
-        runtime_base_env.get("ORT_DISABLE_TELEMETRY") != "1"
-        or runtime_base_env.get("HF_HUB_DISABLE_TELEMETRY") != "1"
-    ):
-        return False
 
-    runtime_parents: dict[str, str] = {}
-    for line in dockerfile.read_text().splitlines():
+    parents: dict[str, str] = {}
+    for line in dockerfile.read_text(encoding="utf-8").splitlines():
         parsed_from = parse_from_instruction(line)
         if parsed_from is not None:
             parent, stage_name = parsed_from
-            if stage_name in runtime_stages:
-                runtime_parents[stage_name] = parent
-    return all(runtime_parents.get(stage) == "runtime-base" for stage in runtime_stages)
+            if stage_name is not None:
+                parents[stage_name] = parent
+
+    for runtime_stage in runtime_stages:
+        chain: list[str] = []
+        seen: set[str] = set()
+        stage = runtime_stage
+        while stage in stages:
+            if stage in seen:
+                return False
+            seen.add(stage)
+            chain.append(stage)
+            if stage == "runtime-base":
+                break
+            parent = parents.get(stage)
+            if parent is None:
+                return False
+            stage = parent
+        if not chain or chain[-1] != "runtime-base":
+            return False
+
+        effective_env: dict[str, str] = {}
+        for inherited_stage in reversed(chain):
+            effective_env.update(_env_map(stages[inherited_stage]))
+        if (
+            effective_env.get("ORT_DISABLE_TELEMETRY") != "1"
+            or effective_env.get("HF_HUB_DISABLE_TELEMETRY") != "1"
+        ):
+            return False
+    return True
 
 
 def _write(tmp_path: Path, text: str) -> Path:
@@ -140,10 +174,11 @@ def test_runtime_stages_are_distinguishable_at_runtime() -> None:
     assert _env_map(stages[VLM_STAGE]).get("ACX_IMAGE_VARIANT") == "vlm"
 
 
-def test_runtime_base_disables_telemetry_for_both_runtime_stages() -> None:
-    assert _runtime_base_disables_telemetry(DOCKERFILE), (
+def test_each_runtime_stage_effectively_disables_telemetry() -> None:
+    assert _runtime_stages_disable_telemetry(DOCKERFILE), (
         "runtime-base must set ORT_DISABLE_TELEMETRY=1 and "
-        "HF_HUB_DISABLE_TELEMETRY=1, and both runtime images must inherit from runtime-base"
+        "HF_HUB_DISABLE_TELEMETRY=1 in both runtime images' effective environments, "
+        "and both runtime images must inherit from runtime-base"
     )
 
 
@@ -166,7 +201,29 @@ def test_runtime_base_telemetry_guard_bites_when_variable_is_missing_or_enabled(
         + "\nFROM runtime-base AS runtime-vlm\n"
         + "\nFROM runtime-base AS runtime\n"
     )
-    assert not _runtime_base_disables_telemetry(_write(tmp_path, synthetic))
+    assert not _runtime_stages_disable_telemetry(_write(tmp_path, synthetic))
+
+
+@pytest.mark.parametrize(
+    ("stage", "override"),
+    [
+        (VLM_STAGE, "ENV EXTRA_FLAG=1 ORT_DISABLE_TELEMETRY=0"),
+        (DEFAULT_STAGE, "ENV HF_HUB_DISABLE_TELEMETRY 0"),
+    ],
+    ids=["runtime-vlm-overrides-ORT", "runtime-overrides-HF-Hub"],
+)
+def test_guard_bites_when_a_runtime_stage_overrides_telemetry(
+    tmp_path: Path, stage: str, override: str
+) -> None:
+    """TEST-15: a later ENV in either runtime stage must override the base."""
+    dockerfile_text = DOCKERFILE.read_text(encoding="utf-8")
+    stage_from = f"FROM runtime-base AS {stage}\n"
+    assert stage_from in dockerfile_text
+    mutated_text = dockerfile_text.replace(stage_from, stage_from + override + "\n", 1)
+    assert mutated_text != dockerfile_text
+
+    assert not _runtime_stages_disable_telemetry(_write(tmp_path, mutated_text))
+    assert _runtime_stages_disable_telemetry(DOCKERFILE)
 
 
 def test_runtime_vlm_is_opt_in_offline_and_not_the_default_target() -> None:

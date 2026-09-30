@@ -373,7 +373,15 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "eval_mode",
         "model_versions",
         "model",
+        "model_revision",
+        "model_revision_source",
+        "seed",
         "prompt_variant",
+        "prompt_version",
+        "prompt_sha256",
+        "task_version",
+        "decoding_contract",
+        "stage_costs",
         "two_pass",
         "dual_length",
         "face_gate",
@@ -1448,27 +1456,65 @@ def _selection_metadata_issue(
     return None
 
 
-def _model_provenance(items: list[dict[str, Any]]) -> dict[str, list[str]]:
+def _model_provenance(
+    items: list[dict[str, Any]],
+    run_provenance: Mapping[str, Any] | None = None,
+) -> dict[str, list[Any]]:
     """Adapter/model that actually produced the captions (HARM-01).
 
     Surfaced so a report is never mistaken for a caption-model baseline when it
     actually scored a model-free 'seeded' stub run — every artifact stamped with
-    the adapter/model version (scope Q5).
+    the adapter/model version (scope Q5). Per-item model and run-configuration
+    stamps must be homogeneous: combining them into one aggregate score would
+    erase which treatment produced each caption.
     """
-    adapters, model_ids, model_versions = set(), set(), set()
-    for item in items:
-        describe = item.get("describe") or {}
-        if describe.get("adapter"):
-            adapters.add(str(describe["adapter"]))
-        if describe.get("model_id"):
-            model_ids.add(str(describe["model_id"]))
-        if describe.get("model_version") is not None:
-            model_versions.add(str(describe["model_version"]))
-    return {
-        "adapters": sorted(adapters),
-        "model_ids": sorted(model_ids),
-        "model_versions": sorted(model_versions),
-    }
+    run_provenance = run_provenance or {}
+    dimensions = (
+        ("adapters", "adapter", None),
+        ("model_ids", "model_id", None),
+        ("model_versions", "model_version", None),
+        ("model_revisions", "model_revision", "model_revision"),
+        ("seeds", "seed", "seed"),
+        ("prompt_variants", "prompt_variant", "prompt_variant"),
+        ("prompt_versions", "prompt_version", "prompt_version"),
+        ("prompt_sha256s", "prompt_sha256", "prompt_sha256"),
+        ("task_versions", "task_version", "task_version"),
+        ("decoding_contracts", "decoding_contract", "decoding_contract"),
+    )
+    successful_items = [item for item in items if not item.get("error")]
+    out: dict[str, list[Any]] = {}
+
+    def _canonical(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+    for output_key, item_key, provenance_key in dimensions:
+        values: dict[str, Any] = {}
+        missing_paths: list[str] = []
+        for item in successful_items:
+            describe = item.get("describe")
+            describe = describe if isinstance(describe, Mapping) else {}
+            if item_key in describe:
+                value = describe[item_key]
+            elif provenance_key is not None and provenance_key in run_provenance:
+                # Older item rows may omit a globally stamped run setting.
+                value = run_provenance[provenance_key]
+            else:
+                missing_paths.append(str(item.get("path", item.get("media_id", "?"))))
+                continue
+            values[_canonical(value)] = value
+        if values and missing_paths:
+            raise ReportError(
+                f"run record has mixed known and missing {item_key} stamps on {missing_paths}; "
+                "refusing aggregate score",
+                invariant="model_provenance_refuses_mixed_values",
+            )
+        if len(values) > 1:
+            raise ReportError(
+                f"run record mixes {item_key} values {sorted(values)}; refusing aggregate score",
+                invariant="model_provenance_refuses_mixed_values",
+            )
+        out[output_key] = [values[key] for key in sorted(values)]
+    return out
 
 
 def _context_text(entry: dict[str, Any]) -> str:
@@ -2089,6 +2135,7 @@ def score_run_record(
     eval_mode = str(run_record["provenance"].get("eval_mode", "standard"))
     if eval_mode not in EVAL_MODES:
         raise ReportError(f"unknown eval_mode {eval_mode!r} in run-record provenance; expected one of {EVAL_MODES}")
+    model_provenance = _model_provenance(run_record["items"], run_record["provenance"])
     entries = _entry_index(manifest_entries)
     roster = _corpus_roster(manifest_entries, manifest_roster)
     caption_scores: list[CaptionScores] = []
@@ -2569,7 +2616,7 @@ def score_run_record(
         "manifest_matches_fetch": (
             None if score_manifest_sha256 is None else score_manifest_sha256 == fetch_provenance.get("manifest_sha256")
         ),
-        "model": _model_provenance(run_record["items"]),
+        "model": model_provenance,
         # Recompute against the manifest actually scored. Fetch-time metadata
         # may describe a different revision; live reports must expose the
         # observed metric backing for this score (AUDIT-07 / EVAL-23).

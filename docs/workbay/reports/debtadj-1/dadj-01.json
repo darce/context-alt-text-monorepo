@@ -167,13 +167,13 @@
       "task": "MAINT-fir-review-parallel-20260729",
       "verdict": "FIXED",
       "duplicate_of": null,
-      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:579-592 adds an entry only when both legs have successful ingest/analyze and roster membership; apps/prototype-description-service/scripts/bench/score_report.py:600-645 derives detection_scoring_set afterward. apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py:31-43 covers a zero-export accepted item remaining in the denominator.",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:579-592 adds an entry to the accepted list only when both legs have successful ingest/analyze and roster membership; apps/prototype-description-service/scripts/bench/score_report.py:600-645 derives detection_scoring_set from accepted entries that are detection-exhaustive under the resolved annotation mode, providing the code evidence for the scored denominator. apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py:31-43 asserts that the zero-export item's ID is in accepted.manifest_media_ids and checks zero_detection_media_count metadata (the count is positive and matches the serialized field), but does not assert the scored denominator.",
       "severity": "low",
       "fix_files": [],
       "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
       "size": "S",
       "related": [],
-      "fix_hint": "No change is needed; membership is finalized once and detection exclusions use a separate scoring subset."
+      "fix_hint": "No change is needed; membership is finalized once and detection exclusions use a separate scoring subset. An optional follow-up is to strengthen the test so it asserts the scored denominator for a zero-export accepted item."
     },
     {
       "db_id": 5933,

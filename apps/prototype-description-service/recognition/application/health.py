@@ -116,6 +116,37 @@ def check_health() -> HealthReport:
     return HealthReport.ok("recognition")
 
 
+def model_bundle_paths(cache_dir: Path, model_name: str, profile: str) -> tuple[Path, ...]:
+    """Return the files that make up the active model bundle, in stable order."""
+    if profile == ModelSpace.FACE_PIPELINE.value:
+        paths = (cache_dir / MODEL_MANIFEST[name].file_name for name in ("yunet", "sface"))
+    elif profile == ModelSpace.AURAFACE.value:
+        paths = (cache_dir / MODEL_MANIFEST["auraface"].file_name,)
+    else:
+        bundle = cache_dir / model_name
+        paths = bundle.glob("*.onnx") if bundle.is_dir() else ()
+    return tuple(sorted((path for path in paths if path.is_file()), key=lambda path: path.as_posix()))
+
+
+def sha256_model_bundle(paths: Sequence[Path], *, cache_dir: Path) -> str | None:
+    """Hash every model file and its relative name into one bundle identity."""
+    manifest: list[dict[str, str]] = []
+    for path in sorted(paths, key=lambda item: item.as_posix()):
+        file_digest = hashlib.sha256()
+        try:
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    file_digest.update(chunk)
+            relative_path = path.relative_to(cache_dir).as_posix()
+        except (OSError, ValueError):
+            return None
+        manifest.append({"path": relative_path, "sha256": file_digest.hexdigest()})
+    if not manifest:
+        return None
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
     """Expose the canonical numeric-runtime stamp on detailed model health.
 

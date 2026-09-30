@@ -103,6 +103,7 @@ _CAPTION_MAX_TOKENS = 512
 # budget it truncates mid-string -> PassOneJSONError; give the structured pass its
 # own larger budget so the JSON closes (the 646-corpus run lost 5 items this way).
 _PASS1_MAX_TOKENS = 1536
+_TASK_VERSION = "alt-text-v1"
 _CONTEXT_BEGIN = "<<<CONTEXT>>>"
 _CONTEXT_END = "<<<END_CONTEXT>>>"
 _FACTS_BEGIN = "<<<FACTS>>>"
@@ -479,6 +480,7 @@ def _stamp_pipeline_provenance(
     instance_shape: str | None = None,
     depiction_lexicon: DepictionLexicon | None = None,
     caption_length: str = DEFAULT_CAPTION_LENGTH,
+    run_configuration: Mapping[str, Any] | None = None,
 ) -> None:
     """Stamp the pipeline config into run-record provenance (attribution, as --eval-mode).
 
@@ -507,6 +509,7 @@ def _stamp_pipeline_provenance(
         provenance["instance_shape"] = instance_shape
     if depiction_lexicon is not None:
         provenance["depiction_lexicon"] = depiction_lexicon.provenance()
+    provenance.update(dict(run_configuration or {}))
 
 
 class BakeoffClient(RemoteSceneClient):
@@ -528,6 +531,8 @@ class BakeoffClient(RemoteSceneClient):
         *,
         model_id: str,
         model_version: str | None = None,
+        model_revision: str | None = None,
+        seed: int | None = None,
         no_think: bool = False,
         timeout_s: float | None = None,
         transport: httpx.BaseTransport | None = None,
@@ -539,6 +544,7 @@ class BakeoffClient(RemoteSceneClient):
         two_pass: bool = False,
         dual_length: bool = False,
         face_gate: bool = False,
+        weave_bench: bool = False,
         face_fixtures: dict[int, list[dict[str, Any]]] | None = None,
         depiction_lexicon: DepictionLexicon | None = None,
     ) -> None:
@@ -549,6 +555,8 @@ class BakeoffClient(RemoteSceneClient):
         self._transport = transport
         self.model_id = model_id
         self.model_version = model_version
+        self.model_revision = model_revision
+        self.seed = seed
         self.no_think = no_think
         if eval_mode not in EVAL_MODES:
             raise ValueError(f"unknown eval_mode {eval_mode!r}; expected one of {EVAL_MODES}")
@@ -593,8 +601,10 @@ class BakeoffClient(RemoteSceneClient):
         self.two_pass = two_pass
         self.dual_length = dual_length
         self.face_gate = face_gate
+        self.weave_bench = weave_bench
         self.face_fixtures = face_fixtures or {}
         self.depiction_lexicon = depiction_lexicon
+        self.prompt_sha256 = self._prompt_fingerprint()
 
     def describe(
         self,
@@ -645,6 +655,7 @@ class BakeoffClient(RemoteSceneClient):
             "adapter": "bakeoff",
             "model_id": self.model_id,
             "model_version": self.model_version,
+            **self.run_configuration(),
             "prompt_variant": self.prompt_variant,
             **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
@@ -700,6 +711,7 @@ class BakeoffClient(RemoteSceneClient):
             "adapter": "bakeoff",
             "model_id": self.model_id,
             "model_version": self.model_version,
+            **self.run_configuration(),
             "prompt_variant": self.prompt_variant,
             **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
@@ -753,6 +765,63 @@ class BakeoffClient(RemoteSceneClient):
             system = f"{system}\n\n{self.depiction_lexicon.render()}"
         return system
 
+    def _prompt_fingerprint(self) -> str:
+        """Hash the selected prompt templates and task switches for attribution."""
+        templates: dict[str, Any] = {
+            "system": self._system_prompt(),
+            "prompt_variant": self.prompt_variant,
+            "task_version": _TASK_VERSION,
+            "no_think": self.no_think,
+            "eval_mode": self.eval_mode,
+            "face_gate": self.face_gate,
+            "two_pass": self.two_pass,
+            "dual_length": self.dual_length,
+            "caption_length": self.caption_length,
+            "weave_bench": self.weave_bench,
+        }
+        if self.two_pass or self.weave_bench:
+            templates["pass1_system"] = _PASS1_SYSTEM_PROMPT
+            templates["weave_instructions"] = _WEAVE_INSTRUCTIONS
+            if PROMPT_VARIANTS[self.prompt_variant].three_surface:
+                templates["three_surface_instructions"] = _three_surface_instructions(self.caption_length)
+        if self.dual_length:
+            templates["compress_system"] = _COMPRESS_SYSTEM_PROMPT
+        canonical = json.dumps(templates, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def decoding_contract(self) -> dict[str, Any]:
+        if self.weave_bench:
+            max_tokens_by_pass = {"weave_bench": WEAVE_MAX_TOKENS[self.caption_length]}
+        elif self.two_pass:
+            max_tokens_by_pass = {
+                "describe_facts": _PASS1_MAX_TOKENS,
+                "ground_weave": WEAVE_MAX_TOKENS[self.caption_length],
+            }
+        else:
+            max_tokens_by_pass = {"caption": _CAPTION_MAX_TOKENS}
+        if self.dual_length:
+            max_tokens_by_pass["compress_short"] = _CAPTION_MAX_TOKENS
+        return {
+            "temperature": 0,
+            "seed": self.seed,
+            "seed_policy": "fixed" if self.seed is not None else "not_set",
+            "top_p": None,
+            "top_p_policy": "server_default",
+            "max_tokens_by_pass": max_tokens_by_pass,
+        }
+
+    def run_configuration(self) -> dict[str, Any]:
+        """Run-defining stamps copied onto each scored item and the run envelope."""
+        return {
+            "model_revision": self.model_revision,
+            "model_revision_source": "operator_supplied" if self.model_revision else "unknown",
+            "seed": self.seed,
+            "prompt_version": self.prompt_variant,
+            "prompt_sha256": self.prompt_sha256,
+            "task_version": _TASK_VERSION,
+            "decoding_contract": self.decoding_contract(),
+        }
+
     def _weave_messages(
         self, facts_raw: str, context_pack: dict[str, Any], *, image_part: dict[str, Any] | None
     ) -> list[dict[str, Any]]:
@@ -792,15 +861,18 @@ class BakeoffClient(RemoteSceneClient):
         started = time.monotonic()
         usage: dict[str, int] | None = None
         try:
+            request_json: dict[str, Any] = {
+                "model": self.model_id,
+                "temperature": 0,
+                "max_tokens": max_tokens,
+                "messages": messages,
+            }
+            if self.seed is not None:
+                request_json["seed"] = self.seed
             payload = self._request_dict(
                 "POST",
                 "/v1/chat/completions",
-                json={
-                    "model": self.model_id,
-                    "temperature": 0,
-                    "max_tokens": max_tokens,
-                    "messages": messages,
-                },
+                json=request_json,
             )
             usage = _extract_usage(payload)
             text = _extract_caption(payload)
@@ -1335,6 +1407,57 @@ def _stamp_timing_and_gpu(
     record["gpu"] = dict(gpu)
 
 
+def _stamp_stage_costs(record: dict[str, Any], *, hourly_rate: float | None) -> None:
+    """Persist measured per-stage duration costs, or an explicit unknown reason."""
+    timing = record.get("timing") if isinstance(record.get("timing"), Mapping) else {}
+    warmup = timing.get("warmup") if isinstance(timing.get("warmup"), Mapping) else {}
+    items = record.get("items") if isinstance(record.get("items"), list) else []
+    inference_seconds = [
+        item.get("latency_s")
+        for item in items
+        if isinstance(item, Mapping)
+        and isinstance(item.get("latency_s"), (int, float))
+        and math.isfinite(float(item["latency_s"]))
+        and float(item["latency_s"]) >= 0
+    ]
+    durations: dict[str, float | None] = {
+        "model_load": timing.get("cold_load_s"),
+        "warmup": warmup.get("elapsed_s"),
+        "scored_inference": sum(float(value) for value in inference_seconds) if inference_seconds else None,
+        # Scoring happens later in the offline report step, outside the measured run.
+        "offline_report_scoring": None,
+    }
+    stage_costs: dict[str, dict[str, Any]] = {}
+    for stage, raw_duration in durations.items():
+        duration = float(raw_duration) if isinstance(raw_duration, (int, float)) else None
+        if duration is None:
+            stage_costs[stage] = {
+                "status": "unknown",
+                "amount_usd": None,
+                "duration_s": None,
+                "hourly_rate_usd": hourly_rate,
+                "reason": "stage duration was not measured",
+            }
+        elif hourly_rate is None:
+            stage_costs[stage] = {
+                "status": "unknown",
+                "amount_usd": None,
+                "duration_s": round(duration, 3),
+                "hourly_rate_usd": None,
+                "reason": "operator hourly rate was not supplied",
+            }
+        else:
+            stage_costs[stage] = {
+                "status": "estimated",
+                "amount_usd": round(duration * hourly_rate / 3600.0, 8),
+                "duration_s": round(duration, 3),
+                "hourly_rate_usd": hourly_rate,
+                "method": "operator_hourly_rate_x_measured_duration",
+            }
+    provenance = record.setdefault("provenance", {})
+    provenance["stage_costs"] = stage_costs
+
+
 def _csv_arg(raw: str | None) -> list[str] | None:
     """Split a comma-separated CLI list; None (flag absent) stays None so the
     loader can tell "not narrowed" from "narrowed to nothing"."""
@@ -1357,6 +1480,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", required=True, help="candidate llama.cpp base URL, e.g. http://host:8080")
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--model-version", default=None, help="e.g. GGUF quant tag Q4_K_M")
+    parser.add_argument("--model-revision", default=None, help="operator-supplied checkpoint/GGUF revision or digest")
+    parser.add_argument("--seed", type=int, default=None, help="optional fixed completion seed (default: server-selected)")
     parser.add_argument("--no-think", action="store_true", help="append /no_think (reasoning-tuned candidates)")
     parser.add_argument("--manifest", default="scene/tests/seed/bakeoff_golden.json")
     parser.add_argument("--limit", type=_limit_arg, default=None, help="cap images (must be >= 1)")
@@ -1487,6 +1612,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--hourly-rate",
+        type=_nonneg_finite_float_arg,
+        default=None,
+        help="operator-supplied instance USD/hour used to stamp per-stage measured cost estimates",
+    )
+    parser.add_argument(
         "--warmup",
         type=_nonneg_int_arg,
         default=1,
@@ -1598,6 +1729,8 @@ def main(argv: list[str] | None = None) -> None:
         args.endpoint,
         model_id=args.model_id,
         model_version=args.model_version,
+        model_revision=args.model_revision,
+        seed=args.seed,
         no_think=args.no_think,
         timeout_s=args.timeout,
         eval_mode=args.eval_mode,
@@ -1608,6 +1741,7 @@ def main(argv: list[str] | None = None) -> None:
         two_pass=args.two_pass,
         dual_length=args.dual_length,
         face_gate=args.face_gate,
+        weave_bench=args.weave_bench is not None,
         face_fixtures=face_fixtures,
         depiction_lexicon=depiction_lexicon,
     )
@@ -1683,6 +1817,7 @@ def main(argv: list[str] | None = None) -> None:
             eval_mode=args.eval_mode,
             instance_shape=args.instance_shape,
             depiction_lexicon=depiction_lexicon,
+            run_configuration=client.run_configuration(),
         )
         if sampler is not None and gpu_block is None:
             gpu_block = sampler.stop()
@@ -1692,6 +1827,7 @@ def main(argv: list[str] | None = None) -> None:
             cold_load_s=args.cold_load_s,
             gpu=gpu_block or _gpu_sampling_disabled(),
         )
+        _stamp_stage_costs(exc.partial_record, hourly_rate=args.hourly_rate)
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
         sys.exit(
             "BoundedStallError: "
@@ -1715,6 +1851,7 @@ def main(argv: list[str] | None = None) -> None:
         instance_shape=args.instance_shape,
         depiction_lexicon=depiction_lexicon,
         caption_length=args.caption_length,
+        run_configuration=client.run_configuration(),
     )
     _stamp_timing_and_gpu(
         record,
@@ -1722,6 +1859,7 @@ def main(argv: list[str] | None = None) -> None:
         cold_load_s=args.cold_load_s,
         gpu=gpu_block or _gpu_sampling_disabled(),
     )
+    _stamp_stage_costs(record, hourly_rate=args.hourly_rate)
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)
     print(_printable_path(record_path))

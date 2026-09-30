@@ -583,6 +583,27 @@ def _load_record_info(path: str) -> dict[str, Any]:
     }
 
 
+def _format_durable_stage_costs(provenances: Mapping[str, Mapping[str, Any]]) -> str:
+    """Compactly surface cost provenance already stamped on each run record."""
+    summaries: list[str] = []
+    for label, provenance in sorted(provenances.items()):
+        stage_costs = provenance.get("stage_costs")
+        if not isinstance(stage_costs, Mapping) or not stage_costs:
+            continue
+        stages: list[str] = []
+        for stage, cost in sorted(stage_costs.items()):
+            if not isinstance(cost, Mapping):
+                stages.append(f"{stage}=unknown")
+                continue
+            amount = cost.get("amount_usd")
+            if cost.get("status") == "estimated" and _finite_number(amount):
+                stages.append(f"{stage}=${float(amount):.6f}")
+            else:
+                stages.append(f"{stage}=unknown")
+        summaries.append(f"{label} [{', '.join(stages)}]")
+    return "; ".join(summaries)
+
+
 def _parse_label_path(
     specs: list[str],
     *,
@@ -1180,6 +1201,9 @@ def main(argv: list[str] | None = None) -> int:
         subtitle += f" · total ${args.cost_total:.2f}"
         if denominator:
             subtitle += f" · ${args.cost_total / denominator:.4f}/{args.cost_denominator}"
+    durable_stage_costs = _format_durable_stage_costs(provenances)
+    if durable_stage_costs:
+        subtitle += f" · durable stage costs: {durable_stage_costs}"
     doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
     if evaluation is not None:
         doc = doc.replace("<main>", "<main>" + _gate_html(evaluation, serving_failures), 1)

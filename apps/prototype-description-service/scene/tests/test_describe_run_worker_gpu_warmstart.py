@@ -34,6 +34,9 @@ from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
 
 HealthHandler = Callable[[httpx.Request], httpx.Response | Awaitable[httpx.Response]]
 
+# The old 1.0s and 2.0s wrappers fired under gate load while the failed run was still being written to sqlite; 10s stays far above that stall and far below the 300s pytest timeout.
+_WARMUP_DETECTOR_SECONDS = 10.0
+
 
 @pytest.fixture(autouse=True)
 def _gpu_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -271,7 +274,7 @@ def test_run_enqueued_during_warmup_completes_without_retries_or_orphans(
                 name="gpusmoke-first-run",
             )
             tracked_tasks.add(first_task)
-            await asyncio.wait_for(first_health_entered.wait(), timeout=0.5)
+            await asyncio.wait_for(first_health_entered.wait(), timeout=_WARMUP_DETECTOR_SECONDS)
 
             second_run_id = await _create_run(session_factory, [22])
             second_task = asyncio.create_task(
@@ -287,7 +290,7 @@ def test_run_enqueued_during_warmup_completes_without_retries_or_orphans(
             )
             tracked_tasks.add(second_task)
             try:
-                await asyncio.wait_for(both_health_entered.wait(), timeout=0.5)
+                await asyncio.wait_for(both_health_entered.wait(), timeout=_WARMUP_DETECTOR_SECONDS)
                 release_health.set()
                 await asyncio.gather(*tracked_tasks)
             finally:
@@ -319,21 +322,44 @@ def test_run_enqueued_during_warmup_completes_without_retries_or_orphans(
     asyncio.run(body())
 
 
-def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPatch) -> None:
-    health_calls = 0
+def _run_warmup_deadline_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    health_handler: HealthHandler,
+    detector_seconds: float,
+):
+    """Return evidence for one warmup that should fail before describe starts.
 
-    async def health_handler(request: httpx.Request) -> httpx.Response:
+    ``detector_seconds`` bounds the job, including the sqlite write after the
+    warmup expires. It is not the warmup budget. That budget is the
+    ``timeout_seconds`` keyword ``run_describe_job`` passes to
+    ``_wait_for_gpu_ready``. The last returned value is the monotonic seconds
+    ``asyncio.wait_for`` spent inside that bound.
+    """
+    health_calls = 0
+    warmup_budgets: list[float] = []
+    real_wait = wmod._wait_for_gpu_ready
+
+    async def _counting_health(request: httpx.Request) -> httpx.Response:
         nonlocal health_calls
         health_calls += 1
-        raise httpx.ConnectError("GPU endpoint refused connection", request=request)
+        outcome = health_handler(request)
+        if isinstance(outcome, Awaitable):
+            return await outcome
+        return outcome
 
-    _install_mock_transport(monkeypatch, health_handler)
+    async def _record_warmup_budget(**kwargs):
+        warmup_budgets.append(kwargs["timeout_seconds"])
+        return await real_wait(**kwargs)
+
+    _install_mock_transport(monkeypatch, _counting_health)
     monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", _record_warmup_budget)
 
-    async def body() -> None:
+    async def body():
+        describe_calls = 0
         async with _database() as (session_factory, _engine):
             run_id = await _create_run(session_factory, [99])
-            describe_calls = 0
 
             async def describe_one(
                 _media_id: int,
@@ -356,30 +382,87 @@ def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPat
                     timeout_seconds=0.5,
                     gpu_policy=_gpu_policy(),
                 ),
-                timeout=1.0,
+                timeout=detector_seconds,
             )
             elapsed = time.monotonic() - started
             run, items = await _read_run(session_factory, run_id)
+        return describe_calls, run, items, elapsed
 
-        assert elapsed < 2.0
-        assert health_calls > 0
-        assert describe_calls == 0
-        assert run is not None
-        assert run.status == DescribeRunStatus.FAILED
-        detail = _warmup_timeout_detail(run.error_message)
-        assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
-        assert detail["retryable"] is True
-        assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
-        envelope = _run_response(run)
-        assert envelope.status is DescribeRunStatus.FAILED
-        assert envelope.terminal is not None
-        assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
-        assert envelope.terminal.retryable is True
-        assert envelope.fallback_reason is None
-        assert items[0].status == DescribeItemStatus.FAILED
-        assert items[0].image_bytes is None
+    describe_calls, run, items, elapsed = asyncio.run(body())
+    return health_calls, describe_calls, run, items, warmup_budgets, elapsed
 
-    asyncio.run(body())
+
+def _assert_warmup_deadline_failed(describe_calls: int, run, items, warmup_budgets: list[float]) -> None:
+    assert len(warmup_budgets) == 1
+    assert warmup_budgets[0] == _gpu_policy().warmup_timeout_seconds == 0.1
+    assert describe_calls == 0
+    assert run is not None
+    assert run.status == DescribeRunStatus.FAILED
+    detail = _warmup_timeout_detail(run.error_message)
+    assert detail["code"] == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+    assert detail["retryable"] is True
+    assert detail["startup_budget_seconds"] == max(1, round(_gpu_policy().warmup_timeout_seconds))
+    envelope = _run_response(run)
+    assert envelope.status is DescribeRunStatus.FAILED
+    assert envelope.terminal is not None
+    assert envelope.terminal.code == wmod.DescribeRunTerminalCode.GPU_WARMUP_TIMEOUT
+    assert envelope.terminal.retryable is True
+    assert envelope.fallback_reason is None
+    assert items[0].status == DescribeItemStatus.FAILED
+    assert items[0].image_bytes is None
+
+
+def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def health_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("GPU endpoint refused connection", request=request)
+
+    health_calls, describe_calls, run, items, warmup_budgets, elapsed = _run_warmup_deadline_scenario(
+        monkeypatch,
+        health_handler=health_handler,
+        detector_seconds=_WARMUP_DETECTOR_SECONDS,
+    )
+
+    assert health_calls > 0
+    assert elapsed < _WARMUP_DETECTOR_SECONDS
+    _assert_warmup_deadline_failed(describe_calls, run, items, warmup_budgets)
+
+
+def test_warmup_deadline_survives_a_stalled_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def health_handler(request: httpx.Request) -> httpx.Response:
+        # A stalled loop is what a busy gate does to the 0.1s budget: the
+        # probe cannot be cancelled until this blocking sleep returns, so the
+        # budget is spent on the first probe.
+        time.sleep(1.5)
+        raise httpx.ConnectError("GPU endpoint refused connection", request=request)
+
+    health_calls, describe_calls, run, items, warmup_budgets, elapsed = _run_warmup_deadline_scenario(
+        monkeypatch,
+        health_handler=health_handler,
+        detector_seconds=_WARMUP_DETECTOR_SECONDS,
+    )
+
+    assert health_calls == 1
+    assert elapsed < _WARMUP_DETECTOR_SECONDS
+    _assert_warmup_deadline_failed(describe_calls, run, items, warmup_budgets)
+
+
+def test_warmup_deadline_detector_catches_a_hung_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _never_ready(**_kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", _never_ready)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError) as excinfo:
+        _run_warmup_deadline_scenario(
+            monkeypatch,
+            health_handler=_refusing_health_handler(),
+            detector_seconds=0.5,
+        )
+    elapsed = time.monotonic() - started
+    assert elapsed < 5.0
+    # Bare asyncio.wait_for TimeoutError carries no message; the warmup TimeoutError("GPU endpoint did not become ready within ...") does, so a leaked warmup timeout cannot satisfy the canary.
+    assert excinfo.value.args == ()
 
 
 def test_gpu_warmup_timeout_startup_budget_rounds_positive_timeout() -> None:
@@ -435,7 +518,7 @@ def test_warmup_timeout_degrades_to_cpu_adapter_when_configured(monkeypatch: pyt
                     gpu_policy=_gpu_policy(),
                     cpu_describe_one=cpu_describe_one,
                 ),
-                timeout=2.0,
+                timeout=_WARMUP_DETECTOR_SECONDS,
             )
             run, items = await _read_run(session_factory, run_id)
 
@@ -510,7 +593,7 @@ def test_warmup_timeout_unavailable_cpu_ends_with_typed_retryable_reason(
                     gpu_policy=_gpu_policy(),
                     cpu_describe_one=UnavailableDescriptionAdapter("florence_small extra missing"),
                 ),
-                timeout=2.0,
+                timeout=_WARMUP_DETECTOR_SECONDS,
             )
             run, items = await _read_run(session_factory, run_id)
 
@@ -571,7 +654,7 @@ def test_warmup_cpu_fallback_forces_provisional_cpu_when_adapter_returns_final_g
                     gpu_policy=_gpu_policy(),
                     cpu_describe_one=cpu_describe_one,
                 ),
-                timeout=2.0,
+                timeout=_WARMUP_DETECTOR_SECONDS,
             )
             run, items = await _read_run(session_factory, run_id)
 

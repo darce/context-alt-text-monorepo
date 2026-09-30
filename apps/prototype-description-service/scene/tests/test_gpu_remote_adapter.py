@@ -134,7 +134,7 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert result.phrase_boxes == ()
     assert result.context_sources == ("context.caption",)
     assert result.context_applied is True
-    assert len(captured) == 1
+    assert len(captured) == 2
     assert captured[0]["path"] == "/v1/chat/completions"
     assert captured[0]["headers"]["authorization"] == "Bearer gpu-secret"
     payload = captured[0]["payload"]
@@ -151,6 +151,7 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert "<<<END_CONTEXT>>>" in user_text
     assert 'caption: "Launch day"' in user_text
     assert "data:image/png;base64" in json.dumps(user_content)
+    assert "Locate each person mentioned in the caption" in _user_text_from_payload(captured[1]["payload"])
 
 
 def test_gpu_remote_adapter_transcodes_webp_to_png_before_posting() -> None:
@@ -830,22 +831,24 @@ def test_reloading_gpu_remote_adapter_does_not_change_pillow_pixel_policy(monkey
 # ------------------------------------------ Qwen person-span grounding (GPUFLOW-3 N3)
 
 
-def test_gpu_remote_adapter_grounding_flag_defaults_off(monkeypatch) -> None:
+def test_gpu_remote_adapter_grounding_flag_defaults_on(monkeypatch) -> None:
     monkeypatch.delenv("ACX_GPU_GROUNDING_ENABLED", raising=False)
     captured: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(json.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "A man stands."}}]})
+    handler = _caption_then_grounding_handler(
+        caption="A man stands.",
+        grounding_content=json.dumps({"bboxes": [[100.0, 100.0, 600.0, 900.0]], "labels": ["A man"]}),
+        captured=captured,
+    )
 
     result = _adapter(handler).describe(image_bytes=_png_bytes(), context=None)
 
-    assert result.phrase_boxes == ()
-    assert len(captured) == 1
-    assert "Locate each person mentioned in the caption" not in _user_text_from_payload(captured[0])
+    assert len(captured) == 2
+    assert "Locate each person mentioned in the caption" in _user_text_from_payload(captured[1])
+    assert len(result.phrase_boxes) == 1
+    assert result.phrase_boxes[0].phrase == "A man"
 
 
-def test_gpu_remote_adapter_grounding_env_flag_defaults_off(monkeypatch) -> None:
+def test_gpu_remote_adapter_grounding_env_flag_defaults_on(monkeypatch) -> None:
     monkeypatch.delenv("ACX_GPU_GROUNDING_ENABLED", raising=False)
     adapter = GpuRemoteDescriptionAdapter(
         endpoint_url="http://gpu.test:8000",
@@ -855,7 +858,7 @@ def test_gpu_remote_adapter_grounding_env_flag_defaults_off(monkeypatch) -> None
             lambda request: httpx.Response(200, json={"choices": [{"message": {"content": "Caption."}}]})
         ),
     )
-    assert adapter.grounding_enabled is False
+    assert adapter.grounding_enabled is True
 
 
 def test_gpu_remote_adapter_grounding_enabled_via_env(monkeypatch) -> None:

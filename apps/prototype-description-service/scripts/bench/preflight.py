@@ -14,6 +14,7 @@ import httpx
 from scripts.bench.stack_pair import BenchError, StackEndpoint, StackPairConfig
 
 _DIM_TOKEN = re.compile(r"pgvector_dimension=(\d+)")
+_RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
 
 
 class PreflightError(BenchError):
@@ -44,7 +45,7 @@ def preflight_stack(
     if getattr(endpoint, "opencv_major", None) in (None, ""):
         raise PreflightError("opencv_major_unattested", "opencv_major is required")
     try:
-        opencv_major = int(endpoint.opencv_major)
+        expected_opencv_major = int(endpoint.opencv_major)
     except (TypeError, ValueError) as exc:
         raise PreflightError("opencv_major_unattested", "opencv_major is not parseable") from exc
 
@@ -66,6 +67,15 @@ def preflight_stack(
 
     dim = _parse_ready_dim(ready_body, endpoint.expected_pgvector_dim)
     profile = _parse_health_profile(health_body, endpoint.expected_profile)
+    runtime_fingerprint = _parse_numeric_runtime_fingerprint(health_body)
+    opencv_major = runtime_fingerprint["opencv_major"]
+    if opencv_major != expected_opencv_major:
+        raise PreflightError(
+            "opencv_major_drift",
+            f"service OpenCV major {opencv_major} != configured {expected_opencv_major}",
+        )
+    if opencv_major != 5:
+        raise PreflightError("opencv_major_unsupported", f"service OpenCV major {opencv_major} is not 5")
     return PreflightResult(
         stack_id=endpoint.stack_id,
         base_url=endpoint.base_url,
@@ -74,7 +84,7 @@ def preflight_stack(
         resolved_profile=profile,
         resolved_pgvector_dim=dim,
         opencv_major=opencv_major,
-        opencv_major_source="operator_attested",
+        opencv_major_source="service_reported",
         checked_at=datetime.now(timezone.utc).isoformat(),
         ready_excerpt=_excerpt(ready_body),
         health_detailed_excerpt=_excerpt(health_body),
@@ -155,6 +165,37 @@ def _parse_health_profile(body: dict[str, Any], expected: str) -> str:
     if profile != expected:
         raise PreflightError("profile_or_dim_drift", f"profile {profile!r} != expected {expected!r}")
     return profile
+
+
+def _parse_numeric_runtime_fingerprint(body: dict[str, Any]) -> dict[str, Any]:
+    """Read the service-reported canonical runtime fingerprint from health."""
+    cache = body.get("model_cache")
+    if not isinstance(cache, dict):
+        raise PreflightError("opencv_runtime_unreported", "model_cache missing from detailed health")
+    detail = cache.get("detail")
+    if not isinstance(detail, str):
+        raise PreflightError("opencv_runtime_unreported", "model_cache.detail missing from detailed health")
+    match = _RUNTIME_FINGERPRINT_TOKEN.search(detail)
+    if match is None:
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint missing from detailed health")
+    try:
+        fingerprint = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint is invalid JSON") from exc
+    if not isinstance(fingerprint, dict):
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint must be an object")
+    required = ("opencv_version", "opencv_major", "onnxruntime_version", "numpy_version")
+    if any(key not in fingerprint for key in required):
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint is incomplete")
+    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in required if key != "opencv_major"):
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint has an invalid version")
+    major = fingerprint["opencv_major"]
+    if type(major) is not int or major <= 0:
+        raise PreflightError("opencv_runtime_unreported", "numeric runtime fingerprint has an invalid OpenCV major")
+    version_major = fingerprint["opencv_version"].split(".", 1)[0]
+    if not version_major.isdecimal() or int(version_major) != major:
+        raise PreflightError("opencv_runtime_unreported", "OpenCV version and major do not match")
+    return fingerprint
 
 
 def _excerpt(body: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,16 @@
+{
+  "lane": "drfu-14",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 11303,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md:234-241,319 - the map retains APP_LINK_PARAMS ownership, review interaction requirements, both component pointers, and the NAV-11 slice; apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:1851-1868 asserts these recovered requirements and the settings-health flow; apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json:4 points source_fixture to WorkbenchPage.tsx, with existence enforced at test:798-819.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts",
+      "size": "S",
+      "fix_hint": "No repair is indicated because the surviving map retains the cited content and its source fixture now resolves to WorkbenchPage.tsx."
+    }
+  ]
+}

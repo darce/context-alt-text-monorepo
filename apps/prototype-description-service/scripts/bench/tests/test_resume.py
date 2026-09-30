@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from scripts.bench.corpus import ItemOutcomeStore
 from scripts.bench.driver import init_run_dir, run_leg
 from scripts.bench.stack_pair import load_stack_pair
+from scripts.eval_harness.remote_client import JobPollTimeoutError, RemoteSceneClient
 from scripts.bench.tests.conftest import (
     FakeClient,
     write_hashed_manifest,
@@ -49,6 +51,30 @@ def _seed_terminal_success(items_path: Path, media_id: int, width: int = 16, hei
             "terminal_ingest_outcome": "success",
         }
     )
+
+
+def test_wait_job_obeys_total_budget_separate_from_request_timeout() -> None:
+    calls = 0
+
+    def pending_job(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"status": "processing"})
+
+    client = RemoteSceneClient(
+        "https://bench.invalid",
+        "key",
+        timeout_s=5.0,
+        job_poll_timeout_s=0.025,
+        poll_interval=0.005,
+        transport=httpx.MockTransport(pending_job),
+    )
+    try:
+        with pytest.raises(JobPollTimeoutError):
+            client.wait_job("pending")
+    finally:
+        client.close()
+    assert 0 < calls < 60
 
 
 def test_resume_does_not_repost_terminal_success(tmp_path: Path) -> None:

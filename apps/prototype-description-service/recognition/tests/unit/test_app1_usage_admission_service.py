@@ -210,6 +210,22 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
     tenant_id = uuid4()
     period_start = datetime.now(tz=UTC)
     entitlement = SimpleNamespace(period_start=period_start, allowance_jobs=1)
+    global_state = SimpleNamespace(
+        period_start=period_start,
+        period_end=period_start + timedelta(days=1),
+        daily_cost_limit=DEFAULT_GLOBAL_DAILY_COST_LIMIT,
+        daily_cost_units=0,
+        inflight_limit=DEFAULT_GLOBAL_INFLIGHT_LIMIT,
+        inflight_units=0,
+        queue_limit=DEFAULT_GLOBAL_QUEUE_LIMIT,
+        queue_depth=0,
+        queue_byte_limit=DEFAULT_GLOBAL_QUEUE_BYTE_LIMIT,
+        queue_bytes=0,
+        stop_requested=False,
+        fence_epoch=DEFAULT_GLOBAL_FENCE_EPOCH,
+        config_version=DEFAULT_GLOBAL_CONFIG_VERSION,
+        updated_at=period_start,
+    )
 
     class _Result:
         def __init__(self, *, row=None, scalar=None, rowcount=None) -> None:
@@ -227,6 +243,7 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
         def __init__(self) -> None:
             self.actions: list[str] = []
             self.entitlement_statement = None
+            self.global_statement = None
 
         async def execute(self, statement):
             if isinstance(statement, Update):
@@ -239,6 +256,10 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
             if entity is UsageReservation:
                 self.actions.append("reservation lookup")
                 return _Result(row=None)
+            if entity is GlobalUsageAdmissionState:
+                self.actions.append("global lock")
+                self.global_statement = statement
+                return _Result(row=global_state)
             if entity is TenantEntitlement:
                 self.actions.append("entitlement lock")
                 self.entitlement_statement = statement
@@ -251,6 +272,10 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
         async def flush(self) -> None:
             self.actions.append("flush")
 
+        @asynccontextmanager
+        async def begin_nested(self):
+            yield self
+
     session = _RecordingSession()
     await SqlAlchemyUsageRepository(session).reserve(
         tenant_id,
@@ -261,14 +286,23 @@ async def test_reservation_path_locks_entitlement_before_check_and_insert() -> N
 
     assert session.actions == [
         "reservation lookup",
+        "global lock",
+        "reservation lookup",
+        "reservation lookup",
         "entitlement lock",
+        "reservation lookup",
         "reservation lookup",
         "expire stale",
         "usage check",
         "insert",
         "flush",
     ]
+    assert session.actions.index("global lock") < session.actions.index("entitlement lock")
+    assert session.actions.index("entitlement lock") < session.actions.index("usage check")
+    assert session.actions.index("usage check") < session.actions.index("insert")
+    assert session.global_statement is not None
     assert session.entitlement_statement is not None
+    assert "FOR UPDATE" in str(session.global_statement.compile(dialect=postgresql.dialect()))
     assert "FOR UPDATE" in str(session.entitlement_statement.compile(dialect=postgresql.dialect())), (
         "the executed entitlement query must compile with FOR UPDATE"
     )
@@ -523,7 +557,17 @@ async def test_reserve_rejects_when_remaining_allowance_is_zero(database) -> Non
 async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(database) -> None:
     session_factory, tenant_id, period_start = database
     stale_id = uuid4()
-    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-request", 1)
+    fence_token = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}"
+    stale_ticket = UsageTicket(
+        stale_id,
+        tenant_id,
+        "stale-request",
+        1,
+        operation_id="stale-request",
+        request_fingerprint="stale-request",
+        job_id="stale-job",
+        fence_token=fence_token,
+    )
     async with session_factory() as session:
         session.add(
             UsageReservation(
@@ -531,7 +575,11 @@ async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(datab
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key=stale_ticket.idempotency_key,
+                operation_id=stale_ticket.operation_id,
+                request_fingerprint=stale_ticket.request_fingerprint,
                 job_id="stale-job",
+                fence_token=fence_token,
+                queue_bytes=0,
                 status=UsageReservationStatus.RESERVED,
                 cost_units=1,
                 reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
@@ -556,7 +604,17 @@ async def test_expired_reservation_is_reclaimed_and_late_commit_is_ignored(datab
 async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted(database) -> None:
     session_factory, tenant_id, period_start = database
     stale_id = uuid4()
-    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-direct-commit", 1)
+    fence_token = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}"
+    stale_ticket = UsageTicket(
+        stale_id,
+        tenant_id,
+        "stale-direct-commit",
+        1,
+        operation_id="stale-direct-commit",
+        request_fingerprint="stale-direct-commit",
+        job_id="stale-job",
+        fence_token=fence_token,
+    )
     async with session_factory() as session:
         session.add(
             UsageReservation(
@@ -564,7 +622,11 @@ async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key=stale_ticket.idempotency_key,
+                operation_id=stale_ticket.operation_id,
+                request_fingerprint=stale_ticket.request_fingerprint,
                 job_id="stale-job",
+                fence_token=fence_token,
+                queue_bytes=0,
                 status=UsageReservationStatus.RESERVED,
                 cost_units=1,
                 reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
@@ -588,7 +650,17 @@ async def test_stale_reservation_commit_without_sweep_expires_and_is_not_counted
 async def test_stale_reservation_release_without_sweep_expires_and_is_not_counted(database) -> None:
     session_factory, tenant_id, period_start = database
     stale_id = uuid4()
-    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-direct-release", 1)
+    fence_token = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}"
+    stale_ticket = UsageTicket(
+        stale_id,
+        tenant_id,
+        "stale-direct-release",
+        1,
+        operation_id="stale-direct-release",
+        request_fingerprint="stale-direct-release",
+        job_id="stale-job",
+        fence_token=fence_token,
+    )
     async with session_factory() as session:
         session.add(
             UsageReservation(
@@ -596,7 +668,11 @@ async def test_stale_reservation_release_without_sweep_expires_and_is_not_counte
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key=stale_ticket.idempotency_key,
+                operation_id=stale_ticket.operation_id,
+                request_fingerprint=stale_ticket.request_fingerprint,
                 job_id="stale-job",
+                fence_token=fence_token,
+                queue_bytes=0,
                 status=UsageReservationStatus.RESERVED,
                 cost_units=1,
                 reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
@@ -639,7 +715,17 @@ async def test_fresh_reservation_commit_remains_chargeable(database) -> None:
 async def test_stale_same_key_retry_cannot_charge_expired_ticket(database) -> None:
     session_factory, tenant_id, period_start = database
     stale_id = uuid4()
-    stale_ticket = UsageTicket(stale_id, tenant_id, "stale-retry", 1)
+    fence_token = f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}"
+    stale_ticket = UsageTicket(
+        stale_id,
+        tenant_id,
+        "stale-retry",
+        1,
+        operation_id="stale-retry",
+        request_fingerprint="stale-retry",
+        job_id="stale-job",
+        fence_token=fence_token,
+    )
     async with session_factory() as session:
         session.add(
             UsageReservation(
@@ -647,7 +733,11 @@ async def test_stale_same_key_retry_cannot_charge_expired_ticket(database) -> No
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key=stale_ticket.idempotency_key,
+                operation_id=stale_ticket.operation_id,
+                request_fingerprint=stale_ticket.request_fingerprint,
                 job_id="stale-job",
+                fence_token=fence_token,
+                queue_bytes=0,
                 status=UsageReservationStatus.RESERVED,
                 cost_units=1,
                 reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
@@ -726,7 +816,11 @@ async def test_used_jobs_ignores_expired_reservations_by_lease_age(database) -> 
                 tenant_id=tenant_id,
                 period_start=period_start,
                 idempotency_key="stale-read-request",
+                operation_id="stale-read-request",
+                request_fingerprint="stale-read-request",
                 job_id="stale-read-job",
+                fence_token=f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}",
+                queue_bytes=0,
                 status=UsageReservationStatus.RESERVED,
                 cost_units=1,
                 reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
@@ -888,7 +982,7 @@ async def test_reserve_fence_token_carries_current_positive_epoch(database) -> N
 def test_settle_checks_locked_epoch_before_status_or_counter_mutation() -> None:
     source = inspect.getsource(SqlAlchemyUsageRepository._settle)
     assert source.index("_lock_global_state") < source.index("_assert_fence_current")
-    assert source.index("_assert_fence_current") < source.index("status=target_status")
+    assert source.index("_assert_fence_current") < source.index("status=settled_status")
     assert source.index("_assert_fence_current") < source.index("_apply_settle_counters")
 
 
@@ -987,6 +1081,10 @@ async def test_modern_row_is_not_legacy_just_because_operation_equals_key(databa
         _assert_modern_fence(ticket.fence_token, epoch=DEFAULT_GLOBAL_FENCE_EPOCH)
         assert ticket.operation_id == "same-as-operation"
         assert ticket.request_fingerprint == "same-as-operation"
+        await session.commit()
+
+    async with session_factory() as session:
+        service = UsageAdmissionService(session)
         with pytest.raises(ReservationNotFoundError):
             await service.commit(
                 replace(ticket, operation_id="", request_fingerprint=""),
@@ -996,6 +1094,8 @@ async def test_modern_row_is_not_legacy_just_because_operation_equals_key(databa
     async with session_factory() as session:
         row = await _reservation(session, ticket.reservation_id)
         assert row.status == UsageReservationStatus.RESERVED
+        assert row.operation_id == "same-as-operation"
+        assert row.request_fingerprint == "same-as-operation"
 
 
 @pytest.mark.asyncio

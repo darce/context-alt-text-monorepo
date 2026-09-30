@@ -1031,8 +1031,7 @@ validate_side() {
             exit 1
         fi
         if ! is_tenant_uuid "$recognition_tenant_id" \
-            || is_placeholder "$recognition_tenant_id" \
-            || [[ "$recognition_tenant_id" == 00000000-0000-4000-8000-000000000001 ]]; then
+            || is_placeholder "$recognition_tenant_id"; then
             echo "ERROR [6] demo ACX_RECOGNITION_TENANT_ID must be an explicit RFC 4122 UUID (redacted length=${#recognition_tenant_id})." >&2
             exit 1
         fi

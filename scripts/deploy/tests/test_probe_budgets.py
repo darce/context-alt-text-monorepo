@@ -184,6 +184,32 @@ do_verify dev || :
         assert sum(prefix in line for line in budget_lines) == 1
 
 
+def test_canonical_health_default_budget_covers_slow_restart_startup(tmp_path: Path) -> None:
+    attempts_log = tmp_path / "canonical-attempts.log"
+    result = _run_shell(
+        tmp_path,
+        f"""
+GREEN=; YELLOW=; RED=; RESET=
+OCI_USER=test
+OCI_HOST=test
+unset ACX_CANONICAL_HEALTH_ATTEMPTS ACX_CANONICAL_HEALTH_SLEEP
+verify_retry_sleep() {{ :; }}
+health_probe_program() {{ printf 'pass'; }}
+env_to_remote_dir() {{ printf '/srv/%s' "$1"; }}
+env_to_compose_files() {{ printf '%s' '-f docker-compose.env.yml'; }}
+validated_deadline() {{ printf '30\\n'; }}
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ printf 'canonical\\n' >>{shlex.quote(str(attempts_log))}; return 1; }}
+probe_canonical_api_health dev || :
+""",
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    assert attempts_log.read_text().splitlines().count("canonical") == 8
+    assert "Canonical api health budget: 8x5s" in combined
+
+
 def test_gpu_snapshot_gate_has_its_own_budget(tmp_path: Path) -> None:
     health_log = tmp_path / "health.log"
     gpu_log = tmp_path / "gpu.log"

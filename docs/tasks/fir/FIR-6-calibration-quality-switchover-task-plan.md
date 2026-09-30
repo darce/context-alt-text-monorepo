@@ -39,7 +39,7 @@ S1–S3 are **corpus-independent and dark** ([RLSE-07]). S4–S5 are **corpus-ga
 - No production writes from bake-off legs; buffalo eval-only; buffalo artifacts never leave `out/`.
 - No copying buffalo-tuned thresholds into face_pipeline defaults ([DRIFT-03]/[PERF-06]).
 - No top-k discovery rework in S2 (top-1 conflict-break semantics are explicit and tested; a top-k upgrade is an S4-informed follow-on decision, driven by the mirrors/similar-people diagnostics).
-- No schema change outside the S1 factor columns (pre-decided below) and S6's dimension flip.
+- No schema change outside the S1 factor columns (pre-decided below); any vector-dimension migration is a separate operator-gated change after the final retrain embedder size is selected.
 
 ## Problem Statement
 

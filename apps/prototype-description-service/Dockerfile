@@ -145,6 +145,11 @@ ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Disable onnxruntime vendor telemetry for all runtime images.
+# See ONNX Runtime Privacy.md, "Disabling Telemetry".
+ENV ORT_DISABLE_TELEMETRY=1
+# See huggingface_hub docs, "Environment variables" (HF_HUB_DISABLE_TELEMETRY).
+ENV HF_HUB_DISABLE_TELEMETRY=1
 
 # Rebind the top-level ARG inside this stage so ENV can consume it.
 # Without this, GIT_COMMIT_SHA is out of scope in the runtime image.

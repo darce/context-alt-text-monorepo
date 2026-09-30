@@ -3780,7 +3780,8 @@
   }
  },
  "notes": {
-  "6292": "fix_files not present on main (new file to create in the fix lane): apps/prototype-description-service/scripts/bench/tests/fixtures/stack-pair.example.yaml"
+  "6292": "fix_files not present on main (new file to create in the fix lane): apps/prototype-description-service/scripts/bench/tests/fixtures/stack-pair.example.yaml",
+  "15201": "severity high closing verdict with no drfu result; action close_unrefuted_low is held, not closed; needs a refutation pass"
  },
  "precedence": "a drfu outcome overrides the dadj verdict for the same db_id: REFUTED on a closing verdict means the defect is still live and routes to a fix lane; UNSURE defers; CONFIRMED (or no drfu result on a low-severity closing) closes.",
  "schema": "debtadj-1-dispositions/v1"

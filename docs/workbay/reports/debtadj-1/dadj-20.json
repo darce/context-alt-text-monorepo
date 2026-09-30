@@ -161,7 +161,7 @@
       "test_file": "",
       "size": "M",
       "related": [],
-      "fix_hint": "Provide a committed redacted config and replace shell placeholders in the executable examples with literal runnable paths."
+      "fix_hint": "Provide a committed redacted config and replace shell placeholders in the executable examples with literal runnable paths. Note: stack-pair.example.yaml does not exist yet; the fix creates it."
     },
     {
       "db_id": 6293,

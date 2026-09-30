@@ -1023,19 +1023,11 @@ PHP;
     }
 
     /**
-     * CON-5 fallback (best-effort lock ceiling): a GET_LOCK timeout must not
-     * suppress the failure-counter increment.
-     *
-     * When acquire_named_lock returns false (GET_LOCK -> '0'),
-     * increment_failure_counter falls through to the unguarded
-     * read-modify-write and its `finally` must skip RELEASE_LOCK because nothing
-     * was held. The increment still lands and the breaker still trips at the
-     * threshold, so the deployment never degrades below the pre-CON-5 baseline.
-     * The two atomicity tests above both set mockVar='1', so this is the only
-     * coverage of the lock-not-acquired branch. Guards a regression that skips
-     * the increment when !$locked, or releases a lock it never acquired.
+     * CON-5: after a lock timeout, never fall back to a racy transient update.
+     * If the lock remains unavailable, conservatively open the breaker rather
+     * than lose a concurrent failure increment.
      */
-    public function testUiReadCounterStillIncrementsWhenLockTimesOut(): void
+    public function testUiReadCounterFailsClosedWithoutRacyIncrementWhenLockTimesOut(): void
     {
         global $wpdb;
         $wpdb->mockVar = '0'; // GET_LOCK(...) timed out -> lock not acquired.
@@ -1045,19 +1037,15 @@ PHP;
         $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
 
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
-        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
-
         $harness->callUiRead();
-        $this->assertSame(
-            1,
+
+        $this->assertFalse(
             get_transient($failureKey),
-            'Counter must still increment via the unguarded fallback when GET_LOCK times out (CON-5 ceiling).'
+            'A transient read-modify-write must not run when GET_LOCK times out.'
         );
-
-        $harness->callUiRead();
         $this->assertNotFalse(
             get_transient($circuitKey),
-            'Breaker must still trip at threshold even when the named lock is never acquired.'
+            'Opening the breaker conservatively replaces the unsafe counter update.'
         );
 
         $getLock = array_values(array_filter(
@@ -1069,50 +1057,98 @@ PHP;
             static fn (string $q): bool => stripos($q, 'RELEASE_LOCK') !== false
         ));
 
-        $this->assertNotEmpty(
+        $this->assertCount(
+            2,
             $getLock,
-            'The lock acquire is still attempted on the fallback path.'
+            'A timed-out lock is retried once before taking the safe fallback.'
         );
         $this->assertEmpty(
             $releaseLock,
-            'RELEASE_LOCK must NOT be issued when the lock was never acquired — the finally skips release.'
+            'RELEASE_LOCK must not be issued when the lock was never acquired.'
+        );
+    }
+
+    public function testUiReadCounterRetriesLockTimeoutBeforeIncrementingAtomically(): void
+    {
+        global $wpdb;
+
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
+        $lockAttempts = 0;
+        $wpdb->onGetVarResolve = static function (string $sql) use (&$lockAttempts): ?string {
+            if (stripos($sql, 'GET_LOCK') !== false) {
+                ++$lockAttempts;
+                return 1 === $lockAttempts ? '0' : '1';
+            }
+            if (stripos($sql, 'RELEASE_LOCK') !== false) {
+                return '1';
+            }
+            return null;
+        };
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $harness->callUiRead();
+
+        $releaseLock = array_values(array_filter(
+            $wpdb->queries,
+            static fn (string $q): bool => stripos($q, 'RELEASE_LOCK') !== false
+        ));
+        $this->assertSame(2, $lockAttempts, 'A timed-out lock should be retried once.');
+        $this->assertCount(1, $releaseLock, 'The acquired retry lock must be released.');
+        $this->assertSame(1, get_transient($failureKey), 'The RMW runs only after the retry acquires the lock.');
+    }
+
+    public function testUiReadCounterDoesNotMutateWhenLockOperationIsUnavailable(): void
+    {
+        global $wpdb;
+        $wpdb->get_var_returns_null = true;
+
+        $harness    = $this->makeUiReadHarness();
+        $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
+        $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
+        set_transient($failureKey, 1, 300);
+
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
+        $harness->callUiRead();
+
+        $this->assertSame(1, get_transient($failureKey), 'The counter must remain unchanged without a lock.');
+        $this->assertNotFalse(
+            get_transient($circuitKey),
+            'The breaker opens conservatively when its counter cannot be updated atomically.'
+        );
+        $this->assertSame(
+            1,
+            count(array_filter($wpdb->queries, static fn (string $q): bool => stripos($q, 'GET_LOCK') !== false)),
+            'A lock operation error is not a timeout and should not be retried.'
         );
     }
 
     /**
-     * CON-5 fallback ($wpdb unavailable): with no usable $wpdb,
-     * acquire_named_lock returns false without emitting any lock query and
-     * increment_failure_counter runs its unguarded RMW.
-     *
-     * The increment and breaker trip must still work with no error raised (the
-     * `finally` skips release because nothing was held). Guards a regression
-     * that assumes $wpdb is always present (e.g. early-boot / drop-in failures).
+     * CON-5 fallback ($wpdb unavailable): preserve the existing count and open
+     * the breaker instead of mutating a transient without synchronization.
      */
-    public function testUiReadCounterStillIncrementsWhenWpdbUnavailable(): void
+    public function testUiReadCounterDoesNotMutateWhenWpdbUnavailable(): void
     {
         $harness    = $this->makeUiReadHarness();
         $failureKey = $this->familyFailureKey($harness->resolvedBaseUrl());
         $circuitKey = $this->familyCircuitKey($harness->resolvedBaseUrl());
+        set_transient($failureKey, 1, 300);
 
         $savedWpdb = $GLOBALS['wpdb'] ?? null;
-        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb so acquire_named_lock bails to the unguarded path.
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Negative-path test simulates missing wpdb so the failure counter takes its safe unavailable-lock path.
         $GLOBALS['wpdb'] = null;
 
         try {
             $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
-            $this->queueHttpResponse(new WP_Error('http_request_failed', 'down'));
-
             $harness->callUiRead();
             $this->assertSame(
                 1,
                 get_transient($failureKey),
-                'Counter must still increment when $wpdb is unavailable (no named lock possible).'
+                'The counter must remain unchanged when no atomic lock can be acquired.'
             );
-
-            $harness->callUiRead();
             $this->assertNotFalse(
                 get_transient($circuitKey),
-                'Breaker must still trip at threshold on the $wpdb-unavailable fallback path.'
+                'Opening the breaker conservatively replaces the unsafe counter update.'
             );
         } finally {
             // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore the test's original wpdb stub.

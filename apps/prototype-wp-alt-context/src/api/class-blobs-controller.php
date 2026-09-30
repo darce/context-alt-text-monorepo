@@ -16,6 +16,7 @@ use WP_REST_Response;
 use function add_query_arg;
 use function add_filter;
 use function esc_url_raw;
+use function get_current_user_id;
 use function hash_equals;
 use function header;
 use function in_array;
@@ -142,18 +143,24 @@ class BlobsController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * Permission gate for the blob proxy. Validates the HMAC capability
-	 * token minted by `BlobUrlRewriter::sign` against the request's
-	 * job_id, media_id, and expires query args.
+	 * Permission gate for the blob proxy. Validates the HMAC token minted by
+	 * `BlobUrlRewriter::sign` against the request's media details and current
+	 * authenticated viewer.
 	 *
 	 * `<img src>` requests cannot carry the `X-WP-Nonce` header, so the
 	 * standard cookie+nonce REST permission check fails for thumbnails
-	 * embedded in admin pages. The signed URL is the capability that
-	 * authorizes this specific GET; no session check is required because
-	 * the token is unforgeable without `wp_salt('auth')`, which is server
-	 * side only.
+	 * embedded in admin pages. The token is bound to the current viewer ID,
+	 * so a copied URL is not sufficient to authorize another viewer.
 	 */
 	public function verify_blob_token( WP_REST_Request $request ): bool|WP_Error {
+		if ( get_current_user_id() <= 0 ) {
+			return new WP_Error(
+				'recognition_blob_auth_required',
+				'An authenticated viewer is required to access this blob.',
+				array( 'status' => 401 )
+			);
+		}
+
 		$job_id   = (string) $request->get_param( 'job_id' );
 		$media_id = (string) $request->get_param( 'media_id' );
 		$expires  = (int) $request->get_param( 'expires' );

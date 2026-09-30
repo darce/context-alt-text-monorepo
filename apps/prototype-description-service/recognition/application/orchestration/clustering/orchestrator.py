@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib.metadata import version
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
@@ -377,12 +378,17 @@ class IncrementalClusteringRunner:
         started_at: datetime,
     ):
         dataset_media_ids = sorted({int(row.media_id) for row in dataset if row.media_id is not None})
+        settings_snapshot = self._gate.settings.model_dump()
+        settings_snapshot["runtime_versions"] = {
+            "hdbscan": version("hdbscan"),
+            "scipy": version("scipy"),
+        }
         return await create_recognition_run(
             self._session,
             tenant_id=tenant_uuid,
             source="cluster_unclustered_identities",
             clustering_job_id=clustering_job.id,
-            settings_snapshot=self._gate.settings.model_dump(),
+            settings_snapshot=settings_snapshot,
             dataset_selector={"media_ids": dataset_media_ids},
             started_at=started_at,
         )

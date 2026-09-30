@@ -1,6 +1,37 @@
 """Planning-only population lists from existing metadata; no pixel inference or gold labels."""
 from pathlib import Path
 import collections,csv,hashlib,json,random
+import math,sys
+
+def check_profile_calibration(root):
+ manifests=root/'benchmarks/manifests'
+ calibration=json.loads((manifests/'slice-tag-calibration-v1.json').read_text())
+ detector=json.loads((manifests/calibration['detection_artifact']).read_text())
+ calibrated=calibration['shippable']['profile']; threshold=calibrated['threshold']
+ assert calibration['evaluation_scope']=='in_sample_calibration_only'
+ signals={e['media_id']:e['faces'][0]['eye_span_ratio'] for e in detector['entries'] if e.get('faces')}
+ expected={i for i,value in signals.items() if value<=threshold}
+ for name in ('corpus-manifest-v3.json','corpus-manifest-v3r-20260814.json'):
+  manifest=json.loads((manifests/name).read_text()); rule=manifest['derived_tag_rules']['profile']
+  assert rule['max']==threshold, f'{name}: cutoff differs from calibration'
+  assert rule['evaluation_scope']=='in_sample_calibration_only', f'{name}: score scope is not explicit'
+  actual={e['media_id'] for e in manifest['entries'] if 'profile' in e['slice_tags_derived']}
+  assert actual==expected, f'{name}: profile tags do not match the calibrated detector population'
+  assert manifest['counts']['derived_tags']['profile']==len(expected)
+  labels={e['media_id']:('profile' in e['slice_tags']) for e in manifest['entries'] if e['slice_tags_known']}
+  ids=sorted(set(labels)&set(signals)); positives=[i for i in ids if labels[i]]; negatives=[i for i in ids if not labels[i]]
+  assert len(ids)==calibration['labelled_images']
+  tp=sum(signals[i]<=threshold for i in positives); fp=sum(signals[i]<=threshold for i in negatives); fn=len(positives)-tp
+  precision=tp/(tp+fp); recall=tp/(tp+fn); f1=2*precision*recall/(precision+recall)
+  auc=sum(1 if signals[p]<signals[n] else .5 if signals[p]==signals[n] else 0 for p in positives for n in negatives)/(len(positives)*len(negatives))
+  for metric,value in (('auc',auc),('f1',f1),('precision',precision),('recall',recall)):
+   assert math.isclose(value,calibrated[metric],abs_tol=.0005), f'{name}: {metric} does not reproduce from the detector artifact'
+
+if __name__=='__main__' and sys.argv[1:]==['--check-profile-calibration']:
+ check_profile_calibration(Path.cwd())
+ print('profile calibration and derived tags are consistent')
+ raise SystemExit(0)
+
 root=Path.cwd(); mp=root/'benchmarks/manifests/corpus-manifest-v3r-20260814.json';cp=root/'benchmarks/reports/fir-occlusion-caption-mining-20260904.json'
 m=json.loads(mp.read_text()); mining=json.loads(cp.read_text()); entries=m['entries']; by={e['media_id']:e for e in entries}
 parent={i:i for i in by}

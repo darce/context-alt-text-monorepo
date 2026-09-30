@@ -31,6 +31,7 @@ class LegExport:
     clusters: Any
     cluster_members: Any
     paths: dict[str, Path] = field(default_factory=dict)
+    media_identity_results: Any = None
 
 
 def require_cluster_success(run_dir: Path | str, stack_id: str) -> dict[str, Any]:
@@ -47,7 +48,41 @@ def require_cluster_success(run_dir: Path | str, stack_id: str) -> dict[str, Any
 def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
     require_cluster_success(run_dir, stack_id)
     media_ids = _roster_stack_media_ids(run_dir, stack_id)
-    identities = client.media_identities(media_ids)
+    export_dir = Path(run_dir) / "legs" / stack_id / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "media_identities": export_dir / "media_identities.json",
+        "media_identity_results": export_dir / "media_identity_results.json",
+        "clusters": export_dir / "clusters.json",
+        "cluster_members": export_dir / "cluster_members.json",
+    }
+    try:
+        identities = client.media_identities(media_ids)
+        identity_rows = _unwrap_rows(identities, what="media_identities")
+    except Exception:
+        # The upstream endpoint is one opaque batch request, so a failed batch
+        # means every requested media id has an unknown/failed query result.
+        _write_preserved(
+            paths["media_identity_results"],
+            [
+                {"media_id": mid, "query_succeeded": False, "rows": []}
+                for mid in media_ids
+            ],
+        )
+        raise
+    identity_results = [
+        {
+            "media_id": mid,
+            "query_succeeded": True,
+            "rows": [
+                row
+                for row in identity_rows
+                if isinstance(row, dict) and row.get("media_id") == mid
+            ],
+        }
+        for mid in media_ids
+    ]
+    _write_preserved(paths["media_identity_results"], identity_results)
     clusters = client.clusters()
     members: Any
     rows = _unwrap_rows(clusters, what="clusters")
@@ -58,13 +93,6 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
             continue
         members.append(client.cluster_members(str(cid)))
 
-    export_dir = Path(run_dir) / "legs" / stack_id / "exports"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    paths = {
-        "media_identities": export_dir / "media_identities.json",
-        "clusters": export_dir / "clusters.json",
-        "cluster_members": export_dir / "cluster_members.json",
-    }
     _write_preserved(paths["media_identities"], identities)
     _write_preserved(paths["clusters"], clusters)
     _write_preserved(paths["cluster_members"], members)
@@ -74,18 +102,25 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
         clusters=clusters,
         cluster_members=members,
         paths=paths,
+        media_identity_results=identity_results,
     )
 
 
 def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
     export_dir = Path(run_dir) / "legs" / stack_id / "exports"
+    identity_results_path = export_dir / "media_identity_results.json"
+    identity_results = None
+    if not identity_results_path.is_symlink() and identity_results_path.is_file():
+        identity_results = json.loads(identity_results_path.read_text(encoding="utf-8"))
     return LegExport(
         stack_id=stack_id,
         media_identities=json.loads((export_dir / "media_identities.json").read_text(encoding="utf-8")),
         clusters=json.loads((export_dir / "clusters.json").read_text(encoding="utf-8")),
         cluster_members=json.loads((export_dir / "cluster_members.json").read_text(encoding="utf-8")),
+        media_identity_results=identity_results,
         paths={
             "media_identities": export_dir / "media_identities.json",
+            "media_identity_results": identity_results_path,
             "clusters": export_dir / "clusters.json",
             "cluster_members": export_dir / "cluster_members.json",
         },

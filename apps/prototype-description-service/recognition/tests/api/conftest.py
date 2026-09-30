@@ -242,8 +242,15 @@ class FakeScanQueueService:
         self.created_jobs: list[tuple[str, int]] = []
         self.messages: dict[str, str] = {}
 
-    async def create_scan_job_record(self, *, tenant_id, total, created_by_user_id=None):  # noqa: ANN001
-        job_id = generate_id()
+    async def create_scan_job_record(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        total: int,
+        created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        job_id = job_id or generate_id()
         self.created_jobs.append((str(tenant_id), int(total)))
         self.messages[str(job_id)] = f"Queueing 0/{int(total)} items"
         return job_id
@@ -764,6 +771,10 @@ def api_client(
 ) -> TestClient:
     """Build a TestClient with faked dependencies and no real DB."""
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+    monkeypatch.setenv("ACX_CLERK_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("ACX_CLERK_JWKS_URL", "https://jwks.example.test/keys")
+    monkeypatch.setenv("ACX_CLERK_AUDIENCE", "clerk-instance-aud")
+    monkeypatch.setenv("ACX_CLERK_AUTHORIZED_PARTIES", "https://app.altcontext.io")
     # API contract tests should not run the inline processor (it requires real ScanService wiring).
     monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
     app = FastAPI()

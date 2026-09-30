@@ -401,6 +401,7 @@ def test_padded_ci_uses_B_draw_space_not_survivors() -> None:
 def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
     tmp_path, monkeypatch
 ) -> None:
+    import hashlib
     import json
 
     from scripts.bench import score_report
@@ -463,9 +464,18 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
         exports_path = run_dir / "legs" / stack_id / "exports"
         identities_path = exports_path / "media_identities.json"
         identities = json.loads(identities_path.read_text(encoding="utf-8"))
-        identities_path.write_text(
-            json.dumps([row for row in identities if row["media_id"] not in {5, 6}]),
-            encoding="utf-8",
+        identities = [row for row in identities if row["media_id"] not in {5, 6}]
+        identities_path.write_text(json.dumps(identities), encoding="utf-8")
+        identity_results = [
+            {
+                "media_id": media_id,
+                "query_succeeded": True,
+                "rows": [row for row in identities if row["media_id"] == media_id],
+            }
+            for media_id in range(1, 5)
+        ]
+        (exports_path / "media_identity_results.json").write_text(
+            json.dumps(identity_results), encoding="utf-8"
         )
         members_path = exports_path / "cluster_members.json"
         members = json.loads(members_path.read_text(encoding="utf-8"))
@@ -482,7 +492,19 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
         observed_calls.append(kwargs.copy())
         return original_bootstrap(*args, **kwargs)
 
-    # This regression exercises scoring metadata, not the separately gated PROV-01 check.
+    # Test an approved pinned manifest after its run metadata has disappeared.
+    monkeypatch.setattr(
+        score_report,
+        "GOLDEN150_MANIFEST_SHA256",
+        hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    )
+    run_doc = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    run_doc["manifest_path"] = "renamed-source.json"
+    (run_dir / "run.json").write_text(json.dumps(run_doc), encoding="utf-8")
+    assert score_report._is_golden150_corpus(run_dir) is True
+    (run_dir / "run.json").unlink()
+
+    # This regression exercises tier provenance, not the separately gated PROV-01 check.
     monkeypatch.setattr(score_report, "_require_prov01_preflights", lambda root, stacks: True)
     monkeypatch.setattr(score_report, "bootstrap_paired_delta", observe_bootstrap)
     score_report.score_head_to_head(run_dir)

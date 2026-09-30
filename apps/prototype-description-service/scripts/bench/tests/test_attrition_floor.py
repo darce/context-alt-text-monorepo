@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.bench.export_map import export_leg
 from scripts.bench.score_report import (
     compute_accepted_set,
     resolve_floor_count,
@@ -28,8 +29,55 @@ def test_absolute_floor_resolution() -> None:
     assert resolve_floor_count(135, 150) == 135
 
 
+def test_export_persists_empty_success_for_each_requested_media_id(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export={2})
+    row = {"media_id": 1, "identity_id": "id-1"}
+
+    class SparseIdentityClient:
+        def media_identities(self, media_ids: list[int]) -> list[dict[str, object]]:
+            assert media_ids == [1, 2]
+            return [row]
+
+        def clusters(self) -> list[dict[str, object]]:
+            return []
+
+    exported = export_leg(
+        SparseIdentityClient(), run_dir, "acx-dev-insightface"
+    )
+
+    assert exported.media_identity_results == [
+        {"media_id": 1, "query_succeeded": True, "rows": [row]},
+        {"media_id": 2, "query_succeeded": True, "rows": []},
+    ]
+
+
+def test_failed_batch_marks_all_requested_media_ids_unqueried(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+
+    class FailedIdentityClient:
+        def media_identities(self, media_ids: list[int]) -> list[dict[str, object]]:
+            raise RuntimeError("batch unavailable")
+
+    with pytest.raises(RuntimeError, match="batch unavailable"):
+        export_leg(FailedIdentityClient(), run_dir, "acx-dev-insightface")
+
+    results = json.loads(
+        (
+            run_dir
+            / "legs"
+            / "acx-dev-insightface"
+            / "exports"
+            / "media_identity_results.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert results == [
+        {"media_id": 1, "query_succeeded": False, "rows": []},
+        {"media_id": 2, "query_succeeded": False, "rows": []},
+    ]
+
+
 def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> None:
-    """Roster-present zero-export item is a scored miss, not dropped from recall denom."""
+    """A successful empty per-id export is a scored miss, not join attrition."""
     run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export={2})
     accepted = compute_accepted_set(run_dir)
     assert 2 in accepted.manifest_media_ids
@@ -40,6 +88,28 @@ def test_zero_detection_accepted_item_stays_in_denominator(tmp_path: Path) -> No
     assert accepted.zero_detection_media_count >= 1
     assert frames["zero_detection_media_count"] == accepted.zero_detection_media_count
     assert report_dir.exists()
+
+
+def test_unqueried_media_id_is_join_attrition(tmp_path: Path) -> None:
+    run_dir = _two_leg_run(tmp_path, media_ids=[1, 2], zero_export=set())
+    results_path = (
+        run_dir
+        / "legs"
+        / "acx-dev-fir"
+        / "exports"
+        / "media_identity_results.json"
+    )
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results_path.write_text(
+        json.dumps([result for result in results if result["media_id"] != 2]),
+        encoding="utf-8",
+    )
+
+    accepted = compute_accepted_set(run_dir)
+
+    assert 2 not in accepted.manifest_media_ids
+    assert 1 in accepted.manifest_media_ids
+    assert accepted.attrition_join >= 1
 
 
 def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
@@ -209,10 +279,18 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
     zero_export = zero_export or set()
     leg = run_dir / "legs" / stack_id
     (leg / "exports").mkdir(parents=True, exist_ok=True)
+    profile = "insightface" if "insight" in stack_id else "face_pipeline"
+    runtime_fingerprint = {
+        "opencv_version": "5.0.0.93",
+        "opencv_major": 5,
+        "onnxruntime_version": "1.24.1",
+        "numpy_version": "2.5.1",
+    }
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     entries = {entry["media_id"]: entry for entry in manifest["entries"]}
     lines = []
     identities = []
+    identity_results = []
     for mid in ok_ids:
         entry = entries[mid]
         ingest = {
@@ -230,20 +308,27 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
         }
         lines.append(json.dumps(ingest))
         lines.append(json.dumps({**ingest, "phase": "analyze", "stack_media_id": mid}))
+        item_rows = []
         if mid not in zero_export:
-            identities.append(
-                {
-                    "identity_id": f"id-{mid}",
-                    "media_id": mid,
-                    "cluster_id": "c1",
-                    "cluster_label": "Alice Q",
-                    "is_auto_label": False,
-                    "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
-                }
-            )
+            identity = {
+                "identity_id": f"id-{mid}",
+                "media_id": mid,
+                "cluster_id": "c1",
+                "cluster_label": "Alice Q",
+                "is_auto_label": False,
+                "bbox": {"x": 400, "y": 400, "width": 200, "height": 200},
+            }
+            identities.append(identity)
+            item_rows.append(identity)
+        identity_results.append(
+            {"media_id": mid, "query_succeeded": True, "rows": item_rows}
+        )
     (leg / "items.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
     (leg / "exports" / "media_identities.json").write_text(json.dumps(identities), encoding="utf-8")
+    (leg / "exports" / "media_identity_results.json").write_text(
+        json.dumps(identity_results), encoding="utf-8"
+    )
     (leg / "exports" / "clusters.json").write_text(
         json.dumps([{"id": "c1", "label": "Alice Q", "is_auto_label": False}]),
         encoding="utf-8",
@@ -264,10 +349,16 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
                 "resolved_profile": "insightface" if "insight" in stack_id else "face_pipeline",
                 "resolved_pgvector_dim": 512 if "insight" in stack_id else 128,
                 "opencv_major": 5,
-                "opencv_major_source": "operator_attested",
+                "opencv_major_source": "service_reported",
                 "checked_at": "2026-07-29T00:00:00Z",
                 "ready_excerpt": {},
-                "health_detailed_excerpt": {},
+                "health_detailed_excerpt": {
+                    "model_cache": {
+                        "profile": profile,
+                        "detail": "numeric_runtime_fingerprint="
+                        + json.dumps(runtime_fingerprint),
+                    }
+                },
             }
         ),
         encoding="utf-8",

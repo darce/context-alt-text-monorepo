@@ -49,6 +49,11 @@ LABEL_MAP_OPTIMISTIC = "label_map_optimistic"
 
 HOLM_NOT_COMPUTED = "not_computed"
 _MANIFEST_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+# Approved frozen corpus bytes; the run-local manifest.sha is verified against
+# manifest.json before score_head_to_head reaches corpus classification.
+GOLDEN150_MANIFEST_SHA256 = (
+    "0dc89a1d0378630522a16080a176c1533357419fcfbe704a7c2bfc487580ac54"
+)
 
 # Persist contract for legs/<stack_id>/preflight.json (PROV-01). Score refuses
 # a file that is missing, unreadable (including non-UTF-8 bytes), not a JSON
@@ -574,6 +579,12 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
             }
         join_by[stack_id] = join
 
+    exports_by = {stack_id: load_leg_exports(root, stack_id) for stack_id in stacks}
+    identity_results_by_stack = {
+        stack_id: _media_identity_results_by_id(export.media_identity_results)
+        for stack_id, export in exports_by.items()
+    }
+
     accepted: list[GoldenEntry] = []
     attrition_ia = 0
     attrition_join = 0
@@ -594,6 +605,11 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
                 ia_fail = True
                 ok_both = False
             if not in_roster:
+                join_fail = True
+                ok_both = False
+            elif analyze is not None and not _media_identity_query_succeeded(
+                identity_results_by_stack[stack_id], analyze.get("stack_media_id")
+            ):
                 join_fail = True
                 ok_both = False
         if present.count(True) == 1:
@@ -617,13 +633,11 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
     else:
         detection_set = [e.media_id for e in candidate_entries]
     zero_det = 0
-    exports_by = {stack_id: load_leg_exports(root, stack_id) for stack_id in stacks}
     for entry in accepted:
         for stack_id in stacks:
-            export = exports_by[stack_id]
-            rows = _unwrap_rows(export.media_identities, what="media_identities")
             stack_mid = join_by[stack_id][entry.media_id]["stack_media_id"]
-            if not any(isinstance(r, dict) and r.get("media_id") == stack_mid for r in rows):
+            query_result = identity_results_by_stack[stack_id].get(stack_mid)
+            if query_result is not None and not query_result["rows"]:
                 zero_det += 1
                 break
 
@@ -663,6 +677,39 @@ def compute_accepted_set(run_dir: Path | str) -> AcceptedSet:
         computed_at=datetime.now(timezone.utc).isoformat(),
         join_by_stack=join_by,
     )
+
+
+def _media_identity_results_by_id(payload: Any) -> dict[int, dict[str, Any]]:
+    if not isinstance(payload, list):
+        return {}
+    results: dict[int, dict[str, Any]] = {}
+    invalid: set[int] = set()
+    for result in payload:
+        if not isinstance(result, dict):
+            continue
+        media_id = result.get("media_id")
+        if not isinstance(media_id, int) or isinstance(media_id, bool):
+            continue
+        if (
+            not isinstance(result.get("query_succeeded"), bool)
+            or not isinstance(result.get("rows"), list)
+            or media_id in results
+            or media_id in invalid
+        ):
+            results.pop(media_id, None)
+            invalid.add(media_id)
+            continue
+        results[media_id] = result
+    return results
+
+
+def _media_identity_query_succeeded(
+    results_by_id: dict[int, dict[str, Any]], media_id: Any
+) -> bool:
+    if not isinstance(media_id, int) or isinstance(media_id, bool):
+        return False
+    result = results_by_id.get(media_id)
+    return result is not None and result.get("query_succeeded") is True
 
 
 def write_accepted_set(run_dir: Path, accepted: AcceptedSet) -> Path:
@@ -856,19 +903,19 @@ def _occasion_resampling_info(manifest: GoldenManifest) -> tuple[dict[int, str],
 
 
 def _is_golden150_corpus(run_dir: Path) -> bool:
-    """Recognize the frozen golden150 corpus by the pinned run's source name."""
-    run_path = run_dir / "run.json"
-    if run_path.is_symlink() or not run_path.is_file():
-        return False
+    """Recognize the approved frozen corpus by its verified manifest content pin."""
+    pin_path = run_dir / "manifest.sha"
+    if pin_path.is_symlink() or not pin_path.is_file():
+        raise BenchError("manifest_sha_missing", "run-dir has no manifest.sha pin")
     try:
-        run_doc = json.loads(run_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
-    if not isinstance(run_doc, dict) or not isinstance(run_doc.get("manifest_path"), str):
-        return False
-    # Normalize Windows separators too: runs can be moved between hosts.
-    source_name = run_doc["manifest_path"].replace("\\", "/").rsplit("/", 1)[-1]
-    return source_name.startswith("golden150-") and source_name.endswith(".json")
+        pin = pin_path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise BenchError("manifest_sha_invalid", "run-dir manifest.sha is unreadable") from exc
+    if not _MANIFEST_SHA_RE.fullmatch(pin):
+        raise BenchError("manifest_sha_invalid", "run-dir manifest.sha is not a sha256 digest")
+    # compute_accepted_set verified that this pin matches the run-local
+    # manifest.json bytes before score_head_to_head classifies the corpus.
+    return pin == GOLDEN150_MANIFEST_SHA256
 
 
 def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:

@@ -113,6 +113,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		'lifecycle_reason',
 		'timing',
 	);
+	private const FAILURE_COUNTER_LOCK_ATTEMPTS = 2;
 
 	private ?RecognitionProxyPolicy $proxy_policy = null;
 	private ?RecognitionEndpointResolver $endpoint_resolver = null;
@@ -811,6 +812,12 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 
 		$failures = $this->increment_failure_counter( $failure_key );
+		if ( null === $failures ) {
+			// Do not risk a lost transient increment when the lock is unavailable.
+			// Open conservatively to stop further backend traffic in this case.
+			set_transient( $circuit_key, 1, $this->circuit_open_seconds() );
+			return;
+		}
 
 		$threshold = (int) apply_filters( 'acx_proxy_circuit_failure_threshold', 2 );
 		$threshold = max( 1, $threshold );
@@ -835,20 +842,18 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 * table, so it is the deployment-agnostic choice over wp_cache_incr (which
 	 * only counts per-request without a persistent object cache).
 	 *
-	 * The lock is best-effort: if it cannot be acquired (timeout) or $wpdb is
-	 * unavailable, the increment still runs unguarded so behaviour never
-	 * degrades below the pre-CON-5 baseline. Two cases keep the guarantee a
-	 * ceiling rather than an absolute: a GET_LOCK timeout falls through to the
-	 * unguarded RMW, and on DB-split deployments (HyperDB/LudicrousDB) the
-	 * GET_LOCK SELECT may route to a replica while the transient write lands on
-	 * the master, so the lock can guard a different connection than the
-	 * mutation. Both are tolerable here — the critical section is two
-	 * sub-millisecond transient ops against a 1s lock timeout, so the realistic
-	 * contended path acquires the lock rather than timing out.
+	 * A timeout is retried once to let a contending request finish its transient
+	 * update. If the lock remains unavailable, no read-modify-write is attempted:
+	 * the caller opens the breaker conservatively instead. This preserves the
+	 * counter's atomicity and avoids a burst of backend traffic when its failure
+	 * state cannot be updated safely.
 	 */
-	private function increment_failure_counter( string $failure_key ): int {
+	private function increment_failure_counter( string $failure_key ): ?int {
 		$lock_name = 'acx_cb_' . md5( $failure_key );
 		$locked    = $this->acquire_named_lock( $lock_name );
+		if ( ! $locked ) {
+			return null;
+		}
 
 		try {
 			$failures = (int) get_transient( $failure_key );
@@ -872,9 +877,19 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$timeout = (int) apply_filters( 'acx_proxy_circuit_lock_timeout_seconds', 1 );
 		$timeout = max( 0, $timeout );
 
-		$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, $timeout ) );
+		for ( $attempt = 0; $attempt < self::FAILURE_COUNTER_LOCK_ATTEMPTS; ++$attempt ) {
+			$acquired = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $lock_name, $timeout ) );
+			if ( '1' === (string) $acquired ) {
+				return true;
+			}
+			// MySQL returns 0 on timeout. Retry that contention case once;
+			// NULL/false indicates the lock operation itself is unavailable.
+			if ( '0' !== (string) $acquired ) {
+				return false;
+			}
+		}
 
-		return '1' === (string) $acquired;
+		return false;
 	}
 
 	private function release_named_lock( string $lock_name ): void {

@@ -72,6 +72,60 @@ class BlobsControllerTest extends TestCase
         $this->assertSame('recognition_blob_token_invalid', $result->get_error_code());
     }
 
+    public function testSignedBlobUrlExpiresWithinFiveMinutes(): void
+    {
+        $now = time();
+        $url = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/private-media');
+        $parts = parse_url($url);
+        $query = [];
+        parse_str($parts['query'] ?? '', $query);
+
+        $this->assertGreaterThan($now, (int) ($query['expires'] ?? 0));
+        $this->assertLessThanOrEqual(
+            $now + 300,
+            (int) ($query['expires'] ?? 0),
+            'Signed blob URLs should expire within five minutes.'
+        );
+    }
+
+    public function testBlobTokenRequiresTheViewerThatReceivedIt(): void
+    {
+        $GLOBALS['__ac_current_user_id'] = 17;
+        $expires = time() + 300;
+        $token = BlobUrlRewriter::sign('job-x', 'private-media', $expires);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/blobs/job-x/private-media', [
+            'job_id' => 'job-x',
+            'media_id' => 'private-media',
+            'expires' => $expires,
+            'token' => $token,
+        ]);
+        $controller = new BlobsController();
+
+        $this->assertTrue($controller->verify_blob_token($request));
+
+        $GLOBALS['__ac_current_user_id'] = 18;
+        $result = $controller->verify_blob_token($request);
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('recognition_blob_token_invalid', $result->get_error_code());
+    }
+
+    public function testBlobTokenRequiresAnAuthenticatedViewer(): void
+    {
+        $GLOBALS['__ac_current_user_id'] = 0;
+        $expires = time() + 300;
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/blobs/job-x/private-media', [
+            'job_id' => 'job-x',
+            'media_id' => 'private-media',
+            'expires' => $expires,
+            'token' => BlobUrlRewriter::sign('job-x', 'private-media', $expires),
+        ]);
+
+        $result = (new BlobsController())->verify_blob_token($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('recognition_blob_auth_required', $result->get_error_code());
+    }
+
     /**
      * BR-137: non-loopback blob proxy must use wp_safe_remote_get.
      * Data-driven so a fixture-host-only chooser goes RED (R4G-BR-02).

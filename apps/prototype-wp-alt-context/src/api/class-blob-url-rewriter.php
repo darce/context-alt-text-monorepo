@@ -27,9 +27,8 @@ use const PHP_QUERY_RFC3986;
  *
  * `<img>` requests also can't carry the WP REST `X-WP-Nonce` header, so we
  * cannot guard the proxy route with the standard cookie+nonce permission
- * callback. Instead, this rewriter mints a self-authenticating capability
- * URL: the rewritten URL carries `expires` + `token` query args, where
- * `token = HMAC-SHA256(wp_salt('auth'), "<route>:<job>:<media>:<expires>:<query>")`.
+ * callback. Instead, this rewriter mints a signed URL that binds the route,
+ * media, expiry, query, and current viewer ID into an HMAC.
  * The matching `BlobsController::verify_blob_token` permission callback
  * recomputes the HMAC and compares it in constant time, only allowing the
  * fetch when the signature matches and `expires` is in the future.
@@ -42,7 +41,7 @@ class BlobUrlRewriter {
 	private const RECOGNITION_FACE_THUMB_PREFIX = '/recognition/face-thumbs/';
 	private const FILE_SCHEME                   = 'file://';
 	private const BLOB_SUFFIX                   = '.bin';
-	private const TOKEN_TTL_SECONDS             = 3600;
+	private const TOKEN_TTL_SECONDS             = 300;
 	private const FACE_THUMB_QUERY_KEYS         = array( 'x', 'y', 'width', 'height' );
 	// Keep this bound aligned with docs/agentic/contracts/clustering-api.md
 	// "Face thumbnail crop contract" and the backend emitter/reader in
@@ -130,6 +129,12 @@ class BlobUrlRewriter {
 			}
 		}
 
+		// Signed proxy URLs are only useful inside an authenticated viewer's
+		// session. Do not mint a capability that an anonymous request could use.
+		if ( self::current_viewer_id() <= 0 ) {
+			return $value;
+		}
+
 		$relative = 'acx/v1/recognition/' . $route_kind . '/' . $job_id . '/' . $media_id;
 		$base_url = \function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
 
@@ -203,9 +208,14 @@ class BlobUrlRewriter {
 				$media_id,
 				(string) $expires,
 				self::canonical_query_string( $query_args ),
+				(string) self::current_viewer_id(),
 			)
 		);
 		return \hash_hmac( 'sha256', $payload, self::secret() );
+	}
+
+	private static function current_viewer_id(): int {
+		return \function_exists( 'get_current_user_id' ) ? (int) \get_current_user_id() : 0;
 	}
 
 	public static function normalize_face_thumb_query_args( array $query_args ): ?array {

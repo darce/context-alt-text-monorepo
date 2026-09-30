@@ -28,6 +28,7 @@ from scripts.eval_harness.manifest import (
     AnnotationMode,
     GoldenEntry,
     GoldenManifest,
+    LEGACY_IMPORT_CAPTURE_SESSION_ID,
     ScoreInvariant,
     SUPPORTED_MANIFEST_VERSION,
     refusal_explanation,
@@ -199,7 +200,14 @@ def bootstrap_paired_delta(
                 split.extend(idxs)
         if full and partial == 0 and not split:
             units = full
-            resampling_unit = "occasion"
+            has_image_units = any(occasion_ids[idxs[0]].startswith("image:") for idxs in full)
+            has_occasion_units = any(not occasion_ids[idxs[0]].startswith("image:") for idxs in full)
+            if has_image_units and has_occasion_units:
+                resampling_unit = "occasion+image"
+            elif has_image_units:
+                resampling_unit = "image"
+            else:
+                resampling_unit = "occasion"
         elif full and (partial or split):
             units = full + [[i] for i in split]
             resampling_unit = "occasion+image"
@@ -318,6 +326,8 @@ def assign_tier(cell: str, ctx: dict[str, Any]) -> tuple[CrossbenchTier, str | N
         return CrossbenchTier.DIRECTIONAL, None
     if ctx.get("native_frame") or "frame_fir5_native" in str(cell):
         return CrossbenchTier.DIRECTIONAL, "frame_fir5_native"
+    if ctx.get("golden150_provenance"):
+        return CrossbenchTier.DIRECTIONAL, "golden150_bias_bound_pending"
     confirmatory_eligible = bool(ctx.get("primary") or ctx.get("holm_significant", False))
     if confirmatory_eligible:
         if "bootstrap_status" not in ctx:
@@ -820,6 +830,47 @@ def _cell_id(metric: str, frame_key: str, label_key: str) -> str:
     return f"{metric}@{frame}/{label}"
 
 
+def _occasion_resampling_info(manifest: GoldenManifest) -> tuple[dict[int, str], dict[str, int]]:
+    """Map media to known capture sessions and retain each session's manifest size."""
+    occasion_by_media: dict[int, str] = {}
+    full_size: dict[str, int] = {}
+    for entry in manifest.entries:
+        sessions: set[str] = set()
+        session_unknown = not entry.face_boxes
+        for box in entry.face_boxes:
+            lineage = box.lineage
+            session = None if lineage is None else lineage.capture_session_id
+            if not session or session == LEGACY_IMPORT_CAPTURE_SESSION_ID:
+                session_unknown = True
+            else:
+                sessions.add(session)
+        if not session_unknown and len(sessions) == 1:
+            occasion_id = f"occasion:{next(iter(sessions))}"
+        else:
+            # A manifest entry without one unambiguous occasion remains an
+            # independent media unit; never merge unrelated unknown occasions.
+            occasion_id = f"image:{entry.media_id}"
+        occasion_by_media[entry.media_id] = occasion_id
+        full_size[occasion_id] = full_size.get(occasion_id, 0) + 1
+    return occasion_by_media, full_size
+
+
+def _is_golden150_corpus(run_dir: Path) -> bool:
+    """Recognize the frozen golden150 corpus by the pinned run's source name."""
+    run_path = run_dir / "run.json"
+    if run_path.is_symlink() or not run_path.is_file():
+        return False
+    try:
+        run_doc = json.loads(run_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(run_doc, dict) or not isinstance(run_doc.get("manifest_path"), str):
+        return False
+    # Normalize Windows separators too: runs can be moved between hosts.
+    source_name = run_doc["manifest_path"].replace("\\", "/").rsplit("/", 1)[-1]
+    return source_name.startswith("golden150-") and source_name.endswith(".json")
+
+
 def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
     missing = [
         stack_id for stack_id in stacks if not (root / "legs" / stack_id / "preflight.json").is_file()
@@ -962,6 +1013,8 @@ def score_head_to_head(run_dir: Path | str) -> Path:
 
     accepted_entries = [e for e in manifest.entries if e.media_id in set(accepted.manifest_media_ids)]
     detection_entries = [e for e in accepted_entries if e.media_id in set(accepted.detection_scoring_set)]
+    occasion_by_media, occasion_full_size = _occasion_resampling_info(manifest)
+    golden150_provenance = _is_golden150_corpus(root)
     detection_ids = set(accepted.detection_scoring_set)
     exhaustiveness_ok = len(detection_ids) == len(accepted_entries)
     floor_ok = accepted.accepted_set_size >= accepted.resolved_floor_count
@@ -976,6 +1029,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             )
         path_to_mid[entry.path] = entry.media_id
     counts_by: dict[str, dict[str, list[ImageCounts]]] = {cell: {s: [] for s in stacks} for cell in named}
+    counts_media_ids_by_cell: dict[str, list[int]] = {}
     cells: list[dict[str, Any]] = []
 
     for stack_id in stacks:
@@ -1072,6 +1126,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                         continue
                     if cell in counts_by:
                         series: list[ImageCounts] = []
+                        series_media_ids: list[int] = []
                         for entry in population:
                             if metric.startswith("detection"):
                                 row = det_by_mid.get(entry.media_id)
@@ -1081,6 +1136,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                                         f"detection population media_id={entry.media_id} has no metric row",
                                     )
                                 series.append(_detection_counts(row))
+                                series_media_ids.append(entry.media_id)
                             else:
                                 row = ident_by_mid.get(entry.media_id)
                                 if row is None:
@@ -1091,7 +1147,9 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                                 counted = _ident_counts(row)
                                 if counted is not None:
                                     series.append(counted)
+                                    series_media_ids.append(entry.media_id)
                         counts_by[cell][stack_id] = series
+                        counts_media_ids_by_cell[cell] = series_media_ids
                     cells.append(
                         {
                             "cell": cell,
@@ -1149,6 +1207,11 @@ def score_head_to_head(run_dir: Path | str) -> Path:
                     series_b,
                     seed=pair.bootstrap_seed,
                     metric=boot_metric,
+                    occasion_ids=[
+                        occasion_by_media[media_id]
+                        for media_id in counts_media_ids_by_cell[cell_name]
+                    ],
+                    occasion_full_size=occasion_full_size,
                     cell=cell_name,
                 )
             except BenchError as exc:
@@ -1199,6 +1262,7 @@ def score_head_to_head(run_dir: Path | str) -> Path:
             "exhaustiveness_ok": exhaustiveness_ok,
             "count_only": False,
             "bootstrap_status": boot_status,
+            "golden150_provenance": golden150_provenance,
         }
         cell.pop("_is_detection", None)
         tier, reason = assign_tier(name, ctx)

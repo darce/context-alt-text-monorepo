@@ -1012,6 +1012,14 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
 });
 
 describe('ux-map render parity (owned maps)', () => {
+  it('declares the review-suggestions group-card error state in the map contract', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const screen = raw.screens.find((candidate) => candidate.id === 'workbench-scan');
+    const zone = screen?.zones?.find((candidate) => candidate.id === 'z-review-suggestions-group-card');
+
+    expect(zone?.states ?? []).toContain('error');
+  });
+
   it.each(GENERATED_MAPS)('%s.md is structurally equal to its JSON render projection', (mapRef) => {
     const raw = readMapJson(mapRef) as UxMapRenderSource;
     const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');

@@ -77,7 +77,7 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 | `z-job-cta` | Scan / analyze CTAs + job progress | job | default, loading, error |
 | `z-identity-preview` | Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows) | ai_review | default, empty, loading, error, degraded, offline |
 | `z-review-suggestions-header` | Review Suggestions queue header / count (default also covers the filter-narrowed count; degraded = repair / reduced-capability mode) | status | default, loading, empty, error, degraded |
-| `z-review-suggestions-group-card` | Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image) | ai_review | default, loading, degraded, edge_input |
+| `z-review-suggestions-group-card` | Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image) | ai_review | default, loading, error, degraded, edge_input |
 
 ```
 +------------------------------------------------------------+

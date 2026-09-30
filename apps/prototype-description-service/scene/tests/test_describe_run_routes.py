@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
+from recognition.domain.portal_contracts import UsageTicket
+from recognition.interface_adapters.http.deps.usage_admission import get_usage_admission_service
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
     DescribeRunTerminalCode,
@@ -29,7 +31,58 @@ from scene.domain.description import DescriptionAdapterKind, DescriptionResultTi
 from scene.infrastructure.vlm.unavailable_adapter import UnavailableDescriptionAdapter
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
-from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
+from scene.tests.test_describe_run_worker import TENANT_ID, _client as _worker_client, _submit
+
+
+class _PassAdmission:
+    async def reserve(
+        self,
+        tenant_id,
+        *,
+        idempotency_key,
+        job_id,
+        cost_units,
+        operation_id=None,
+        request_fingerprint=None,
+        queue_bytes=0,
+    ):
+        del queue_bytes
+        return UsageTicket(
+            uuid.uuid4(),
+            tenant_id,
+            idempotency_key,
+            cost_units,
+            operation_id=operation_id or idempotency_key,
+            request_fingerprint=request_fingerprint or "",
+            job_id=job_id,
+            fence_token="fence-routes-run",
+        )
+
+    async def commit(self, ticket):
+        del ticket
+
+    async def release(self, ticket):
+        del ticket
+
+    async def commit_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+    async def release_fenced(self, ticket, *, fence_token):
+        del ticket, fence_token
+
+
+def _install_admission(client) -> _PassAdmission:
+    admission = _PassAdmission()
+    client.app.state.usage_admission_service = admission
+    client.app.dependency_overrides[get_usage_admission_service] = lambda: admission
+    return admission
+
+
+@contextmanager
+def _client():
+    with _worker_client() as (client, sf):
+        _install_admission(client)
+        yield client, sf
 
 
 def _no_worker(monkeypatch):
@@ -619,6 +672,7 @@ def test_cancel_route_404_for_unknown_run(monkeypatch):
 def _demo_run_client(*, recognition_quota: int = 5, non_demo: bool = False):
     """Describe/run client — shared harness with run tables (DS2B-PM-H-02)."""
     with demo_quota_client(recognition_quota=recognition_quota, non_demo=non_demo, tables="run") as ctx:
+        _install_admission(ctx[0])
         yield ctx
 
 

@@ -1,0 +1,88 @@
+{
+  "lane": "drfu-08",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 6285,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:23 — discordant paired image values assert ci_half_width > 0.05 and DIRECTIONAL with ci_half_width_above_precision_floor; the identical-leg zero-width fixture is separate.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the red fixture now discriminates the half-width guard from identical legs."
+    },
+    {
+      "db_id": 6287,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:71 — on the pinned 1000x1000 geometry, the x=700 prediction asserts zero IoU matches and FP=FN=1 while count-only P/R stays perfect.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the translation fixture pins geometry below the 0.5 IoU threshold."
+    },
+    {
+      "db_id": 6289,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:137 — verification commands include scene/tests/test_eval_harness_face_metrics.py; it is also listed in the S2 proof at :811 and success criteria at :1218.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the harness test is an explicit verification gate."
+    },
+    {
+      "db_id": 6332,
+      "outcome": "REFUTED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:659-660 says accepted_set is for identification and the primary endpoint but detection_scoring_set is for all detection endpoints; :983 pins primary_endpoint to detection_recall. apps/prototype-description-service/scripts/bench/score_report.py:902,986-987 filters detection entries through detection_scoring_set and bootstraps detection_recall on that population, leaving the normative primary-population conflict unresolved.",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "Clarify that the pinned primary detection_recall endpoint uses detection_scoring_set and that accepted_set is the population for identification endpoints."
+    },
+    {
+      "db_id": 6344,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:253 writes terminal_ingest_outcome=success on the ingest record (and :291 on successful analyze); scripts/bench/score_report.py:371,374 reads that same key and accepts only success.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the shipped writer and reader share an explicit field name and success token."
+    },
+    {
+      "db_id": 6345,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:142-148 writes legs/<stack_id>/leg_outcome.json with cluster_gate_refused; scripts/bench/tests/test_cluster_gate.py:65-66 asserts the artifact and refusal code.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the refused-leg artifact is created and asserted."
+    },
+    {
+      "db_id": 6347,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/eval_harness/remote_client.py:180-210 separates analyze job-id creation from terminal wait_job polling; scripts/bench/driver.py:249-253 records ingest success and :258,291 waits before persisting analyze success with stack_media_id.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; the current driver defines the ingest and analyze record sequence explicitly."
+    },
+    {
+      "db_id": 6348,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:51-70 enumerates clusters, fetches each cluster's members, and persists media_identities.json, clusters.json, and cluster_members.json under the leg exports directory.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No fix needed; export_leg implements and persists the cluster-member aggregation."
+    }
+  ]
+}

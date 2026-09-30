@@ -19,17 +19,16 @@ from scripts.bench.corpus import (
     load_bench_manifest,
     resolve_media_bytes,
 )
-from scripts.eval_harness.manifest import load_manifest
-from scripts.bench.export_map import export_leg
+from scripts.bench.export_map import LEG_EXPORT_REQUIRED_FILES, export_leg
 from scripts.bench.production_shaped_guard import assert_named_bench_stack
-from scripts.bench.stack_pair import BenchError, FIR23_STACK_ALLOWLIST, StackEndpoint, StackPairConfig
+from scripts.bench.stack_pair import FIR23_STACK_ALLOWLIST, BenchError, StackEndpoint, StackPairConfig
 from scripts.bench.status import (
     ANALYZE_PARTIAL_SUCCESS,
     CLUSTER_SUCCESS_STATUSES,
     ItemOutcome,
-    ItemPhase,
     RunPhase,
 )
+from scripts.eval_harness.manifest import load_manifest
 from scripts.eval_harness.remote_client import RemoteSceneClient
 
 LICENSE_BANNER = (
@@ -343,7 +342,7 @@ def run_leg(
             if not decision.admits:
                 return outcomes
         exports = leg_dir / "exports"
-        needed = ("media_identities.json", "clusters.json", "cluster_members.json")
+        needed = LEG_EXPORT_REQUIRED_FILES
         if not all((exports / name).is_file() for name in needed):
             export_leg(client, root, endpoint.stack_id)
         return outcomes
@@ -493,7 +492,7 @@ def _leg_complete(run_dir: Path, stack_id: str) -> bool:
     if _terminal_leg_refusal(leg / "leg_outcome.json"):
         return False
     exports = leg / "exports"
-    needed = ("media_identities.json", "clusters.json", "cluster_members.json")
+    needed = LEG_EXPORT_REQUIRED_FILES
     return _cluster_status_ok(leg / "cluster_job.json") and all((exports / name).is_file() for name in needed)
 
 

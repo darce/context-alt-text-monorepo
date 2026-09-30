@@ -29,32 +29,48 @@ _LINEAGE = {
 }
 
 
-def _named_box(name: str) -> dict[str, Any]:
+def _named_box(
+    name: str | None,
+    *,
+    x: float = 0.5,
+    y: float = 0.4,
+    w: float = 0.2,
+    h: float = 0.3,
+) -> dict[str, Any]:
     return {
-        "x": 0.5,
-        "y": 0.4,
-        "w": 0.2,
-        "h": 0.3,
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
         "name": name,
         "source": "operator",
-        "lineage": _LINEAGE,
+        "lineage": {**_LINEAGE, "decision": "named" if name else "stranger"},
     }
 
 
-def _manifest_doc(*, mode: str, boxed: bool, n: int = 1) -> dict[str, Any]:
+def _manifest_doc(
+    *,
+    mode: str,
+    boxed: bool,
+    n: int = 1,
+    face_boxes_by_image: list[list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
     # VLM6-DELTA-03: n>1 replicates the single canonical entry under distinct
     # media_ids/paths so a test can clear SCORE_PASS_MIN_SCORED_IMAGES (=5,
     # branch-only category-vacuity gate) without changing per-entry semantics.
     return {
         "manifest_version": 3,
         "annotation_mode": mode,
+        "iou_threshold": 0.5,
         "roster": ["Alice Example", "Zed Zeta"],
         "entries": [
             {
                 "path": f"mock_images/alice{i}.jpg",
                 "sha256": "a" * 64,
                 "media_id": i,
-                "face_count": 1,
+                "face_count": (
+                    len(face_boxes_by_image[i - 1]) if face_boxes_by_image is not None else 1
+                ),
                 "present_identities": ["Alice Example"],
                 "context_pack": {"title": "t"},
                 "base_caption": "Alice Example.",
@@ -95,14 +111,23 @@ def _manifest_doc(*, mode: str, boxed: bool, n: int = 1) -> dict[str, Any]:
                 ],
                 "policy": {"recognition_enabled": True},
                 "provenance": {"source": "fixture", "license": "fixture"},
-                "face_boxes": [_named_box("Alice Example")] if boxed else [],
+                "face_boxes": (
+                    face_boxes_by_image[i - 1]
+                    if face_boxes_by_image is not None
+                    else [_named_box("Alice Example")] if boxed else []
+                ),
             }
             for i in range(1, n + 1)
         ],
     }
 
 
-def _run_record(*, face_count: int = 3, n: int = 1) -> dict[str, Any]:
+def _run_record(
+    *,
+    face_count: int = 3,
+    n: int = 1,
+    prediction_boxes_by_image: list[list[dict[str, float]]] | None = None,
+) -> dict[str, Any]:
     return {
         "schema": "acx-eval/v1",
         "kind": "run_record",
@@ -124,18 +149,35 @@ def _run_record(*, face_count: int = 3, n: int = 1) -> dict[str, Any]:
                     "alt_text_draft": "Alice Example in the foreground by the pool.",
                     "visual_facts": {"objects": []},
                 },
-                "identities": [
-                    {
-                        "name": "Alice Example",
-                        "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
-                        "unpositioned": False,
-                    }
-                ],
+                "identities": (
+                    [
+                        {
+                            "name": "Alice Example",
+                            "bbox": bbox,
+                            "unpositioned": False,
+                        }
+                        for bbox in prediction_boxes_by_image[i - 1]
+                    ]
+                    if prediction_boxes_by_image is not None
+                    else [
+                        {
+                            "name": "Alice Example",
+                            "bbox": {"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0},
+                            "unpositioned": False,
+                        }
+                    ]
+                ),
+                "image_width": 100,
+                "image_height": 100,
                 # VLM6-DELTA-03: clears identity_ordering category-vacuity
                 # (report.py score_run_record counts ordering_positional only
                 # when this equals IdentityOrdering.POSITIONAL).
                 "identity_ordering": "positional",
-                "face_count": face_count,
+                "face_count": (
+                    len(prediction_boxes_by_image[i - 1])
+                    if prediction_boxes_by_image is not None
+                    else face_count
+                ),
                 "error": None,
             }
             for i in range(1, n + 1)
@@ -150,6 +192,8 @@ def _write_score_inputs(
     boxed: bool,
     record: dict[str, Any] | None = None,
     n: int = 1,
+    face_boxes_by_image: list[list[dict[str, Any]]] | None = None,
+    prediction_boxes_by_image: list[list[dict[str, float]]] | None = None,
 ) -> tuple[Path, Path]:
     # VLM6-DELTA-02: stamp the record's provenance.manifest_sha256 with the real
     # fetch-time hash of the manifest actually written to disk. A dummy sha
@@ -161,10 +205,24 @@ def _write_score_inputs(
     import scripts.eval_harness.manifest as man_mod
 
     man_path = tmp_path / f"{mode}.json"
-    man_path.write_text(json.dumps(_manifest_doc(mode=mode, boxed=boxed, n=n)), encoding="utf-8")
+    man_path.write_text(
+        json.dumps(
+            _manifest_doc(
+                mode=mode,
+                boxed=boxed,
+                n=n,
+                face_boxes_by_image=face_boxes_by_image,
+            )
+        ),
+        encoding="utf-8",
+    )
     loaded_manifest = man_mod.load_manifest(str(man_path), skip_hash_verification=True)
     fetch_manifest_sha256 = cli_mod._manifest_sha(loaded_manifest)
-    record = dict(record) if record is not None else _run_record(n=n)
+    record = (
+        dict(record)
+        if record is not None
+        else _run_record(n=n, prediction_boxes_by_image=prediction_boxes_by_image)
+    )
     record = json.loads(json.dumps(record))  # defensive deep copy before mutating provenance
     record.setdefault("provenance", {})["manifest_sha256"] = fetch_manifest_sha256
     rec_path = tmp_path / "run.json"
@@ -201,12 +259,60 @@ def test_score_gate_exits_0_when_scored_and_published_report_agree_clean(
 
     # n=5 clears SCORE_PASS_MIN_SCORED_IMAGES (branch-only category-vacuity
     # gate); exhaustive + boxed GT is genuinely clean (no refusal at all).
-    man_path, rec_path = _write_score_inputs(tmp_path, mode="exhaustive", boxed=True, n=5)
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        record=_run_record(face_count=1, n=5),
+        n=5,
+    )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
     published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
     assert published["faces"]["detection"].get("refused") is not True
+    assert published["faces"]["detection"]["tp"] == 5
+    assert published["faces"]["detection"]["fp"] == 0
+    assert published["faces"]["detection"]["fn"] == 0
     assert published["verdict"]["verdict"] == "pass"
+
+
+def test_score_gate_publishes_geometry_matched_detection_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    face_boxes_by_image = [
+        [_named_box("Alice Example")],
+        [_named_box("Alice Example", x=0.9)],
+        [_named_box("Alice Example")],
+        [_named_box("Alice Example"), _named_box(None, x=0.9)],
+        [_named_box("Alice Example")],
+    ]
+    prediction_boxes_by_image = [
+        [{"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0}],
+        [{"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0}],
+        [
+            {"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0},
+            {"x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0},
+        ],
+        [{"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0}],
+        [{"x": 40.0, "y": 25.0, "width": 20.0, "height": 30.0}],
+    ]
+    man_path, rec_path = _write_score_inputs(
+        tmp_path,
+        mode="exhaustive",
+        boxed=True,
+        n=5,
+        face_boxes_by_image=face_boxes_by_image,
+        prediction_boxes_by_image=prediction_boxes_by_image,
+    )
+    import scripts.eval_harness.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    cli_mod.main(["score", "--manifest", str(man_path), "--run-record", str(rec_path)])
+    published = json.loads(rec_path.with_name("run-report.json").read_text(encoding="utf-8"))
+    detection = published["faces"]["detection"]
+    assert detection["tp"] == 4
+    assert detection["fp"] == 2
+    assert detection["fn"] == 2
 
 
 def test_score_gate_exits_category_vacuity_when_roster_only_detection_is_unconsented(
@@ -584,7 +690,9 @@ def test_score_exits_1_when_run_record_is_aborted(
     record = _run_record(face_count=1)
     record["aborted"] = True
     man_path, rec_path = _write_score_inputs(
-        tmp_path, mode="exhaustive", boxed=True, record=record
+        # This run-record has identity rows but no detector localization rows;
+        # use roster-only so the fixture isolates the aborted-record gate.
+        tmp_path, mode="roster_only", boxed=True, record=record
     )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     with pytest.raises(SystemExit) as exc:

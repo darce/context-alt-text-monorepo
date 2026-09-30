@@ -1,17 +1,88 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
 
 from db.models import IdentityMember, Tenant
 from db.models import MediaIdentity as MediaIdentityModel
+from db.models.identity import ClusterMergeReceipt
+from recognition.application.orchestration.cluster_merge import _ensure_same_space_merge
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.scan.service import ScanService
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import CrossSpaceMergeError, IdentityCluster
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
+
+
+def _embedding_models_result(models: list[str | None]) -> Mock:
+    result = Mock()
+    result.scalars.return_value.all.return_value = models
+    return result
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_allows_unstamped_empty_target() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _embedding_models_result(["buffalo_l@insightface"]),
+        _embedding_models_result([]),
+    ]
+
+    await _ensure_same_space_merge(AsyncMock(), source_id, target_id, session=session)
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_rejects_two_stamped_spaces() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _embedding_models_result(["space-a"]),
+        _embedding_models_result(["space-b"]),
+    ]
+
+    with pytest.raises(CrossSpaceMergeError) as exc_info:
+        await _ensure_same_space_merge(AsyncMock(), source_id, target_id, session=session)
+
+    assert exc_info.value.source_model == "space-a"
+    assert exc_info.value.target_model == "space-b"
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_rejects_unstamped_source() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _embedding_models_result([None]),
+        _embedding_models_result(["space-a"]),
+    ]
+
+    with pytest.raises(CrossSpaceMergeError) as exc_info:
+        await _ensure_same_space_merge(AsyncMock(), source_id, target_id, session=session)
+
+    assert exc_info.value.source_model is None
+    assert exc_info.value.target_model == "space-a"
+
+
+@pytest.mark.asyncio
+async def test_merge_space_guard_rejects_unstamped_source_representatives() -> None:
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+    cluster_repo = AsyncMock()
+    cluster_repo.get_all_representatives.side_effect = [
+        [SimpleNamespace(embedding_model=None, embedding=[0.1])],
+        [SimpleNamespace(embedding_model="space-a", embedding=[0.2])],
+    ]
+
+    with pytest.raises(CrossSpaceMergeError):
+        await _ensure_same_space_merge(cluster_repo, source_id, target_id)
 
 
 @pytest.mark.asyncio
@@ -145,8 +216,71 @@ async def test_merge_flow_records_moved_member_provenance(
     assert refreshed_identity is not None
     assert refreshed_identity.moved_by_merge_id == uuid.UUID(moved_by_merge_id)
 
+    receipt = await db_session.get(ClusterMergeReceipt, uuid.UUID(moved_by_merge_id))
+    assert receipt is not None
+    assert [str(moved_id) for moved_id in receipt.moved_identity_ids] == [str(identity_id)]
+
     moved_members = await member_repository.get_by_cluster(target.id)
     assert [member.identity_id for member in moved_members] == [str(identity_id)]
+
+
+@pytest.mark.asyncio
+async def test_merge_flow_rejects_members_from_different_embedding_spaces(
+    db_session,
+    tenant: Tenant,
+    cluster_service: ClusterService,
+    cluster_repository: SqlAlchemyClusterRepository,
+    member_repository: SqlAlchemyMemberRepository,
+) -> None:
+    tenant_id = str(tenant.id)
+    source = await cluster_repository.save(
+        IdentityCluster(tenant_id=tenant_id, label="Source", is_labeled=True, identity_count=1)
+    )
+    target = await cluster_repository.save(
+        IdentityCluster(tenant_id=tenant_id, label="Target", is_labeled=True, identity_count=1)
+    )
+
+    source_identity_id = uuid.uuid4()
+    target_identity_id = uuid.uuid4()
+    for identity_id, media_id, embedding_model in (
+        (source_identity_id, 9992, "space-a"),
+        (target_identity_id, 9993, "space-b"),
+    ):
+        db_session.add(
+            MediaIdentityModel(
+                id=identity_id,
+                tenant_id=tenant.id,
+                media_id=media_id,
+                media_url=f"http://example.test/{media_id}.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=12,
+                bbox_height=12,
+                confidence=0.97,
+                embedding=[0.1] * 512,
+                embedding_model=embedding_model,
+            )
+        )
+    await db_session.flush()
+    await member_repository.add_member(source.id, identity_id=str(source_identity_id), similarity=0.94)
+    await member_repository.add_member(target.id, identity_id=str(target_identity_id), similarity=0.94)
+
+    with pytest.raises(CrossSpaceMergeError) as exc_info:
+        await cluster_service.merge_cluster(
+            source_cluster_id=source.id,
+            tenant_id=tenant_id,
+            target_cluster_id=target.id,
+            target_label="Merged Target",
+        )
+
+    assert exc_info.value.source_model == "space-a"
+    assert exc_info.value.target_model == "space-b"
+    assert [member.identity_id for member in await member_repository.get_by_cluster(source.id)] == [
+        str(source_identity_id)
+    ]
+    assert [member.identity_id for member in await member_repository.get_by_cluster(target.id)] == [
+        str(target_identity_id)
+    ]
 
 
 @pytest.mark.asyncio

@@ -74,6 +74,18 @@ def test_partial_occasion_splits() -> None:
     assert interval.resampling_unit == "occasion+image"
 
 
+def test_unknown_occasions_remain_image_resampling_units() -> None:
+    interval = bootstrap_paired_delta(
+        [1.0, 0.0],
+        [0.0, 1.0],
+        seed=3,
+        metric="mean",
+        occasion_ids=["image:1", "image:2"],
+        occasion_full_size={"image:1": 1, "image:2": 1},
+    )
+    assert interval.resampling_unit == "image"
+
+
 def test_holm_on_secondaries() -> None:
     # Three secondaries; first two tiny p, third large.
     result = holm_bonferroni(
@@ -384,3 +396,121 @@ def test_padded_ci_uses_B_draw_space_not_survivors() -> None:
     assert interval.ci_lower == 0.0
     assert interval.ci_upper == 1.0
     assert (interval.ci_lower, interval.ci_upper) != (1.0, 1.0)
+
+
+def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+
+    from scripts.bench import score_report
+    from scripts.bench.driver import init_run_dir
+    from scripts.bench.stack_pair import load_stack_pair
+    from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair
+    from scripts.bench.tests.test_score_head_to_head import (
+        A_STACK,
+        B_STACK,
+        NATIVE_ID,
+        PRIMARY,
+        _box,
+        _pred,
+        _write_leg,
+        _write_manifest,
+    )
+
+    session_a = "occasion-a"
+    session_b = "occasion-b"
+    entries = []
+    for media_id in range(1, 7):
+        entry = golden_entry(
+            media_id,
+            face_count=1,
+            present_identities=["Alice Q"],
+            face_boxes=[_box()],
+        )
+        entry["face_boxes"][0]["lineage"]["capture_session_id"] = (
+            session_a if media_id <= 3 else session_b
+        )
+        entries.append(entry)
+
+    manifest_path = _write_manifest(
+        tmp_path / "golden150-draft-20260723.json", entries
+    )
+    secondary_endpoints = [
+        "detection_precision@frame_e2e/label_map_primary",
+        "identification_recall@frame_e2e/label_map_primary",
+        "identification_precision@frame_e2e/label_map_primary",
+        NATIVE_ID,
+    ]
+    pair = load_stack_pair(
+        write_pair(
+            tmp_path / "pair.yaml",
+            valid_pair_dict(accepted_set_floor=0.5, secondary_endpoints=secondary_endpoints),
+        )
+    )
+    run_dir = init_run_dir(tmp_path / "run", pair, manifest_path)
+    media_ids = list(range(1, 7))
+    predictions = [_pred(media_id) for media_id in media_ids]
+    for stack_id in (A_STACK, B_STACK):
+        _write_leg(run_dir, stack_id, predictions, media_ids)
+        items_path = run_dir / "legs" / stack_id / "items.jsonl"
+        retained = [
+            line
+            for line in items_path.read_text(encoding="utf-8").splitlines()
+            if json.loads(line)["manifest_media_id"] not in {5, 6}
+        ]
+        items_path.write_text("\n".join(retained) + "\n", encoding="utf-8")
+        exports_path = run_dir / "legs" / stack_id / "exports"
+        identities_path = exports_path / "media_identities.json"
+        identities = json.loads(identities_path.read_text(encoding="utf-8"))
+        identities_path.write_text(
+            json.dumps([row for row in identities if row["media_id"] not in {5, 6}]),
+            encoding="utf-8",
+        )
+        members_path = exports_path / "cluster_members.json"
+        members = json.loads(members_path.read_text(encoding="utf-8"))
+        for cluster in members:
+            cluster["members"] = [
+                row for row in cluster["members"] if row["media_id"] not in {5, 6}
+            ]
+        members_path.write_text(json.dumps(members), encoding="utf-8")
+
+    observed_calls: list[dict[str, object]] = []
+    original_bootstrap = score_report.bootstrap_paired_delta
+
+    def observe_bootstrap(*args, **kwargs):
+        observed_calls.append(kwargs.copy())
+        return original_bootstrap(*args, **kwargs)
+
+    # This regression exercises scoring metadata, not the separately gated PROV-01 check.
+    monkeypatch.setattr(score_report, "_require_prov01_preflights", lambda root, stacks: True)
+    monkeypatch.setattr(score_report, "bootstrap_paired_delta", observe_bootstrap)
+    score_report.score_head_to_head(run_dir)
+
+    primary_call = next(call for call in observed_calls if call.get("cell") == PRIMARY)
+    assert primary_call["occasion_ids"] == [
+        f"occasion:{session_a}",
+        f"occasion:{session_a}",
+        f"occasion:{session_a}",
+        f"occasion:{session_b}",
+    ]
+    assert primary_call["occasion_full_size"] == {
+        f"occasion:{session_a}": 3,
+        f"occasion:{session_b}": 3,
+    }
+
+    frames = json.loads((run_dir / "score" / "frames.json").read_text(encoding="utf-8"))
+    primary_cells = [cell for cell in frames["cells"] if cell.get("cell") == PRIMARY]
+    assert len(primary_cells) == 2
+    for cell in primary_cells:
+        assert cell["resampling_unit"] == "occasion+image"
+        assert cell["partial_occasions"] == 1
+        assert cell["tier"] == CrossbenchTier.DIRECTIONAL.value
+        assert cell["reason"] == "golden150_bias_bound_pending"
+
+    native_identification = [
+        cell for cell in frames["cells"] if cell.get("cell") == NATIVE_ID
+    ]
+    assert len(native_identification) == 2
+    assert all(cell["tier"] == CrossbenchTier.DIRECTIONAL.value for cell in native_identification)
+    assert all(cell["reason"] == "frame_fir5_native" for cell in native_identification)

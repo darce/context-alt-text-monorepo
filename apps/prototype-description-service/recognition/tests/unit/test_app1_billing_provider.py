@@ -559,7 +559,7 @@ async def _tenant(session: _AsyncSessionFacade) -> Tenant:
 @pytest.mark.asyncio
 async def test_inbox_is_verified_idempotency_boundary(billing_session: _AsyncSessionFacade) -> None:
     tenant = await _tenant(billing_session)
-    repo = BillingRepository(billing_session)
+    repo = BillingRepository(billing_session, environment="sandbox", seller_account=_SELLER_ACCOUNT)
     payload = {"type": "subscription.active", "data": {"id": "sub-1"}}
 
     with pytest.raises(PermissionError):
@@ -599,7 +599,7 @@ async def test_inbox_is_verified_idempotency_boundary(billing_session: _AsyncSes
 @pytest.mark.asyncio
 async def test_projection_rejects_stale_event_position(billing_session: _AsyncSessionFacade) -> None:
     tenant = await _tenant(billing_session)
-    repo = BillingRepository(billing_session)
+    repo = BillingRepository(billing_session, environment="sandbox", seller_account=_SELLER_ACCOUNT)
     newer = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
     older = datetime(2026, 9, 20, 11, 0, tzinfo=UTC)
 
@@ -643,7 +643,7 @@ async def test_projection_rejects_stale_event_position(billing_session: _AsyncSe
 async def test_repository_uses_status_vocabularies_and_bounds_pending_reads(
     billing_session: _AsyncSessionFacade,
 ) -> None:
-    repo = BillingRepository(billing_session)
+    repo = BillingRepository(billing_session, environment="sandbox", seller_account=_SELLER_ACCOUNT)
     rows = await repo.list_pending_webhooks(limit=3)
 
     assert rows == []

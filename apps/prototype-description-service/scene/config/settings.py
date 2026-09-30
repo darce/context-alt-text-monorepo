@@ -1,8 +1,9 @@
 """Description-specific settings, kept separate from RecognitionSettings.
 
 Env-driven via ``default_factory`` so a deployment can flip the adapter or caps
-without touching the recognition-only configuration surface. Defaults keep the
-service on the seeded adapter.
+without touching the recognition-only configuration surface. The default uses
+the image-grounded Florence adapter; the seeded fixture adapter is opt-in for
+tests and controlled demos.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ class DescriptionSettings(BaseModel):
 
     # The operator switch: seeded | florence_small | florence_large | gpu_phi4.
     profile: DescriptionProfile = Field(
-        default_factory=lambda: DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "seeded"))
+        default_factory=lambda: DescriptionProfile(os.environ.get("ACX_DESCRIPTION_ADAPTER", "florence_small"))
     )
     max_description_image_bytes: int = Field(
         default_factory=lambda: int(os.environ.get("ACX_DESCRIPTION_MAX_IMAGE_BYTES", _DEFAULT_MAX_IMAGE_BYTES))

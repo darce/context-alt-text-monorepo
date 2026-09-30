@@ -29,11 +29,11 @@
    "auc": 0.782,
    "precision": 0.567,
    "recall": 0.776,
-   "calibrated_on": "148 labelled images from 150 hand-tagged images",
+   "calibrated_on": "148 detector-supported images out of 150 hand-tagged images; 2 images without detector signal are reported separately",
    "evaluation_scope": "in_sample_calibration_only"
   }
  },
- "derived_tag_caveat": "slice_tags_derived is a SHORTLIST, not ground truth. The profile signal and threshold were selected and scored on the same 148 labelled images; its AUC, precision and recall describe the calibration sample, not held-out performance. Blur, low_res, masked, sunglasses and occlusion_other scored at chance and remain hand-only. Never merge derived tags into slice_tags.",
+ "derived_tag_caveat": "slice_tags_derived is a SHORTLIST, not ground truth. The profile signal and threshold were selected and scored on the same 148 detector-supported images out of 150 hand-tagged images. The 2 images without detector signal (media IDs 271 and 375; one profile-positive, one profile-negative) are reported as a separate stratum and are not treated as profile-negative. The AUC, precision and recall describe the calibration sample, not held-out performance. Blur, low_res, masked, sunglasses and occlusion_other scored at chance and remain hand-only. Never merge derived tags into slice_tags.",
  "consent": {
   "personal": "signed consent on file with the operator, held off-repo; subjects are named by pseudonym throughout",
   "celebs": "third-party editorial fixtures; not consented, not consent-equivalent"

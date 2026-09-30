@@ -15,6 +15,9 @@ from time import time_ns
 
 import pytest
 
+# onnxruntime telemetry writes a `:memory:.ses` sidecar into the test cwd, and setting it here covers in-process imports and every test subprocess, which inherits the environment.
+os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
+
 _RECEIPT_DIRECTORY = Path("/tmp")
 _RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
 _LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / ("prototype-description-service-pytest-collection-scope.json")

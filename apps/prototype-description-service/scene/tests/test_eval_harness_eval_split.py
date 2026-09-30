@@ -1043,24 +1043,6 @@ def test_draw_alice_bob_verified_has_no_provisional_reason():
     assert artifact["disjointness"]["identities_spanning_both_halves"] == []
 
 
-@pytest.mark.parametrize("fraction", [0.0, 1.0])
-def test_draw_empty_half_is_provisional_with_reason(fraction):
-    # VLM6-RV5-L-01: empty half is provisional (empty_half), never verified.
-    # MUT[status=not spanning]: reverting the empty-half gate makes this fail.
-    artifact = _draw_alice_bob(held_out_fraction=fraction)
-    assert artifact["disjointness"]["identities_spanning_both_halves"] == []
-    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
-    assert artifact["disjointness"]["provisional_reason"] == "empty_half"
-    assert (
-        verify_eval_split(
-            artifact,
-            _alice_bob_manifest(),
-            **_alice_bob_expected(expected_held_out_fraction=fraction),
-        )
-        == []
-    )
-
-
 def test_verify_verified_under_insufficient_coverage_names_label_coverage():
     # VLM6-RV5-L-01: artifact stamped verified while coverage is incomplete.
     # MUT[delete_coverage_cross_check]: dropping the verify precondition

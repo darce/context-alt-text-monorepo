@@ -38,6 +38,7 @@ const { bulkDescribeState, fetchGpuStatusMock, fetchSettingsMock } = vi.hoisted(
     },
     runId: null,
     activeRunId: null,
+    unreadableMediaIds: [],
   } as Record<string, any>,
   fetchGpuStatusMock: vi.fn(),
   fetchSettingsMock: vi.fn(),
@@ -151,28 +152,6 @@ vi.mock('../JobPipelineContext', () => ({
   }),
 }));
 
-const statusResponse = () => ({
-  gpu_state: {
-    state: GPU_STATE.STOPPED,
-    instance_id: null,
-    written_at: 1_700_000_000,
-    reason: null,
-    since: null,
-    intent: 'auto',
-    intent_expires_at: null,
-    intent_status: 'none',
-    honoured_nonce: null,
-    lease_expires_at: null,
-    instance_running_since: null,
-    last_transition_reason: 'unknown',
-  },
-  snapshot_age_seconds: 1,
-  snapshot_fresh: true,
-  intent: null,
-  load: { has_work: false, written_at: 1_700_000_001, fresh: true },
-  server_time: '2026-09-17T00:00:00Z',
-});
-
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',
   run_id: 'run-terminal',
@@ -207,8 +186,7 @@ const progressFromRun = (run: DescribeRunResponse): DescribeRunProgress => ({
   timing: run.timing ?? null,
 });
 
-const renderSelection = () => {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const renderSelection = (queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) => {
   return render(
     <QueryClientProvider client={queryClient}>
       <MediaSelection />
@@ -219,7 +197,6 @@ const renderSelection = () => {
 describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchGpuStatusMock.mockResolvedValue(statusResponse());
     fetchSettingsMock.mockResolvedValue({ recognition_enabled: false });
     Object.assign(bulkDescribeState, {
       submit: { isPending: false, mutate: vi.fn(), error: null },
@@ -243,6 +220,7 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
       },
       runId: null,
       activeRunId: null,
+      unreadableMediaIds: [],
     });
   });
 
@@ -309,4 +287,5 @@ describe('MediaSelection GPU status wiring [GPUFLOW-3 U1b]', () => {
     expect(document.querySelector('.acx-media-selection__bulk-describe-progress')).toBeNull();
     expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
+
 });

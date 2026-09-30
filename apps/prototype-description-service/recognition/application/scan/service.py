@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -34,6 +35,7 @@ from recognition.application.embedding.generator import (
 from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.storage import ObjectStore
 from recognition.domain.job import JobStatus
+from recognition.shared.db.dialect import is_postgres
 
 ObjectStoreFactory = Callable[[str], ObjectStore]
 
@@ -57,7 +59,7 @@ class _InProcessPersistLockEntry:
 
 
 _IN_PROCESS_PERSIST_LOCKS: dict[tuple[str, int], _InProcessPersistLockEntry] = {}
-_IN_PROCESS_PERSIST_LOCKS_GUARD = asyncio.Lock()
+_IN_PROCESS_PERSIST_LOCKS_GUARD = threading.RLock()
 
 
 def _advisory_lock_keys(tenant_uuid: uuid.UUID, media_id: int) -> tuple[int, int]:
@@ -74,14 +76,7 @@ def _advisory_lock_keys(tenant_uuid: uuid.UUID, media_id: int) -> tuple[int, int
 
 
 def _session_is_postgres(session: AsyncSession) -> bool:
-    bind = session.bind if hasattr(session, "bind") else None
-    if bind is None and hasattr(session, "get_bind") and callable(session.get_bind):
-        try:
-            bind = session.get_bind()
-        except (AttributeError, RuntimeError):
-            return False
-    dialect = getattr(bind, "dialect", None)
-    return getattr(dialect, "name", None) == "postgresql"
+    return is_postgres(session)
 
 
 def _persist_lock_key(tenant_uuid: uuid.UUID, media_id: int) -> tuple[str, int]:
@@ -119,7 +114,7 @@ async def _in_process_persist_lock(
     root_transaction: object | None,
 ) -> tuple[_InProcessPersistLockEntry, bool]:
     key = _persist_lock_key(tenant_uuid, media_id)
-    async with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
         entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
         if entry is None:
             entry = _InProcessPersistLockEntry(lock=asyncio.Lock())
@@ -132,17 +127,18 @@ async def _in_process_persist_lock(
 
 
 def _release_in_process_persist_waiter(tenant_uuid: uuid.UUID, media_id: int) -> None:
-    """Decrement waiter count; drop the registry entry when idle (sync-safe)."""
+    """Decrement waiter count; drop the registry entry when idle."""
     key = _persist_lock_key(tenant_uuid, media_id)
-    entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
-    if entry is None:
-        return
-    if entry.waiters > 0:
-        entry.waiters -= 1
-    if entry.waiters <= 0 and not entry.lock.locked():
-        current = _IN_PROCESS_PERSIST_LOCKS.get(key)
-        if current is entry:
-            del _IN_PROCESS_PERSIST_LOCKS[key]
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        entry = _IN_PROCESS_PERSIST_LOCKS.get(key)
+        if entry is None:
+            return
+        if entry.waiters > 0:
+            entry.waiters -= 1
+        if entry.waiters <= 0 and not entry.lock.locked():
+            current = _IN_PROCESS_PERSIST_LOCKS.get(key)
+            if current is entry:
+                del _IN_PROCESS_PERSIST_LOCKS[key]
 
 
 @asynccontextmanager
@@ -176,8 +172,9 @@ async def _media_persist_lock(
         try:
             yield
         finally:
-            if _persist_lock_owner_matches(entry, sync_session, root_transaction):
-                entry.reentry_depth -= 1
+            with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+                if _persist_lock_owner_matches(entry, sync_session, root_transaction):
+                    entry.reentry_depth -= 1
         return
 
     lock = entry.lock
@@ -187,28 +184,32 @@ async def _media_persist_lock(
         _release_in_process_persist_waiter(tenant_uuid, media_id)
         raise
 
-    if sync_session is not None and root_transaction is not None:
-        entry.owner_sync_session = sync_session
-        entry.owner_root_transaction = root_transaction
-        entry.reentry_depth = 1
+    with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+        if sync_session is not None and root_transaction is not None:
+            entry.owner_sync_session = sync_session
+            entry.owner_root_transaction = root_transaction
+            entry.reentry_depth = 1
 
     released = False
+    release_scheduled = False
     hold_until_commit = False
+    loop = asyncio.get_running_loop()
 
     def _capture_owner(_sess: object = None, transaction: object = None) -> None:
         # _remove_listener is deferred to the next loop tick, so this listener
         # outlives its own critical section. Re-arming after release would hand
         # a stale owner a reentrant pass into a lock a waiter now holds.
-        if (
-            released
-            or sync_session is None
-            or getattr(transaction, "parent", None) is not None
-            or entry.owner_sync_session is not None
-        ):
-            return
-        entry.owner_sync_session = sync_session
-        entry.owner_root_transaction = transaction
-        entry.reentry_depth = 1
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if (
+                released
+                or sync_session is None
+                or getattr(transaction, "parent", None) is not None
+                or entry.owner_sync_session is not None
+            ):
+                return
+            entry.owner_sync_session = sync_session
+            entry.owner_root_transaction = transaction
+            entry.reentry_depth = 1
 
     def _remove_listener() -> None:
         if sync_session is None:
@@ -217,33 +218,47 @@ async def _media_persist_lock(
             ("after_transaction_end", _release),
             ("after_transaction_create", _capture_owner),
         ):
-            with suppress(Exception):
+            try:
                 event.remove(sync_session, event_name, listener)
+            except Exception:
+                logger.warning(
+                    "Failed to remove persist-lock listener %s for session %r",
+                    event_name,
+                    sync_session,
+                    exc_info=True,
+                )
+
+    def _finish_release() -> None:
+        nonlocal released
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if released:
+                return
+            released = True
+            entry.owner_sync_session = None
+            entry.owner_root_transaction = None
+            entry.reentry_depth = 0
+            if lock.locked():
+                lock.release()
+        _release_in_process_persist_waiter(tenant_uuid, media_id)
+        _remove_listener()
 
     def _release(_sess: object = None, transaction: object = None) -> None:
-        nonlocal released
+        nonlocal release_scheduled
         if getattr(transaction, "parent", None) is not None:
             return
-        if released:
+        with _IN_PROCESS_PERSIST_LOCKS_GUARD:
+            if released or release_scheduled:
+                return
+            release_scheduled = True
+        if transaction is None:
+            _finish_release()
             return
-        released = True
-        entry.owner_sync_session = None
-        entry.owner_root_transaction = None
-        entry.reentry_depth = 0
-        if lock.locked():
-            lock.release()
-        _release_in_process_persist_waiter(tenant_uuid, media_id)
-        # event.remove during after_transaction_end mutates SQLAlchemy's
-        # listener deque while it is iterating; defer when fired as a callback.
-        if transaction is not None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                _remove_listener()
-            else:
-                loop.call_soon(_remove_listener)
-        else:
-            _remove_listener()
+        try:
+            # SQLAlchemy's sync-session listeners can run away from the event
+            # loop, while asyncio.Lock must only be released on its loop.
+            loop.call_soon_threadsafe(_finish_release)
+        except RuntimeError:
+            logger.warning("Failed to schedule persist-lock release on its event loop", exc_info=True)
 
     try:
         if sync_session is not None:
@@ -460,6 +475,7 @@ class ScanService:
             if mid_int not in seen_media:
                 ordered_media.append(mid_int)
                 seen_media.add(mid_int)
+        ordered_media.sort()
 
         total_persisted = 0
         pending_events: list[tuple[int, ReconcileResult, list[FaceDetection], float]] = []
@@ -516,7 +532,10 @@ class ScanService:
         need the explicit no-DB gap around adapter inference should use
         ``tasks.scan.process_scan_job_inline``.
         """
-        sources_list = list(media_sources) if media_sources else list(media_ids)
+        media_ids_list = list(media_ids)
+        has_media_sources = bool(media_sources)
+        media_sources_list = list(media_sources) if media_sources is not None else None
+        sources_list = media_sources_list if has_media_sources else media_ids_list
         try:
             return await run_scan_three_phase(
                 mark_running=lambda: self.mark_job_running(job_id),
@@ -524,8 +543,8 @@ class ScanService:
                 persist=lambda detections: self.save_job_results(
                     job_id=job_id,
                     tenant_id=tenant_id,
-                    media_ids=media_ids,
-                    media_sources=media_sources,
+                    media_ids=media_ids_list,
+                    media_sources=media_sources_list if has_media_sources else None,
                     detections=detections,
                 ),
             )
@@ -642,6 +661,13 @@ class ScanService:
         ``matched`` / ``new`` are re-scan row recycling counts, not assignment or
         unknown labels (those live in clustering / FIR-6).
         """
+        detections_needing_embeddings = [detection for detection in detections if detection.embedding is None]
+        if detections_needing_embeddings:
+            face_bytes = [str(detection.media_id).encode() for detection in detections_needing_embeddings]
+            embeddings: list[EmbeddingResult] = await self._generator.generate(face_bytes)
+            for detection, embedding_result in zip(detections_needing_embeddings, embeddings, strict=False):
+                detection.embedding = embedding_result.embedding
+
         async with _media_persist_lock(self._session, tenant_uuid, media_id):
             return await self._persist_identities_unlocked(
                 tenant_uuid=tenant_uuid,
@@ -666,15 +692,7 @@ class ScanService:
         result = await self._session.execute(stmt)
         existing_identities = list(result.scalars().all())
 
-        # 2. Generate embeddings if needed
-        detections_needing_embeddings = [d for d in detections if d.embedding is None]
-        if detections_needing_embeddings:
-            face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
-            embeddings: list[EmbeddingResult] = await self._generator.generate(face_bytes)
-            for det, emb_result in zip(detections_needing_embeddings, embeddings, strict=False):
-                det.embedding = emb_result.embedding
-
-        # 3. Match new detections to existing identities using BBOX IOU
+        # 2. Match new detections to existing identities using BBOX IOU
         matched: list[tuple[MediaIdentity, FaceDetection]] = []
         unmatched_new: list[FaceDetection] = list(detections)
         orphaned_old: list[MediaIdentity] = list(existing_identities)

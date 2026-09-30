@@ -259,10 +259,10 @@ async def create_cluster_for_identity(
     """Create a new labeled cluster for a single identity."""
     validate_entity_id(request.identity_id, field_name="identity_id")
     label = validate_label(request.label)
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return CreateClusterForIdentityResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
@@ -314,10 +314,10 @@ async def merge_cluster(
     """Merge cluster into target (by label)."""
     validate_entity_id(cluster_id, field_name="cluster_id")
     validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return ClusterResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
@@ -376,12 +376,12 @@ async def split_cluster(
     If mode="async", the split is queued and returns 202 Accepted with a job ID.
     """
     validate_entity_id(cluster_id, field_name="cluster_id")
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         if "job_id" in cached_response:
             return AsyncSplitClusterResponse.model_validate(cached_response)
         return SplitClusterResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     if request.mode == "async":
         if not hasattr(job_service, "queue_split"):
@@ -457,10 +457,10 @@ async def split_topology_command(
 ) -> SplitTopologyCommandResponse:
     """Execute a split through the topology-command plane."""
     validate_entity_id(request.cluster_id, field_name="cluster_id")
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return SplitTopologyCommandResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     source_cluster = await cluster_repo.get_by_id(request.cluster_id)
     if source_cluster is None:
@@ -558,12 +558,12 @@ async def reassign_identity(
     is automatically marked as accepted.
     """
     validate_entity_id(request.identity_id, field_name="identity_id")
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return ReassignIdentityResponse.model_validate(cached_response)
     if request.target_cluster_id:
         validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
-    assert_tenant_match(auth, request.tenant_id)
 
     if getattr(suggestion_service, "tenant_id", None) != request.tenant_id:
         suggestion_service = await get_suggestion_service(
@@ -702,10 +702,10 @@ async def revert_merge_cluster(
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> RevertMergeClusterResponse:
     """Restore moved identities into a recreated source cluster."""
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return RevertMergeClusterResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
@@ -772,10 +772,10 @@ async def assign_outlier(
     """Assign an unclustered identity (outlier) to an existing cluster."""
     validate_entity_id(cluster_id, field_name="cluster_id")
     validate_entity_id(request.identity_id, field_name="identity_id")
+    assert_tenant_match(auth, request.tenant_id)
     cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
     if cached_response is not None:
         return ClusterResponse.model_validate(cached_response)
-    assert_tenant_match(auth, request.tenant_id)
 
     if getattr(suggestion_refresh_service, "tenant_id", None) != request.tenant_id:
         suggestion_refresh_service = await get_suggestion_refresh_service(

@@ -15,8 +15,8 @@ import pytest_asyncio
 from sqlalchemy import Table, event, inspect, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 
 from db.base import Base

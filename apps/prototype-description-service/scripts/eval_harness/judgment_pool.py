@@ -27,9 +27,7 @@ _VARIANT_SUFFIX = re.compile(r"_t\d+$", re.IGNORECASE)
 # Contributor ids whose family (or first underscore token) is one of these
 # are the human pass. Complement-of-model would silently treat a new machine
 # id as human (same allowlist shape as HUMAN_CONFIRMATION_SOURCES).
-HUMAN_CONTRIBUTOR_FAMILIES: frozenset[str] = frozenset(
-    {"human", "operator", "annotator", "sme"}
-)
+HUMAN_CONTRIBUTOR_FAMILIES: frozenset[str] = frozenset({"human", "operator", "annotator", "sme"})
 
 UNJUDGED_ARE_NOT_NEGATIVES_DISCLOSURE = (
     "unjudged_are_not_negatives=true: unjudged pooled candidates are not "
@@ -112,9 +110,7 @@ class PoolIncompleteness:
             raise ValueError("unjudged_are_not_negatives is an EVAL-25 invariant and must be True")
 
     def render(self) -> str:
-        unique_bits = ", ".join(
-            f"{cid}={count}" for cid, count in self.unique_contribution_count.items()
-        )
+        unique_bits = ", ".join(f"{cid}={count}" for cid, count in self.unique_contribution_count.items())
         return "\n".join(
             (
                 f"contributors={','.join(self.contributors)}",
@@ -177,11 +173,7 @@ def build_pool(
         )
     if any(not cid or not str(cid).strip() for cid in contributor_ids):
         raise ValueError("contributor id must be non-empty")
-    model_families = {
-        contributor_family(cid)
-        for cid in contributor_ids
-        if not is_human_contributor(cid)
-    }
+    model_families = {contributor_family(cid) for cid in contributor_ids if not is_human_contributor(cid)}
     if len(model_families) < 2:
         raise NonIndependentPoolError(
             f"EVAL-25 refuses a pool whose model contributors collapse to "
@@ -239,9 +231,7 @@ def bind_gold(
     pooled and cannot be used as gold, even when ``pool`` itself is legal.
     """
     if not pool.contributors:
-        raise GoldSetNotFromPoolError(
-            "EVAL-25 refuses gold bound to a contributor-less pool"
-        )
+        raise GoldSetNotFromPoolError("EVAL-25 refuses gold bound to a contributor-less pool")
     bound: list[ReferenceFact] = []
     for fact in gold:
         source = fact.source_pool
@@ -301,7 +291,7 @@ def incompleteness_report(
     """
     judged_keys = _judged_keys(pool=pool, judged=judged)
     unjudged_count = sum(1 for item in pool.items if item.key not in judged_keys)
-    unique: dict[str, int] = {cid: 0 for cid in pool.contributors}
+    unique: dict[str, int] = dict.fromkeys(pool.contributors, 0)
     for item in pool.items:
         if len(item.pooled_from) == 1:
             unique[item.pooled_from[0]] += 1

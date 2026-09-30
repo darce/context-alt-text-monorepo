@@ -20,12 +20,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
 from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.infrastructure.face_pipeline.provenance import (
     MODEL_MANIFEST,
-    PENDING_OPERATOR_FETCH,
     ModelVerifyOutcome,
-    load_verified_model,
     verify_face_pipeline_model,
 )
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -138,11 +137,7 @@ def _disk_headroom_result(
     return CheckResult(
         "disk_headroom",
         status,
-        detail
-        or (
-            f"reason={reason}; free_bytes={free_bytes}; min_bytes={min_bytes}; "
-            f"probe_path={probe_path}"
-        ),
+        detail or (f"reason={reason}; free_bytes={free_bytes}; min_bytes={min_bytes}; probe_path={probe_path}"),
         payload=payload,
     )
 
@@ -533,30 +528,6 @@ def expected_embedding_dimension(space: ModelSpace) -> int:
     return int(entry.embedding_dim)
 
 
-def assert_space_activatable(space: ModelSpace) -> None:
-    """Refuse activation while a space's provenance or preprocessing is unverified."""
-    if space is ModelSpace.INSIGHTFACE:
-        return
-    if space is ModelSpace.FACE_PIPELINE:
-        model_names = ("yunet", "sface")
-    elif space is ModelSpace.AURAFACE:
-        model_names = ("auraface",)
-    else:
-        raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
-
-    for model_name in model_names:
-        entry = MODEL_MANIFEST.get(model_name)
-        if entry is None:
-            raise ValueError(f"model space {space.value!r} is missing manifest entry {model_name!r}")
-        if entry.sha256 == PENDING_OPERATOR_FETCH or entry.license_sha256 == PENDING_OPERATOR_FETCH:
-            raise ValueError(f"model {model_name!r} remains {PENDING_OPERATOR_FETCH}")
-        if space is ModelSpace.AURAFACE:
-            preprocessing = entry.preprocessing
-            template_id = preprocessing.alignment_template_id if preprocessing is not None else "missing"
-            if preprocessing is None or "unverified" in template_id.lower():
-                raise ValueError(f"model {model_name!r} alignment template {template_id!r} is -unverified")
-
-
 def _stat_file_identity(path: Path) -> tuple[int, int] | None:
     """Return (mtime_ns, size) for an existing file; None on missing/race ([DRIFT-02])."""
     try:
@@ -683,6 +654,11 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
 
 def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     """Run the readiness check belonging to one model space."""
+    try:
+        assert_space_activatable(space)
+    except ValueError as exc:
+        return CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc))
+
     if space is ModelSpace.INSIGHTFACE:
         from recognition.config import get_settings
 
@@ -693,10 +669,13 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
     if space is not ModelSpace.AURAFACE:
         raise UnhandledModelSpaceError(f"Unhandled model space: {space!r}")
 
-    try:
-        load_verified_model("auraface", models_dir=store)
-    except Exception as exc:  # noqa: BLE001 - provenance detail is the readiness contract
-        return CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc))
+    outcome = _cached_verify_outcome("auraface", models_dir=store)
+    if not outcome.ok:
+        return CheckResult(
+            "model_cache",
+            HealthStatus.UNHEALTHY,
+            outcome.reason or "auraface: unverified",
+        )
 
     try:
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
@@ -723,7 +702,8 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         face_pipeline = get_settings().face_pipeline
         get_shared_face_pipeline_runtime(
             profile=space,
-            models_dir=store,
+            models_dir=face_pipeline.resolved_models_dir,
+            embedder_models_dir=store,
             score_threshold=float(face_pipeline.score_threshold),
             nms_threshold=float(face_pipeline.nms_threshold),
             top_k=int(face_pipeline.top_k),

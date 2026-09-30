@@ -29,6 +29,9 @@ from recognition.domain.portal_contracts import (
 )
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
+# Recognition work can span multiple bounded inference and database calls; this
+# gives a synchronous request room to finish while reclaiming abandoned rows promptly.
+USAGE_RESERVATION_LEASE = timedelta(minutes=30)
 _ACTIVE_ENTITLEMENT_STATUSES = (
     EntitlementStatus.BETA_ACTIVE,
     EntitlementStatus.PAID_ACTIVE,
@@ -50,6 +53,10 @@ class UsageAdmissionError(RuntimeError):
 
 class InvalidUsageRequestError(ValueError):
     """The caller supplied an invalid usage request or ticket."""
+
+
+class ExpiredUsageReservationError(InvalidUsageRequestError):
+    """The idempotency key identifies an expired reservation."""
 
 
 class AllowanceExceededError(UsageAdmissionError):
@@ -259,6 +266,7 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.cost_units == ticket.cost_units,
             )
             .limit(1)
+            .execution_options(populate_existing=True)
         )
         result = await _with_timeout(
             self._session.execute(stmt),
@@ -408,6 +416,13 @@ class SqlAlchemyUsageRepository:
             raise InvalidUsageRequestError("queue_bytes must be a non-negative integer")
 
         bound_job_id = job_id or uuid4().hex
+        existing = await self._get_by_idempotency_key(tenant_id, normalized_key)
+        if existing is not None:
+            if existing.status == UsageReservationStatus.EXPIRED:
+                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
+            # A stale RESERVED retry can be returned here, but _settle applies
+            # this same lease before charging it, so replay cannot extend it.
+            return self._replay_or_conflict(existing, normalized_fingerprint)
         now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
         self._roll_global_period_if_needed(global_state, now)
@@ -453,7 +468,26 @@ class SqlAlchemyUsageRepository:
         if existing is None:
             existing = await self._get_by_idempotency_key(tenant_id, normalized_key)
         if existing is not None:
+            if existing.status == UsageReservationStatus.EXPIRED:
+                raise ExpiredUsageReservationError("idempotency key belongs to an expired reservation")
             return self._replay_or_conflict(existing, normalized_fingerprint)
+
+        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
+        expire_stmt = (
+            update(UsageReservation)
+            .where(
+                UsageReservation.tenant_id == tenant_id,
+                UsageReservation.period_start == entitlement.period_start,
+                UsageReservation.status == UsageReservationStatus.RESERVED,
+                UsageReservation.reserved_at < lease_cutoff,
+            )
+            .values(status=UsageReservationStatus.EXPIRED, settled_at=func.now())
+        )
+        await _with_timeout(
+            self._session.execute(expire_stmt),
+            timeout_s=self._timeout_s,
+            operation="expire stale usage reservations",
+        )
 
         used_stmt = (
             select(func.coalesce(func.sum(UsageReservation.cost_units), 0))
@@ -461,6 +495,10 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.tenant_id == tenant_id,
                 UsageReservation.period_start == entitlement.period_start,
                 UsageReservation.status.in_(_CHARGEABLE_RESERVATION_STATUSES),
+                or_(
+                    UsageReservation.status == UsageReservationStatus.COMMITTED,
+                    UsageReservation.reserved_at >= lease_cutoff,
+                ),
             )
             .limit(1)
         )
@@ -555,6 +593,17 @@ class SqlAlchemyUsageRepository:
         if current_status is not UsageReservationStatus.RESERVED:
             return
 
+        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
+        reserved_at = reservation.reserved_at
+        if reserved_at.tzinfo is None:
+            reserved_at = reserved_at.replace(tzinfo=UTC)
+        stale_reservation = reserved_at < lease_cutoff
+        settled_status = UsageReservationStatus.EXPIRED if stale_reservation else target_status
+        lease_guard = (
+            UsageReservation.reserved_at < lease_cutoff
+            if stale_reservation
+            else UsageReservation.reserved_at >= lease_cutoff
+        )
         stmt = (
             update(UsageReservation)
             .where(
@@ -567,9 +616,11 @@ class SqlAlchemyUsageRepository:
                 UsageReservation.request_fingerprint == reservation.request_fingerprint,
                 UsageReservation.status == UsageReservationStatus.RESERVED,
                 UsageReservation.fence_token == reservation.fence_token,
+                lease_guard,
             )
-            .values(status=target_status, settled_at=func.now())
+            .values(status=settled_status, settled_at=func.now())
             .returning(UsageReservation.id)
+            .execution_options(synchronize_session=False)
         )
         result = await _with_timeout(
             self._session.execute(stmt),
@@ -578,7 +629,7 @@ class SqlAlchemyUsageRepository:
         )
         changed_id = result.scalar_one_or_none()
         if changed_id is not None:
-            self._apply_settle_counters(global_state, reservation, target_status=target_status, now=now)
+            self._apply_settle_counters(global_state, reservation, target_status=settled_status, now=now)
             return
 
         # A concurrent completion won the guarded update.  Re-read one row to
@@ -842,6 +893,7 @@ SqlAlchemyUsageAdmissionRepository = SqlAlchemyUsageRepository
 __all__ = [
     "AllowanceExceededError",
     "GlobalUsageLimitExceededError",
+    "ExpiredUsageReservationError",
     "InvalidUsageRequestError",
     "ReservationNotFoundError",
     "SqlAlchemyUsageRepository",
@@ -854,6 +906,7 @@ __all__ = [
     "UsageAdmissionUnavailableError",
     "UsageFenceMismatchError",
     "UsageFingerprintConflictError",
+    "USAGE_RESERVATION_LEASE",
     "UsageRepository",
     "UsageReservationRepository",
 ]

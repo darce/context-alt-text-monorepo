@@ -8,8 +8,8 @@ existing safety policy.
 
 from __future__ import annotations
 
-import json
 import fcntl
+import json
 import logging
 import math
 import os
@@ -323,14 +323,9 @@ class IntentAuthorityStore:
             ):
                 raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
         raw_rejected_sequences = payload.get("rejected_sequences", [])
-        if (
-            not isinstance(raw_rejected_sequences, list)
-            or any(
-                isinstance(sequence, bool)
-                or not isinstance(sequence, int)
-                or sequence < MIN_INTENT_SEQUENCE
-                for sequence in raw_rejected_sequences
-            )
+        if not isinstance(raw_rejected_sequences, list) or any(
+            isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < MIN_INTENT_SEQUENCE
+            for sequence in raw_rejected_sequences
         ):
             raise IntentAuthorityError(f"intent authority ledger is invalid: {self.path}")
         last_wall_time = payload.get("last_wall_time")
@@ -422,9 +417,7 @@ class IntentAuthorityStore:
         with _intent_file_lock(self.path):
             state = self._read_state()
             owner = state.get("sequences", {}).get(str(sequence))
-            rejected = sequence in state.get("rejected_sequences", []) or (
-                owner is not None and owner != nonce
-            )
+            rejected = sequence in state.get("rejected_sequences", []) or (owner is not None and owner != nonce)
             return int(state["highest_sequence"]), rejected
 
     def filter_valid(
@@ -676,7 +669,10 @@ class DeferredStopStore:
             _atomic_write_json(self.path, payload)
 
     def supersede_if_newer(
-        self, *, sequence: int, nonce: str,
+        self,
+        *,
+        sequence: int,
+        nonce: str,
         before_clear: Callable[[DeferredStopRecord], None] | None = None,
     ) -> bool:
         """Atomically clear a deferred STOP superseded by a fencing token."""
@@ -688,9 +684,7 @@ class DeferredStopStore:
             record = self.read()
             if record is None:
                 return False
-            superseded = sequence > record.sequence or (
-                sequence == record.sequence and nonce != record.nonce
-            )
+            superseded = sequence > record.sequence or (sequence == record.sequence and nonce != record.nonce)
             if superseded:
                 if before_clear is not None:
                     before_clear(record)
@@ -698,7 +692,9 @@ class DeferredStopStore:
             return superseded
 
     def clear(
-        self, *, sequence: int | None = None,
+        self,
+        *,
+        sequence: int | None = None,
         before_clear: Callable[[DeferredStopRecord], None] | None = None,
     ) -> None:
         with _intent_file_lock(self.path):
@@ -787,7 +783,11 @@ def _read_one(
         return None
 
     schema_version = payload.get("schema_version")
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != INTENT_SCHEMA_VERSION:
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != INTENT_SCHEMA_VERSION
+    ):
         _invalid(path, f"schema_version must be {INTENT_SCHEMA_VERSION}", reason_sink=reason_sink)
         return None
 
@@ -963,11 +963,7 @@ def read_effective_intent(
     if not valid:
         return EffectiveIntent(
             status=IntentStatus.EXPIRED if expired else IntentStatus.NONE,
-            reason=(
-                parse_reasons[0]
-                if parse_reasons
-                else ("intent expired" if expired else None)
-            ),
+            reason=(parse_reasons[0] if parse_reasons else ("intent expired" if expired else None)),
         )
 
     winner = max(

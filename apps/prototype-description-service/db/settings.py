@@ -85,6 +85,7 @@ def _load_env_file() -> None:
 
     Values already present in the environment take precedence. Variable references
     like ${PGUSER} are expanded using the progressively built environment.
+    Matching outer quotes are stripped; single-quoted values remain literal.
     """
 
     if not ENV_FILE.exists():
@@ -98,7 +99,14 @@ def _load_env_file() -> None:
         key = key.strip()
         if not key or key in os.environ:
             continue
-        resolved_value: str | None = os.path.expandvars(value.strip())
+        value = value.strip()
+        resolved_value: str | None
+        if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
+            resolved_value = value[1:-1]
+        elif len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            resolved_value = os.path.expandvars(value[1:-1])
+        else:
+            resolved_value = os.path.expandvars(value)
         if key == "DB_NAME":
             resolved_value, warning = canonicalize_local_db_name(
                 resolved_value,

@@ -4,13 +4,13 @@
  * Plugin Name: Alt Context
  * Plugin URI: https://github.com/darce/context-alt-text-monorepo
  * Description: Batch-generate contextually rich alt-text with facial recognition.
- * Version: 0.0.25
+ * Version: 0.0.35
  * Author: Daniel Arcé
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: alt-context
  * Domain Path: /public/languages
- * Requires at least: 6.0
+ * Requires at least: 6.2
  * Tested up to: 6.8
  * Requires PHP: 8.0
  * Network: false

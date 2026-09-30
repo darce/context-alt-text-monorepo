@@ -3,7 +3,7 @@
  * truth; when Status=missing and listed rows have been corrected to complete,
  * a reconciliation sentence is appended from listed-row observation only.
  */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, act } from '@testing-library/react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import React from 'react';
@@ -14,6 +14,7 @@ import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 import * as workbenchMediaApi from '../../../api/workbenchMediaApi';
 import * as recognitionApi from '../../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { WorkbenchMediaProvider, useWorkbenchMediaContext } from '../WorkbenchMediaContext';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -106,18 +107,20 @@ const seedPage = (
   return page;
 };
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-        staleTime: Infinity,
-        refetchOnMount: false,
-        refetchOnWindowFocus: false,
-      },
-      mutations: { retry: false },
+// Cached status cases need no mount refetch so assertions observe their seeded page.
+const buildCachedStatusClient = () => {
+  const client = buildTestQueryClient();
+  client.setDefaultOptions({
+    queries: {
+      retry: false,
+      staleTime: Infinity,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
     },
+    mutations: { retry: false },
   });
+  return client;
+};
 
 const StatusProbe = (): React.JSX.Element => {
   const { mediaQueue } = useWorkbenchMediaContext();
@@ -127,16 +130,18 @@ const StatusProbe = (): React.JSX.Element => {
 const renderProvider = (
   client: QueryClient,
   initialEntry = '/?status=missing',
-): ReturnType<typeof render> =>
-  render(
-    <QueryClientProvider client={client}>
+): ReturnType<typeof render> => {
+  const QueryWrapper = createQueryWrapper(client);
+  return render(
+    <QueryWrapper>
       <MemoryRouter initialEntries={[initialEntry]}>
         <WorkbenchMediaProvider>
           <StatusProbe />
         </WorkbenchMediaProvider>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryWrapper>,
   );
+};
 
 /** Strip the i18n sprintf sentinel wraps used by the mock (`⟦…⟧`). */
 const unwrapStatus = (text: string | null): string => (text ?? '').replace(/⟦|⟧/g, '');
@@ -216,7 +221,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   it('[TEST-06] headline: missing filter, three cached rows, two patched complete — envelope count + reconciliation', async () => {
     // Predicted RED (pre-fix): message is exactly "Showing 3 media items." with
     // no reconciliation about the two corrected rows — that is today's defect.
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -245,7 +250,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('keeps the original envelope total in the message after listed rows are corrected', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -268,7 +273,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('does not append a reconciliation sentence when the filter is not missing', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = allPageKey();
     seedPage(client, {
       items: [makeItem(1, 'missing'), makeItem(2, 'complete'), makeItem(3, 'complete')],
@@ -290,7 +295,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('does not append a reconciliation sentence when zero listed rows read complete', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
       total: 3,
@@ -303,7 +308,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('pluralises the reconciliation sentence for one corrected row vs several', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -331,7 +336,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   it('does not claim alt text for decorative complete rows [INT-08]', async () => {
     // After Mark as decorative the row is complete with null alt + isDecorative.
     // Saying "now has alt text" is false — the operator deliberately has none.
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -354,7 +359,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   it('mixed corrections emit two independent pluralised sentences [D-01][INT-08]', async () => {
     // Opposite outcomes (gained alt vs marked decorative) must not share one
     // _n() over the summed count — each count owns its plural form.
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -394,7 +399,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
     // sprintf mock wraps interpolations in ⟦…⟧ so discarding the joiner return
     // value and falling back to `${showing} ${reconciliation}` is observable
     // in the DOM (outer sentinel missing) [C-01][TEST-15].
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -426,7 +431,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('does not invalidate or mark the workbench list stale after a successful listed-row correction', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     const key = missingPageKey();
     seedPage(client, {
       items: [makeItem(1), makeItem(2), makeItem(3)],
@@ -474,12 +479,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('fetching branch still reports Updating media queue…', async () => {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false, staleTime: 0 },
-        mutations: { retry: false },
-      },
-    });
+    const client = buildTestQueryClient();
     let resolveFetch: (value: WorkbenchMediaResponse) => void = () => undefined;
     fetchWorkbenchMock.mockImplementation(
       () =>
@@ -499,12 +499,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('error branch still reports Unable to load media…', async () => {
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false, staleTime: 0 },
-        mutations: { retry: false },
-      },
-    });
+    const client = buildTestQueryClient();
     fetchWorkbenchMock.mockRejectedValue(new Error('network down'));
     renderProvider(client, '/?status=missing');
     await waitFor(() => {
@@ -515,7 +510,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
   });
 
   it('empty branch: generic and search-specific messages unchanged', async () => {
-    const client = buildClient();
+    const client = buildCachedStatusClient();
     seedPage(client, { items: [], total: 0, status: 'missing' });
     renderProvider(client, '/?status=missing');
     let status = await waitForIdleStatus();
@@ -524,7 +519,7 @@ describe('WorkbenchMediaContext statusMessage [WBUX-5-BR-112]', () => {
 
     cleanup();
 
-    const clientSearch = buildClient();
+    const clientSearch = buildCachedStatusClient();
     seedPage(clientSearch, { items: [], total: 0, status: 'missing', search: 'bridge' });
     renderProvider(clientSearch, '/?status=missing&s=bridge');
     status = await waitForIdleStatus();

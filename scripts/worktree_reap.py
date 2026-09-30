@@ -346,7 +346,7 @@ def active_lane_paths(repo: Path | str) -> dict[Path, str]:
     repo_path = Path(repo).resolve()
     try:
         configure_runtime(RuntimeConfig.for_repo(repo_path))
-        response = list_lanes(all_tasks=True, limit=_LANE_PAGE_LIMIT)
+        response = list_lanes(limit=_LANE_PAGE_LIMIT)
         if not isinstance(response, Mapping):
             raise LaneStateError("lane registry response is not a mapping")
         if not response.get("ok"):

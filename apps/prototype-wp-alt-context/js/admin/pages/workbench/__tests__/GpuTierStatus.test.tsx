@@ -1,5 +1,5 @@
-import { createElement, type ReactElement, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createElement, type ReactElement } from 'react';
+import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,7 @@ import {
   GPU_SERVICE_STATUS_WARMUP_POLL_INTERVAL_MS,
   useGpuServiceStatus,
 } from '../../../hooks/useGpuServiceStatus';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { GpuTierStatus, gpuWaitFromOperationDetail } from '../GpuTierStatus';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -79,16 +80,10 @@ const ALL_GPU_STATES = [
 
 let queryClient: QueryClient;
 
-const createWrapper = () => {
-  queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children);
-  return wrapper;
+const renderGpu = (ui: ReactElement) => {
+  queryClient = buildTestQueryClient();
+  return render(ui, { wrapper: createQueryWrapper(queryClient) });
 };
-
-const renderGpu = (ui: ReactElement) => render(ui, { wrapper: createWrapper() });
 
 describe('GpuTierStatus', () => {
   beforeEach(() => {
@@ -121,7 +116,6 @@ describe('GpuTierStatus', () => {
   });
 
   it('covers every canonical GPU_STATE value in the idle table', () => {
-    expect(ALL_GPU_STATES).toHaveLength(6);
     expect(new Set(ALL_GPU_STATES)).toEqual(new Set(Object.values(GPU_STATE)));
   });
 
@@ -259,23 +253,42 @@ describe('GpuTierStatus', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });
 
-  it('renders fetch-failure copy with Retry and refetches on click', async () => {
+  it('renders neutral idle copy with Check status and refetches on click', async () => {
     fetchGpuStatusMock.mockRejectedValue(new Error('network down'));
     renderGpu(createElement(GpuTierStatus));
 
-    const status = await screen.findByRole('status', { name: 'Description Service status unavailable' });
+    const status = await screen.findByRole('status', {
+      name: 'Description Service idle — status not checked',
+    });
     expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.UNKNOWN);
-    expect(status).toHaveTextContent('Description Service status unavailable');
+    expect(status).toHaveTextContent('Description Service idle — status not checked');
+    expect(status).not.toHaveClass('acx-sync-status--warning');
+    expect(status).not.toHaveClass('acx-sync-status--danger');
     expect(status.textContent).not.toContain('GPU tier: not reported');
 
     fetchGpuStatusMock.mockResolvedValue(statusResponse());
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
 
     expect(
       await screen.findByRole('status', {
         name: 'Description Service is off — it starts when you describe',
       }),
     ).toBeInTheDocument();
+  });
+
+  it('keeps the run-owned status copy when idle polling is paused for a run', async () => {
+    fetchGpuStatusMock.mockRejectedValue(new Error('network down'));
+    renderGpu(
+      createElement(GpuTierStatus, {
+        isRunPending: true,
+        gpuState: GPU_STATE.WARMING,
+      }),
+    );
+
+    const status = await screen.findByRole('status', { name: 'Description Service is starting…' });
+    expect(status).toHaveAttribute('data-gpu-state', GPU_STATE.WARMING);
+    expect(status).not.toHaveTextContent('Description Service idle — status not checked');
+    expect(fetchGpuStatusMock).not.toHaveBeenCalled();
   });
 
   it('does not render a raw degraded lifecycle reason from the status payload', async () => {
@@ -340,7 +353,8 @@ describe('useGpuServiceStatus (owned GpuTierStatus proof)', () => {
   });
 
   it('pauses polling while a run is pending and resumes after terminal status', async () => {
-    const wrapper = createWrapper();
+    queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { rerender, result } = renderHook(
       ({ isRunPending }: { isRunPending: boolean }) => useGpuServiceStatus({ isRunPending }),
       { wrapper, initialProps: { isRunPending: false } },

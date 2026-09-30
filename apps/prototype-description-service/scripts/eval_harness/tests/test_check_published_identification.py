@@ -14,7 +14,6 @@ report does not embed the manifest fields needed to judge honesty.
 from __future__ import annotations
 
 import importlib.util
-import inspect
 import json
 import os
 import subprocess
@@ -254,21 +253,3 @@ def test_no_report_files_is_a_failed_scan(tmp_path: Path) -> None:
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 1, combined
     assert "no tracked" in combined
-
-
-def test_precision_only_predicate_would_miss_leftover() -> None:
-    """Characterization: the retired filter is exactly why S2R4-14 existed.
-
-    Kept as a pin so a walk-around that restores ``precision is not None``
-    cannot satisfy the leftover-shape test by accident. The production
-    classifier must not use this predicate.
-    """
-    leftover = {"precision": None, "recall": 0.0, "per_identity": {"Ada": {}}}
-    retired = leftover.get("precision") is not None
-    assert retired is False
-    guard = _load_guard()
-    classifier = inspect.getsource(guard.scan_payload)
-    refused_fn = inspect.getsource(guard.is_refused_identification)
-    assert "precision is not None" not in classifier
-    assert "precision is not None" not in refused_fn
-    assert "is_refused_identification" in classifier

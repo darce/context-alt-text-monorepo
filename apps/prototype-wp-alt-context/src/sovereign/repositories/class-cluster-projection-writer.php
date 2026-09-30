@@ -153,14 +153,14 @@ class ClusterProjectionWriter {
 				representative_id = VALUES(representative_id),
 				is_pinned = VALUES(is_pinned),
 				identity_count = VALUES(identity_count),
-				snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
 				is_user_confirmed = VALUES(is_user_confirmed),
 				updated_at = VALUES(updated_at),
 				last_synced_at = VALUES(last_synced_at),
-				representative_quality = IF(%d, VALUES(representative_quality), representative_quality),
-				quality_components = IF(%d, VALUES(quality_components), quality_components),
-				representative_media_id = IF(%d, VALUES(representative_media_id), representative_media_id),
-				undoable_merge_receipt_id = IF(%d, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id)',
+				representative_quality = IF(%d AND VALUES(snapshot_version) > snapshot_version, VALUES(representative_quality), representative_quality),
+				quality_components = IF(%d AND VALUES(snapshot_version) > snapshot_version, VALUES(quality_components), quality_components),
+				representative_media_id = IF(%d AND VALUES(snapshot_version) > snapshot_version, VALUES(representative_media_id), representative_media_id),
+				undoable_merge_receipt_id = IF(%d AND VALUES(snapshot_version) > snapshot_version, VALUES(undoable_merge_receipt_id), undoable_merge_receipt_id),
+				snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))',
 			array(
 				$this->table_name,
 				$normalized_cluster_uuid,
@@ -289,14 +289,26 @@ class ClusterProjectionWriter {
 				'apply' => 0,
 			);
 		}
+		$has_quality_pair = array_key_exists( ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY, $snapshot_export )
+			&& array_key_exists( ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS, $snapshot_export );
+		$representative_quality = '';
+		$quality_components = '';
+		if ( $has_quality_pair ) {
+			$normalized_quality = self::normalize_representative_quality(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ]
+			);
+			$normalized_components = self::normalize_quality_components(
+				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ]
+			);
+			if ( '' !== $normalized_quality && '' !== $normalized_components ) {
+				$representative_quality = $normalized_quality;
+				$quality_components = $normalized_components;
+			}
+		}
 
 		return array(
-			'representative_quality' => self::normalize_representative_quality(
-				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_QUALITY ] ?? null
-			),
-			'quality_components' => self::normalize_quality_components(
-				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_QUALITY_COMPONENTS ] ?? null
-			),
+			'representative_quality' => $representative_quality,
+			'quality_components' => $quality_components,
 			'representative_media_id' => self::normalize_representative_media_id(
 				$snapshot_export[ ClustersRepositoryInterface::SNAPSHOT_EXPORT_REPRESENTATIVE_MEDIA_ID ] ?? null
 			),

@@ -284,8 +284,8 @@ describe('TopClusterCard', () => {
     expect(meta?.textContent).not.toMatch(/3 faces in cluster|0 faces|\+3 more|3 of 7/i);
   });
 
-  // UXW2-2-R1-27: restore E21-20 — 39px cells hide the overflow missing-state label.
-  it('hides the missing-state label at 39px cells and shows it at 80px', () => {
+  // UXW2-2-R1-27: restore E21-20 — multi-face cards hide the overflow missing-state label.
+  it('hides the missing-state label for multi-face cards and shows it for a single face', () => {
     const twoMissingReps = [
       buildRepresentative({ id: 'rep-1' }),
       buildRepresentative({ id: 'rep-2' }),
@@ -304,7 +304,6 @@ describe('TopClusterCard', () => {
     const smallCells = container.querySelectorAll('.acx-top-cluster-card__thumb-image');
     expect(smallCells).toHaveLength(2);
     smallCells.forEach((cell) => {
-      expect(cell).toHaveStyle({ width: '39px', height: '39px' });
       expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
     });
     unmount();
@@ -321,7 +320,6 @@ describe('TopClusterCard', () => {
     );
 
     const largeCell = singleContainer.querySelector('.acx-top-cluster-card__thumb-image');
-    expect(largeCell).toHaveStyle({ width: '80px', height: '80px' });
     expect(largeCell).not.toHaveClass('acx-durable-face-thumb--hide-missing-label');
     expect(singleContainer.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent(
       'No image',

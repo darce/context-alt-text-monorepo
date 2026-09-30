@@ -54,6 +54,7 @@ class FakeSession:
         scalar_one_or_none: object | None = None,
         scalar: object = 0,
         all_rows: list[object] | None = None,
+        rowcount: int = 0,
     ) -> None:
         """Queue a deterministic execute result for the next `execute()` call."""
         self._execute_results.append(
@@ -61,6 +62,7 @@ class FakeSession:
                 scalar_one_or_none_value=scalar_one_or_none,
                 scalar_value=scalar,
                 all_rows=all_rows or [],
+                rowcount=rowcount,
             )
         )
 
@@ -182,10 +184,12 @@ class FakeSessionResult:
         scalar_one_or_none_value: object | None = None,
         scalar_value: object = 0,
         all_rows: list[object] | None = None,
+        rowcount: int = 0,
     ) -> None:
         self._scalar_one_or_none_value = scalar_one_or_none_value
         self._scalar_value = scalar_value
         self._all_rows = all_rows or []
+        self.rowcount = rowcount
 
     def scalar_one_or_none(self):  # noqa: ANN001
         return self._scalar_one_or_none_value
@@ -828,6 +832,8 @@ def api_client(
         return fake_media_identity_service
 
     app.dependency_overrides[media_router.get_media_identity_service] = _fake_media_identity_service
+
+    app.state.fake_session = fake_session
 
     return TestClient(app)
 

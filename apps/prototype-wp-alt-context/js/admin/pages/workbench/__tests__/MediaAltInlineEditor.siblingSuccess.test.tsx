@@ -13,7 +13,7 @@
  * keeps its alert + draft — proving the stats refresh is key-safe.
  */
 import React, { useMemo } from 'react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +21,7 @@ import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
 import { mediaStatsMissingQueryKey } from '../../../hooks/useMediaStats';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import { MediaAltInlineEditor } from '../MediaAltInlineEditor';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -154,14 +155,6 @@ const WorkbenchAltList = ({
   );
 };
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
 describe('MediaAltInlineEditor — sibling success must not destroy partial row A [BR-77]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -198,11 +191,10 @@ describe('MediaAltInlineEditor — sibling success must not destroy partial row 
       return Promise.resolve({ items: [], total: 7, totalPages: 7 });
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     render(
-      <QueryClientProvider client={client}>
-        <WorkbenchAltList queryFn={queryFn} statsQueryFn={statsQueryFn} />
-      </QueryClientProvider>,
+      <WorkbenchAltList queryFn={queryFn} statsQueryFn={statsQueryFn} />,
+      { wrapper: createQueryWrapper(client) },
     );
 
     await waitFor(() => expect(screen.getByTestId('media-row-42')).toBeInTheDocument());
@@ -281,11 +273,10 @@ describe('MediaAltInlineEditor — sibling success must not destroy partial row 
       }),
     );
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     render(
-      <QueryClientProvider client={client}>
-        <WorkbenchAltList queryFn={queryFn} />
-      </QueryClientProvider>,
+      <WorkbenchAltList queryFn={queryFn} />,
+      { wrapper: createQueryWrapper(client) },
     );
     await waitFor(() => expect(screen.getByTestId('media-row-42')).toBeInTheDocument());
 
@@ -332,11 +323,10 @@ describe('MediaAltInlineEditor — no module pin state across sequential tests',
         totalPages: 1,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     render(
-      <QueryClientProvider client={client}>
-        <WorkbenchAltList queryFn={queryFn} />
-      </QueryClientProvider>,
+      <WorkbenchAltList queryFn={queryFn} />,
+      { wrapper: createQueryWrapper(client) },
     );
     await waitFor(() => expect(screen.getByTestId('media-row-42')).toBeInTheDocument());
 
@@ -364,11 +354,10 @@ describe('MediaAltInlineEditor — no module pin state across sequential tests',
         totalPages: 1,
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     render(
-      <QueryClientProvider client={client}>
-        <WorkbenchAltList queryFn={queryFn} />
-      </QueryClientProvider>,
+      <WorkbenchAltList queryFn={queryFn} />,
+      { wrapper: createQueryWrapper(client) },
     );
     await waitFor(() => expect(screen.getByTestId('media-row-99')).toBeInTheDocument());
 

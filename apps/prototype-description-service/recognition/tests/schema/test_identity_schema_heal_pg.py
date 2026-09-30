@@ -20,11 +20,31 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from recognition.tests.schema.test_identity_schema_heal_fakeop import (
-    _FakeOp,
+    _FakeOp as _BaseFakeOp,
+    _FakeScalarResult,
     _issued_drop,
 )
 
 MIGRATION = importlib.import_module("db.migrations.versions.001_identity_schema")
+
+
+class _FakeOp(_BaseFakeOp):
+    def get_bind(self):
+        original = super().get_bind()
+
+        class _Bind:
+            dialect = original.dialect
+
+            def execute(self, stmt, params=None):
+                sql = str(stmt).lower()
+                if "from pg_index i" in sql:
+                    assert "idx.relname = 'mv_cluster_centroids_cluster_id'" in sql
+                    assert "i.indisunique" in sql
+                    # These fixtures model a healthy index, so no stale index exists.
+                    return _FakeScalarResult(False)
+                return original.execute(stmt, params)
+
+        return _Bind()
 
 
 def _table_names(engine) -> set[str]:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, tuple_, update
@@ -29,6 +30,8 @@ from scene.domain.describe_run import (
     utc_observation,
     validate_duration_ms,
 )
+
+_PURGE_BATCH_SIZE = 400
 
 
 class DescribeOperationRepository:
@@ -257,7 +260,12 @@ class DescribeOperationRepository:
         return op
 
     async def active_demand_count(
-        self, *, now: datetime | None = None, stop_requested: bool = False, max_lease_reached: bool = False
+        self,
+        *,
+        now: datetime | None = None,
+        stop_requested: bool = False,
+        max_lease_reached: bool = False,
+        stop_held_leases: Collection[tuple[uuid.UUID, str]] = (),
     ) -> int:
         await DescribeRunRepository(self._session)._require_rls_bypass()
         now = as_utc(now or datetime.now(UTC))
@@ -270,43 +278,60 @@ class DescribeOperationRepository:
             .values(state=State.EXPIRED)
             .execution_options(synchronize_session="fetch")
         )
-        if stop_requested or max_lease_reached:
+        if max_lease_reached:
             return 0
-        return int(
-            await self._session.scalar(
-                select(func.count())
-                .select_from(DescribeDemandLease)
-                .where(
-                    DescribeDemandLease.state == State.ACTIVE,
-                    DescribeDemandLease.expires_at > now,
-                )
+        held = tuple(stop_held_leases) if stop_requested else ()
+        if stop_requested and not held:
+            return 0
+        query = (
+            select(func.count())
+            .select_from(DescribeDemandLease)
+            .join(
+                DescribeOperation,
+                (DescribeDemandLease.tenant_id == DescribeOperation.tenant_id)
+                & (DescribeDemandLease.operation_id == DescribeOperation.operation_id),
             )
-            or 0
+            .where(
+                DescribeDemandLease.state == State.ACTIVE,
+                DescribeDemandLease.expires_at > now,
+                DescribeDemandLease.retain_until > now,
+                DescribeOperation.retain_until > now,
+            )
         )
+        if held:
+            query = query.where(~tuple_(DescribeDemandLease.tenant_id, DescribeDemandLease.operation_id).in_(held))
+        return int(await self._session.scalar(query) or 0)
 
     async def purge_expired(self, *, now: datetime | None = None) -> int:
         await DescribeRunRepository(self._session)._require_rls_bypass()
         now = as_utc(now or datetime.now(UTC))
-        # Match renewal lock order: parent operation before demand lease.
-        candidates = (
+        deleted = 0
+        while True:
+            # Match renewal lock order: parent operation before demand lease.
+            candidates = (
+                await self._session.execute(
+                    select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
+                    .where(DescribeOperation.retain_until <= now)
+                    .order_by(DescribeOperation.tenant_id, DescribeOperation.operation_id)
+                    .limit(_PURGE_BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+            identities = [(row.tenant_id, row.operation_id) for row in candidates]
+            if not identities:
+                break
+            # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
             await self._session.execute(
-                select(DescribeOperation.tenant_id, DescribeOperation.operation_id)
-                .where(DescribeOperation.retain_until <= now)
-                .with_for_update(skip_locked=True)
+                delete(DescribeDemandLease)
+                .where(tuple_(DescribeDemandLease.tenant_id, DescribeDemandLease.operation_id).in_(identities))
+                .execution_options(synchronize_session="fetch")
             )
-        ).all()
-        identities = [(row.tenant_id, row.operation_id) for row in candidates]
-        # Evaluate expiry in SQL: SQLite-loaded identity-map timestamps are naive.
-        await self._session.execute(
-            delete(DescribeDemandLease)
-            .where(tuple_(DescribeDemandLease.tenant_id, DescribeDemandLease.operation_id).in_(identities))
-            .execution_options(synchronize_session="fetch")
-        )
-        result = await self._session.execute(
-            delete(DescribeOperation)
-            .where(tuple_(DescribeOperation.tenant_id, DescribeOperation.operation_id).in_(identities))
-            .execution_options(synchronize_session="fetch")
-        )
+            result = await self._session.execute(
+                delete(DescribeOperation)
+                .where(tuple_(DescribeOperation.tenant_id, DescribeOperation.operation_id).in_(identities))
+                .execution_options(synchronize_session="fetch")
+            )
+            deleted += int(result.rowcount or 0)
         await self._session.execute(
             delete(DescribeStartup)
             .where(
@@ -318,4 +343,4 @@ class DescribeOperationRepository:
             .execution_options(synchronize_session="fetch")
         )
         await self._session.flush()
-        return result.rowcount
+        return deleted

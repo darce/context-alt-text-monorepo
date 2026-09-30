@@ -247,7 +247,8 @@ class PersonMergeService {
 			}
 		}
 		foreach ( array( 'local_revision', 'cluster_count' ) as $field ) {
-			if ( ! $this->is_integer_in_range( $loser[ $field ] ?? null, 0 ) ) {
+			$maximum = 'cluster_count' === $field ? 4294967295 : null;
+			if ( ! $this->is_integer_in_range( $loser[ $field ] ?? null, 0, $maximum ) ) {
 				return false;
 			}
 		}
@@ -274,9 +275,13 @@ class PersonMergeService {
 		return $this->is_integer_in_range( $id, 1 );
 	}
 
-	private function is_integer_in_range( mixed $value, int $minimum ): bool {
+	private function is_integer_in_range( mixed $value, int $minimum, ?int $maximum = null ): bool {
+		$options = array( 'min_range' => $minimum );
+		if ( null !== $maximum ) {
+			$options['max_range'] = $maximum;
+		}
 		return ( is_int( $value ) || ( is_string( $value ) && 1 === preg_match( '/^(0|[1-9][0-9]*)$/D', $value ) ) )
-			&& false !== filter_var( $value, FILTER_VALIDATE_INT, array( 'options' => array( 'min_range' => $minimum ) ) );
+			&& false !== filter_var( $value, FILTER_VALIDATE_INT, array( 'options' => $options ) );
 	}
 
 	/** Called only after acquiring the undo option lock on recovery and undo. */

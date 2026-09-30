@@ -860,12 +860,12 @@ focused on the destructive contract.
 ├── Caddyfile                        # multi-subdomain reverse proxy config
 ├── docker-compose.caddy.yml         # standalone Caddy (joins all env networks)
 ├── prod/
-│   ├── .env -> secrets/.env
+│   ├── .env                         # runtime env + credentials (regular file, 0600; edit in place)
 │   ├── docker-compose.env.yml       # parameterized env template
-│   ├── secrets/.env                 # prod credentials (chmod 600)
 │   └── db/docker-prod-init/
 ├── staging/                         # same structure as prod
 ├── dev/                             # same structure as prod
+├── dev-fir/                         # same structure; .env from .env.fir.example
 ├── demo/
 │   ├── .env -> secrets/.env
 │   ├── docker-compose.demo.yml      # WordPress + MariaDB demo stack
@@ -881,6 +881,15 @@ focused on the destructive contract.
 │   └── demo-dbdata/                 # demo MariaDB (persists)
 └── logs/
 ```
+
+Backend envs keep one regular `.env` per env dir: `recognition-service.sh`
+rewrites it with an atomic `os.replace`, which would replace a
+`.env -> secrets/.env` symlink and leave `secrets/.env` a stale copy. Legacy
+`<env>/secrets/.env` files on the VM are not read by anything. The demo stack
+is different: its scripts re-link `.env -> secrets/.env` on every run.
+Templates, rotation and the OCI Vault opt-in:
+`apps/prototype-description-service/docs/secrets-inventory.md`
+§ Per-environment runtime files.
 
 ### Container Registry (OCIR)
 

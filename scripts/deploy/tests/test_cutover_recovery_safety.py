@@ -23,19 +23,15 @@ is rewritten to a tmp unit dir. sudo/systemctl/docker/rm are fail-closed shims.
 from __future__ import annotations
 
 import os
-import stat
+import shlex
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 SCRIPT = Path(__file__).resolve().parents[1] / "recognition-service.sh"
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 def _install_fail_closed_shims(
@@ -62,41 +58,41 @@ def _install_fail_closed_shims(
         f"fail_at='{fail_at or ''}'\n"
         "if [[ \"$sudo_fail\" == 1 ]]; then echo 'sudo: a password is required' >&2; exit 1; fi\n"
         "under_allowed() {\n"
-        "  local raw=\"$1\" abs prefix\n"
-        "  [[ \"$raw\" == /* ]] || raw=\"$PWD/$raw\"\n"
-        "  abs=\"$(realpath -m -- \"$raw\")\"\n"
-        "  prefix=\"$allowed/\"\n"
-        "  [[ \"$abs\" == \"$allowed\" || \"$abs\" == \"$prefix\"* ]]\n"
+        '  local raw="$1" abs prefix\n'
+        '  [[ "$raw" == /* ]] || raw="$PWD/$raw"\n'
+        '  abs="$(python3 -c \'import os,sys; print(os.path.realpath(sys.argv[1]))\' "$raw")"\n'
+        '  prefix="$allowed/"\n'
+        '  [[ "$abs" == "$allowed" || "$abs" == "$prefix"* ]]\n'
         "}\n"
-        "cmd=\"${1:-}\"; shift || true\n"
-        "printf 'sudo %s %s\\n' \"$cmd\" \"$*\" >>\"$records\"\n"
-        "case \"$cmd\" in\n"
+        'cmd="${1:-}"; shift || true\n'
+        'printf \'sudo %s %s\\n\' "$cmd" "$*" >>"$records"\n'
+        'case "$cmd" in\n'
         "  systemctl|docker)\n"
-        "    exec \"$cmd\" \"$@\"\n"
+        '    exec "$cmd" "$@"\n'
         "    ;;\n"
         "  python3)\n"
-        "    [[ \"$1\" == -c && \"$#\" == 3 ]] || exit 2\n"
-        "    under_allowed \"$3\" || exit 2\n"
-        "    exec python3 \"$@\"\n"
+        '    [[ "$1" == -c && "$#" == 3 ]] || exit 2\n'
+        '    under_allowed "$3" || exit 2\n'
+        '    exec python3 "$@"\n'
         "    ;;\n"
         "  test)\n"
-        "    for arg in \"$@\"; do\n"
+        '    for arg in "$@"; do\n'
         "      # POSIX test operators are not paths: unary -f/-d/..., negation `!`.\n"
-        "      [[ \"$arg\" == -* || \"$arg\" == '!' ]] && continue\n"
-        "      under_allowed \"$arg\" || { echo \"sudo test: path outside sandbox: $arg\" >&2; exit 2; }\n"
+        '      [[ "$arg" == -* || "$arg" == \'!\' ]] && continue\n'
+        '      under_allowed "$arg" || { echo "sudo test: path outside sandbox: $arg" >&2; exit 2; }\n'
         "    done\n"
-        "    exec test \"$@\"\n"
+        '    exec test "$@"\n'
         "    ;;\n"
         "  rm)\n"
         "    if [[ \"$fail_at\" == unit-rm ]]; then echo 'rm failed' >&2; exit 1; fi\n"
-        "    for arg in \"$@\"; do\n"
-        "      [[ \"$arg\" == -* ]] && continue\n"
-        "      under_allowed \"$arg\" || { echo \"sudo rm: path outside sandbox: $arg\" >&2; exit 2; }\n"
+        '    for arg in "$@"; do\n'
+        '      [[ "$arg" == -* ]] && continue\n'
+        '      under_allowed "$arg" || { echo "sudo rm: path outside sandbox: $arg" >&2; exit 2; }\n'
         "    done\n"
-        "    exec rm \"$@\"\n"
+        '    exec rm "$@"\n'
         "    ;;\n"
         "  *)\n"
-        "    echo \"sudo: refused unexpected command: ${cmd:-empty}\" >&2\n"
+        '    echo "sudo: refused unexpected command: ${cmd:-empty}" >&2\n'
         "    exit 2\n"
         "    ;;\n"
         "esac\n",
@@ -109,26 +105,26 @@ def _install_fail_closed_shims(
         f"records='{records}'\n"
         f"fail_at='{fail_at or ''}'\n"
         f"show_mode='{show_mode or ''}'\n"
-        "cmd=\"${1:-}\"; shift || true\n"
-        "printf 'systemctl %s %s\\n' \"$cmd\" \"$*\" >>\"$records\"\n"
-        "unit=\"${1:-}\"\n"
-        "unit=\"${unit#\\'}\"\n"
-        "unit=\"${unit%\\'}\"\n"
-        "unit=\"${unit%.service}\"\n"
-        "case \"$cmd\" in\n"
+        'cmd="${1:-}"; shift || true\n'
+        'printf \'systemctl %s %s\\n\' "$cmd" "$*" >>"$records"\n'
+        'unit="${1:-}"\n'
+        'unit="${unit#\\\'}"\n'
+        'unit="${unit%\\\'}"\n'
+        'unit="${unit%.service}"\n'
+        'case "$cmd" in\n'
         "  stop)\n"
         "    if [[ \"$fail_at\" == stop ]]; then echo 'stop failed' >&2; exit 1; fi\n"
-        "    if [[ \"$fail_at\" == stop-5 ]]; then echo \"Failed to stop $unit.service.\" >&2; exit 5; fi\n"
-        "    if [[ ! -f \"$state/$unit\" ]]; then echo \"Unit $unit not loaded.\" >&2; exit 5; fi\n"
+        '    if [[ "$fail_at" == stop-5 ]]; then echo "Failed to stop $unit.service." >&2; exit 5; fi\n'
+        '    if [[ ! -f "$state/$unit" ]]; then echo "Unit $unit not loaded." >&2; exit 5; fi\n'
         "    printf 'inactive\\n' >\"$state/$unit\"\n"
         "    exit 0\n"
         "    ;;\n"
         "  is-enabled)\n"
-        "    [[ -f \"$state/$unit.enabled\" ]] && exit 0\n"
+        '    [[ -f "$state/$unit.enabled" ]] && exit 0\n'
         "    exit 1\n"
         "    ;;\n"
         "  disable)\n"
-        "    rm -f \"$state/$unit.enabled\"\n"
+        '    rm -f "$state/$unit.enabled"\n'
         "    exit 0\n"
         "    ;;\n"
         "  daemon-reload)\n"
@@ -137,39 +133,39 @@ def _install_fail_closed_shims(
         "    exit 0\n"
         "    ;;\n"
         "  show)\n"
-        "    unit=\"\"; have_load=0; have_active=0; have_sub=0; have_pager=0\n"
-        "    for arg in \"$@\"; do\n"
-        "      arg=\"${arg#\\'}\"; arg=\"${arg%\\'}\"\n"
-        "      case \"$arg\" in\n"
+        '    unit=""; have_load=0; have_active=0; have_sub=0; have_pager=0\n'
+        '    for arg in "$@"; do\n'
+        '      arg="${arg#\\\'}"; arg="${arg%\\\'}"\n'
+        '      case "$arg" in\n'
         "        --no-pager) have_pager=1 ;;\n"
         "        --property=LoadState) have_load=1 ;;\n"
         "        --property=ActiveState) have_active=1 ;;\n"
         "        --property=SubState) have_sub=1 ;;\n"
         "        --property=*|--*)\n"
-        "          echo \"systemctl: refused unsupported show flag: $arg\" >&2\n"
+        '          echo "systemctl: refused unsupported show flag: $arg" >&2\n'
         "          exit 2\n"
         "          ;;\n"
-        "        *) unit=\"$arg\" ;;\n"
+        '        *) unit="$arg" ;;\n'
         "      esac\n"
         "    done\n"
-        "    unit=\"${unit%.service}\"\n"
-        "    if [[ \"$have_pager\" != 1 || \"$have_load\" != 1 || \"$have_active\" != 1 || \"$have_sub\" != 1 || -z \"$unit\" ]]; then\n"
+        '    unit="${unit%.service}"\n'
+        '    if [[ "$have_pager" != 1 || "$have_load" != 1 || "$have_active" != 1 || "$have_sub" != 1 || -z "$unit" ]]; then\n'
         "      echo 'systemctl: refused show without LoadState,ActiveState,SubState and --no-pager' >&2\n"
         "      exit 2\n"
         "    fi\n"
         "    if [[ \"$show_mode\" == fail ]]; then echo 'Failed to get properties' >&2; exit 1; fi\n"
-        "    if [[ \"$show_mode\" == empty ]]; then exit 0; fi\n"
+        '    if [[ "$show_mode" == empty ]]; then exit 0; fi\n'
         "    if [[ \"$show_mode\" == malformed ]]; then printf 'not-a-property-listing\\n'; exit 0; fi\n"
-        "    if [[ \"$show_mode\" == unknown ]]; then\n"
+        '    if [[ "$show_mode" == unknown ]]; then\n'
         "      printf 'LoadState=unexpected\\nActiveState=unexpected\\nSubState=unexpected\\n'\n"
         "      exit 0\n"
         "    fi\n"
-        "    if [[ ! -f \"$state/$unit\" ]]; then\n"
+        '    if [[ ! -f "$state/$unit" ]]; then\n'
         "      printf 'LoadState=not-found\\nActiveState=inactive\\nSubState=dead\\n'\n"
         "      exit 0\n"
         "    fi\n"
-        "    active_state=\"$(cat \"$state/$unit\")\"\n"
-        "    if [[ \"$active_state\" == active ]]; then\n"
+        '    active_state="$(cat "$state/$unit")"\n'
+        '    if [[ "$active_state" == active ]]; then\n'
         "      printf 'LoadState=loaded\\nActiveState=active\\nSubState=running\\n'\n"
         "    else\n"
         "      printf 'LoadState=loaded\\nActiveState=inactive\\nSubState=dead\\n'\n"
@@ -177,7 +173,7 @@ def _install_fail_closed_shims(
         "    exit 0\n"
         "    ;;\n"
         "  *)\n"
-        "    echo \"systemctl: refused unsupported command: ${cmd:-empty}\" >&2\n"
+        '    echo "systemctl: refused unsupported command: ${cmd:-empty}" >&2\n'
         "    exit 2\n"
         "    ;;\n"
         "esac\n",
@@ -188,7 +184,7 @@ def _install_fail_closed_shims(
         "set -u\n"
         f"records='{records}'\n"
         f"fail_at='{fail_at or ''}'\n"
-        "printf 'docker %s\\n' \"$*\" >>\"$records\"\n"
+        'printf \'docker %s\\n\' "$*" >>"$records"\n'
         "if [[ \"$1\" != compose ]]; then echo 'docker: refused unexpected command' >&2; exit 2; fi\n"
         "if [[ \"$fail_at\" == compose-rm ]]; then echo 'compose rm failed' >&2; exit 1; fi\n"
         "exit 0\n",
@@ -263,6 +259,66 @@ def test_abort_payload_succeeds_when_candidate_unit_is_absent(tmp_path: Path) ->
     assert "compose" in logged and "rm" in logged
 
 
+def test_abort_payload_absent_unit_is_quiet(tmp_path: Path) -> None:
+    result, _ = _run_abort_payload(tmp_path, unit_state="absent")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not loaded" not in result.stderr
+    assert "Failed to stop" not in result.stderr
+
+    failed_stop, _ = _run_abort_payload(tmp_path, unit_state="active", fail_at="stop-5")
+    assert failed_stop.returncode != 0
+    assert "Failed to stop" in failed_stop.stderr
+
+
+def test_edge_restore_network_check_matches_present_networks(tmp_path: Path) -> None:
+    payload_path = tmp_path / "edge-restore.payload"
+    command = f"""
+source {shlex.quote(str(SCRIPT))}
+GREEN=; YELLOW=; RED=; RESET=
+run_with_deadline() {{ shift 2; "$@"; }}
+ssh() {{ cat >{shlex.quote(str(payload_path))}; return 0; }}
+restore_edge_backups dev
+"""
+    result = subprocess.run(["bash", "-c", command], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    payload = payload_path.read_text(encoding="utf-8")
+    start = payload.index("verify_edge_networks() {")
+    end = payload.index("\n}\n", start) + 2
+    function_src = payload[start:end]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "docker",
+        "#!/usr/bin/env bash\n"
+        'case "${1:-}" in\n'
+        "  compose) printf 'cid1\\n' ;;\n"
+        "  inspect) printf '%s\\n' \"${NETWORK_JSON:-}\" ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+    )
+    edge_dir = tmp_path / "edge"
+    edge_dir.mkdir()
+
+    def run_check(network_json: str) -> subprocess.CompletedProcess[str]:
+        env_vars = os.environ.copy()
+        env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+        env_vars["NETWORK_JSON"] = network_json
+        driver = f"{function_src}\nedge_dir={shlex.quote(str(edge_dir))}\nverify_edge_networks"
+        return subprocess.run(["bash", "-c", driver], text=True, capture_output=True, check=False, env=env_vars)
+
+    present = run_check(
+        '{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},"acx-dev-fir-net":{},"acx-demo-net":{}}'
+    )
+    assert present.returncode == 0, present.stdout + present.stderr
+    assert "Trailing backslash" not in present.stderr
+    assert "missing restored network" not in present.stderr
+
+    missing = run_check('{"acx-prod-net":{},"acx-staging-net":{},"acx-dev-net":{},"acx-dev-fir-net":{}}')
+    assert missing.returncode == 1
+    assert "missing restored network acx-demo-net" in missing.stderr
+
+
 def test_abort_payload_succeeds_when_candidate_unit_is_inactive(tmp_path: Path) -> None:
     result, logged = _run_abort_payload(tmp_path, unit_state="inactive")
     combined = result.stdout + result.stderr + logged
@@ -295,9 +351,7 @@ def test_abort_payload_propagates_genuine_cleanup_failure(tmp_path: Path, fail_a
         assert "docker compose" not in logged, combined
 
 
-def _assert_failed_stop_did_not_cleanup(
-    tmp_path: Path, result: subprocess.CompletedProcess[str], logged: str
-) -> None:
+def _assert_failed_stop_did_not_cleanup(tmp_path: Path, result: subprocess.CompletedProcess[str], logged: str) -> None:
     combined = result.stdout + result.stderr + logged
     assert result.returncode != 0, combined
     assert (tmp_path / "systemd" / "acx-dev-next.service").exists(), combined
@@ -319,12 +373,8 @@ def test_abort_cleans_up_when_show_reports_not_found(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("show_mode", ["fail", "empty", "malformed", "unknown"])
-def test_abort_refuses_cleanup_when_state_query_is_unconfirmed(
-    tmp_path: Path, show_mode: str
-) -> None:
-    result, logged = _run_abort_payload(
-        tmp_path, unit_state="active", fail_at="stop-5", show_mode=show_mode
-    )
+def test_abort_refuses_cleanup_when_state_query_is_unconfirmed(tmp_path: Path, show_mode: str) -> None:
+    result, logged = _run_abort_payload(tmp_path, unit_state="active", fail_at="stop-5", show_mode=show_mode)
     _assert_failed_stop_did_not_cleanup(tmp_path, result, logged)
 
 
@@ -581,12 +631,8 @@ def test_inflight_confirmed_absent_skips_without_drain(tmp_path: Path, caller: s
         "empty",
     ],
 )
-def test_inflight_probe_errors_refuse_recovery_and_do_not_drain(
-    tmp_path: Path, caller: str, inject: str
-) -> None:
-    result, logged = _run_inflight_callers(
-        tmp_path, inject=inject, marker=True, caller=caller
-    )
+def test_inflight_probe_errors_refuse_recovery_and_do_not_drain(tmp_path: Path, caller: str, inject: str) -> None:
+    result, logged = _run_inflight_callers(tmp_path, inject=inject, marker=True, caller=caller)
     combined = result.stdout + result.stderr
     assert result.returncode != 0, combined
     assert "drained" not in logged.splitlines()

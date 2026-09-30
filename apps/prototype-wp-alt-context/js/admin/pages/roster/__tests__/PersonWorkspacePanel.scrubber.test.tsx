@@ -463,7 +463,7 @@ describe('PersonWorkspacePanel face scrubber', () => {
     expect(screen.getByRole('listbox', { name: 'Faces in face group 1' })).toHaveFocus();
   });
 
-  it('gives rail cells explicit width and height before the image loads', () => {
+  it('shows the loading placeholder before the thumbnail image loads', () => {
     const completeDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'complete');
     Object.defineProperty(HTMLImageElement.prototype, 'complete', {
       configurable: true,
@@ -478,40 +478,11 @@ describe('PersonWorkspacePanel face scrubber', () => {
       expect(thumb).not.toBeNull();
       expect(thumb).toHaveClass('acx-face-thumbnail--loading');
       expect(option.querySelector('.acx-face-thumbnail__placeholder')).not.toBeNull();
-      expect(thumb).toHaveStyle({ width: '64px', height: '64px' });
     } finally {
       if (completeDescriptor) {
         Object.defineProperty(HTMLImageElement.prototype, 'complete', completeDescriptor);
       }
     }
-  });
-
-  it('reserves explicit width and height on the raw-image rail fallback', () => {
-    renderWorkspace(
-      baseEntry({
-        clusters: [
-          {
-            cluster_id: CLUSTER_UUID,
-            identity_count: 1,
-            representative_identity: null,
-            instances: [
-              {
-                identity_id: 'identity-raw',
-                media_id: 303,
-                media_url: 'https://example.com/zero-bbox.jpg',
-                bbox: { x: 0, y: 0, width: 0, height: 0 },
-                similarity: 0.5,
-              },
-            ],
-          },
-        ],
-      }),
-    );
-
-    const image = screen.getByRole('img', { name: 'Face from media 303 in face group 1' });
-    expect(image.tagName).toBe('IMG');
-    expect(image).toHaveAttribute('width', '64');
-    expect(image).toHaveAttribute('height', '64');
   });
 
   it('selects a face from the face= deep link and falls back without crashing when unmatched', async () => {

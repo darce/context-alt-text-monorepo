@@ -1,0 +1,20 @@
+[
+  {
+    "test": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_reservation_path_locks_entitlement_before_check_and_insert",
+    "verdict": "kept",
+    "reason": "The executed reservation query is the only guard that entitlement row locking happens before the chargeable usage check and reservation insertion.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_app1_usage_admission_service.py::test_reservation_path_locks_entitlement_before_check_and_insert (strengthened)"
+  },
+  {
+    "test": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_repository_is_the_sqlalchemy_implementation",
+    "verdict": "deleted",
+    "reason": "The duplicate class-name comparison does not guard persistence behavior and passes for a same-named stub; real entitlement flows exercise the repository.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_grant_beta_is_tenant_bound_audited_and_upserts_metadata; apps/prototype-description-service/recognition/tests/unit/test_app1_tenant_entitlement_service.py::test_h6_active_paid_state_uses_configured_plan_allowance"
+  },
+  {
+    "test": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py::test_make_serve_preserves_skip_install_fast_path",
+    "verdict": "kept",
+    "reason": "The expanded recipe check is the only guard that make serve passes SKIP_INSTALL=1 to the startup script so it skips dependency installation.",
+    "covered_by": "apps/prototype-description-service/recognition/tests/unit/test_start_prototype_local_script.py::test_make_serve_preserves_skip_install_fast_path (strengthened)"
+  }
+]

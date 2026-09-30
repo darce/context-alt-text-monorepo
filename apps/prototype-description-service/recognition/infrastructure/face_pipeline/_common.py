@@ -25,36 +25,48 @@ DEFAULT_INPUT_SIZE: Final[tuple[int, int]] = (320, 320)
 
 # Manifest is the single source for SFace dim (rg-015) — never invent a default.
 SFACE_CROP_SIZE: Final[int] = 112
-# embed_batch implements exactly this contract (L2 unit vectors for cosine).
-SFACE_NORMALIZATION: Final[str] = "l2"
-SFACE_METRIC: Final[str] = "cosine"
 _FLOAT01_TRAP_MAX: Final[float] = 1.5
 
 
-def resolve_sface_embedding_dim() -> int:
-    """Return SFace embedding dim from the provenance manifest (fail-closed).
+def resolve_embedding_dim(model_name: str) -> int:
+    """Return a model's embedding dim when it satisfies the embed contract.
 
-    Requires the operational contract that ``embed_batch`` implements:
-    non-null dim, ``normalization='l2'``, ``metric='cosine'``. Unsupported
-    provenance values raise before any feature execution (FIR3-BR-05).
+    ``embed_batch`` implements L2-normalized vectors compared with cosine
+    distance, so model metadata must explicitly describe that same contract.
+    Unknown models and incomplete metadata fail closed rather than falling back
+    to a guessed dimension.
     """
-    entry = MODEL_MANIFEST["sface"]
+    try:
+        entry = MODEL_MANIFEST[model_name]
+    except KeyError:
+        known_models = ", ".join(sorted(MODEL_MANIFEST))
+        raise ValueError(f"unknown embedding model {model_name!r}; known models: {known_models}") from None
+
     dim = entry.embedding_dim
     if dim is None:
         raise ValueError(
-            "MODEL_MANIFEST['sface'].embedding_dim is None; refusing to invent a default embedding dimension (rg-015)"
+            f"MODEL_MANIFEST[{model_name!r}].embedding_dim is None; "
+            "refusing to invent a default embedding dimension (rg-015)"
         )
-    if entry.normalization != SFACE_NORMALIZATION:
+    if entry.normalization != "l2":
         raise ValueError(
-            f"unsupported SFace normalization {entry.normalization!r}; "
-            f"require {SFACE_NORMALIZATION!r} (embed_batch L2 contract)"
+            f"unsupported {model_name} normalization {entry.normalization!r}; require 'l2' (embed_batch L2 contract)"
         )
-    if entry.metric != SFACE_METRIC:
+    if entry.metric != "cosine":
         raise ValueError(
-            f"unsupported SFace metric {entry.metric!r}; "
-            f"require {SFACE_METRIC!r} (embed_batch cosine contract)"
+            f"unsupported {model_name} metric {entry.metric!r}; require 'cosine' (embed_batch cosine contract)"
         )
     return int(dim)
+
+
+def resolve_sface_embedding_dim() -> int:
+    """Return SFace embedding dim by delegating to the generic resolver.
+
+    The generic resolver enforces the operational ``embed_batch`` contract:
+    non-null dim, ``normalization='l2'``, and ``metric='cosine'``. Unsupported
+    provenance values raise before any feature execution (FIR3-BR-05).
+    """
+    return resolve_embedding_dim("sface")
 
 
 SFACE_EMBEDDING_DIM: Final[int] = resolve_sface_embedding_dim()
@@ -181,10 +193,9 @@ __all__ = [
     "RawDetection",
     "SFACE_CROP_SIZE",
     "SFACE_EMBEDDING_DIM",
-    "SFACE_METRIC",
-    "SFACE_NORMALIZATION",
     "ZeroNormEmbeddingError",
     "embed_batch",
     "ensure_bgr_u8",
+    "resolve_embedding_dim",
     "resolve_sface_embedding_dim",
 ]

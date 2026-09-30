@@ -5,6 +5,13 @@
 import type { DataSource, ProjectionStatus } from './dataSource';
 import type { BoundingBox, ClusterIdentity, RepresentativeBounds } from './identity';
 
+export interface ClusterQualityComponents {
+  confidence: number | null;
+  bbox_area: number | null;
+  sharpness: number | null;
+  occlusion_severity: number | null;
+}
+
 export interface ClusterSummary {
   id: string;
   label: string | null;
@@ -17,6 +24,10 @@ export interface ClusterSummary {
   created_at?: string;
   /** Bound person from wp_acx_clusters.person_id → persons.person_uuid. Null when unresolved. */
   person_uuid?: string | null;
+  representative_quality?: number | null;
+  quality_components?: ClusterQualityComponents | null;
+  representative_media_id?: number | null;
+  undoable_merge_receipt_id?: string | null;
 }
 
 export interface ClusterListResponse {

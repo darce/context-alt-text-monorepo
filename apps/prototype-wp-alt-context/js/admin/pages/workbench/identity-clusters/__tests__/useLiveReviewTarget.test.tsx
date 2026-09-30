@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers } from '../../../../api/recognition';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import {
@@ -60,16 +60,6 @@ const okMembers = (): ClusterMembersResponse => ({
   truncated: false,
 });
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return wrapper;
-};
-
 describe('useLiveReviewTarget', () => {
   afterEach(() => {
     vi.resetAllMocks();
@@ -82,7 +72,7 @@ describe('useLiveReviewTarget', () => {
 
     const { result } = renderHook(
       () => useLiveReviewTarget('cluster-live', { onClose, onRebind }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {
@@ -108,7 +98,7 @@ describe('useLiveReviewTarget', () => {
           onRebind,
           onClose,
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {
@@ -133,7 +123,7 @@ describe('useLiveReviewTarget', () => {
           resolveSurvivor: (id) => (id === 'cluster-x' ? 'cluster-survivor' : null),
           onAnnounce,
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {
@@ -162,7 +152,7 @@ describe('useLiveReviewTarget', () => {
           onRebind,
           onClose,
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {
@@ -197,7 +187,7 @@ describe('useLiveReviewTarget', () => {
             openId = null;
           },
         }),
-      { wrapper: createWrapper(), initialProps: { id: openId } },
+      { wrapper: createQueryWrapper(buildTestQueryClient()), initialProps: { id: openId } },
     );
 
     await waitFor(() => {
@@ -237,9 +227,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true, retryDelay: 1 } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(
       () => useLiveReviewTarget('cluster-blip', { onClose, onRebind }),
@@ -276,7 +264,7 @@ describe('useLiveReviewTarget', () => {
     const onClose = vi.fn();
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-slow', { onClose }), {
-      wrapper: createWrapper(),
+      wrapper: createQueryWrapper(buildTestQueryClient()),
     });
 
     expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
@@ -302,9 +290,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-timeout', { onClose }), {
       wrapper,
@@ -335,9 +321,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-500', { onClose }), {
       wrapper,
@@ -366,9 +350,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true, retryDelay: 1 } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-timeout', { onClose }), {
       wrapper,
@@ -400,9 +382,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-auth', { onClose }), {
       wrapper,
@@ -428,9 +408,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(
       () =>
@@ -464,9 +442,7 @@ describe('useLiveReviewTarget', () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: true } },
     });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    const wrapper = createQueryWrapper(queryClient);
 
     const { result } = renderHook(() => useLiveReviewTarget('cluster-auth', { onClose }), {
       wrapper,
@@ -490,7 +466,7 @@ describe('useLiveReviewTarget', () => {
     const { rerender } = renderHook(
       ({ id }: { id: string | null }) =>
         useLiveReviewTarget(id, { resolveSurvivor: () => null, onClose, onAnnounce }),
-      { wrapper: createWrapper(), initialProps: { id: 'cluster-x' } },
+      { wrapper: createQueryWrapper(buildTestQueryClient()), initialProps: { id: 'cluster-x' } },
     );
 
     await waitFor(() => {
@@ -523,7 +499,7 @@ describe('useLiveReviewTarget', () => {
           onRebind,
           onClose,
         }),
-      { wrapper: createWrapper() },
+      { wrapper: createQueryWrapper(buildTestQueryClient()) },
     );
 
     await waitFor(() => {

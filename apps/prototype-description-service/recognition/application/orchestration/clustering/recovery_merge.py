@@ -19,7 +19,6 @@ import numpy as np
 from sqlalchemy import delete, func, or_, select, update
 
 from db.models.constraints import IdentityClusterBlock
-
 from db.models.identity import (
     ClusterMergeKind,
     ClusterMergeReceipt,
@@ -518,10 +517,7 @@ async def run_recovery_merge_on_clusters(
     sibling_cache = {cluster.cluster_id: list(await receipt_store.siblings(cluster.cluster_id)) for cluster in clusters}
     max_residual = settings.recovery_max_residual_size
     candidate_identity_ids = tuple(
-        member.identity_id
-        for cluster in clusters
-        if len(cluster.members) <= max_residual
-        for member in cluster.members
+        member.identity_id for cluster in clusters if len(cluster.members) <= max_residual for member in cluster.members
     )
     active_block_pairs: set[tuple[str, str]] = set()
     load_active_blocks = getattr(receipt_store, "active_block_pairs", None)
@@ -588,10 +584,7 @@ async def run_recovery_merge_on_clusters(
             continue
         dest_similarity, destination = ranked[0]
         runner_up = ranked[1][1] if len(ranked) > 1 else None
-        if any(
-            (member.identity_id, destination.cluster_id) in active_block_pairs
-            for member in residual.members
-        ):
+        if any((member.identity_id, destination.cluster_id) in active_block_pairs for member in residual.members):
             abstention = ResidualAbstention(
                 residual_cluster_id=residual.cluster_id,
                 destination_cluster_id=destination.cluster_id,
@@ -765,8 +758,7 @@ async def _persist_reverted_receipt_blocks(
     """
     tenant_uuid = uuid.UUID(str(tenant_id))
     receipt_result = await session.execute(
-        select(ClusterMergeReceipt)
-        .where(
+        select(ClusterMergeReceipt).where(
             ClusterMergeReceipt.tenant_id == tenant_uuid,
             ClusterMergeReceipt.reverted_at.is_not(None),
         )
@@ -777,9 +769,7 @@ async def _persist_reverted_receipt_blocks(
 
     receipt_pairs: dict[uuid.UUID, set[uuid.UUID]] = {}
     moved_ids = {
-        uuid.UUID(str(identity_id))
-        for receipt in reverted_receipts
-        for identity_id in receipt.moved_identity_ids
+        uuid.UUID(str(identity_id)) for receipt in reverted_receipts for identity_id in receipt.moved_identity_ids
     }
     for receipt in reverted_receipts:
         survivor_id = uuid.UUID(str(receipt.survivor_cluster_id))
@@ -795,16 +785,13 @@ async def _persist_reverted_receipt_blocks(
             MediaIdentityModel.id.in_(moved_ids),
         )
     )
-    existing_identity_ids = {
-        uuid.UUID(str(identity_id)) for identity_id in identity_result.scalars().all()
-    }
+    existing_identity_ids = {uuid.UUID(str(identity_id)) for identity_id in identity_result.scalars().all()}
     if not existing_identity_ids:
         return 0
 
     survivor_ids = tuple(receipt_pairs)
     existing_block_result = await session.execute(
-        select(IdentityClusterBlock)
-        .where(
+        select(IdentityClusterBlock).where(
             IdentityClusterBlock.tenant_id == tenant_uuid,
             IdentityClusterBlock.identity_id.in_(existing_identity_ids),
             IdentityClusterBlock.blocked_cluster_id.in_(survivor_ids),

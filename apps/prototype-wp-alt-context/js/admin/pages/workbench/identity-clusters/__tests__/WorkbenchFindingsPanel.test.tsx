@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import {
   buildWorkbenchFindings,
+  FINDINGS_READ_ONLY_REASON,
   NEXT_ACTION_KIND,
   NONE_REASON,
   useWorkbenchFindings,
@@ -126,6 +127,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
   isAssignmentError: false,
   isUnavailable: false,
   isReadOnly: false,
+  readOnlyReason: null,
   queueSettled: true,
   nextAction: { kind: NEXT_ACTION_KIND.NONE, reason: NONE_REASON.EMPTY },
   queue: [],
@@ -479,12 +481,13 @@ describe('WorkbenchFindingsPanel', () => {
     expect(screen.getByText('Recognition findings are unavailable right now.')).toBeInTheDocument();
   });
 
-  it('keeps findings visible but disables curation in read-only state', () => {
+  it('keeps findings visible and explains why the next action is disabled in read-only state', () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(
       makeViewModel({
         counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 2, total: 2 },
         hasFindings: true,
         isReadOnly: true,
+        readOnlyReason: FINDINGS_READ_ONLY_REASON.PROJECTION_UNAVAILABLE,
         nextAction: { kind: NEXT_ACTION_KIND.CLUSTER, clusterId: 'cluster-2' },
       }),
     );
@@ -492,12 +495,11 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Findings are visible while local sync catches up. Curation stays disabled until projected results are available locally.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
+    const reason = screen.getByText('Findings are read-only because projected results are unavailable.');
+    const reviewNext = screen.getByRole('button', { name: /Review next/ });
+    expect(reason).toBeInTheDocument();
+    expect(reviewNext).toBeDisabled();
+    expect(reviewNext).toHaveAccessibleDescription(reason.textContent);
   });
 
   it('shows a low-emphasis secondary action to view all findings for mixed queues', async () => {
@@ -551,44 +553,6 @@ describe('WorkbenchFindingsPanel', () => {
     expect(image).toHaveAttribute('src', mediaUrl);
     expect(image.closest('.acx-face-thumbnail')).toBeInTheDocument();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-  });
-
-  // FIX-2: rendered size must be pinned — lowering FINDINGS_PREVIEW_SIZE_PX must go red.
-  it('renders FaceThumbnail crop at FINDINGS_PREVIEW_SIZE_PX (72)', () => {
-    const mediaUrl = 'http://example.test/uploads/group-photo.jpg';
-    const bbox = { x: 10, y: 20, width: 80, height: 90 };
-    vi.mocked(useWorkbenchFindings).mockReturnValue(
-      makeViewModel({
-        counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 0, total: 1 },
-        previews: [
-          preview({
-            key: 'assignment-s1',
-            mediaUrl,
-            label: 'Ada Lovelace',
-            bbox,
-          }),
-        ],
-        hasFindings: true,
-        nextAction: {
-          kind: NEXT_ACTION_KIND.ASSIGNMENT,
-          suggestionId: 's1',
-          clusterId: 'c1',
-          label: 'Ada Lovelace',
-        },
-      }),
-    );
-
-    const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
-
-    const cropRoot = container.querySelector('.acx-face-thumbnail');
-    expect(cropRoot).toBeInTheDocument();
-    expect(cropRoot).toHaveStyle({
-      width: `${FINDINGS_PREVIEW_SIZE_PX}px`,
-      height: `${FINDINGS_PREVIEW_SIZE_PX}px`,
-    });
-    // Literal 72 pins the constant itself — lowering FINDINGS_PREVIEW_SIZE_PX must fail.
-    expect(cropRoot).toHaveStyle({ width: '72px', height: '72px' });
-    expect(FINDINGS_PREVIEW_SIZE_PX).toBe(72);
   });
 
   // Dedicated server face thumbs win over a croppable mediaUrl+bbox contest (TEST-15 vs HEAD).

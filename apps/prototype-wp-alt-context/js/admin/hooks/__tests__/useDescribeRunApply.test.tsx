@@ -1,7 +1,6 @@
-import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDescribeRunApply } from '../useDescribeRunApply';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
@@ -10,6 +9,7 @@ import * as describeApi from '../../api/describeApi';
 import type { ApplyDescribeRunResponse, DescribeRunItemsResponse } from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('../../api/describeApi', () => ({
   fetchDescribeRunItems: vi.fn(),
@@ -77,25 +77,22 @@ const applyResponse = (overrides: Partial<ApplyDescribeRunResponse> = {}): Apply
   ...overrides,
 });
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-
-const createWrapper = (client: QueryClient) => {
-  const Wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
-  return Wrapper;
-};
+let queryClient: QueryClient;
+let wrapper: ReturnType<typeof createQueryWrapper>;
 
 describe('useDescribeRunApply', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queryClient = buildTestQueryClient();
+    wrapper = createQueryWrapper(queryClient);
+  });
+
+  afterEach(() => {
+    queryClient.clear();
   });
 
   it('does not fetch items when no run id is provided', () => {
-    renderHook(() => useDescribeRunApply(null), { wrapper: createWrapper(buildClient()) });
+    renderHook(() => useDescribeRunApply(null), { wrapper });
     expect(fetchItemsMock).not.toHaveBeenCalled();
   });
 
@@ -103,7 +100,7 @@ describe('useDescribeRunApply', () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
 
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(buildClient()),
+      wrapper,
     });
 
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
@@ -122,7 +119,7 @@ describe('useDescribeRunApply', () => {
     applyMock.mockResolvedValue(applyResponse());
 
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(buildClient()),
+      wrapper,
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
@@ -137,26 +134,25 @@ describe('useDescribeRunApply', () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
     applyMock.mockResolvedValue(applyResponse());
 
-    const client = buildClient();
-    seedWorkbenchCache(client);
+    seedWorkbenchCache(queryClient);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
-    expectListPagesInvalidated(client, false);
-    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).not.toBe(true);
-    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).not.toBe(true);
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).not.toBe(true);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).not.toBe(true);
 
     const itemsFetchesBefore = fetchItemsMock.mock.calls.length;
     result.current.apply.mutate([70]);
     await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
     await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
 
-    expectListPagesInvalidated(client, true);
-    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
     // Prefix workbench() invalidation would also mark the perPage:1 total probe.
-    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
   it('refreshes list pages and missing stats after a partial apply — some alts landed [BR-125]', async () => {
@@ -168,10 +164,9 @@ describe('useDescribeRunApply', () => {
       }),
     );
 
-    const client = buildClient();
-    seedWorkbenchCache(client);
+    seedWorkbenchCache(queryClient);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
@@ -180,9 +175,9 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.applied).toEqual([71]);
     expect(result.current.apply.data?.failed).toEqual([70]);
 
-    expectListPagesInvalidated(client, true);
-    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
   it('still invalidates list pages when only partial writes landed [S6-F4]', async () => {
@@ -195,19 +190,18 @@ describe('useDescribeRunApply', () => {
       }),
     );
 
-    const client = buildClient();
-    seedWorkbenchCache(client);
+    seedWorkbenchCache(queryClient);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
     result.current.apply.mutate([]);
     await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
 
-    expectListPagesInvalidated(client, true);
-    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
   it('skips workbench and stats invalidation when a 200 apply landed nothing [S6-F4]', async () => {
@@ -223,10 +217,9 @@ describe('useDescribeRunApply', () => {
       }),
     );
 
-    const client = buildClient();
-    seedWorkbenchCache(client);
+    seedWorkbenchCache(queryClient);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
-      wrapper: createWrapper(client),
+      wrapper,
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
@@ -236,14 +229,14 @@ describe('useDescribeRunApply', () => {
     await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
 
     // History buckets still refresh; library rows and dashboard counters do not.
-    expectListPagesInvalidated(client, false);
-    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
-    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
   it('is a no-op apply when no run id is set', async () => {
     const { result } = renderHook(() => useDescribeRunApply(null), {
-      wrapper: createWrapper(buildClient()),
+      wrapper,
     });
 
     result.current.apply.mutate([]);

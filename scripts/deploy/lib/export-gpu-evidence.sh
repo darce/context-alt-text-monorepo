@@ -231,6 +231,9 @@ curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
 curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
 copy_max_time="${EVIDENCE_COPY_MAX_TIME:-$curl_max_time}"
 lock_max_time="${EVIDENCE_LOCK_MAX_TIME:-60}"
+audit_page_limit=1000
+audit_capture_max_seconds="${EVIDENCE_AUDIT_CAPTURE_MAX_SECONDS:-120}"
+audit_capture_max_bytes="${EVIDENCE_AUDIT_CAPTURE_MAX_BYTES:-33554432}"
 
 for timeout_value in \
     "$oci_connection_timeout" \
@@ -247,6 +250,14 @@ for timeout_value in \
         *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
+case "$audit_capture_max_seconds" in
+    ''|0*|*[!0-9]*) fail_usage "OCI Audit capture wall-clock limit must be a positive integer no greater than 120 seconds" ;;
+esac
+case "$audit_capture_max_bytes" in
+    ''|0*|*[!0-9]*) fail_usage "OCI Audit capture byte limit must be a positive integer no greater than 33554432" ;;
+esac
+[ "$audit_capture_max_seconds" -le 120 ] || fail_usage "OCI Audit capture wall-clock limit must not exceed 120 seconds"
+[ "$audit_capture_max_bytes" -le 33554432 ] || fail_usage "OCI Audit capture byte limit must not exceed 33554432"
 # The checker is the source of truth for the manifest contract.  Keep the
 # shell boundary free of a second copy of these values so a checker upgrade
 # cannot silently make every newly exported bundle unverifiable.
@@ -714,11 +725,12 @@ is_allowed_oci_read() {
             [ "$#" -eq 5 ] && [ "$4" = "--instance-id" ]
             ;;
         audit:event:list)
-            [ "$#" -eq 10 ] \
+            [ "$#" -eq 11 ] \
                 && [ "$4" = "--compartment-id" ] \
                 && [ "$6" = "--start-time" ] \
                 && [ "$8" = "--end-time" ] \
-                && [ "${10}" = "--all" ]
+                && [ "${10}" = "--limit" ] \
+                && [ "${11}" = "$audit_page_limit" ]
             ;;
         *)
             return 1
@@ -730,6 +742,75 @@ run_oci() {
     if ! is_allowed_oci_read "$@"; then
         echo "ERROR: refusing non-read-only OCI command: $*" >&2
         return 3
+    fi
+    if [ "$1:$2:$3" = "audit:event:list" ]; then
+        "$resolved_python" - "$audit_capture_max_bytes" "$audit_capture_max_seconds" "$oci_bin" "$@" \
+            --connection-timeout "$oci_connection_timeout" \
+            --read-timeout "$oci_read_timeout" \
+            --output json <<'PY'
+import os
+import selectors
+import signal
+import subprocess
+import sys
+import time
+
+
+max_bytes = int(sys.argv[1])
+max_seconds = int(sys.argv[2])
+process = subprocess.Popen(sys.argv[3:], stdout=subprocess.PIPE, start_new_session=True)
+assert process.stdout is not None
+deadline = time.monotonic() + max_seconds
+captured_bytes = 0
+failure = None
+reached_eof = False
+
+with selectors.DefaultSelector() as selector:
+    selector.register(process.stdout, selectors.EVENT_READ)
+    while not reached_eof:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            failure = f"OCI Audit capture exceeded the {max_seconds}-second wall-clock limit"
+            break
+        events = selector.select(remaining)
+        if not events:
+            failure = f"OCI Audit capture exceeded the {max_seconds}-second wall-clock limit"
+            break
+        for key, _ in events:
+            available = max_bytes - captured_bytes
+            chunk = os.read(key.fileobj.fileno(), min(65536, available + 1))
+            if not chunk:
+                selector.unregister(key.fileobj)
+                reached_eof = True
+                break
+            if len(chunk) > available:
+                sys.stdout.buffer.write(chunk[:available])
+                sys.stdout.buffer.flush()
+                failure = f"OCI Audit capture exceeded the {max_bytes}-byte limit"
+                break
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+            captured_bytes += len(chunk)
+        if failure:
+            break
+
+if not failure:
+    try:
+        return_code = process.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        failure = f"OCI Audit capture exceeded the {max_seconds}-second wall-clock limit"
+if failure:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    print(f"ERROR: {failure}", file=sys.stderr)
+    raise SystemExit(124 if "wall-clock" in failure else 75)
+if return_code != 0:
+    raise SystemExit(return_code if return_code > 0 else 128 - return_code)
+PY
+        return $?
     fi
     "$oci_bin" "$@" \
         --connection-timeout "$oci_connection_timeout" \
@@ -775,7 +856,7 @@ receipts_file="${work_dir}/wp_describe_receipts.json"
 
 oci_timeout_command="--connection-timeout ${oci_connection_timeout} --read-timeout ${oci_read_timeout}"
 instance_command="$(quote_for_manifest "$oci_bin") compute instance get --instance-id $(quote_for_manifest "$instance_id") ${oci_timeout_command} --output json"
-audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$audit_until") --all ${oci_timeout_command} --output json"
+audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$audit_until") --limit ${audit_page_limit} ${oci_timeout_command} --output json"
 
 # Both OCI calls below are read verbs.  Do not call the configured binary
 # anywhere else in this script; run_oci is the single safety boundary.
@@ -784,7 +865,25 @@ run_oci audit event list \
     --compartment-id "$compartment_id" \
     --start-time "$since" \
     --end-time "$audit_until" \
-    --all >"$audit_file"
+    --limit "$audit_page_limit" >"$audit_file"
+
+"$resolved_python" - "$audit_file" "$audit_page_limit" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+
+audit_path, page_limit = sys.argv[1:]
+try:
+    with Path(audit_path).open(encoding="utf-8") as handle:
+        audit = json.load(handle)
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"ERROR: OCI Audit capture is not valid JSON: {exc}") from None
+if not isinstance(audit, dict) or not isinstance(audit.get("data"), list):
+    raise SystemExit("ERROR: OCI Audit capture does not contain an event list")
+if len(audit["data"]) >= int(page_limit):
+    raise SystemExit(f"ERROR: OCI Audit capture reached the {page_limit}-event page limit; refusing a possibly incomplete capture")
+PY
 
 # Build state history from the shared strict Audit parser. Only successful
 # transitions with observed current states and explicit prior-state fields are

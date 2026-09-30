@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognition';
+import { classifyError, isCooldown } from '../utils/appError';
+import { hasRetryAfterWait, RETRY_AFTER_MAX_MS } from '../utils/retryAfter';
 import {
   cooldownRemainingMs,
   DEFAULT_COOLDOWN_SECONDS,
@@ -35,6 +37,19 @@ const hasPendingClustering = (data: MediaIdentitiesResponse | undefined): boolea
 
 const serializeQueryKey = (mediaIds: number[]): string => mediaIds.join(',');
 
+const isTransientIdentityError = (error: unknown): boolean => {
+  if (isCooldown(error)) {
+    return true;
+  }
+
+  const classified = classifyError(error);
+  if (classified._tag === 'http') {
+    return classified.status === 502 || classified.status === 503 || classified.status === 504;
+  }
+
+  return classified._tag === 'timeout' || classified._tag === 'transport';
+};
+
 export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
   const queryKey = queryKeys.media.identitiesByIds(mediaIds);
   const keySerialized = serializeQueryKey(mediaIds);
@@ -51,9 +66,33 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) => {
     queryKey,
     queryFn: () => fetchMediaIdentities(mediaIds),
     enabled: enabled && mediaIds.length > 0,
-    // Deliberate exception to shared retry: conditional query already stops polling on error;
-    // next scheduled poll (recognition cooldown in slice 2) is the retry. [RES-06]
-    retry: false,
+    // Retry transient failures before surfacing an error because cold starts, rate limits, and
+    // network blips are expected to recover. [RES-06]
+    retry: (failureCount, error) => {
+      if (failureCount >= 2) {
+        return false;
+      }
+
+      const classified = classifyError(error);
+      if (
+        classified._tag === 'http' &&
+        classified.retryAfterMs !== undefined &&
+        classified.retryAfterMs > RETRY_AFTER_MAX_MS
+      ) {
+        return false;
+      }
+
+      return isTransientIdentityError(error);
+    },
+    retryDelay: (attempt, error) => {
+      const classified = classifyError(error);
+      const retryAfterMs =
+        classified._tag === 'http' && hasRetryAfterWait(classified.retryAfterMs)
+          ? classified.retryAfterMs
+          : 0;
+
+      return Math.max(retryAfterMs, cooldownRemainingMs(), 1000 * 2 ** attempt);
+    },
     staleTime: 15_000,
     placeholderData: (previousData) => previousData,
     // Auto-poll every 3 seconds when there are identities pending cluster assignment.

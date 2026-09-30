@@ -10,47 +10,47 @@ import {
 } from '../../components/ui/dialog';
 import { GuidedPrototypeEntrance } from '../pages/GuidedPrototypeEntrance';
 import { GuidedDesignNotes } from '../pages/guided/GuidedDesignNotes';
-import { GuidedDescriptionReview } from '../pages/guided/GuidedDescriptionReview';
+import { GuidedDescriptionReview, GuidedPhotoReview } from '../pages/guided/GuidedDescriptionReview';
 import { GuidedFaceMatchCard } from '../pages/guided/GuidedFaceMatchCard';
-import { GuidedFacesPanel } from '../pages/guided/GuidedFacesPanel';
 import { GuidedPhotoFaces } from '../pages/guided/GuidedPhotoFaces';
 import { GuidedOutcome } from '../pages/guided/GuidedOutcome';
+import { GuidedChoiceChangeDialog } from '../pages/guided/GuidedChoiceChangeDialog';
 import {
   focusGuidedSection,
-  guidedStepLabelForScope,
   guideStepsForScope,
+  guidedStepLabelForScope,
   GuidedPrototypeGuide,
 } from '../pages/guided/GuidedPrototypeGuide';
 import { GuidedResetDialog } from '../pages/guided/GuidedResetDialog';
 import { GuidedSamplePhoto } from '../pages/guided/GuidedSamplePhoto';
-import { guidedCopy } from './publicGuideCopy';
+import { guidedCopy as adminGuidedCopy } from './copy';
+import { guidedCopy as publicGuidedCopy } from './publicGuideCopy';
 import {
   GUIDED_NAME_CHOICE,
   GUIDED_IMAGE_KEYS,
   GUIDED_STEP,
-  applyGuidedDraft,
+  GUIDED_OUTCOME,
   applyGuidedDraftForImage,
+  canKeepCurrentForImage,
   cancelGuidedChoiceReplacement,
   chooseGuidedName,
+  choicesForPhoto,
   confirmGuidedChoiceReplacement,
   createGuidedDemoState,
   createGuidedScenario,
-  editGuidedDraft,
   editGuidedDraftForImage,
+  formatGuidedSimilarity,
   getGuidedPerson,
+  GUIDED_MATCH_THRESHOLD,
   guidedNameCoverage,
-  keepGuidedCurrentAltText,
   keepGuidedCurrentAltTextForImage,
-  namesDecided,
-  previewGuidedDraft,
+  outcomeForPhoto,
+  outcomeReady,
   previewGuidedDraftForImage,
   resetGuidedDemoState,
-  restoreGuidedRevision,
   restoreGuidedRevisionForImage,
-  retryGuidedFixture,
   retryGuidedFixtureForImage,
   selectGuidedStep,
-  undoGuidedApplication,
   undoGuidedApplicationForImage,
   type GuidedDemoState,
   type GuidedFacePosition,
@@ -75,17 +75,17 @@ const lastSummary = (state: GuidedDemoState): string => state.actionHistory.at(-
 const choiceLabel = (scenario: GuidedScenario, position: GuidedFacePosition, choice: GuidedNameChoice): string => {
   const face = scenario.faces.find((candidate) => candidate.position === position);
   if (face === undefined) {
-    return guidedCopy('names.pending');
+    return publicGuidedCopy('names.pending');
   }
 
   const person = getGuidedPerson(scenario, face.matchedPersonKey);
   switch (choice) {
-    case GUIDED_NAME_CHOICE.INCLUDE:
-      return guidedCopy('names.include', { name: person.name });
-    case GUIDED_NAME_CHOICE.OMIT:
-      return guidedCopy('names.omit');
-    case GUIDED_NAME_CHOICE.UNDECIDED:
-      return guidedCopy('names.pending');
+    case GUIDED_NAME_CHOICE.USE:
+      return publicGuidedCopy('names.use.public', { name: person.name });
+    case GUIDED_NAME_CHOICE.LEAVE_UNNAMED:
+      return publicGuidedCopy('names.omit.public');
+    case GUIDED_NAME_CHOICE.UNANSWERED:
+      return publicGuidedCopy('names.pending');
     default: {
       const exhaustive: never = choice;
       return exhaustive;
@@ -94,27 +94,34 @@ const choiceLabel = (scenario: GuidedScenario, position: GuidedFacePosition, cho
 };
 
 const publicChoiceSummary = (scenario: GuidedScenario, state: GuidedDemoState): string => {
-  const leftFace = scenario.faces.find((candidate) => candidate.position === 'left');
-  const rightFace = scenario.faces.find((candidate) => candidate.position === 'right');
-  if (leftFace === undefined || rightFace === undefined) {
-    return guidedCopy('feedback.choices.public', {
-      leftName: 'Left face',
-      leftChoice: guidedCopy('names.pending'),
-      rightName: 'Right face',
-      rightChoice: guidedCopy('names.pending'),
-    });
-  }
+  return GUIDED_IMAGE_KEYS.map((imageKey) => {
+    const leftFace = scenario.faces.find(
+      (candidate) => candidate.imageKey === imageKey && candidate.position === 'left',
+    );
+    const rightFace = scenario.faces.find(
+      (candidate) => candidate.imageKey === imageKey && candidate.position === 'right',
+    );
+    if (leftFace === undefined || rightFace === undefined) {
+      return publicGuidedCopy('feedback.choices.public', {
+        leftName: 'Left face',
+        leftChoice: publicGuidedCopy('names.pending'),
+        rightName: 'Right face',
+        rightChoice: publicGuidedCopy('names.pending'),
+      });
+    }
 
-  return guidedCopy('feedback.choices.public', {
-    leftName: getGuidedPerson(scenario, leftFace.matchedPersonKey).name,
-    leftChoice: choiceLabel(scenario, 'left', state.choices.left),
-    rightName: getGuidedPerson(scenario, rightFace.matchedPersonKey).name,
-    rightChoice: choiceLabel(scenario, 'right', state.choices.right),
-  });
+    const choices = choicesForPhoto(state, imageKey);
+    return `${leftFace.imageKey}: ${publicGuidedCopy('feedback.choices.public', {
+      leftName: getGuidedPerson(scenario, leftFace.matchedPersonKey).name,
+      leftChoice: choiceLabel(scenario, 'left', choices.left),
+      rightName: getGuidedPerson(scenario, rightFace.matchedPersonKey).name,
+      rightChoice: choiceLabel(scenario, 'right', choices.right),
+    })}`;
+  }).join(' ');
 };
 
 const publicSourceSummary = (): React.ReactNode => {
-  const source = guidedCopy('context.source.summary.public');
+  const source = publicGuidedCopy('context.source.summary.public');
   const vendor = 'AltText.ai';
   const vendorIndex = source.indexOf(vendor);
   if (vendorIndex < 0) {
@@ -159,14 +166,14 @@ const GuidedChoiceReplacementDialog = ({
           event.preventDefault();
         }}
       >
-        <DialogTitle>{guidedCopy('names.change_title')}</DialogTitle>
-        <DialogDescription>{guidedCopy('names.change_body')}</DialogDescription>
+        <DialogTitle>{adminGuidedCopy('names.change_title')}</DialogTitle>
+        <DialogDescription>{adminGuidedCopy('names.change_body')}</DialogDescription>
         <div className="acx-dialog__actions">
           <button type="button" className="acx-button acx-button--secondary" onClick={onCancelReplacement}>
-            {guidedCopy('names.change_cancel')}
+            {adminGuidedCopy('names.change_cancel')}
           </button>
           <button type="button" className="acx-button acx-button--primary" onClick={onConfirmReplacement}>
-            {guidedCopy('names.change_confirm')}
+            {adminGuidedCopy('names.change_confirm')}
           </button>
         </div>
       </DialogContent>
@@ -175,6 +182,90 @@ const GuidedChoiceReplacementDialog = ({
 );
 
 GuidedChoiceReplacementDialog.displayName = 'GuidedChoiceReplacementDialog';
+
+interface PublicStartOverDialogProps {
+  onConfirm: () => void;
+  onFocusFirstNameQuestion: () => void;
+}
+
+const PublicStartOverDialog = ({
+  onConfirm,
+  onFocusFirstNameQuestion,
+}: PublicStartOverDialogProps): React.JSX.Element => {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const focusScenarioAfterConfirmRef = useRef(false);
+  const wasOpenRef = useRef(false);
+
+  React.useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (!wasOpenRef.current) {
+      return;
+    }
+    wasOpenRef.current = false;
+    if (focusScenarioAfterConfirmRef.current) {
+      focusScenarioAfterConfirmRef.current = false;
+      onFocusFirstNameQuestion();
+      return;
+    }
+    triggerRef.current?.focus();
+  }, [onFocusFirstNameQuestion, open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="acx-button acx-button--tertiary"
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        {publicGuidedCopy('reset.confirm.public')}
+      </button>
+      <DialogRoot open={open} onOpenChange={setOpen}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent
+            aria-modal="true"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+            }}
+          >
+            <DialogTitle>{publicGuidedCopy('reset.title.public')}</DialogTitle>
+            <DialogDescription>{publicGuidedCopy('reset.body.public')}</DialogDescription>
+            <div className="acx-dialog__actions">
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                autoFocus
+                onClick={() => setOpen(false)}
+              >
+                {publicGuidedCopy('reset.keep.public')}
+              </button>
+              <button
+                type="button"
+                className="acx-button acx-button--danger"
+                onClick={() => {
+                  focusScenarioAfterConfirmRef.current = true;
+                  onConfirm();
+                  setOpen(false);
+                }}
+              >
+                {publicGuidedCopy('reset.confirm.public')}
+              </button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
+    </>
+  );
+};
+
+PublicStartOverDialog.displayName = 'PublicStartOverDialog';
 
 export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughProps): React.JSX.Element => {
   const scenario = useMemo(() => createGuidedScenario(), []);
@@ -185,7 +276,6 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
   const [resetVersion, setResetVersion] = useState(0);
   const [liveWaiting, setLiveWaiting] = useState(false);
   const choiceOriginRef = useRef<HTMLInputElement | null>(null);
-  const pendingDraftRef = useRef<string | null>(null);
   const pendingDraftsByImageRef = useRef<Partial<Record<GuidedImageKey, string>>>({});
 
   const flushPendingDraft = (current: GuidedDemoState): GuidedDemoState => {
@@ -200,13 +290,6 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
       next = editGuidedDraftForImage(next, imageKey, pending);
     }
 
-    if (pendingDrafts.tribeca === undefined) {
-      const pending = pendingDraftRef.current;
-      if (pending !== null && pending !== (next.draftText ?? '')) {
-        next = editGuidedDraft(next, pending);
-      }
-    }
-
     return next;
   };
 
@@ -215,52 +298,118 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
     setFeedback(message ?? lastSummary(next));
   };
 
+  const handleFocusFirstNameQuestion = (): void => {
+    document.querySelector<HTMLInputElement>('#guided-name-tribeca-left-include')?.focus({ preventScroll: true });
+  };
+
+  const handleFocusFirstPhoto = (): void => {
+    document.getElementById(`guided-photo-step-${GUIDED_IMAGE_KEYS[0]}`)?.focus();
+  };
+
+  const focusPublicReview = (imageKey: GuidedImageKey): void => {
+    document.getElementById(`guided-photo-review-${imageKey}`)?.focus({ preventScroll: true });
+  };
+
   const guideProgressMessage = (step: GuidedStep): string => {
     const steps = guideStepsForScope(scope);
     const stepNumber = steps.indexOf(step) + 1;
     const stepTitle = guidedStepLabelForScope(step, scope);
-    return scope === 'public'
-      ? guidedCopy('guide.current.public', { stepNumber, stepCount: steps.length, stepTitle })
-      : guidedCopy('guide.current', { stepNumber, stepTitle });
+    return adminGuidedCopy('guide.current', { stepNumber, stepTitle });
   };
 
   const handleBegin = (): void => {
-    commit(selectGuidedStep(flushPendingDraft(demo), GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
-    setGuideOpen(true);
-    focusGuidedSection(GUIDED_STEP.CONTEXT);
+    if (scope === 'admin') {
+      commit(selectGuidedStep(flushPendingDraft(demo), GUIDED_STEP.CONTEXT), guideProgressMessage(GUIDED_STEP.CONTEXT));
+      setGuideOpen(true);
+      focusGuidedSection(GUIDED_STEP.CONTEXT);
+      return;
+    }
+    commit(flushPendingDraft(demo));
   };
 
   const handleSelectStep = (step: GuidedStep): void => {
     commit(selectGuidedStep(flushPendingDraft(demo), step), guideProgressMessage(step));
   };
 
-  const handleChoose = (position: GuidedFacePosition, choice: GuidedNameChoice, origin: HTMLInputElement): void => {
+  const handleChoose = (
+    imageKey: GuidedImageKey,
+    position: GuidedFacePosition,
+    choice: GuidedNameChoice,
+    origin: HTMLInputElement,
+  ): void => {
     choiceOriginRef.current = origin;
-    commit(chooseGuidedName(flushPendingDraft(demo), scenario, position, choice));
+    commit(chooseGuidedName(flushPendingDraft(demo), scenario, position, choice, imageKey));
   };
 
   const handleCancelReplacement = (): void => {
     commit(cancelGuidedChoiceReplacement(demo));
-    choiceOriginRef.current?.focus();
+    if (scope === 'admin') {
+      choiceOriginRef.current?.focus();
+    }
   };
 
-  const handlePreview = (text: string): void => {
-    let next = demo;
-    if (text !== (next.draftText ?? '')) {
-      next = editGuidedDraft(next, text);
+  const handleConfirmReplacement = (): void => {
+    commit(confirmGuidedChoiceReplacement(flushPendingDraft(demo), scenario));
+    if (scope === 'admin') {
+      choiceOriginRef.current?.focus({ preventScroll: true });
     }
-    next = previewGuidedDraft(next);
+  };
+
+  const handleReturnToChangedChoice = (): void => {
+    choiceOriginRef.current?.focus({ preventScroll: true });
+  };
+
+  const handlePreview = (imageKey: GuidedImageKey, text: string): void => {
+    let next = demo;
+    if (text !== (next.drafts[imageKey].draftText ?? '')) {
+      next = editGuidedDraftForImage(next, imageKey, text);
+    }
+    next = previewGuidedDraftForImage(next, imageKey);
     commit(next);
-    focusGuidedSection(GUIDED_STEP.APPLY);
+    if (scope === 'public') {
+      focusPublicReview(imageKey);
+    } else {
+      focusGuidedSection(GUIDED_STEP.APPLY);
+    }
+  };
+
+  const handleKeep = (imageKey: GuidedImageKey): void => {
+    const current = flushPendingDraft(demo);
+    if (!canKeepCurrentForImage(current, imageKey) || current.drafts[imageKey].outcome === GUIDED_OUTCOME.APPLIED) {
+      return;
+    }
+    commit(keepGuidedCurrentAltTextForImage(current, imageKey));
   };
 
   const handleReset = (): void => {
-    pendingDraftRef.current = null;
     pendingDraftsByImageRef.current = {};
     choiceOriginRef.current = null;
     setDemo(resetGuidedDemoState(demo));
     setResetVersion((current) => current + 1);
-    setFeedback(guidedCopy('reset.status'));
+    setFeedback(scope === 'public' ? publicGuidedCopy('reset.success.public') : adminGuidedCopy('reset.status'));
+  };
+
+  const reviewActions = {
+    onEdit: (imageKey: GuidedImageKey, text: string): void =>
+      commit(editGuidedDraftForImage(flushPendingDraft(demo), imageKey, text)),
+    onDraftInput: (imageKey: GuidedImageKey, text: string): void => {
+      pendingDraftsByImageRef.current[imageKey] = text;
+    },
+    onPreview: handlePreview,
+    onKeep: handleKeep,
+    onRetryFixture: (imageKey: GuidedImageKey): void =>
+      commit(retryGuidedFixtureForImage(flushPendingDraft(demo), imageKey, scenario)),
+    onRestore: (imageKey: GuidedImageKey, revisionId: string, mode: GuidedRestoreMode): void =>
+      commit(restoreGuidedRevisionForImage(flushPendingDraft(demo), imageKey, revisionId, mode)),
+    onApply: (imageKey: GuidedImageKey, visibleText: string): void => {
+      let next = flushPendingDraft(demo);
+      if (visibleText !== (next.drafts[imageKey].draftText ?? '')) {
+        next = editGuidedDraftForImage(next, imageKey, visibleText);
+      }
+      commit(applyGuidedDraftForImage(next, imageKey, scope === 'public' ? visibleText : undefined));
+    },
+    onUndo: (imageKey: GuidedImageKey): void =>
+      commit(undoGuidedApplicationForImage(flushPendingDraft(demo), imageKey)),
   };
 
   const RootTag = scope === 'public' ? 'div' : 'main';
@@ -272,15 +421,16 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
       data-testid="guided-demo-root"
       data-scope={scope}
     >
-      <GuidedPrototypeEntrance onBegin={handleBegin} scope={scope} />
-      <GuidedPrototypeGuide
-        activeStep={demo.activeStep}
-        open={guideOpen}
-        onToggle={() => setGuideOpen((current) => !current)}
-        onSelect={handleSelectStep}
-        scope={scope}
-      />
-
+      <GuidedPrototypeEntrance onBegin={handleBegin} onFocusFirstPhoto={handleFocusFirstPhoto} scope={scope} />
+      {scope === 'admin' ? (
+        <GuidedPrototypeGuide
+          activeStep={demo.activeStep}
+          open={guideOpen}
+          onToggle={() => setGuideOpen((current) => !current)}
+          onSelect={handleSelectStep}
+          scope="admin"
+        />
+      ) : null}
       <section className="acx-guided-page__workspace" aria-labelledby="acx-guided-page-title">
         <section
           id="guided-section-understand"
@@ -289,95 +439,152 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           tabIndex={-1}
         >
           <header className="acx-guided-page__hero">
-            <h2 id="acx-guided-page-title">{guidedStepLabelForScope(GUIDED_STEP.CONTEXT, scope)}</h2>
-            <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} />
+            <h2 id="acx-guided-page-title">
+              {scope === 'public'
+                ? publicGuidedCopy('photos.title.public')
+                : guidedStepLabelForScope(GUIDED_STEP.CONTEXT, scope)}
+            </h2>
+            {scope === 'public' ? (
+              <PublicStartOverDialog onConfirm={handleReset} onFocusFirstNameQuestion={handleFocusFirstNameQuestion} />
+            ) : (
+              <GuidedResetDialog liveWaiting={liveWaiting} onConfirm={handleReset} scope="admin" />
+            )}
           </header>
           <div className="acx-guided-page__scenario">
             <div className="acx-guided-page__context">
-              <p>{guidedCopy('context.purpose')}</p>
+              <p>{adminGuidedCopy('context.purpose')}</p>
             </div>
             <div className="acx-guided-page__media-list">
-              {scenario.pressPhotos.map((photo, index) => (
-                <GuidedSamplePhoto
-                  key={photo.key}
-                  photo={photo}
-                  headingId={`guided-photo-${photo.key}-title`}
-                  {...(index === 0 ? { evidenceAlt: scenario.samples.tribeca.none ?? photo.altText } : {})}
-                  currentAltText={demo.appliedAltText}
-                  showCurrentAltText={index === 0}
-                  scope={scope}
-                >
-                  <GuidedPhotoFaces
-                    photoKey={photo.key}
-                    title={scope === 'public' ? guidedCopy('faces.title.public') : guidedCopy('faces.group_title')}
-                  >
-                    {scenario.faces
-                      .filter((face) => face.imageKey === photo.key)
-                      .map((face) => {
-                        const person = getGuidedPerson(scenario, face.matchedPersonKey);
-                        const personCoverage = coverage.find((entry) => entry.key === person.key);
-                        if (personCoverage === undefined) {
-                          throw new Error(`Missing guided name coverage for ${person.key}.`);
-                        }
+              {scenario.pressPhotos.map((photo, index) => {
+                const photoReview =
+                  scope === 'public' ? (
+                    <GuidedPhotoReview
+                      photo={photo}
+                      state={demo}
+                      scope="public"
+                      recordedOriginLabel={publicGuidedCopy('draft.origin.public')}
+                      actions={reviewActions}
+                    />
+                  ) : null;
 
-                        return (
-                          <GuidedFaceMatchCard
-                            key={face.id}
-                            idScope={photo.key}
-                            matches={scenario.faces
-                              .filter(
-                                (candidate) =>
-                                  candidate.imageKey === photo.key &&
-                                  candidate.matchedPersonKey === face.matchedPersonKey,
-                              )
-                              .map((match) => {
-                                const matchPhoto = scenario.pressPhotos.find(
-                                  (candidate) => candidate.key === match.imageKey,
-                                );
-                                if (matchPhoto === undefined) {
-                                  throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+                const photoContent = (
+                  <GuidedSamplePhoto
+                    key={photo.key}
+                    photo={photo}
+                    headingId={`guided-photo-${photo.key}-title`}
+                    currentAltText={demo.drafts[photo.key].appliedAltText}
+                    showCurrentAltText={index === 0}
+                    scope={scope}
+                  >
+                    <GuidedPhotoFaces
+                      photoKey={photo.key}
+                      title={
+                        scope === 'public'
+                          ? publicGuidedCopy('names.heading.public')
+                          : adminGuidedCopy('faces.group_title')
+                      }
+                    >
+                      {scenario.faces
+                        .filter((face) => face.imageKey === photo.key)
+                        .map((face) => {
+                          const person = getGuidedPerson(scenario, face.matchedPersonKey);
+                          const personCoverage = coverage.find((entry) => entry.key === person.key);
+                          if (personCoverage === undefined) {
+                            throw new Error(`Missing guided name coverage for ${person.key}.`);
+                          }
+
+                          return (
+                            <React.Fragment key={face.id}>
+                              <GuidedFaceMatchCard
+                                idScope={photo.key}
+                                matches={scenario.faces
+                                  .filter(
+                                    (candidate) =>
+                                      candidate.imageKey === photo.key &&
+                                      candidate.matchedPersonKey === face.matchedPersonKey,
+                                  )
+                                  .map((match) => {
+                                    const matchPhoto = scenario.pressPhotos.find(
+                                      (candidate) => candidate.key === match.imageKey,
+                                    );
+                                    if (matchPhoto === undefined) {
+                                      throw new Error(`Missing guided press photo for ${match.imageKey}.`);
+                                    }
+                                    return { face: match, mediaUrl: matchPhoto.src };
+                                  })}
+                                person={person}
+                                coverage={personCoverage}
+                                choice={choicesForPhoto(demo, photo.key)[face.position]}
+                                disabled={demo.pendingChoiceChange !== null}
+                                onChoose={(choice, origin, imageKey) =>
+                                  handleChoose(imageKey, face.position, choice, origin)
                                 }
-                                return { face: match, mediaUrl: matchPhoto.src };
-                              })}
-                            person={person}
-                            coverage={personCoverage}
-                            choice={demo.choices[face.position]}
-                            disabled={demo.pendingChoiceChange !== null}
-                            onChoose={(choice, origin) => handleChoose(face.position, choice, origin)}
-                          />
-                        );
-                      })}
-                  </GuidedPhotoFaces>
-                </GuidedSamplePhoto>
-              ))}
+                              />
+                              {scope === 'admin' && face.similarity !== null ? (
+                                <p className="acx-guided-face__match-line">
+                                  {adminGuidedCopy('names.match.line', {
+                                    name: person.name,
+                                    similarity: formatGuidedSimilarity(face.similarity),
+                                  })}
+                                </p>
+                              ) : null}
+                              {scope === 'admin' &&
+                              !face.isClusterAnchor &&
+                              face.similarity !== null &&
+                              face.similarity < GUIDED_MATCH_THRESHOLD ? (
+                                <p>
+                                  {adminGuidedCopy('names.match.below_threshold', {
+                                    threshold: formatGuidedSimilarity(GUIDED_MATCH_THRESHOLD),
+                                  })}
+                                </p>
+                              ) : null}
+                            </React.Fragment>
+                          );
+                        })}
+                    </GuidedPhotoFaces>
+                  </GuidedSamplePhoto>
+                );
+
+                return scope === 'public' ? (
+                  <section
+                    key={photo.key}
+                    id={`guided-photo-step-${photo.key}`}
+                    tabIndex={-1}
+                    className="acx-guided-page__photo-step"
+                    data-testid={`guided-photo-step-${photo.key}`}
+                    aria-labelledby={`guided-photo-step-${photo.key}-title`}
+                  >
+                    <h3 id={`guided-photo-step-${photo.key}-title`}>
+                      {publicGuidedCopy('photo.count.public', { photoNumber: index + 1 })}
+                    </h3>
+                    {photoContent}
+                    {photoReview}
+                  </section>
+                ) : (
+                  photoContent
+                );
+              })}
             </div>
             <div className="acx-guided-page__provenance-footer">
               {scope === 'public' ? (
                 <>
                   <p>{publicSourceSummary()}</p>
-                  <p>{guidedCopy('context.source.comparison_boundary.public')}</p>
+                  <p>{publicGuidedCopy('context.source.comparison_boundary.public')}</p>
                 </>
               ) : null}
-              <p>{guidedCopy('provenance.recorded')}</p>
+              <p>{adminGuidedCopy('provenance.recorded')}</p>
             </div>
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              {...(scope === 'public' ? { 'data-testid': 'guided-review-draft' } : {})}
-              disabled={scope === 'public' && !namesDecided(demo)}
-              aria-describedby={scope === 'public' && !namesDecided(demo) ? 'guided-choices-help' : undefined}
-              onClick={() => {
-                const nextStep = scope === 'public' ? GUIDED_STEP.DRAFT : GUIDED_STEP.NAMES;
-                handleSelectStep(nextStep);
-                focusGuidedSection(nextStep);
-              }}
-            >
-              {scope === 'public' ? guidedCopy('context.next.public') : guidedCopy('context.next')}
-            </button>
-            {scope === 'public' ? (
-              <p id="guided-choices-help" data-testid="guided-choices-help">
-                {namesDecided(demo) ? null : guidedCopy('choices.help.public')}
-              </p>
+            {scope === 'admin' ? (
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                onClick={() => {
+                  handleSelectStep(GUIDED_STEP.NAMES);
+                  focusGuidedSection(GUIDED_STEP.NAMES);
+                }}
+              >
+                {adminGuidedCopy('context.next')}
+              </button>
             ) : null}
           </div>
         </section>
@@ -405,102 +612,55 @@ export const RecordedWalkthrough = ({ scope, livePanel }: RecordedWalkthroughPro
           </span>
         </p>
 
+        {scope === 'public' ? (
+          <GuidedChoiceChangeDialog
+            open={demo.pendingChoiceChange !== null}
+            onKeepEdits={handleCancelReplacement}
+            onChangeName={handleConfirmReplacement}
+            onReturnFocus={handleReturnToChangedChoice}
+          />
+        ) : (
+          <GuidedChoiceReplacementDialog
+            open={demo.pendingChoiceChange !== null}
+            onConfirmReplacement={handleConfirmReplacement}
+            onCancelReplacement={handleCancelReplacement}
+          />
+        )}
+
         {scope === 'admin' ? (
-          <GuidedFacesPanel
-            scenario={scenario}
-            state={demo}
-            onChoose={handleChoose}
-            onContinue={() => {
-              handleSelectStep(GUIDED_STEP.DRAFT);
+          <GuidedDescriptionReview scenario={scenario} state={demo} scope="admin" actions={reviewActions} />
+        ) : null}
+
+        {scope === 'public' && outcomeReady(demo) ? (
+          <GuidedOutcome
+            outcomes={{
+              tribeca: outcomeForPhoto(demo, 'tribeca'),
+              coachella: outcomeForPhoto(demo, 'coachella'),
+            }}
+            outcomeReady
+            scope={scope}
+            onReturn={() => {
+              focusPublicReview(GUIDED_IMAGE_KEYS[0]);
+            }}
+          />
+        ) : null}
+        {scope === 'admin' ? (
+          <GuidedOutcome
+            outcome={demo.outcome}
+            scope="admin"
+            onReturn={() => {
               focusGuidedSection(GUIDED_STEP.DRAFT);
             }}
           />
         ) : null}
 
-        <GuidedChoiceReplacementDialog
-          open={demo.pendingChoiceChange !== null}
-          onConfirmReplacement={() => {
-            commit(confirmGuidedChoiceReplacement(flushPendingDraft(demo), scenario));
-            focusGuidedSection(GUIDED_STEP.DRAFT);
-          }}
-          onCancelReplacement={handleCancelReplacement}
-        />
-
-        <GuidedDescriptionReview
-          scenario={scenario}
-          state={demo}
-          scope={scope}
-          {...(scope === 'public' ? { recordedOriginLabel: guidedCopy('draft.origin.public') } : {})}
-          actions={{
-            onEdit: (text) => commit(editGuidedDraft(flushPendingDraft(demo), text)),
-            onDraftInput: (text) => {
-              pendingDraftRef.current = text;
-            },
-            onPreview: handlePreview,
-            onKeep: () => commit(keepGuidedCurrentAltText(flushPendingDraft(demo))),
-            onRetryFixture: () => commit(retryGuidedFixture(flushPendingDraft(demo), scenario)),
-            onRestore: (revisionId: string, mode: GuidedRestoreMode) =>
-              commit(restoreGuidedRevision(flushPendingDraft(demo), revisionId, mode)),
-            onApply: (text) => {
-              let next = flushPendingDraft(demo);
-              if (text !== (next.draftText ?? '')) {
-                next = editGuidedDraft(next, text);
-              }
-              commit(scope === 'public' ? applyGuidedDraft(next, text) : applyGuidedDraft(next));
-            },
-            onUndo: () => {
-              commit(undoGuidedApplication(flushPendingDraft(demo)));
-            },
-            onEditForImage: (imageKey, text) =>
-              commit(editGuidedDraftForImage(flushPendingDraft(demo), imageKey, text)),
-            onDraftInputForImage: (imageKey, text) => {
-              pendingDraftsByImageRef.current[imageKey] = text;
-            },
-            onPreviewForImage: (imageKey, text) => {
-              let next = flushPendingDraft(demo);
-              if (text !== (next.drafts[imageKey].draftText ?? '')) {
-                next = editGuidedDraftForImage(next, imageKey, text);
-              }
-              next = previewGuidedDraftForImage(next, imageKey);
-              commit(next);
-              focusGuidedSection(GUIDED_STEP.APPLY);
-            },
-            onKeepForImage: (imageKey) => commit(keepGuidedCurrentAltTextForImage(flushPendingDraft(demo), imageKey)),
-            onRetryFixtureForImage: (imageKey) =>
-              commit(retryGuidedFixtureForImage(flushPendingDraft(demo), imageKey, scenario)),
-            onRestoreForImage: (imageKey, revisionId, mode) =>
-              commit(restoreGuidedRevisionForImage(flushPendingDraft(demo), imageKey, revisionId, mode)),
-            onApplyForImage: (imageKey, visibleText) => {
-              let next = flushPendingDraft(demo);
-              if (visibleText !== (next.drafts[imageKey].draftText ?? '')) {
-                next = editGuidedDraftForImage(next, imageKey, visibleText);
-              }
-              commit(
-                scope === 'public'
-                  ? applyGuidedDraftForImage(next, imageKey, visibleText)
-                  : applyGuidedDraftForImage(next, imageKey),
-              );
-            },
-            onUndoForImage: (imageKey) => commit(undoGuidedApplicationForImage(flushPendingDraft(demo), imageKey)),
-          }}
-        />
-
-        <GuidedOutcome
-          outcome={demo.outcome}
-          scope={scope}
-          onReturn={() => {
-            handleSelectStep(GUIDED_STEP.DRAFT);
-            focusGuidedSection(GUIDED_STEP.DRAFT);
-          }}
-        />
-
         {scope === 'admin' ? (
           <>
             <section className="acx-guided-history" aria-labelledby="acx-guided-history-title">
-              <h2 id="acx-guided-history-title">{guidedCopy('history.title')}</h2>
-              <p>{guidedCopy('history.scope')}</p>
+              <h2 id="acx-guided-history-title">{adminGuidedCopy('history.title')}</h2>
+              <p>{adminGuidedCopy('history.scope')}</p>
               {demo.actionHistory.length === 0 ? (
-                <p>{guidedCopy('history.empty')}</p>
+                <p>{adminGuidedCopy('history.empty')}</p>
               ) : (
                 <ol>
                   {demo.actionHistory.map((entry) => (

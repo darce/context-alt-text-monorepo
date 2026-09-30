@@ -503,22 +503,25 @@ async def _record_run_readiness(
     async with session_factory() as session:
         await set_tenant_context(session, tenant_id)
         repo = DescribeRunRepository(session)
-        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        first_ready_before = None if run is None else run.first_ready_at
-        associated_operation_id = None if run is None else run.operation_id
-        # Stale snapshot: association may land before the locked re-read below.
-        await _observed_startup(session, tenant_id=tenant_id, operation_id=associated_operation_id)
-        run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-        if run is not None:
-            associated_operation_id = run.operation_id
-            if first_ready_before is None:
-                first_ready_before = run.first_ready_at
+        run = await repo.get_run_for_update(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            await session.commit()
+            return
+        first_ready_before = run.first_ready_at
+        associated_operation_id = run.operation_id
         observed_id, observed_ms = await _observed_startup(
             session,
             tenant_id=tenant_id,
             operation_id=associated_operation_id,
             for_update=_session_supports_row_lock(session),
         )
+        if observed_id is None:
+            observed_id, observed_ms = await _observed_startup(
+                session,
+                tenant_id=tenant_id,
+                operation_id=associated_operation_id,
+                for_update=_session_supports_row_lock(session),
+            )
         operation_id = associated_operation_id or uuid.uuid4().hex
         startup_id = observed_id if cold else None
         startup_ms = observed_ms if cold else None
@@ -536,12 +539,11 @@ async def _record_run_readiness(
             now = datetime.now(UTC)
             kwargs["now"] = now
             kwargs["ramp_up_ms"] = elapsed_ms(run.started_at, now) if cold else 0.0
-        await repo.record_readiness(**kwargs)
+        newly_recorded = await repo.record_readiness(**kwargs)
         run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             await session.commit()
             return
-        newly_recorded = first_ready_before is None and run.first_ready_at is not None
         if newly_recorded:
             # Repository maps null startup_id → ramp_up_ms=0; restore the measured
             # wait only when this invocation newly recorded first readiness.
@@ -607,11 +609,25 @@ def _attempt_processing_ms(result: object) -> float | None:
     """Read adapter-dispatch timing; never invent zero for unobserved work."""
     if isinstance(result, DescribeItemOutcome):
         return result.processing_ms
-    timing = getattr(result, "attempt_timing", None)
-    if timing is not None and getattr(timing, "processing_ms", None) is not None:
-        return float(timing.processing_ms)
-    value = getattr(result, "processing_ms", None)
-    return None if value is None else float(value)
+    seen: set[int] = set()
+    current: object | None = result
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        timing = getattr(current, "attempt_timing", None)
+        if timing is not None and getattr(timing, "processing_ms", None) is not None:
+            return float(timing.processing_ms)
+        value = getattr(current, "processing_ms", None)
+        if value is not None:
+            return float(value)
+        if not isinstance(current, BaseException):
+            break
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__suppress_context__:
+            break
+        else:
+            current = current.__context__
+    return None
 
 
 def _adapter_was_dispatched(result: object) -> bool:

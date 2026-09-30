@@ -5,8 +5,7 @@
  * keeps its cadence). Suspend on arm, resume at expiry without remount, no
  * timer leak on unmount.
  */
-import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +19,7 @@ import { useMediaIdentities } from '../useMediaIdentities';
 import { useExportJobStatus } from '../useRetentionStatus';
 import { useRecognitionCooldown } from '../useRecognitionCooldown';
 import { useSyncHealth } from '../useSyncHealth';
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 
 vi.mock('../../api/recognition', async () => {
   const actual = await vi.importActual<typeof recognitionApi>('../../api/recognition');
@@ -66,13 +66,17 @@ const gatedCallCounts = () => ({
   describe: fetchBulkDescribeRunMock.mock.calls.length,
 });
 
+const testQueryClients = new Set<QueryClient>();
+
 const createWrapper = () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  const client = buildTestQueryClient();
+  // Infinite gcTime keeps React Query cleanup timers out of fake-timer assertions.
+  client.setDefaultOptions({
+    queries: { retry: false, gcTime: Infinity },
+    mutations: { retry: false },
   });
-  return ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+  testQueryClients.add(client);
+  return createQueryWrapper(client);
 };
 
 describe('recognition cooldown gate over the six pollers', () => {
@@ -116,6 +120,8 @@ describe('recognition cooldown gate over the six pollers', () => {
   });
 
   afterEach(() => {
+    testQueryClients.forEach((client) => client.clear());
+    testQueryClients.clear();
     _resetCooldownForTests();
     vi.useRealTimers();
   });
@@ -287,6 +293,8 @@ describe('recognition cooldown gate over the export-job-status poller (7th)', ()
   });
 
   afterEach(() => {
+    testQueryClients.forEach((client) => client.clear());
+    testQueryClients.clear();
     _resetCooldownForTests();
     vi.useRealTimers();
   });

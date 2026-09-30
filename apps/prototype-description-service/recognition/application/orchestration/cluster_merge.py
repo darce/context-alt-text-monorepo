@@ -10,16 +10,20 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 from sqlalchemy import select, update
-from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
+from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
+from db.models import IdentityMember as IdentityMemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.models.identity import (
+    ClusterMergeKind,
     ClusterMergeReceipt,
     ReceiptExpiredError,
     ReceiptNotTopError,
@@ -31,8 +35,10 @@ from recognition.application.identity_mapping import media_identity_from_model
 from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.settings.clustering import ClusteringSettings
 from recognition.application.suggestions.embedding_space import (
     models_are_same_space,
+    representative_embedding_model,
     same_space_representative_vectors,
 )
 from recognition.domain.cluster import (
@@ -50,22 +56,80 @@ from recognition.shared.similarity import normalize_face_embedding
 logger = logging.getLogger(__name__)
 
 
-async def _cluster_gallery_model(cluster_repo: ClusterRepository, cluster_id: str) -> str | None:
-    """Resolve a cluster's gallery space from loaded representatives, not get_by_id."""
+async def _cluster_gallery_space(
+    cluster_repo: ClusterRepository,
+    cluster_id: str,
+) -> tuple[str | None, bool, bool]:
+    """Resolve a cluster's representative space and whether all reps use it."""
     reps = list(await cluster_repo.get_all_representatives(cluster_id))
     model, _vectors = same_space_representative_vectors(reps)
-    return model
+    all_representatives_match = all(models_are_same_space(representative_embedding_model(rep), model) for rep in reps)
+    return model, all_representatives_match, bool(reps)
+
+
+async def _cluster_full_embedding_models(session: AsyncSession, cluster_id: str) -> set[str | None]:
+    """Read model stamps from every member and representative identity."""
+    cluster_uuid = uuid.UUID(str(cluster_id))
+    member_identity_ids = select(IdentityMemberModel.identity_id).where(
+        IdentityMemberModel.cluster_id == cluster_uuid
+    )
+    representative_identity_ids = select(IdentityClusterRepresentativeModel.identity_id).where(
+        IdentityClusterRepresentativeModel.cluster_id == cluster_uuid
+    )
+    identity_ids = member_identity_ids.union(representative_identity_ids)
+    result = await session.execute(
+        select(MediaIdentityModel.embedding_model).where(MediaIdentityModel.id.in_(identity_ids))
+    )
+    return set(result.scalars().all())
+
+
+def _model_description(models: set[str | None]) -> str | None:
+    if not models:
+        return None
+    if len(models) == 1:
+        return next(iter(models))
+    labels = sorted(model if model is not None else "<unstamped>" for model in models)
+    return f"mixed[{','.join(labels)}]"
 
 
 async def _ensure_same_space_merge(
     cluster_repo: ClusterRepository,
     source_cluster_id: str,
     target_cluster_id: str,
+    *,
+    session: AsyncSession | None = None,
 ) -> None:
     """FIR23-01: refuse composing mixed embedding spaces via merge."""
-    source_model = await _cluster_gallery_model(cluster_repo, source_cluster_id)
-    target_model = await _cluster_gallery_model(cluster_repo, target_cluster_id)
-    if models_are_same_space(source_model, target_model):
+    if session is not None:
+        source_models = await _cluster_full_embedding_models(session, source_cluster_id)
+        target_models = await _cluster_full_embedding_models(session, target_cluster_id)
+        all_models = source_models | target_models
+        if None not in all_models and len(all_models) <= 1:
+            return
+        raise CrossSpaceMergeError(
+            source_cluster_id=source_cluster_id,
+            target_cluster_id=target_cluster_id,
+            source_model=_model_description(source_models or {None}),
+            target_model=_model_description(target_models or {None}),
+        )
+
+    source_model, source_representatives_match, source_has_representatives = await _cluster_gallery_space(
+        cluster_repo, source_cluster_id
+    )
+    target_model, target_representatives_match, target_has_representatives = await _cluster_gallery_space(
+        cluster_repo, target_cluster_id
+    )
+    if (
+        source_representatives_match
+        and target_representatives_match
+        and (not source_has_representatives or source_model is not None)
+        and (not target_has_representatives or target_model is not None)
+        and (
+            source_model is None
+            or target_model is None
+            or models_are_same_space(source_model, target_model)
+        )
+    ):
         return
     raise CrossSpaceMergeError(
         source_cluster_id=source_cluster_id,
@@ -314,6 +378,43 @@ async def merge_cluster(
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
     member_repo: MemberRepository = assignment_writer.member_repository
 
+    receipt_id: uuid.UUID | None = None
+    if moved_by_merge_id and session is not None:
+        with suppress(ValueError):
+            receipt_id = uuid.UUID(str(moved_by_merge_id))
+
+    tenant_uuid: uuid.UUID | None = None
+    source_uuid: uuid.UUID | None = None
+    target_uuid: uuid.UUID | None = None
+    if receipt_id is not None:
+        try:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            source_uuid = uuid.UUID(str(source_cluster_id))
+            target_uuid = uuid.UUID(str(target_cluster_id))
+        except ValueError:
+            receipt_id = None
+
+    if receipt_id is not None and session is not None:
+        assert tenant_uuid is not None and source_uuid is not None and target_uuid is not None
+        await _lock_merge_clusters(
+            session,
+            tenant_id=tenant_uuid,
+            cluster_ids=[source_uuid, target_uuid],
+        )
+        existing_receipt = await _load_receipt(session, tenant_id=tenant_uuid, receipt_id=receipt_id)
+        if existing_receipt is not None:
+            try:
+                receipt_source_id = uuid.UUID(str(existing_receipt.source_cluster_id))
+                receipt_target_id = uuid.UUID(str(existing_receipt.survivor_cluster_id))
+            except ValueError:
+                return None
+            if receipt_source_id != source_uuid or receipt_target_id != target_uuid:
+                return None
+            target = await cluster_repo.get_by_id(target_cluster_id)
+            if target is None or target.tenant_id.lower() != tenant_id.lower():
+                return None
+            return target
+
     source = await cluster_repo.get_by_id(source_cluster_id)
     target = await cluster_repo.get_by_id(target_cluster_id)
     if not source or not target:
@@ -332,11 +433,20 @@ async def merge_cluster(
             clustering_logger=clustering_logger,
         )
 
-    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id)
+    await _ensure_same_space_merge(cluster_repo, source_cluster_id, target_cluster_id, session=session)
 
     moved_identity_ids: list[uuid.UUID] = []
-    if moved_by_merge_id and session is not None:
+    sibling_receipts: list[ClusterMergeReceipt] = []
+    if receipt_id is not None and session is not None:
+        assert tenant_uuid is not None and target_uuid is not None
+        sibling_receipts = await _load_sibling_receipts(
+            session,
+            tenant_id=tenant_uuid,
+            survivor_cluster_id=target_uuid,
+        )
         source_members = await member_repo.get_by_cluster(source_cluster_id)
+        if not source_members:
+            return None
         for member in source_members:
             try:
                 moved_identity_ids.append(uuid.UUID(str(member.identity_id)))
@@ -344,18 +454,33 @@ async def merge_cluster(
                 continue
 
     moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
-    if moved_by_merge_id and session is not None and moved_identity_ids:
-        try:
-            provenance_uuid = uuid.UUID(str(moved_by_merge_id))
-        except ValueError:
-            provenance_uuid = None
-        if provenance_uuid is not None:
+    if receipt_id is not None and session is not None:
+        if moved <= 0:
+            return None
+        if moved_identity_ids:
             await session.execute(
                 update(MediaIdentityModel)
                 .where(MediaIdentityModel.id.in_(moved_identity_ids))
-                .values(moved_by_merge_id=provenance_uuid)
+                .values(moved_by_merge_id=receipt_id)
             )
             await session.flush()
+        settings = getattr(assignment_writer, "_settings", None) or ClusteringSettings()
+        created_at = datetime.now(tz=UTC)
+        session.add(
+            ClusterMergeReceipt(
+                receipt_id=receipt_id,
+                tenant_id=uuid.UUID(str(tenant_id)),
+                survivor_cluster_id=uuid.UUID(str(target.id)),
+                source_cluster_id=uuid.UUID(str(source.id)),
+                source_label=source.label,
+                moved_identity_ids=moved_identity_ids,
+                rule_version="operator-v1",
+                kind=ClusterMergeKind.OPERATOR.value,
+                created_at=created_at,
+                expires_at=created_at + timedelta(days=settings.merge_undo_window_days),
+                sequence_no=ClusterMergeReceipt.next_sequence_no(sibling_receipts),
+            )
+        )
 
     target.identity_count = (target.identity_count or 0) + moved
     final_label = target_label or target.label
@@ -507,13 +632,15 @@ async def _load_receipt(
 ) -> ClusterMergeReceipt | None:
     """Look up a receipt by (tenant_id, receipt_id) without taking a row lock."""
     result = await session.execute(
-        select(ClusterMergeReceipt)
-        .where(
+        select(ClusterMergeReceipt).where(
             ClusterMergeReceipt.tenant_id == tenant_id,
             ClusterMergeReceipt.receipt_id == receipt_id,
         )
     )
-    return result.scalar_one_or_none()
+    if hasattr(result, "scalar_one_or_none"):
+        return result.scalar_one_or_none()
+    rows = result.scalars().all()
+    return rows[0] if rows else None
 
 
 async def _load_sibling_receipts(
@@ -542,6 +669,27 @@ async def _lock_survivor_cluster(
             IdentityClusterModel.tenant_id == tenant_id,
             IdentityClusterModel.id == survivor_cluster_id,
         )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+
+
+async def _lock_merge_clusters(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    cluster_ids: Sequence[uuid.UUID],
+) -> None:
+    """Serialize competing merges by locking both clusters in UUID order."""
+    ordered_cluster_ids = sorted(set(cluster_ids))
+    await session.execute(
+        select(IdentityClusterModel)
+        .where(
+            IdentityClusterModel.tenant_id == tenant_id,
+            IdentityClusterModel.id.in_(ordered_cluster_ids),
+        )
+        .order_by(IdentityClusterModel.id)
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
 
@@ -583,11 +731,7 @@ async def _revert_merge_impl(
         survivor_cluster_id=requested_survivor_id,
     )
     receipt = next(
-        (
-            sibling
-            for sibling in siblings
-            if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)
-        ),
+        (sibling for sibling in siblings if _norm_uuid_str(sibling.receipt_id) == _norm_uuid_str(receipt_uuid)),
         None,
     )
     if receipt is None:

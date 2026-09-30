@@ -3,8 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
-import { LAST_SYNC_RESULT } from '../../../api/recognition/types/sync';
+import type { ReclaimerStatus, SyncHealthResponse } from '../../../api/recognition/types/sync';
+import { LAST_SYNC_RESULT, RECLAIMER_VOCABULARY } from '../../../api/recognition/types/sync';
 import {
   SYNC_PRESENTATION_STATUS,
   SYNC_VOCABULARY,
@@ -41,6 +41,26 @@ const offlineEnvelope = (): SyncHealthResponse =>
   onlineEnvelope({
     breaker: { state: 'open', base_url: 'http://localhost:8000', opened_at: null },
   });
+
+const reclaimerFixture = (
+  state: ReclaimerStatus['state'],
+  overrides: Partial<ReclaimerStatus> = {},
+): ReclaimerStatus => ({
+  state,
+  scheduler_mode: RECLAIMER_VOCABULARY.scheduler_mode.ACTION_SCHEDULER,
+  effective_period_seconds: 3600,
+  last_attempt_at: '2026-09-22T12:00:00Z',
+  last_success_at: state === RECLAIMER_VOCABULARY.state.NEVER_RUN ? null : '2026-09-22T11:59:00Z',
+  last_outcome:
+    state === RECLAIMER_VOCABULARY.state.NEVER_RUN
+      ? null
+      : RECLAIMER_VOCABULARY.last_outcome.SUCCESS,
+  last_purged_count: 4,
+  backlog_remaining: 2,
+  backlog_oldest_age_seconds: 7200,
+  batch_cap_reached: true,
+  ...overrides,
+});
 
 /** Banned jargon must never appear in any presentation headline/detail/badge. */
 const BANNED = [
@@ -224,6 +244,126 @@ describe('buildSyncPresentation state matrix', () => {
   });
 });
 
+describe('reclaimer state matrix', () => {
+  it.each([
+    [RECLAIMER_VOCABULARY.state.NEVER_RUN, 'Background cleanup has not run yet.'],
+    [RECLAIMER_VOCABULARY.state.HEALTHY, 'Last sync:'],
+    [RECLAIMER_VOCABULARY.state.OVERDUE, 'Background cleanup is overdue.'],
+    [RECLAIMER_VOCABULARY.state.BREACH, 'Purge is overdue.'],
+  ] as const)('renders the %s contract state with icon and copy', (state, expectedText) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-09-22T12:00:00Z',
+      reclaimer: reclaimerFixture(state),
+    });
+
+    expect(p.headline).toContain(expectedText);
+    expect(p.icon).toBeTruthy();
+    expect(p.tone).toBeTruthy();
+  });
+
+  it('does not render healthy without a committed last success', () => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-09-22T12:00:00Z',
+      reclaimer: reclaimerFixture(RECLAIMER_VOCABULARY.state.HEALTHY, { last_success_at: null }),
+    });
+
+    expect(p.headline).toBe(SYNC_VOCABULARY.reclaimerUnknownHeadline);
+    expect(p.badge).toBe(SYNC_VOCABULARY.reclaimerUnknownBadge);
+  });
+
+  it('treats an absent reclaimer object as unknown instead of healthy', () => {
+    const p = syncPresentationInputFromStatus({
+      last_snapshot_version: 1,
+      last_synced_at: '2026-09-22T12:00:00Z',
+      is_stale: false,
+      sync_health: 'healthy',
+      last_sync_result: LAST_SYNC_RESULT.OK,
+    });
+
+    const rendered = buildSyncPresentation(p);
+
+    expect(rendered.headline).toBe(SYNC_VOCABULARY.reclaimerUnknownHeadline);
+    expect(rendered.icon).toBeTruthy();
+    expect(rendered.tone).toBe('warning');
+  });
+
+  it('keeps breach copy recovery-focused and includes measured backlog details', () => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-09-22T12:00:00Z',
+      reclaimer: reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH, {
+        backlog_remaining: 7,
+        backlog_oldest_age_seconds: 7200,
+        batch_cap_reached: true,
+      }),
+    });
+
+    expect(p.detail).toMatch(/purge is overdue/i);
+    expect(p.detail).toMatch(/next sync will attempt recovery/i);
+    expect(p.detail).toMatch(/7/);
+    expect(p.detail).toMatch(/7200/);
+    expect(p.detail).toMatch(/more remains/i);
+    expect(p.detail).not.toMatch(/data loss/i);
+  });
+
+  it.each([
+    ['unknown', null],
+    ['overdue', reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE)],
+    ['breach', reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH)],
+  ] as const)('keeps resync-required primary for a %s reclaimer', (_label, reclaimer) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncResult: LAST_SYNC_RESULT.RESYNC_REQUIRED,
+      reclaimer,
+    });
+
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.RESYNC_REQUIRED);
+    expect(p.status).not.toBe(SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN);
+    expect(p.action?.kind).toBe('sync_now');
+  });
+
+  it.each([
+    ['unknown', null],
+    ['overdue', reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE)],
+    ['breach', reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH)],
+  ] as const)('keeps the retry action for a %s reclaimer on results error', (_label, reclaimer) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'stale',
+      resultsSyncState: 'error',
+      resultsError: SYNC_VOCABULARY.resultsErrorHeadline,
+      reclaimer,
+    });
+
+    expect(p.status).toBe(SYNC_PRESENTATION_STATUS.ERROR);
+    expect(p.action?.kind).toBe('retry_results');
+  });
+
+  it.each([
+    ['unknown', null, SYNC_PRESENTATION_STATUS.RECLAIMER_UNKNOWN],
+    [
+      'overdue',
+      reclaimerFixture(RECLAIMER_VOCABULARY.state.OVERDUE),
+      SYNC_PRESENTATION_STATUS.RECLAIMER_OVERDUE,
+    ],
+    [
+      'breach',
+      reclaimerFixture(RECLAIMER_VOCABULARY.state.BREACH),
+      SYNC_PRESENTATION_STATUS.RECLAIMER_BREACH,
+    ],
+  ] as const)('surfaces the %s reclaimer warning on idle', (_label, reclaimer, expectedStatus) => {
+    const p = buildSyncPresentation({
+      legacySyncHealth: 'healthy',
+      lastSyncedAt: '2026-09-22T12:00:00Z',
+      reclaimer,
+    });
+
+    expect(p.status).toBe(expectedStatus);
+    expect(p.headline).toBeTruthy();
+  });
+});
+
 describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
   const workbenchDir = path.dirname(fileURLToPath(import.meta.url));
   const syncTypesSource = readFileSync(
@@ -288,6 +428,7 @@ describe('HARM-BR-04 phantom failed field deleted from sync contract', () => {
       is_stale: false,
       sync_health: 'healthy' as const,
       last_sync_result: LAST_SYNC_RESULT.OK,
+      reclaimer: reclaimerFixture(RECLAIMER_VOCABULARY.state.HEALTHY),
     };
     const withPhantomFailed = {
       ...baseStatus,

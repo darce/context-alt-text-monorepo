@@ -5,22 +5,17 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import stat
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 REPO_ROOT = SCRIPT.parents[2]
 
 pytestmark = pytest.mark.skipif(shutil.which("flock") is None, reason="requires real flock")
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body)
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 def _make_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
@@ -226,7 +221,7 @@ def test_privileged_lock_open_passes_legacy_regression(tmp_path: Path) -> None:
     body = "\n".join(
         [
             "legacy_rc=0",
-            f"ssh -l \"$OCI_USER\" -- \"$OCI_HOST\" {shlex.quote(legacy_remote)} || legacy_rc=$?",
+            f'ssh -l "$OCI_USER" -- "$OCI_HOST" {shlex.quote(legacy_remote)} || legacy_rc=$?',
             f"printf '%s\\n' \"$legacy_rc\" >{legacy_rc}",
             f"with_shared_tag_lock shared printf 'new\\n' >{new_marker}",
         ]

@@ -96,25 +96,23 @@ def test_reset_remote_dev_fir_dry_run_succeeds_and_summarizes_plan() -> None:
     assert "https://fir.dev.api.altcontext.com/ready" in out
 
 
-def test_deploy_dev_fir_and_rollback_targets_exist() -> None:
-    """FIR23-STACK: deploy-dev-fir exists; rollback-dev-fir refuses (shared :dev tag)."""
+def test_deploy_dev_fir_and_reset_targets_exist() -> None:
+    """FIR512-3-HR-03: dev-fir has its own :dev-fir tag; the Make lever resets it forward."""
     deploy_mk = (REPO_ROOT / "mk" / "deploy.mk").read_text(encoding="utf-8")
     assert "deploy-dev-fir:" in deploy_mk
-    assert "deploy-rollback-dev-fir:" in deploy_mk
+    assert "deploy-reset-dev-fir-to-dev:" in deploy_mk
+    assert "deploy-rollback-dev-fir" not in deploy_mk
     assert 'deploy dev-fir' in deploy_mk or '"$(DEPLOY_SCRIPT)" deploy dev-fir' in deploy_mk
-    # Gate r0811864a A-04/B-01: a FIR-only rollback would retag the :dev image
-    # both stacks share, silently rolling back acx-dev too. The target must
-    # refuse instead of running `promote staging dev-fir`.
+    # Gate r0811864a A-04/B-01: never retag :staging onto dev-fir.
     assert "promote staging dev-fir" not in deploy_mk
 
 
-def test_deploy_rollback_dev_fir_refuses_at_runtime() -> None:
-    """Gate r0811864a A-04/B-01: the refusal must run as written, not just read well."""
-    result = _run_make(["deploy-rollback-dev-fir"])
-    assert result.returncode != 0
-    combined = result.stdout + result.stderr
-    assert "shares the :dev image tag" in combined
-    assert "deploy-rollback-dev" in combined
+def test_deploy_reset_dev_fir_to_dev_promotes_dev_forward() -> None:
+    """FIR512-3-HR-03: the reset promotes :dev -> :dev-fir; the old rollback name is gone."""
+    result = _run_make(["-n", "deploy-reset-dev-fir-to-dev"])
+    assert result.returncode == 0, result.stderr
+    assert "promote dev dev-fir" in result.stdout
+    assert _run_make(["-n", "deploy-rollback-dev-fir"]).returncode != 0
 
 
 def test_reset_remote_dev_dry_run_without_site_url_fails_closed() -> None:

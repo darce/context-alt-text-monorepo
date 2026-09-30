@@ -21,13 +21,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import TenantEntitlement, UsageReservation
 from recognition.domain.portal_contracts import EntitlementStatus, UsageReservationStatus
+from recognition.infrastructure.repositories.usage_repository import USAGE_RESERVATION_LEASE
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
 _BILLING_SOURCE = "billing"
@@ -146,9 +147,7 @@ class SqlAlchemyTenantEntitlementRepository:
             ):
                 raise ValueError("past_due_grace_s must be a finite positive number")
             past_due_grace = timedelta(seconds=float(past_due_grace_s))
-        if past_due_grace is not None and (
-            not isinstance(past_due_grace, timedelta) or past_due_grace <= timedelta(0)
-        ):
+        if past_due_grace is not None and (not isinstance(past_due_grace, timedelta) or past_due_grace <= timedelta(0)):
             raise ValueError("past_due_grace must be a positive timedelta")
         self._past_due_grace = past_due_grace
 
@@ -190,12 +189,19 @@ class SqlAlchemyTenantEntitlementRepository:
         """Return chargeable usage for one tenant and one entitlement period."""
         tenant_uuid = _validate_tenant_id(tenant_id)
         normalized_period_start = _as_utc(period_start)
+        lease_cutoff = datetime.now(tz=UTC) - USAGE_RESERVATION_LEASE
         stmt = (
             select(func.coalesce(func.sum(UsageReservation.cost_units), 0))
             .where(
                 UsageReservation.tenant_id == tenant_uuid,
                 UsageReservation.period_start == normalized_period_start,
-                UsageReservation.status.in_((UsageReservationStatus.RESERVED, UsageReservationStatus.COMMITTED)),
+                or_(
+                    UsageReservation.status == UsageReservationStatus.COMMITTED,
+                    and_(
+                        UsageReservation.status == UsageReservationStatus.RESERVED,
+                        UsageReservation.reserved_at >= lease_cutoff,
+                    ),
+                ),
             )
             .limit(1)
         )
@@ -279,10 +285,7 @@ class SqlAlchemyTenantEntitlementRepository:
             if row is None:
                 row = TenantEntitlement(**values)
                 self._session.add(row)
-            elif (
-                _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE
-                and row.source != _BILLING_SOURCE
-            ):
+            elif _entitlement_status(row.status) is not EntitlementStatus.PAID_ACTIVE and row.source != _BILLING_SOURCE:
                 self._set_beta_values(row, values)
 
         await _with_timeout(
@@ -353,9 +356,7 @@ class SqlAlchemyTenantEntitlementRepository:
                 or (existing_grace_until is not None and normalized_now <= existing_grace_until)
             )
             beta_current = (
-                row.plan_code == "beta"
-                and existing_status is EntitlementStatus.BETA_ACTIVE
-                and current_period
+                row.plan_code == "beta" and existing_status is EntitlementStatus.BETA_ACTIVE and current_period
             )
             # WHY: active paid billing outranks beta, but an unexpired beta
             # grant remains an independent authorization while billing is
@@ -380,8 +381,7 @@ class SqlAlchemyTenantEntitlementRepository:
                 }
             )
             transitioning_from_beta_to_paid = (
-                existing_status is EntitlementStatus.BETA_ACTIVE
-                and normalized_status is EntitlementStatus.PAID_ACTIVE
+                existing_status is EntitlementStatus.BETA_ACTIVE and normalized_status is EntitlementStatus.PAID_ACTIVE
             )
             recovering_to_paid = (
                 normalized_status is EntitlementStatus.PAID_ACTIVE

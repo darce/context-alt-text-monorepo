@@ -17,6 +17,61 @@ class SchemaVerificationTest extends TestCase
 {
     private LifecycleManager $manager;
 
+    /**
+     * Model dbDelta's quoted-default comparison against MySQL TEXT DEFAULT NULL.
+     * The normal dbDelta stub only tracks column names, so it cannot catch this.
+     * Scan every TEXT definition, including longtext, to cover fresh-install DDL too.
+     *
+     * @return list<string>
+     */
+    private function textDefaultAlterQueries(array $statements): array
+    {
+        $queries = [];
+        foreach ($statements as $sql) {
+            preg_match('/CREATE TABLE\s+(\S+)/', $sql, $table);
+            foreach (explode("\n", $sql) as $definition) {
+                if (!preg_match('/^\s*(\w+)\s+(?:tiny|medium|long)?text\b/i', $definition, $column)) {
+                    continue;
+                }
+                // WordPress dbDelta compares quoted defaults strictly with DESCRIBE.Default.
+                if (preg_match("/ DEFAULT '(.*?)'/i", $definition, $default) && null !== $default[1]) {
+                    $queries[] = "ALTER TABLE {$table[1]} ALTER COLUMN {$column[1]} SET DEFAULT '{$default[1]}'";
+                }
+            }
+        }
+        return $queries;
+    }
+
+    public function testTextDefaultsConvergeWithoutUnsupportedDbDeltaAlter(): void
+    {
+        $legacy = ['persons' => "CREATE TABLE wp_acx_persons (\n tags text DEFAULT '',\n PRIMARY KEY (id)\n);"];
+        $unsupported = "ALTER TABLE wp_acx_persons ALTER COLUMN tags SET DEFAULT ''";
+        $this->assertSame([$unsupported], $this->textDefaultAlterQueries($legacy));
+
+        // Reproduce MySQL's rejection through the existing dbDelta failure seam.
+        $legacyManager = new LifecycleManagerSchemaOverride();
+        $legacyManager->statementsOverride = $legacy;
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', 'stale');
+        $GLOBALS['__ac_dbdelta_fail_on_match'] = 'wp_acx_persons';
+        $GLOBALS['__ac_dbdelta_fail_error'] = "BLOB, TEXT, GEOMETRY or JSON column 'tags' can't have a default value: " . $unsupported;
+        try {
+            $legacyManager->maybe_upgrade();
+        } finally {
+            unset($GLOBALS['__ac_dbdelta_fail_on_match'], $GLOBALS['__ac_dbdelta_fail_error']);
+        }
+        $this->assertSame('stale', get_option('acx_schema_fingerprint'));
+        $this->assertStringContainsString($unsupported, implode("\n", $this->getErrorLog()));
+
+        $statements = $this->manager->build_projection_schema_statements('wp_', '');
+        $this->assertSame([], $this->textDefaultAlterQueries($statements), 'Canonical DDL must not generate unsupported TEXT default ALTERs');
+        $this->manager->maybe_upgrade();
+        $this->assertSame($this->manager->compute_projection_schema_fingerprint(), get_option('acx_schema_fingerprint'));
+        $GLOBALS['__ac_dbdelta_queries'] = [];
+        $this->manager->maybe_upgrade();
+        $this->assertSame([], $GLOBALS['__ac_dbdelta_queries'], 'Successful convergence must stop the migration loop');
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

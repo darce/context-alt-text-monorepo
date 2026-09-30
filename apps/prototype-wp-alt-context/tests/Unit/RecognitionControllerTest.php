@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\MediaIdentitiesController;
 use AltContext\Api\RecognitionController;
 use AltContext\Tests\TestCase;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -25,6 +26,7 @@ class RecognitionControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->setOption(RecognitionPolicy::OPTION, true);
 
         // Set up recognition URL so controller doesn't fail on missing config
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
@@ -54,6 +56,20 @@ class RecognitionControllerTest extends TestCase
             $result === true,
             'Batch of 100 items should pass validation (old limit was 50)'
         );
+    }
+
+    public function testAnalyzeRejectsRecognitionWhenDisabled(): void
+    {
+        $this->setOption(RecognitionPolicy::OPTION, false);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->analyze_media($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('recognition_disabled', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status']);
+        $this->assertSame([], $this->getHttpCalls());
     }
 
     public function testDefaultCompositionWiresSyncJobAndSharedSyncStateRepository(): void

@@ -6,9 +6,12 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Tests\TestCase;
+use AltContext\Tests\Support\FindsSqlQueries;
 
 class ConflictRepositoryTest extends TestCase
 {
+	use FindsSqlQueries;
+
 	public function testRecordConflictPersistsOpenConflictRow(): void
 	{
 		global $wpdb;
@@ -207,17 +210,4 @@ class ConflictRepositoryTest extends TestCase
 		$this->assertNull($repository->find_open_backend_roster_regression('tenant-storm'));
 	}
 
-	/**
-	 * @param array<int,string> $queries
-	 */
-	private function findQueryContaining(array $queries, string $needle): string
-	{
-		foreach ($queries as $query) {
-			if (str_contains($query, $needle)) {
-				return $query;
-			}
-		}
-
-		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
-	}
 }

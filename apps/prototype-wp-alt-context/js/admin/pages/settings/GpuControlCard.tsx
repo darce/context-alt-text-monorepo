@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react';
 
 import { GPU_STATE, GpuIntentAction, GpuIntentStatus, type GpuStatusResponse } from '../../api/gpuApi';
 import { toWorkbench } from '../../navigation/appLinks';
+import { toUserMessage } from '../../utils/appError';
 import {
   readUnavailable,
   unavailableReasonCopy,
@@ -67,11 +68,11 @@ const secondsSinceServerTime = (serverTime: string, epochSeconds: number | null)
   return Math.max(0, serverMilliseconds / 1000 - epochSeconds);
 };
 
-const formatClock = (value: string | null): string | null => {
+const formatClock = (value: string | number | null): string | null => {
   if (value === null) {
     return null;
   }
-  const milliseconds = Date.parse(value);
+  const milliseconds = typeof value === 'number' ? value : Date.parse(value);
   if (!Number.isFinite(milliseconds)) {
     return null;
   }
@@ -152,11 +153,68 @@ const startDisabledReason = (data: GpuStatusResponse): string => {
   }
 };
 
-const errorCopy = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('502')
-    ? 'Could not reach the description service (502). Retrying in 15 s.'
-    : 'Could not reach the description service. Retrying in 15 s.';
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const errorHttpDetails = (error: unknown): { status: number | null; code: string | null } => {
+  if (!isRecord(error)) {
+    return { status: null, code: null };
+  }
+
+  let status = typeof error.status === 'number' && Number.isFinite(error.status) ? error.status : null;
+  let code = typeof error.code === 'string' && error.code.trim() !== '' ? error.code : null;
+  if (isRecord(error.data)) {
+    if (status === null && typeof error.data.status === 'number' && Number.isFinite(error.data.status)) {
+      status = error.data.status;
+    }
+    if (code === null && typeof error.data.code === 'string' && error.data.code.trim() !== '') {
+      code = error.data.code;
+    }
+  }
+
+  if (typeof error.bodyPreview === 'string') {
+    try {
+      const payload: unknown = JSON.parse(error.bodyPreview);
+      if (isRecord(payload)) {
+        if (code === null && typeof payload.code === 'string' && payload.code.trim() !== '') {
+          code = payload.code;
+        }
+        if (isRecord(payload.data)) {
+          if (status === null && typeof payload.data.status === 'number' && Number.isFinite(payload.data.status)) {
+            status = payload.data.status;
+          }
+          if (code === null && typeof payload.data.code === 'string' && payload.data.code.trim() !== '') {
+            code = payload.data.code;
+          }
+        }
+      }
+    } catch {
+      // Non-JSON bodies (for example, a proxy error page) do not carry a WP_Error code.
+    }
+  }
+
+  return { status, code };
+};
+
+const errorCauseCopy = (error: unknown): string => {
+  const { status, code } = errorHttpDetails(error);
+  if (status !== null && code !== null) {
+    return sprintf(__('HTTP %1$d (%2$s)', 'alt-context'), status, code);
+  }
+  if (status !== null) {
+    return sprintf(__('HTTP %d', 'alt-context'), status);
+  }
+  if (code !== null) {
+    return sprintf(__('WordPress error: %s', 'alt-context'), code);
+  }
+  return toUserMessage(error, __('The request could not be completed. Check Settings and the service logs.', 'alt-context'));
+};
+
+const pollCountdownSeconds = (pollIntervalMs: number | false): number | null => {
+  if (typeof pollIntervalMs !== 'number' || !Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    return null;
+  }
+  return Math.ceil(pollIntervalMs / 1000);
 };
 
 const intentFailureCopy = (
@@ -190,6 +248,9 @@ export const GpuControlCard = (): React.JSX.Element => {
     isFetching,
     isError,
     error,
+    errorUpdatedAt,
+    dataUpdatedAt,
+    pollIntervalMs,
     refetch,
     canStart,
     startBlockedReason,
@@ -221,6 +282,8 @@ export const GpuControlCard = (): React.JSX.Element => {
   const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
   const lastChecked = unavailable ? formatClock(unavailable.checked_at) : null;
   const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+  const errorLastChecked = formatClock(errorUpdatedAt > 0 ? errorUpdatedAt : dataUpdatedAt > 0 ? dataUpdatedAt : null);
+  const errorRetryInSeconds = pollCountdownSeconds(pollIntervalMs);
   const intentFailureNotice = intentFailureCopy(lastIntentAction, intentError);
 
   const submitIntent = (
@@ -264,6 +327,7 @@ export const GpuControlCard = (): React.JSX.Element => {
       className="acx-button acx-button--tertiary"
       onClick={() => void refetch()}
       disabled={isFetching}
+      aria-busy={isFetching}
     >
       <span aria-hidden="true">↻</span> {__('Refresh', 'alt-context')}
     </button>
@@ -333,7 +397,38 @@ export const GpuControlCard = (): React.JSX.Element => {
             ) : null}
           </span>
         ) : isError ? (
-          <span className="notice-error">{errorCopy(error)}</span>
+          <span
+            data-testid="gpu-control-error-status"
+            data-tone={GPU_STATE_TONE.WARNING}
+            className={stateToneClass(GPU_STATE_TONE.WARNING)}
+          >
+            <AlertTriangle
+              className="acx-gpu-control__state-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="gpu-control-error-icon"
+            />{' '}
+            <span>{__('Description Service (GPU control) unavailable', 'alt-context')}</span>{' '}
+            <span>{sprintf(__('Cause: %s', 'alt-context'), errorCauseCopy(error))}</span>
+            {errorLastChecked ? (
+              <>
+                {' '}
+                <span>{sprintf(__('Last checked %s', 'alt-context'), errorLastChecked)}</span>
+              </>
+            ) : null}
+            {errorRetryInSeconds !== null ? (
+              <>
+                {' '}
+                <span>{sprintf(__('Retrying in %d s', 'alt-context'), errorRetryInSeconds)}</span>
+              </>
+            ) : null}
+            {isFetching ? (
+              <>
+                {' '}
+                <span>{__('Checking service status…', 'alt-context')}</span>
+              </>
+            ) : null}
+          </span>
         ) : null}
         {intentFailureNotice ? (
           <span className="notice-error" role="alert" data-testid="gpu-intent-failure">

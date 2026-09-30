@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
+from uuid import UUID
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -24,7 +26,7 @@ from recognition.interface_adapters.http.deps.portal_auth import (
     PortalAuthSettings,
     build_portal_token_verifier,
 )
-from recognition.interface_adapters.http.deps.session import get_session
+from recognition.interface_adapters.http.deps.session import get_optional_session, get_session
 from recognition.interface_adapters.http.routers.billing_webhooks import get_billing_repository
 from shared.secrets import get_secret_provider
 
@@ -37,6 +39,7 @@ _ALLOWED_POLAR_ENVIRONMENTS = frozenset({"sandbox", "live"})
 _DEFAULT_POLAR_BASE_URL = _POLAR_SANDBOX_BASE_URL
 _DEFAULT_POLAR_TIMEOUT_SECONDS = 10.0
 _DEFAULT_USAGE_ADMISSION_TIMEOUT_S = 5.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,6 +538,11 @@ def _polar_configured(config: PortalCompositionConfig) -> bool:
     return bool(config.billing_webhook_secret and config.billing_product_ids)
 
 
+def install_usage_admission_composition(app: FastAPI) -> None:
+    """Install the request-scoped usage service independently of portal routes."""
+    install_usage_admission_factory(app)
+
+
 def install_portal_composition(
     app: FastAPI,
     *,
@@ -594,7 +602,8 @@ __all__ = [
     "CheckoutServiceFactory",
     "PortalCompositionConfig",
     "UsageAdmissionServiceFactory",
-    "install_portal_composition",
     "install_portal_fallback",
     "install_usage_admission_factory",
+    "install_portal_composition",
+    "install_usage_admission_composition",
 ]

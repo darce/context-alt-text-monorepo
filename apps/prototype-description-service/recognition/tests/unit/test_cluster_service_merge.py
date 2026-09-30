@@ -303,9 +303,7 @@ async def test_merge_cluster_allows_same_space_stamped_clusters(
     )
     mock_cluster_repo.get_by_id.side_effect = [source_cluster, target_cluster]
     mock_cluster_repo.update.return_value = target_cluster
-    mock_cluster_repo.get_all_representatives.side_effect = lambda cluster_id: [
-        _space_rep(cluster_id, "space-a")
-    ]
+    mock_cluster_repo.get_all_representatives.side_effect = lambda cluster_id: [_space_rep(cluster_id, "space-a")]
 
     merged = await service.merge_cluster(
         source_cluster_id=source_id,

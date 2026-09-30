@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # GUIDESEED-1: contract suite for infra/oci/demo/seed/select-guided-seed.sh.
 # Runs the selector against a scratch OUT/MANIFEST/README so the real seed
-# bundle is never touched. Asserts: deterministic <slug>_<n>.jpg naming, the
-# committed guided manifest counts, content-verified JPEGs, provenance rows
+# bundle is never touched. Asserts: deterministic <slug>_<n>.<source extension>
+# naming, the committed guided manifest counts, content-verified images, provenance rows
 # regenerated between GUIDED-PROVENANCE markers (SEED-PROVENANCE untouched),
 # idempotent re-run, and refusal when a bundled source image is missing.
 set -euo pipefail
@@ -53,16 +53,21 @@ bash -n "$SELECT" && pass "selector parses (bash -n)" || fail "selector has a sy
 OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null \
   && pass "selector exits 0 against the bundled assets" || fail "selector exited non-zero"
 
-for f in katy_perry_1.jpg katy_perry_2.jpg katy_perry_3.jpg justin_trudeau_1.jpg justin_trudeau_2.jpg tribeca_press_1.jpg; do
+for f in katy_perry_1.jpg katy_perry_2.jpg katy_perry_3.jpg justin_trudeau_1.jpg justin_trudeau_2.jpg tribeca_press_1.jpg coachella_press_1.webp; do
   [ -f "$OUT/$f" ] && pass "copied $f" || fail "missing $OUT/$f"
 done
 n=$(count_files "$OUT")
-[ "$n" -eq 6 ] && pass "exactly 6 files in OUT" || fail "expected 6 files in OUT, found $n"
+[ "$n" -eq 7 ] && pass "exactly 7 files in OUT" || fail "expected 7 files in OUT, found $n"
 
 for f in "$OUT"/*; do
   [ -f "$f" ] || continue
   mt=$(file -b --mime-type "$f")
-  [ "$mt" = "image/jpeg" ] || fail "$(basename "$f") is $mt, not image/jpeg"
+  if [ "$(basename "$f")" = "coachella_press_1.webp" ]; then
+    [ "$mt" = "image/webp" ] && pass "coachella_press_1.webp is image/webp" \
+      || fail "coachella_press_1.webp is $mt, not image/webp"
+  else
+    [ "$mt" = "image/jpeg" ] || fail "$(basename "$f") is $mt, not image/jpeg"
+  fi
 done
 pass "content check ran on every copied file"
 
@@ -71,27 +76,27 @@ cmp -s "$ASSETS/guided-katy-perry-2026.jpg" "$OUT/katy_perry_1.jpg" && pass "kat
 cmp -s "$ASSETS/guided-katy-perry-2019.jpg" "$OUT/katy_perry_2.jpg" && pass "katy_perry_2 is the 2019 photo" || fail "katy_perry_2 byte mismatch"
 cmp -s "$ASSETS/guided-katy-perry-2016.jpg" "$OUT/katy_perry_3.jpg" && pass "katy_perry_3 is the 2016 photo" || fail "katy_perry_3 byte mismatch"
 cmp -s "$ASSETS/guided-justin-trudeau-2025.jpg" "$OUT/justin_trudeau_1.jpg" && pass "justin_trudeau_1 is the 2025 photo" || fail "justin_trudeau_1 byte mismatch"
-cmp -s "$ASSETS/guided-justin-trudeau-2025-b.jpg" "$OUT/justin_trudeau_2.jpg" && pass "justin_trudeau_2 is the 2025-b photo" || fail "justin_trudeau_2 byte mismatch"
+cmp -s "$ASSETS/guided-justin-trudeau-2023.jpg" "$OUT/justin_trudeau_2.jpg" && pass "justin_trudeau_2 is the 2023 photo" || fail "justin_trudeau_2 byte mismatch"
 cmp -s "$ASSETS/guided-press-tribeca-2026.jpg" "$OUT/tribeca_press_1.jpg" && pass "tribeca_press_1 is the press photo" || fail "tribeca_press_1 byte mismatch"
 
-expected_manifest=$'justin_trudeau 2\nkaty_perry 3\ntribeca_press 1'
-[ "$(cat "$MANIFEST")" = "$expected_manifest" ] && pass "manifest lists justin_trudeau 2 / katy_perry 3 / tribeca_press 1" \
+expected_manifest=$'coachella_press 1\njustin_trudeau 2\nkaty_perry 3\ntribeca_press 1'
+[ "$(cat "$MANIFEST")" = "$expected_manifest" ] && pass "manifest lists coachella_press 1 / justin_trudeau 2 / katy_perry 3 / tribeca_press 1" \
   || fail "manifest content unexpected: $(tr '\n' '|' < "$MANIFEST")"
 diff -q "$MANIFEST" "$REPO_ROOT/infra/oci/demo/seed/guided-manifest.txt" >/dev/null \
   && pass "committed guided-manifest.txt matches the generated one" || fail "committed infra/oci/demo/seed/guided-manifest.txt is stale"
 
-rows=$(grep -cE '^\| (katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.jpg \|' "$README" || true)
-[ "$rows" -eq 6 ] && pass "6 guided provenance rows" || fail "expected 6 guided provenance rows, found $rows"
+rows=$(grep -cE '^\| (coachella_press|katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.(jpg|webp) \|' "$README" || true)
+[ "$rows" -eq 7 ] && pass "7 guided provenance rows" || fail "expected 7 guided provenance rows, found $rows"
 grep -q 'sigourney_weaver_1.jpg' "$README" && pass "SEED-PROVENANCE block untouched" || fail "SEED-PROVENANCE block was clobbered"
 grep -q 'CC BY-SA 4.0' "$README" && grep -q 'EU reuse licence' "$README" && grep -q 'public domain' "$README" \
   && pass "licence text present per source" || fail "licence text missing"
 grep -q '| Katy Perry |' "$README" && grep -q '| Justin Trudeau |' "$README" && pass "subject labels match roster names" || fail "subject labels wrong"
 start=$(grep -n 'GUIDED-PROVENANCE:START' "$README" | cut -d: -f1); end=$(grep -n 'GUIDED-PROVENANCE:END' "$README" | cut -d: -f1)
-[ "$((end - start))" -eq 9 ] && pass "guided block is header + separator + 6 rows + END" || fail "guided block has $((end - start - 1)) lines between markers"
+[ "$((end - start))" -eq 10 ] && pass "guided block is header + separator + 7 rows + END" || fail "guided block has $((end - start - 1)) lines between markers"
 
 OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null
-n2=$(count_files "$OUT"); rows2=$(grep -cE '^\| (katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.jpg \|' "$README" || true)
-[ "$n2" -eq 6 ] && [ "$rows2" -eq 6 ] && pass "re-run is idempotent (6 files, 6 rows)" || fail "re-run drifted: $n2 files, $rows2 rows"
+n2=$(count_files "$OUT"); rows2=$(grep -cE '^\| (coachella_press|katy_perry|justin_trudeau|tribeca_press)_[0-9]+\.(jpg|webp) \|' "$README" || true)
+[ "$n2" -eq 7 ] && [ "$rows2" -eq 7 ] && pass "re-run is idempotent (7 files, 7 rows)" || fail "re-run drifted: $n2 files, $rows2 rows"
 
 # GUIDESEED-1-GR-01: a clustering file whose name collides with a guided slug
 # must survive a rerun. Cleanup may only remove exact owned 1..N files.
@@ -101,8 +106,8 @@ OUT="$OUT" MANIFEST="$MANIFEST" README="$README" bash "$SELECT" >/dev/null
 [ -f "$sentinel" ] && pass "GR-01 clustering sentinel katy_perry_99.jpg survived rerun" \
   || fail "GR-01 clustering sentinel was deleted on guided rerun"
 n_gr01=$(count_files "$OUT")
-[ "$n_gr01" -eq 7 ] && pass "GR-01 OUT keeps 6 guided files plus the sentinel" \
-  || fail "GR-01 expected 7 files (6 guided + sentinel), found $n_gr01"
+[ "$n_gr01" -eq 8 ] && pass "GR-01 OUT keeps 7 guided files plus the sentinel" \
+  || fail "GR-01 expected 8 files (7 guided + sentinel), found $n_gr01"
 
 # GUIDESEED-1-GR-06: cleanup must work without GNU find -maxdepth and must not
 # swallow content-changing failures.
@@ -128,8 +133,8 @@ set -e
 [ -f "$sentinel" ] && pass "GR-06 clustering sentinel still present after stub-find rerun" \
   || fail "GR-06 clustering sentinel was deleted when find was stubbed"
 n_gr06=$(count_files "$OUT")
-[ "$n_gr06" -eq 7 ] && pass "GR-06 OUT still has 6 guided files plus the sentinel" \
-  || fail "GR-06 expected 7 files after stub-find rerun, found $n_gr06"
+[ "$n_gr06" -eq 8 ] && pass "GR-06 OUT still has 7 guided files plus the sentinel" \
+  || fail "GR-06 expected 8 files after stub-find rerun, found $n_gr06"
 cmp -s "$ASSETS/guided-katy-perry-2026.jpg" "$OUT/katy_perry_1.jpg" \
   && pass "GR-06 rerun still copied owned guided targets" || fail "GR-06 rerun did not refresh katy_perry_1.jpg"
 

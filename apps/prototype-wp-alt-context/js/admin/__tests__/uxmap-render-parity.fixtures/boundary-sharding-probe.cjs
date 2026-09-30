@@ -1,3 +1,5 @@
+const console = require('node:console');
+const process = require('node:process');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');

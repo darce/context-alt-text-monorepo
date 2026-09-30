@@ -18,7 +18,8 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 from prometheus_client import start_http_server
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityClusteringJob
@@ -71,11 +72,22 @@ _CLUSTERING_JOB_TYPE_VALUES: tuple[str, ...] = tuple(sorted(t.value for t in CLU
 _DEFAULT_WORKER_METRICS_PORT = 9108
 _DEFAULT_WORKER_METRICS_ADDR = "127.0.0.1"
 _DEFAULT_USAGE_SWEEP_INTERVAL_SECONDS = 300.0
+_WORKER_LOCK_TIMEOUT = "5s"
 
 # Process exporter state: registry identity (not a bare bool) so a restart that
 # accidentally constructs a second FacePipelineMetrics fails loud instead of
 # silently serving a dead registry (COORD-FINAL-01).
 _process_metrics_exporter_registry: object | None = None
+
+
+def _apply_worker_lock_timeout(connection: Connection) -> None:
+    """Bound PostgreSQL lock waits for every worker transaction."""
+    if connection.dialect.name.startswith("postgres"):
+        connection.exec_driver_sql(f"SET LOCAL lock_timeout = '{_WORKER_LOCK_TIMEOUT}'")
+
+
+def _install_worker_lock_timeout(engine: Engine) -> None:
+    event.listen(engine, "begin", _apply_worker_lock_timeout)
 
 
 def _resolve_worker_metrics_port() -> int:
@@ -244,6 +256,7 @@ class ScanWorker:
             pool_pre_ping=True,
             connect_args=connect_args,
         )
+        _install_worker_lock_timeout(self._engine.sync_engine)
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine, expire_on_commit=False
         )

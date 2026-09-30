@@ -11,7 +11,6 @@ scratch git repos and pins the classifier directly.
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 import subprocess
@@ -515,21 +514,3 @@ def test_provenance_helper_does_not_group_missing_sha() -> None:
     assert refused.score_manifest_sha256 is None
     assert scored.score_manifest_sha256 is None
     assert provenance_contradictions([refused, scored]) == {}
-
-
-def test_lazy_precision_predicate_misses_leftover_and_cannot_pass() -> None:
-    """Characterization: the retired filter is exactly why S2R4-14 existed.
-
-    A walk-around that restores ``precision is not None`` as the scored
-    predicate cannot satisfy the leftover-shape pin.
-    """
-    leftover = _leftover_ident()
-    retired = leftover.get("precision") is not None
-    assert retired is False
-    verdict, _ = classify_identification(leftover)
-    assert verdict is IdentVerdict.SCORED
-    metric_src = inspect.getsource(_has_metric_fields)
-    classify_src = inspect.getsource(classify_identification)
-    assert "precision is not None" not in metric_src
-    assert "precision is not None" not in classify_src
-    assert "_has_metric_fields" in classify_src

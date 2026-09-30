@@ -1,24 +1,13 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import { useSyncStatus } from '../useSyncStatus';
 import * as recognitionApi from '../../api/recognition';
 
 vi.mock('../../api/recognition', () => ({
   fetchSyncStatus: vi.fn(),
 }));
-
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
 
 describe('useSyncStatus', () => {
   const createDeferred = <T,>() => {
@@ -40,7 +29,8 @@ describe('useSyncStatus', () => {
     const statusDeferred = createDeferred<recognitionApi.SyncStatusResponse>();
     fetchSyncStatusMock.mockReturnValue(statusDeferred.promise);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { result } = renderHook(() => useSyncStatus(), { wrapper });
 
     await waitFor(() => expect(fetchSyncStatusMock).toHaveBeenCalled());
@@ -67,7 +57,8 @@ describe('useSyncStatus', () => {
     const statusDeferred = createDeferred<recognitionApi.SyncStatusResponse>();
     fetchSyncStatusMock.mockReturnValue(statusDeferred.promise);
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { result } = renderHook(() => useSyncStatus(), { wrapper });
 
     await waitFor(() => expect(fetchSyncStatusMock).toHaveBeenCalled());

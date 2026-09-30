@@ -102,9 +102,7 @@ except ImportError:  # pragma: no cover — standalone single-file deploy path
             try:
                 return raw.decode("utf-8")
             except UnicodeDecodeError:
-                escaped = raw.replace(b"\\", b"\\\\").decode(
-                    "utf-8", errors="backslashreplace"
-                )
+                escaped = raw.replace(b"\\", b"\\\\").decode("utf-8", errors="backslashreplace")
                 return f"undecodable:{escaped}"
         if text.lstrip("\\").startswith("undecodable:"):
             return f"\\{text}"

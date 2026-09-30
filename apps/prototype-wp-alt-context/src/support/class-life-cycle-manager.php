@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Support;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
+require_once __DIR__ . '/../sovereign/sync/class-reclaimer-liveness.php';
 require_once __DIR__ . '/../api/services/class-person-resolution-service.php';
 require_once __DIR__ . '/../api/services/class-person-label-backfill-service.php';
 require_once __DIR__ . '/../api/class-tenant-identity.php';
@@ -15,9 +16,12 @@ use AltContext\Api\Services\PersonResolutionService;
 use AltContext\Api\TenantIdentity;
 use AltContext\PublicSite\PublicGuideRoute;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\ReclaimerLiveness;
+use Throwable;
 use function array_keys;
 use function class_exists;
 use function defined;
+use function do_action;
 use function function_exists;
 use function get_debug_type;
 use function get_option;
@@ -105,7 +109,8 @@ class LifecycleManager {
 	/**
 	 * Run when the plugin is activated.
 	 *
-	 * Stores install metadata and ensures rewrite rules are refreshed.
+	 * Activation can run before the public route's init hook, so register it here
+	 * and leave the version unset for the normal init request to flush again.
 	 */
 	public function activate(): void {
 		if ( defined( 'ACX_VERSION' ) ) {
@@ -121,16 +126,16 @@ class LifecycleManager {
 		}
 		$this->maybe_heal_unbound_human_labels();
 		$this->migrate_legacy_roster_data();
+		( new PublicGuideRoute() )->register_rewrite();
 		flush_rewrite_rules( false );
-		update_option( self::OPTION_REWRITE_VERSION, self::REWRITE_VERSION );
+		delete_option( self::OPTION_REWRITE_VERSION );
 	}
 
 	/**
 	 * Flush rewrites once when an already-active install picks up a new rule set.
 	 *
-	 * Activation already flushes; this covers plugin updates that skip the
-	 * activation hook. Runs on init priority 20 so PublicGuideRoute has
-	 * registered ^guide/?$ first.
+	 * Activation may flush before init registers ^guide/?$; the version stays
+	 * unset so this init-priority-20 flush persists the registered guide rule.
 	 */
 	public function maybe_flush_rewrites(): void {
 		$stored = get_option( self::OPTION_REWRITE_VERSION, '' );
@@ -648,6 +653,15 @@ class LifecycleManager {
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
 		OutboxDrain::clear_scheduled_purge();
+		try {
+			( new ReclaimerLiveness() )->purge_all_options();
+		} catch ( Throwable $exception ) {
+			try {
+				do_action( 'acx_reclaimer_liveness_options_purge_failed', $exception );
+			} catch ( Throwable $ignored ) {
+				// Observability hooks are additive; never let one block table cleanup.
+			}
+		}
 		$this->drop_tables();
 		flush_rewrite_rules( false );
 	}
@@ -730,7 +744,7 @@ class LifecycleManager {
 			tenant_id varchar(64) NOT NULL,
 			name varchar(255) NOT NULL,
 			normalized_name varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-			tags text DEFAULT '',
+			tags text DEFAULT NULL,
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			reference_thumb_path varchar(512) DEFAULT NULL,
 			cluster_count int(11) unsigned DEFAULT 0,
@@ -923,6 +937,7 @@ class LifecycleManager {
 			acknowledged_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY uq_idempotency (idempotency_key),
+			KEY idx_tenant_status_created (tenant_id, status, created_at),
 			KEY idx_status_created (status, created_at),
 			KEY idx_entity (entity_type, entity_key)
 		) {$charset_collate};";

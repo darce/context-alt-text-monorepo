@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from math import sqrt
+from math import isfinite, sqrt
 from typing import Final, Literal
 
 from recognition.application.settings import QualitySettings
@@ -71,18 +71,22 @@ class RepresentativeQuality:
 
 
 def min_bbox_area_from_settings(settings: QualitySettings | None = None) -> float:
-    """Area floor for the C4 bbox term.
-
-    ``QualitySettings`` has ``min_face_size`` (px), not ``min_bbox_area``. The
-    area floor is ``min_face_size²`` so a face that saturates the linear size
-    factor also saturates the area term. Not a named-identity fit.
-    """
-    size = float((settings or _default_settings).min_face_size)
-    return max(size * size, 1.0)
+    """Representative-only area floor for the C4 bbox term."""
+    area = _finite_float((settings or _default_settings).min_bbox_area, "min_bbox_area")
+    if area <= 0.0:
+        raise ValueError("min_bbox_area must be greater than zero")
+    return max(area, 1.0)
 
 
-def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+def _finite_float(value: float, name: str) -> float:
+    numeric = float(value)
+    if not isfinite(numeric):
+        raise ValueError(f"{name} must be finite")
+    return numeric
+
+
+def _clamp01(value: float, name: str = "quality factor") -> float:
+    return max(0.0, min(1.0, _finite_float(value, name)))
 
 
 def _geometric_mean(left: float, right: float) -> float:
@@ -91,14 +95,23 @@ def _geometric_mean(left: float, right: float) -> float:
     return sqrt(left * right)
 
 
-def _bbox_term(bbox_width: int, bbox_height: int, settings: QualitySettings) -> float:
-    area = max(0.0, float(bbox_width) * float(bbox_height))
+def _bbox_area(bbox_width: int, bbox_height: int) -> float:
+    width = max(0.0, _finite_float(bbox_width, "bbox_width"))
+    height = max(0.0, _finite_float(bbox_height, "bbox_height"))
+    area = width * height
+    if not isfinite(area):
+        raise ValueError("bbox area must be finite")
+    return area
+
+
+def _bbox_term(area: float, settings: QualitySettings) -> float:
     return min(1.0, area / min_bbox_area_from_settings(settings))
 
 
 def _occlusion_term(occlusion_severity: float | None, k_occ: float) -> float:
-    severity = 0.0 if occlusion_severity is None else _clamp01(occlusion_severity)
-    return max(0.0, 1.0 - severity * max(0.0, float(k_occ)))
+    coefficient = _finite_float(k_occ, "oact_coefficient")
+    severity = 0.0 if occlusion_severity is None else _clamp01(occlusion_severity, "occlusion_severity")
+    return max(0.0, 1.0 - severity * max(0.0, coefficient))
 
 
 def _sharpness_term(sharpness: float | None, settings: QualitySettings) -> float:
@@ -107,19 +120,20 @@ def _sharpness_term(sharpness: float | None, settings: QualitySettings) -> float
     Missing sharpness does not penalize (insightface). No-op floor (0.0) keeps
     the term at 1.0 so we do not invent a Laplacian reference.
     """
+    floor = _finite_float(settings.factor_floor_sharpness, "factor_floor_sharpness")
     if sharpness is None:
         return 1.0
-    floor = float(settings.factor_floor_sharpness)
+    measured_sharpness = _finite_float(sharpness, "sharpness")
     if floor <= 0.0:
         return 1.0
-    return min(1.0, max(0.0, float(sharpness) / max(floor * 2.0, 1e-6)))
+    return min(1.0, max(0.0, measured_sharpness / max(floor * 2.0, 1e-6)))
 
 
 def occlusion_rank(occlusion_severity: float | None) -> float:
     """Primary representative sort key: lower is better; missing is not penalized."""
     if occlusion_severity is None:
         return 0.0
-    return _clamp01(occlusion_severity)
+    return _clamp01(occlusion_severity, "occlusion_severity")
 
 
 def compute_representative_quality(
@@ -141,18 +155,20 @@ def compute_representative_quality(
     the default keeps the pre-composite confidence×bbox score.
     """
     s = settings or _default_settings
-    conf = _clamp01(confidence)
-    bbox_term = _bbox_term(bbox_width, bbox_height, s)
-    k_occ = float(s.oact_coefficient)
+    confidence_value = _finite_float(confidence, "confidence")
+    bbox_area = _bbox_area(bbox_width, bbox_height)
+    conf = _clamp01(confidence_value)
+    bbox_term = _bbox_term(bbox_area, s)
+    k_occ = _finite_float(s.oact_coefficient, "oact_coefficient")
     occ_term = _occlusion_term(occlusion_severity, k_occ)
     sharp_term = _sharpness_term(sharpness, s)
-    occ_sev = None if occlusion_severity is None else _clamp01(occlusion_severity)
+    occ_sev = None if occlusion_severity is None else _clamp01(occlusion_severity, "occlusion_severity")
     composite_score = round(
         _clamp01(_geometric_mean(conf, bbox_term) * occ_term * sharp_term),
         3,
     )
     legacy_score = compute_identity_quality(
-        confidence=confidence,
+        confidence=confidence_value,
         bbox_width=bbox_width,
         bbox_height=bbox_height,
         settings=s,
@@ -170,7 +186,7 @@ def compute_representative_quality(
         composite=selected_score,
         confidence=conf,
         bbox_term=round(bbox_term, 6),
-        bbox_area=float(max(0, bbox_width) * max(0, bbox_height)),
+        bbox_area=bbox_area,
         occlusion_severity=occ_sev,
         occlusion_term=occ_term,
         sharpness=sharpness,
@@ -230,18 +246,24 @@ def compute_identity_quality(
         IdentityQualityInfo with computed score and adjustment.
     """
     s = settings or _default_settings
+    confidence_value = _finite_float(confidence, "confidence")
+    width = _finite_float(bbox_width, "bbox_width")
+    height = _finite_float(bbox_height, "bbox_height")
+    min_face_size = _finite_float(s.min_face_size, "min_face_size")
+    if min_face_size <= 0.0:
+        raise ValueError("min_face_size must be greater than zero")
 
     # Size factor: punish faces below min_face_size
-    min_dim = min(bbox_width, bbox_height)
-    size_factor = min(1.0, min_dim / s.min_face_size)
+    min_dim = min(width, height)
+    size_factor = min(1.0, min_dim / min_face_size)
 
     # Combined score (confidence × size only)
-    raw_score = confidence * size_factor
-    score = round(max(0.0, min(1.0, raw_score)), 3)
+    raw_score = confidence_value * size_factor
+    score = round(_clamp01(raw_score), 3)
 
     return IdentityQualityInfo(
         score=score,
-        confidence=confidence,
+        confidence=confidence_value,
         size_factor=size_factor,
         threshold_adjustment=compute_quality_adjustment(
             score,
@@ -283,6 +305,8 @@ def compute_quality_adjustment(
           they consume the adjustment channel.
     """
     s = settings or _default_settings
+    quality_score = _finite_float(quality_score, "quality_score")
+    coefficient = _finite_float(s.oact_coefficient, "oact_coefficient")
 
     if quality_score >= s.high_quality_threshold:
         base_adjustment = s.high_quality_adjustment
@@ -305,9 +329,8 @@ def compute_quality_adjustment(
     # OACT: undamped +(coeff × severity); maturity damps base band only (see notes).
     oact_term = 0.0
     if occlusion_severity is not None:
-        coeff = float(s.oact_coefficient)
-        if coeff != 0.0:
-            severity = max(0.0, min(1.0, float(occlusion_severity)))
-            oact_term = +(coeff * severity)
+        severity = _clamp01(occlusion_severity, "occlusion_severity")
+        if coefficient != 0.0:
+            oact_term = +(coefficient * severity)
 
     return base_adjustment + oact_term

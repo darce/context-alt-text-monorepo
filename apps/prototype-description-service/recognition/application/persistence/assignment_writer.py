@@ -751,6 +751,7 @@ class AssignmentWriter:
             diverse_reps = _select_diverse_representatives(
                 rep_pool,
                 self._settings.max_representatives_per_cluster,
+                self._settings,
             )
             for identity in diverse_reps:
                 await self._create_and_add_representative(

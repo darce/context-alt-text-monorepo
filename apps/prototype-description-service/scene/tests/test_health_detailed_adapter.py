@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import time
 from pathlib import Path
@@ -323,6 +324,80 @@ def test_health_detailed_does_not_read_secrets(tmp_path: Path, monkeypatch: pyte
     adapter = _get_adapter(_build_client(tmp_path))
     assert adapter["usable"] is True
     assert adapter["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_local_cpu_readiness_does_not_resolve_secret_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import main as main_module
+    from scene.config.profiles import DescriptionProfile
+    from scene.interface_adapters.http import deps as scene_http_deps
+
+    def _raise_provider() -> None:
+        raise RuntimeError("health path must not construct DescriptionSettings or read secrets")
+
+    monkeypatch.setattr("shared.secrets.get_secret_provider", _raise_provider)
+    monkeypatch.setattr("scene.config.settings.get_secret_provider", _raise_provider)
+    monkeypatch.setattr(scene_http_deps, "_missing_vlm_dependencies", lambda: ())
+
+    readiness = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+
+    assert readiness["usable"] is True
+    assert readiness["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_local_cpu_readiness_logs_adapter_build_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from api import main as main_module
+    from scene.config.profiles import DescriptionProfile
+    from scene.interface_adapters.http import deps as scene_http_deps
+
+    monkeypatch.setattr(scene_http_deps, "_missing_vlm_dependencies", lambda: ())
+
+    def _construction_failure(_settings):
+        raise RuntimeError("adapter construction diagnostic")
+
+    monkeypatch.setattr(scene_http_deps, "_build_florence_small_adapter", _construction_failure)
+    caplog.set_level(logging.WARNING, logger="scene.interface_adapters.http.deps")
+
+    readiness = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+
+    assert readiness["usable"] is False
+    assert readiness["reason"] == main_module.AdapterReadinessReason.LOCAL_ADAPTER_UNAVAILABLE.value
+    assert any(
+        record.name == "scene.interface_adapters.http.deps"
+        and "local CPU description adapter readiness failed" in record.getMessage()
+        and record.levelno == logging.WARNING
+        and record.exc_info is not None
+        and "adapter construction diagnostic" in str(record.exc_info[1])
+        for record in caplog.records
+    ), "local adapter readiness failures must preserve the cause for operators"
+
+
+@pytest.mark.asyncio
+async def test_local_cpu_readiness_does_not_load_model_weights(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import main as main_module
+    from scene.config.profiles import DescriptionProfile
+    from scene.interface_adapters.http import deps as scene_http_deps
+
+    monkeypatch.setattr(scene_http_deps, "_missing_vlm_dependencies", lambda: ())
+    load_calls = 0
+
+    class _LazyAdapter:
+        def ensure_loaded(self) -> None:
+            nonlocal load_calls
+            load_calls += 1
+
+    adapter = _LazyAdapter()
+    monkeypatch.setattr(scene_http_deps, "_build_florence_small_adapter", lambda _settings: adapter)
+
+    first = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+    second = await main_module._description_adapter_readiness(DescriptionProfile.FLORENCE_SMALL)
+
+    assert first["usable"] is True
+    assert second["usable"] is True
+    assert load_calls == 0, "health polling must not trigger lazy model weight loading"
 
 
 def test_stalled_resolver_stays_bounded_and_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

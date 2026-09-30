@@ -12,7 +12,7 @@
 # Prerequisites:
 #   - SSH access to the VM
 #   - Docker images tagged and pushed to OCIR
-#   - /opt/acx-backend/<env>/secrets/.env exists on the VM
+#   - /opt/acx-backend/<env>/.env exists on the VM (regular file, 0600; see docs/secrets-inventory.md)
 
 set -euo pipefail
 

@@ -4,13 +4,12 @@
  * (buildSuggestionReviewItems re-filters) but fails these raw-item assertions.
  */
 
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
 import * as recognitionApi from '../../../../api/recognition';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 import { useSuggestionReviewQueries } from '../useSuggestionReviewQueries';
 import { buildPendingRow } from './suggestionProjection.fixtures';
 
@@ -27,18 +26,13 @@ vi.mock('../../../../api/recognition', async () => {
   };
 });
 
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
-
 describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
+  let queryClient: ReturnType<typeof buildTestQueryClient>;
+  let wrapper: ReturnType<typeof createQueryWrapper>;
+
   beforeEach(() => {
+    queryClient = buildTestQueryClient();
+    wrapper = createQueryWrapper(queryClient);
     vi.clearAllMocks();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
@@ -68,6 +62,10 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       singleton_count: 0,
       data_source: 'local_projection',
     });
+  });
+
+  afterEach(() => {
+    queryClient.clear();
   });
 
   it('assignmentQuery items are projectReviewQueue output (filter + sort), not raw fromPendingRow', async () => {
@@ -105,7 +103,6 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       data_source: 'local_projection',
     });
 
-    const { wrapper } = createWrapper();
     const { result } = renderHook(() => useSuggestionReviewQueries(), { wrapper });
 
     await waitFor(() => expect(result.current.assignmentQuery.isSuccess).toBe(true));
@@ -138,7 +135,6 @@ describe('useSuggestionReviewQueries queryFn (BR-23 / L1R-02)', () => {
       data_source: 'local_projection',
     });
 
-    const { wrapper } = createWrapper();
     const { result } = renderHook(() => useSuggestionReviewQueries(), { wrapper });
 
     await waitFor(() => expect(result.current.topUnlabeledQuery.isSuccess).toBe(true));

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task_ref": "FIR512-2",
+  "date": "2026-09-22",
+  "host": "acx-backend",
+  "arch": "aarch64",
+  "tested_source_commit": "ee9d344fd10e8bf93fe651fdb6557e50069f7d1a",
+  "live_probe_source_commit": "fcfab5ed5aa23d959caaac4ee551347a3979d2cd",
+  "source_difference": "Only test fixture landmark dtype reconciled after live probe; production unchanged.",
+  "runtime": {
+    "python": "3.12.7",
+    "opencv": "5.0.0",
+    "onnxruntime": "1.29.0",
+    "numpy": "2.5.1"
+  },
+  "unit_validation": {
+    "passed": 253,
+    "failed": 0,
+    "skipped": 0,
+    "modules": [
+      "test_face_pipeline_pure_contracts",
+      "test_face_pipeline_golden_provenance",
+      "test_firdv3_auraface_space_contract",
+      "test_auraface_alignment_measurement",
+      "test_firdv3_s1b_readiness_contract",
+      "test_face_pipeline_adapter",
+      "test_fir23_embedding_model_read_paths",
+      "test_face_pipeline_opencv_ref",
+      "test_face_pipeline_ort_parity"
+    ],
+    "flags": [
+      "FACE_PIPELINE_PARITY_REQUIRED=1",
+      "-p no:randomly"
+    ]
+  },
+  "live_probe": {
+    "fixture": "generate_goldens.cartoon_face_image()",
+    "detector": "verified YuNet 2026may",
+    "embedder": "verified AuraFace glintr100.onnx",
+    "readiness": "ok",
+    "faces": 1,
+    "dimensions": 512,
+    "l2_norm": 1.0,
+    "raw_norm": 15.317420959472656,
+    "model_id": "insightface-auraface+cv5.0.0/ort1.29@512d/l2/cosine",
+    "framework_label_is_metadata_only": true,
+    "insightface_runtime_imported": false,
+    "quality_crops_match_aligner_bgr": true,
+    "reference_cosine": 0.9999999999994835,
+    "cosine_min": 0.99999999
+  },
+  "pinned_alignment_check": {
+    "source_commit": "1480e705287bc5d59f923b46c260ec6e3e4150f6",
+    "face_align_sha256": "a8b34ddd06716f5ca7e7501415cbd3789ccbce18db9e557b35e537695290d922",
+    "reference_scikit_image": "0.25.2",
+    "cases": [
+      "saved float64 landmarks",
+      "real YuNet float32 landmarks"
+    ],
+    "reference_matches_pinned_source": true,
+    "production_affine_max_abs_delta": 0.0,
+    "production_crop_differing_values": 0
+  },
+  "limitations": [
+    "Synthetic fixtures only; no identity-accuracy, calibration, or latency qualification.",
+    "No development-site deployment, isolated database provisioning, or real-photo enrollment.",
+    "No local machine model inference or test execution during recovery.",
+    "Original crash cause not established."
+  ]
+}

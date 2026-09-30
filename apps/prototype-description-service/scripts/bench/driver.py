@@ -192,7 +192,7 @@ def run_leg(
             endpoint.base_url,
             os.environ.get(endpoint.api_key_env, ""),
             tenant_id=os.environ.get(endpoint.tenant_id_env, ""),
-            timeout_s=float(pair.job_poll_timeout_sec),
+            job_poll_timeout_s=float(pair.job_poll_timeout_sec),
         )
         owned_client = True
     outcomes: list[AnalyzeOutcome] = []

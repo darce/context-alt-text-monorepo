@@ -282,7 +282,7 @@ def _wire_model_version(spec: ProfileSpec, model_id: str | None) -> str | None:
 
 def _resolve_description_profile() -> DescriptionProfile:
     """Validate the configured description profile before registering routes."""
-    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.SEEDED.value)
+    raw = os.environ.get("ACX_DESCRIPTION_ADAPTER", DescriptionProfile.FLORENCE_SMALL.value)
     try:
         return DescriptionProfile(raw)
     except ValueError as exc:

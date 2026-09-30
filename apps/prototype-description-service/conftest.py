@@ -15,7 +15,7 @@ from time import time_ns
 
 import pytest
 
-# onnxruntime telemetry writes a `:memory:.ses` sidecar into the test cwd, and setting it here covers in-process imports and every test subprocess, which inherits the environment.
+# Guards onnxruntime >= 1.29 telemetry, which writes `:memory:.ses` into cwd.
 os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
 
 _RECEIPT_DIRECTORY = Path("/tmp")

@@ -134,7 +134,7 @@
         "apps/prototype-wp-alt-context/src/api/class-api.php",
         "apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php"
       ],
-      "test_file": "",
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/DirectAccessGuardTest.php",
       "size": "L",
       "related": [],
       "fix_hint": "Add a defined(ABSPATH) early exit to every directly reachable PHP source file, or demonstrate the packaged layout blocks direct requests to src."
@@ -182,7 +182,7 @@
       "fix_files": [
         "apps/prototype-wp-alt-context/src/api/class-api.php"
       ],
-      "test_file": "",
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/WorkbenchMediaListPermissionTest.php",
       "size": "S",
       "related": [],
       "fix_hint": "Align the read permission with manage_options or restrict results to attachments the current user may edit."

@@ -48,7 +48,7 @@
         "benchmarks/manifests/corpus-manifest-v3.json",
         "benchmarks/tools/fir_corpus_population_draft_20260919.py"
       ],
-      "test_file": "",
+      "test_file": "benchmarks/tests/test_fir_corpus_population_draft_image_root.py",
       "size": "M",
       "related": [
         6430

@@ -1,0 +1,216 @@
+{
+  "lane": "dadj-21",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 6297,
+      "finding_id": "FIR8V66-LC-01",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:123,647,905 - resolves a fractional floor using manifest entry count N, then compares accepted_set_size to resolved_floor_count; tests/test_attrition_floor.py:20-23 asserts 0.90 × 150 resolves to 135.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The scorer and its fractional-floor test now use the manifest count as the denominator."
+    },
+    {
+      "db_id": 6299,
+      "finding_id": "FIR8V66-LC-03",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:465-475 - appends detection rows before the native/e2e branch, so frame aliases have identical detection values; score_report.py:319,1107 - native aliases are demoted but still increase Holm family_size via every declared secondary.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "M",
+      "related": [6309],
+      "fix_hint": "Use one canonical endpoint identifier for each detection metric so frame and label aliases cannot pad the declared Holm family."
+    },
+    {
+      "db_id": 6300,
+      "finding_id": "FIR8V66-LC-04",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/driver.py:240-248 - decodes image bytes and persists image_width/image_height; corpus.py:101-109 produces positive Pillow dimensions and fails on decode errors; tests/test_resume.py:101-116 rejects non-positive stored dimensions.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_resume.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The ingest path now decodes and records the dimensions required by scoring."
+    },
+    {
+      "db_id": 6301,
+      "finding_id": "FIR8V66-LC-05",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score.py:77 - calls scipy.optimize.linear_sum_assignment on negative IoU; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:418 explicitly says tied optima are not claimed to be unique and matched_faces is invariant under the tie.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The current plan no longer claims a per-pair comparator uniquely orders Hungarian assignments."
+    },
+    {
+      "db_id": 6302,
+      "finding_id": "FIR8V66-LC-06",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:44-52,62-75,91-105 - asserts an exact-overlap GREEN, a translated RED, and a containment RED; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1252 records these coordinate-sensitive proofs in success criteria.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The acceptance criteria now require geometry fixtures that distinguish correct localization from count-only scoring."
+    },
+    {
+      "db_id": 6303,
+      "finding_id": "FIR8V66-LC-07",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1021,1197 - specifies the superset check is optional and skipped without baseline_manifest_path; line 1255 still marks the blocker unconditionally enforced. driver.py:379-386 is conditional on that optional path, and tests/test_corpus_superset.py:55-60 asserts omission skips the check.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Qualify the success criterion so it says the blocker runs only when baseline_manifest_path is configured."
+    },
+    {
+      "db_id": 6304,
+      "finding_id": "FIR8V66-LC-08",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:120,174-175 - prediction bbox keys must equal {x, y, width, height} or scoring raises box_convention_unknown; docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:415 pins the same producer key set.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The current adapter and plan use the public export's width and height field names."
+    },
+    {
+      "db_id": 6305,
+      "finding_id": "FIR8V66-LC-09",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1232 says two offline-harness edits are the only files outside scripts/bench and makes a third a review stop; the plan also lists docs/runbooks/fir-8-cross-stack-bench.md as a new S3 deliverable at lines 784 and 1148.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Scope the review stop to code edits outside scripts/bench or enumerate the runbook and plan separately."
+    },
+    {
+      "db_id": 6306,
+      "finding_id": "FIR8V66-LC-10",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:58 still claims the condition is stated identically in five places; the same terminal-plus-success rule is repeated at lines 727,770,821,868,1089, and 1195.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Remove the hard-coded count or keep it synchronized with every repeated cluster-gate statement."
+    },
+    {
+      "db_id": 6307,
+      "finding_id": "FIR8V66-LC-11",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:247-252 includes deploy_ownership_key_rejected, cluster_gate_refused, max_differential_attrition_invalid, base_url_invalid, base_url_not_allowlisted, and config_endpoint_invalid; lines 253-258 add export_media_not_in_roster, accepted_set_below_floor, and detection_exhaustiveness_unasserted.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The current normative table now documents the codes named by this finding."
+    },
+    {
+      "db_id": 6308,
+      "finding_id": "FIR8V66-LC-12",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:164-185 clamps converted GT and prediction edges to [0,1] and drops zero-area boxes; score.py:35-36 clamps again for IoU. tests/test_detection_localization.py:135-152 asserts a degenerate GT is excluded while the valid match retains its original index.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The scorer now specifies and applies clamping and degenerate-box handling before assignment."
+    },
+    {
+      "db_id": 6309,
+      "finding_id": "FIR8V66-LC-13",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:25-28 creates the full metric × frame × label-map endpoint grid, including detection aliases; score_report.py:1096-1107 includes every declared secondary in Holm family_size. docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1037-1042 still permits all sixteen strings.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "M",
+      "related": [6299],
+      "fix_hint": "Restrict endpoint IDs and Holm declarations to distinct hypotheses so label-map and frame aliases cannot change the correction family size."
+    },
+    {
+      "db_id": 6310,
+      "finding_id": "FIR8V66-LC-14",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:439 leaves the fallback trigger as 'when GT boxes lack size parity'; export_map.py:406-411 actually applies centre-in-box to every remaining unassigned GT/pred pair. tests/test_e2e_frame.py:378-410 asserts the current wide-prediction fallback without defining a size-parity condition.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Replace the undefined size-parity trigger with the precise fallback predicate the shipped mapper and test implement."
+    },
+    {
+      "db_id": 6311,
+      "finding_id": "FIR8V66-LC-15",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:311 demotes cells whose detection corpus is not exhaustive to DIRECTIONAL with detection_exhaustiveness_unasserted; tests/test_score_head_to_head.py:570 asserts that reason, and the plan says the head-to-head gate is withheld for box-less runs at line 1254.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The scorer and plan now disclose box-less detection results as directional and withhold the gate number."
+    }
+  ]
+}

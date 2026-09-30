@@ -44,6 +44,7 @@ _EXPORT_ENVIRONMENT = {
     "ACX_DESCRIPTION_ADAPTER": "seeded",
     "ACX_CLERK_ISSUER": "https://route-manifest.invalid/issuer",
     "ACX_CLERK_JWKS_URL": "https://route-manifest.invalid/.well-known/jwks.json",
+    "ACX_CLERK_AUDIENCE": "route-manifest",
     "ACX_CLERK_AUTHORIZED_PARTIES": "route-manifest",
     "POLAR_WEBHOOK_SECRET": "route-manifest-webhook-secret",
     "POLAR_PRODUCT_IDS": "starter=route-manifest-product",

@@ -226,6 +226,14 @@
     },
     {
       "method": "POST",
+      "path": "/portal/billing/checkout"
+    },
+    {
+      "method": "POST",
+      "path": "/portal/billing/manage"
+    },
+    {
+      "method": "POST",
       "path": "/portal/keys"
     },
     {
@@ -235,6 +243,10 @@
     {
       "method": "POST",
       "path": "/portal/keys/{param_0}/rotate"
+    },
+    {
+      "method": "POST",
+      "path": "/portal/onboarding/claim"
     },
     {
       "method": "POST",

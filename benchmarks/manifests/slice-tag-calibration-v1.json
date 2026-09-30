@@ -1,6 +1,9 @@
 {
  "auc_floor": 0.75,
  "labelled_images": 148,
+ "detection_artifact": "detections-yunet-t030.json",
+ "evaluation_scope": "in_sample_calibration_only",
+ "evaluation_note": "The signal and threshold were selected and scored on the same 148 labelled images. These metrics describe the calibration sample; they are not held-out performance estimates.",
  "shippable": {
   "profile": {
    "signal": "eye_span_ratio",

@@ -11,7 +11,7 @@
   "detected_boxes": "detections-yunet-t030.json (YuNet geometry + landmarks, all 646)",
   "captions": "golden150-draft-20260723.json (150-entry subset)",
   "slice_tags": "golden150-draft-20260723.json (operator hand tags, 150-entry subset)",
-  "slice_tags_derived": "detections-yunet-t030.json via calibrated rules (shortlist, all 646)"
+  "slice_tags_derived": "detections-yunet-t030.json via calibrated eye_span_ratio <= 0.8473 rule (all 646)"
  },
  "detector": {
   "model_id": "yunet",
@@ -25,14 +25,15 @@
  "derived_tag_rules": {
   "profile": {
    "signal": "eye_span_ratio",
-   "max": 0.75,
+   "max": 0.8473,
    "auc": 0.782,
-   "precision": 0.67,
-   "recall": 0.61,
-   "calibrated_on": "150 hand-tagged images"
+   "precision": 0.567,
+   "recall": 0.776,
+   "calibrated_on": "148 labelled images from 150 hand-tagged images",
+   "evaluation_scope": "in_sample_calibration_only"
   }
  },
- "derived_tag_caveat": "slice_tags_derived is a SHORTLIST at ~0.67 precision, not ground truth. Only `profile` cleared calibration against the 150 hand-tagged images; blur, low_res, masked, sunglasses and occlusion_other scored at chance and remain hand-only. Never merge derived tags into slice_tags.",
+ "derived_tag_caveat": "slice_tags_derived is a SHORTLIST, not ground truth. The profile signal and threshold were selected and scored on the same 148 labelled images; its AUC, precision and recall describe the calibration sample, not held-out performance. Blur, low_res, masked, sunglasses and occlusion_other scored at chance and remain hand-only. Never merge derived tags into slice_tags.",
  "consent": {
   "personal": "signed consent on file with the operator, held off-repo; subjects are named by pseudonym throughout",
   "celebs": "third-party editorial fixtures; not consented, not consent-equivalent"
@@ -48,9 +49,9 @@
   "with_slice_tags_known": 150,
   "with_detected_faces": 605,
   "detected_faces_total": 1763,
-  "with_derived_tags": 176,
+  "with_derived_tags": 255,
   "derived_tags": {
-   "profile": 176
+   "profile": 255
   },
   "sha256_rebased_from_original": 358,
   "duplicate_content_groups": 3,
@@ -3392,7 +3393,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -3632,7 +3635,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -3721,7 +3726,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -4030,7 +4037,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -5265,7 +5274,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -7491,7 +7502,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -7789,7 +7802,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -10220,7 +10235,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -10838,7 +10855,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -12753,7 +12772,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -13971,7 +13992,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -15284,7 +15307,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -15402,7 +15427,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -15887,7 +15914,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -17075,7 +17104,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -17284,7 +17315,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -17442,7 +17475,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -17531,7 +17566,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -18322,7 +18359,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -21460,7 +21499,9 @@
     "occlusion_other"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -21627,7 +21668,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -22639,7 +22682,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -23724,7 +23769,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -26267,7 +26314,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -27354,7 +27403,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -27698,7 +27749,9 @@
     "blur"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -28306,7 +28359,9 @@
     "occlusion_other"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -28566,7 +28621,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -29135,7 +29192,9 @@
     "profile"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -30023,7 +30082,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -30112,7 +30173,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -31281,7 +31344,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -31414,7 +31479,9 @@
     "sunglasses"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -33066,7 +33133,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -35052,7 +35121,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -35141,7 +35212,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -36753,7 +36826,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -41193,7 +41268,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -41411,7 +41488,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -41631,7 +41710,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -46559,7 +46640,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -47001,7 +47084,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -47090,7 +47175,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -47494,7 +47581,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -51677,7 +51766,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -52648,7 +52739,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -54661,7 +54754,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -55230,7 +55325,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -56131,7 +56228,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -58578,7 +58677,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -66977,7 +67078,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -70683,7 +70786,9 @@
     "blur"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -76768,7 +76873,9 @@
     "blur"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -81337,7 +81444,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -81739,7 +81848,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -82028,7 +82139,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -83460,7 +83573,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -83588,7 +83703,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -83850,7 +83967,9 @@
     "masked"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -86145,7 +86264,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -87418,7 +87539,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -87547,7 +87670,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -89261,7 +89386,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -92281,7 +92408,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -92976,7 +93105,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -95280,7 +95411,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -95491,7 +95624,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -96375,7 +96510,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -98009,7 +98146,9 @@
     "low_res"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -98232,7 +98371,9 @@
     "blur"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -98788,7 +98929,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -100168,7 +100311,9 @@
     "occlusion_other"
    ],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true
@@ -100366,7 +100511,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -101046,7 +101193,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -101623,7 +101772,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -101871,7 +102022,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -103819,7 +103972,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -104453,7 +104608,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": false,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": null,
    "policy": {
     "recognition_enabled": true
@@ -104533,7 +104690,9 @@
    },
    "slice_tags": [],
    "slice_tags_known": true,
-   "slice_tags_derived": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
    "slice_tags_source": "operator_hand",
    "policy": {
     "recognition_enabled": true

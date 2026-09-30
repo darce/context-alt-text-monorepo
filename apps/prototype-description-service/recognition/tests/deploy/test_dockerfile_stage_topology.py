@@ -58,12 +58,16 @@ def _env_map(body: str) -> dict[str, str]:
     return out
 
 
-def _runtime_base_disables_ort_telemetry(dockerfile: Path = DOCKERFILE) -> bool:
+def _runtime_base_disables_telemetry(dockerfile: Path = DOCKERFILE) -> bool:
     stages = _dockerfile_stages(dockerfile)
     runtime_stages = {DEFAULT_STAGE, VLM_STAGE}
     if "runtime-base" not in stages or not runtime_stages.issubset(stages):
         return False
-    if _env_map(stages["runtime-base"]).get("ORT_DISABLE_TELEMETRY") != "1":
+    runtime_base_env = _env_map(stages["runtime-base"])
+    if (
+        runtime_base_env.get("ORT_DISABLE_TELEMETRY") != "1"
+        or runtime_base_env.get("HF_HUB_DISABLE_TELEMETRY") != "1"
+    ):
         return False
 
     runtime_parents: dict[str, str] = {}
@@ -136,17 +140,21 @@ def test_runtime_stages_are_distinguishable_at_runtime() -> None:
     assert _env_map(stages[VLM_STAGE]).get("ACX_IMAGE_VARIANT") == "vlm"
 
 
-def test_runtime_base_disables_ort_telemetry_for_both_runtime_stages() -> None:
-    assert _runtime_base_disables_ort_telemetry(DOCKERFILE), (
-        "runtime-base must set ORT_DISABLE_TELEMETRY=1 and both runtime images "
-        "must inherit from runtime-base"
+def test_runtime_base_disables_telemetry_for_both_runtime_stages() -> None:
+    assert _runtime_base_disables_telemetry(DOCKERFILE), (
+        "runtime-base must set ORT_DISABLE_TELEMETRY=1 and "
+        "HF_HUB_DISABLE_TELEMETRY=1, and both runtime images must inherit from runtime-base"
     )
 
 
 @pytest.mark.parametrize(
     "runtime_base_env",
-    ["", "ENV ORT_DISABLE_TELEMETRY=0"],
-    ids=["missing", "enabled"],
+    [
+        "",
+        "ENV ORT_DISABLE_TELEMETRY=0\nENV HF_HUB_DISABLE_TELEMETRY=1",
+        "ENV ORT_DISABLE_TELEMETRY=1\nENV HF_HUB_DISABLE_TELEMETRY=0",
+    ],
+    ids=["missing", "ORT telemetry enabled", "HF Hub telemetry enabled"],
 )
 def test_runtime_base_telemetry_guard_bites_when_variable_is_missing_or_enabled(
     tmp_path: Path, runtime_base_env: str
@@ -158,7 +166,7 @@ def test_runtime_base_telemetry_guard_bites_when_variable_is_missing_or_enabled(
         + "\nFROM runtime-base AS runtime-vlm\n"
         + "\nFROM runtime-base AS runtime\n"
     )
-    assert not _runtime_base_disables_ort_telemetry(_write(tmp_path, synthetic))
+    assert not _runtime_base_disables_telemetry(_write(tmp_path, synthetic))
 
 
 def test_runtime_vlm_is_opt_in_offline_and_not_the_default_target() -> None:

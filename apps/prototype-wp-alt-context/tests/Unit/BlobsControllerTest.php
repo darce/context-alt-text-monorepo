@@ -14,6 +14,12 @@ use WP_REST_Request;
  */
 class BlobsControllerTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        unset($GLOBALS['__ac_current_user_id']);
+        parent::tearDown();
+    }
+
     public function testServeFaceThumbProxiesCropQueryToRecognitionService(): void
     {
         $this->setOption('acx_recognition_url', 'https://api.example.test');

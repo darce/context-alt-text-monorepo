@@ -5,16 +5,31 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
+from recognition.domain.portal_contracts import EntitlementStatus
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth, require_write_access
+from recognition.interface_adapters.http.deps.operator_authorization import get_operator_entitlement_repository
 from scene.interface_adapters.http.routers import gpu as gpu_routes
 
 NOW = 1_786_125_000.0
+
+
+class _PaidOperatorEntitlementRepository:
+    async def get(self, tenant_id: object) -> SimpleNamespace:
+        now = datetime.now(tz=UTC)
+        return SimpleNamespace(
+            tenant_id=tenant_id,
+            status=EntitlementStatus.PAID_ACTIVE,
+            period_start=now - timedelta(days=1),
+            period_end=now + timedelta(days=1),
+        )
 
 
 @asynccontextmanager
@@ -36,16 +51,22 @@ async def _client(
     app.include_router(gpu_routes.router, prefix="/scene")
     resolved_auth = auth or AuthContext(
         token="key",
-        tenant_claim="tenant",
+        tenant_claim="11111111-1111-1111-1111-111111111111",
         api_key_id="key-1",
         enabled=True,
     )
+    operator_entitlement_repository = _PaidOperatorEntitlementRepository()
 
     async def _auth_override() -> AuthContext:
         return resolved_auth
 
     app.dependency_overrides[require_auth] = _auth_override
     app.dependency_overrides[require_write_access] = _auth_override
+
+    async def _operator_entitlement_repository_override() -> _PaidOperatorEntitlementRepository:
+        return operator_entitlement_repository
+
+    app.dependency_overrides[get_operator_entitlement_repository] = _operator_entitlement_repository_override
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, state_path, load_path, intent_path

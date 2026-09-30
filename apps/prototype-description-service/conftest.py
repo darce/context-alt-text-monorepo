@@ -20,6 +20,7 @@ _RECEIPT_PREFIX = "prototype-description-service-pytest-collection-scope"
 _LEGACY_RECEIPT_PATH = _RECEIPT_DIRECTORY / ("prototype-description-service-pytest-collection-scope.json")
 _SERVICE_PYPROJECT = Path(__file__).with_name("pyproject.toml").resolve()
 _EVAL_HARNESS_TEST_DIRECTORY = Path(__file__).parent / "scene" / "tests"
+_NESTED_COLLECTION_TIMEOUT_SECONDS = 240
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -173,25 +174,49 @@ def _run_nested_collection(
 ) -> tuple[tuple[str, ...], str]:
     env = os.environ.copy()
     env.pop("ACX_STRICT_GATE", None)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            "--collection-scope-receipt",
-            str(receipt_path),
-            *paths,
-        ],
-        cwd=project_root,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "--collection-scope-receipt",
+        str(receipt_path),
+        *paths,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project_root,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_NESTED_COLLECTION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+
+        def output_tail(value: str | bytes | None) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                value = value.decode(errors="replace")
+            return value[-2000:]
+
+        message = (
+            "Nested pytest collection timed out after "
+            f"{_NESTED_COLLECTION_TIMEOUT_SECONDS} seconds for paths: "
+            f"{', '.join(paths) if paths else '<default collection>'}"
+        )
+        stdout_tail = output_tail(exc.stdout)
+        stderr_tail = output_tail(exc.stderr)
+        if stdout_tail:
+            message += f"; partial stdout tail: {stdout_tail}"
+        if stderr_tail:
+            message += f"; partial stderr tail: {stderr_tail}"
+        raise RuntimeError(message) from exc
     output = result.stdout + result.stderr
     if result.returncode:
         raise subprocess.CalledProcessError(
@@ -214,17 +239,36 @@ def _cached_nested_collection(
 
     test_run_uid = os.environ["PYTEST_XDIST_TESTRUNUID"]
     cache_path = shared_directory / f"nested-{test_run_uid}-{name}-collection.json"
+    failure_marker_path = cache_path.with_name(f"{cache_path.name}.failed")
     lock_path = cache_path.with_suffix(".lock")
     with lock_path.open("a+") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
             if cache_path.exists():
                 payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            elif failure_marker_path.exists():
+                failure_payload = json.loads(
+                    failure_marker_path.read_text(encoding="utf-8")
+                )
+                raise RuntimeError(failure_payload["error"])
             else:
                 receipt_path = shared_directory / (
                     f"nested-{test_run_uid}-{name}-receipt.json"
                 )
-                items, output = _run_nested_collection(project_root, receipt_path, *paths)
+                try:
+                    items, output = _run_nested_collection(
+                        project_root, receipt_path, *paths
+                    )
+                except RuntimeError as exc:
+                    failure_payload = {"error": str(exc)}
+                    temporary_path = failure_marker_path.with_name(
+                        f"{failure_marker_path.name}.{os.getpid()}.tmp"
+                    )
+                    temporary_path.write_text(
+                        json.dumps(failure_payload), encoding="utf-8"
+                    )
+                    os.replace(temporary_path, failure_marker_path)
+                    raise
                 payload = {"items": items, "output": output}
                 temporary_path = cache_path.with_name(
                     f"{cache_path.name}.{os.getpid()}.tmp"

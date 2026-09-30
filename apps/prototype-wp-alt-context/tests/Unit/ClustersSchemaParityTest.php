@@ -138,11 +138,25 @@ class ClustersSchemaParityTest extends TestCase
 
     public function testSqlReadColumnGuardDetectsFabricatedColumn(): void
     {
-        $sql = 'SELECT confidence_score FROM %i WHERE suggested_label_confidence = %f';
+        $sql = <<<'SQL'
+SELECT confidence_score
+FROM %i
+WHERE suggested_label_confidence = %f
+    AND tenant_id = %1$s
+    AND person_id = %s
+    AND cluster_uuid = %d
+    AND curation_state = %m
+    AND label = %p
+    AND curation_state = 'dismissed'
+    AND label = 'cluster-%%'
+SQL;
         $referenced = $this->parseSqlReadColumns($sql);
 
         $this->assertContains('confidence_score', $referenced, 'parser must extract selected identifiers');
         $this->assertContains('suggested_label_confidence', $referenced, 'parser must extract where identifiers');
+        foreach (['i', 'f', 'p', 's', 'd', 'm', 'dismissed', 'cluster'] as $nonColumn) {
+            $this->assertNotContains($nonColumn, $referenced, "parser must exclude {$nonColumn} because it is a placeholder token, alias, or SQL string literal");
+        }
         $this->assertSame(
             ['confidence_score'],
             $this->columnsMissingFrom($referenced, $this->parseClustersDdlColumns()),
@@ -538,6 +552,10 @@ PHP;
      */
     private function parseSqlReadColumns(string $sql): array
     {
+        // String literals and wpdb conversion placeholders are not column names.
+        $sql = preg_replace("~'(?:''|\\\\.|[^'\\\\])*'~s", ' ', $sql) ?? $sql;
+        $sql = preg_replace('/%(?:[0-9]+\$)?[a-z]/i', ' ', $sql) ?? $sql;
+
         $columns = [];
         if (preg_match_all('/\b([a-z_][a-z0-9_]*)\s*\.\s*([a-z_][a-z0-9_]*)\b/i', $sql, $qualifiedMatches, PREG_SET_ORDER)) {
             foreach ($qualifiedMatches as $match) {
@@ -549,6 +567,7 @@ PHP;
 
         $sql = preg_replace('/\{\$[^}]*\}/', ' ', $sql) ?? $sql;
         $sql = preg_replace('/\bAS\s+[a-z_][a-z0-9_]*/i', ' ', $sql) ?? $sql;
+        $sql = preg_replace('/\b(?:FROM|JOIN)\s+[a-z_][a-z0-9_]*\b/i', ' ', $sql) ?? $sql;
         $sql = preg_replace('/\b[a-z_][a-z0-9_]*\s*\.\s*(?:[a-z_][a-z0-9_]*|\*)/i', ' ', $sql) ?? $sql;
 
         $keywords = array_fill_keys([

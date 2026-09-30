@@ -31,6 +31,11 @@
 Purpose: Operator surface for media queue scan, job pipeline, sync health, and review overlays
 
 url_params: `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`, `cluster`
+wp_page: `alt-context-workbench`
+job_entry: true
+deep_link: true
+primary_action_id: `act-open-scan`
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -67,6 +72,11 @@ url_params: `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`
 Purpose: Filter and select library media; run scan faces / describe pipeline (default also covers the reviewing state: a face group loaded in the review panel)
 
 url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `cluster`
+wp_page: —
+job_entry: true
+deep_link: true
+primary_action_id: `act-scan-selected`
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -108,6 +118,11 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 Purpose: Review identity conflicts; commit human judgment with evidence
 
 url_params: `panel`
+wp_page: —
+job_entry: false
+deep_link: true
+primary_action_id: `act-resolve-conflict`
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -137,6 +152,11 @@ url_params: `panel`
 Purpose: Inspect failed sync ops; retry or discard
 
 url_params: `panel`
+wp_page: —
+job_entry: false
+deep_link: true
+primary_action_id: `act-retry-dead-letter`
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -165,6 +185,11 @@ url_params: `panel`
 Purpose: Review the faces in one unnamed group; Back returns to Review Suggestions
 
 url_params: `tab`, `panel`, `cluster`, `rq`
+wp_page: —
+job_entry: false
+deep_link: true
+primary_action_id: `act-review-back`
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -192,6 +217,11 @@ url_params: `tab`, `panel`, `cluster`, `rq`
 Purpose: Manage named people after dashboard identity guidance. Unnamed faces are named in Review Queue, not here (NAV-05).
 
 url_params: `personFilter`, `person`
+wp_page: `alt-context-roster`
+job_entry: true
+deep_link: true
+primary_action_id: —
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -212,6 +242,12 @@ url_params: `personFilter`, `person`
 ### Settings / service health (`exit-settings`)
 
 Purpose: Configure recognition target and connection health
+
+wp_page: `alt-context-settings`
+job_entry: false
+deep_link: true
+primary_action_id: —
+code_ref: `apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -256,6 +292,7 @@ Component pointers:
 | `act-retry-projection` | Retry projection sync | `projection` | secondary | yes | no | yes | `workbench-shell` |
 
 ## Flows
+
 ### Select media → scan → continue (`flow-scan-happy`)
 
 ```mermaid

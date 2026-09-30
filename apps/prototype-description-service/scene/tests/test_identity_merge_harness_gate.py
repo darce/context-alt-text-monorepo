@@ -62,13 +62,13 @@ def _phrase_boxes(scene, caption):
     for pb in scene["phrase_boxes"]:
         start = caption.find(pb["phrase"])
         assert start != -1, f"phrase {pb['phrase']!r} not in base_caption for media {scene['media_id']}"
-        x, y, w, h = pb["box"]
+        x_min, y_min, x_max, y_max = pb["box"]
         phrase_boxes.append(
             PhraseBox(
                 phrase=pb["phrase"],
                 span_start=start,
                 span_end=start + len(pb["phrase"]),
-                box=NormalizedBox(x=x, y=y, width=w, height=h),
+                box=NormalizedBox(x=x_min, y=y_min, width=x_max - x_min, height=y_max - y_min),
             )
         )
     return phrase_boxes

@@ -318,10 +318,7 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
     )
     local_cpu_adapter_unavailable = False
     if spec.available and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU and not vlm_dependencies_missing:
-        local_cpu_adapter_unavailable = isinstance(
-            scene_http_deps.get_description_adapter(profile),
-            scene_http_deps.UnavailableDescriptionAdapter,
-        )
+        local_cpu_adapter_unavailable = not scene_http_deps.local_cpu_adapter_is_usable()
     if not spec.available:
         usable = False
         reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value

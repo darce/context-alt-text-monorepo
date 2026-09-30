@@ -450,7 +450,10 @@ def test_stage2_fails_closed_when_recognition_enabled_and_naming_inputs_missing(
 def test_status_route_returns_run_snapshot(monkeypatch):
     _no_worker(monkeypatch)
     with _client() as (client, _):
-        run_id = _create_run(client)
+        submitted = _submit(client, [70])
+        assert submitted.status_code == 202, submitted.text
+        submitted_body = submitted.json()
+        run_id = submitted_body["run_id"]
         status_response = client.get(f"/scene/describe/run/{run_id}")
         assert status_response.status_code == 200, status_response.text
         body = status_response.json()
@@ -458,8 +461,9 @@ def test_status_route_returns_run_snapshot(monkeypatch):
         assert body["status"] == DescribeRunStatus.PENDING
         assert "eta_seconds" in body
         assert "timing" not in body
-        assert "operation_id" not in body
-        assert "startup_id" not in body
+        # Usage reservation writes operation_id at accept. Startup stays null until observed.
+        assert body["operation_id"] == submitted_body["operation_id"]
+        assert body["startup_id"] is None
         assert body["terminal"] is None
         assert body["fallback_reason"] is None
 
@@ -541,8 +545,9 @@ def test_submit_omits_unobserved_timing_and_operation_ids(monkeypatch):
     with _client() as (client, _):
         body = _submit(client, [70]).json()
         assert "timing" not in body
-        assert "operation_id" not in body
-        assert "startup_id" not in body
+        # Usage reservation writes operation_id at accept. Startup stays null until observed.
+        assert isinstance(body["operation_id"], str) and body["operation_id"]
+        assert body["startup_id"] is None
 
 
 def test_status_returns_persisted_timing_from_repository(monkeypatch):

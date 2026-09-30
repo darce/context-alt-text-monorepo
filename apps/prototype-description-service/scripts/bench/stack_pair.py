@@ -281,6 +281,8 @@ def _parse_stack(entry: Any) -> StackEndpoint:
         opencv_major = int(entry["opencv_major"])
     except (TypeError, ValueError) as exc:
         raise BenchError("opencv_major_unattested", "opencv_major is not a parseable integer") from exc
+    if opencv_major != 5:
+        raise BenchError("opencv_major_unsupported", f"opencv_major must be 5, got {opencv_major}")
 
     stack_id = str(entry["stack_id"])
     if stack_id not in FIR23_STACK_ALLOWLIST:

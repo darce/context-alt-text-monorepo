@@ -51,10 +51,8 @@ _MANIFEST_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # Persist contract for legs/<stack_id>/preflight.json (PROV-01). Score refuses
 # a file that is missing, unreadable (including non-UTF-8 bytes), not a JSON
-# object, or lacks these keys. Validation is key-presence only: values are
-# not re-checked at score time (null opencv_major or expected≠resolved still
-# pass if every key is present). The honest writer cannot emit those
-# artifacts; they are reachable only via a tampered or hand-written file.
+# object, or lacks these keys. Required provenance values and runtime versions
+# are also rechecked at score time so hand-written or tampered files fail closed.
 PROV01_PREFLIGHT_KEYS = (
     "stack_id",
     "base_url",
@@ -68,6 +66,8 @@ PROV01_PREFLIGHT_KEYS = (
     "ready_excerpt",
     "health_detailed_excerpt",
 )
+
+_RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
 
 
 class CrossbenchTier(StrEnum):
@@ -831,6 +831,7 @@ def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
             + ", ".join(missing)
             + "; score refuses a run-dir without PROV-01",
         )
+    opencv_versions: list[str] = []
     for stack_id in stacks:
         path = root / "legs" / stack_id / "preflight.json"
         try:
@@ -851,7 +852,68 @@ def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
                 "preflight_invalid",
                 f"{stack_id} preflight.json missing PROV-01 keys: " + ", ".join(absent),
             )
+        _validate_preflight_provenance(doc, stack_id)
+        opencv_versions.append(_preflight_opencv_version(doc, stack_id))
+    if len(set(opencv_versions)) > 1:
+        raise BenchError("preflight_invalid", "OpenCV versions differ between benchmark legs")
     return True
+
+
+def _validate_preflight_provenance(doc: dict[str, Any], stack_id: str) -> None:
+    """Recheck provenance values before scoring; key presence alone is unsafe."""
+    if doc.get("stack_id") != stack_id:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight.json stack_id does not match its leg")
+    if not isinstance(doc.get("expected_profile"), str) or not doc["expected_profile"]:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight.json expected_profile is invalid")
+    if doc.get("resolved_profile") != doc["expected_profile"]:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight profile differs from expectation")
+    expected_dim = doc.get("expected_pgvector_dim")
+    resolved_dim = doc.get("resolved_pgvector_dim")
+    if (
+        type(expected_dim) is not int
+        or expected_dim <= 0
+        or type(resolved_dim) is not int
+        or resolved_dim != expected_dim
+    ):
+        raise BenchError("preflight_invalid", f"{stack_id} preflight pgvector dimension differs from expectation")
+    if type(doc.get("opencv_major")) is not int or doc["opencv_major"] != 5:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight must report OpenCV major 5")
+    if doc.get("opencv_major_source") != "service_reported":
+        raise BenchError("preflight_invalid", f"{stack_id} preflight OpenCV major is not service-reported")
+    health = doc.get("health_detailed_excerpt")
+    cache = health.get("model_cache") if isinstance(health, dict) else None
+    if not isinstance(cache, dict) or cache.get("profile") != doc["resolved_profile"]:
+        raise BenchError("preflight_invalid", f"{stack_id} detailed health profile differs from preflight")
+
+
+def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
+    health = doc.get("health_detailed_excerpt")
+    cache = health.get("model_cache") if isinstance(health, dict) else None
+    detail = cache.get("detail") if isinstance(cache, dict) else None
+    if not isinstance(detail, str):
+        raise BenchError("preflight_invalid", f"{stack_id} preflight lacks detailed health model_cache.detail")
+    match = _RUNTIME_FINGERPRINT_TOKEN.search(detail)
+    if match is None:
+        raise BenchError("preflight_invalid", f"{stack_id} preflight lacks a service runtime fingerprint")
+    try:
+        fingerprint = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint is invalid JSON") from exc
+    if not isinstance(fingerprint, dict):
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint must be an object")
+    required = ("opencv_version", "opencv_major", "onnxruntime_version", "numpy_version")
+    if any(key not in fingerprint for key in required):
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint is incomplete")
+    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in required if key != "opencv_major"):
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint has an invalid version")
+    major = fingerprint["opencv_major"]
+    if type(major) is not int or major != doc["opencv_major"]:
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint OpenCV major is inconsistent")
+    version = fingerprint["opencv_version"]
+    major_token = version.split(".", 1)[0]
+    if not major_token.isdecimal() or int(major_token) != major:
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint OpenCV version is inconsistent")
+    return version
 
 
 def score_head_to_head(run_dir: Path | str) -> Path:

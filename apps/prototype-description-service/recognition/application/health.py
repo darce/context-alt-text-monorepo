@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import json
 import logging
 import threading
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,33 @@ class CheckResult:
 def check_health() -> HealthReport:
     """Return a static health signal for the recognition service."""
     return HealthReport.ok("recognition")
+
+
+def _with_numeric_runtime_fingerprint(result: CheckResult) -> CheckResult:
+    """Expose the canonical numeric-runtime stamp on detailed model health.
+
+    /health/detailed already includes ``model_cache.detail``. Keeping the
+    machine-readable fingerprint there lets remote benchmark preflight attest
+    the service's installed stack without importing runtime packages on the
+    operator's machine.
+    """
+    try:
+        from recognition.infrastructure.face_pipeline import numeric_runtime_fingerprint
+
+        fingerprint = numeric_runtime_fingerprint()
+        values = {
+            "opencv_version": fingerprint.opencv_version,
+            "opencv_major": fingerprint.opencv_major,
+            "onnxruntime_version": fingerprint.onnxruntime_version,
+            "numpy_version": fingerprint.numpy_version,
+        }
+        encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        detail = f"{result.detail}; numeric_runtime_fingerprint={encoded}"
+    except Exception as exc:  # noqa: BLE001 - health must never raise
+        # Keep ordinary readiness behavior. Benchmark preflight sees the
+        # missing marker and refuses to create a comparable run.
+        detail = f"{result.detail}; numeric_runtime_fingerprint_unavailable={type(exc).__name__}"
+    return replace(result, detail=detail)
 
 
 def _disk_headroom_result(
@@ -507,7 +535,9 @@ def check_model_cache(cache_dir: Path, model_name: str = "buffalo_l") -> CheckRe
     onnx_files = list(bundle.glob("*.onnx"))
     if not onnx_files:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"no_onnx_files: {bundle}")
-    return CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"{len(onnx_files)} bundle file(s)")
+    )
 
 
 def expected_embedding_dimension(space: ModelSpace) -> int:
@@ -649,7 +679,9 @@ def check_face_pipeline_models(models_dir: Path) -> CheckResult:
             HealthStatus.UNHEALTHY,
             f"runtime unavailable: {exc}",
         )
-    return CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"verified: yunet+sface @ {root}")
+    )
 
 
 def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
@@ -710,7 +742,9 @@ def check_model_space(space: ModelSpace, store: Path, /) -> CheckResult:
         )
     except Exception as exc:
         return CheckResult("model_cache", HealthStatus.UNHEALTHY, f"runtime unavailable: {exc}")
-    return CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
+    return _with_numeric_runtime_fingerprint(
+        CheckResult("model_cache", HealthStatus.OK, f"verified: auraface @ {store}")
+    )
 
 
 def reset_face_pipeline_verify_cache_for_tests() -> None:

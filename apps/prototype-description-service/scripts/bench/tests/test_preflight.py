@@ -16,11 +16,25 @@ from scripts.bench.preflight import (
     write_preflight_json,
 )
 from scripts.bench.stack_pair import StackEndpoint, load_stack_pair
-from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, write_pair
+from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, valid_pair_dict, write_pair
 
 
 def _insightface_endpoint(**overrides: object) -> StackEndpoint:
     payload = {**INSIGHTFACE_STACK, **overrides}
+    return StackEndpoint(
+        stack_id=payload["stack_id"],
+        role=payload["role"],
+        base_url=payload["base_url"],
+        expected_profile=payload["expected_profile"],
+        expected_pgvector_dim=payload["expected_pgvector_dim"],
+        opencv_major=payload.get("opencv_major"),
+        api_key_env=payload["api_key_env"],
+        tenant_id_env=payload["tenant_id_env"],
+    )
+
+
+def _fir_endpoint(**overrides: object) -> StackEndpoint:
+    payload = {**FIR_STACK, **overrides}
     return StackEndpoint(
         stack_id=payload["stack_id"],
         role=payload["role"],
@@ -47,7 +61,21 @@ def _ready(dim: int, *, status: str = "ok") -> dict:
     }
 
 
-def _health(profile: str) -> dict:
+def _health(profile: str, *, opencv_version: str = "5.0.0.93", include_runtime: bool = True) -> dict:
+    detail = "cached"
+    if include_runtime:
+        version_major = int(opencv_version.split(".", 1)[0])
+        fingerprint = {
+            "opencv_version": opencv_version,
+            "opencv_major": version_major,
+            "onnxruntime_version": "1.28.0",
+            "numpy_version": "2.5.1",
+        }
+        detail += "; numeric_runtime_fingerprint=" + json.dumps(
+            fingerprint,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     return {
         "status": "ok",
         "timestamp": "2026-07-29T00:00:00Z",
@@ -56,7 +84,7 @@ def _health(profile: str) -> dict:
             "cache_dir": "/models",
             "bundle_files": 2,
             "status": "ok",
-            "detail": "cached",
+            "detail": detail,
             "profile": profile,
         },
     }
@@ -86,7 +114,88 @@ def test_preflight_ok_real_shapes() -> None:
     assert result.resolved_profile == "insightface"
     assert result.resolved_pgvector_dim == 512
     assert result.opencv_major == 5
-    assert result.opencv_major_source == "operator_attested"
+    assert result.opencv_major_source == "service_reported"
+    assert "numeric_runtime_fingerprint" in result.health_detailed_excerpt["model_cache"]["detail"]
+
+
+def test_preflight_refuses_service_opencv_major_drift() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface", opencv_version="4.13.0.92")),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_major_drift"
+
+
+def test_preflight_refuses_non5_even_when_configured() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(opencv_major=4),
+            transport=_transport(_ready(512), _health("insightface", opencv_version="4.13.0.92")),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_major_unsupported"
+
+
+def test_preflight_refuses_missing_service_runtime_fingerprint() -> None:
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface", include_runtime=False)),
+            api_key="k",
+        )
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from recognition.application import health
+    from recognition.infrastructure import face_pipeline
+    from shared.health import HealthStatus
+
+    monkeypatch.setattr(
+        face_pipeline,
+        "numeric_runtime_fingerprint",
+        lambda: SimpleNamespace(
+            opencv_version="5.0.0.93",
+            opencv_major=5,
+            onnxruntime_version="1.28.0",
+            numpy_version="2.5.1",
+        ),
+    )
+    result = health._with_numeric_runtime_fingerprint(
+        health.CheckResult("model_cache", HealthStatus.OK, "cached")
+    )
+    assert '"opencv_version":"5.0.0.93"' in result.detail
+    assert '"onnxruntime_version":"1.28.0"' in result.detail
+
+
+def test_score_refuses_different_service_opencv_versions(tmp_path: Path) -> None:
+    from scripts.bench.score_report import _require_prov01_preflights
+    from scripts.bench.stack_pair import BenchError
+
+    results = (
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), _health("insightface")),
+            api_key="k",
+        ),
+        preflight_stack(
+            _fir_endpoint(),
+            transport=_transport(_ready(128), _health("face_pipeline", opencv_version="5.0.1.99")),
+            api_key="k",
+        ),
+    )
+    for result in results:
+        dest = tmp_path / "legs" / result.stack_id / "preflight.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_preflight_json(dest, result)
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(tmp_path, [result.stack_id for result in results])
+    assert exc.value.code == "preflight_invalid"
 
 
 def test_dim_drift_on_insightface_raises_profile_or_dim_drift() -> None:
@@ -180,6 +289,15 @@ def test_write_preflight_json_round_trips_prov01_keys(tmp_path: Path) -> None:
     write_preflight_json(dest, result)
     assert _require_prov01_preflights(tmp_path, [result.stack_id]) is True
 
+    doc = json.loads(dest.read_text(encoding="utf-8"))
+    doc["opencv_major"] = 4
+    dest.write_text(json.dumps(doc), encoding="utf-8")
+    from scripts.bench.stack_pair import BenchError
+
+    with pytest.raises(BenchError) as exc:
+        _require_prov01_preflights(tmp_path, [result.stack_id])
+    assert exc.value.code == "preflight_invalid"
+
 
 def test_missing_opencv_major_raises_and_writes_no_preflight_json(tmp_path: Path) -> None:
     dest = tmp_path / "preflight.json"
@@ -211,6 +329,16 @@ def test_load_missing_opencv_major_is_unattested(tmp_path: Path) -> None:
     with pytest.raises(Exception) as exc:
         load_stack_pair(path)
     assert getattr(exc.value, "code", "") == "opencv_major_unattested"
+
+
+def test_load_unsupported_opencv_major_is_rejected(tmp_path: Path) -> None:
+    from scripts.bench.stack_pair import BenchError
+
+    pair = valid_pair_dict()
+    pair["stacks"][0]["opencv_major"] = 4
+    with pytest.raises(BenchError) as exc:
+        load_stack_pair(write_pair(tmp_path / "pair.yaml", pair))
+    assert exc.value.code == "opencv_major_unsupported"
 
 
 def test_run_pair_defaults_to_fail_closed_preflight(tmp_path: Path) -> None:
@@ -290,7 +418,7 @@ def test_run_pair_persists_preflight_json(tmp_path: Path) -> None:
     ):
         doc = json.loads((out / "legs" / stack_id / "preflight.json").read_text())
         assert doc["opencv_major"] == 5
-        assert doc["opencv_major_source"] == "operator_attested"
+        assert doc["opencv_major_source"] == "service_reported"
         assert doc["resolved_pgvector_dim"] == dim
         assert doc["resolved_profile"] == profile
 

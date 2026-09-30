@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from scripts.bench.stack_pair import (
     DEPLOY_OWNERSHIP_KEYS,
     BenchError,
     load_stack_pair,
+    validate_stack_pair_config,
 )
 from scripts.bench.tests.conftest import FIR_STACK, INSIGHTFACE_STACK, valid_pair_dict, write_pair
 
@@ -53,6 +55,94 @@ def test_deploy_ownership_key_rejected(tmp_path: Path, key: str) -> None:
 def test_allowed_key_control_still_loads(tmp_path: Path) -> None:
     pair = _load(tmp_path, images_dir="/tmp/corpus")
     assert pair.images_dir == "/tmp/corpus"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("wall_clock_timeout_sec", "600"),
+        ("wall_clock_timeout_sec", 0),
+        ("wall_clock_timeout_sec", 86401),
+        ("job_poll_timeout_sec", 600.0),
+        ("job_poll_timeout_sec", 0),
+        ("job_poll_timeout_sec", 86401),
+        ("item_max_attempts", "2"),
+        ("item_max_attempts", 0),
+        ("item_max_attempts", 11),
+    ],
+)
+def test_invalid_run_budgets_fail_without_coercion(tmp_path: Path, key: str, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, **{key: value})
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize(
+    ("wall_clock_timeout_sec", "job_poll_timeout_sec", "item_max_attempts"),
+    [(1, 1, 1), (86400, 86400, 10)],
+)
+def test_run_budget_boundaries_are_accepted(
+    tmp_path: Path,
+    wall_clock_timeout_sec: int,
+    job_poll_timeout_sec: int,
+    item_max_attempts: int,
+) -> None:
+    pair = _load(
+        tmp_path,
+        wall_clock_timeout_sec=wall_clock_timeout_sec,
+        job_poll_timeout_sec=job_poll_timeout_sec,
+        item_max_attempts=item_max_attempts,
+    )
+    assert pair.wall_clock_timeout_sec == wall_clock_timeout_sec
+    assert pair.job_poll_timeout_sec == job_poll_timeout_sec
+    assert pair.item_max_attempts == item_max_attempts
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1])
+def test_private_source_requires_boolean(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, allow_private_source=value)
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize("value", [0.0, 1.01, 1, "0.10", True, float("nan"), float("inf")])
+def test_head_to_head_delta_requires_bounded_yaml_float(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, head_to_head_delta=value)
+    assert exc.value.code == "config_invalid"
+
+
+@pytest.mark.parametrize("value", [0.01, 1.0])
+def test_head_to_head_delta_float_boundaries_are_accepted(tmp_path: Path, value: float) -> None:
+    pair = _load(tmp_path, head_to_head_delta=value)
+    assert pair.head_to_head_delta == value
+
+
+@pytest.mark.parametrize("value", [0, "0.05", True])
+def test_attrition_requires_yaml_float(tmp_path: Path, value: object) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, max_differential_attrition=value)
+    assert exc.value.code == "max_differential_attrition_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("wall_clock_timeout_sec", 0),
+        ("job_poll_timeout_sec", 86401),
+        ("item_max_attempts", 11),
+        ("allow_private_source", "false"),
+        ("head_to_head_delta", "0.10"),
+        ("max_differential_attrition", "0.05"),
+    ],
+)
+def test_materialized_config_rejects_invalid_scalars(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    pair = _load(tmp_path)
+    with pytest.raises(BenchError) as exc:
+        validate_stack_pair_config(replace(pair, **{field: value}))
+    assert exc.value.code in {"config_invalid", "max_differential_attrition_invalid"}
 
 
 @pytest.mark.parametrize("value", [1, 1.0, 1.5, -1, "ninety"])

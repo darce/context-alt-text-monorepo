@@ -234,14 +234,17 @@ async def _require_rls_bypass(session: AsyncSession) -> None:
         )
 
 
-async def _allocate_snapshot_revision(session: AsyncSession) -> int:
+async def _allocate_snapshot_revision(session: AsyncSession, *, minimum_revision: int = 0) -> int:
     """Allocate the next publication revision under the demand-read transaction.
 
     A singleton row lock serializes allocation with the subsequent demand read
     so an older database view cannot receive a newer revision. The table is the
     publication sequence declared by the identity schema; this path never
-    creates it at runtime.
+    creates it at runtime. ``minimum_revision`` reseeds a counter recreated by
+    a schema reset above the revision already published on the host.
     """
+    if isinstance(minimum_revision, bool) or not isinstance(minimum_revision, int) or minimum_revision < 0:
+        raise ValueError("minimum snapshot revision must be a non-negative integer")
     if is_sqlite(session):
         await session.execute(
             text(f"INSERT OR IGNORE INTO {_SNAPSHOT_REVISION_TABLE} (singleton, revision) VALUES (1, 0)")
@@ -254,7 +257,12 @@ async def _allocate_snapshot_revision(session: AsyncSession) -> int:
             )
         )
     result = await session.execute(
-        text(f"UPDATE {_SNAPSHOT_REVISION_TABLE} SET revision = revision + 1 WHERE singleton = 1 RETURNING revision")
+        text(
+            f"UPDATE {_SNAPSHOT_REVISION_TABLE} SET revision = "
+            "CASE WHEN revision < :minimum_revision THEN :minimum_revision ELSE revision END + 1 "
+            "WHERE singleton = 1 RETURNING revision"
+        ),
+        {"minimum_revision": minimum_revision},
     )
     revision = result.scalar()
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
@@ -276,6 +284,17 @@ def _published_revision(payload: object) -> int:
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise RuntimeError("malformed published load snapshot revision")
     return revision
+
+
+def _published_revision_at(path: str | Path) -> int:
+    """Read the host snapshot revision so a recreated DB sequence can resume."""
+    target = Path(path)
+    if not target.exists():
+        return 0
+    try:
+        return _published_revision(json.loads(target.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("unreadable published load snapshot") from exc
 
 
 def _read_gpu_lifecycle_payload() -> dict[str, Any] | None:
@@ -395,6 +414,7 @@ async def load_snapshot(
     now: datetime | None = None,
     stop_requested: bool | None = None,
     max_lease_reached: bool | None = None,
+    minimum_revision: int = 0,
 ) -> dict[str, int | float | bool]:
     """Count non-terminal work for the GPU lifecycle controller.
 
@@ -419,7 +439,7 @@ async def load_snapshot(
         stop_requested=stop_requested,
         max_lease_reached=max_lease_reached,
     )
-    revision = await _allocate_snapshot_revision(session)
+    revision = await _allocate_snapshot_revision(session, minimum_revision=minimum_revision)
     await _persist_first_ready(session, now=observed_at)
     lease_demand = await DescribeOperationRepository(
         session, lease_seconds=_COUNTING_LEASE_SECONDS
@@ -480,10 +500,7 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
             if write_if_newer:
                 published = 0
                 if target.exists():
-                    try:
-                        published = _published_revision(json.loads(target.read_text(encoding="utf-8")))
-                    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                        raise RuntimeError("unreadable published load snapshot") from exc
+                    published = _published_revision_at(target)
                 if candidate_revision is not None and candidate_revision <= published:
                     return
             fd, tmp_name = tempfile.mkstemp(
@@ -541,6 +558,7 @@ async def dump_load_snapshot(
     target = path or resolve_load_path()
     observed_at = as_utc(now or datetime.now(UTC))
     try:
+        published_revision = _published_revision_at(target)
         async with session_factory() as session:
             await enable_rls_bypass(session)
             snap = await load_snapshot(
@@ -548,6 +566,7 @@ async def dump_load_snapshot(
                 now=observed_at,
                 stop_requested=stop_requested,
                 max_lease_reached=max_lease_reached,
+                minimum_revision=published_revision,
             )
             await session.commit()
         write_load_snapshot(snap, target)

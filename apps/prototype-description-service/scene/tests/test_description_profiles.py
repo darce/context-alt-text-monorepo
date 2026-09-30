@@ -130,9 +130,9 @@ def test_available_gpu_profiles_pin_a_non_none_hub_revision():
 # ------------------------------------------------------------- settings wiring
 
 
-def test_settings_default_profile_is_seeded(monkeypatch):
+def test_settings_default_profile_is_florence_small(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
-    assert DescriptionSettings().profile is DescriptionProfile.SEEDED
+    assert DescriptionSettings().profile is DescriptionProfile.FLORENCE_SMALL
 
 
 def test_settings_reads_profile_from_env(monkeypatch):
@@ -143,11 +143,19 @@ def test_settings_reads_profile_from_env(monkeypatch):
 # ------------------------------------------------------- adapter resolution
 
 
-def test_resolve_defaults_to_seeded(monkeypatch):
+def test_resolve_defaults_to_florence_small(monkeypatch):
     monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
     from scene.interface_adapters.http.deps import get_description_adapter
 
-    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
+    _reset_singleton()
+    assert get_description_adapter().kind is DescriptionAdapterKind.LOCAL_CPU
+
+
+def test_api_profile_resolver_defaults_to_florence_small(monkeypatch):
+    monkeypatch.delenv("ACX_DESCRIPTION_ADAPTER", raising=False)
+    from api.main import _resolve_description_profile
+
+    assert _resolve_description_profile() is DescriptionProfile.FLORENCE_SMALL
 
 
 def test_resolve_florence_small_builds_local_cpu_without_loading(monkeypatch):
@@ -365,7 +373,8 @@ def test_default_profile_unaffected_by_hosted_optin(monkeypatch):
     monkeypatch.setenv("ACX_HOSTED_PROVIDER_OPTIN", "1")
     from scene.interface_adapters.http.deps import get_description_adapter
 
-    assert get_description_adapter().kind is DescriptionAdapterKind.SEEDED
+    _reset_singleton()
+    assert get_description_adapter().kind is DescriptionAdapterKind.LOCAL_CPU
 
 
 def test_fake_hosted_adapter_satisfies_protocol_with_canned_result():

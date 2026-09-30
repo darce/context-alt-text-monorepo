@@ -14,7 +14,7 @@
 
 ## Objective
 
-Turn the dark FIR-4 pipeline into a switchable one: persist the quality signals the old pipeline lost (sharpness, pre-norm embedding magnitude, landmark pose proxies, occlusion severity), scaffold the OACT occlusion-adaptive threshold channel dark, enforce within-photo one-to-one assignment, make representative aggregation quality-gated, calibrate every face_pipeline threshold on ACX data via the FIR-5 harness with a leak-proof protocol, produce the bake-off report that **proposes** gate criteria, and — only after the **operator records the gate decision in MCP** — flip the switch: face-pipeline profile default, `PGVECTOR_DIM` 512→128, buffalo eviction from prod images.
+Turn the dark FIR-4 pipeline into a switchable one: persist the quality signals the old pipeline lost (sharpness, pre-norm embedding magnitude, landmark pose proxies, occlusion severity), scaffold the OACT occlusion-adaptive threshold channel dark, enforce within-photo one-to-one assignment, make representative aggregation quality-gated, calibrate every face_pipeline threshold on ACX data via the FIR-5 harness with a leak-proof protocol, produce the bake-off report that **proposes** gate criteria, and — only after the **operator records the gate decision in MCP** — flip the face-pipeline profile default and evict buffalo from production images. Keep `PGVECTOR_DIM` at 512 through this switch-over; decide and migrate the vector dimension separately after the retrain end-state is selected.
 
 S1–S3 are **corpus-independent and dark** ([RLSE-07]). S4–S5 are **corpus-gated** (operator Golden-150 + FIR-5 merged). S6 is **operator-gated** ([RLSE-02]/[RLSE-03]).
 
@@ -39,7 +39,7 @@ S1–S3 are **corpus-independent and dark** ([RLSE-07]). S4–S5 are **corpus-ga
 - No production writes from bake-off legs; buffalo eval-only; buffalo artifacts never leave `out/`.
 - No copying buffalo-tuned thresholds into face_pipeline defaults ([DRIFT-03]/[PERF-06]).
 - No top-k discovery rework in S2 (top-1 conflict-break semantics are explicit and tested; a top-k upgrade is an S4-informed follow-on decision, driven by the mirrors/similar-people diagnostics).
-- No schema change outside the S1 factor columns (pre-decided below) and S6's dimension flip.
+- No schema change outside the S1 factor columns (pre-decided below); any vector-dimension migration is a separate operator-gated change after the final retrain embedder size is selected.
 
 ## Problem Statement
 
@@ -145,7 +145,7 @@ FIR-5 report machinery (`report.py` face_bakeoff path; required entrypoints: the
 Preconditions verified in-slice: operator gate decision id (pass verdict) cited; FIR-2 tenant wipe/re-scan sign-off cited; S4 apply-commit present.
 
 1. Flip `RECOGNITION_FACE_PIPELINE_PROFILE` default → `face_pipeline` (`recognition/config/settings.py:44`).
-2. Flip `PGVECTOR_DIM` default `"512"` → `"128"` (`db/settings.py:216`) + every pinning deploy config: `.env*`, `docker-compose*.yml`, `infra/oci/**`, reset scripts (grep-enumerated; list lands in the slice decision).
+2. Leave `PGVECTOR_DIM` default `"512"` (`db/settings.py:216`) and its pinning deploy configs unchanged. Any dimension migration is a separate operator-gated change after the final retrain embedder size is selected.
 3. Evict buffalo weights + insightface from production images; `[bench]` extra untouched.
 4. Greenfield reset per scope §Rollback; previous image stays tagged.
 5. Repo-wide prod-path sweep for buffalo/insightface references (re-verify FIR-4's sweep).
@@ -242,5 +242,5 @@ Wave 1: S1 → S2 → S3a into `feature/fir-6` (coordinator rebases on collision
 
 - [ ] Dark pipeline: persisted quality factors, OACT seam, one-to-one photo assignment, gated aggregation — all inert at prod defaults until S6
 - [ ] Calibration lands in face_pipeline-scoped knobs via an MCP-cited apply-commit; insightface values untouched pre-S6
-- [ ] Report proposes (never judges) the gate; switch-over cites the operator decision and flips profile + dimension + images together with a soak watch
+- [ ] Report proposes (never judges) the gate; switch-over cites the operator decision, flips the profile and production image contents with a soak watch, and leaves `PGVECTOR_DIM` at 512 pending a separately gated dimension decision
 - [ ] `handoff_close_check(enforce=True)` passes; task `done` + archived

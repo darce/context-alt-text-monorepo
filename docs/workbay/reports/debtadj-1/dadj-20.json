@@ -1,0 +1,235 @@
+{
+  "lane": "dadj-20",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 6281,
+      "finding_id": "FIR8V66-D-09",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:24-34 - LEGAL_ENDPOINTS spans all metric/frame/label combinations; score_report.py:1107 sizes Holm by every declared secondary, while score_report.py:329-331 forces native and optimistic cells to DIRECTIONAL.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py",
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Restrict Holm declarations to confirmatory-capable secondaries or exclude permanently directional cells from the declared family size."
+    },
+    {
+      "db_id": 6282,
+      "finding_id": "FIR8V66-D-10",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/stack_pair.py:191-195 - head_to_head_delta is checked only for numeric type and finiteness; the plan's scale is 0..1 at docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:572.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/stack_pair.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_stack_pair_consumption.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Reject head_to_head_delta outside the positive metric-fraction domain and cover the boundary values in the config tests."
+    },
+    {
+      "db_id": 6283,
+      "finding_id": "FIR8V66-D-11",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:577 and :626 explicitly label the ρ wording as retired historical rationale; :1073 says the power-floor code was removed. The operative rules use occasion/image resampling and the precision precondition.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No change is needed because the remaining terms clearly describe retired behavior rather than directing implementation."
+    },
+    {
+      "db_id": 6284,
+      "finding_id": "FIR8V66-D-12",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1253 checks only the stamped ci_half_width bound; the operative contract separately requires Holm adjustment at :605, and artifacts-first refusal on differential attrition at :1075.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Expand the success criterion to cover the primary and Holm rules, floor, attrition refusal ordering, and required bootstrap provenance."
+    },
+    {
+      "db_id": 6285,
+      "finding_id": "FIR8V66-E-01",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:23-42 uses discordant paired values, asserts ci_half_width > 0.05, and asserts DIRECTIONAL with ci_half_width_above_precision_floor; the closed-plan fixture is specified at :613.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The discriminating discordant-leg fixture and threshold assertion now prove the precision gate can refuse a cell."
+    },
+    {
+      "db_id": 6287,
+      "finding_id": "FIR8V66-E-03",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:63-85 pins the 1000×1000 GT/prediction geometry at x=700 and asserts zero matches plus FP=1/FN=1; :88-103 adds a containment RED with IoU 0.0625 below threshold.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The localization red-proofs now pin concrete translated and containment geometries and assert the IoU miss."
+    },
+    {
+      "db_id": 6288,
+      "finding_id": "FIR8V66-E-04",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py:1568-1585 exercises only pred_faces=3/labeled_faces=2 and matched values 0, 2, 3, -1, None; it does not test the reversed count ordering. face_metrics.py:620-622 currently enforces the min bound.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add both pred<labeled and labeled<pred boundary cases so each side of the min bound is independently load-bearing."
+    },
+    {
+      "db_id": 6289,
+      "finding_id": "FIR8V66-E-05",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:810-811 and :1129-1130 include the explicit scene/tests/test_eval_harness_face_metrics.py command alongside bench tests.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The harness test file is now explicitly included in the documented proof commands."
+    },
+    {
+      "db_id": 6290,
+      "finding_id": "FIR8V66-E-06",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py:1568-1585 tests matched=0 and matched=min=2 but has no 0<matched<min case; face_metrics.py:620-625 has a separate matched arithmetic branch with FP/FN clamps.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Add an interior matched-count case such as pred=3, labeled=5, matched=2 and assert TP=2, FP=1, FN=3."
+    },
+    {
+      "db_id": 6292,
+      "finding_id": "FIR8V66-E-08",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/runbooks/fir-8-cross-stack-bench.md:54 and :74 use `stack-pair.yaml`, `<manifest.json>`, `<corpus-root>`, and `<stamp>` in shell commands; no sample stack-pair YAML exists under the bench fixture tree.",
+      "severity": "low",
+      "fix_files": [
+        "docs/runbooks/fir-8-cross-stack-bench.md",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md",
+        "apps/prototype-description-service/scripts/bench/tests/fixtures/stack-pair.example.yaml"
+      ],
+      "test_file": "",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Provide a committed redacted config and replace shell placeholders in the executable examples with literal runnable paths."
+    },
+    {
+      "db_id": 6293,
+      "finding_id": "FIR8V66-E-09",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1202 and :1213 still claim tests were observed red first; :1203 and :1236 refer to handoff decisions but give no artifact path, decision id, or URL for independent inspection.",
+      "severity": "low",
+      "fix_files": [
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Link each red-phase and handoff claim to an inspectable artifact or remove the unrecorded historical attestation."
+    },
+    {
+      "db_id": 6294,
+      "finding_id": "FIR8V66-E-10",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:418 replaces the total-pair tie rule with deterministic scipy.optimize.linear_sum_assignment on -IoU, fixed axis order, and a lockfile-pinned solver; apps/prototype-description-service/scripts/bench/score.py:77 calls that solver, and uv.lock:3076-3078 pins SciPy 1.18.0.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score.py",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The plan now defines the concrete deterministic solver and pinned dependency instead of claiming a separate pairwise tie-break rule."
+    },
+    {
+      "db_id": 6295,
+      "finding_id": "FIR8V66-E-11",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py:1546-1552 asserts matched_faces is the final dataclass field with default None and verifies ImageDetection('a.jpg', 3, 2).matched_faces is None.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/eval_harness/face_metrics.py",
+        "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py"
+      ],
+      "test_file": "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The optional-last-field proof now checks both dataclass order and the legacy three-argument positional constructor."
+    },
+    {
+      "db_id": 6296,
+      "finding_id": "FIR8V66-E-12",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-description-service/pyproject.toml:75-76 defines the dev extra; scripts/bench/__init__.py and scripts/bench/cross_stack_bench.py are present, and plan :127 explains the parent scripts namespace-package import path.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-description-service/pyproject.toml",
+        "apps/prototype-description-service/scripts/bench/__init__.py",
+        "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "The app project, dev extra, benchmark package marker, and namespace import path are now present in the checkout."
+    }
+  ]
+}

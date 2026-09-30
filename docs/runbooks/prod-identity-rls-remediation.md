@@ -43,7 +43,7 @@ FROM unnest(ARRAY[
     'image_descriptions','image_description_runs','image_description_run_items',
     'clustering_job_reports','assignment_decisions',
     'identity_atlas_runs','identity_atlas_points','identity_atlas_queue_dispositions',
-    'api_key_rotation_history','billing_subscription_projection','portal_identity',
+    'api_key_rotation_history','billing_checkout_attempt','billing_subscription_projection','portal_identity',
     'portal_tenant_invitation','tenant_entitlement','tenant_key_idempotency',
     'usage_reservation']) AS t(relname)
 LEFT JOIN pg_class c

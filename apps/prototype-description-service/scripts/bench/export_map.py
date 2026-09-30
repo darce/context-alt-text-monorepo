@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -22,6 +23,14 @@ from scripts.bench.stack_pair import BenchError
 from scripts.bench.status import CLUSTER_SUCCESS_STATUSES, ItemOutcome, ItemPhase
 from scripts.eval_harness.face_metrics import ImageDetection, ImageIdentities
 from scripts.eval_harness.manifest import FaceBox, GoldenEntry, GoldenManifest
+
+LEG_EXPORT_PAYLOAD_FILES = (
+    "media_identities.json",
+    "media_identity_results.json",
+    "clusters.json",
+    "cluster_members.json",
+)
+LEG_EXPORT_REQUIRED_FILES = (*LEG_EXPORT_PAYLOAD_FILES, "export_sha256.json")
 
 
 @dataclass
@@ -96,6 +105,8 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
     _write_preserved(paths["media_identities"], identities)
     _write_preserved(paths["clusters"], clusters)
     _write_preserved(paths["cluster_members"], members)
+    export_sha256 = _write_export_sha256(paths)
+    paths["export_sha256"] = export_sha256
     return LegExport(
         stack_id=stack_id,
         media_identities=identities,
@@ -123,6 +134,7 @@ def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
             "media_identity_results": identity_results_path,
             "clusters": export_dir / "clusters.json",
             "cluster_members": export_dir / "cluster_members.json",
+            "export_sha256": export_dir / "export_sha256.json",
         },
     )
 
@@ -130,6 +142,17 @@ def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
 def _write_preserved(path: Path, payload: Any) -> None:
     # Persist the upstream payload as-is. Never invent envelope fields.
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_export_sha256(paths: dict[str, Path]) -> Path:
+    """Persist content hashes for the raw JSON exports used by scoring."""
+    digests = {
+        paths[name].name: hashlib.sha256(paths[name].read_bytes()).hexdigest()
+        for name in ("media_identities", "media_identity_results", "clusters", "cluster_members")
+    }
+    dest = next(iter(paths.values())).parent / "export_sha256.json"
+    dest.write_text(json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8")
+    return dest
 
 
 def _roster_stack_media_ids(run_dir: Path | str, stack_id: str) -> list[int]:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from scripts.bench.stack_pair import BenchError, StackEndpoint, StackPairConfig
 
 _DIM_TOKEN = re.compile(r"pgvector_dimension=(\d+)")
 _RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class PreflightError(BenchError):
@@ -67,6 +68,7 @@ def preflight_stack(
 
     dim = _parse_ready_dim(ready_body, endpoint.expected_pgvector_dim)
     profile = _parse_health_profile(health_body, endpoint.expected_profile)
+    _parse_model_bundle_provenance(health_body)
     runtime_fingerprint = _parse_numeric_runtime_fingerprint(health_body)
     opencv_major = runtime_fingerprint["opencv_major"]
     if opencv_major != expected_opencv_major:
@@ -85,7 +87,7 @@ def preflight_stack(
         resolved_pgvector_dim=dim,
         opencv_major=opencv_major,
         opencv_major_source="service_reported",
-        checked_at=datetime.now(timezone.utc).isoformat(),
+        checked_at=datetime.now(UTC).isoformat(),
         ready_excerpt=_excerpt(ready_body),
         health_detailed_excerpt=_excerpt(health_body),
     )
@@ -165,6 +167,22 @@ def _parse_health_profile(body: dict[str, Any], expected: str) -> str:
     if profile != expected:
         raise PreflightError("profile_or_dim_drift", f"profile {profile!r} != expected {expected!r}")
     return profile
+
+
+def _parse_model_bundle_provenance(body: dict[str, Any]) -> None:
+    """Require the service to attest which model bundle is active and hash it."""
+    cache = body.get("model_cache")
+    if not isinstance(cache, dict):
+        raise PreflightError("model_bundle_unreported", "model_cache missing from detailed health")
+    model_name = cache.get("model_name")
+    bundle_files = cache.get("bundle_files")
+    bundle_sha256 = cache.get("bundle_sha256")
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise PreflightError("model_bundle_unreported", "model_cache.model_name missing from detailed health")
+    if type(bundle_files) is not int or bundle_files <= 0:
+        raise PreflightError("model_bundle_unreported", "model_cache.bundle_files is missing or empty")
+    if not isinstance(bundle_sha256, str) or _SHA256.fullmatch(bundle_sha256) is None:
+        raise PreflightError("model_bundle_unreported", "model_cache.bundle_sha256 is missing or invalid")
 
 
 def _parse_numeric_runtime_fingerprint(body: dict[str, Any]) -> dict[str, Any]:

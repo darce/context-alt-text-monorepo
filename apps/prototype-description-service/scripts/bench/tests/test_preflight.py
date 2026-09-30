@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -83,6 +84,7 @@ def _health(profile: str, *, opencv_version: str = "5.0.0.93", include_runtime: 
             "model_name": "buffalo_l",
             "cache_dir": "/models",
             "bundle_files": 2,
+            "bundle_sha256": "a" * 64,
             "status": "ok",
             "detail": detail,
             "profile": profile,
@@ -148,6 +150,36 @@ def test_preflight_refuses_missing_service_runtime_fingerprint() -> None:
     assert exc.value.code == "opencv_runtime_unreported"
 
 
+def test_preflight_refuses_unhashed_model_bundle() -> None:
+    health = _health("insightface")
+    del health["model_cache"]["bundle_sha256"]
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "model_bundle_unreported"
+
+
+def test_preflight_persists_live_model_bundle_provenance(tmp_path: Path) -> None:
+    result = preflight_stack(
+        _insightface_endpoint(),
+        transport=_transport(_ready(512), _health("insightface")),
+        api_key="k",
+    )
+    dest = tmp_path / "preflight.json"
+
+    write_preflight_json(dest, result)
+
+    cache = json.loads(dest.read_text(encoding="utf-8"))["health_detailed_excerpt"]["model_cache"]
+    assert cache["model_name"] == "buffalo_l"
+    assert cache["bundle_files"] == 2
+    assert cache["bundle_sha256"] == "a" * 64
+
+
 def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
@@ -170,6 +202,24 @@ def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest
     )
     assert '"opencv_version":"5.0.0.93"' in result.detail
     assert '"onnxruntime_version":"1.28.0"' in result.detail
+
+
+def test_model_bundle_sha256_tracks_model_names_and_bytes(tmp_path: Path) -> None:
+    from recognition.application.health import model_bundle_paths, sha256_model_bundle
+
+    cache_dir = tmp_path / "models"
+    bundle_dir = cache_dir / "buffalo_l"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "z.onnx").write_bytes(b"model-z")
+    (bundle_dir / "a.onnx").write_bytes(b"model-a")
+
+    paths = model_bundle_paths(cache_dir, "buffalo_l", "insightface")
+    digest = sha256_model_bundle(paths, cache_dir=cache_dir)
+
+    assert [path.name for path in paths] == ["a.onnx", "z.onnx"]
+    assert digest is not None
+    (bundle_dir / "a.onnx").write_bytes(b"changed model")
+    assert sha256_model_bundle(paths, cache_dir=cache_dir) != digest
 
 
 def test_score_refuses_different_service_opencv_versions(tmp_path: Path) -> None:

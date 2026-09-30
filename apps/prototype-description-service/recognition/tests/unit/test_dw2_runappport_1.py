@@ -48,6 +48,19 @@ def _case(case_id: str, group: str, *, test: str | None = None, **extra: Any) ->
     return case
 
 
+def _typed_provenance() -> str:
+    """Provenance JSON the runner accepts for the fake HEAD this file's runner returns."""
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "git_sha": "d" * 40,
+            "command": "pytest",
+            "provenance": {"source": "unit-test", "result": "pass"},
+        }
+    )
+
+
 def _successful_runner(calls: list[tuple[list[str], dict[str, Any]]]):
     def fake(command: list[str], **kwargs: Any) -> SimpleNamespace:
         if command[:3] == ["git", "rev-parse", "HEAD"]:
@@ -141,11 +154,15 @@ def test_missing_supplemental_artifact_does_not_fail_executed_case_gate(tmp_path
         command_runner=_successful_runner([]),
     )
 
-    assert status == 0
+    assert status == 1
     evidence = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert evidence["release_gate_results"]["beta"]["status"] == "passed"
     case_result = next(case for case in evidence["case_results"] if case["case_id"] == "SC-1")
     assert case_result["artifact_present"] is False
+    assert any(
+        "missing required artifact" in reason and str(artifact) in reason
+        for reason in evidence["groups"][0]["failure_reasons"]
+    )
 
 
 def test_additional_evidence_requirement_can_have_pending_artifact(tmp_path: Path) -> None:
@@ -212,6 +229,7 @@ def test_beta_run_passes_while_expansion_and_paid_artifacts_are_absent(tmp_path:
         groups=["beta"],
         out_dir=tmp_path / "out",
         command_runner=_successful_runner([]),
+        disposition="slice",
     )
 
     assert status == 0
@@ -355,7 +373,7 @@ def test_manifest_uv_execution_envelope_is_preserved(tmp_path: Path) -> None:
 
 def test_existing_evidence_only_artifact_satisfies_required_case(tmp_path: Path) -> None:
     artifact = tmp_path / "observation-report.md"
-    artifact.write_text("observations recorded", encoding="utf-8")
+    artifact.write_text(_typed_provenance(), encoding="utf-8")
     manifest_path = _manifest(
         tmp_path,
         [
@@ -380,7 +398,7 @@ def test_existing_evidence_only_artifact_satisfies_required_case(tmp_path: Path)
 
 def test_evidence_only_group_passes_with_its_artifact(tmp_path: Path) -> None:
     artifact = tmp_path / "paid-release-record.json"
-    artifact.write_text("release evidence", encoding="utf-8")
+    artifact.write_text(_typed_provenance(), encoding="utf-8")
     manifest_path = _manifest(
         tmp_path,
         [_case("SC-1", "paid", artifact=str(artifact))],
@@ -504,7 +522,7 @@ def test_paid_gate_rejects_empty_app_sc_20_artifact(tmp_path: Path) -> None:
 
 def test_paid_gate_requires_and_records_live_charge_authorization(tmp_path: Path) -> None:
     artifact = tmp_path / "app1-paid-release.json"
-    artifact.write_text('{"transaction": "recorded"}', encoding="utf-8")
+    artifact.write_text(_typed_provenance(), encoding="utf-8")
     manifest_path = _paid_artifact_manifest(tmp_path, artifact)
 
     status_without_authorization = runner.run_evals(

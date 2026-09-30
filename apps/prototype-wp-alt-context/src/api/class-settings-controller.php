@@ -27,6 +27,7 @@ use WP_REST_Response;
 use function apply_filters;
 use function array_key_exists;
 use function current_user_can;
+use function delete_option;
 use function defined;
 use function get_option;
 use function in_array;
@@ -142,6 +143,10 @@ class SettingsController {
 				'api_key_set'               => '' !== $key_resolution['value'],
 				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
 				'key_source'                => $key_resolution['source'],
+				'api_key_storage_notice'    => 'option' === $key_resolution['source']
+					? 'This key is stored in the WordPress options database as plaintext. '
+						. 'Set ACX_RECOGNITION_API_KEY or the acx_recognition_api_key filter instead.'
+					: null,
 				'tenant_id'                 => $tenant_resolution['value'],
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
@@ -192,6 +197,8 @@ class SettingsController {
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
 			$key = trim( $body['api_key'] );
+			// Compatibility fallback: WordPress options store this key as plaintext.
+			// Deployments should use ACX_RECOGNITION_API_KEY or the filter instead.
 			update_option( 'acx_recognition_api_key', $key );
 			if ( $this->option_matches_intended( 'acx_recognition_api_key', $key ) ) {
 				$saved[] = 'api_key';
@@ -246,6 +253,24 @@ class SettingsController {
 			}
 
 			$allow_person_names = $body['allow_person_names'];
+			// Remove any earlier opt-in before contacting the service, so a failed
+			// request or concurrent describe cannot keep sending names.
+			delete_option( 'acx_description_allow_person_names' );
+			delete_option( 'acx_description_allow_person_names_tenant_id' );
+			$stored_policy = get_option( 'acx_description_allow_person_names', false );
+			if (
+				true === $stored_policy
+				|| 1 === $stored_policy
+				|| '1' === $stored_policy
+				|| 'true' === $stored_policy
+			) {
+				return new WP_Error(
+					'allow_person_names_cache_failed',
+					'Could not safely clear the local person-naming preference.',
+					array( 'status' => 500 )
+				);
+			}
+
 			$sync_response      = $this->request_naming_agreement( 'PUT', $allow_person_names );
 			if ( is_wp_error( $sync_response ) || $sync_response['enabled'] !== $allow_person_names ) {
 				$message = is_wp_error( $sync_response )
@@ -256,6 +281,23 @@ class SettingsController {
 					$message,
 					array( 'status' => 502 )
 				);
+			}
+			// Cache only an agreement confirmed by the authoritative service. The
+			// describe request uses this tenant-scoped value before sending names.
+			if ( $allow_person_names ) {
+				$tenant_id = TenantIdentity::resolve()['value'];
+				update_option( 'acx_description_allow_person_names', true );
+				update_option( 'acx_description_allow_person_names_tenant_id', $tenant_id );
+				if (
+					! $this->option_matches_intended( 'acx_description_allow_person_names', true )
+					|| ! $this->option_matches_intended( 'acx_description_allow_person_names_tenant_id', $tenant_id )
+				) {
+					return new WP_Error(
+						'allow_person_names_cache_failed',
+						'Could not safely save the local person-naming preference.',
+						array( 'status' => 500 )
+					);
+				}
 			}
 
 			$saved[] = 'allow_person_names';

@@ -243,6 +243,10 @@ class SettingsControllerTest extends TestCase
         $this->assertTrue($data['api_key_set']);
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
+        $this->assertStringContainsString(
+            'stored in the WordPress options database',
+            $data['api_key_storage_notice']
+        );
     }
 
     public function testGetSettingsReturnsPersistedTenantFields(): void
@@ -462,6 +466,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
         $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_description_allow_person_names', true);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '{"enabled":false}',
@@ -474,9 +479,36 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
         $this->assertArrayNotHasKey('acx_description_allow_person_names', $GLOBALS['__ac_options'] ?? []);
+        $this->assertArrayNotHasKey(
+            'acx_description_allow_person_names_tenant_id',
+            $GLOBALS['__ac_options'] ?? []
+        );
+        $this->assertFalse(get_option('acx_description_allow_person_names'));
         $calls = $this->getHttpCalls();
         $this->assertSame('PUT', $calls[0]['method']);
         $this->assertSame('{"enabled":false}', $calls[0]['args']['body']);
+    }
+
+    public function testSaveSettingsCachesEnabledPersonNamesForConfirmedTenant(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $tenantId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+        $this->setOption('acx_recognition_tenant_id', $tenantId);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"enabled":true}',
+        ]);
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['allow_person_names' => true]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(['allow_person_names'], $response->get_data()['saved']);
+        $this->assertTrue(get_option('acx_description_allow_person_names'));
+        $this->assertSame($tenantId, get_option('acx_description_allow_person_names_tenant_id'));
     }
 
     public function testSaveSettingsRejectsNonBooleanAllowPersonNames(): void
@@ -497,6 +529,7 @@ class SettingsControllerTest extends TestCase
         $this->setUserCapability('manage_options', true);
         $this->setOption('acx_recognition_url', 'https://api.example.com');
         $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_description_allow_person_names', true);
         $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
@@ -506,6 +539,7 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('allow_person_names_sync_failed', $response->get_error_code());
         $this->assertSame(502, $response->get_error_data()['status']);
+        $this->assertFalse(get_option('acx_description_allow_person_names'));
     }
 
     public function testSaveSettingsRr07PreservesCodeManagedSelectorContract(): void

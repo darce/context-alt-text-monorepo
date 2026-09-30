@@ -49,6 +49,33 @@ def _dockerfile_stages(dockerfile: Path = DOCKERFILE) -> dict[str, str]:
     return _dockerfile_stages_shared(dockerfile)
 
 
+def _env_map(body: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ln in body.splitlines():
+        match = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
+        if match:
+            out[match.group(1)] = match.group(2).strip().strip("'\"")
+    return out
+
+
+def _runtime_base_disables_ort_telemetry(dockerfile: Path = DOCKERFILE) -> bool:
+    stages = _dockerfile_stages(dockerfile)
+    runtime_stages = {DEFAULT_STAGE, VLM_STAGE}
+    if "runtime-base" not in stages or not runtime_stages.issubset(stages):
+        return False
+    if _env_map(stages["runtime-base"]).get("ORT_DISABLE_TELEMETRY") != "1":
+        return False
+
+    runtime_parents: dict[str, str] = {}
+    for line in dockerfile.read_text().splitlines():
+        parsed_from = parse_from_instruction(line)
+        if parsed_from is not None:
+            parent, stage_name = parsed_from
+            if stage_name in runtime_stages:
+                runtime_parents[stage_name] = parent
+    return all(runtime_parents.get(stage) == "runtime-base" for stage in runtime_stages)
+
+
 def _write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "Dockerfile"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,30 +132,39 @@ def test_runtime_stages_are_distinguishable_at_runtime() -> None:
     """RA-07: an operator must be able to tell which image is running."""
     stages = _dockerfile_stages()
     # ENV map lookup via active lines (not brittle substring adjacency).
-    def _env_map(body: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for ln in body.splitlines():
-            m = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
-            if m:
-                out[m.group(1)] = m.group(2).strip().strip("'\"")
-        return out
-
     assert _env_map(stages[DEFAULT_STAGE]).get("ACX_IMAGE_VARIANT") == "recognition"
     assert _env_map(stages[VLM_STAGE]).get("ACX_IMAGE_VARIANT") == "vlm"
+
+
+def test_runtime_base_disables_ort_telemetry_for_both_runtime_stages() -> None:
+    assert _runtime_base_disables_ort_telemetry(DOCKERFILE), (
+        "runtime-base must set ORT_DISABLE_TELEMETRY=1 and both runtime images "
+        "must inherit from runtime-base"
+    )
+
+
+@pytest.mark.parametrize(
+    "runtime_base_env",
+    ["", "ENV ORT_DISABLE_TELEMETRY=0"],
+    ids=["missing", "enabled"],
+)
+def test_runtime_base_telemetry_guard_bites_when_variable_is_missing_or_enabled(
+    tmp_path: Path, runtime_base_env: str
+) -> None:
+    base_env_line = f"{runtime_base_env}\n" if runtime_base_env else ""
+    synthetic = (
+        "FROM python:3.12-slim AS runtime-base\n"
+        + base_env_line
+        + "\nFROM runtime-base AS runtime-vlm\n"
+        + "\nFROM runtime-base AS runtime\n"
+    )
+    assert not _runtime_base_disables_ort_telemetry(_write(tmp_path, synthetic))
 
 
 def test_runtime_vlm_is_opt_in_offline_and_not_the_default_target() -> None:
     """PROV-01b: runtime-vlm carries torch extras but never becomes the bare build."""
     stages = _dockerfile_stages()
     vlm = stages[VLM_STAGE]
-
-    def _env_map(body: str) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for ln in body.splitlines():
-            m = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
-            if m:
-                out[m.group(1)] = m.group(2).strip().strip("'\"")
-        return out
 
     env = _env_map(vlm)
     assert default_build_target(DOCKERFILE) == DEFAULT_STAGE

@@ -48,17 +48,23 @@ uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py
 
 ## 3. Preflight
 
-Working directory: `apps/prototype-description-service`.
+Working directory: `apps/prototype-description-service`. The committed redacted pair config is `scripts/bench/tests/fixtures/stack-pair.example.yaml`; it contains the allowlisted dev endpoints and environment-variable names, never credentials. Live preflight remains blocked until `acx-dev-fir` is delivered.
 
 ```bash
-uv run python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml
+PAIR_CONFIG="scripts/bench/tests/fixtures/stack-pair.example.yaml"
+uv run python -m scripts.bench.cross_stack_bench preflight --config "$PAIR_CONFIG"
 ```
 
 Optional: write per-leg `preflight.json` under a run-dir:
 
 ```bash
-uv run python -m scripts.bench.cross_stack_bench preflight --config stack-pair.yaml --out ../../benchmarks/results/crossbench-<stamp>/
+PAIR_CONFIG="scripts/bench/tests/fixtures/stack-pair.example.yaml"
+RUN_STAMP="crossbench-20260930T000000Z"
+RUN_DIR="../../benchmarks/results/${RUN_STAMP}"
+uv run python -m scripts.bench.cross_stack_bench preflight --config "$PAIR_CONFIG" --out "$RUN_DIR"
 ```
+
+Use a fresh UTC stamp for each real run; the literal above is a shell-safe example.
 
 Fails closed on auth (`preflight_auth_failed`), missing routes (`preflight_endpoint_missing`), profile/dim drift (`profile_or_dim_drift`), or unattested `opencv_major` (`opencv_major_unattested`). No partial `preflight.json` on those failures.
 
@@ -68,13 +74,18 @@ Fails closed on auth (`preflight_auth_failed`), missing routes (`preflight_endpo
 
 ## 4. Run
 
-Working directory: `apps/prototype-description-service`. `--out` resolves to the repository-level `benchmarks/results/` tree.
+Working directory: `apps/prototype-description-service`. `--out` resolves to the repository-level `benchmarks/results/` tree. Stage the selected corpus manifest and its image files at the example paths below before running; the live run remains blocked until `acx-dev-fir` is delivered.
 
 ```bash
-uv run python -m scripts.bench.cross_stack_bench run --config stack-pair.yaml --manifest <manifest.json> --images-dir <corpus-root> --out ../../benchmarks/results/crossbench-<stamp>/
+PAIR_CONFIG="scripts/bench/tests/fixtures/stack-pair.example.yaml"
+MANIFEST="../../benchmarks/manifests/corpus-manifest-v3r-20260930.json"
+IMAGES_DIR="../../benchmarks/images"
+RUN_STAMP="crossbench-20260930T000000Z"
+RUN_DIR="../../benchmarks/results/${RUN_STAMP}"
+uv run python -m scripts.bench.cross_stack_bench run --config "$PAIR_CONFIG" --manifest "$MANIFEST" --images-dir "$IMAGES_DIR" --out "$RUN_DIR"
 ```
 
-Flow: ingest → analyze → cluster → export persist. Resume is append-only via `legs/<stack_id>/items.jsonl`.
+Flow: ingest → analyze → cluster → export persist. Resume is append-only via each leg's `items.jsonl` (for example, `legs/acx-dev-fir/items.jsonl`).
 
 `run` **requires a git checkout** of the monorepo. `init_run_dir` stamps `cli_sha` / `harness_sha` from `git log` and fails closed with `provenance_sha_unavailable` from a packaged install, tarball, or CI artifact tree that is not a checkout.
 
@@ -88,8 +99,8 @@ Flow: ingest → analyze → cluster → export persist. Resume is append-only v
 | `bootstrap_series_mismatch` | named cell stamps this as `bootstrap_status`; CONFIRMATORY is refused | paired series length/presence disagrees across legs |
 | `bootstrap_status` | cell field `ok` / `partial` / a fail-closed code; `partial` or any non-`ok` demotes CONFIRMATORY | inspect `bootstrap_n_used`; undefined resamples are Δ = 0 over B (conservative p) |
 | `export_envelope_invalid` | `score` aborts | exports must be a **bare JSON array**; `{"data": [...]}` object envelopes are rejected |
-| `preflight_missing` | `score` aborts | each `legs/<stack_id>/preflight.json` must exist (PROV-01); recover with `preflight --config <stack-pair.yaml> --out <run-dir>` |
-| `preflight_invalid` | `score` aborts | `preflight.json` is unreadable (including non-UTF-8), not a JSON object, or missing required PROV-01 keys (key-presence only); rewrite from a successful `preflight --config <stack-pair.yaml> --out <run-dir>` |
+| `preflight_missing` | `score` aborts | each `legs/acx-dev-fir/preflight.json` and `legs/acx-dev-insightface/preflight.json` must exist (PROV-01); rerun the section 3 preflight block with `--out "$RUN_DIR"` |
+| `preflight_invalid` | `score` aborts | `preflight.json` is unreadable (including non-UTF-8), not a JSON object, or missing required PROV-01 keys (key-presence only); rerun the section 3 preflight block with `--out "$RUN_DIR"` |
 | `leg_outcome_unreadable` | `status` / `run` aborts | rewrite or delete a torn `leg_outcome.json`; it is not treated as absence |
 
 **Do not run this against live endpoints until `acx-dev-fir` exists.** A mocked/unit path is the only verified path in this task.
@@ -101,7 +112,9 @@ Flow: ingest → analyze → cluster → export persist. Resume is append-only v
 Working directory: `apps/prototype-description-service`. Reads the run-dir only; **no network**.
 
 ```bash
-uv run python -m scripts.bench.cross_stack_bench status --run-dir ../../benchmarks/results/crossbench-<stamp>/
+RUN_STAMP="crossbench-20260930T000000Z"
+RUN_DIR="../../benchmarks/results/${RUN_STAMP}"
+uv run python -m scripts.bench.cross_stack_bench status --run-dir "$RUN_DIR"
 ```
 
 ---
@@ -111,20 +124,22 @@ uv run python -m scripts.bench.cross_stack_bench status --run-dir ../../benchmar
 Working directory: `apps/prototype-description-service`. Offline; **no credentials / no network**. Fails if either leg's cluster phase is missing or non-success. Writes `score/accepted_set.json`, `score/attrition.json`, `score/frames.json`, `score/report.html`.
 
 ```bash
-uv run python -m scripts.bench.cross_stack_bench score --run-dir ../../benchmarks/results/crossbench-<stamp>/
+RUN_STAMP="crossbench-20260930T000000Z"
+RUN_DIR="../../benchmarks/results/${RUN_STAMP}"
+uv run python -m scripts.bench.cross_stack_bench score --run-dir "$RUN_DIR"
 ```
 
 ---
 
 ## 7. Teardown
 
-**Only** FIR23-STACK's documented stack-scoped DB reset for `acx-dev-fir` (and optional dev bench-tenant cleanup).
+FIR23-STACK has not delivered a reset runbook in this checkout, so there is no §reset citation to follow. The tracked reset mechanism is `scripts/deploy/db-reset-remote.sh`, whose `dev-fir` branch targets the `acx-dev-fir` Postgres and API containers. The supported dry-run preview from the repository root is:
 
-Placeholder until that command is stable:
+```bash
+DRY_RUN=1 ENV=dev-fir CONFIRM=RESET scripts/deploy/db-reset-remote.sh
+```
 
-> See FIR23-STACK runbook §reset
-
-Do **not** invent `DROP DATABASE` one-liners here.
+This prints the target and remote commands without connecting. The FIR23-STACK operator must own the live reset and follow any delivered stack procedure; this bench runbook does not authorize or execute the destructive command. Do **not** invent `DROP DATABASE` one-liners here.
 
 ---
 
@@ -143,10 +158,10 @@ Do **not** invent `DROP DATABASE` one-liners here.
 - [ ] Unit/mocked suite green (`scripts/bench/tests/` and `scene/tests/test_eval_harness_face_metrics.py`)
 - [ ] **Live path still blocked** — do not tick this as a live pass
 - [ ] When FIR23-STACK delivers `acx-dev-fir`: both preflights green
-- [ ] Report path exists under `benchmarks/results/crossbench-<stamp>/score/`
+- [ ] Report path exists under `benchmarks/results/crossbench-20260930T000000Z/score/` (replace this example stamp with the run's recorded stamp)
 - [ ] Both sampling frames (`frame_e2e`, `frame_fir5_native`) and both label maps present
 - [ ] `license_notice` / `license_banner` present; insightface not referenced as a product path
-- [ ] Stacks reset via FIR23-STACK §reset only
+- [ ] Stack reset handled by the FIR23-STACK operator using the tracked reset mechanism and any delivered operator procedure
 
 ---
 

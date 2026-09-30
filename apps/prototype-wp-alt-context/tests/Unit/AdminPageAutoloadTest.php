@@ -78,7 +78,8 @@ class AdminPageAutoloadTest extends TestCase
         $symbols = array_merge(self::BOOTSTRAP_CLASSES, [self::BOOTSTRAP_TRAIT]);
         foreach ($symbols as $symbol) {
             $script = sprintf(
-                'require %s; var_export(class_exists(%s) || trait_exists(%s));',
+                "if (!defined('ABSPATH')) { define('ABSPATH', sys_get_temp_dir() . '/'); } "
+                    . 'require %s; var_export(class_exists(%s) || trait_exists(%s));',
                 var_export($autoload, true),
                 var_export($symbol, true),
                 var_export($symbol, true),
@@ -149,7 +150,9 @@ class AdminPageAutoloadTest extends TestCase
             var_export(self::BOOTSTRAP_TRAIT . ' not loaded', true),
         );
 
-        $script = "<?php\n" . $requires . $checks
+        $script = "<?php\n"
+            . "if (!defined('ABSPATH')) { define('ABSPATH', sys_get_temp_dir() . '/'); }\n"
+            . $requires . $checks
             . 'new AltContext\\Admin\\Menu('
             . 'new AltContext\\Admin\\DashboardPage(), new AltContext\\Admin\\WorkbenchPage(), '
             . 'new AltContext\\Admin\\RosterPage(), new AltContext\\Admin\\SettingsPage());' . "\n"

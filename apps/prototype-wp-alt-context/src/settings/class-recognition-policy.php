@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Settings;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use function add_option;
 use function get_option;
 use function is_string;

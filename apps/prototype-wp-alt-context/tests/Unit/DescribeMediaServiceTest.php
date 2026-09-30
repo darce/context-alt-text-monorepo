@@ -119,11 +119,17 @@ class DescribeMediaServiceTest extends TestCase
      * @param array<int,array<string,mixed>> $identityRows
      * @return array<string,mixed>
      */
-    private function describeEnvelopeWithIdentityRows(array $identityRows, bool $allowPersonNames): array
+    private function describeEnvelopeWithIdentityRows(
+        array $identityRows,
+        bool $allowPersonNames,
+        ?string $consentTenantId = null
+    ): array
     {
-        // The legacy local option is intentionally ignored. The recognition
-        // service owns the tenant naming agreement and applies the final gate.
-        $this->setOption('acx_legacy_naming_fixture', $allowPersonNames);
+        $this->setOption('acx_description_allow_person_names', $allowPersonNames);
+        $this->setOption(
+            'acx_description_allow_person_names_tenant_id',
+            $consentTenantId ?? self::currentTenantId()
+        );
         $this->plantAttachment(42, "\xff\xd8\xff\xe0fake-jpeg-bytes", 'jpg');
 
         $host = new DescribeMediaServiceTestHost(self::currentTenantId(), $this->validBackendBody(42));
@@ -1291,7 +1297,7 @@ class DescribeMediaServiceTest extends TestCase
         $this->assertStringContainsString('identity_unconfirmed', $envelopeJson);
     }
 
-    public function testRosterDescriptionContextAlwaysSendsConfirmedNamesToService(): void
+    public function testRosterDescriptionContextDoesNotSendConfirmedNamesWhenPolicyIsDisabled(): void
     {
         $envelopeJson = json_encode(
             $this->describeEnvelopeWithIdentityRows(
@@ -1309,8 +1315,38 @@ class DescribeMediaServiceTest extends TestCase
         );
 
         $this->assertIsString($envelopeJson);
-        $this->assertStringContainsString('Ada Lovelace', $envelopeJson);
-        $this->assertStringNotContainsString('person_naming_policy_disabled', $envelopeJson);
+        $envelope = json_decode($envelopeJson, true);
+        $this->assertIsArray($envelope);
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame('disabled', $identity['policy']['person_naming']);
+        $this->assertSame(array(), $identity['identities']);
+        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
+    }
+
+    public function testRosterDescriptionContextDoesNotReuseConsentFromAnotherTenant(): void
+    {
+        $envelopeJson = json_encode(
+            $this->describeEnvelopeWithIdentityRows(
+                array(
+                    array(
+                        'identity_uuid'     => 'identity-1',
+                        'cluster_uuid'      => 'cluster-1',
+                        'person_name'       => 'Ada Lovelace',
+                        'is_user_confirmed' => 1,
+                    ),
+                ),
+                true,
+                'previous-tenant'
+            )
+        );
+
+        $this->assertIsString($envelopeJson);
+        $envelope = json_decode($envelopeJson, true);
+        $this->assertIsArray($envelope);
+        $identity = $envelope['context_pack']['identity'];
+        $this->assertSame('disabled', $identity['policy']['person_naming']);
+        $this->assertSame(array(), $identity['identities']);
+        $this->assertStringNotContainsString('Ada Lovelace', $envelopeJson);
     }
 
     public function testRosterDescriptionContextRepresentsAmbiguousMachineOnlyState(): void

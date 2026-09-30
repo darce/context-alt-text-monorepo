@@ -1023,9 +1023,15 @@ class DescribeMediaService {
 
 
 	private function build_identity_context( int $media_id ): array {
-		$tenant_id           = $this->host->get_tenant_id();
+		$tenant_id            = $this->host->get_tenant_id();
+		$allowed_tenant_id    = (string) get_option( 'acx_description_allow_person_names_tenant_id', '' );
+		$allow_person_names   = $this->is_truthy_flag( get_option( 'acx_description_allow_person_names', false ) )
+			&& $tenant_id === $allowed_tenant_id;
 		$confirmed_identities = array();
 		$machine_only_count   = 0;
+		$policy               = array(
+			'person_naming' => $allow_person_names ? 'allowed' : 'disabled',
+		);
 
 		try {
 			$rows = $this->identity_members_repository->list_for_media_ids( $tenant_id, array( $media_id ) );
@@ -1039,7 +1045,7 @@ class DescribeMediaService {
 				)
 			);
 			return array(
-				'policy'         => array( 'person_naming' => 'allowed' ),
+				'policy'         => $policy,
 				'identities'     => array(),
 				'review_reasons' => array(),
 			);
@@ -1058,6 +1064,10 @@ class DescribeMediaService {
 			// label as a roster-confirmed name.
 			$person_name = trim( (string) ( $row['person_name'] ?? '' ) );
 			if ( $this->is_truthy_flag( $row['is_user_confirmed'] ?? false ) && '' !== $person_name ) {
+				if ( ! $allow_person_names ) {
+					continue;
+				}
+
 				$confirmed_identities[] = $this->non_empty_fields(
 					array(
 						'name'        => $person_name,
@@ -1083,7 +1093,7 @@ class DescribeMediaService {
 		}
 
 		return array(
-			'policy'         => array( 'person_naming' => 'allowed' ),
+			'policy'         => $policy,
 			'identities'     => $confirmed_identities,
 			'review_reasons' => $review_reasons,
 		);

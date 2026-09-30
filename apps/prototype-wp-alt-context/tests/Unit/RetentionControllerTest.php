@@ -89,8 +89,30 @@ class RetentionControllerTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(2, $calls);
-        $this->assertStringContainsString('/retention/policy', $calls[0]['url']);
-        $this->assertStringContainsString('/retention/audit?limit=5', $calls[1]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/policy', $calls[0]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/audit?limit=5', $calls[1]['url']);
+    }
+
+    public function testRetentionProxyRejectsUnprefixedBackendPaths(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['retention_mode' => 'dispose_after_ack']),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => []]),
+        ]);
+
+        $controller = new RetentionController();
+        $controller->get_status(new WP_REST_Request('GET', '/acx/v1/retention/status'));
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertNotSame('https://recognition.test/retention/policy', $calls[0]['url']);
+        $this->assertNotSame('https://recognition.test/retention/audit?limit=5', $calls[1]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/policy', $calls[0]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/audit?limit=5', $calls[1]['url']);
     }
 
     public function testGetStatusReturnsGracefulFallbackWhenBackendUnavailable(): void
@@ -416,7 +438,7 @@ class RetentionControllerTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/retention/policy', $calls[0]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/policy', $calls[0]['url']);
         $this->assertSame('PATCH', $calls[0]['args']['method']);
         $this->assertSame('{"retention_mode":"purge_on_demand"}', $calls[0]['args']['body']);
     }
@@ -456,7 +478,42 @@ class RetentionControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertFalse(isset($GLOBALS['__ac_transients']['acx_retention_status_' . $tenantId]));
-        $this->assertStringContainsString('/retention/export', $this->getHttpCalls()[0]['url']);
+        $this->assertSame(
+            'https://recognition.test/recognition/retention/export',
+            $this->getHttpCalls()[0]['url']
+        );
+    }
+
+    public function testExportJobHandlersUseCompleteMountedPaths(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{}',
+        ]);
+
+        $controller = new RetentionController();
+        $statusRequest = new WP_REST_Request('GET', '/acx/v1/retention/export/job_123/status');
+        $statusRequest->set_param('job_id', 'job_123');
+        $dataRequest = new WP_REST_Request('GET', '/acx/v1/retention/export/job_123/data');
+        $dataRequest->set_param('job_id', 'job_123');
+
+        $controller->get_export_job_status($statusRequest);
+        $controller->get_export_job_data($dataRequest);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertSame(
+            'https://recognition.test/recognition/retention/export/job_123/status',
+            $calls[0]['url']
+        );
+        $this->assertSame(
+            'https://recognition.test/recognition/retention/export/job_123/data',
+            $calls[1]['url']
+        );
     }
 
     public function testTriggerPurgeRequiresConfirmation(): void
@@ -498,7 +555,7 @@ class RetentionControllerTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/retention/purge', $calls[0]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/purge', $calls[0]['url']);
         $this->assertSame('{"confirm":true,"scope":"all"}', $calls[0]['args']['body']);
     }
 
@@ -628,7 +685,7 @@ class RetentionControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/retention/import', $calls[0]['url']);
+        $this->assertSame('https://recognition.test/recognition/retention/import', $calls[0]['url']);
         $this->assertSame(
             json_encode(['data' => ['schema_version' => 2, 'clusters' => []]]),
             $calls[0]['args']['body']
@@ -677,10 +734,10 @@ class RetentionControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/retention/audit', $calls[0]['url']);
-        $this->assertStringContainsString('limit=10', $calls[0]['url']);
-        $this->assertStringContainsString('offset=5', $calls[0]['url']);
-        $this->assertStringContainsString('event_type=export_completed', $calls[0]['url']);
+        $this->assertSame(
+            'https://recognition.test/recognition/retention/audit?limit=10&offset=5&event_type=export_completed',
+            $calls[0]['url']
+        );
     }
 
     public function testListAuditEventsOmitsUnsetOptionalParams(): void
@@ -697,7 +754,7 @@ class RetentionControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $url = $this->getHttpCalls()[0]['url'];
-        $this->assertStringNotContainsString('event_type', $url);
+        $this->assertSame('https://recognition.test/recognition/retention/audit', $url);
     }
 
     public function testApplyPresetRejectsMissingPresetField(): void
@@ -732,7 +789,10 @@ class RetentionControllerTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/retention/policy/preset', $calls[0]['url']);
+        $this->assertSame(
+            'https://recognition.test/recognition/retention/policy/preset',
+            $calls[0]['url']
+        );
         $this->assertSame('POST', $calls[0]['args']['method']);
         $this->assertSame('{"preset":"gdpr"}', $calls[0]['args']['body']);
     }

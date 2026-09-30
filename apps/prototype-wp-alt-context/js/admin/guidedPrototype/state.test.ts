@@ -7,22 +7,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { guidedCopy } from './copy';
 import {
   applyGuidedDraft,
+  applyGuidedDraftForImage,
   canApply,
   canApplyImageDraftPublic,
   canPreview,
   canRestoreRevision,
   canUndo,
+  bothNamesAnswered,
+  canKeepCurrentForImage,
   cancelGuidedChoiceReplacement,
   chooseGuidedName,
   confirmGuidedChoiceReplacement,
   createGuidedDemoState,
   createGuidedScenario,
+  descriptionForPhoto,
   editGuidedDraft,
   editGuidedDraftForImage,
   getGuidedFace,
   getGuidedPerson,
   GUIDED_DRAFT_ORIGIN,
   GUIDED_DRAFT_STATUS,
+  GUIDED_MATCH_STRENGTH,
+  GUIDED_MATCH_THRESHOLD,
   GUIDED_NAME_CHOICE,
   GUIDED_OUTCOME,
   GUIDED_PERSON_KEYS,
@@ -33,7 +39,10 @@ import {
   guidedStepIndex,
   keepGuidedCurrentAltText,
   keepGuidedCurrentAltTextForImage,
+  isClusterAnchor,
   namesDecided,
+  outcomeForPhoto,
+  outcomeReady,
   previewGuidedDraft,
   previewGuidedDraftForImage,
   resetGuidedDemoState,
@@ -44,7 +53,6 @@ import {
   selectGuidedStep,
   undoGuidedApplication,
   undoGuidedApplicationForImage,
-  applyGuidedDraftForImage,
   type GuidedDemoState,
   type GuidedImageKey,
   type GuidedNameChoice,
@@ -54,7 +62,8 @@ import {
 
 const KATY = 'katy-perry';
 const JUSTIN = 'justin-trudeau';
-const ORIGINAL_ALT = 'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
+const ORIGINAL_ALT =
+  'A man in a black suit and a woman in a white dress pose together, smiling, in front of a Tribeca Festival step-and-repeat backdrop.';
 
 const INCLUDE = GUIDED_NAME_CHOICE.INCLUDE;
 const OMIT = GUIDED_NAME_CHOICE.OMIT;
@@ -83,15 +92,9 @@ const chooseBoth = (
   scenario: GuidedScenario,
   left: GuidedNameChoice,
   right: GuidedNameChoice,
-  imageKey: GuidedImageKey = TRIBECA,
+  imageKey?: GuidedImageKey,
 ): GuidedDemoState =>
-  chooseGuidedName(
-    chooseGuidedName(state, scenario, 'left', left, imageKey),
-    scenario,
-    'right',
-    right,
-    imageKey,
-  );
+  chooseGuidedName(chooseGuidedName(state, scenario, 'left', left, imageKey), scenario, 'right', right, imageKey);
 
 const includeBoth = (scenario: GuidedScenario, state: GuidedDemoState = createGuidedDemoState()): GuidedDemoState =>
   chooseBoth(state, scenario, INCLUDE, INCLUDE);
@@ -100,6 +103,7 @@ const snapshot = (value: unknown): string => JSON.stringify(value);
 
 const expectTribecaMirror = (state: GuidedDemoState): void => {
   const tribeca = state.drafts[TRIBECA];
+  expect(state.choices).toEqual(state.photoChoices[TRIBECA]);
   expect(state.draftText).toBe(tribeca.draftText);
   expect(state.draftOrigin).toBe(tribeca.draftOrigin);
   expect(state.draftStatus).toBe(tribeca.draftStatus);
@@ -186,6 +190,7 @@ describe('guided scenario fixture', () => {
       strength: 'strong',
       source: 'saved-run',
     });
+    expect(GUIDED_MATCH_THRESHOLD).toBe(0.6);
     expect(getGuidedFace(scenario, 'tribeca-katy-perry')).toEqual({
       id: 'tribeca-katy-perry',
       imageKey: 'tribeca',
@@ -194,10 +199,12 @@ describe('guided scenario fixture', () => {
       matchedPersonKey: KATY,
       similarity: 1,
       isClusterAnchor: true,
-      strength: 'strong',
+      strength: GUIDED_MATCH_STRENGTH.SELF_ANCHOR,
       note: 'Her face is turned a little to the side.',
       source: 'saved-run',
     });
+    expect(isClusterAnchor(getGuidedFace(scenario, 'tribeca-katy-perry'))).toBe(true);
+    expect(isClusterAnchor(getGuidedFace(scenario, 'tribeca-justin-trudeau'))).toBe(false);
 
     expect(scenario.pressPhoto.src).toContain('guided-press-tribeca-2026');
     expect(scenario.pressPhoto.altText).toBe(ORIGINAL_ALT);
@@ -305,6 +312,10 @@ describe('createGuidedDemoState', () => {
     expect(state).toEqual({
       activeStep: GUIDED_STEP.CONTEXT,
       choices: { left: UNDECIDED, right: UNDECIDED },
+      photoChoices: {
+        tribeca: { left: UNDECIDED, right: UNDECIDED },
+        coachella: { left: UNDECIDED, right: UNDECIDED },
+      },
       drafts: {
         tribeca: {
           draftText: null,
@@ -313,6 +324,7 @@ describe('createGuidedDemoState', () => {
           draftVersion: 0,
           previewedVersion: null,
           appliedAltText: ORIGINAL_ALT,
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
           applicationHistory: [],
           draftHistory: [],
         },
@@ -324,6 +336,7 @@ describe('createGuidedDemoState', () => {
           previewedVersion: null,
           appliedAltText:
             'Two people sit on a curb outdoors at night, holding red cups and eating food, with trees and plants in the background.',
+          outcome: GUIDED_OUTCOME.NOT_FINISHED,
           applicationHistory: [],
           draftHistory: [],
         },
@@ -428,6 +441,87 @@ describe('per-image draft transitions', () => {
     expectTribecaMirror(state);
     state = keepGuidedCurrentAltText(state);
     expectTribecaMirror(state);
+  });
+});
+
+describe('per-photo name answers and outcomes', () => {
+  it('keeps the four photo-and-face answers independent and builds each description from its own pair', () => {
+    const scenario = createGuidedScenario();
+    const unanswered = createGuidedDemoState();
+    expect(unanswered.photoChoices).toEqual({
+      tribeca: { left: 'unanswered', right: 'unanswered' },
+      coachella: { left: 'unanswered', right: 'unanswered' },
+    });
+    expect(bothNamesAnswered(unanswered, TRIBECA)).toBe(false);
+    expect(bothNamesAnswered(unanswered, COACHELLA)).toBe(false);
+
+    const tribeca = chooseBoth(unanswered, scenario, GUIDED_NAME_CHOICE.USE, GUIDED_NAME_CHOICE.LEAVE_UNNAMED, TRIBECA);
+    expect(tribeca.photoChoices.tribeca).toEqual({ left: 'use', right: 'leave_unnamed' });
+    expect(tribeca.photoChoices.coachella).toEqual({ left: 'unanswered', right: 'unanswered' });
+    expect(bothNamesAnswered(tribeca, TRIBECA)).toBe(true);
+    expect(bothNamesAnswered(tribeca, COACHELLA)).toBe(false);
+    expect(descriptionForPhoto(tribeca, scenario, TRIBECA)).toBe(scenario.samples[TRIBECA]['justin-trudeau']);
+    expect(descriptionForPhoto(tribeca, scenario, COACHELLA)).toBeNull();
+
+    const allFour = chooseBoth(tribeca, scenario, GUIDED_NAME_CHOICE.LEAVE_UNNAMED, GUIDED_NAME_CHOICE.USE, COACHELLA);
+    expect(allFour.photoChoices).toEqual({
+      tribeca: { left: 'use', right: 'leave_unnamed' },
+      coachella: { left: 'leave_unnamed', right: 'use' },
+    });
+    expect(descriptionForPhoto(allFour, scenario, COACHELLA)).toBe(scenario.samples[COACHELLA]['katy-perry']);
+    expect(descriptionForPhoto(allFour, scenario, COACHELLA)).not.toContain('Justin Trudeau');
+  });
+
+  it('tracks applied and kept status per photo, and undo clears only that photo', () => {
+    const scenario = createGuidedScenario();
+    const unanswered = createGuidedDemoState();
+    expect(canKeepCurrentForImage(unanswered, TRIBECA)).toBe(false);
+    expect(keepGuidedCurrentAltTextForImage(unanswered, TRIBECA)).toBe(unanswered);
+    expect(outcomeForPhoto(unanswered, TRIBECA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(unanswered)).toBe(false);
+
+    const tribecaAnswered = chooseBoth(
+      unanswered,
+      scenario,
+      GUIDED_NAME_CHOICE.USE,
+      GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
+      TRIBECA,
+    );
+    expect(canKeepCurrentForImage(tribecaAnswered, TRIBECA)).toBe(true);
+    const tribecaKept = keepGuidedCurrentAltTextForImage(tribecaAnswered, TRIBECA);
+    expect(outcomeForPhoto(tribecaKept, TRIBECA)).toBe(GUIDED_OUTCOME.KEPT);
+    expect(outcomeForPhoto(tribecaKept, COACHELLA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(tribecaKept)).toBe(false);
+
+    const ready = chooseBoth(
+      tribecaAnswered,
+      scenario,
+      GUIDED_NAME_CHOICE.LEAVE_UNNAMED,
+      GUIDED_NAME_CHOICE.USE,
+      COACHELLA,
+    );
+
+    expect(outcomeReady(ready)).toBe(false);
+    const applied = applyGuidedDraftForImage(ready, TRIBECA, 'Tribeca description applied.');
+    expect(outcomeForPhoto(applied, TRIBECA)).toBe(GUIDED_OUTCOME.APPLIED);
+    expect(outcomeForPhoto(applied, COACHELLA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(applied)).toBe(false);
+
+    const undone = undoGuidedApplicationForImage(applied, TRIBECA);
+    expect(outcomeForPhoto(undone, TRIBECA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeForPhoto(undone, COACHELLA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeReady(undone)).toBe(false);
+
+    const appliedAgain = applyGuidedDraftForImage(undone, TRIBECA, 'Tribeca description applied again.');
+    const kept = keepGuidedCurrentAltTextForImage(appliedAgain, COACHELLA);
+    expect(outcomeForPhoto(kept, TRIBECA)).toBe(GUIDED_OUTCOME.APPLIED);
+    expect(outcomeForPhoto(kept, COACHELLA)).toBe(GUIDED_OUTCOME.KEPT);
+    expect(outcomeReady(kept)).toBe(true);
+
+    const undoneAfterBothDone = undoGuidedApplicationForImage(kept, TRIBECA);
+    expect(outcomeForPhoto(undoneAfterBothDone, TRIBECA)).toBe(GUIDED_OUTCOME.NOT_FINISHED);
+    expect(outcomeForPhoto(undoneAfterBothDone, COACHELLA)).toBe(GUIDED_OUTCOME.KEPT);
+    expect(outcomeReady(undoneAfterBothDone)).toBe(false);
   });
 });
 
@@ -1026,13 +1120,14 @@ describe('undoGuidedApplication', () => {
 });
 
 describe('keepGuidedCurrentAltText', () => {
-  it('is allowed while names are blocked and leaves applied text and draft unchanged', () => {
+  it('is a no-op while names are unanswered', () => {
     const start = createGuidedDemoState();
     const kept = keepGuidedCurrentAltText(start);
-    expect(kept.outcome).toBe(GUIDED_OUTCOME.KEPT);
+    expect(kept).toEqual(start);
+    expect(kept.outcome).not.toBe(GUIDED_OUTCOME.KEPT);
     expect(kept.appliedAltText).toBe(ORIGINAL_ALT);
-    expect(kept.draftText).toBeNull();
-    expect(kept.actionHistory.at(-1)?.summary).toBe(guidedCopy('outcome.kept'));
+    expect(kept.draftText).toBe(start.draftText);
+    expect(kept.actionHistory).toEqual(start.actionHistory);
   });
 
   it('remains available when the matching sample is missing (T04)', () => {

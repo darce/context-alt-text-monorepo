@@ -15,6 +15,7 @@ describe('GuidedPhotoFaces', () => {
 
     const article = screen.getByRole('article', { name: title });
     expect(article).toHaveAttribute('aria-labelledby', 'guided-faces-tribeca-title');
+    expect(article).toHaveAttribute('data-image-key', 'tribeca');
     expect(screen.getByTestId('guided-faces-tribeca')).toBe(article);
 
     const heading = within(article).getByRole('heading', { level: 4, name: title });

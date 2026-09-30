@@ -27,7 +27,8 @@ from recognition.application.embedding.generator import (
 )
 from recognition.config.settings import RecognitionSettings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
-from recognition.infrastructure.face_pipeline.model_space import UnhandledModelSpaceError
+from recognition.infrastructure.face_pipeline.activation import assert_space_activatable
+from recognition.infrastructure.face_pipeline.model_space import ModelSpace, UnhandledModelSpaceError
 from recognition.observability.face_pipeline_metrics import FacePipelineMetricsObserver
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,11 @@ async def build_embedding_runtime(
     - ``runtime_mode == "test"`` → stubs (orthogonal to profile).
     - ``profile == "insightface"`` (default) → shared InsightFace adapter path;
       ``adapter_provider`` overrides the shared singleton when provided.
-    - ``profile == "face_pipeline"`` → shared face_pipeline runtime; generator slot
-      is ``UnavailableEmbeddingGenerator`` (embeds happen in detect). ``adapter_provider``
-      is ignored. Any load/verify failure yields Unavailable* for **both** slots.
+    - ``profile == "face_pipeline"`` or ``"auraface"`` → shared in-house runtime;
+      generator slot is ``UnavailableEmbeddingGenerator`` (embeds happen in detect).
+      AuraFace uses YuNet from the face_pipeline models dir and the AuraFace
+      embedder from ``auraface_models_dir``. ``adapter_provider`` is ignored.
+      Any load/verify failure yields Unavailable* for **both** slots.
     - ``metrics`` is a process-local observer forwarded into
       ``FacePipelineFaceDetector`` (FINALB-06); shared runtime singleton does not
       own process-specific collectors. Other profiles ignore it.
@@ -58,7 +61,7 @@ async def build_embedding_runtime(
         return StubFaceDetector(), StubEmbeddingGenerator()
 
     profile = settings.face_pipeline.profile
-    if profile == "face_pipeline":
+    if profile in {"face_pipeline", "auraface"}:
         # Lazy import: keep the insightface dark default free of the face_pipeline
         # (ORT/cv2) import graph until the profile is actually selected (S3CR-01).
         from recognition.infrastructure.embeddings.face_pipeline_adapter import (
@@ -69,12 +72,18 @@ async def build_embedding_runtime(
         )
 
         try:
+            space = ModelSpace(profile)
+            assert_space_activatable(space)
+            embedder_models_dir = None
+            if space is ModelSpace.AURAFACE:
+                embedder_models_dir = settings.auraface_models_dir
             runtime = get_shared_face_pipeline_runtime(
                 profile=profile,
                 models_dir=settings.face_pipeline.resolved_models_dir,
                 score_threshold=settings.face_pipeline.score_threshold,
                 nms_threshold=settings.face_pipeline.nms_threshold,
                 top_k=settings.face_pipeline.top_k,
+                embedder_models_dir=embedder_models_dir,
             )
             detector: FaceDetectorProtocol = FacePipelineFaceDetector(
                 runtime,

@@ -266,7 +266,6 @@ export const MediaAltSuggest = ({
   // operation [INT-06]. Visible text stays DECORATIVE_TOGGLE_VISIBLE_LABEL;
   // aria-label is title-qualified only; tooltip / aria-describedby keep the
   // full outcome sentence [GPUFLOW-2 B7][A11Y-04].
-  const decorativeSentence = isDecorative ? UNMARK_DECORATIVE_LABEL : MARK_DECORATIVE_LABEL;
   const trimmedTitle = title?.trim() ?? '';
   const decorativeControlAriaLabel = trimmedTitle
     ? sprintf(__('Decorative: %s', 'alt-context'), trimmedTitle)
@@ -622,12 +621,25 @@ export const MediaAltSuggest = ({
     );
   };
 
-  const decorativeBusyLabel = isMarkingDecorative
+  const decorativeDisplayIsDecorative = isMarkingDecorative
     ? decorativeBusyUnmarkingRef.current
-      ? __('Removing decorative mark…', 'alt-context')
-      : __('Marking as decorative…', 'alt-context')
+    : isDecorative;
+  const decorativeSentence = decorativeDisplayIsDecorative
+    ? UNMARK_DECORATIVE_LABEL
+    : MARK_DECORATIVE_LABEL;
+  const decorativeBusyLabel = isMarkingDecorative
+    ? trimmedTitle
+      ? sprintf(
+          decorativeBusyUnmarkingRef.current
+            ? __('Removing decorative mark for %s…', 'alt-context')
+            : __('Marking as decorative for %s…', 'alt-context'),
+          trimmedTitle,
+        )
+      : decorativeBusyUnmarkingRef.current
+        ? __('Removing decorative mark…', 'alt-context')
+        : __('Marking as decorative…', 'alt-context')
     : null;
-  const decorativePressedStyle = isDecorative
+  const decorativePressedStyle = decorativeDisplayIsDecorative
     ? DECORATIVE_TOGGLE_PRESSED_STYLE
     : DECORATIVE_TOGGLE_IDLE_STYLE;
   const renderDecorativeToggle = (disabled: boolean): React.JSX.Element => (
@@ -636,13 +648,13 @@ export const MediaAltSuggest = ({
         type="button"
         ref={decorativeButtonRef}
         className={
-          isDecorative
+          decorativeDisplayIsDecorative
             ? 'button acx-media-selection__media-alt-suggest-decorative acx-media-selection__media-alt-suggest-decorative--pressed'
             : 'button acx-media-selection__media-alt-suggest-decorative'
         }
         onClick={toggleDecorative}
         disabled={disabled}
-        aria-pressed={isDecorative}
+        aria-pressed={decorativeDisplayIsDecorative}
         aria-busy={isMarkingDecorative ? true : undefined}
         aria-label={decorativeBusyLabel ?? decorativeControlAriaLabel}
         aria-describedby={decorativeDescriptionId}
@@ -960,13 +972,11 @@ export const MediaAltSuggest = ({
       // (focus-loss). aria-label / aria-busy stay conditional: the idle draft
       // surface has no busy name, and name is already gated so the role need
       // not be. (axe accepts unnamed group; generate host is also unconditional.)
-      const acceptingLabel = isMarkingDecorative
-        ? decorativeBusyUnmarkingRef.current
-          ? __('Removing decorative mark…', 'alt-context')
-          : __('Marking as decorative…', 'alt-context')
-        : isEditing
+      const acceptingLabel =
+        decorativeBusyLabel ??
+        (isEditing
           ? __('Saving alt text…', 'alt-context')
-          : __('Accepting draft…', 'alt-context');
+          : __('Accepting draft…', 'alt-context'));
 
       return (
         <div
@@ -1110,13 +1120,7 @@ export const MediaAltSuggest = ({
         role="group"
         tabIndex={-1}
         aria-busy={isMarkingDecorative ? true : undefined}
-        aria-label={
-          isMarkingDecorative
-            ? decorativeBusyUnmarkingRef.current
-              ? __('Removing decorative mark…', 'alt-context')
-              : __('Marking as decorative…', 'alt-context')
-            : undefined
-        }
+        aria-label={decorativeBusyLabel ?? undefined}
         onBlur={handleContainerBlur}
       >
         <button

@@ -16,8 +16,8 @@ from scene.application.gpu_intent import (
     DEFAULT_INTENT_TTL_SECONDS,
     IntentAction,
     read_gpu_intent,
-    resolve_gpu_intent_path,
     resolve_gpu_intent_durable_path,
+    resolve_gpu_intent_path,
     write_gpu_intent,
 )
 

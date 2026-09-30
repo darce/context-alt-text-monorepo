@@ -57,7 +57,7 @@ Lifecycle semantics:
 | --- | --- | --- |
 | absent / expired / malformed / `auto` | unchanged: start when `has_work` | unchanged: idle reap, lease cap, boot-failure fallback |
 | `start` (unexpired) | START allowed with no work; honoured at most once per nonce (RES-01) | idle reap suppressed; **lease cap still stops** (RES-10); boot-failure fallback unchanged |
-| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle |
+| `stop` (unexpired) | START suppressed even with work | STOP when `has_work` is false; when work is in flight publish `intent_status = blocked_work_in_flight` and re-evaluate next cycle; if `has_work` is true and no GPU instance is running, publish `intent_status = stopped_with_work` and emit the CPU fallback decision |
 
 **Stop with arriving work (COST-10, GPUOPS-1-CANON-07).** A live `stop`
 intent suppresses START even when `has_work` becomes true after the intent was
@@ -69,10 +69,9 @@ GPU instance is running, the controller publishes
 `intent_status = stopped_with_work` and emits
 `{action: FALLBACK, profile: florence_small, reason: operator_stop_with_work}`
 so the describe service can route the queue to the CPU floor instead of
-stalling. `operator_stop_with_work` is added to the FALLBACK `reason` set
-below. As of this revision the controller does not emit it; the implementation
-is tracked on the GPU-LIFECYCLE-CODE lane of ISSUEDAG-1, and until it lands a
-deliberate operator stop is a stall path, not a degrade path.
+stalling. `operator_stop_with_work` is an emitted reason in the FALLBACK
+`reason` set below; a deliberate operator stop with queued work follows the
+fallback path rather than stalling.
 
 Malformed intent is logged at WARNING with the parse error and treated as
 `auto` (AGT-10, CAL-02). A valid intent whose `expires_at` is more than 7200
@@ -91,7 +90,7 @@ cycle:
 | --- | --- | --- |
 | `intent` | `start\|stop\|auto` | effective intent this cycle |
 | `intent_expires_at` | iso8601 or null | from the winning intent |
-| `intent_status` | `none\|pending\|honoured\|blocked_work_in_flight\|expired` | what the controller did with it |
+| `intent_status` | `none\|pending\|honoured\|blocked_work_in_flight\|stopped_with_work\|expired` | what the controller did with it |
 | `honoured_nonce` | string or null | idempotency marker for START |
 | `lease_expires_at` | iso8601 or null | `running_since + max_lease_seconds` |
 | `instance_running_since` | iso8601 or null | from the running-since lease |
@@ -253,11 +252,12 @@ back closed: no STOP.
 
 When a started instance does not become ready within the bounded wait, the
 controller emits `{action: FALLBACK, profile: florence_small, instance_id,
-reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed,
-operator_stop_with_work}` (the last is contract-required, not yet emitted; see
-"Stop with arriving work" above). The decision
-is logged only; no consumer is wired. Profile name is the given CPU floor
-(`florence_small`), not imported from `scene.config.profiles`.
+reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed}`.
+A stop intent observed with work and no running GPU instance emits a separate
+fallback decision with `reason = operator_stop_with_work` and publishes
+`intent_status = stopped_with_work` (see "Stop with arriving work" above).
+The decision is logged only; no consumer is wired. Profile name is the given
+CPU floor (`florence_small`), not imported from `scene.config.profiles`.
 
 ## Readiness exhaustion and the describe envelope (GPUFLOW-2 A3)
 
@@ -352,6 +352,34 @@ Rules:
     Note the API image pins the same GID as `acx`
     (`apps/prototype-description-service/Dockerfile`) — a separate namespace
     from the host, and every chown on both sides is numeric.
+
+## Finite warming observation
+
+The SPA uses a bounded observation policy for a live describe run whose phase is
+`warming`. This is a UI policy fallback, not a backend SLO: it does not cancel,
+fail, or re-submit a live run. The constants are
+`WARMING_OBSERVATION_LIMIT_MS = 600000` and
+`WARMING_OBSERVATION_GRACE_MS = 30000`.
+
+The first warming observation is persisted in `sessionStorage` under
+`acx:warming-observation:v1:<run_id>:<startup_id>` (the two identifiers are
+URI-encoded; a missing startup id uses `null`). The record is keyed by the
+`(run_id, startup_id)` pair and is never renewed by another poll, render,
+remount, navigation, reload, or Retry. A new run or startup id starts a new
+bound. Older trustworthy phase-start evidence may shorten the bound, never
+lengthen it. Terminal runs remove the record. If session storage cannot be
+read or written, the UI keeps the same first observation in memory so storage
+failure cannot disable the watchdog.
+
+`unknown` evidence means the GPU snapshot is absent, malformed, stale, or the
+status request failed. It is distinct from fresh `stopped`: a fresh stopped
+snapshot with no intent is still provisional `waiting`, because the reaper may
+not have consumed demand yet. Valid pending start demand is also `waiting`; an
+explicit fresh start/demand failure may be immediately `overdue`. At the bound,
+`overdue` means that readiness confirmation is overdue, never that the job
+failed. The UI copy must preserve that distinction, and `unknown` exposes a
+Retry/refetch action rather than claiming the GPU is stopped or healthy. Actual
+resumed progress and terminal state always win over a stale overdue display.
 
 ## GPUFLOW-1 synchronous demand and timing
 

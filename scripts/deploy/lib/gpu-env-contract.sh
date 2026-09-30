@@ -22,7 +22,7 @@ source "$describe_gate_contract"
 acx_env_literal_value() {
     local value="${1%$'\r'}"
     case "$value" in
-        *\\*|*'$'*|*$'\n'*|*$'\r'*)
+        *$'\n'*|*$'\r'*)
             echo "ERROR: unsupported dotenv escape, interpolation or multiline value (redacted)." >&2
             return 1 ;;
     esac
@@ -36,6 +36,16 @@ acx_env_literal_value() {
             value="${value:1:${#value}-2}"
             if [[ "$value" == *"$delimiter"* ]]; then
                 echo "ERROR: embedded dotenv quote delimiter (redacted)." >&2
+                return 1
+            fi
+            if [[ "$delimiter" == '"' ]] && [[ "$value" == *'$'* || "$value" == *\\* ]]; then
+                echo "ERROR: unsupported dotenv escape or interpolation (redacted)." >&2
+                return 1
+            fi
+            ;;
+        *)
+            if [[ "$value" == *'$'* || "$value" == *\\* ]]; then
+                echo "ERROR: unsupported dotenv escape or interpolation (redacted)." >&2
                 return 1
             fi
             ;;

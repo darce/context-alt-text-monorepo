@@ -13,8 +13,15 @@ import {
   type GpuState,
 } from '../api/describeApi';
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
+import { classifyError } from '../utils/appError';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
-import { isAbortOrTimeout } from '../utils/retryPolicy';
+import { isAbortOrTimeout, isCooldownSignal } from '../utils/retryPolicy';
+import {
+  deriveWarmingObservation,
+  WARMING_OBSERVATION_EVIDENCE,
+  WARMING_OBSERVATION_STATUS,
+  type WarmingObservation,
+} from '../utils/warmingDeadline';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -29,11 +36,11 @@ import { isAbortOrTimeout } from '../utils/retryPolicy';
 export const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 
 /**
- * Consecutive abort-like poll failures that flip a frozen run to a hard error
- * (UXP-2 BR review). A single timeout freezes-and-thaws (BR-07), but a frozen
- * bar that never recovers is a silent hang: at the 2s cadence, 5 dead polls is
- * ~>10s of dead air, at which point the run stops polling and surfaces the
- * Retry affordance instead of freezing forever.
+ * Consecutive transient poll failures that flip a frozen run to a hard error
+ * (UXP-2 BR review). A single failed poll freezes-and-thaws (BR-07), but a
+ * frozen bar that never recovers is a silent hang: at the 2s cadence, 5 dead
+ * polls is ~>10s of dead air, at which point the run stops polling and surfaces
+ * the Retry affordance instead of freezing forever.
  */
 export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
 
@@ -42,26 +49,30 @@ export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
  * progress: freeze the bar and keep polling, rather than dead-ending the
  * operator on a transient failure.
  *
- * Named for its policy, not its shape, and deliberately distinct from the retry
- * decision even though both currently reduce to `isAbortOrTimeout`. They answer
- * different questions and have different reasons to change: FEBT1-W2A-05
- * narrowed the *retry* predicate and silently moved this UI policy across a
- * module boundary (three tests red). A retry-side narrowing must land here as a
- * compile-or-test event, not as a behaviour change nobody asked for
- * (DOM-03 one meaning per term per context; REF-10 the shared implementation is
- * coincidental, not a shared rule).
+ * Named for its policy, not its shape, and deliberately distinct from request
+ * retry eligibility. A retry-side narrowing must land here as a compile-or-test
+ * event, not silently narrow the progress UI's transient-failure policy
+ * (DOM-03, REF-10).
  *
- * Exported so a unit test can pin both abort-like tags directly (TEST-15).
+ * Exported so tests can pin the transient-failure policy directly (TEST-15).
  */
-export const isFrozenPollFailure = (error: unknown): boolean => isAbortOrTimeout(error);
+export const isFrozenPollFailure = (error: unknown): boolean => {
+  const classified = classifyError(error);
+  return (
+    isAbortOrTimeout(error) ||
+    classified._tag === 'transport' ||
+    classified._tag === 'auth_expired' ||
+    classified._tag === 'nonce_refresh' ||
+    isCooldownSignal(error) ||
+    (classified._tag === 'http' && classified.status >= 500 && classified.status < 600)
+  );
+};
 
 /**
  * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
  *
- * Transient abort/timeout must keep polling — user abort is never retried, and
- * timeout is retried only once, so the next scheduled poll is the remaining
- * retry. Stop only on hard (non-abort/timeout) errors, terminal run status, or
- * the frozen-streak bound.
+ * Transient poll failures keep polling inside the bounded streak. Stop only on
+ * hard errors, terminal run status, or the frozen-streak bound.
  *
  * Exported so pure unit tests can invert each branch (TEST-15) without the hook.
  */
@@ -71,7 +82,7 @@ export const getDescribeRunRefetchInterval = (args: {
   data: DescribeRunResponse | undefined;
   frozenPollStreak: number;
 }): number | false => {
-  // Keep polling through abort/timeout; only hard failures stop (BR-07).
+  // Keep polling through transient failures; only hard failures stop (BR-07).
   if (args.status === 'error' && !isFrozenPollFailure(args.error)) {
     return false;
   }
@@ -103,6 +114,8 @@ export interface DescribeRunProgress {
    * from the process-wide gpu_state snapshot (R-03).
    */
   isWarming?: boolean;
+  /** Persisted finite observation for the live warming phase. */
+  warmingObservation?: WarmingObservation;
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
@@ -159,8 +172,16 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   useEffect(() => {
     if (dataUpdatedAt > lastCountedDataAtRef.current) {
       lastCountedDataAtRef.current = dataUpdatedAt;
+      // Only publish a real transition. An unconditional setState here fires on
+      // EVERY poll; React counts those as nested updates while a test (or a busy
+      // tab) drains many poll cycles in one flush, trips its 50-update guard, and
+      // the thrown error is captured as a hard query error that stops the poller
+      // for good (Release It! 5.5 fail fast -- this failed silently instead).
+      const hadStreak = consecutiveFrozenPollsRef.current !== 0;
       consecutiveFrozenPollsRef.current = 0;
-      setFrozenPollStreak(0);
+      if (hadStreak) {
+        setFrozenPollStreak(0);
+      }
     }
     if (errorUpdatedAt > lastCountedErrorAtRef.current && isFrozenPollFailure(queryError)) {
       lastCountedErrorAtRef.current = errorUpdatedAt;
@@ -191,13 +212,82 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
 
+  const lastCompletedRef = useRef<number | null>(null);
+  const lastProgressAtRef = useRef<number | null>(null);
+  const warmingProgressSnapshotRef = useRef<{
+    key: string;
+    dataUpdatedAt: number;
+    processed: number;
+  } | null>(null);
+  const processed =
+    run === null ? null : run.completed + run.failed + run.skipped;
+  const warmingObservationKey = `${run?.run_id ?? runId}:${startupId ?? 'null'}`;
+  const resumedProgress =
+    processed !== null &&
+    lastCompletedRef.current !== null &&
+    processed > lastCompletedRef.current;
+  const progressInCurrentSnapshot =
+    resumedProgress ||
+    (processed !== null &&
+      warmingProgressSnapshotRef.current?.key === warmingObservationKey &&
+      warmingProgressSnapshotRef.current.dataUpdatedAt === dataUpdatedAt &&
+      warmingProgressSnapshotRef.current.processed === processed);
+  const warmingObservation = deriveWarmingObservation({
+    runId: run?.run_id ?? runId,
+    startupId,
+    isWarming,
+    isTerminal,
+    gpuState: run?.gpu_state,
+    resumedProgress: progressInCurrentSnapshot,
+  });
+
+  // Keep progress evidence stable across the state update that clears a stale
+  // stall banner, but let the next successful poll re-evaluate the deadline.
+  useEffect(() => {
+    if (resumedProgress && processed !== null) {
+      warmingProgressSnapshotRef.current = {
+        key: warmingObservationKey,
+        dataUpdatedAt,
+        processed,
+      };
+      return;
+    }
+    if (
+      warmingProgressSnapshotRef.current !== null &&
+      (warmingProgressSnapshotRef.current.key !== warmingObservationKey ||
+        warmingProgressSnapshotRef.current.dataUpdatedAt !== dataUpdatedAt)
+    ) {
+      warmingProgressSnapshotRef.current = null;
+    }
+  }, [dataUpdatedAt, processed, resumedProgress, warmingObservationKey]);
+
+  const [, setWarmingDeadlineTick] = useState(0);
+  useEffect(() => {
+    if (
+      !isWarming ||
+      warmingObservation.deadlineAt === null ||
+      warmingObservation.status === WARMING_OBSERVATION_STATUS.OVERDUE ||
+      warmingObservation.evidence === WARMING_OBSERVATION_EVIDENCE.PROGRESS
+    ) {
+      return;
+    }
+
+    const deadlineTimer = window.setTimeout(() => {
+      setWarmingDeadlineTick((tick) => tick + 1);
+    }, Math.max(0, warmingObservation.deadlineAt - Date.now()));
+    return () => window.clearTimeout(deadlineTimer);
+  }, [
+    isWarming,
+    warmingObservation.deadlineAt,
+    warmingObservation.evidence,
+    warmingObservation.status,
+  ]);
+
   const { refetch } = query;
   const retry = useCallback(() => {
     void refetch();
   }, [refetch]);
 
-  const lastCompletedRef = useRef<number | null>(null);
-  const lastProgressAtRef = useRef<number | null>(null);
   const [stalledForSeconds, setStalledForSeconds] = useState<number | null>(null);
 
   // Reset per-run stall accounting whenever the tracked run changes.
@@ -215,9 +305,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     if (run === null) {
       return;
     }
-    const processed = run.completed + run.failed + run.skipped;
-    if (lastCompletedRef.current === null || processed > lastCompletedRef.current) {
-      lastCompletedRef.current = processed;
+    const nextProcessed = run.completed + run.failed + run.skipped;
+    if (lastCompletedRef.current === null || nextProcessed > lastCompletedRef.current) {
+      lastCompletedRef.current = nextProcessed;
       lastProgressAtRef.current = Date.now();
       setStalledForSeconds(null);
     }
@@ -226,8 +316,10 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   // Tick the stall indicator once per second while the run is live. A polling
   // error surfaces its own Retry affordance, and a frozen poll already shows
   // the paused notice, so suppress the speculative stall banner in both.
+  const warmingBlocksStall =
+    isWarming && warmingObservation.status !== WARMING_OBSERVATION_STATUS.OVERDUE;
   useEffect(() => {
-    if (runId === null || isTerminal || isError || isFrozen || isWarming) {
+    if (runId === null || isTerminal || isError || isFrozen || warmingBlocksStall) {
       setStalledForSeconds(null);
       return;
     }
@@ -247,7 +339,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     updateStallState();
     const intervalId = window.setInterval(updateStallState, 1_000);
     return () => window.clearInterval(intervalId);
-  }, [runId, isTerminal, isError, isFrozen, isWarming]);
+  }, [runId, isTerminal, isError, isFrozen, warmingBlocksStall]);
 
   // Terminal (processed) items over total: completed + failed + skipped, so the
   // bar reaches 100% when every item is done regardless of per-item outcome.
@@ -265,6 +357,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     timing,
     startupId,
     isWarming,
+    warmingObservation,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

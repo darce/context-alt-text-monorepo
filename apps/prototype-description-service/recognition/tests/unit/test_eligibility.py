@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from recognition.application.suggestions.eligibility import is_eligible_cluster
+from recognition.application.suggestions.eligibility import (
+    is_candidate_already_a_cluster_member,
+    is_eligible_cluster,
+)
 
 # === Confirmed-only eligibility tests (v4.12.0) ===
 
@@ -75,3 +78,9 @@ def test_confirmed_cluster_with_human_label_from_matching_tenant_is_eligible() -
         user_confirmed=True,
     )
     assert is_eligible_cluster(cluster, "tenant-1") is True
+
+
+def test_candidate_already_in_cluster_is_identified_as_owned() -> None:
+    """A solved identity-to-cluster pair can be skipped by suggestion refresh."""
+    assert is_candidate_already_a_cluster_member("person-p", ["person-p"]) is True
+    assert is_candidate_already_a_cluster_member("person-q", ["person-p"]) is False

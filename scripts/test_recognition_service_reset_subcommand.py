@@ -453,14 +453,24 @@ def test_reset_live_bootstrap_passes_tenant_site_as_positional_args(
     bindir.mkdir()
     ssh_log = tmp_path / "ssh.log"
     ssh_log.write_text("")
+    backup_root = tmp_path / "vm-backups"
+    lease_path = backup_root / "locks" / "deploy-dev.lease"
     (bindir / "ssh").write_text(
         "#!/bin/sh\n"
         f'{{ printf "ARGV:"; for a in "$@"; do printf " <%s>" "$a"; done; printf "\\n"; }} >> "{ssh_log}"\n'
+        "last=\n"
+        'for a in "$@"; do last=$a; done\n'
+        f'if [ "$last" = "bash -s" ] && [ -f "{lease_path}" ]; then echo LEASE-PRESENT >> "{ssh_log}"; fi\n'
+        "case \"$last\" in\n"
+        "  'sudo python3 -c '*) exec bash -c \"$last\" ;;\n"
+        "esac\n"
         "# Drain heredoc stdin so bash -s callers do not hang.\n"
         "cat >/dev/null 2>&1 || true\n"
         "exit 0\n"
     )
     (bindir / "ssh").chmod(0o755)
+    (bindir / "sudo").write_text("#!/bin/sh\nexec \"$@\"\n")
+    (bindir / "sudo").chmod(0o755)
     (bindir / "curl").write_text("#!/bin/sh\nexit 0\n")
     (bindir / "curl").chmod(0o755)
     (bindir / "sleep").write_text("#!/bin/sh\nexit 0\n")
@@ -479,7 +489,9 @@ def test_reset_live_bootstrap_passes_tenant_site_as_positional_args(
     # Skip preflight that would try real network beyond our stubs.
     script = (
         f'source "{SCRIPT}"; '
+        f'ACX_DEPLOY_BACKUP_ROOT="{backup_root}"; '
         f"preflight_ssh() {{ :; }}; "
+        f"preflight_remote_face_pipeline_models() {{ :; }}; "
         f'do_reset dev'
     )
     proc = subprocess.run(
@@ -492,6 +504,8 @@ def test_reset_live_bootstrap_passes_tenant_site_as_positional_args(
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     log = ssh_log.read_text()
+    assert "LEASE-PRESENT" in log, log
+    assert not lease_path.exists()
     # Bootstrap call must pass tenant/site as separate argv after bash -s, not
     # embedded unquoted inside a single remote command string with shell metachars.
     assert tenant_id in log, log

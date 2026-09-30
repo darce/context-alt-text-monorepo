@@ -1840,21 +1840,15 @@ def test_face_public_redaction_drops_operator_paths_base_url_identity_text():  #
     # Score overwrites tau_fit_status/sampling_frames from protocol constants — plant
     # hostile allow-listed free text on the scored report (the PUBLIC boundary input).
     scored = json.loads(json.dumps(scored))  # deep-copy via JSON for mutation
-    scored.setdefault("provenance", {})["tau_fit_status"] = (
-        f"status for /var/op/{private_slug}/cache"
-    )
+    scored.setdefault("provenance", {})["tau_fit_status"] = f"status for /var/op/{private_slug}/cache"
     scored.setdefault("provenance", {})["sampling_frames"] = {
         "face_id": f"eval of {private} at /home/ubuntu/secret/notes",
     }
     scored["protocol_disclosures"] = [f"mean_prototype; exclude {private}"]
-    scored.setdefault("gate_proposal", {})["scope_amendments_for_operator_ack"] = [
-        f"ack {private} enrollment"
-    ]
+    scored.setdefault("gate_proposal", {})["scope_amendments_for_operator_ack"] = [f"ack {private} enrollment"]
     scored.setdefault("gate_proposal", {})["error_context"] = "/home/ubuntu/secret/face-run.json"
     # RF-01: demographic wrong_names not cleared by the two-key enumeration.
-    scored.setdefault("slices", {}).setdefault("demographic", {}).setdefault("by_cohort", {})[
-        "adult_f"
-    ] = {
+    scored.setdefault("slices", {}).setdefault("demographic", {}).setdefault("by_cohort", {})["adult_f"] = {
         "wrong_names": [[99, 0, private, "Alice Example"]],
         "ignored_wrong_names": [],
         "precision": 0.0,
@@ -3744,9 +3738,7 @@ def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # V
     fail_cases = [
         (
             "position_at_floor",
-            lambda s: s["faces"]["identification"]["positional"].update(
-                {"position_accuracy": POSITION_ACCURACY_FLOOR}
-            ),
+            lambda s: s["faces"]["identification"]["positional"].update({"position_accuracy": POSITION_ACCURACY_FLOOR}),
             "position_accuracy",
         ),
         (
@@ -3795,9 +3787,7 @@ def test_build_score_verdict_quality_floors_fail_total_failure_mutations():  # V
         )
     # Just above / below threshold → not a quality-floor fail (may still pass).
     pass_edge = _passable_scored_dict()
-    pass_edge["faces"]["identification"]["positional"]["position_accuracy"] = (
-        POSITION_ACCURACY_FLOOR + eps
-    )
+    pass_edge["faces"]["identification"]["positional"]["position_accuracy"] = POSITION_ACCURACY_FLOOR + eps
     pass_edge["placement"]["accuracy"] = PLACEMENT_ACCURACY_FLOOR + eps
     pass_edge["hallucination"]["fabricated_fact_rate"] = FABRICATED_FACT_RATE_CEILING - eps
     pass_edge["hallucination"]["fabricated_fact_rate_trapped"] = FABRICATED_FACT_RATE_CEILING - eps
@@ -3841,14 +3831,12 @@ def test_quality_floor_realistic_midrange_and_chance_boundary():  # VLM6-R2-G-06
     just_above = _passable_scored_dict()
     just_above["faces"]["identification"]["positional"]["position_accuracy"] = 0.5001
     just_above["faces"]["identification"]["positional"]["compared_images"] = 5
-    just_reasons = build_score_quality_floor_reasons(
-        just_above, scored_n=int(just_above["counts"]["scored"])
-    )
+    just_reasons = build_score_quality_floor_reasons(just_above, scored_n=int(just_above["counts"]["scored"]))
     assert not any("position_accuracy" in r for r in just_reasons), just_reasons
     just_verdict = build_score_verdict(just_above, rubric_gate="enforce")
-    assert not any(
-        "quality-floor" in r and "position_accuracy" in r for r in just_verdict["reasons"]
-    ), just_verdict["reasons"]
+    assert not any("quality-floor" in r and "position_accuracy" in r for r in just_verdict["reasons"]), just_verdict[
+        "reasons"
+    ]
 
     # Exact chance boundary: `<=` means floor itself is FAIL.
     at_floor = _passable_scored_dict()
@@ -4036,9 +4024,7 @@ def test_face_markdown_renders_nested_real_occlusion_admission():
     real = scored["gate_proposal"]["evidence_admission"]["real_occlusion"]
     assert real
     for regime, admission in real.items():
-        assert (
-            f"real_occlusion.{regime}={admission['status']}/{admission['admission']}"
-        ) in md
+        assert (f"real_occlusion.{regime}={admission['status']}/{admission['admission']}") in md
     assert "real_occlusion=null/null" not in md
 
 
@@ -4290,9 +4276,7 @@ def test_labeled_y_missing_paths_public_redacted():  # VLM6-R2-A-02 / wd-A Task 
     assert leak in local["faces"]["identity_ordering"]["labeled_y_missing_paths"]
     assert leak in json.dumps(local)
 
-    redacted = _redact_caption_report_for_public(
-        local, run_record=record, manifest_entries=entries
-    )
+    redacted = _redact_caption_report_for_public(local, run_record=record, manifest_entries=entries)
     blob = json.dumps(redacted)
     assert leak not in blob
     assert "/ops/private" not in blob
@@ -4531,8 +4515,8 @@ def test_face_labeled_y_missing_constant_zero_mutation_diverges(
     Same bar as wF4 caption-path control, but on score_face_run_record so the
     face freeze can pin the counter after regeneration.
     """
-    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
     import scripts.eval_harness.report as report_mod
+    from scripts.eval_harness.face_metrics import LabeledOrderResult, labeled_order
 
     face_run, manifest = _face_y_missing_fixture()
     live = score_face_run_record(face_run, manifest, score_manifest_sha256="s" * 64)
@@ -4886,15 +4870,11 @@ def test_fixture_local_detection_caveat_filters_on_affects_only():  # VLM6-R2-C-
         },
     ]
     assert _fixture_local_detection_caveat_line(traps=kind_only, fn=5, scored_images=11) is None
-    assert "fixture-local detection frame" not in _markdown_face(
-        _scored_face_md_stub(traps=kind_only)
-    )
+    assert "fixture-local detection frame" not in _markdown_face(_scored_face_md_stub(traps=kind_only))
     # Stripped affects (real corpus / can-fail control) emits nothing.
     stripped = [{k: v for k, v in t.items() if k != "affects"} for t in traps]
     assert _fixture_local_detection_caveat_line(traps=stripped, fn=5, scored_images=11) is None
-    assert "fixture-local detection frame" not in _markdown_face(
-        _scored_face_md_stub(traps=stripped)
-    )
+    assert "fixture-local detection frame" not in _markdown_face(_scored_face_md_stub(traps=stripped))
     assert _fixture_local_detection_caveat_line(traps=[], fn=5, scored_images=11) is None
     assert _fixture_local_detection_caveat_line(traps=None, fn=5, scored_images=11) is None
 
@@ -5022,9 +5002,7 @@ def test_face_public_export_no_private_name_or_operator_path_anywhere():  # wE1 
 
     redacted = redact_face_report_for_public(report)
     blob = json.dumps(redacted, sort_keys=True)
-    md = __import__("scripts.eval_harness.report", fromlist=["_markdown_face"])._markdown_face(
-        redacted
-    )
+    md = __import__("scripts.eval_harness.report", fromlist=["_markdown_face"])._markdown_face(redacted)
 
     for token in (
         private,
@@ -5040,9 +5018,7 @@ def test_face_public_export_no_private_name_or_operator_path_anywhere():  # wE1 
         assert token not in md, f"PUBLIC MD leaked {token!r}"
 
     # Structure: wrong_names cleared everywhere including demographic.
-    demo_rows = (
-        ((redacted.get("slices") or {}).get("demographic") or {}).get("by_cohort") or {}
-    )
+    demo_rows = ((redacted.get("slices") or {}).get("demographic") or {}).get("by_cohort") or {}
     for cohort in demo_rows.values():
         if isinstance(cohort, dict):
             assert list(cohort.get("wrong_names") or []) == []
@@ -5332,8 +5308,7 @@ def test_single_subject_cohort_namedness_agrees_with_face_metrics():  # wE4 → 
         pred_named = named_box_name(box) is not None
         in_cohort = mid in cohort
         assert in_cohort is pred_named, (
-            f"media_id={mid} name={box['name']!r}: cohort={in_cohort} "
-            f"named_box_name={named_box_name(box)!r}"
+            f"media_id={mid} name={box['name']!r}: cohort={in_cohort} named_box_name={named_box_name(box)!r}"
         )
 
 

@@ -33,9 +33,8 @@ const DIRECTORY_THUMB_SIZE = 32;
 /**
  * Pick the representative face for a directory row.
  *
- * Rule: the cluster with the highest `identity_count` (most-confirmed face for
- * that person). Ties broken by `cluster_id` ascending so the choice is stable
- * across renders for the same entry.
+ * Use projected representative quality when available. Older snapshots without
+ * quality fall back to identity count. Ties use cluster_id for stable results.
  */
 export const selectRepresentativeIdentity = (entry: RosterEntry): RosterEntryInstance | null => {
   const clusters = entry.clusters;
@@ -43,12 +42,21 @@ export const selectRepresentativeIdentity = (entry: RosterEntry): RosterEntryIns
     return null;
   }
 
-  let best = clusters[0];
-  for (let i = 1; i < clusters.length; i++) {
-    const candidate = clusters[i];
+  const clustersWithQuality = clusters.filter(
+    (cluster) => typeof cluster.representative_identity?.representative_quality === 'number',
+  );
+  const candidates = clustersWithQuality.length > 0 ? clustersWithQuality : clusters;
+  let best = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const candidateQuality = candidate.representative_identity?.representative_quality;
+    const bestQuality = best.representative_identity?.representative_quality;
+    const candidateRank = clustersWithQuality.length > 0 ? candidateQuality : candidate.identity_count;
+    const bestRank = clustersWithQuality.length > 0 ? bestQuality : best.identity_count;
+
     if (
-      candidate.identity_count > best.identity_count ||
-      (candidate.identity_count === best.identity_count && candidate.cluster_id < best.cluster_id)
+      (typeof candidateRank === 'number' && typeof bestRank === 'number' && candidateRank > bestRank) ||
+      (candidateRank === bestRank && candidate.cluster_id < best.cluster_id)
     ) {
       best = candidate;
     }
@@ -182,6 +190,20 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
     setIsEditing(false);
   };
 
+  const handleEditKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!updatePerson.isPending && name.trim()) {
+        handleSave();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      handleCancel();
+    }
+  };
+
   const handleDelete = () => {
     deletePerson.mutate(entry.id, {
       onSuccess: () => setIsDeleteConfirmOpen(false),
@@ -210,6 +232,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
                 setNameError(null);
               }
             }}
+            onKeyDown={handleEditKeyDown}
             disabled={updatePerson.isPending}
             autoFocus
             aria-invalid={nameError ? true : undefined}
@@ -233,6 +256,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             value={tags}
             placeholder={__('family, friend, etc.', 'alt-context')}
             onChange={(e) => setTags(e.target.value)}
+            onKeyDown={handleEditKeyDown}
             disabled={updatePerson.isPending}
           />
         </td>
@@ -242,6 +266,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             type="button"
             className="acx-icon-button"
             onClick={handleSave}
+            aria-label={sprintf(__('Save changes to %s', 'alt-context'), displayName)}
             title={__('Save changes', 'alt-context')}
             disabled={updatePerson.isPending || !name.trim()}
           >
@@ -251,6 +276,7 @@ const EditableRow = ({ entry, onOpenPerson, onMergePerson }: EditableRowProps) =
             type="button"
             className="acx-icon-button"
             onClick={handleCancel}
+            aria-label={sprintf(__('Cancel editing %s', 'alt-context'), displayName)}
             title={__('Cancel', 'alt-context')}
             disabled={updatePerson.isPending}
           >

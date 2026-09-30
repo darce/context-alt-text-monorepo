@@ -21,7 +21,7 @@ export const getGpuControlPollInterval = (data: GpuStatusResponse | undefined): 
     : GPU_STATUS_POLL_INTERVAL_MS;
 };
 
-const getQueryPollInterval = (query: { state: { data: unknown } }): number =>
+const getQueryPollInterval = (query: { state: { data: unknown } }): number | false =>
   getGpuControlPollInterval(query.state.data as GpuStatusResponse | undefined);
 
 const stateCanStart = (state: GpuStatusResponse['gpu_state']['state']): boolean =>
@@ -107,6 +107,7 @@ export const useGpuControl = () => {
   });
 
   const data = statusQuery.data;
+  const pollIntervalMs: number | false = getQueryPollInterval({ state: { data } });
   const effectiveState = data?.snapshot_fresh ? data.gpu_state.state : undefined;
   const canStart = data
     ? effectiveState !== undefined && stateCanStart(effectiveState) && data.gpu_state.intent !== GpuIntentAction.START
@@ -118,6 +119,7 @@ export const useGpuControl = () => {
   return {
     ...statusQuery,
     data,
+    pollIntervalMs,
     canStart,
     canStop,
     startBlockedReason: data ? getGpuStartBlockedReason(data) : null,

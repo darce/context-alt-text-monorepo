@@ -83,6 +83,34 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumb_url']);
     }
 
+    public function testMapClusterListPreservesSnapshotExportFields(): void
+    {
+        $quality_components = [
+            'confidence' => 0.91,
+            'bbox_area' => 0.12,
+            'sharpness' => 0.77,
+            'occlusion_severity' => null,
+        ];
+
+        $payload = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-export',
+                    'representative_quality' => '0.82',
+                    'quality_components' => json_encode($quality_components),
+                    'representative_media_id' => '501',
+                    'undoable_merge_receipt_id' => 'b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44',
+                ],
+            ],
+            []
+        );
+
+        $this->assertSame(0.82, $payload[0]['representative_quality']);
+        $this->assertSame($quality_components, $payload[0]['quality_components']);
+        $this->assertSame(501, $payload[0]['representative_media_id']);
+        $this->assertSame('b9e2c4a1-7d6f-4a8b-9c31-2e5f0a7b8d44', $payload[0]['undoable_merge_receipt_id']);
+    }
+
     public function testMapClusterListUsesObservedEmptyMemberCountOnCounterMismatch(): void
     {
         $GLOBALS['__ac_error_log'] = [];

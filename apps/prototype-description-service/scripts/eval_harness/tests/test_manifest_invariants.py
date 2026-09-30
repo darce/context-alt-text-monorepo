@@ -333,6 +333,12 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # roster member (manifest.py::load_manifest); reuse the other fixture
     # identity rather than inventing an off-roster name.
     manifest_doc["entries"][0]["easy_wrong"] = ["Quiet Example"]
+    # Strict score-time validation requires human-adjudicated lineage even
+    # for roster-only GT boxes; make this local synthetic input scoreable.
+    for entry in manifest_doc["entries"]:
+        for box in entry["face_boxes"]:
+            box["lineage"]["label_source"] = "operator_blind"
+            box["lineage"]["saw_machine_proposals"] = False
     man_path.write_text(json.dumps(manifest_doc), encoding="utf-8")
     # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
     # load, mirrors cli.py::_manifest_sha).

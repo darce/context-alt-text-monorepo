@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import _write_executable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
@@ -222,11 +223,6 @@ def test_each_transport_frames_and_bounds_the_checker_payload(source_name: str, 
         "ServerAliveCountMax=2",
     ):
         assert required in block, f"{source_name} is missing transport guard {required}"
-
-
-def _write_executable(path: Path, source: str) -> None:
-    path.write_text(source, encoding="utf-8")
-    path.chmod(0o755)
 
 
 def test_make_transport_does_not_hide_a_missing_checker_producer(tmp_path: Path) -> None:

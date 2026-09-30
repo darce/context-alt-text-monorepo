@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { renderHook, act } from '@testing-library/react';
 import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
 import { useJobPersistence } from '../useJobPersistence';

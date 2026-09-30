@@ -5,10 +5,15 @@ Suggestion management routes.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from typing import TypeVar
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field
+from sqlalchemy import update
+
+from db.models.constraints import ClusterMergeSuggestion as MergeSuggestionModel
 
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.roster_candidates import (
@@ -527,6 +532,8 @@ async def accept_merge_suggestion(
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+    if cluster_a.tenant_id != request.tenant_id or cluster_b.tenant_id != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
     source_cluster_id, target_cluster_id, target_label = _resolve_merge_pair(
         cluster_a,
@@ -553,6 +560,23 @@ async def accept_merge_suggestion(
         request.tenant_id, str(suggestion.id)
     )
 
+    acceptance_result = await session.execute(
+        update(MergeSuggestionModel)
+        .where(
+            MergeSuggestionModel.tenant_id == UUID(request.tenant_id),
+            MergeSuggestionModel.id == UUID(str(suggestion.id)),
+            MergeSuggestionModel.resolution == SuggestionStatus.PENDING.value,
+        )
+        .values(
+            resolution=SuggestionStatus.ACCEPTED.value,
+            resolved_at=datetime.now(tz=UTC),
+        )
+    )
+    if acceptance_result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Merge suggestion is no longer pending",
+        )
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
     suggestion.status = SuggestionStatus.ACCEPTED
@@ -720,13 +744,8 @@ async def _collect_min_confidence_page[T_Suggestion](
     filtered: list[T_Suggestion] = []
     page_offset = 0
     target_count = offset + limit
-    max_batches = 10
-    batch_count = 0
 
     while len(filtered) < target_count:
-        if batch_count >= max_batches:
-            break
-        batch_count += 1
         page = list(await fetch_page(batch_size, page_offset))
         if not page:
             break

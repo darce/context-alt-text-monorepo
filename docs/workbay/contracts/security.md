@@ -214,7 +214,39 @@ allowlist that granted `is_admin=True` cross-tenant access is **retired**
 
 ### Structured Error Format
 
-Structured `{error, message, path, trace_id}` payloads are used by the registered application exception handlers such as `RecognitionError`, `ClusterNotFoundError`, and duplicate-label `IntegrityError`. Generic 500 and pool exhaustion responses are intentionally opaque and omit `message`. Plain `HTTPException` responses raised directly by auth dependencies keep FastAPI's default `detail` shape instead of this envelope.
+Structured `{error, message, path, correlation_id}` payloads are used by the registered application exception handlers such as `RecognitionError`, `ClusterNotFoundError`, and duplicate-label `IntegrityError`. Generic 500 and pool exhaustion responses are intentionally opaque and omit `message`. Plain `HTTPException` responses raised directly by auth dependencies keep FastAPI's default `detail` shape instead of this envelope.
+
+## Correlation ID (`X-ACX-Request-Id`)
+
+The service uses `X-ACX-Request-Id` as its request correlation header. The
+middleware source of truth is
+`recognition/interface_adapters/http/middleware/correlation.py`.
+
+This header is diagnostic metadata, not an authentication credential. It does
+not identify a tenant, replace `Authorization` or `X-Api-Key`, or grant any
+access by itself.
+
+Clients may send an inbound value only when it is a canonical lowercase,
+hyphenated UUIDv4 written as exactly 36 ASCII characters, with exactly one
+header occurrence. A missing, malformed, or repeated value is silently
+replaced with a fresh server-generated UUIDv4; the rejected value is never
+echoed or logged, and the request is not rejected.
+
+Every response, including successful and error responses, carries
+`X-ACX-Request-Id`: a valid inbound value is echoed, and a missing or rejected
+value is returned as its replacement. Service log records emitted in the
+request scope carry that same value under the `correlation_id` field, while
+records with no request binding use `-`. Exactly one request-scoped access
+record is emitted per request on the `recognition.access` logger.
+
+The header alone does not create an API record. If the WordPress plugin rejects
+a request locally before sending it to the Recognition Service, no API request
+or `recognition.access` record exists for that id. An operator may therefore
+see the id in local/plugin diagnostics without a matching server-side record.
+
+For browser callers, `X-ACX-Request-Id` is present in both CORS
+`allow_headers` and `expose_headers`, so a browser may send the header and read
+it from the response.
 
 ## Rate Limiting
 
@@ -311,7 +343,8 @@ Cross-origin browser requests are gated by a Starlette `CORSMiddleware` register
 | `allow_credentials`    | `False` (prevents credential-bearing cross-origin leaks)          |
 | `allow_origin_regex`   | `None` (no regex; exact match only)                               |
 | `allow_methods`        | `["GET", "POST", "PATCH", "DELETE", "OPTIONS"]` (explicit list)   |
-| `allow_headers`        | `["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"]`   |
+| `allow_headers`        | `["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", "Idempotency-Key", "X-ACX-Request-Id"]` |
+| `expose_headers`       | `["X-ACX-Request-Id"]`                                            |
 | `max_age`              | `600` (10-minute preflight cache)                                 |
 
 Because `allow_credentials=False`, Starlette omits the `Access-Control-Allow-Credentials` response header entirely.

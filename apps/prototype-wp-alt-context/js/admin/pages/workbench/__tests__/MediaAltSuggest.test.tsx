@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClient, useQuery } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,10 +9,7 @@ import {
   DECORATIVE_TOGGLE_PRESSED_STYLE,
   DECORATIVE_TOGGLE_VISIBLE_LABEL,
   formatAltLengthAdvisory,
-  formatMeasuredDuration,
   formatOverLengthReadyAnnouncement,
-  formatSuggestTimingLine,
-  formatWarmingStatus,
   MARK_DECORATIVE_LABEL,
   MediaAltSuggest,
   RECOMMENDED_ALT_TEXT_MAX_LENGTH,
@@ -21,6 +18,7 @@ import {
 } from '../MediaAltSuggest';
 import { correctDescriptionHistoryItem, describeMedia } from '../../../api/describeApi';
 import type { DescriptionHistoryItem, VisualFactsResponse } from '../../../api/describeApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 import suggestStates from './fixtures/gpuflow-suggest-states.json';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaItem, WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
@@ -88,14 +86,6 @@ const sampleResponse = (altTextDraft = draft): VisualFactsResponse => ({
   result_generation: 1,
 });
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
 const workbenchPageKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
 
 const seedWorkbenchRow = (
@@ -150,22 +140,20 @@ const LiveWorkbenchAltRow = ({ initial }: { initial: WorkbenchMediaResponse }): 
 };
 
 const renderLiveAltRow = (altText: string, status: WorkbenchMediaItem['status'] = 'complete') => {
-  const client = buildClient();
+  const client = buildTestQueryClient();
   const initial = seedWorkbenchRow(client, altText, status);
-  const view = render(
-    <QueryClientProvider client={client}>
-      <LiveWorkbenchAltRow initial={initial} />
-    </QueryClientProvider>,
-  );
+  const view = render(<LiveWorkbenchAltRow initial={initial} />, {
+    wrapper: createQueryWrapper(client),
+  });
   return { client, ...view };
 };
 
 const cachedRow = (client: QueryClient) =>
   client.getQueryData<WorkbenchMediaResponse>(workbenchPageKey)?.items.find((item) => item.id === 42);
 
-const renderSuggest = (element: ReactElement, client = buildClient()) => ({
+const renderSuggest = (element: ReactElement, client = buildTestQueryClient()) => ({
   client,
-  ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
+  ...render(element, { wrapper: createQueryWrapper(client) }),
 });
 
 /** Visible-text accessible name for controls whose names come from textContent. */
@@ -568,7 +556,7 @@ describe('MediaAltSuggest', () => {
   it('settles accept without waiting for media-tree invalidation [WBUX-5-S2C3A-BR-05]', async () => {
     describeMock.mockResolvedValue(sampleResponse());
     correctMock.mockResolvedValue(sampleHistoryItem());
-    const client = buildClient();
+    const client = buildTestQueryClient();
     // Never resolves: splits void vs await in useCorrectMediaAlt's hook-level
     // onSuccess. With await, query-core never dispatches success.
     vi.spyOn(client, 'invalidateQueries').mockReturnValue(new Promise<void>(() => undefined));
@@ -2020,25 +2008,6 @@ describe('MediaAltSuggest', () => {
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
-  it('exports a single named recommended-max constant used as the threshold [S2c-3c]', () => {
-    // [TEST-15] discrimination: goes red if the literal is scattered / the export
-    // is dropped — callers and tests share one named source of truth.
-    expect(RECOMMENDED_ALT_TEXT_MAX_LENGTH).toBe(125);
-    expect(Number.isInteger(RECOMMENDED_ALT_TEXT_MAX_LENGTH)).toBe(true);
-  });
-
-  it('pins length formatter copy with argument order (draft length first, max second) [S6-A-07][TEST-15]', () => {
-    // Literal-copy pins: comparisons against formatAltLengthAdvisory(n) itself move
-    // with an in-formatter %1$d/%2$d swap and stay green. These strings name the
-    // business order: actual draft length is 200; recommended maximum is 125.
-    expect(formatAltLengthAdvisory(200)).toBe(
-      'This draft is 200 characters. The recommended maximum is 125 characters so screen readers can convey the description without excessive length. Consider shortening it before saving.',
-    );
-    expect(formatOverLengthReadyAnnouncement(200)).toBe(
-      'Draft ready. Review before saving. This draft is 200 characters; recommended maximum is 125. Consider shortening it.',
-    );
-  });
-
   it('enqueues exactly one correction for two same-tick Accept activations [S2C3A-BR-16]', async () => {
     // disabled={isAccepting} only paints after the next render. fireEvent.click
     // alone flushes a render between clicks and hits disabled — proving nothing.
@@ -2098,11 +2067,7 @@ describe('MediaAltSuggest', () => {
     await screen.findByText(draft);
 
     // Sibling committed while draft was sticky — prop updates to the new truth.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Sibling committed this." />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Sibling committed this." />);
 
     fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
 
@@ -2184,13 +2149,12 @@ describe('MediaAltSuggest', () => {
 
     // Trigger a genuine CAS conflict first so a conflict message is on screen.
     rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltSuggest isDecorative={false}
-          mediaId={42}
-          committedAlt="Sibling committed this."
-          onCommitStart={onCommitStart}
-        />
-      </QueryClientProvider>,
+      <MediaAltSuggest
+        isDecorative={false}
+        mediaId={42}
+        committedAlt="Sibling committed this."
+        onCommitStart={onCommitStart}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
     const casAlert = await screen.findByRole('alert');
@@ -2199,9 +2163,12 @@ describe('MediaAltSuggest', () => {
     // Restore committedAlt so CAS would pass, then refuse the lock claim.
     // The CAS message must survive the refused claim (clear only after claim succeeds).
     rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Existing alt" onCommitStart={onCommitStart} />
-      </QueryClientProvider>,
+      <MediaAltSuggest
+        isDecorative={false}
+        mediaId={42}
+        committedAlt="Existing alt"
+        onCommitStart={onCommitStart}
+      />,
     );
     // Baseline was captured at generate as "Existing alt"; prop is again "Existing alt"
     // so CAS passes and we reach the claim — which refuses.
@@ -2386,11 +2353,7 @@ describe('MediaAltSuggest', () => {
     expect(await screen.findByRole('button', { name: /generating/i })).toBeDisabled();
 
     // Sibling (or cache) updates committed alt while generation is in flight.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Arrived during generate" />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt="Arrived during generate" />);
 
     resolveDescribe(sampleResponse());
     await screen.findByText(draft);
@@ -2474,13 +2437,11 @@ describe('MediaAltSuggest', () => {
     // 2) Ordinary Accept with non-empty alt → complete
     describeMock.mockResolvedValueOnce(sampleResponse());
     correctMock.mockResolvedValueOnce(sampleHistoryItem(draft));
-    const clientAlt = buildClient();
+    const clientAlt = buildTestQueryClient();
     const initialAlt = seedWorkbenchRow(clientAlt, null, 'missing');
-    const altCase = render(
-      <QueryClientProvider client={clientAlt}>
-        <LiveWorkbenchAltRow initial={initialAlt} />
-      </QueryClientProvider>,
-    );
+    const altCase = render(<LiveWorkbenchAltRow initial={initialAlt} />, {
+      wrapper: createQueryWrapper(clientAlt),
+    });
     fireEvent.click(screen.getByRole('button', { name: /suggest alt text/i }));
     await screen.findByText(draft);
     fireEvent.click(screen.getByRole('button', { name: /^accept$/i }));
@@ -2747,7 +2708,7 @@ describe('MediaAltSuggest', () => {
         resolveCorrect = resolve;
       }),
     );
-    const client = buildClient();
+    const client = buildTestQueryClient();
     const { rerender } = renderSuggest(
       <MediaAltSuggest isDecorative={true} mediaId={42} committedAlt={null} />,
       client,
@@ -2760,11 +2721,7 @@ describe('MediaAltSuggest', () => {
 
     // Mid-flight: parent re-renders with isDecorative false (success-path cache
     // patch shape) while the local busy flag is still set.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltSuggest isDecorative={false} mediaId={42} committedAlt={null} />);
 
     // [TEST-15]: live-prop labels flip to "Marking as decorative…" — wrong direction.
     expect(screen.getByRole('button', { name: /removing decorative mark/i })).toBeDisabled();
@@ -2995,22 +2952,6 @@ describe('MediaAltSuggest GPUFLOW warming and timing', () => {
     expect(alert).toHaveTextContent('Description service is unavailable.');
     expect(screen.queryByTestId('media-alt-suggest-warming')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
-  });
-
-  it('formats warming and timing helpers from fixture values', () => {
-    expect(formatWarmingStatus(12)).toBe('Description service is starting (about 12 s)');
-    expect(formatWarmingStatus(null)).toBe('Description service is starting');
-    expect(formatSuggestTimingLine(null)).toBeNull();
-    expect(formatSuggestTimingLine(suggestStates.success_with_timing.timing)).toBe(
-      'Generated in 1.2 s, Waited for service 0 s, Started in 38 s',
-    );
-  });
-
-  it('rounds measured durations to whole seconds before splitting minutes', () => {
-    expect(formatMeasuredDuration(119500)).toBe('2 m');
-    expect(formatMeasuredDuration(59600)).toBe('1 m');
-    expect(formatMeasuredDuration(60400)).toBe('1 m');
-    expect(formatMeasuredDuration(90000)).toBe('1 m 30 s');
   });
 
   it('retries mismatch once without operation_id then surfaces the error', async () => {

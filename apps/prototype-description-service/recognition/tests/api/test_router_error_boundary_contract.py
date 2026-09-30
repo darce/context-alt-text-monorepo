@@ -41,6 +41,7 @@ from recognition.interface_adapters.http import routers as routers_pkg
 
 ROUTERS_DIR = Path(routers_pkg.__file__).parent
 
+
 def _router_modules() -> list[Path]:
     """Every router module, or an exception. Never an empty list.
 

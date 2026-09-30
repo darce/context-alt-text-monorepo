@@ -22,7 +22,7 @@ DEMO_WALKTHROUGH_APP  := $(ROOT_MAKEFILE_DIR)/apps/prototype-wp-alt-context
 .PHONY: deploy-help deploy-build deploy-build-remote \
         deploy-dev deploy-dev-fir deploy-staging deploy-prod deploy-demo \
         deploy-promote-staging deploy-promote-prod deploy-rollback-dev \
-        deploy-rollback-dev-fir \
+        deploy-reset-dev-fir-to-dev \
         deploy-verify deploy-verify-dev deploy-verify-staging deploy-verify-prod \
         deploy-status deploy-clear-image-repo \
         deploy-compose-dev deploy-compose-staging deploy-compose-prod \
@@ -39,7 +39,7 @@ deploy-help:
 	@echo "  Full deploy (build + push + restart + verify) — remote build by default:"
 	@echo "    make deploy-dev                            Remote build on VM, push :dev + :SHA, restart acx-dev, verify"
 	@echo "    make deploy-dev REMOTE_BUILD=0             Same, built locally (requires colima / Docker Desktop)"
-	@echo "    make deploy-dev-fir                        Same image (:dev tag), restart acx-dev-fir (isolated FIR stack), verify"
+	@echo "    make deploy-dev-fir                        Remote build on VM, push :dev-fir + :SHA, restart acx-dev-fir, verify"
 	@echo "    make deploy-staging                        Remote build on VM, push :staging + :SHA, restart acx-staging, verify"
 	@echo "    make deploy-prod CONFIRM=PROMOTE           Remote build on VM, push :latest + :SHA, restart acx-prod, verify"
 	@echo "    ACX_BUILD_TARGET=runtime-vlm make deploy-dev                    Remote VLM image build+deploy (default; free-space gated)"
@@ -52,12 +52,13 @@ deploy-help:
 	@echo "  Promote / rollback (retag existing image — remote ssh by default):"
 	@echo "    make deploy-promote-staging                Retag :dev -> :staging, restart, verify"
 	@echo "    make deploy-promote-prod CONFIRM=PROMOTE   Retag :staging -> :latest, restart, verify"
-	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev (rollback path; also affects dev-fir — shared :dev tag)"
-	@echo "    make deploy-rollback-dev-fir               Refuses: FIR-only rollback impossible (shared :dev tag)"
+	@echo "    make deploy-rollback-dev                   Retag :staging -> :dev"
+	@echo "    make deploy-reset-dev-fir-to-dev           Retag :dev -> :dev-fir (reset FIR forward to current :dev)"
+	@echo "                                               Previous-digest rollback: recognition-service.sh rollback dev-fir <id>"
 	@echo ""
 	@echo "  Verify / status / sticky-repo reset:"
-	@echo "    make deploy-verify ENV=dev                 GET /health and compare commit_sha to local HEAD (dev|dev-fir|staging|prod)"
-	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (reads remote ACX_IMAGE_REPO for VLM)"
+	@echo "    make deploy-verify ENV=dev                 Compare /health and running image to VM release receipt (deployed-release.json)"
+	@echo "    make deploy-verify-dev|staging|prod        Same, fixed env (compares to VM receipt; reads remote ACX_IMAGE_REPO for VLM)"
 	@echo "    make deploy-status                         Snapshot /health for dev, dev-fir, staging, prod"
 	@echo "    make deploy-clear-image-repo ENV=dev       Remove sticky ACX_IMAGE_REPO from remote .env (→ recognition default)"
 	@echo "    make deploy-clear-image-repo ENV=prod CONFIRM=PROMOTE   Same for prod (CONFIRM required)"
@@ -92,6 +93,7 @@ deploy-help:
 	@echo "    DRY_RUN=1 make demo-enable-public-guide WP_PATH=/path/to/wordpress SITE_URL=https://demo.altcontext.com"
 	@echo "    Sets acx_public_guide_enabled, flushes rewrites, signed-out GET /guide/ must be 200 with the guide module script."
 	@echo "    acx_public_demo_enabled (public demo describe) stays off unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1."
+	@echo "    Host wp is limited to loopback or .test SITE_URLs; use the compose runner for remote sites."
 	@echo "    make demo-public-guide-e2e SITE_URL=https://demo.altcontext.com"
 	@echo "    make demo-public-guide-e2e ACX_PUBLIC_GUIDE_URL=https://demo.altcontext.com/guide/"
 	@echo "    Exports ACX_PUBLIC_GUIDE_URL and runs npm run e2e:public-guide (Playwright public-guide project)."
@@ -112,7 +114,7 @@ deploy-help:
 	@echo "                      REMOTE_BUILD (default 1; set 0 for local), ACX_REMOTE_BUILD (env equivalent)"
 	@echo "                      ACX_BUILD_TARGET (e.g. runtime-vlm; charset [A-Za-z0-9_.-]+ only)"
 	@echo "                      ACX_IMAGE_VARIANT (recognition|vlm; vlm requires *vlm* build target)"
-	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_BOOT_SMOKE"
+	@echo "                      ACX_VERIFY_OPTIONAL=1 ACX_CUTOVER_HEALTH_ATTEMPTS ACX_CUTOVER_HEALTH_SLEEP ACX_CANONICAL_HEALTH_ATTEMPTS ACX_CANONICAL_HEALTH_SLEEP ACX_VERIFY_ATTEMPTS ACX_VERIFY_SLEEP ACX_ROLLBACK_VERIFY_ATTEMPTS ACX_ROLLBACK_VERIFY_SLEEP ACX_GPU_SNAPSHOT_GATE_ATTEMPTS ACX_GPU_SNAPSHOT_GATE_SLEEP ACX_BOOT_SMOKE"
 
 # Build only (no push). Override the tag with TAG=staging.
 # ACX_BUILD_TARGET / ACX_IMAGE_VARIANT are passed through the environment.
@@ -159,17 +161,14 @@ deploy-rollback-dev:
 	@REMOTE_BUILD=$(RB_DEFAULT) \
 		"$(DEPLOY_SCRIPT)" promote staging dev
 
-# FIR-only rollback is impossible by design: dev-fir shares the :dev image tag
-# with acx-dev (env_to_tag maps both to "dev"), so retagging for dev-fir would
-# also roll back acx-dev on its next restart. Fail closed and name the real
-# lever instead of silently mutating the shared tag (gate r0811864a A-04/B-01).
-deploy-rollback-dev-fir:
-	@echo "deploy-rollback-dev-fir: refused. dev-fir shares the :dev image tag with acx-dev;" >&2
-	@echo "a FIR-only image rollback does not exist. To roll back the shared :dev image for" >&2
-	@echo "BOTH stacks, run 'make deploy-rollback-dev' and restart acx-dev-fir afterwards." >&2
-	@exit 2
+# Reset dev-fir forward to the current :dev image (promote/retag). This is
+# not a previous-digest rollback; that remains:
+#   scripts/deploy/recognition-service.sh rollback dev-fir <id>
+deploy-reset-dev-fir-to-dev:
+	@REMOTE_BUILD=$(RB_DEFAULT) \
+		"$(DEPLOY_SCRIPT)" promote dev dev-fir
 
-# Verify a deployed environment matches local HEAD.
+# Verify /health and the running image against the VM release receipt (deployed-release.json).
 # Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
 # ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
 deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)
@@ -249,6 +248,7 @@ deploy-demo:
 # Deliberate per-site enable of the signed-out public guide. Requires WP_PATH and
 # SITE_URL; DRY_RUN=1 prints the plan and mutates nothing. Does not turn on
 # acx_public_demo_enabled unless ACX_RETAIN_PUBLIC_DEMO_DESCRIBE=1 is set.
+# Host wp is for LocalWP loopback or .test URLs; remote SITE_URLs require compose.
 demo-enable-public-guide:
 	@if [ -z "$(WP_PATH)" ] || [ -z "$(SITE_URL)" ]; then \
 		echo "ERROR: WP_PATH and SITE_URL are required (no default site)." >&2; \

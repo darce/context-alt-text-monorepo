@@ -10,7 +10,12 @@ OCI service** (concurrency 1).
 
 ```bash
 # 1. Fixtures (59 MB, not vendored): see scene/tests/seed/README.md
-export GOLDEN_IMAGES_DIR=~/Development/eval-fixtures
+# Canonical gitignored root: <primary checkout>/benchmarks/images
+#   mock_images/, mock_entities/, corpus646/originals/<bucket>/<file>
+#   (source-space originals verified against corpus-manifest-v3r sha256_source;
+#    provenance in benchmarks/images/corpus646/provenance.json).
+# ~/Development/eval-fixtures is a transitional symlink to that directory.
+export GOLDEN_IMAGES_DIR="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)/benchmarks/images"
 
 # 2. Dedicated eval tenant — NEVER the demo tenant. Mint via /admin console.
 export ACX_EVAL_LIVE=1                    # safety gate for live subcommands

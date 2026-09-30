@@ -4,6 +4,7 @@
 > **Parent**: [E15-5a OCI Operational Hygiene](./E15-5a-oci-operational-hygiene-task-plan.md) Slice 3
 > **Scope**: planning artifact only. This plan does not execute the migration; it documents the migration so an operator can execute it under pressure.
 > **Living-doc rule**: re-verify this plan whenever `apps/prototype-description-service/.env.prod.example`, `apps/prototype-description-service/docker-compose.env.yml`, or `apps/prototype-description-service/Caddyfile` change materially.
+> **Operational status (2026-09-22)**: dormant contingency. OCI is the only production host; Hetzner serves nothing until a trigger below fires.
 
 ---
 
@@ -224,19 +225,14 @@ Off-host retention (Hetzner Storage Box, S3-compatible, or operator workstation 
 
 ### Files to Copy Verbatim
 
-The full surface lives in [`apps/prototype-description-service/.env.prod.example`](../../../apps/prototype-description-service/.env.prod.example). The actual prod values live in `/opt/acx-backend/prod/secrets/.env` on the OCI VM. Migrate as a unit:
+The full surface lives in [`apps/prototype-description-service/.env.prod.example`](../../../apps/prototype-description-service/.env.prod.example). The live prod values are in `/opt/acx-backend/prod/.env` on the OCI VM: a regular file (0600), never a symlink (the deploy refuses a symlinked `.env`). Prod runs `RECOGNITION_SECRET_BACKEND=oci_vault`, so the Vault-held secrets (`PGPASSWORD`, `RECOGNITION_ADMIN_TOKEN`, everything in `RECOGNITION_VAULT_SECRET_MAP`) are not in that file, and the OCI instance principal that reads them does not exist on Hetzner: provision those values for the target host separately (see Per-Variable Migration Notes below). Stream the file host to host so the plaintext never lands on the laptop disk:
 
 ```bash
-# REPLACE before running: <tailnet> -> your tailnet name; <hetzner-ip> -> Hetzner public IP.
-ssh ubuntu@acx-backend.<tailnet>.ts.net 'sudo cat /opt/acx-backend/prod/secrets/.env' > prod.env.tmp
-# Move to Hetzner via password manager or short-lived scp; do NOT commit.
-scp prod.env.tmp root@<hetzner-ip>:/opt/acx-backend/prod/secrets/.env
-ssh root@<hetzner-ip> '
-  sudo chown root:root /opt/acx-backend/prod/secrets/.env
-  sudo chmod 600 /opt/acx-backend/prod/secrets/.env
-  sudo ln -sf /opt/acx-backend/prod/secrets/.env /opt/acx-backend/prod/.env
-'
-shred -u prod.env.tmp
+# Set both first. No angle-bracket placeholders: bash reads them as redirects.
+SRC=ubuntu@acx-backend.YOUR-TAILNET.ts.net
+DST=root@HETZNER-PUBLIC-IP
+ssh "$SRC" 'sudo cat /opt/acx-backend/prod/.env' \
+  | ssh "$DST" 'install -d -m 0750 /opt/acx-backend/prod && umask 077 && cat > /opt/acx-backend/prod/.env && chmod 600 /opt/acx-backend/prod/.env'
 ```
 
 ### Per-Variable Migration Notes

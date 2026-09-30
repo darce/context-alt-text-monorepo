@@ -3,6 +3,27 @@
 declare(strict_types=1);
 
 namespace {
+    if (!function_exists('_wp_render_title_tag')) {
+        function _wp_render_title_tag(): void
+        {
+            echo '<title>ACX Demo</title>';
+        }
+    }
+
+    if (!function_exists('_block_template_render_title_tag')) {
+        function _block_template_render_title_tag(): void
+        {
+            echo '<title>ACX Demo</title>';
+        }
+    }
+
+    if (!function_exists('_block_template_viewport_meta_tag')) {
+        function _block_template_viewport_meta_tag(): void
+        {
+            echo '<meta name="viewport" content="width=device-width, initial-scale=1" />';
+        }
+    }
+
     if (!function_exists('wp_styles')) {
         function wp_styles(): object
         {
@@ -66,13 +87,13 @@ final class PublicGuideRouteTest extends TestCase
     {
         $route = new PublicGuideRoute($this->nullResolver());
         $this->simulateRewriteMatch();
-        $this->setOption('acx_public_guide_enabled', true);
+        update_option('acx_public_guide_enabled', true);
         self::assertFalse($route->filter_admin_bar(true));
         self::assertFalse($route->filter_admin_bar(false));
         unset($GLOBALS['wp']);
         self::assertTrue($route->filter_admin_bar(true));
         $this->simulateRewriteMatch();
-        $this->setOption('acx_public_guide_enabled', false);
+        update_option('acx_public_guide_enabled', false);
         self::assertTrue($route->filter_admin_bar(true));
     }
 
@@ -187,11 +208,21 @@ final class PublicGuideRouteTest extends TestCase
         self::assertSame(200, $GLOBALS['__ac_status_header']);
         self::assertSame($this->expectedTemplatePath(), $result);
 
+        add_action('wp_head', '_wp_render_title_tag', 1);
         $html = $this->renderTemplate($result);
         $templateSource = (string) file_get_contents($result);
 
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
+        self::assertSame(1, substr_count($html, '<title>'));
+        self::assertStringContainsString(
+            "<title>Demo: Names change a photo's meaning | AltContext</title>",
+            $html
+        );
+        self::assertStringContainsString(
+            '<meta name="description" content="Try the AltContext demo. Write an image description (alt text) and choose who is named in each photo.">',
+            $html
+        );
         self::assertSame(1, $GLOBALS['__ac_wp_head_calls']);
         self::assertSame(1, $GLOBALS['__ac_wp_footer_calls']);
         self::assertSame(0, $GLOBALS['__ac_get_header_calls']);
@@ -205,6 +236,26 @@ final class PublicGuideRouteTest extends TestCase
         self::assertStringContainsString('data-acx-load-timeout="' . PublicGuideRoute::LOAD_TIMEOUT_MS . '"', $html);
         self::assertStringNotContainsString('get_header(', $templateSource);
         self::assertStringNotContainsString('get_footer(', $templateSource);
+    }
+
+    public function testEnabledOptionRemovesBlockThemeTitleAndViewportTags(): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+
+        $route = new PublicGuideRoute($this->nullResolver());
+        $template = $route->template_include('/theme/page.php');
+
+        add_action('wp_head', '_block_template_render_title_tag', 1);
+        add_action('wp_head', '_block_template_viewport_meta_tag', 0);
+        $html = $this->renderTemplate($template);
+
+        self::assertSame(1, substr_count($html, '<title>'));
+        self::assertSame(1, substr_count($html, 'name="viewport"'));
+        self::assertStringContainsString(
+            "<title>Demo: Names change a photo's meaning | AltContext</title>",
+            $html
+        );
     }
 
     public function testRequestWithoutRewriteMatchLeavesIncomingTemplateUntouched(): void
@@ -408,6 +459,57 @@ final class PublicGuideRouteTest extends TestCase
         self::assertArrayNotHasKey(PublicGuideRoute::REWRITE_REGEX, $GLOBALS['__ac_persisted_rewrite_rules']);
     }
 
+    public function testActivateRegistersEnabledGuideRewriteAndPersistsIt(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $wpRewrite = new stdClass();
+        // The WordPress stub logs add_rewrite_rule() calls separately instead
+        // of updating extra_rules_top like core does.
+        $wpRewrite->extra_rules_top = [
+            PublicGuideRoute::REWRITE_REGEX => 'index.php?acx_public_guide=1',
+        ];
+        // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- unit-test rewrite object
+        $GLOBALS['wp_rewrite'] = $wpRewrite;
+
+        (new LifecycleManager())->activate();
+
+        self::assertContains(
+            [
+                'regex' => PublicGuideRoute::REWRITE_REGEX,
+                'query' => 'index.php?acx_public_guide=1',
+                'after' => 'top',
+            ],
+            $GLOBALS['__ac_rewrite_rules']
+        );
+        self::assertArrayHasKey(
+            PublicGuideRoute::REWRITE_REGEX,
+            $GLOBALS['__ac_persisted_rewrite_rules']
+        );
+    }
+
+    public function testActivationDefersRewriteVersionStampUntilInitFlush(): void
+    {
+        $this->setOption(PublicGuideRoute::OPTION_ENABLED, '1');
+        $manager = new class() extends LifecycleManager {
+            public int $flushCount = 0;
+
+            protected function flush_rewrites(): void
+            {
+                ++$this->flushCount;
+            }
+        };
+
+        $manager->activate();
+
+        self::assertNotSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
+        self::assertSame(0, $manager->flushCount);
+
+        $manager->maybe_flush_rewrites();
+
+        self::assertSame(1, $manager->flushCount);
+        self::assertSame(LifecycleManager::REWRITE_VERSION, get_option('acx_rewrite_version'));
+    }
+
     public function testBundleFailureStillRendersFallbackAndEnqueuesNothing(): void
     {
         $this->setOption('acx_public_guide_enabled', true);
@@ -433,6 +535,46 @@ final class PublicGuideRouteTest extends TestCase
         self::assertDoesNotMatchRegularExpression('/<script(?![^>]*\\bsrc=)/', $html);
         self::assertStringContainsString('rel="canonical"', $html);
         self::assertStringContainsString('href="http://example.test/guide/"', $html);
+    }
+
+    /**
+     * @dataProvider provideBundleResolutionFailures
+     */
+    public function testBundleResolutionFailuresEmitBootstrapFailureAction(callable $resolver, string $reason): void
+    {
+        $this->setOption('acx_public_guide_enabled', true);
+        $this->simulateRewriteMatch();
+
+        $route = new PublicGuideRoute($resolver);
+        $route->enqueue_assets();
+
+        $events = array_values(array_filter(
+            $GLOBALS['__ac_do_action_log'],
+            static fn (array $event): bool => ($event['hook'] ?? '') === 'acx_admin_asset_bootstrap_failure'
+        ));
+
+        self::assertCount(1, $events);
+        self::assertSame($reason, $events[0]['args'][1]['reason'] ?? null);
+        self::assertSame(PublicGuideRoute::ENTRY_POINT, $events[0]['args'][1]['entry_point'] ?? null);
+        self::assertStringContainsString($reason, (string) ($events[0]['args'][0] ?? ''));
+        self::assertSame([$reason], $this->getErrorLog());
+    }
+
+    /**
+     * @return array<string, array{0: callable(string): ?array, 1: string}>
+     */
+    public static function provideBundleResolutionFailures(): array
+    {
+        return [
+            'missing resolver result' => [
+                static fn (string $entry): ?array => null,
+                'Missing or invalid build manifest entry for ' . PublicGuideRoute::ENTRY_POINT . '.',
+            ],
+            'empty JavaScript URL' => [
+                static fn (string $entry): ?array => array('js' => '', 'css' => array()),
+                'Missing JavaScript URL for build manifest entry ' . PublicGuideRoute::ENTRY_POINT . '.',
+            ],
+        ];
     }
 
     public function testSuccessPathEnqueuesModuleScriptAndCssUrls(): void
@@ -577,16 +719,16 @@ final class PublicGuideRouteTest extends TestCase
     {
         self::assertFalse(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', true);
+        update_option('acx_public_guide_enabled', true);
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', 1);
+        update_option('acx_public_guide_enabled', 1);
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', '1');
+        update_option('acx_public_guide_enabled', '1');
         self::assertTrue(PublicGuideRoute::is_enabled());
 
-        $this->setOption('acx_public_guide_enabled', 'true');
+        update_option('acx_public_guide_enabled', 'true');
         self::assertFalse(PublicGuideRoute::is_enabled());
     }
 

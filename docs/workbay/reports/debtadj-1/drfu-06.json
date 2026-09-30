@@ -1,0 +1,86 @@
+{
+  "lane": "drfu-06",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 6266,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:475-514 builds native identity rows from IoU-matched GT and predicted faces, while :524 uses the full present_identities list for e2e; scripts/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:108-124 checks equal detection rows and higher e2e identification false negatives.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "No additional implementation fix is indicated; the current frame split follows the described rule."
+    },
+    {
+      "db_id": 6273,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:123-126 resolves fractional floors against n_entries and :647 passes the manifest-entry count; scripts/prototype-description-service/scripts/bench/tests/test_attrition_floor.py:20-23 asserts 0.90 of 150 resolves to 135.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated; floor resolution uses manifest size as the fraction base."
+    },
+    {
+      "db_id": 6274,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:90 defines the interval as ci_half_width and :314-316 compares it to head_to_head_delta/2 on the same unitless ratio scale; scripts/prototype-description-service/scripts/bench/tests/test_precision_precondition.py:23-42 exercises the 0.10 delta threshold against 0.05 half-width.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated; the CI level and fraction-scale half-width are pinned and reported."
+    },
+    {
+      "db_id": 6275,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:236-239 computes two-sided bootstrap sign-tail p-values around zero, :276-300 defines Holm with alpha=0.05, and :1096-1107 applies it over the declared secondary endpoints; scripts/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py:169-185 asserts p-values and Holm results.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated; the code defines bootstrap p-values and the Holm family and threshold."
+    },
+    {
+      "db_id": 6276,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:42 pins CI_LEVEL=0.95, :233-243 computes the 2.5/97.5 percentile interval and its half-width, and :1207 stamps ci_level in the report provenance.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated; detection scoring and bootstrap use the explicit detection subset."
+    },
+    {
+      "db_id": 6278,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:902 creates detection_entries from the accepted detection_scoring_set, :986-989 assigns detection metrics that subset and identification metrics accepted_entries, and :1013 builds bootstrap series from each metric population; scripts/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py:192-202 asserts a box-less accepted entry is excluded from detection precision.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated for this lane; the contract and rule paths are already indexed."
+    },
+    {
+      "db_id": 9612,
+      "outcome": "CONFIRMED",
+      "evidence": ".gitignore:169-170 contains ignore rules, but the current lane index lists 27 tracked paths under docs/workbay/contracts and docs/workbay/rules (including docs/workbay/contracts/cluster-delta-api.md); ignored paths are therefore committed in this lane snapshot.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated for this lane; the contract and rule paths are already indexed."
+    },
+    {
+      "db_id": 10164,
+      "outcome": "CONFIRMED",
+      "evidence": "scripts/deploy/sync-demo.sh:462-483 gates measured alt coverage and :484-507 fails closed on absent or untrusted/seeded provenance; scripts/deploy/tests/test-smoke-gate.sh:108 asserts 0/100 coverage fails and :693-699 asserts fixture provenance remains blocked with enforcement disabled.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "scripts/deploy/tests/test-smoke-gate.sh",
+      "size": "S",
+      "fix_hint": "No implementation fix is indicated; the public demo gate checks both coverage and provenance."
+    }
+  ]
+}

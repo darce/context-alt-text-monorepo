@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 import re
-import stat
 import subprocess
 from pathlib import Path
 
 import pytest
-
+from conftest import _write_executable
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 REPO_ROOT = SCRIPT.parents[2]
@@ -135,11 +134,6 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${FAKE_RSYNC_LOG:?}"
 exit 0
 """
-
-
-def _write_executable(path: Path, body: str) -> None:
-    path.write_text(body)
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
 @pytest.fixture

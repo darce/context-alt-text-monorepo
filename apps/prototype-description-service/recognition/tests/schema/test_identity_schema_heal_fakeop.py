@@ -102,6 +102,24 @@ def _issued_drop(op: _FakeOp) -> bool:
     return any(needle in sql.replace("\n", " ") for sql in op.statements)
 
 
+def test_repair_describe_demand_lease_retention_covers_shorter_lease_deadlines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    op = _FakeOp()
+    monkeypatch.setattr(MIGRATION, "_relkind", lambda _op, _name: "r")
+    monkeypatch.setattr(
+        MIGRATION,
+        "_existing_columns",
+        lambda _op, _table: {"tenant_id", "operation_id", "expires_at", "retain_until"},
+    )
+
+    MIGRATION._repair_describe_demand_lease_retention(op)
+
+    sql = op.statements[0]
+    assert "lease.retain_until <> operation.retain_until" in sql
+    assert "lease.expires_at > operation.retain_until" in sql
+
+
 def test_restore_matview_grants_raise_named_remediation_on_dbapi_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

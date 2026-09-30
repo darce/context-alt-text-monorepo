@@ -473,6 +473,7 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion_id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -560,6 +561,7 @@ async def test_accept_merge_suggestion_response_carries_source_and_target_ids(
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
     monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion_id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -1242,6 +1244,48 @@ def _bind_merge_repo(monkeypatch, suggestion, *, delete_error: Exception | None 
 
 
 @pytest.mark.asyncio
+async def test_accept_merge_suggestion_returns_conflict_if_update_matches_no_pending_row(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """A concurrent resolution must make the conditional accept update lose."""
+    from fastapi import HTTPException
+    from recognition.domain.suggestion import SuggestionStatus
+    from recognition.interface_adapters.http.routers.suggestions import (
+        AcceptMergeSuggestionRequest,
+        accept_merge_suggestion,
+    )
+
+    cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    fake_cluster_service.fake_cluster_repository = fake_cluster_repository
+    suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
+    _bind_merge_repo(monkeypatch, suggestion)
+
+    fake_session = api_client.app.state.fake_session
+    commits_before = fake_session.commit_calls
+
+    async def cluster_service_builder(_tenant_id: str):
+        return fake_cluster_service
+
+    with pytest.raises(HTTPException) as raised:
+        await accept_merge_suggestion(
+            suggestion_id=suggestion.id,
+            request=AcceptMergeSuggestionRequest(tenant_id=tenant_id),
+            auth=None,
+            session=fake_session,
+            cluster_service_builder=cluster_service_builder,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail == "Merge suggestion is no longer pending"
+    assert fake_session.commit_calls == commits_before
+    assert suggestion.status == SuggestionStatus.PENDING
+
+
+@pytest.mark.asyncio
 async def test_accept_merge_suggestion_returns_moved_identity_ids(
     api_client,
     tenant_id,
@@ -1272,6 +1316,7 @@ async def test_accept_merge_suggestion_returns_moved_identity_ids(
         identity_id=str(uuid.uuid4()),
     )
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion.id}/accept",
         headers={"X-Tenant-ID": tenant_id},
@@ -1292,7 +1337,6 @@ async def test_accept_merge_suggestion_returns_moved_identity_ids(
 
 @pytest.mark.asyncio
 async def test_accept_merge_suggestion_rolls_back_merge_when_accept_marking_fails(
-    api_client,
     tenant_id,
     fake_cluster_service,
     fake_cluster_repository,
@@ -1305,19 +1349,30 @@ async def test_accept_merge_suggestion_rolls_back_merge_when_accept_marking_fail
     (ARCH-03: design the failure path, do not leave a half-applied write behind).
     """
     from recognition.domain.suggestion import SuggestionStatus
+    from recognition.interface_adapters.http.routers.suggestions import (
+        AcceptMergeSuggestionRequest,
+        accept_merge_suggestion,
+    )
 
     cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    fake_cluster_service.fake_cluster_repository = fake_cluster_repository
     suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
     _bind_merge_repo(monkeypatch, suggestion, delete_error=RuntimeError("accept marking failed"))
 
-    fake_session = _fake_session_of(api_client)
+    fake_session = FakeSession()
+    fake_session.queue_execute_result(rowcount=1)
     commits_before = fake_session.commit_calls
 
+    async def cluster_service_builder(_tenant_id: str):
+        return fake_cluster_service
+
     with pytest.raises(RuntimeError, match="accept marking failed"):
-        api_client.post(
-            f"/recognition/suggestions/merge/{suggestion.id}/accept",
-            headers={"X-Tenant-ID": tenant_id},
-            json={"tenant_id": tenant_id},
+        await accept_merge_suggestion(
+            suggestion_id=suggestion.id,
+            request=AcceptMergeSuggestionRequest(tenant_id=tenant_id),
+            auth=None,
+            session=fake_session,
+            cluster_service_builder=cluster_service_builder,
         )
 
     # No commit at all: the merge writes stay inside the aborted transaction.
@@ -1338,6 +1393,7 @@ async def test_accept_merge_suggestion_honours_operator_chosen_survivor(
     suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
     _bind_merge_repo(monkeypatch, suggestion)
 
+    api_client.app.state.fake_session.queue_execute_result(rowcount=1)
     resp = api_client.post(
         f"/recognition/suggestions/merge/{suggestion.id}/accept",
         headers={"X-Tenant-ID": tenant_id},

@@ -53,11 +53,9 @@ def _is_missing_git_binary(exc: BaseException) -> bool:
     Retained as a classifier for error messages; missing-binary no longer opens
     a format-only hatch (wE2 refuse-uniform / RD-01).
     """
-    if isinstance(exc, FileNotFoundError):
-        return True
-    if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOENT:
-        return True
-    return False
+    return isinstance(exc, FileNotFoundError) or (
+        isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOENT
+    )
 
 
 def _refuse_git_probe(label: str, sha: str, detail: str, *, cause: BaseException | None = None) -> None:
@@ -94,13 +92,9 @@ def _resolve_git_binary() -> str:
     try:
         resolved = Path(found).resolve(strict=True)
     except (OSError, RuntimeError) as exc:
-        raise FileNotFoundError(
-            errno.ENOENT, "git executable not resolvable", found
-        ) from exc
+        raise FileNotFoundError(errno.ENOENT, "git executable not resolvable", found) from exc
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise FileNotFoundError(
-            errno.ENOENT, "git executable not usable", str(resolved)
-        )
+        raise FileNotFoundError(errno.ENOENT, "git executable not usable", str(resolved))
     return str(resolved)
 
 
@@ -225,8 +219,7 @@ def _verify_git_commit(
         _refuse_git_probe(
             label,
             sha,
-            f"is-inside-work-tree rc={in_repo.returncode} stdout="
-            f"{(in_repo.stdout or '').strip()!r}: {detail}",
+            f"is-inside-work-tree rc={in_repo.returncode} stdout={(in_repo.stdout or '').strip()!r}: {detail}",
         )
         raise  # pragma: no cover
 

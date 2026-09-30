@@ -94,6 +94,8 @@ def build_experiment_manifest(
         raise ExperimentManifestError("run_id is required and must remain stable")
     if created_at is None:
         raise ExperimentManifestError("created_at is required and must remain stable")
+    if not isinstance(aborted, bool):
+        raise ExperimentManifestError("aborted must be a boolean")
 
     normalized_head_sha = _normalize_head_sha(head_sha)
     corpus = _validate_corpus_manifest(corpus_manifest)
@@ -109,6 +111,11 @@ def build_experiment_manifest(
         )
 
     validated_face_run_record = validate_face_run_record(face_run_record)
+    record_aborted = validated_face_run_record.get("aborted", False)
+    if aborted != record_aborted:
+        raise ExperimentManifestError(
+            "aborted flag must match output.face_run_record.aborted"
+        )
     document = {
         "identity": {
             "run_id": run_id,
@@ -120,7 +127,7 @@ def build_experiment_manifest(
             "corpus_manifest_version": corpus.manifest_version,
         },
         "policy": {"stack_pair": policy},
-        "execution": {"status": "aborted" if aborted else "completed"},
+        "execution": {"status": "aborted" if record_aborted else "completed"},
         "output": {"face_run_record": validated_face_run_record},
     }
     return validate_experiment_manifest(document)
@@ -169,6 +176,15 @@ def validate_experiment_manifest(document: dict[str, Any], **_kwargs: Any) -> di
         raise ExperimentManifestError(
             "experiment manifest policy.stack_pair must contain exactly the eight stack-pair provenance fields"
         )
+    pinned_corpus_sha = stack_policy["manifest_sha256"]
+    if pinned_corpus_sha is None:
+        raise ExperimentManifestError(
+            "stack pair is unpinned: manifest_sha256 must pin the corpus manifest"
+        )
+    if persisted_corpus_sha != pinned_corpus_sha:
+        raise ExperimentManifestError(
+            "corpus manifest sha256 pin mismatch with the stack pair manifest_sha256 pin"
+        )
 
     execution = document.get("execution")
     if not isinstance(execution, dict) or execution.get("status") not in {"completed", "aborted"}:
@@ -186,6 +202,11 @@ def validate_experiment_manifest(document: dict[str, Any], **_kwargs: Any) -> di
         raise ExperimentManifestError(f"invalid output.face_run_record: {exc}") from exc
     if validated_record != embedded_record:
         raise ExperimentManifestError("output.face_run_record is not in canonical validated form")
+    expected_status = "aborted" if validated_record.get("aborted", False) else "completed"
+    if execution["status"] != expected_status:
+        raise ExperimentManifestError(
+            "execution.status must match output.face_run_record.aborted"
+        )
     return document
 
 

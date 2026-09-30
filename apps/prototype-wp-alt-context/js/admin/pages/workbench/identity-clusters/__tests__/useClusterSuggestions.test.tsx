@@ -1,7 +1,5 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as buildNamingOptionsModule from '../buildNamingOptions';
 import {
@@ -20,6 +18,7 @@ import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';
 import * as recognitionApi from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 
 vi.mock('../../../../api/recognition', () => ({
   fetchIdentitiesSuggestions: vi.fn(),
@@ -247,18 +246,13 @@ describe('selectClusterSuggestions', () => {
 });
 
 describe('useClusterSuggestions', () => {
-  const createWrapper = () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-    return { wrapper, queryClient };
-  };
+  let queryClient: ReturnType<typeof buildTestQueryClient>;
+  let wrapper: ReturnType<typeof createQueryWrapper>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    queryClient = buildTestQueryClient();
+    wrapper = createQueryWrapper(queryClient);
     vi.mocked(useRosterEntries).mockReturnValue(
       createMockQuery({
         data: [],
@@ -269,8 +263,11 @@ describe('useClusterSuggestions', () => {
     );
   });
 
+  afterEach(() => {
+    queryClient.clear();
+  });
+
   it('merges identity projection with naming union and preserves server arrival order', async () => {
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -344,11 +341,9 @@ describe('useClusterSuggestions', () => {
     expect(result.current.options[0].value).toBe(namingOptionValue('cluster', 'c1'));
     expect(result.current.options.some((option) => option.source === 'person' && option.label === 'Alicia')).toBe(true);
 
-    queryClient.clear();
   });
 
   it('preserves server arrival order for Suggested group (no client re-sort)', async () => {
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -379,14 +374,12 @@ describe('useClusterSuggestions', () => {
     expect(result.current.options.map((option) => option.label)).toEqual(['Alicia', 'Alice', 'Alison']);
     expect(result.current.options.every((option) => option.group === NAMING_GROUP_SUGGESTED)).toBe(true);
 
-    queryClient.clear();
   });
 
   it('free-typed suggested label findClusterByLabel returns suggestionId (L1V-01 → acceptSuggestion)', async () => {
     // Free-type Save calls findClusterByLabel; without suggestionId on the match the
     // merge hop never calls acceptSuggestion and the pending row stays open.
     // Predicted first failure: match.suggestionId undefined despite option.suggestion_id.
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -426,11 +419,9 @@ describe('useClusterSuggestions', () => {
       suggestionId: 'sug-free-type-api',
     });
 
-    queryClient.clear();
   });
 
   it('excludes the editable cluster from suggestions and exact label lookup', async () => {
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -480,11 +471,9 @@ describe('useClusterSuggestions', () => {
     const exactMatch = await result.current.findClusterByLabel('Saffron Cypress');
     expect(exactMatch).toBeNull();
 
-    queryClient.clear();
   });
 
   it('surfaces the first human-labeled match inside the window in the dropdown (clusterFirstThenHuman, BR-15)', async () => {
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -512,11 +501,9 @@ describe('useClusterSuggestions', () => {
     expect(result.current.options.map((option) => option.label)).toEqual(['Bob', 'Bobby']);
     expect(result.current.options[0]?.value).toBe(namingOptionValue('cluster', 'cluster-bob'));
 
-    queryClient.clear();
   });
 
   it('does not render cluster-* auto-label options in Suggested group', async () => {
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -545,12 +532,10 @@ describe('useClusterSuggestions', () => {
     expect(result.current.options.map((option) => option.label)).toEqual(['Bob']);
     expect(result.current.options.every((option) => !option.label.startsWith('cluster-'))).toBe(true);
 
-    queryClient.clear();
   });
 
   it('source-gates findClusterByLabel: person-name hits never resolve as merge targets even when same-named cluster exists (PR-16 / FIX-1)', async () => {
     // Predicted first failure: remote same-named cluster returned as merge target (prior tests mocked empty list)
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -616,12 +601,10 @@ describe('useClusterSuggestions', () => {
       expect(match.id).not.toMatch(/^person/);
     }
 
-    queryClient.clear();
   });
 
   it('rejects auto cluster-* labels from remote findClusterByLabel (BR-17 / FIX-2)', async () => {
     // Predicted first failure: returns { id: 'auto-1', label: 'cluster-1234' }
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -652,12 +635,10 @@ describe('useClusterSuggestions', () => {
     const match = await result.current.findClusterByLabel('cluster-1234');
     expect(match).toBeNull();
 
-    queryClient.clear();
   });
 
   it('excludes auto cluster-* labels from All Labels union (UXP-3-BR-17)', async () => {
     // Predicted first failure: All Labels includes label 'cluster-9999'
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -690,14 +671,12 @@ describe('useClusterSuggestions', () => {
     await waitFor(() => expect(result.current.options.some((option) => option.label === 'Human Label')).toBe(true));
     expect(result.current.options.every((option) => !String(option.label).startsWith('cluster-'))).toBe(true);
 
-    queryClient.clear();
   });
 
   it('namedMatches filter keeps null-labeled ClusterSummary out of naming options (BR-53)', async () => {
     // Real hook (unmocked loader): API returns one null-labeled row + one named row.
     // Options contain the named row only; spy asserts namedMatches filtered before buildNamingOptions
     // (buildNamingOptions itself null-skips, so options alone cannot red-proof the loader filter).
-    const { wrapper, queryClient } = createWrapper();
     const fetchIdentitiesSuggestionsMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
     const buildSpy = vi.spyOn(buildNamingOptionsModule, 'buildNamingOptions');
@@ -753,7 +732,6 @@ describe('useClusterSuggestions', () => {
     expect(labelMatchArgs?.map((row) => row.id)).toEqual(['named-row']);
 
     buildSpy.mockRestore();
-    queryClient.clear();
   });
 
   describe('TEST-15 at-rest labelled clusters (E21-16)', () => {
@@ -777,7 +755,6 @@ describe('useClusterSuggestions', () => {
       // is disabled until 2+ chars, so at-rest union is suggestions + roster only.
       // ORCH-11: All Labels is sliced at NAMING_OPTIONS_LIMIT even when the
       // at-rest labelled page is larger.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       const labeledPage = [
@@ -815,7 +792,6 @@ describe('useClusterSuggestions', () => {
       );
       expect(optionLabels).toHaveLength(NAMING_OPTIONS_LIMIT);
 
-      queryClient.clear();
     });
 
     it('does not render auto cluster-* labels from the at-rest labelled list', async () => {
@@ -823,7 +799,6 @@ describe('useClusterSuggestions', () => {
       // fetched at rest. cluster-1234 cannot leak pre-fix — no at-rest fetch runs.
       // The auto-label exclusion is the pre-existing BR-17 gate in buildNamingOptions
       // (`if (!isHumanLabeledTarget(label)) continue`), not the new at-rest query.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       listRecognitionClustersMock.mockResolvedValue({
@@ -849,14 +824,12 @@ describe('useClusterSuggestions', () => {
         false,
       );
 
-      queryClient.clear();
     });
 
     it('still triggers the >=2-char search query and merges those hits', async () => {
       // Predicted first failure: Maya never appears if the memo ternary is frozen
       // on atRestLabeledClusters, or if the search `enabled` threshold moves to
       // >= 3 (typed 'Ma' is length 2 and already enabled the pre-change query).
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       listRecognitionClustersMock.mockImplementation((params) => {
@@ -902,11 +875,9 @@ describe('useClusterSuggestions', () => {
       // Production replaces the at-rest page rather than unioning it with search hits.
       expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
-      queryClient.clear();
     });
 
     it('threads envelope total/truncated instead of deriving them from page length (REV1-01)', async () => {
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const page = Array.from({ length: 50 }, (_, index) => ({
         ...baseCluster,
@@ -929,13 +900,11 @@ describe('useClusterSuggestions', () => {
       await waitFor(() => expect(result.current.atRestTruncated).toBe(true));
       expect(result.current.atRestTotal).toBe(80);
 
-      queryClient.clear();
     });
 
     it('excludes editableClusterId from the at-rest labelled list', async () => {
       // Predicted first failure (pre-fix): neither at-rest row appears. After the
       // at-rest fetch, the editable cluster must stay out of the assign dropdown.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       listRecognitionClustersMock.mockResolvedValue({
@@ -968,7 +937,6 @@ describe('useClusterSuggestions', () => {
       );
       expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
-      queryClient.clear();
     });
 
     it('keeps the at-rest labelled page visible while the first search is in flight (REV1-02)', async () => {
@@ -976,7 +944,6 @@ describe('useClusterSuggestions', () => {
       // search observer has never fetched, so labelMatches ?? [] blanks the list.
       // Assert after the flip and before the deferred search resolves — asserting
       // before debounce is tautological (at-rest mode is still active).
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
 
@@ -1041,13 +1008,11 @@ describe('useClusterSuggestions', () => {
       );
       expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
-      queryClient.clear();
     });
 
     it('treats a one-character query as at-rest and does not search', async () => {
       // Existing coverage is 0 chars (at-rest) and 2 chars (search). A gate written
       // as `<= 1` or `> 1` would pass those; one character is the missing edge.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       listRecognitionClustersMock.mockResolvedValue({
@@ -1089,7 +1054,6 @@ describe('useClusterSuggestions', () => {
       ).toBe(false);
 
       vi.useRealTimers();
-      queryClient.clear();
     });
 
     it('does not offer the editable cluster among naming options while preserving envelope total', async () => {
@@ -1097,7 +1061,6 @@ describe('useClusterSuggestions', () => {
       // buildNamingOptions({ excludeClusterId })). This test pins the combined
       // user-visible result rather than either layer alone. atRestTotal is the
       // envelope total and stays independent of the filtered page.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       const atRestPage = [
@@ -1127,13 +1090,11 @@ describe('useClusterSuggestions', () => {
       await waitFor(() => expect(result.current.atRestTotal).toBe(12));
       expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
-      queryClient.clear();
     });
 
     it('keeps a labelled cluster past the at-rest page unreachable until the operator types', async () => {
       // Existing coverage only spies the at-rest `limit` argument. A row that
       // is not on the 50-row page must stay absent until typed search runs.
-      const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       const atRestPage = Array.from({ length: 50 }, (_, index) => ({
@@ -1184,7 +1145,6 @@ describe('useClusterSuggestions', () => {
         expect(result.current.options.some((option) => option.label === 'Zenobia Vance')).toBe(true),
       );
 
-      queryClient.clear();
     });
   });
 });

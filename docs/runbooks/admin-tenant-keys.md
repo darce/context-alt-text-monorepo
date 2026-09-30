@@ -62,14 +62,21 @@ authenticate per section (c). These targets wrap
 
 ## (a) Enable `/admin` on the prod VM
 
-1. In the prod env file (`/opt/acx-backend/prod/secrets/.env`), set:
+1. In the prod env file (`/opt/acx-backend/prod/.env`, the only env file the
+   prod stack reads; a legacy `prod/secrets/.env` is a stale copy), set:
 
    ```sh
    RECOGNITION_ADMIN_ENABLED=true
-   # strong token, >=32 chars:  python -c "import secrets; print(secrets.token_urlsafe(32))"
-   RECOGNITION_ADMIN_TOKEN=<paste-generated-token>
    RECOGNITION_ADMIN_TAILNET_BOUND=1
    ```
+
+   The token is not an env value on prod (`RECOGNITION_SECRET_BACKEND=oci_vault`):
+   store a strong token (>=32 chars:
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`) as a new
+   version of the Vault secret mapped as `RECOGNITION_ADMIN_TOKEN` in
+   `RECOGNITION_VAULT_SECRET_MAP`, then `sudo systemctl restart acx-prod`
+   (`infra/oci/vault-instance-principal-runbook.md` §§ 1 and 5). A
+   `RECOGNITION_ADMIN_TOKEN=` line in prod's `.env` is ignored under `oci_vault`.
 
    Fail-closed: if `RECOGNITION_ADMIN_ENABLED=true` with an empty/`<32`-char
    token, or in production without `RECOGNITION_ADMIN_TAILNET_BOUND=1`, the

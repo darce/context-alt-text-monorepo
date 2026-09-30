@@ -52,6 +52,10 @@ lane-reset: lane-guard
 	fi
 
 lane-refresh: lane-guard
+
+ifeq ($(and $(ROOT_MAKEFILE_DIR),$(wildcard Makefile.d/lane-gate.mk)),)
+# The installed plugin overlay owns this recipe; keep this fallback when it is absent.
+lane-refresh:
 	@set -eu; \
 	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
 	STASH_MSG="lane-refresh $(LANE) $$(date +%Y%m%d%H%M%S)"; \
@@ -151,6 +155,7 @@ lane-refresh: lane-guard
 		fi; \
 		git -C "$$TARGET_WORKTREE" status -sb; \
 	fi
+endif
 
 lane-clean: lane-guard
 	@set -eu; \
@@ -243,6 +248,10 @@ lane-commits: lane-guard lane-orchestrator-guard
 	fi
 
 lane-intake: lane-guard lane-orchestrator-guard
+
+ifeq ($(and $(ROOT_MAKEFILE_DIR),$(wildcard Makefile.d/lane-gate.mk)),)
+# The installed plugin overlay owns this recipe; keep this fallback when it is absent.
+lane-intake:
 	@set -eu; \
 	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
 		echo "Orchestrator root is dirty. Commit, stash, or clean it before lane intake."; \
@@ -354,3 +363,4 @@ lane-intake: lane-guard lane-orchestrator-guard
 		fi; \
 		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
 	fi
+endif

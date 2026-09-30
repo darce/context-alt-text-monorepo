@@ -83,8 +83,12 @@ need to browse/list/revoke keys, and `make provision-customer` for a real custom
    ```
 
 2. Browse `http://localhost:8001/admin/` (trailing slash). Basic auth:
-   username anything, password = the **prod** `RECOGNITION_ADMIN_TOKEN` from
-   `/opt/acx-backend/prod/secrets/.env` on the VM. (The token in your laptop's
+   username anything, password = the **prod** `RECOGNITION_ADMIN_TOKEN`. Prod
+   runs `RECOGNITION_SECRET_BACKEND=oci_vault`, so the live value is the OCI
+   Vault secret mapped as `RECOGNITION_ADMIN_TOKEN` in prod's
+   `RECOGNITION_VAULT_SECRET_MAP` (`infra/oci/vault-instance-principal-runbook.md`
+   § 1); a token line in any prod env file is ignored. `make admin-oci-mint`
+   needs no token at all. (The token in your laptop's
    `apps/prototype-description-service/.env` is the *local* console's token —
    it will be rejected here, by design.)
 3. Create the tenant: fresh UUID + the site URL (e.g. `http://localhost:10010`
@@ -223,11 +227,47 @@ selects the DB (`local` default; `prod` for hosted).
 
 ---
 
+## Inspecting config without leaking secrets (SEC-07)
+
+Anything a shell command prints goes into the agent transcript and the
+session log. That counts as disclosure, even if nobody reads it.
+Name-based redaction (`sed 's/KEY=.*/***/'`, `grep -v password`) does not
+work here. On 2026-09-24 two values leaked through it:
+
+- `WORDPRESS_CONFIG_EXTRA` embeds
+  `define('ACX_RECOGNITION_API_KEY','<value>')` inside a single env var,
+  so a filter keyed on `KEY=` never matched.
+- `POSTGRES_DSN` / `POSTGRES_SYNC_DSN` carry the password in the URL
+  userinfo (`user:<pw>@host`). The variable name contains no secret-looking
+  word.
+
+Rules:
+
+1. **List names, not values.** Print `NAME` only:
+   `docker inspect <c> --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1`.
+   Use the same pattern for `.env` files (`cut -d= -f1 .env`) and
+   `printenv | cut -d= -f1`.
+2. **Read a value only by exact name, and only if it is non-secret by
+   definition.** Examples: `RECOGNITION_FACE_PIPELINE_PROFILE`,
+   `ACX_IMAGE_TAG`, `ACX_RECOGNITION_URL`. Do not grep by pattern over
+   values. Anything named `*_DSN`, `*_URL` with userinfo, `*CONFIG_EXTRA*`,
+   `*_KEY`, `*_TOKEN`, `*_SECRET` or `*PASSWORD*` is treated as secret.
+3. **Presence checks only for secrets:**
+   `[ -n "$VAR" ] && echo set`, or `wp config has ACX_RECOGNITION_API_KEY`.
+   Never print a prefix or length.
+4. **Never dump whole containers of config:** `wp-config.php`,
+   `WORDPRESS_CONFIG_EXTRA`, `secrets/.env`, `docker inspect` without
+   `--format`, `docker compose config`, or `env` inside a container.
+5. **A leak is a rotation.** If a value reaches a transcript, rotate it the
+   same day: API keys per Track 1 § Key lifecycle, the demo wp-admin
+   password per AUTH-01, and DB passwords via the env's `.env` plus a stack
+   restart. Record a decision naming what was rotated.
+
 ## Failure signature quick reference
 
 | Symptom | Likely cause |
 | --- | --- |
-| Prod `/admin` Basic auth rejects your token | You supplied the **local** `.env` token to the **prod** console (tunnel `:8001`). Fetch the prod token from `/opt/acx-backend/prod/secrets/.env` on the VM. |
+| Prod `/admin` Basic auth rejects your token | You supplied the **local** `.env` token to the **prod** console (tunnel `:8001`). Prod reads its token from OCI Vault (`oci_vault` backend), not from an env file; or skip the console with `make admin-oci-mint`. |
 | Settings "API key rejected", whoami 401/403 | Key minted in a different environment's DB than the service being called — or orphaned by a prod DB reset. Re-mint on the correct track. |
 | Pasting a key in Settings has no effect | `ACX_RECOGNITION_API_KEY` (or `_URL`) constant is defined; constants override options. Clear the defines or manage via constants consistently. |
 | Local console mints fine but remote calls still 403 | Working as designed — local mints are Track 2 fixtures; the remote service has never heard of them. Mint on Track 1. |

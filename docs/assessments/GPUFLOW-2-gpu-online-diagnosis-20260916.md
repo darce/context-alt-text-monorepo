@@ -285,14 +285,25 @@ missing value from that account is **NOT CAPTURED**, not zero.
 
 - [ ] **GPU state and health.** Record:
 
+  On the GPU lifecycle host:
+
   ```bash
   sudo jq . /run/acx/gpu-state.json
-  curl -fsS -H "X-Api-Key: ${ACX_HEALTH_API_KEY:?set from the API host env}" https://<api-host>/health/detailed | jq '.description_adapter'
   ```
 
-  Read `ACX_HEALTH_API_KEY` from the API host env file and never echo its value
-  or include it in captured evidence; `/health/detailed` is auth-gated and the
-  deployment probe uses `X-Api-Key` ([api/main.py:543-548](../../apps/prototype-description-service/api/main.py#L543-L548), [infra/oci/demo/bootstrap-wp.sh:364-392](../../infra/oci/demo/bootstrap-wp.sh#L364-L392)).
+  On the WordPress host, from the WordPress install directory:
+
+  ```bash
+  (
+    api_key="$(wp eval 'echo ACX_RECOGNITION_API_KEY;')"
+    curl -fsS -H "X-Api-Key: ${api_key:?ACX_RECOGNITION_API_KEY is not set in WordPress config}" https://<api-host>/health/detailed | jq '.description_adapter'
+  )
+  ```
+
+  Run the health check from the WordPress host, where `wp eval` reads the
+  configured `ACX_RECOGNITION_API_KEY`; never echo its value or include it in
+  captured evidence. `/health/detailed` is auth-gated and the deployment probe
+  uses `X-Api-Key` ([api/main.py:543-548](../../apps/prototype-description-service/api/main.py#L543-L548), [infra/oci/demo/bootstrap-wp.sh:364-392](../../infra/oci/demo/bootstrap-wp.sh#L364-L392)).
 
   Expected: state transitions `stopped` → `starting`/`warming` → `ready` for a
   successful cold path, or `degraded` with a non-empty lifecycle reason for a
@@ -300,12 +311,13 @@ missing value from that account is **NOT CAPTURED**, not zero.
   adapter profile; never infer `ready` from an OCI `RUNNING` state alone.
 
 - [ ] **WP circuit and outbox.** On the WordPress host, query the existing sync
-  health endpoint and read-only tables:
+  health endpoint and read-only tables from the WordPress install directory:
 
   ```bash
   curl -fsS https://demo.altcontext.com/wp-json/acx/v1/recognition/sync/health \
     | jq '{breaker,outbox}'
-  wp db query "SELECT CASE WHEN first_failed_at IS NULL THEN 'missing_first_failed_at' WHEN first_failed_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) THEN '<1d' WHEN first_failed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN '1-7d' ELSE '>=7d' END AS age_bucket, COUNT(*) AS rows, MIN(first_failed_at) AS oldest_first_failure, MAX(last_attempted_at) AS newest_attempt FROM wp_acx_sync_outbox WHERE status = 'failed' GROUP BY age_bucket ORDER BY age_bucket"
+  outbox_table="$(wp db prefix)acx_sync_outbox"
+  wp db query "SELECT CASE WHEN first_failed_at IS NULL THEN 'missing_first_failed_at' WHEN first_failed_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) THEN '<1d' WHEN first_failed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN '1-7d' ELSE '>=7d' END AS age_bucket, COUNT(*) AS rows, MIN(first_failed_at) AS oldest_first_failure, MAX(last_attempted_at) AS newest_attempt FROM ${outbox_table} WHERE status = 'failed' GROUP BY age_bucket ORDER BY age_bucket"
   ```
 
   Expected: the breaker state is explicitly `open` or `closed`, the failed

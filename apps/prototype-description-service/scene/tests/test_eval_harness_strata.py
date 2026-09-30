@@ -158,8 +158,9 @@ def test_face_dependent_strata_keep_the_frame_when_detector_output_is_partial():
             "hit.jpg",
         }
     missed = report.offline[Domain.PEOPLE].candidates[
-        next(i for i, candidate in enumerate(report.offline[Domain.PEOPLE].candidates)
-             if candidate.path == "missed.jpg")
+        next(
+            i for i, candidate in enumerate(report.offline[Domain.PEOPLE].candidates) if candidate.path == "missed.jpg"
+        )
     ]
     assert missed.face_count == 0 and missed.face_count_source is FaceCountSource.NONE
 

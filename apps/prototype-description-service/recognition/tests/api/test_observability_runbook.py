@@ -13,6 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    CorrelationSource,
+    generate_correlation_id,
+    validate_correlation_id,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[5]
 RUNBOOK = REPO_ROOT / "docs" / "operations" / "observability-runbook.md"
 
@@ -58,11 +65,29 @@ def test_runbook_includes_promql_histogram_quantile_formula(runbook_text: str) -
 
 
 def test_runbook_references_correlation_header_and_metrics_endpoint(runbook_text: str) -> None:
-    """Both the correlation header (`X-Request-ID`) and `/metrics` must be
+    """Both the shipped correlation header and `/metrics` must be
     named explicitly so operators can search logs and scrape metrics without
     guessing identifiers.
     """
-    assert "X-Request-ID" in runbook_text
+    assert CORRELATION_ID_HEADER in runbook_text
     assert "/metrics" in runbook_text
     assert "/health" in runbook_text
     assert "/ready" in runbook_text
+
+
+def test_runbook_matches_shipped_correlation_contract(runbook_text: str) -> None:
+    """The operator contract must track the middleware's public identifiers."""
+    generated_id = generate_correlation_id()
+    assert validate_correlation_id(generated_id) == generated_id
+
+    generation_doc = (generate_correlation_id.__doc__ or "").strip()
+    assert generation_doc.startswith("Generate a ")
+    id_format = generation_doc.removeprefix("Generate a ").removesuffix(" request id.")
+
+    assert id_format in runbook_text
+    assert CORRELATION_ID_HEADER in runbook_text
+    assert "echoed back" in runbook_text
+    assert "response header" in runbook_text
+    assert all(f"`{source.value}`" in runbook_text for source in CorrelationSource)
+    assert "X-Request-ID" not in runbook_text
+    assert "req-<uuid7>" not in runbook_text

@@ -18,6 +18,8 @@ Reign in scattered `.env`/secret authentication across the three services so tha
 
 ## Assessment — the real problem
 
+> **Historical (2026-07-08 intake).** Phases 1–3 shipped: `RECOGNITION_ALLOWED_API_KEYS` was removed (option (a), decision #1882) and tenant keys are DB-only. Current state lives in the [inventory](../../apps/prototype-description-service/docs/secrets-inventory.md).
+
 There is not one secrets problem but **five trust domains** smeared across files with no ownership map. Consolidation ≠ one file (a DB password ≠ a human login ≠ a machine key); it = **one documented owner per secret + one fetch mechanism + one manager for prod**.
 
 | # | Trust domain | Secrets | Canonical source (target) | Scattered today |
@@ -56,7 +58,7 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
 2. **Delete dead root `.env`.**
 3. **One documented `.env.example` per deployable** — each var annotated with domain + source + consumer.
 4. **Load-time validation (rg-008):** each service fails fast with a clear message on a missing *required* secret; no silent empty defaults.
-5. **Decide the fate of `RECOGNITION_ALLOWED_API_KEYS` (a dev-only bypass, not prod drift** — already blocked in prod per `recognition/config/security.py:103,114` and `api/main.py:127-130`**).** Choose: **(a) remove it** — devs/CI must mint a real key via `/admin`; costs local ergonomics but leaves one code path; or **(b) keep it, hard-gated to non-prod, documented as a dev bypass.** If (a): expand→contract — enumerate active DB keys via the `/admin` list / `api_key_repository`, grep the static-list consumers (`recognition/config/security.py:61` `dev_api_keys` default_factory + `api/main.py:127-130`), confirm no prod consumer, then delete the config field. Prod bootstrap is unaffected (`RECOGNITION_ADMIN_TOKEN` mints the first key). **Recommendation: (a)**, adding a `make dev-mint-key` helper to offset the ergonomics loss.
+5. **`RECOGNITION_ALLOWED_API_KEYS` — done, option (a) enacted.** The allowlist is removed (decision #1882); tenant keys are DB-only and devs/CI mint a real key. There is no env-var bypass in any mode.
 6. **One onboarding command** (`make dev-setup`): copies examples, prompts for values, mints a dev key via `/admin` if (a) is chosen.
 7. **Document the other in-scope secret classes (doc-only — not relocated into app auth):** test creds (`ACX_E2E_WP_ADMIN_*`) — confirm `.env.local` is gitignored, ship `.env.local.example`; demo/human accounts (`WP_ADMIN_*`, `acx-demo-admin`) — record ownership (WordPress user store; demo-bootstrap-only) and confirm never committed. A human login ≠ a machine key, so consolidation here = documentation + gitignore verification, not merging them into the key system.
 
@@ -75,6 +77,25 @@ Heuristics: *be a pessimist → smallest shippable cut*; *branch-by-abstraction*
 - **Failure-mode decision:** Vault unreachable at boot → **fail-fast** (do not serve without secrets), surfaced explicitly.
 
 *Success:* prod boots and pulls secrets via instance principal; no plaintext on host; rotating a secret is a single Vault operation.
+
+### Phase 4 — Centralize the auth pipeline (three planes)
+
+- **Status:** Phases 1–3 landed (the [inventory](../../apps/prototype-description-service/docs/secrets-inventory.md) is current state); Phase 4 is target design.
+- **Plane A — tenant identity and keys** (humans at app.altcontext.com):
+  - Clerk hosted sign-in; the backend verifies Clerk session JWTs against public JWKS (config only, `ACX_CLERK_*`; no backend Clerk secret [SECD-02 minimize the TCB]).
+  - `/portal` (gated by `RECOGNITION_PORTAL_ENABLED`) mints/rotates/revokes in `api_keys`, the single key store; the plugin keeps its key in the WP option.
+  - Break-glass issuers stay: prod `/admin` (tailnet), `make admin-oci-mint`, in-container `manage_api_keys`.
+  - Rotation overlap and emergency revoke follow the [APP-1 scope](app-altcontext-beta-clerk-polar-scope.md).
+  - Status: APP-1 in progress; router on main behind the flag; no app vhost yet.
+- **Plane B — machine secrets:**
+  - Read only through `SecretProvider`; per-env Vault secrets with env-specific names and per-env OCID maps; env files hold config and OCID maps, never prod values.
+  - Rotation = new version + restart; any new provider-read secret (e.g. `POLAR_*`) is mapped before its feature flag turns on (`POLAR_WEBHOOK_SECRET` required before `RECOGNITION_PORTAL_ENABLED`) [CARD-07]; per-env DB passwords [PG-09].
+- **Plane C — operators and agents, verbs not secrets:**
+  - Humans and agents act through Tailscale and make targets that run where the secret lives (`admin-oci-mint`, `provision-customer`, deploy targets), so no secret crosses the laptop/VM boundary [SEC-01][SEC-04 least-privilege agency].
+  - Agents hold no prod root secrets; API tests use dedicated low-tier, expiring, revocable test-tenant keys; high-impact verbs (prod mint, rotation, Vault writes, DB reset) stay human-gated [SEC-05 human-in-the-loop][SECD-04 dual control].
+  - Known gap: lanes on the acx-backend VM can reach IMDS (`169.254.169.254`) and read every env's secrets (shared instance principal `acx-backend-dg`; policy `acx-backend-secret-read` is tenancy-wide).
+  - Operator-gated fixes: a dedicated secrets compartment + per-env dynamic groups; block IMDS from lane sandboxes; or run lanes off the VM [CARD-10][SECD-06 independent defense in depth].
+- *Success:* one issuer path per plane; no plaintext prod secret on disk; every public vhost authenticated; agent sandboxes cannot read prod secrets.
 
 ## Testability (required in the per-phase task plans)
 
@@ -141,6 +162,8 @@ Separate **two distinct auth concerns** — they have opposite answers:
 - You need **MFA, social / passwordless login, or SOC2-grade audit trails**.
 - **Multiple apps** (WP + dashboard + API) must share one identity + RBAC.
 
+**Trigger fired (2026-09):** customer dashboard (APP-1 `/portal`, app.altcontext.com). Clerk was chosen in the [E16-7](e16-7-tenant-selfserve-key-panel-scope.md) and [APP-1](app-altcontext-beta-clerk-polar-scope.md) scopes, superseding the OCI-IAM-first recommendation below for human identity. Machine and tenant keys stay homegrown (point 1).
+
 **Do NOT adopt one** while the only human surface is WP-admin for a few operators (WP's own auth suffices), or for machine/tenant keys.
 
 **Vendor shortlist (evaluate in this order given OCI + ship-soon):**
@@ -159,6 +182,6 @@ Separate **two distinct auth concerns** — they have opposite answers:
 ## Open questions / assumptions
 
 - **A1 (assumption):** exactly one live tenant key is in real use (the `/admin` list shows one active STANDARD key on tenant `…00aa`); Phase-1 allowlist retirement must first confirm no other consumer relies on the static env list. *Verify before the contract step via the `/admin` list + `api_key_repository`, and grep the static-list consumers at `recognition/config/security.py:61` and `api/main.py:127-130`.*
-- **A2 (assumption):** the prod/demo VM can be granted an OCI **dynamic group + instance-principal policy** to read the Vault secret compartment. *Confirm OCI IAM access before Phase 3.*
-- **Q1:** for prod, one Vault compartment shared across services, or per-service compartments? (affects blast radius + IAM policy granularity).
-- **Q2:** SOPS(age)-encrypted compose `.env` in git as an interim (Phase 1.5), or jump straight to Vault (Phase 3)?
+- **A2 (assumption, confirmed):** the prod/demo VM can be granted an OCI **dynamic group + instance-principal policy** to read the Vault secret compartment. Dynamic group `acx-backend-dg` + policy `acx-backend-secret-read` are live; the policy's tenancy-wide scope is the Plane C gap.
+- **Q1:** for prod, one Vault compartment shared across services, or per-service compartments? (affects blast radius + IAM policy granularity). *Answer (AUTHPIPE-1):* isolate by environment, not by service: prod secrets in their own compartment, readable only by prod's principal; real only once prod and non-prod run under different principals (Phase 4, Plane C).
+- **Q2:** SOPS(age)-encrypted compose `.env` in git as an interim (Phase 1.5), or jump straight to Vault (Phase 3)? *Answer:* moot; Phase 3 (Vault) landed, no SOPS interim.

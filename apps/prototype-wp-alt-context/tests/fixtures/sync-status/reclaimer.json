@@ -1,0 +1,50 @@
+{
+  "never_run": {
+    "state": "never_run",
+    "scheduler_mode": "action_scheduler",
+    "effective_period_seconds": 3600,
+    "last_attempt_at": null,
+    "last_success_at": null,
+    "last_outcome": null,
+    "last_purged_count": null,
+    "backlog_remaining": null,
+    "backlog_oldest_age_seconds": null,
+    "batch_cap_reached": false
+  },
+  "healthy": {
+    "state": "healthy",
+    "scheduler_mode": "action_scheduler",
+    "effective_period_seconds": 3600,
+    "last_attempt_at": "2026-09-21T00:00:00Z",
+    "last_success_at": "2026-09-21T00:00:00Z",
+    "last_outcome": "success",
+    "last_purged_count": 12,
+    "backlog_remaining": 3,
+    "backlog_oldest_age_seconds": 120,
+    "batch_cap_reached": false
+  },
+  "overdue": {
+    "state": "overdue",
+    "scheduler_mode": "wp_cron",
+    "effective_period_seconds": 86400,
+    "last_attempt_at": "2026-09-18T00:00:00Z",
+    "last_success_at": "2026-09-18T00:00:00Z",
+    "last_outcome": "failed",
+    "last_purged_count": 0,
+    "backlog_remaining": 100,
+    "backlog_oldest_age_seconds": 172800,
+    "batch_cap_reached": true
+  },
+  "breach": {
+    "state": "breach",
+    "scheduler_mode": "action_scheduler",
+    "effective_period_seconds": 3600,
+    "last_attempt_at": "2026-09-15T00:00:00Z",
+    "last_success_at": "2026-09-15T00:00:00Z",
+    "last_outcome": "lock_contended",
+    "last_purged_count": 0,
+    "backlog_remaining": 250,
+    "backlog_oldest_age_seconds": 518400,
+    "batch_cap_reached": false
+  }
+}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
+import { fetchFailedOutboxOperations } from '../../api/recognition';
 import type { OutboxListResponse, OutboxOperation } from '../../api/recognition';
 import { useBulkRetryOperations } from '../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../hooks/useDeadLetterOperations';
@@ -13,7 +14,7 @@ import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
-/** DIAGNO-M-10 / CARD-09: one page of <= 50, sequential per-ID discard, no batch route. */
+/** DIAGNO-M-10 / CARD-09: paged sequential per-ID discard, no batch route. */
 const BULK_DISCARD_PAGE_SIZE = 50;
 const BULK_RETRY_ARM_TIMEOUT_MS = 8000;
 const FAILED_RETENTION_DAYS = 7;
@@ -566,6 +567,9 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const failedTotal = operationsQuery.data?.total;
   const siteGmtOffsetHours = getSiteGmtOffsetHours();
   const eligibilityList = asFailureAgeList(bulkDiscardPageQuery.data);
+  const bulkDiscardHasMorePages = Boolean(
+    eligibilityList && eligibilityList.total > eligibilityList.items.length,
+  );
   const eligibilityNowMs = resolveNowMs(
     eligibilityList ?? asFailureAgeList(operationsQuery.data),
     siteGmtOffsetHours,
@@ -581,7 +585,23 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           .slice(0, BULK_DISCARD_PAGE_SIZE)
       : [];
   const eligibleCount = eligibleOperations.length;
-  const canBulkDiscard = eligibilityReady && eligibleCount > 0;
+  const canBulkDiscard = eligibilityReady && (eligibleCount > 0 || bulkDiscardHasMorePages);
+  const bulkDiscardButtonLabel = bulkDiscardHasMorePages
+    ? __('Discard eligible failed changes', 'alt-context')
+    : sprintf(__('Discard %d eligible', 'alt-context'), eligibleCount);
+  const bulkDiscardConfirmLabel = bulkDiscardHasMorePages
+    ? __('Confirm discard eligible failed changes', 'alt-context')
+    : sprintf(__('Confirm discard %d eligible', 'alt-context'), eligibleCount);
+  const bulkDiscardArmedStatus = bulkDiscardHasMorePages
+    ? __(
+        'Discard eligible failed changes is armed. Activate Confirm discard eligible failed changes to continue.',
+        'alt-context',
+      )
+    : sprintf(
+        __('Discard %d eligible is armed. Activate Confirm discard %d eligible to continue.', 'alt-context'),
+        eligibleCount,
+        eligibleCount,
+      );
   const missingAgeClock = Boolean(
     eligibilityList &&
       bulkDiscardPageQuery.isSuccess &&
@@ -757,15 +777,42 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       return;
     }
 
-    const candidates = eligibleOperations;
     const failedTotalAtStart = eligibilityList?.total ?? 0;
+    const candidates = [...eligibleOperations];
+
+    try {
+      for (
+        let pageOffset = eligibilityList?.items.length ?? 0;
+        pageOffset < failedTotalAtStart;
+        pageOffset += BULK_DISCARD_PAGE_SIZE
+      ) {
+        const page: FailureAgeList = await fetchFailedOutboxOperations({
+          limit: BULK_DISCARD_PAGE_SIZE,
+          offset: pageOffset,
+        });
+        const pageNowMs = resolveNowMs(page, siteGmtOffsetHours) ?? eligibilityNowMs;
+        candidates.push(
+          ...page.items.filter((operation) =>
+            isOlderThanRetention(operation, pageNowMs, siteGmtOffsetHours),
+          ),
+        );
+      }
+    } catch {
+      dispatch({ type: 'setBulkDiscardRunning', running: false });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to load eligible failed changes for bulk discard.', 'alt-context'),
+      });
+      return;
+    }
 
     if (candidates.length === 0) {
       dispatch({ type: 'setBulkDiscardRunning', running: false });
       dispatch({ type: 'setActionStatus', status: '' });
       dispatch({
         type: 'setNotice',
-        notice: __('No failed changes older than 7 days on this page.', 'alt-context'),
+        notice: __('No failed changes older than 7 days.', 'alt-context'),
       });
       return;
     }
@@ -803,8 +850,12 @@ export const DeadLetterPanel = (): React.JSX.Element => {
 
     const discardedCount = results.filter((result) => result.outcome === BULK_DISCARD_OUTCOME.DISCARDED).length;
     const remainingTotal = Math.max(0, failedTotalAtStart - discardedCount);
-    const remainderCopy =
-      remainingTotal > 0
+    const remainingEligibleCount = Math.max(0, candidates.length - discardedCount);
+    const remainderCopy = bulkDiscardHasMorePages
+      ? remainingEligibleCount > 0
+        ? sprintf(__('%d eligible failed changes remain.', 'alt-context'), remainingEligibleCount)
+        : ''
+      : remainingTotal > 0
         ? sprintf(__('%d remain — run again for the next page.', 'alt-context'), remainingTotal)
         : '';
     dispatch({ type: 'setBulkDiscardResults', results });
@@ -849,14 +900,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                   failedTotal,
                 )
               : bulkDiscardArmed
-                ? sprintf(
-                    __(
-                      'Discard %d eligible is armed. Activate Confirm discard %d eligible to continue.',
-                      'alt-context',
-                    ),
-                    eligibleCount,
-                    eligibleCount,
-                  )
+                ? bulkDiscardArmedStatus
                 : (notice ?? ''));
 
   const statusRegion = (
@@ -950,8 +994,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
           {bulkDiscardRunning
             ? __('Discarding failed older than 7 days…', 'alt-context')
             : bulkDiscardArmed
-              ? sprintf(__('Confirm discard %d eligible', 'alt-context'), eligibleCount)
-              : sprintf(__('Discard %d eligible', 'alt-context'), eligibleCount)}
+              ? bulkDiscardConfirmLabel
+              : bulkDiscardButtonLabel}
         </button>
       </div>
       {missingAgeClock && !mutationPending ? (

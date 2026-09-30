@@ -616,7 +616,7 @@ def test_pre_timing_schema_heals_checks_and_columns_on_postgres(monkeypatch, pg_
         # G1 added bind-using post-create hooks; this test only captures declarations.
         patch.setattr(identity_schema, "_backfill_usage_reservation_identity", lambda op: None)
         patch.setattr(identity_schema, "_seed_usage_admission_global_state", lambda op: None)
-        identity_schema.ensure_tables(None)
+        identity_schema.ensure_tables(_RecordingOp())
     elements, kw = captured[table_name]
     timing_columns = {
         "queue_ms",

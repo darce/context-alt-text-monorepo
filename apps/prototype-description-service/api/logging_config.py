@@ -2,7 +2,7 @@
 
 Emits structured JSON log records so external aggregators can index fields
 without regex parsing. Every record is stamped with the active correlation id
-via :class:`CorrelationIdFilter` — see
+at creation and by handler filters — see
 ``recognition/interface_adapters/http/middleware/correlation.py``.
 """
 
@@ -17,9 +17,11 @@ from pathlib import Path
 from pythonjsonlogger.json import JsonFormatter
 
 from recognition.interface_adapters.http.middleware.correlation import (
+    ACCESS_LOGGER_NAME,
     CORRELATION_ID_LOG_FIELD,
     CORRELATION_ID_PLACEHOLDER,
     CorrelationIdFilter,
+    get_correlation_id,
 )
 
 # Container default: image seeds + chowns /var/log/acx for USER acx (SEC-13).
@@ -67,6 +69,41 @@ _STATIC_LOG_DEFAULTS = {
 }
 
 
+class _CorrelationRecordDict(dict[str, object]):
+    """Let ``Logger.makeRecord`` apply an explicit correlation-id extra value."""
+
+    def __contains__(self, key: object) -> bool:
+        if key == CORRELATION_ID_LOG_FIELD:
+            return False
+        return super().__contains__(key)
+
+
+_RECORD_FACTORY_INSTALLED = False
+
+
+def _install_correlation_record_factory() -> None:
+    """Stamp correlation_id at record creation so any handler sees it."""
+    global _RECORD_FACTORY_INSTALLED
+    if _RECORD_FACTORY_INSTALLED:
+        return
+
+    previous = logging.getLogRecordFactory()
+
+    def factory(*args: object, **kwargs: object) -> logging.LogRecord:
+        record = previous(*args, **kwargs)
+        record.__dict__ = _CorrelationRecordDict(record.__dict__)
+        if not hasattr(record, CORRELATION_ID_LOG_FIELD):
+            setattr(
+                record,
+                CORRELATION_ID_LOG_FIELD,
+                get_correlation_id() or CORRELATION_ID_PLACEHOLDER,
+            )
+        return record
+
+    logging.setLogRecordFactory(factory)
+    _RECORD_FACTORY_INSTALLED = True
+
+
 def build_json_formatter() -> JsonFormatter:
     """Return a ``JsonFormatter`` configured with our canonical field set.
 
@@ -95,6 +132,7 @@ class RecognitionFilter(logging.Filter):
             or name.startswith("recognition.interface_adapters")
             or name.startswith("recognition.worker")
             or name.startswith("db")
+            or name == ACCESS_LOGGER_NAME
         )
         return allowed
 
@@ -151,6 +189,11 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(log_level)
     root.handlers.clear()
+    # Uvicorn emits its default access record after the ASGI application has
+    # returned, when the request contextvar may no longer be available.  The
+    # correlation middleware emits the single request-scoped access record;
+    # suppressing this logger prevents duplicate access lines.
+    logging.getLogger("uvicorn.access").disabled = True
     # Drop previously attached correlation filters so repeat calls don't stack.
     for existing in list(root.filters):
         if isinstance(existing, CorrelationIdFilter):
@@ -158,9 +201,9 @@ def configure_logging(level: str = "INFO") -> None:
 
     recognition_filter = RecognitionFilter()
     correlation_filter = CorrelationIdFilter()
-    # Stamp every LogRecord at the root, so handlers attached by other systems
-    # (pytest's caplog, external aggregators injected via addHandler) also see
-    # the correlation_id attribute.
+    # Stamp records at creation so handlers attached by other systems see the
+    # correlation_id; the root and owned-handler filters remain belt-and-braces.
+    _install_correlation_record_factory()
     root.addFilter(correlation_filter)
 
     # Console handler: JSON so stdout/stderr aggregators parse fields without regex.

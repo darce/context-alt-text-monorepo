@@ -23,9 +23,11 @@ from typing import cast
 
 import pytest
 from sqlalchemy import Table, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import scene.application.describe_load as load_mod
+import scene.application.describe_run_repository as run_repo_mod
 from db.models.base_imports import Base
 from db.models.scene import (
     DescribeDemandLease,
@@ -214,6 +216,46 @@ def test_load_snapshot_requires_rls_bypass_on_non_sqlite(monkeypatch):
     monkeypatch.setattr(load_mod, "is_sqlite", lambda _session: False)
     with pytest.raises(RuntimeError, match="RLS-bypassed"):
         asyncio.run(load_snapshot(_NotBypassedSession()))  # type: ignore[arg-type]
+
+
+def test_active_demand_count_requires_bypass_and_reads_cross_tenant_leases(monkeypatch):
+    class _Result:
+        def __init__(self, value: object):
+            self._value = value
+
+        def scalar(self):
+            return self._value
+
+    class _Session:
+        def __init__(self, bypass_value: object, tenant_b: uuid.UUID, tenant_a_lease: object):
+            self.bypass_value = bypass_value
+            self.current_tenant = tenant_b
+            self.tenant_a_lease = tenant_a_lease
+            self.aggregate_statement = None
+
+        async def execute(self, statement, *_args, **_kwargs):
+            if "current_setting('app.bypass_rls', true)" in str(statement):
+                return _Result(self.bypass_value)
+            return _Result(None)
+
+        async def scalar(self, statement):
+            self.aggregate_statement = statement
+            return 1 if self.tenant_a_lease is not None else 0
+
+    monkeypatch.setattr(run_repo_mod, "is_sqlite", lambda _session: False)
+    tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
+    tenant_a_lease = (tenant_a, "tenant-a-operation")
+    rejected = _Session("off", tenant_b, tenant_a_lease)
+    with pytest.raises(RuntimeError, match="RLS-bypassed"):
+        asyncio.run(DescribeOperationRepository(rejected, lease_seconds=180).active_demand_count())  # type: ignore[arg-type]
+    assert rejected.aggregate_statement is None
+
+    bypassed = _Session("on", tenant_b, tenant_a_lease)
+    assert asyncio.run(DescribeOperationRepository(bypassed, lease_seconds=180).active_demand_count()) == 1  # type: ignore[arg-type]
+    assert bypassed.current_tenant == tenant_b
+    aggregate_sql = str(bypassed.aggregate_statement.compile(dialect=postgresql.dialect())).lower()
+    where_clause = aggregate_sql.partition(" where ")[2]
+    assert "tenant_id" not in where_clause
 
 
 def test_require_rls_bypass_fails_closed_unless_pg_setting_is_truthy(monkeypatch):
@@ -737,6 +779,23 @@ def test_load_snapshot_stop_and_max_lease_exclude_demand_without_deleting(
             assert counted["in_flight"] == 2
             assert counted["lease_demand"] == 2
             assert _has_work(counted) is True
+            repo = DescribeOperationRepository(session, lease_seconds=180)
+            one_held_demand = await repo.active_demand_count(
+                now=start,
+                stop_requested=True,
+                stop_held_leases={(tenant_a, first_id)},
+            )
+            one_held_in_flight = one_held_demand
+            assert one_held_demand == 1
+            assert one_held_in_flight == 1
+            both_held_demand = await repo.active_demand_count(
+                now=start,
+                stop_requested=True,
+                stop_held_leases={(tenant_a, first_id), (tenant_b, second_id)},
+            )
+            both_held_in_flight = both_held_demand
+            assert both_held_demand == 0
+            assert both_held_in_flight == 0
             global_stop = await load_snapshot(session, now=start, stop_requested=True)
             assert global_stop["in_flight"] == 0
             assert global_stop["lease_demand"] == 0
@@ -1136,8 +1195,14 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
             await session.commit()
         a_read = asyncio.Event()
         b_published = asyncio.Event()
-        real_load = describe_router.load_snapshot
+        real_dump = describe_router.dump_load_snapshot
+        real_load = load_mod.load_snapshot
         calls = 0
+
+        async def fixed_time_dump(session_factory):
+            await real_dump(session_factory, now=start, raise_on_error=True)
+
+        monkeypatch.setattr(describe_router, "dump_load_snapshot", fixed_time_dump)
 
         async def gated_load(session, **kwargs):
             nonlocal calls
@@ -1149,10 +1214,10 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
                 await b_published.wait()
             return snap
 
-        monkeypatch.setattr(describe_router, "load_snapshot", gated_load)
+        monkeypatch.setattr(load_mod, "load_snapshot", gated_load)
 
         async def publisher_a() -> None:
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
 
         async def publisher_b() -> None:
             await a_read.wait()
@@ -1161,7 +1226,7 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
                     tenant_id=uuid.uuid4(), request_digest=_DIGEST_B, now=start
                 )
                 await session.commit()
-            await describe_router._maybe_dump_describe_load(sf)
+            await describe_router.dump_load_snapshot(sf)
             b_published.set()
 
         await asyncio.wait_for(asyncio.gather(publisher_a(), publisher_b()), timeout=5)
@@ -1174,8 +1239,8 @@ def test_maybe_dump_describe_load_drops_older_publish_after_demand_change(
         async def equal_revision_load(session, **kwargs):
             return equal
 
-        monkeypatch.setattr(describe_router, "load_snapshot", equal_revision_load)
-        await describe_router._maybe_dump_describe_load(sf)
+        monkeypatch.setattr(load_mod, "load_snapshot", equal_revision_load)
+        await describe_router.dump_load_snapshot(sf)
         replayed = json.loads(target.read_text())
         assert replayed["revision"] == 2
         assert replayed["lease_demand"] == 2

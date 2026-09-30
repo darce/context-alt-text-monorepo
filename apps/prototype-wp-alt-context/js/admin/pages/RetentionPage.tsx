@@ -28,6 +28,19 @@ const formatLastChecked = (checkedAt: string): string | null => {
   return new Date(milliseconds).toISOString().slice(11, 19);
 };
 
+const untypedQueryErrorCause = (error: unknown): string => {
+  if (typeof error === 'object' && error !== null) {
+    const details = error as { status?: unknown; code?: unknown };
+    if (typeof details.status === 'number' && Number.isFinite(details.status)) {
+      return sprintf(__('HTTP %d', 'alt-context'), details.status);
+    }
+    if (typeof details.code === 'string' && details.code.trim() !== '') {
+      return sprintf(__('error code %s', 'alt-context'), details.code);
+    }
+  }
+  return toUserMessage(error, __('Unable to load retention status. Please try again.', 'alt-context'));
+};
+
 const retryCountdownSeconds = (retryAfterSeconds: number | null): number | null => {
   if (retryAfterSeconds === null || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
     return null;
@@ -68,6 +81,18 @@ export const RetentionSection = (): React.JSX.Element => {
   const unavailableCopy = unavailable ? unavailableReasonCopy(unavailable.reason) : null;
   const lastChecked = unavailable ? formatLastChecked(unavailable.checked_at) : null;
   const retryInSeconds = unavailable ? retryCountdownSeconds(unavailable.retry_after_seconds) : null;
+  const fallbackCheckedAt = retentionQuery.isError
+    ? retentionQuery.errorUpdatedAt || retentionQuery.dataUpdatedAt
+    : retentionQuery.dataUpdatedAt || retentionQuery.errorUpdatedAt;
+  const fallbackLastChecked =
+    Number.isFinite(fallbackCheckedAt) && fallbackCheckedAt > 0
+      ? formatLastChecked(new Date(fallbackCheckedAt).toISOString())
+      : null;
+  const fallbackCause = retentionQuery.isError
+    ? untypedQueryErrorCause(retentionQuery.error)
+    : !status || !status.available
+      ? __('The service reported it is unavailable.', 'alt-context')
+      : __('The service returned no retention policy.', 'alt-context');
 
   const body = retentionQuery.isLoading ? (
     <p>{__('Loading retention status\u2026', 'alt-context')}</p>
@@ -111,16 +136,27 @@ export const RetentionSection = (): React.JSX.Element => {
         </>
       ) : (
         <>
-          <h4>{__('Backend unavailable', 'alt-context')}</h4>
-          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
-          {retentionQuery.isError ? (
-            <p role="alert">
-              {toUserMessage(
-                retentionQuery.error,
-                __('Unable to load retention status. Please try again.', 'alt-context'),
-              )}
-            </p>
-          ) : null}
+          <h4>{sprintf(__('%s unavailable', 'alt-context'), unavailableServiceLabel('recognition'))}</h4>
+          <div
+            className="acx-sync-status acx-sync-status--warning"
+            role="alert"
+            data-testid="acx-retention-unavailable"
+          >
+            <AlertTriangle
+              className="acx-retention__note-icon"
+              size={16}
+              aria-hidden="true"
+              data-testid="acx-retention-unavailable-icon"
+            />
+            <div>
+              <p>{sprintf(__('Cause: %s', 'alt-context'), fallbackCause)}</p>
+              {fallbackLastChecked ? (
+                <p className="acx-retention__detail">
+                  {sprintf(__('Last checked %s', 'alt-context'), fallbackLastChecked)}
+                </p>
+              ) : null}
+            </div>
+          </div>
         </>
       )}
       <button

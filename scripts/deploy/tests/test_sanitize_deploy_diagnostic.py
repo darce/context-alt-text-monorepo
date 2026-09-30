@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -474,6 +475,48 @@ def test_sanitize_deploy_diagnostic_gr232_pretty_printed_json_composites() -> No
         assert secret not in out, out
     assert "[REDACTED]" in out
     assert out.count("\n") == 10
+
+
+def test_sanitizer_pretty_open_emits_no_awk_warning(tmp_path: Path) -> None:
+    raw = (
+        '"password": {\n'
+        '  "nested": "pretty-double-secret"\n'
+        "}\n"
+        "'api_key': [\n"
+        "  'pretty-single-secret'\n"
+        "]\n"
+    )
+    driver = _sanitize_deploy_diagnostic_src() + "\nsanitize_deploy_diagnostic"
+    result = subprocess.run(
+        ["bash", "-c", driver], input=raw, text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "pretty-double-secret" not in result.stdout
+    assert "pretty-single-secret" not in result.stdout
+    assert "[REDACTED]" in result.stdout
+    assert result.stderr == ""
+
+    if shutil.which("gawk") is None:
+        return
+    bin_dir = tmp_path / "gawk-bin"
+    bin_dir.mkdir()
+    awk_wrapper = bin_dir / "awk"
+    awk_wrapper.write_text("#!/usr/bin/env bash\nexec gawk --lint \"$@\"\n", encoding="utf-8")
+    awk_wrapper.chmod(awk_wrapper.stat().st_mode | 0o111)
+    env_vars = os.environ.copy()
+    env_vars["PATH"] = f"{bin_dir}:{env_vars.get('PATH', '')}"
+    lint_result = subprocess.run(
+        ["bash", "-c", driver],
+        input=raw,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env_vars,
+    )
+    assert lint_result.returncode == 0, lint_result.stdout + lint_result.stderr
+    assert "pretty-double-secret" not in lint_result.stdout
+    assert "pretty-single-secret" not in lint_result.stdout
+    assert "escape sequence" not in lint_result.stderr.lower()
 
 
 def test_sanitize_deploy_diagnostic_gr233_pem_private_key_body() -> None:

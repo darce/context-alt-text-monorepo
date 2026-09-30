@@ -224,6 +224,9 @@ EOF
 chmod +x "${fixture_root}/fake-deploy.sh"
 cat >"${fixture_root}/verify-harness.sh" <<'EOF'
 source "$1"
+read_deployed_release_receipt() {
+    printf '%s\n%s\n' "$DEPLOY_SHA" 'iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+}
 curl() {
     local write_out="" url=""
     while [ "$#" -gt 0 ]; do
@@ -243,6 +246,8 @@ curl() {
 }
 read_remote_image_repo() { :; }
 verify_running_image_matches_deployed() { return 0; }
+read_running_api_image_id() { printf '%s\n' 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; }
+remote_image_id_for_digest() { printf '%s\n' 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; }
 verify_live_gpu_snapshots() {
     printf 'LIVE_GPU_SNAPSHOT_CHECK_CALLED:%s\n' "$1"
     return "${FAKE_GPU_SNAPSHOT_RC:-0}"

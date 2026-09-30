@@ -68,6 +68,7 @@ interface MediaSelectionTableBodyProps {
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   selection: Record<string, boolean>;
   identitiesDataSource?: DataSource;
+  identitiesLoading?: boolean;
   onRetryIdentities?: () => void;
   searchQuery?: string;
   statusFilter?: WorkbenchMediaStatus;
@@ -85,6 +86,7 @@ export const MediaSelectionTableBody = ({
   onToggleRow,
   selection,
   identitiesDataSource,
+  identitiesLoading,
   onRetryIdentities,
   searchQuery = '',
   statusFilter = 'all',
@@ -271,6 +273,7 @@ export const MediaSelectionTableBody = ({
           onToggleRow={onToggleRow}
           checked={selection[item.id.toString()] ?? false}
           identitiesDataSource={identitiesDataSource}
+          identitiesLoading={identitiesLoading}
           onRetryIdentities={onRetryIdentities}
           draft={draftsByMediaId[item.id]}
         />
@@ -286,6 +289,7 @@ interface MediaSelectionRowProps {
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   checked: boolean;
   identitiesDataSource?: DataSource;
+  identitiesLoading?: boolean;
   onRetryIdentities?: () => void;
   draft?: QueueDraft;
 }
@@ -302,6 +306,7 @@ const MediaSelectionRow = ({
   onToggleRow,
   checked,
   identitiesDataSource,
+  identitiesLoading,
   onRetryIdentities,
   draft,
 }: MediaSelectionRowProps): React.JSX.Element => {
@@ -453,6 +458,7 @@ const MediaSelectionRow = ({
         <IdentityClusterList
           identities={item.identities ?? []}
           dataSource={identitiesDataSource}
+          isLoading={identitiesLoading}
           onRetry={onRetryIdentities}
         />
       </td>

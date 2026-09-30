@@ -63,7 +63,7 @@ export const RosterPage = (): React.JSX.Element => {
     }
     return rosterEntries.find((entry) => getEntryPersonUuid(entry) === personRouteUuid) ?? null;
   }, [personRouteUuid, projectionShapeAvailable, projectionStatus, rosterEntries]);
-  const hasEntriesFilter = searchParams.get('personFilter') !== null;
+  const hasEntriesFilter = searchParams.get('personFilter') !== null || searchParams.get('s') !== null;
   const defaultWorkspaceRoute = React.useMemo(
     () => parsedRoute.selectedClusterId === null && !parsedRoute.requiresProjectionGateNotice && !hasEntriesFilter,
     [hasEntriesFilter, parsedRoute.requiresProjectionGateNotice, parsedRoute.selectedClusterId],

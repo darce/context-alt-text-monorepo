@@ -19,7 +19,7 @@ import { __ } from '@wordpress/i18n';
 import { listRecognitionClusters, type ClusterSummary } from '../../../api/recognition';
 import { classifyError } from '../../../utils/appError';
 import { createLogger, redactEndpoint, withRequestId } from '../../../utils/logger';
-import { isAbortError } from './clusterMutationUtils';
+import { isDeliberateCancelError } from './clusterMutationUtils';
 import { isHumanLabeledTarget } from './suggestionProjection';
 import type { ClusterLabelMatch } from './useClusterMatchAction';
 
@@ -109,7 +109,7 @@ export const lookupClusterByLabel = async ({
   try {
     results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
   } catch (err) {
-    if (isAbortError(err)) {
+    if (signal?.aborted || isDeliberateCancelError(err)) {
       return { status: CLUSTER_LABEL_LOOKUP_STATUS.ABORTED };
     }
     // AGT-10 / REF-37: degrade loudly — the failure is reported to the caller *and* logged.

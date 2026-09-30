@@ -23,6 +23,7 @@ from db.session import get_pool_stats
 from recognition.application.health import (
     CheckResult,
     aggregate_status,
+    assert_space_activatable,
     check_active_embedding_model,
     check_breaker,
     check_database,
@@ -57,9 +58,10 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
 from recognition.interface_adapters.http.deps.portal_composition import (
     install_portal_composition,
     install_usage_admission_factory,
+    install_usage_admission_composition,
 )
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
-from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
+from recognition.interface_adapters.http.middleware.correlation import CORRELATION_ID_HEADER, CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
     MetricsMiddleware,
     get_default_metrics,
@@ -110,6 +112,7 @@ class AdapterReadinessReason(StrEnum):
 
     PROFILE_UNAVAILABLE = "profile_unavailable"
     VLM_DEPENDENCIES_MISSING = "vlm_dependencies_missing"
+    LOCAL_ADAPTER_UNAVAILABLE = "local_adapter_unavailable"
     ENDPOINT_UNCONFIGURED = "endpoint_unconfigured"
     ENDPOINT_INVALID_URL = "endpoint_invalid_url"
     ENDPOINT_NOT_ALLOWLISTED = "endpoint_not_allowlisted"
@@ -314,12 +317,18 @@ async def _description_adapter_readiness(profile: DescriptionProfile) -> dict[st
         and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU
         and bool(scene_http_deps._missing_vlm_dependencies())
     )
+    local_cpu_adapter_unavailable = False
+    if spec.available and spec.adapter_kind is DescriptionAdapterKind.LOCAL_CPU and not vlm_dependencies_missing:
+        local_cpu_adapter_unavailable = not scene_http_deps.local_cpu_adapter_is_usable()
     if not spec.available:
         usable = False
         reason: str | None = AdapterReadinessReason.PROFILE_UNAVAILABLE.value
     elif vlm_dependencies_missing:
         usable = False
         reason = AdapterReadinessReason.VLM_DEPENDENCIES_MISSING.value
+    elif local_cpu_adapter_unavailable:
+        usable = False
+        reason = AdapterReadinessReason.LOCAL_ADAPTER_UNAVAILABLE.value
     elif spec.adapter_kind is not DescriptionAdapterKind.GPU:
         usable = True
         reason = None
@@ -368,6 +377,36 @@ def _resolve_health_db_timeout_seconds() -> float:
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"ACX_HEALTH_DB_TIMEOUT_SECONDS must be a positive number (got {raw!r})")
     return value
+
+
+async def _detailed_health_database_check(
+    session: AsyncSession | None,
+    *,
+    timeout_seconds: float,
+) -> CheckResult:
+    try:
+        return await asyncio.wait_for(check_database(session), timeout=timeout_seconds)
+    except TimeoutError:
+        return CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
+
+
+async def _detailed_health_embedding_runtime(
+    session: AsyncSession,
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    try:
+        capability = await asyncio.wait_for(
+            read_embedding_runtime_capability(session),
+            timeout=timeout_seconds,
+        )
+        return embedding_runtime_health_payload(capability)
+    except Exception:
+        return {
+            "available": False,
+            "reason": "capability read failed",
+            "heartbeat_age_seconds": None,
+        }
 
 
 async def _supervise_load_snapshot_refresher(session_factory) -> None:
@@ -575,14 +614,21 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_origin_regex=None,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type", "Idempotency-Key"],
+        allow_headers=[
+            "Authorization",
+            "X-Api-Key",
+            "X-Tenant-ID",
+            "Content-Type",
+            "Idempotency-Key",
+            CORRELATION_ID_HEADER,
+        ],
+        expose_headers=[CORRELATION_ID_HEADER],
         max_age=600,
     )
-    app.add_middleware(CorrelationIdMiddleware)
-    app.add_middleware(MetricsMiddleware)
     # E15-11: enforce body-size cap on the multipart upload endpoint before
     # FastAPI buffers the body. Path-scoped so the JSON variant on the same
-    # base path is unaffected.
+    # base path is unaffected. Correlation is wrapped outside this middleware
+    # so early 400/411/413 responses receive an id and access record.
     recognition_settings = RecognitionSettings()
     app.add_middleware(
         UploadSizeLimitMiddleware,
@@ -593,9 +639,14 @@ def create_app() -> FastAPI:
             "/scene/describe/async",
         },
     )
+    app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
     initialize_clustering_circuit_breaker(app)
+
+    if os.environ.get("RECOGNITION_BETA_ADMISSION_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        install_usage_admission_composition(app)
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")
@@ -743,8 +794,8 @@ def register_health_probes(
 
     Model-cache probe is profile-aware ([OBS-08]): insightface uses the
     existing onnx-count check; face_pipeline uses eager sha256 verification
-    with mtime/size drift re-verify ([EMB-05]); auraface uses its own
-    provenance and embedding-space readiness check.
+    with mtime/size drift re-verify ([EMB-05]); auraface refuses unverified
+    activation before model I/O, then reuses the same cached verify outcome.
 
     Settings are constructed once at registration (S3CR-06), including the
     description profile validation; the face model profile is re-read from
@@ -771,6 +822,8 @@ def register_health_probes(
 
         face_pipeline verification runs off the event loop (S3CR-03).
         Invalid profile → UNHEALTHY CheckResult (S3CR-04), not HTTP 500.
+        Unverified AuraFace activation is refused with the same UNHEALTHY
+        contract before model I/O, never as an unhandled 500.
         """
         raw_profile = _current_profile()
         try:
@@ -792,6 +845,14 @@ def register_health_probes(
             insightface_model_name=insightface_model_name,
             models_dirs=models_dirs,
         )
+        try:
+            assert_space_activatable(profile)
+        except ValueError as exc:
+            return (
+                CheckResult("model_cache", HealthStatus.UNHEALTHY, str(exc)),
+                store,
+                label,
+            )
         return await asyncio.to_thread(probe), store, label
 
     async def _disk_headroom_probe() -> CheckResult:
@@ -854,8 +915,15 @@ def register_health_probes(
     ) -> dict[str, object]:
         breaker = get_or_create_session_dependency_circuit_breaker(app)
         mc_check, _, _ = await _model_probe()
+        try:
+            database_check = await asyncio.wait_for(
+                check_database(session),
+                timeout=health_db_timeout_seconds,
+            )
+        except TimeoutError:
+            database_check = CheckResult("database", HealthStatus.UNHEALTHY, "probe_timeout")
         checks = [
-            await check_database(session),
+            database_check,
             check_breaker(breaker),
             mc_check,
             check_active_embedding_model(),
@@ -891,7 +959,10 @@ def register_health_probes(
         # operators; never hit by load-balancer probes. Shares aggregator +
         # probes with /ready so the two stay in sync without duplicates.
         breaker = get_or_create_session_dependency_circuit_breaker(app)
-        db_check = await check_database(session)
+        db_check = await _detailed_health_database_check(
+            session,
+            timeout_seconds=health_db_timeout_seconds,
+        )
         breaker_check = check_breaker(breaker)
         mc_check, cache_dir, model_name = await _model_probe()
         embedding_model_check = check_active_embedding_model(verbose=True)
@@ -902,6 +973,9 @@ def register_health_probes(
             bundle_files = sum(
                 1 for name in ("yunet", "sface") if (cache_dir / MODEL_MANIFEST[name].file_name).is_file()
             )
+        elif profile == "auraface":
+            auraface_artifact = cache_dir / MODEL_MANIFEST["auraface"].file_name
+            bundle_files = 1 if auraface_artifact.is_file() else 0
         else:
             bundle = cache_dir / model_name
             bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
@@ -911,15 +985,10 @@ def register_health_probes(
             "heartbeat_age_seconds": None,
         }
         if session is not None:
-            try:
-                embedding_capability = await read_embedding_runtime_capability(session)
-                embedding_runtime = embedding_runtime_health_payload(embedding_capability)
-            except Exception:
-                embedding_runtime = {
-                    "available": False,
-                    "reason": "capability read failed",
-                    "heartbeat_age_seconds": None,
-                }
+            embedding_runtime = await _detailed_health_embedding_runtime(
+                session,
+                timeout_seconds=health_db_timeout_seconds,
+            )
         return {
             "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),

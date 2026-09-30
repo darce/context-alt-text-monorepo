@@ -42,6 +42,7 @@ import cv2
 import numpy as np
 
 from scripts.eval_harness.accept_predicate import accepts
+
 from .face_assignment import (
     MatchedFace,
     argmax_gallery,
@@ -80,8 +81,7 @@ WALK_STABILITY_DELTA_BOUND = 0.05
 SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "synthetic occluders are solid seeded rectangles mapped onto "
     "MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
-    "twin universe = cached clean detections only; hard clean-detection "
-    "failures are structurally absent (EVAL-17)",
+    "twin universe = cached clean detections only; hard clean-detection failures are structurally absent (EVAL-17)",
     "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
     "argmax; each twin is scored at its source identity's held-out fold tau_k "
     "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
@@ -585,9 +585,7 @@ def _rollup_pairs(
 
     reasons: list[str] = []
     if n_eligible < ELIGIBLE_PAIR_FLOOR:
-        reasons.append(
-            f"eligible_pairs={n_eligible}<floor={ELIGIBLE_PAIR_FLOOR}"
-        )
+        reasons.append(f"eligible_pairs={n_eligible}<floor={ELIGIBLE_PAIR_FLOOR}")
     # Safety net: single-identity pairs should already be ineligible (EVAL-18).
     if any(p.eligible and p.gallery_n_identities < 2 for p in pairs):
         reasons.append("gallery_lt_2_distinct_identities")
@@ -596,9 +594,7 @@ def _rollup_pairs(
         # (flag alone is insufficient — the aggregate-Δ bound must be measured).
         reasons.append("walk_stability_not_asserted")
     elif walk_stability_delta > walk_stability_bound:
-        reasons.append(
-            f"walk_stability_delta={walk_stability_delta}>bound={walk_stability_bound}"
-        )
+        reasons.append(f"walk_stability_delta={walk_stability_delta}>bound={walk_stability_bound}")
 
     return OcclusionAccuracy(
         accuracy=accuracy,
@@ -706,17 +702,8 @@ def assert_walk_stability(
     non-None accuracy; otherwise returns (False, delta_or_None). A single run
     clearing the floor is insufficient — both re-runs must be adequately powered.
     """
-    if (
-        accuracy_a is None
-        or accuracy_b is None
-        or n_eligible_a < floor
-        or n_eligible_b < floor
-    ):
-        delta = (
-            None
-            if accuracy_a is None or accuracy_b is None
-            else abs(float(accuracy_a) - float(accuracy_b))
-        )
+    if accuracy_a is None or accuracy_b is None or n_eligible_a < floor or n_eligible_b < floor:
+        delta = None if accuracy_a is None or accuracy_b is None else abs(float(accuracy_a) - float(accuracy_b))
         return False, delta
     delta = abs(float(accuracy_a) - float(accuracy_b))
     return delta <= bound, delta
@@ -739,8 +726,7 @@ def filter_headline_probes(
     """
     if occluded_probe_keys is None:
         raise ValueError(
-            "occluded_probe_keys is required (fail-closed); pass an explicit "
-            "empty set when no occluded probes exist"
+            "occluded_probe_keys is required (fail-closed); pass an explicit empty set when no occluded probes exist"
         )
     out: list[MatchedFace] = []
     for face in matched:

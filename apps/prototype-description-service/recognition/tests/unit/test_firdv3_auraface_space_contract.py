@@ -92,13 +92,14 @@ def test_model_provenance_declares_frozen_typed_preprocessing_record() -> None:
         "input_size",
         "channel_order",
         "input_scale",
+        "input_mean",
         "alignment_template_id",
         "output_l2_normalized",
     } <= {field.name for field in fields(input_preprocessing)}
 
 
 def test_auraface_manifest_is_declarable_and_operator_pinned() -> None:
-    """AuraFace metadata is present without pretending its bytes were locally hashed."""
+    """AuraFace metadata carries the measured operator-provided pins."""
     entry = _auraface_entry()
 
     assert entry.file_name.endswith(".onnx")
@@ -111,8 +112,25 @@ def test_auraface_manifest_is_declarable_and_operator_pinned() -> None:
     assert entry.framework
     assert entry.normalization
     assert entry.metric
-    assert entry.sha256 == PENDING_OPERATOR_FETCH
-    assert entry.license_sha256 == PENDING_OPERATOR_FETCH
+    assert entry.sha256 == "a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60"
+    assert entry.license_sha256 == "609e2cb599f84aaa41d8ef29d8fdb04d164fab22e8d9292ca34a599d0f56a338"
+
+
+def test_auraface_pins_are_not_the_operator_fetch_sentinel() -> None:
+    entry = _auraface_entry()
+
+    for pin in (entry.sha256, entry.license_sha256):
+        assert pin != PENDING_OPERATOR_FETCH
+        assert len(pin) == 64
+        assert pin == pin.lower()
+        assert all(character in "0123456789abcdef" for character in pin)
+
+
+def test_auraface_license_file_matches_the_fetched_artifact() -> None:
+    entry = _auraface_entry()
+
+    assert entry.license_file == "LICENSE.auraface.md"
+    assert entry.license_id == "Apache-2.0"
 
 
 def test_auraface_preprocessing_is_rgb_arcface_family_and_declared() -> None:
@@ -121,27 +139,40 @@ def test_auraface_preprocessing_is_rgb_arcface_family_and_declared() -> None:
 
     assert tuple(preprocessing.input_size) == (112, 112)
     assert preprocessing.channel_order == "RGB"
-    assert preprocessing.input_scale is not None
+    assert preprocessing.input_scale == pytest.approx(1.0 / 127.5)
+    assert preprocessing.input_mean == pytest.approx(127.5)
     assert isinstance(preprocessing.alignment_template_id, str)
     assert preprocessing.alignment_template_id.strip()
+    assert preprocessing.alignment_template_id == "arcface-112"
     assert "sface" not in preprocessing.alignment_template_id.lower()
-    assert isinstance(preprocessing.output_l2_normalized, bool)
+    assert preprocessing.output_l2_normalized is False
 
     sface_preprocessing = getattr(MODEL_MANIFEST["sface"], "preprocessing", None)
     if sface_preprocessing is not None:
         assert preprocessing.alignment_template_id != sface_preprocessing.alignment_template_id
 
 
-def test_pending_auraface_pin_is_missing_not_loadable(tmp_path: Path) -> None:
+def test_auraface_preprocessing_is_the_measured_contract() -> None:
+    preprocessing = _preprocessing(_auraface_entry())
+    source = Path(provenance.__file__).read_text(encoding="utf-8")
+
+    assert preprocessing.output_l2_normalized is False
+    assert preprocessing.alignment_template_id == "arcface-112"
+    assert preprocessing.input_mean == pytest.approx(127.5)
+    assert "output_l2_normalized=False" in source
+    assert 'alignment_template_id="arcface-112"' in source
+    assert "arcface-112-unverified" in source  # retained historical id
+    assert "UNVERIFIED" in source  # retained historical FIRDV-3 S1b notes
+
+
+def test_pinned_auraface_without_files_is_missing_not_loadable(tmp_path: Path) -> None:
     _auraface_entry()
 
-    with pytest.raises(ModelMissingError, match=PENDING_OPERATOR_FETCH):
+    with pytest.raises(ModelMissingError, match="model file missing"):
         load_verified_model("auraface", models_dir=tmp_path)
 
 
-def test_auraface_model_sha256_mismatch_refuses_synthetic_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auraface_model_sha256_mismatch_refuses_synthetic_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     entry = _auraface_entry()
     expected_model = b"0123456789abcdef"
     actual_model = b"fedcba9876543210"
@@ -252,7 +283,9 @@ def test_sface_embedding_manifest_regression_is_still_128d() -> None:
     assert metric == entry.metric == "cosine"
 
 
-def test_fetch_and_verify_defaults_are_exactly_the_live_baseline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_fetch_and_verify_defaults_are_exactly_the_live_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A declarable candidate must not become a gate-preflight requirement."""
     fetch = _load_fetch_script()
     candidate = ModelProvenance(

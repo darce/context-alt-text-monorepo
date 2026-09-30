@@ -6,7 +6,12 @@
  * E21-5 Slice 1a: nextAction is the head of the ordered review queue.
  */
 
-import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types/dataSource';
+import {
+  DATA_SOURCE,
+  PROJECTION_STATUS,
+  type DataSource,
+  type ProjectionStatus,
+} from '../../../api/recognition/types/dataSource';
 import type { PendingMergeSuggestion, PendingNameSuggestion } from '../../../api/recognition/types';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
@@ -114,6 +119,7 @@ export interface WorkbenchFindingsSourceState {
   assignmentDataSource: DataSource | undefined;
   nameDataSource: DataSource | undefined;
   topUnlabeledDataSource: DataSource | undefined;
+  projectionStatus?: ProjectionStatus;
   isLoading: boolean;
   isError: boolean;
   /** Projection outage on top-unlabeled — distinct from primary-queue isError. */
@@ -163,6 +169,7 @@ export interface WorkbenchFindingsViewModel {
   isAssignmentError: boolean;
   isUnavailable: boolean;
   isReadOnly: boolean;
+  readOnlyReason: FindingsReadOnlyReason | null;
   /**
    * True only when every queue source query has finished its initial load
    * (has data or errored). Partial resolve must not look settled — clamp/index
@@ -178,6 +185,13 @@ export interface WorkbenchFindingsViewModel {
    */
   queue: ReviewQueueItem[];
 }
+
+export const FINDINGS_READ_ONLY_REASON = {
+  PROJECTION_BOOTSTRAPPING: 'projection_bootstrapping',
+  PROJECTION_UNAVAILABLE: 'projection_unavailable',
+} as const;
+
+export type FindingsReadOnlyReason = (typeof FINDINGS_READ_ONLY_REASON)[keyof typeof FINDINGS_READ_ONLY_REASON];
 
 const PREVIEW_LIMIT = 6;
 
@@ -394,10 +408,13 @@ export const buildWorkbenchFindings = (
   // outages degrade gracefully to a partial summary instead of hiding the panel.
   const isUnavailable =
     state.assignmentDataSource === DATA_SOURCE.UNAVAILABLE || state.topUnlabeledDataSource === DATA_SOURCE.UNAVAILABLE;
-  const isReadOnly =
-    state.assignmentDataSource === DATA_SOURCE.BACKEND_PROXY ||
-    state.nameDataSource === DATA_SOURCE.BACKEND_PROXY ||
-    state.topUnlabeledDataSource === DATA_SOURCE.BACKEND_PROXY;
+  const readOnlyReason =
+    state.projectionStatus === PROJECTION_STATUS.BOOTSTRAPPING
+      ? FINDINGS_READ_ONLY_REASON.PROJECTION_BOOTSTRAPPING
+      : state.projectionStatus === PROJECTION_STATUS.UNAVAILABLE
+        ? FINDINGS_READ_ONLY_REASON.PROJECTION_UNAVAILABLE
+        : null;
+  const isReadOnly = readOnlyReason !== null;
 
   const queue = buildReviewQueue({
     reviewItems: queues.reviewItems,
@@ -423,6 +440,7 @@ export const buildWorkbenchFindings = (
     isAssignmentError: state.isAssignmentError,
     isUnavailable,
     isReadOnly,
+    readOnlyReason,
     queueSettled: state.queueSettled,
     queue,
     nextAction: selectNextAction(queue, {
@@ -501,6 +519,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       assignmentDataSource,
       nameDataSource,
       topUnlabeledDataSource,
+      projectionStatus: topUnlabeledQuery.data?.projection_status,
       isLoading,
       isError,
       isTopUnlabeledError,

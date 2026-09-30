@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -13,6 +13,7 @@ from sqlalchemy import Float
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import Session
 
 from db.models.identity import (
     ClusterMergeKind,
@@ -121,6 +122,29 @@ def test_cluster_merge_receipts_orm_declares_contract_columns() -> None:
     moved_type = _unwrap_type(columns["moved_identity_ids"].type)
     assert isinstance(moved_type, ARRAY)
     assert isinstance(_unwrap_type(moved_type.item_type), PG_UUID)
+
+
+def test_cluster_merge_receipt_sqlite_round_trip_preserves_uuid_ids() -> None:
+    engine = sa.create_engine("sqlite:///:memory:")
+    ClusterMergeReceipt.__table__.create(engine)
+    now = datetime(2026, 9, 17, tzinfo=UTC)
+    receipt = _receipt(created_at=now)
+    expected_ids = receipt.moved_identity_ids
+
+    try:
+        with Session(engine) as session:
+            session.add(receipt)
+            session.flush()
+            receipt_id = receipt.receipt_id
+            session.expunge(receipt)
+
+            loaded = session.get(ClusterMergeReceipt, receipt_id)
+
+        assert loaded is not None
+        assert loaded.moved_identity_ids == expected_ids
+        assert all(isinstance(identity_id, UUID) for identity_id in loaded.moved_identity_ids)
+    finally:
+        engine.dispose()
 
 
 def test_cluster_merge_kind_is_centralized_enum() -> None:

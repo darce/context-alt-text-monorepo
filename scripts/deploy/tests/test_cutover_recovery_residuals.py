@@ -268,6 +268,7 @@ ACX_BOOT_SMOKE=0
 record() {{ printf '%s\\n' "$*" >>"{records}"; }}
 init_deploy_ocir_docker_config() {{ :; }}
 preflight_ssh() {{ :; }}
+deploy_env_lease() {{ return 0; }}
 preflight_remote_face_pipeline_models() {{ :; }}
 preflight_git_clean() {{ :; }}
 preflight_branch_synced() {{ :; }}
@@ -284,6 +285,7 @@ capture_prior_runtime_identity() {{ return 0; }}
 do_build() {{ :; }}
 do_build_remote() {{ :; }}
 do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"; }}
+image_commit_sha() {{ printf '%s\\n' "${{DEPLOY_SHA}}"; }}
 promote_gate() {{ :; }}
 do_push_tag() {{ return 1; }}
 _pull_ref() {{ :; }}
@@ -365,7 +367,7 @@ restore_prior_image_repo_env
     combined = result.stdout + result.stderr
     assert result.returncode == 75, combined
     assert env_file.read_text().startswith("SECRET=preserved\nACX_IMAGE_REPO=example.test/shared\n")
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
 def _sticky_shell(tmp_path: Path, command: str) -> str:
@@ -381,6 +383,7 @@ export PATH="{bin_dir}:$PATH"
 env_to_remote_dir() {{ printf '%s\\n' "{tmp_path}"; }}
 ssh() {{ bash -c "${{@: -1}}"; }}
 preflight_ssh() {{ :; }}
+ACX_DEPLOY_BACKUP_ROOT="{tmp_path}/deploy-backups"
 ACX_PRIOR_IMAGE_REPO_ENV=dev
 {command}
 '''
@@ -419,7 +422,7 @@ def test_sticky_owned_cleanup_is_idempotent_and_preserves_secrets(tmp_path: Path
     assert env_file.read_bytes() == after
     assert after.startswith(("SECRET=do-not-log\n" + prior).encode())
     assert "do-not-log" not in result.stdout + result.stderr
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
     assert _sticky_ship(tmp_path, owner).returncode == 75
 
 
@@ -431,6 +434,7 @@ def test_sticky_clear_invalidates_prior_owner(tmp_path: Path, action: str) -> No
     assert _sticky_ship(tmp_path, owner).returncode == 0
     result = _sticky_run(tmp_path, "clear_remote_image_repo_env dev")
     assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "deploy-backups" / "locks" / "deploy-dev.lease").exists()
     cleared = env_file.read_bytes()
     result = _sticky_run(tmp_path, f'image_repo_resource {action} "{tmp_path}" {owner} example.test/shared')
     assert result.returncode == 75, result.stderr

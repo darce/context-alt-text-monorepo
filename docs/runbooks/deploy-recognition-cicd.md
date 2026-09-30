@@ -217,6 +217,9 @@ the last green deploy run. Both commands then run exactly as written. Do not
 re-introduce an angle-bracket placeholder here: the shell passes it through
 verbatim, `git rev-parse` rejects it, and the rollback fails at the worst
 possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
+The script builds from its checkout, so use a detached worktree at `$GOOD_SHA`:
+`git worktree add --detach /tmp/acx-good "$GOOD_SHA"`, then run
+`CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 /tmp/acx-good/scripts/deploy/recognition-service.sh deploy prod` there.
 
 ### Roll back the GPU lifecycle release
 

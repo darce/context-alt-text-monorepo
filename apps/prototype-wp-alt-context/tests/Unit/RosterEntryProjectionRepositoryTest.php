@@ -193,6 +193,120 @@ class RosterEntryProjectionRepositoryTest extends TestCase
 		$this->assertSame('identity-1', $data[0]['clusters'][0]['representative_identity']['identity_id']);
 	}
 
+	public function testListEntriesMapsPersistedRepresentativeMetadataToContractLocations(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 2,
+				'representative_id' => 'identity-1',
+				'representative_media_id' => 902,
+				'representative_quality' => '0.93',
+				'quality_components' => '{"confidence":0.98,"bbox_area":0.12,"sharpness":0.71,"occlusion_severity":0.04}',
+				'undoable_merge_receipt_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [
+			[
+				'identity_uuid' => 'identity-1',
+				'cluster_uuid' => 'cluster-1',
+				'attachment_id' => 101,
+				'bbox_json' => '[0, 0, 10, 10]',
+				'thumb_path' => 'http://example.test/101.jpg',
+				'similarity' => '0.98',
+				'updated_at' => '2026-05-07 14:31:00',
+			],
+		];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 55,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$cluster = $data[0]['clusters'][0];
+
+		$this->assertSame(902, $cluster['representative_media_id']);
+		$this->assertSame('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', $cluster['undoable_merge_receipt_id']);
+		$this->assertArrayNotHasKey('representative_quality', $cluster);
+		$this->assertArrayNotHasKey('quality_components', $cluster);
+		$this->assertSame(101, $cluster['representative_identity']['media_id']);
+		$this->assertSame(0.93, $cluster['representative_identity']['representative_quality']);
+		$this->assertSame(
+			[
+				'confidence' => 0.98,
+				'bbox_area' => 0.12,
+				'sharpness' => 0.71,
+				'occlusion_severity' => 0.04,
+			],
+			$cluster['representative_identity']['quality_components']
+		);
+	}
+
+	public function testListEntriesPreservesRepresentativeMetadataWhenIdentityIsUnresolved(): void
+	{
+		global $wpdb;
+
+		$wpdb->tableRows['wp_acx_persons'] = [
+			[
+				'id' => 1,
+				'person_uuid' => '11111111-1111-1111-1111-111111111111',
+				'name' => 'Alice',
+				'tags' => '[]',
+				'updated_at' => '2026-05-07 14:00:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_clusters'] = [
+			[
+				'cluster_uuid' => 'cluster-1',
+				'person_id' => 1,
+				'identity_count' => 0,
+				'representative_id' => '',
+				'representative_quality' => '0.82',
+				'quality_components' => '{"confidence":0.91,"sharpness":0.72}',
+				'updated_at' => '2026-05-07 14:30:00',
+			],
+		];
+		$wpdb->tableRows['wp_acx_identity_members'] = [];
+
+		$repository = new RosterEntryProjectionRepository(
+			new RosterEntryProjectionSyncStateSpy(
+				snapshotVersion: 55,
+				lastUpdated: '2026-05-07 18:00:00',
+				lastSyncResult: 'ok'
+			)
+		);
+
+		$data = $repository->list_entries(self::currentTenantId());
+		$cluster = $data[0]['clusters'][0];
+
+		$this->assertNull($cluster['representative_identity']);
+		$this->assertSame(0.82, $cluster['representative_quality'] ?? null);
+		$this->assertSame(
+			[
+				'confidence' => 0.91,
+				'sharpness' => 0.72,
+			],
+			$cluster['quality_components'] ?? null
+		);
+	}
+
 	public function testListEntriesRewritesBlobThumbPathWhenAttachmentUrlMissing(): void
 	{
 		global $wpdb;

@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { __ } from '@wordpress/i18n';
 import type { ReactElement } from 'react';
@@ -12,6 +11,7 @@ import {
 import { correctDescriptionHistoryItem } from '../../../api/describeApi';
 import { queryKeys } from '../../../api/queryKeys';
 import type { WorkbenchMediaResponse } from '../../../api/workbenchMediaApi';
+import { buildTestQueryClient, createQueryWrapper } from '../../../test-utils/queryClient';
 
 vi.mock('@wordpress/i18n', () => ({
   __: vi.fn((text: string) => text),
@@ -39,17 +39,9 @@ vi.mock('../../../api/describeApi', async () => {
 
 const correctMock = vi.mocked(correctDescriptionHistoryItem);
 
-const buildClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-const renderEditor = (element: ReactElement, client = buildClient()) => ({
+const renderEditor = (element: ReactElement, client = buildTestQueryClient()) => ({
   client,
-  ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>),
+  ...render(element, { wrapper: createQueryWrapper(client) }),
 });
 
 describe('MediaAltInlineEditor', () => {
@@ -391,11 +383,7 @@ describe('MediaAltInlineEditor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit alt text/i }));
     // A parent refetch delivers a fresher value while the editor is open.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltInlineEditor mediaId={42} altText="Fresh alt from refetch" />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltInlineEditor mediaId={42} altText="Fresh alt from refetch" />);
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
     // Cancel must surface the value that landed during editing, not the stale seed.
@@ -463,13 +451,11 @@ describe('MediaAltInlineEditor', () => {
     // Sibling commit moves the prop → CAS conflict message on screen.
     // Baseline (previousAltTextRef) stays "Bridge at dusk" while editing [S2A-BR-03].
     rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltInlineEditor
-          mediaId={42}
-          altText="Sibling committed this."
-          onCommitStart={onCommitStart}
-        />
-      </QueryClientProvider>,
+      <MediaAltInlineEditor
+        mediaId={42}
+        altText="Sibling committed this."
+        onCommitStart={onCommitStart}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
     const casAlert = await screen.findByRole('alert');
@@ -480,13 +466,11 @@ describe('MediaAltInlineEditor', () => {
     // Restore prop so CAS passes; claim still refuses. The CAS warning must remain
     // (setConflictMessage(null) must not run above a refused claim).
     rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltInlineEditor
-          mediaId={42}
-          altText="Bridge at dusk"
-          onCommitStart={onCommitStart}
-        />
-      </QueryClientProvider>,
+      <MediaAltInlineEditor
+        mediaId={42}
+        altText="Bridge at dusk"
+        onCommitStart={onCommitStart}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: /^save/i }));
 
@@ -518,11 +502,7 @@ describe('MediaAltInlineEditor', () => {
     });
 
     // Sibling commit (or cache patch) delivers a new committed value while open.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltInlineEditor mediaId={42} altText="Sibling committed this." />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltInlineEditor mediaId={42} altText="Sibling committed this." />);
 
     // Buffer must survive the prop change (effect must not setDraft while editing).
     expect(screen.getByRole('textbox', { name: /alt text/i })).toHaveValue(
@@ -590,11 +570,7 @@ describe('MediaAltInlineEditor', () => {
     expect(correctMock).toHaveBeenCalledTimes(1);
 
     // Simulate the parent re-render from useCorrectMediaAlt's PARTIAL patch.
-    rerender(
-      <QueryClientProvider client={client}>
-        <MediaAltInlineEditor mediaId={42} altText="Hello" />
-      </QueryClientProvider>,
-    );
+    rerender(<MediaAltInlineEditor mediaId={42} altText="Hello" />);
 
     // Retry must reach the wire — not false CAS from stale null baseline.
     correctMock.mockResolvedValueOnce({

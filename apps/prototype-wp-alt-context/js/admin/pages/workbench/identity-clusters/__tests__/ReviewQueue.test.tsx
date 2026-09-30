@@ -104,10 +104,10 @@ const wholeHoldText = (el: HTMLElement): string =>
 
 /** Satisfy HAI-17 in legacy interaction tests whose fixture has a multi-face target. */
 const reviewCurrentStoredFaces = async (): Promise<void> => {
-  const review = screen.queryByRole('button', { name: 'Review details' });
+  const showStoredFaces = screen.queryByRole('button', { name: 'Show stored faces' });
   const approve = screen.queryByRole('button', { name: 'Yes' });
-  if (review && approve?.hasAttribute('disabled')) {
-    await userEvent.click(review);
+  if (showStoredFaces && approve?.hasAttribute('disabled')) {
+    await userEvent.click(showStoredFaces);
   }
 };
 
@@ -4998,7 +4998,7 @@ describe('ReviewQueue', () => {
 
       await user.click(screen.getByRole('button', { name: 'Next review item' }));
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Show stored faces' })).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('acx-review-select'));
 
@@ -5122,7 +5122,7 @@ describe('ReviewQueue', () => {
 
       await user.click(screen.getByRole('button', { name: 'Next review item' }));
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Show stored faces' })).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('acx-review-select'));
 

@@ -207,7 +207,7 @@ async def test_cli_provision_ci_uses_reduced_quota(db_session: AsyncSession, cap
 
 def test_makefile_d_issue_demo_ci_account_wraps_cli() -> None:
     repo_root = pathlib.Path(__file__).resolve().parents[5]
-    mk = repo_root / "Makefile.d" / "demo-auth.mk"
+    mk = repo_root / "mk" / "demo-auth.mk"
     text = mk.read_text(encoding="utf-8")
     assert "issue-demo-ci-account:" in text
     assert "python -m scripts.provision_demo" in text

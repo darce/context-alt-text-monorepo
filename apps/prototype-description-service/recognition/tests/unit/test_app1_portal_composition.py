@@ -5,13 +5,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from recognition.application.services.checkout_service import CheckoutService
 from recognition.infrastructure.billing.polar_provider import PolarBillingProvider
 from recognition.infrastructure.repositories.checkout_attempt_repository import CheckoutAttemptRepository
 from recognition.interface_adapters.http.deps import portal_composition as composition
-from recognition.interface_adapters.http.deps.portal_composition import _portal_auth_settings
+from recognition.interface_adapters.http.deps.portal_composition import (
+    _portal_auth_settings,
+)
 
 ISSUER = "https://clerk.example.test"
 JWKS_URL = "https://clerk.example.test/.well-known/jwks.json"

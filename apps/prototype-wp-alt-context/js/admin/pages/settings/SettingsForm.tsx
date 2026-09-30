@@ -21,6 +21,7 @@ import {
   NAMING_AGREEMENT_LABEL,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
+import { TONE_CLASS, type BannerTone } from './testConnectionBanner';
 
 const URL_REJECTION_REASON_LABELS: Record<UrlRejectionReasonValue, string> = {
   [UrlRejectionReason.REJECTED_SCHEME]: __(
@@ -80,6 +81,9 @@ interface SettingsFormStatus {
   testPending: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
+  saveMessage?: string;
+  saveMessageTone?: BannerTone;
+  routingSaveFeedback?: boolean;
 }
 
 interface SettingsFormActions {
@@ -90,6 +94,7 @@ interface SettingsFormActions {
   onAllowPersonNamesChange?: (value: boolean) => void;
   onSave: (e: React.FormEvent) => void;
   onTest: () => void;
+  onCommitRouting?: () => void;
   onFocusServiceUrl?: () => void;
 }
 
@@ -114,7 +119,15 @@ export const SettingsForm = ({
     urlReadOnly,
     keyReadOnly,
   } = values;
-  const { savePending, testPending, hasUnsavedRoutingChanges, testResult } = status;
+  const {
+    savePending,
+    testPending,
+    hasUnsavedRoutingChanges,
+    testResult,
+    saveMessage = '',
+    saveMessageTone = 'info',
+    routingSaveFeedback = false,
+  } = status;
   const {
     onUrlChange,
     onApiKeyChange,
@@ -123,6 +136,7 @@ export const SettingsForm = ({
     onAllowPersonNamesChange,
     onSave,
     onTest,
+    onCommitRouting,
     onFocusServiceUrl,
   } = actions;
   // R19-BR-04: one derived state drives empty CTA + source chip; do not re-check
@@ -130,6 +144,7 @@ export const SettingsForm = ({
   const cardState = deriveServiceUrlCardState(data);
   // R19-BR-05: test_connection probes effective_target_url, not the blanked url.
   const hasProbeTarget = data.effective_target_url.trim() !== '';
+  const canCheckHealth = hasProbeTarget || (hasUnsavedRoutingChanges && url.trim() !== '');
   // RECOG-1: local survives only as a dev-only code hatch; when active the
   // effective target resolves to local. Surface it as a read-only diagnostic.
   const devHatchActive = data.recognition_source === RecognitionSource.LOCAL;
@@ -206,6 +221,13 @@ export const SettingsForm = ({
             className="regular-text"
             value={url}
             onChange={(e) => onUrlChange(e.target.value)}
+            onBlur={onCommitRouting}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onCommitRouting?.();
+              }
+            }}
             readOnly={urlReadOnly}
             placeholder="https://api.altcontext.com"
           />
@@ -220,6 +242,13 @@ export const SettingsForm = ({
             className="regular-text"
             value={apiKey}
             onChange={(e) => onApiKeyChange(e.target.value)}
+            onBlur={onCommitRouting}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onCommitRouting?.();
+              }
+            }}
             readOnly={keyReadOnly}
             placeholder={data.api_key_set ? `Current: ${data.api_key_last4}` : __('Enter API key', 'alt-context')}
           />
@@ -227,6 +256,16 @@ export const SettingsForm = ({
             {SOURCE_LABELS[data.key_source] ?? data.key_source}
             {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
           </p>
+          {routingSaveFeedback && saveMessage ? (
+            <div
+              className={`notice inline ${TONE_CLASS[saveMessageTone]}`}
+              role={saveMessageTone === 'error' ? 'alert' : 'status'}
+              aria-live={saveMessageTone === 'error' ? 'assertive' : 'polite'}
+              data-testid="acx-settings-routing-save-message"
+            >
+              <p>{saveMessage}</p>
+            </div>
+          ) : null}
         </div>
 
         <div className="acx-target-card__actions">
@@ -234,7 +273,7 @@ export const SettingsForm = ({
             type="button"
             className="button button-secondary"
             onClick={onTest}
-            disabled={testPending || hasUnsavedRoutingChanges || !hasProbeTarget}
+            disabled={savePending || testPending || !canCheckHealth}
           >
             {testPending ? __('Checking…', 'alt-context') : __('Check health', 'alt-context')}
           </button>
@@ -278,12 +317,6 @@ export const SettingsForm = ({
             'Local recognition is enabled via the ACX_RECOGNITION_SOURCE developer constant. Remove it to use the hosted service.',
             'alt-context',
           )}
-        </p>
-      ) : null}
-
-      {hasUnsavedRoutingChanges ? (
-        <p className="description">
-          {__('Save settings before scanning or testing so recognition traffic uses your edits.', 'alt-context')}
         </p>
       ) : null}
 

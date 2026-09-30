@@ -341,6 +341,10 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def count_top_unlabeled(self, tenant_id: str, min_identity_count: int = 2) -> int:
+        """Count clusters that qualify for the top-unlabeled listing."""
+        ...
+
     async def dismiss_cluster(self, cluster_id: str) -> bool:
         """Mark a cluster as dismissed from the naming queue.
 

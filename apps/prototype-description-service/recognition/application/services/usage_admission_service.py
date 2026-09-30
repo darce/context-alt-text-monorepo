@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+from collections.abc import Awaitable
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +27,20 @@ from recognition.infrastructure.repositories.usage_repository import (
 )
 
 _DEFAULT_OPERATION_TIMEOUT_S = 5.0
+
+
+async def _with_operation_timeout[T](
+    awaitable: Awaitable[T],
+    *,
+    timeout_s: float,
+    operation: str,
+) -> T:
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except UsageAdmissionTimeoutError:
+        raise
+    except TimeoutError as exc:
+        raise UsageAdmissionTimeoutError(f"usage admission repository operation timed out: {operation}") from exc
 
 
 def _validate_request(
@@ -121,6 +137,7 @@ class UsageAdmissionService:
             raise ValueError("timeout_s must be a finite positive number")
         if not math.isfinite(float(timeout_s)) or float(timeout_s) <= 0:
             raise ValueError("timeout_s must be a finite positive number")
+        self._timeout_s = float(timeout_s)
 
         candidate: Any = repository if repository is not None else session
         if candidate is None:
@@ -131,7 +148,7 @@ class UsageAdmissionService:
         if all(callable(getattr(candidate, name, None)) for name in ("reserve", "commit", "release")):
             self._repository = candidate
         else:
-            self._repository = SqlAlchemyUsageRepository(candidate, timeout_s=timeout_s)
+            self._repository = SqlAlchemyUsageRepository(candidate, timeout_s=self._timeout_s)
 
     async def reserve(
         self,
@@ -155,21 +172,29 @@ class UsageAdmissionService:
             queue_bytes=queue_bytes,
         )
         try:
-            reservation = await self._repository.reserve(
-                tenant_id,
-                idempotency_key=idempotency_key,
-                job_id=job_id,
-                cost_units=cost_units,
-                operation_id=operation_id,
-                request_fingerprint=request_fingerprint,
-                queue_bytes=queue_bytes,
+            reservation = await _with_operation_timeout(
+                self._repository.reserve(
+                    tenant_id,
+                    idempotency_key=idempotency_key,
+                    job_id=job_id,
+                    cost_units=cost_units,
+                    operation_id=operation_id,
+                    request_fingerprint=request_fingerprint,
+                    queue_bytes=queue_bytes,
+                ),
+                timeout_s=self._timeout_s,
+                operation="reserve",
             )
         except TypeError:
-            reservation = await self._repository.reserve(
-                tenant_id,
-                idempotency_key=idempotency_key,
-                job_id=job_id,
-                cost_units=cost_units,
+            reservation = await _with_operation_timeout(
+                self._repository.reserve(
+                    tenant_id,
+                    idempotency_key=idempotency_key,
+                    job_id=job_id,
+                    cost_units=cost_units,
+                ),
+                timeout_s=self._timeout_s,
+                operation="reserve",
             )
         if isinstance(reservation, UsageTicket):
             return reservation
@@ -178,9 +203,17 @@ class UsageAdmissionService:
     async def _settle(self, method_name: str, ticket: UsageTicket, *, fence_token: str | None) -> None:
         method = getattr(self._repository, method_name)
         try:
-            await method(ticket, fence_token=fence_token)
+            await _with_operation_timeout(
+                method(ticket, fence_token=fence_token),
+                timeout_s=self._timeout_s,
+                operation=method_name,
+            )
         except TypeError:
-            await method(ticket)
+            await _with_operation_timeout(
+                method(ticket),
+                timeout_s=self._timeout_s,
+                operation=method_name,
+            )
 
     async def commit(self, ticket: UsageTicket) -> None:
         """Commit one reservation; duplicate completion is a no-op."""
@@ -199,9 +232,17 @@ class UsageAdmissionService:
             raise InvalidUsageRequestError("fence_token must be a non-empty string")
         commit_fenced = getattr(self._repository, "commit_fenced", None)
         if callable(commit_fenced):
-            await commit_fenced(ticket, fence_token=fence_token.strip())
+            await _with_operation_timeout(
+                commit_fenced(ticket, fence_token=fence_token.strip()),
+                timeout_s=self._timeout_s,
+                operation="commit_fenced",
+            )
             return
-        await self._repository.commit(ticket, fence_token=fence_token.strip())
+        await _with_operation_timeout(
+            self._repository.commit(ticket, fence_token=fence_token.strip()),
+            timeout_s=self._timeout_s,
+            operation="commit_fenced",
+        )
 
     async def release_fenced(self, ticket: UsageTicket, *, fence_token: str) -> None:
         """Idempotent terminal release guarded by reservation id plus fence."""
@@ -210,9 +251,17 @@ class UsageAdmissionService:
             raise InvalidUsageRequestError("fence_token must be a non-empty string")
         release_fenced = getattr(self._repository, "release_fenced", None)
         if callable(release_fenced):
-            await release_fenced(ticket, fence_token=fence_token.strip())
+            await _with_operation_timeout(
+                release_fenced(ticket, fence_token=fence_token.strip()),
+                timeout_s=self._timeout_s,
+                operation="release_fenced",
+            )
             return
-        await self._repository.release(ticket, fence_token=fence_token.strip())
+        await _with_operation_timeout(
+            self._repository.release(ticket, fence_token=fence_token.strip()),
+            timeout_s=self._timeout_s,
+            operation="release_fenced",
+        )
 
     async def assert_fence_current(self, ticket: UsageTicket, *, fence_token: str) -> None:
         """Reject a captured worker token whose generation is no longer current."""

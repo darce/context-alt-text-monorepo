@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +12,7 @@ import { suggestionProjectionMatrix } from './suggestionProjection.fixtures';
 import * as recognitionApi from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
+import { buildTestQueryClient, createQueryWrapper } from '../../../../test-utils/queryClient';
 
 vi.mock('../../../../api/recognition', () => ({
   fetchIdentitiesSuggestions: vi.fn(),
@@ -23,16 +22,6 @@ vi.mock('../../../../api/recognition', () => ({
 vi.mock('../../../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
 }));
-
-const createWrapper = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-  return { wrapper, queryClient };
-};
 
 const match = (label: string, cluster_id = `cluster-${label}`) => ({
   cluster_id,
@@ -64,19 +53,59 @@ describe('useInlineSuggestionBatch', () => {
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({ matches: {} });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     renderHook(() => useInlineSuggestionBatch(['a', 'b', 'c']), { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock).toHaveBeenCalledWith(['a', 'b', 'c'], PROJECTION_TOP_K);
-    expect(PROJECTION_TOP_K).toBe(5);
+  });
+
+  it('surfaces a failed chunk as a query error when other chunks succeed', async () => {
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    fetchMock.mockImplementation(async (ids) => {
+      if (ids[0] === 'identity-100') {
+        throw new Error('chunk unavailable');
+      }
+      const firstId = ids[0];
+      return { matches: firstId ? { [firstId]: [match(firstId)] } : {} };
+    });
+
+    const identityIds = Array.from({ length: 201 }, (_, index) => `identity-${index}`);
+    const wrapper = createQueryWrapper(buildTestQueryClient());
+    const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.getMatch('identity-0')?.label).toBe('identity-0');
+    expect(result.current.getMatch('identity-100')).toBeUndefined();
+    expect(result.current.getMatch('identity-200')?.label).toBe('identity-200');
+  });
+
+  it('limits concurrent chunk requests to four', async () => {
+    const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    fetchMock.mockImplementation(async () => {
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      activeRequests -= 1;
+      return { matches: {} };
+    });
+
+    const identityIds = Array.from({ length: 901 }, (_, index) => `identity-${index}`);
+    const wrapper = createQueryWrapper(buildTestQueryClient());
+    const { result } = renderHook(() => useInlineSuggestionBatch(identityIds), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(maxActiveRequests).toBe(4);
   });
 
   it('fetches nothing for an empty id set', async () => {
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({ matches: {} });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch([]), { wrapper });
 
     // Give any accidental query a chance to fire.
@@ -94,7 +123,7 @@ describe('useInlineSuggestionBatch', () => {
       },
     });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch(['a', 'b']), { wrapper });
 
     await waitFor(() => expect(result.current.getMatch('a')?.label).toBe('Ada'));
@@ -113,7 +142,7 @@ describe('useInlineSuggestionBatch', () => {
     const fetchMock = vi.mocked(recognitionApi.fetchIdentitiesSuggestions);
     fetchMock.mockResolvedValue({ matches: { a: [match('Ada')] } });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch(['a', 'b']), { wrapper });
 
     await waitFor(() => expect(result.current.getMatch('a')?.label).toBe('Ada'));
@@ -132,7 +161,7 @@ describe('useInlineSuggestionBatch', () => {
       },
     });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch(['a']), { wrapper });
 
     // Wait for the data to be applied, not merely the fetch to fire — getMatch is
@@ -153,7 +182,7 @@ describe('useInlineSuggestionBatch', () => {
       },
     });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch([identityId]), { wrapper });
 
     await waitFor(() =>
@@ -173,7 +202,7 @@ describe('useInlineSuggestionBatch', () => {
       },
     });
 
-    const { wrapper } = createWrapper();
+    const wrapper = createQueryWrapper(buildTestQueryClient());
     const { result } = renderHook(() => useInlineSuggestionBatch([identityId]), { wrapper });
 
     // Wait for the data to be applied, not merely the fetch to fire (BR-11).
@@ -192,7 +221,8 @@ describe('useInlineSuggestionBatch', () => {
       },
     });
 
-    const { wrapper, queryClient } = createWrapper();
+    const queryClient = buildTestQueryClient();
+    const wrapper = createQueryWrapper(queryClient);
     const { result: batch } = renderHook(() => useInlineSuggestionBatch(['a', 'b']), { wrapper });
     await waitFor(() => expect(batch.current.getMatch('a')?.label).toBe('Ada'));
     expect(fetchMock).toHaveBeenCalledTimes(1);

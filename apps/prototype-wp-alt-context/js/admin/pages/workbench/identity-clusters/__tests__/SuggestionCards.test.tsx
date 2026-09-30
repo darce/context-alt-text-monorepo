@@ -251,14 +251,14 @@ describe('SuggestionCard BR-41 group accname', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await user.click(screen.getByRole('button', { name: 'Show stored faces' }));
     await user.click(screen.getByRole('button', { name: 'Yes' }));
     expect(onAccept).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByText(/close matches/i)).not.toBeInTheDocument();
   });
 
-  it('renders the face-count string and review title (UXW2-3-R1-11)', () => {
+  it('renders the face-count string and separate stored-face and cluster actions (UXW2-3-R1-11)', () => {
     render(
       <SuggestionCard
         suggestion={baseSuggestion}
@@ -271,10 +271,29 @@ describe('SuggestionCard BR-41 group accname', () => {
     );
 
     expect(screen.getByText(/3 faces/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Review details' })).toHaveAttribute(
-      'title',
-      'Review these faces',
+    expect(screen.getByRole('button', { name: 'Show stored faces' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open face group' })).toBeInTheDocument();
+  });
+
+  it('opens the cluster separately from showing stored faces', async () => {
+    const onReview = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onReview={onReview}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
     );
+
+    await user.click(screen.getByRole('button', { name: 'Open face group' }));
+
+    expect(onReview).toHaveBeenCalledTimes(1);
+    expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(screen.queryByRole('list', { name: 'Stored faces for Alex' })).toBeNull();
   });
 });
 
@@ -463,10 +482,23 @@ describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
     expect(approve).toBeDisabled();
     expect(screen.queryByRole('list', { name: 'Stored faces for Alex' })).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    const showStoredFaces = screen.getByRole('button', { name: 'Show stored faces' });
+    expect(showStoredFaces).toHaveAttribute('aria-expanded', 'false');
+    expect(showStoredFaces).toHaveAttribute('aria-controls', 'acx-stored-face-list-sugg-1');
+    await user.click(showStoredFaces);
 
-    expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(onReview).not.toHaveBeenCalled();
     expect(screen.getByRole('list', { name: 'Stored faces for Alex' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide stored faces' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('list', { name: 'Stored faces for Alex' })).toHaveTextContent(
+      'Stored face 2 of 3 — Image unavailable',
+    );
+    expect(screen.getByRole('list', { name: 'Stored faces for Alex' })).toHaveTextContent(
+      'Stored face 3 of 3 — Image unavailable',
+    );
     expect(approve).toBeEnabled();
     await user.click(approve);
     expect(onAccept).toHaveBeenCalledTimes(1);
@@ -487,9 +519,9 @@ describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
     const approve = screen.getByRole('button', { name: 'Yes' });
     expect(approve).toBeDisabled();
     expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+    expect(screen.getByText('Show stored faces first to approve.')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await user.click(screen.getByRole('button', { name: 'Show stored faces' }));
 
     const faceList = screen.getByRole('list', { name: 'Stored faces for Alex' });
     expect(faceList).toHaveTextContent('Stored face 1 of 3 — Image unavailable');
@@ -514,7 +546,7 @@ describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
     );
 
     const approve = screen.getByRole('button', { name: 'Yes' });
-    const reason = screen.getByText('Review all stored faces before approving.');
+    const reason = screen.getByText('Show stored faces first to approve.');
     expect(reason).toBeVisible();
     expect(approve).toHaveAttribute('aria-disabled', 'true');
     expect(approve).toHaveAttribute('aria-describedby', reason.id);

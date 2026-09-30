@@ -397,19 +397,10 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		// no image bytes. WP loads each attachment's bytes and forwards a
 		// multipart/form-data body to the backend: field `tenant_id`, field
 		// `media_ids` (JSON int array as string), and one `image_<media_id>` file
-		// part per id. The backend 422s if any media_id lacks an image part, so a
-		// file we cannot read fails the whole run fast (400 naming the id) instead
-		// of silently dropping it.
-		$multipart_body = array(
-			'tenant_id'           => $this->get_tenant_id(),
-			'media_ids'           => wp_json_encode( array_values( $media_ids ) ),
-			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
-		);
-		// GUIDEDFIX-2: forward the validated key so the backend can dedupe on
-		// (tenant_id, idempotency_key). Absent stays absent — never invent one.
-		if ( '' !== $idempotency_key ) {
-			$multipart_body['idempotency_key'] = $idempotency_key;
-		}
+		// part per id. An attachment whose file cannot be read is skipped, logged,
+		// and reported back as `unreadable_media_ids`, so one missing original no
+		// longer blocks the rest; when no file is readable, submit fails with the
+		// same 400 code and names the ids.
 
 		// PHP-01: bound aggregate raw bytes BEFORE loading them. Stat each file
 		// and reject on a single-file or running-total overflow so a large run
@@ -417,13 +408,45 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		// attachment in memory.
 		$max_body_bytes = $this->describe_run_max_body_bytes();
 		$running_total  = 0;
+		$file_parts     = array();
+		$unreadable     = array();
 		foreach ( $media_ids as $media_id ) {
 			$file_part = $this->load_media_file_part( $media_id, $max_body_bytes, $running_total );
 			if ( is_wp_error( $file_part ) ) {
+				if ( 'describe_run_attachment_unreadable' === $file_part->get_error_code() ) {
+					$unreadable[] = (int) $media_id;
+					Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for describe run: attachment file missing or unreadable', $media_id ) );
+					continue;
+				}
 				return $file_part;
 			}
-			$running_total                          += strlen( $file_part['content'] );
-			$multipart_body[ 'image_' . $media_id ]  = $file_part;
+			$running_total                 += strlen( $file_part['content'] );
+			$file_parts[ (int) $media_id ]  = $file_part;
+		}
+		if ( array() === $file_parts ) {
+			return new WP_Error(
+				'describe_run_attachment_unreadable',
+				sprintf( 'No readable attachment files for media_ids: %s.', implode( ', ', $unreadable ) ),
+				array(
+					'status'    => 400,
+					'media_ids' => $unreadable,
+				)
+			);
+		}
+		$readable_ids = array_map( 'intval', array_keys( $file_parts ) );
+
+		$multipart_body = array(
+			'tenant_id'           => $this->get_tenant_id(),
+			'media_ids'           => wp_json_encode( $readable_ids ),
+			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
+		);
+		// GUIDEDFIX-2: forward the validated key so the backend can dedupe on
+		// (tenant_id, idempotency_key). Absent stays absent — never invent one.
+		if ( '' !== $idempotency_key ) {
+			$multipart_body['idempotency_key'] = $idempotency_key;
+		}
+		foreach ( $file_parts as $media_id => $file_part ) {
+			$multipart_body[ 'image_' . $media_id ] = $file_part;
 		}
 
 		$response = $this->proxy_recognition_request(
@@ -448,10 +471,16 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 					? sanitize_text_field( $data['run_id'] )
 					: '';
 				if ( '' !== $run_id ) {
-					$stored = $this->store_run_media_ids( $run_id, $media_ids );
+					$stored = $this->store_run_media_ids( $run_id, $readable_ids );
 					if ( is_wp_error( $stored ) ) {
 						return $stored;
 					}
+				}
+				if ( array() !== $unreadable ) {
+					sort( $unreadable );
+					// This WP-owned key is not part of the backend run schema.
+					$data['unreadable_media_ids'] = array_values( array_unique( $unreadable ) );
+					$response->set_data( $data );
 				}
 			}
 		}

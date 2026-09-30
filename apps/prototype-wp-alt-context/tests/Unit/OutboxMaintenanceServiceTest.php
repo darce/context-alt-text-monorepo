@@ -10,10 +10,13 @@ use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxMaintenanceService;
 use AltContext\Sovereign\Sync\OutboxQueryRepository;
 use AltContext\Sovereign\Sync\OutboxStatus;
+use AltContext\Tests\Support\FindsSqlQueries;
 use AltContext\Tests\TestCase;
 
 class OutboxMaintenanceServiceTest extends TestCase
 {
+    use FindsSqlQueries;
+
     public function testRetryFailedOperationResetsStateRefreshesMetricsAndSchedulesDrain(): void
     {
         global $wpdb;
@@ -161,6 +164,101 @@ class OutboxMaintenanceServiceTest extends TestCase
         $syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
         $this->assertStringContainsString('pending_curation_operations = 2', $syncStateUpdate);
         $this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+    }
+
+    public function testBulkRetryReturnsCommittedCountWhenMetricsRefreshThrows(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = 2;
+        $metrics = new class() extends SyncStateRepository {
+            public function refresh_curation_metrics(string $tenant_id): void
+            {
+                throw new \RuntimeException('metrics failed');
+            }
+        };
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService(null, $metrics);
+
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([
+            [$tenantId, 'metrics_refresh', 'metrics failed'],
+        ], $failures);
+    }
+
+    public function testBulkRetryReturnsCommittedCountWhenDrainSchedulingThrows(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = 2;
+        $metrics = $this->trackingSyncStateRepository();
+        add_filter(
+            'acx_outbox_action_scheduler_group',
+            static function (): string {
+                throw new \RuntimeException('drain scheduling failed');
+            }
+        );
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService(null, $metrics);
+
+        $this->assertSame(2, $service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([
+            [$tenantId, 'drain_schedule', 'drain scheduling failed'],
+        ], $failures);
+    }
+
+    public function testBulkRetryReturnsFalseWhenCasUpdateFails(): void
+    {
+        global $wpdb;
+
+        $tenantId = 'tenant-test-123';
+        $wpdb->mockResults = [
+            ['id' => 1],
+            ['id' => 2],
+        ];
+        $wpdb->defaultQueryResult = false;
+        $failures = [];
+        add_action(
+            'acx_sync_outbox_retry_additive_failed',
+            static function (string $failedTenantId, string $operation, \Throwable $exception) use (&$failures): void {
+                $failures[] = [$failedTenantId, $operation, $exception->getMessage()];
+            },
+            10,
+            3
+        );
+
+        $service = new OutboxMaintenanceService();
+
+        $this->assertFalse($service->retry_failed_operations_bulk($tenantId));
+        $this->assertSame([], $failures);
     }
 
     public function testBulkRetryPacesRequeueSoOneDrainCycleClaimsFewerThanAllRows(): void
@@ -472,6 +570,8 @@ class OutboxMaintenanceServiceTest extends TestCase
     {
         global $wpdb;
 
+        // Retention must not delete the row whose orphan classification is under test.
+        $GLOBALS['__ac_current_time'] = strtotime('2026-09-17 00:00:00 UTC');
         $tenantId = 'tenant-orphan-still-present';
         $wpdb->defaultQueryResult = 0;
         $wpdb->tableRows['wp_acx_sync_outbox'] = [
@@ -626,20 +726,6 @@ class OutboxMaintenanceServiceTest extends TestCase
             $tenantId,
             'open'
         )] = $conflicts;
-    }
-
-    /**
-     * @param array<int,string> $queries
-     */
-    private function findQueryContaining(array $queries, string $needle): string
-    {
-        foreach ($queries as $query) {
-            if (str_contains($query, $needle)) {
-                return $query;
-            }
-        }
-
-        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
     }
 
     private function isHookScheduled(string $hook): bool

@@ -1,8 +1,7 @@
-import React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { buildTestQueryClient, createQueryWrapper } from '../../test-utils/queryClient';
 import {
   invalidateMediaStats,
   MEDIA_STATS_PROBE,
@@ -32,21 +31,6 @@ const envelope = (total: number): WorkbenchMediaResponse => ({
   totalPages: Math.max(1, total),
 });
 
-const buildClient = (): QueryClient =>
-  new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
-
-const createWrapper = (client: QueryClient) => {
-  const Wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
-  return Wrapper;
-};
-
 describe('useMediaStats', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,8 +56,8 @@ describe('useMediaStats', () => {
       return Promise.resolve(envelope(10));
     });
 
-    const client = buildClient();
-    const { result } = renderHook(() => useMediaStats(), { wrapper: createWrapper(client) });
+    const client = buildTestQueryClient();
+    const { result } = renderHook(() => useMediaStats(), { wrapper: createQueryWrapper(client) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.stats.total).toBe(10);
@@ -95,7 +79,7 @@ describe('useMediaStats', () => {
       return Promise.resolve(envelope(0));
     });
 
-    const client = buildClient();
+    const client = buildTestQueryClient();
     // Seed a list page that must never be touched by stats invalidation.
     const listKey = queryKeys.media.workbenchPage({ page: 1, perPage: 20, status: 'missing' });
     client.setQueryData<WorkbenchMediaResponse>(listKey, {
@@ -115,7 +99,7 @@ describe('useMediaStats', () => {
       totalPages: 1,
     });
 
-    const { result } = renderHook(() => useMediaStats(), { wrapper: createWrapper(client) });
+    const { result } = renderHook(() => useMediaStats(), { wrapper: createQueryWrapper(client) });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.stats.missing).toBe(5);
 

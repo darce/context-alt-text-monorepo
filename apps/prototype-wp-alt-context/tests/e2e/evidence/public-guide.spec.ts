@@ -1,10 +1,10 @@
 import { devices, expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
 import {
-  classifyAcxRequest,
-  isAcxRestRequest,
-  type AcxRequestRecord,
-} from '../fixtures/guided-recording';
+  PUBLIC_GUIDE_FALLBACK,
+  guidedCopy as publicGuideCopy,
+} from '../../../js/admin/guidedPrototype/publicGuideCopy';
+import { classifyAcxRequest, isAcxRestRequest, type AcxRequestRecord } from '../fixtures/guided-recording';
 
 /**
  * GUIDEROUTE-1: signed-out public guide acceptance.
@@ -12,23 +12,24 @@ import {
  * Runs under the `public-guide` Playwright project (no auth-setup). Skips when
  * ACX_PUBLIC_GUIDE_URL is unset. Wire it with `npm run e2e:public-guide` or
  * `make demo-public-guide-e2e SITE_URL=...` (not implied by deploy-enable).
- * Desktop 1440×900 and mobile Pixel 7 both complete choose → edit →
- * apply → undo from the keyboard only, with zero privileged acx/v1
- * traffic and zero describe calls.
+ * Desktop 1440×900 and mobile 390×844 check the delivered layout, then
+ * complete name choice → edit → use → undo from the keyboard with zero
+ * privileged acx/v1 traffic and zero describe calls.
  */
 
-const PUBLIC_SCOPE = 'Recorded example. Changes stay in this tab; WordPress and the server roster are unchanged.';
-const PUBLIC_TITLE = "Who's in the photo belongs in the alt text.";
-const PUBLIC_CONTEXT_PURPOSE =
-  'Names can be useful in this gallery when the editor has enough evidence to include them. ' +
-  'Leaving someone unnamed is also a valid choice.';
-const PUBLIC_START = 'Start the walkthrough';
-const PUBLIC_REVIEW_DRAFTS = 'Review drafts';
-const PUBLIC_DRAFT_LABEL = 'Alt text to apply';
-const APPLY_SUBMIT = 'Apply to demo copy';
-const APPLY_UNDO = 'Undo last application';
+const PUBLIC_SCOPE = publicGuideCopy('scope.public');
+const PUBLIC_TITLE = publicGuideCopy('entry.title.public');
+const PUBLIC_DOCUMENT_TITLE = `Demo: ${PUBLIC_TITLE} | AltContext`;
+const PUBLIC_CONTEXT_PURPOSE = publicGuideCopy('context.purpose');
+const PUBLIC_START = publicGuideCopy('entry.start.public');
+const PUBLIC_CASE_STUDY = publicGuideCopy('entry.read_case_study');
+const PUBLIC_COMPARE_PHOTOS = publicGuideCopy('names.compare.public');
+const PUBLIC_DRAFT_LABEL = publicGuideCopy('draft.field_label.public');
+const PUBLIC_LEAVE_UNNAMED = publicGuideCopy('names.omit.public');
+const APPLY_SUBMIT = publicGuideCopy('description.use.public');
+const APPLY_UNDO = publicGuideCopy('description.undo.public');
 const WALKTHROUGH_PHOTO_KEY = 'tribeca';
-const FALLBACK = 'The walkthrough could not load. Reload the page and try again.';
+const FALLBACK = PUBLIC_GUIDE_FALLBACK;
 const STEP_TIMEOUT_MS = 20_000;
 
 const configuredUrl = (process.env.ACX_PUBLIC_GUIDE_URL ?? '').trim();
@@ -58,7 +59,9 @@ const attachAcxCounter = (page: Page): AcxRequestRecord[] => {
 
 const assertNoPrivilegedOrDescribe = (records: readonly AcxRequestRecord[]): void => {
   const privileged = records.filter((row) => row.classification === 'privileged');
-  const describeCalls = records.filter((row) => /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url));
+  const describeCalls = records.filter((row) =>
+    /\/(?:public\/)?demo\/describe(?:[/?#]|$)|\/describe(?:[/?#]|$)/i.test(row.url),
+  );
   expect(privileged, JSON.stringify(privileged)).toEqual([]);
   expect(describeCalls, JSON.stringify(describeCalls)).toEqual([]);
 };
@@ -68,32 +71,68 @@ const pressControl = async (locator: Locator, key: 'Enter' | 'Space' = 'Enter'):
   await locator.press(key);
 };
 
-const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
+const completeKeyboardWalkthrough = async (page: Page, viewportName: string): Promise<void> => {
   const walkthroughPhoto = page.getByTestId(`guided-photo-${WALKTHROUGH_PHOTO_KEY}`);
   const walkthroughReview = page.getByTestId(`guided-description-review-${WALKTHROUGH_PHOTO_KEY}`);
 
   await pressControl(page.getByRole('button', { name: PUBLIC_START }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 1 of 2', { timeout: STEP_TIMEOUT_MS });
-
   await pressControl(
-    walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-left`).getByRole('radio', { name: /^Use / }),
+    walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-left`).getByRole('radio').first(),
     'Space',
   );
   await pressControl(
-    walkthroughPhoto.getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-right`).getByRole('radio', { name: /^Use / }),
+    walkthroughPhoto
+      .getByTestId(`name-choice-${WALKTHROUGH_PHOTO_KEY}-right`)
+      .getByRole('radio', { name: PUBLIC_LEAVE_UNNAMED }),
     'Space',
   );
-  await pressControl(page.getByRole('button', { name: PUBLIC_REVIEW_DRAFTS }));
-  await expect(page.getByTestId('guided-demo-stepper')).toContainText('Step 2 of 2', { timeout: STEP_TIMEOUT_MS });
 
-  const appliedText = walkthroughReview.locator('[data-applied-text]');
+  const reviewBox = await walkthroughReview.boundingBox();
+  if (reviewBox === null) {
+    throw new Error('The Tribeca photo review card is missing.');
+  }
+  const editorBox = await walkthroughReview
+    .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
+    .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL })
+    .boundingBox();
+  if (editorBox === null) {
+    throw new Error('The Tribeca photo review description field is missing.');
+  }
+
+  expect(editorBox.x).toBeGreaterThanOrEqual(reviewBox.x);
+  expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(reviewBox.x + reviewBox.width);
+
+  if (viewportName === 'desktop 1440x900') {
+    const imageBox = await walkthroughPhoto.locator('.acx-guided-page__image-wrap').boundingBox();
+    if (imageBox === null) {
+      throw new Error('The desktop review card or its description fields are missing.');
+    }
+    expect(reviewBox.width).toBeGreaterThanOrEqual(imageBox.width);
+    expect(editorBox.width).toBeGreaterThanOrEqual(300);
+  } else {
+    expect(reviewBox.x).toBeGreaterThanOrEqual(0);
+    expect(reviewBox.x + reviewBox.width).toBeLessThanOrEqual(390);
+
+    const applyButtonHeights = await walkthroughReview
+      .locator('.acx-guided-review__apply > button')
+      .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+    expect(applyButtonHeights.length).toBeGreaterThan(0);
+    for (const height of applyButtonHeights) {
+      expect(height).toBeLessThanOrEqual(64);
+    }
+  }
+
+  const appliedText = walkthroughReview
+    .getByTestId(`guided-current-alt-${WALKTHROUGH_PHOTO_KEY}`)
+    .locator('[data-applied-text]');
   const before = (await appliedText.textContent()) ?? '';
   const draft = walkthroughReview
     .getByTestId(`guided-draft-field-${WALKTHROUGH_PHOTO_KEY}`)
     .getByRole('textbox', { name: PUBLIC_DRAFT_LABEL });
+  await expect(draft).toBeVisible({ timeout: STEP_TIMEOUT_MS });
   await draft.focus();
   await page.keyboard.press('End');
-  await page.keyboard.type(' ');
+  await page.keyboard.type(' Edited in the public guide.');
 
   const applyButton = walkthroughReview.getByTestId(`demo-apply-${WALKTHROUGH_PHOTO_KEY}`);
   await expect(applyButton).toHaveAccessibleName(APPLY_SUBMIT);
@@ -108,6 +147,102 @@ const completeKeyboardWalkthrough = async (page: Page): Promise<void> => {
   await expect(appliedText).toHaveText(before, { timeout: STEP_TIMEOUT_MS });
 };
 
+const assertResponsiveLayout = async (page: Page, viewportName: string): Promise<void> => {
+  const root = page.getByTestId('guided-demo-root');
+  const rootBox = await root.boundingBox();
+  expect(rootBox, 'public guide root box').not.toBeNull();
+
+  const layout = await page.locator('.acx-guided-entrance').evaluate((entrance) => {
+    const content = entrance.querySelector('.acx-guided-entrance__content');
+    const plan = entrance.querySelector('.acx-guided-entrance__plan');
+    const samplePhoto = document.querySelector('[data-testid="guided-photo-tribeca"]');
+    const image = samplePhoto?.querySelector('.acx-guided-page__image-wrap');
+    const faces = samplePhoto?.querySelector('.acx-guided-page__faces');
+    if (
+      content === null ||
+      plan === null ||
+      image === null ||
+      image === undefined ||
+      faces === null ||
+      faces === undefined
+    ) {
+      throw new Error('Public guide layout landmarks are missing');
+    }
+    const contentBox = content.getBoundingClientRect();
+    const planBox = plan.getBoundingClientRect();
+    const imageBox = image.getBoundingClientRect();
+    const facesBox = faces.getBoundingClientRect();
+    return {
+      contentLeft: contentBox.left,
+      contentRight: contentBox.right,
+      planLeft: planBox.left,
+      imageRight: imageBox.right,
+      facesLeft: facesBox.left,
+    };
+  });
+
+  if (viewportName === 'desktop 1440x900') {
+    expect(layout.planLeft).toBeGreaterThan(layout.contentRight);
+    expect(layout.facesLeft).toBeGreaterThan(layout.imageRight);
+
+    await page
+      .getByTestId('guided-photo-tribeca')
+      .getByRole('button', { name: PUBLIC_COMPARE_PHOTOS, exact: true })
+      .first()
+      .click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-reference img').evaluateAll((images) =>
+      images.map((image) => {
+        const bounds = image.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }),
+    );
+    expect(referenceTiles.length).toBeGreaterThan(0);
+    for (const tile of referenceTiles) {
+      expect(tile.width).toBeGreaterThanOrEqual(184);
+      expect(tile.width).toBeLessThanOrEqual(200);
+      expect(tile.height).toBeGreaterThanOrEqual(184);
+      expect(tile.height).toBeLessThanOrEqual(200);
+      expect(Math.abs(tile.width - tile.height)).toBeLessThan(1);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    return;
+  }
+
+  expect(layout.contentLeft - (rootBox?.x ?? 0)).toBeCloseTo(24, 0);
+  const firstPhotoFrame = await page
+    .getByTestId('guided-photo-tribeca')
+    .locator('.acx-guided-page__image-wrap')
+    .boundingBox();
+  if (firstPhotoFrame === null) {
+    throw new Error('The first sample photo image frame is missing');
+  }
+  expect(firstPhotoFrame.y).toBeLessThan(844 - 120);
+
+  await page
+    .getByTestId('guided-photo-tribeca')
+    .getByRole('button', { name: PUBLIC_COMPARE_PHOTOS, exact: true })
+    .first()
+    .click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  const referenceTiles = await dialog.locator('.acx-guided-face__lightbox-gallery img').evaluateAll((images) =>
+    images.slice(0, 2).map((image) => {
+      const bounds = image.getBoundingClientRect();
+      return { width: bounds.width, top: bounds.top };
+    }),
+  );
+  expect(referenceTiles).toHaveLength(2);
+  expect(referenceTiles[0].width).toBeGreaterThanOrEqual(158);
+  expect(referenceTiles[0].width).toBeLessThanOrEqual(160);
+  expect(referenceTiles[1].width).toBe(referenceTiles[0].width);
+  expect(Math.abs(referenceTiles[0].top - referenceTiles[1].top)).toBeLessThan(1);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+};
+
 test.describe('public guide signed-out', () => {
   test.skip(
     configuredUrl === '',
@@ -116,10 +251,11 @@ test.describe('public guide signed-out', () => {
   test.setTimeout(120_000);
 
   // defaultBrowserType is worker-scoped and cannot be set in a nested describe.
-  const { defaultBrowserType: _defaultBrowserType, ...pixel7 } = devices['Pixel 7'];
+  const pixel7 = { ...devices['Pixel 7'] };
+  delete pixel7.defaultBrowserType;
   const viewports = [
     { name: 'desktop 1440x900', use: { viewport: { width: 1440, height: 900 } } },
-    { name: 'mobile Pixel 7', use: pixel7 },
+    { name: 'mobile 390x844', use: { ...pixel7, viewport: { width: 390, height: 844 } } },
   ] as const;
 
   for (const viewport of viewports) {
@@ -129,7 +265,7 @@ test.describe('public guide signed-out', () => {
         storageState: { cookies: [], origins: [] },
       });
 
-      test('signed-out /guide/ is 200 with canonical, scope copy, keyboard apply/undo, and no REST', async ({
+      test('signed-out /guide/ is 200 with canonical, scope copy, keyboard name choice/use/undo, and no REST', async ({
         page,
       }) => {
         const acxRequests = attachAcxCounter(page);
@@ -140,13 +276,16 @@ test.describe('public guide signed-out', () => {
         await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', /\/guide\/?$/);
         await expect(page.getByTestId('guided-scope')).toHaveText(PUBLIC_SCOPE);
         await expect(page.getByRole('heading', { level: 1, name: PUBLIC_TITLE })).toBeVisible();
+        expect.soft(await page.locator('title').count()).toBe(1);
+        expect.soft(await page.locator('title').allTextContents()).toEqual([PUBLIC_DOCUMENT_TITLE]);
         await expect(page.getByText(PUBLIC_CONTEXT_PURPOSE)).toBeVisible();
         await expect(page.getByTestId('guided-photo-tribeca')).toBeVisible();
         await expect(page.getByTestId('guided-photo-coachella')).toBeVisible();
         await expect(page.getByRole('button', { name: PUBLIC_START })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'Read the case study' })).toBeVisible();
+        await expect(page.getByRole('link', { name: PUBLIC_CASE_STUDY })).toBeVisible();
 
-        await completeKeyboardWalkthrough(page);
+        await assertResponsiveLayout(page, viewport.name);
+        await completeKeyboardWalkthrough(page, viewport.name);
         assertNoPrivilegedOrDescribe(acxRequests);
       });
 
@@ -165,12 +304,14 @@ test.describe('public guide signed-out', () => {
       });
 
       test('route-blocked guide bundle shows the fallback paragraph', async ({ page }) => {
-        await page.route('**/*.js', (route) => route.abort());
-        await page.route('**/*.mjs', (route) => route.abort());
+        await page.route(
+          (url) => /\/guide-(?!watch-)[^/]+\.js$/.test(url.pathname),
+          (route) => route.abort(),
+        );
         const acxRequests = attachAcxCounter(page);
         const response = await page.goto(guideUrl, { waitUntil: 'domcontentloaded' });
         expect(response?.status()).toBe(200);
-        await expect(page.getByRole('alert')).toContainText(FALLBACK);
+        await expect(page.getByRole('alert')).toContainText(FALLBACK, { timeout: STEP_TIMEOUT_MS });
         await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', /\/guide\/?$/);
         assertNoPrivilegedOrDescribe(acxRequests);
       });

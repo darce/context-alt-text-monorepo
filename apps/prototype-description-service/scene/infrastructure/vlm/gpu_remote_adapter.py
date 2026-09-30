@@ -253,10 +253,10 @@ def _user_text(context: Mapping[str, Any] | None) -> tuple[str, tuple[str, ...],
     return "\n".join(lines), sources, bool(rendered)
 
 
-def _env_flag_enabled(name: str) -> bool:
+def _env_flag_enabled(name: str, *, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
-        return False
+        return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -414,7 +414,9 @@ class GpuRemoteDescriptionAdapter:
             pool=5.0,
         )
         self.grounding_enabled = (
-            bool(grounding_enabled) if grounding_enabled is not None else _env_flag_enabled(_GROUNDING_FLAG_ENV)
+            bool(grounding_enabled)
+            if grounding_enabled is not None
+            else _env_flag_enabled(_GROUNDING_FLAG_ENV, default=True)
         )
         self._grounding_timeout_s = max(0.1, float(grounding_timeout_s))
 

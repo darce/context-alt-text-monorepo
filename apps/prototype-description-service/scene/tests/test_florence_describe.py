@@ -17,7 +17,9 @@ from scripts.eval_harness.florence_describe import (
     CAPTION_TASK,
     MODEL_SPECS,
     BoundedStallError,
+    OciInstanceIdentityError,
     done_ids,
+    get_oci_instance_identity,
     main,
     parse_tsv,
     resolve_image_path,
@@ -54,6 +56,10 @@ def corpus(tmp_path):
 def _run(rows, captioner, out, **kw):
     kw.setdefault("spec", SPEC)
     kw.setdefault("resolved_revision", SPEC.revision)
+    kw.setdefault(
+        "instance_identity",
+        {"provider": "oci", "instance_id": "ocid1.instance.test", "region": "test-region", "shape": "VM.Standard"},
+    )
     return run(rows, captioner, out, **kw)
 
 
@@ -317,9 +323,44 @@ def test_jsonl_row_shape(corpus, tmp_path):
     assert row["model_id"] == "microsoft/Florence-2-base-ft"
     assert row["model_version"] == "florence-2-base-ft"
     assert row["model_revision"] == SPEC.revision
+    assert row["oci_instance_identity"] == {
+        "provider": "oci",
+        "instance_id": "ocid1.instance.test",
+        "region": "test-region",
+        "shape": "VM.Standard",
+    }
     assert isinstance(row["latency_s"], float)
     assert isinstance(row["completed_at"], float)
     assert row["path"].endswith("img-1.png")
+
+
+def test_oci_identity_uses_authenticated_instance_metadata(monkeypatch):
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {"id": "ocid1.instance.test", "region": "us-test-1", "shape": "VM.Standard"}
+            ).encode("utf-8")
+
+    def _urlopen(request, *, timeout):
+        assert request.full_url == "http://169.254.169.254/opc/v2/instance/"
+        assert request.get_header("Authorization") == "Bearer Oracle"
+        assert timeout == 2.0
+        return _Response()
+
+    monkeypatch.setattr("scripts.eval_harness.florence_describe.urlopen", _urlopen)
+
+    assert get_oci_instance_identity() == {
+        "provider": "oci",
+        "instance_id": "ocid1.instance.test",
+        "region": "us-test-1",
+        "shape": "VM.Standard",
+    }
 
 
 # -------------------------------------------------------------- pins / config
@@ -361,6 +402,36 @@ def test_main_refuses_unpinned_large_ft_before_load(tmp_path, monkeypatch, capsy
     err = capsys.readouterr().err
     assert "no pinned revision" in err
     assert "large-ft" in err
+    assert called == []
+
+
+def test_main_refuses_model_load_without_oci_identity(tmp_path, monkeypatch, capsys):
+    tsv = tmp_path / "a.tsv"
+    tsv.write_text("1\t2026/07/img-1.png\n")
+    called: list[object] = []
+
+    def _blocked():
+        raise OciInstanceIdentityError("metadata unavailable")
+
+    def _boom(spec):  # pragma: no cover — must not be reached
+        called.append(spec)
+        raise AssertionError("model loading must require verified OCI identity")
+
+    monkeypatch.setattr("scripts.eval_harness.florence_describe.get_oci_instance_identity", _blocked)
+    monkeypatch.setattr("scripts.eval_harness.florence_describe.load_captioner", _boom)
+    result = main(
+        [
+            "--images-dir",
+            str(tmp_path),
+            "--tsv",
+            str(tsv),
+            "--out-jsonl",
+            str(tmp_path / "out.jsonl"),
+        ]
+    )
+
+    assert result == 1
+    assert "OCI identity check failed" in capsys.readouterr().err
     assert called == []
 
 

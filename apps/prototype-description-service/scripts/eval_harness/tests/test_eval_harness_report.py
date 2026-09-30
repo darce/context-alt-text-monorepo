@@ -13,9 +13,11 @@ import json
 
 import pytest
 
+from scripts.eval_harness.bakeoff import BakeoffClient, _stamp_stage_costs
+from scripts.eval_harness.build_bakeoff_report import _format_durable_stage_costs
 from scripts.eval_harness.cli import _extract_detection_boxes, _extract_identities
 from scripts.eval_harness.manifest import ManifestError, ScoreInvariant, compute_corpus_coverage_gaps
-from scripts.eval_harness.report import Audience, build_reports, score_run_record
+from scripts.eval_harness.report import Audience, ReportError, build_reports, score_run_record
 
 _LINEAGE = {
     "labeler_id": "test-labeler",
@@ -278,6 +280,123 @@ def test_score_run_record_emits_scored_detection_arithmetic() -> None:
         scored["faces"]["detection"], tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN
     )
     assert scored["counts"] == {"total": 3, "scored": 2, "failed": 1}
+
+
+def test_score_run_record_preserves_homogeneous_model_run_stamps() -> None:
+    record = _run_record()
+    decoding = {"temperature": 0, "seed": 17, "max_tokens_by_pass": {"caption": 512}}
+    stamps = {
+        "model_revision": "sha256:fixture-model",
+        "seed": 17,
+        "prompt_variant": "v2",
+        "prompt_version": "v2",
+        "prompt_sha256": "a" * 64,
+        "task_version": "alt-text-v1",
+        "decoding_contract": decoding,
+    }
+    for item in record["items"][:2]:
+        item["describe"].update(stamps)
+    record["provenance"].update(stamps)
+
+    scored = score_run_record(record, _manifest_entries())
+    model = scored["provenance"]["model"]
+
+    assert model["model_revisions"] == ["sha256:fixture-model"]
+    assert model["seeds"] == [17]
+    assert model["prompt_versions"] == ["v2"]
+    assert model["prompt_sha256s"] == ["a" * 64]
+    assert model["task_versions"] == ["alt-text-v1"]
+    assert model["decoding_contracts"] == [decoding]
+
+
+@pytest.mark.parametrize(
+    ("field", "mixed_value"),
+    [
+        ("model_id", "other-model"),
+        ("model_revision", "sha256:other-model"),
+        ("seed", 42),
+        ("prompt_sha256", "b" * 64),
+        ("task_version", "alt-text-v2"),
+        ("decoding_contract", {"temperature": 0.7, "seed": 17, "max_tokens_by_pass": {"caption": 512}}),
+    ],
+)
+def test_score_run_record_refuses_mixed_model_or_run_stamps(field: str, mixed_value: object) -> None:
+    record = _run_record()
+    common = {
+        "model_revision": "sha256:fixture-model",
+        "seed": 17,
+        "prompt_variant": "v2",
+        "prompt_version": "v2",
+        "prompt_sha256": "a" * 64,
+        "task_version": "alt-text-v1",
+        "decoding_contract": {"temperature": 0, "seed": 17, "max_tokens_by_pass": {"caption": 512}},
+    }
+    for item in record["items"][:2]:
+        item["describe"].update(common)
+    record["items"][1]["describe"][field] = mixed_value
+
+    with pytest.raises(ReportError, match="refusing aggregate score"):
+        score_run_record(record, _manifest_entries())
+
+
+def test_bakeoff_stamps_measured_stage_costs_and_explicit_unknowns() -> None:
+    record = {
+        "provenance": {},
+        "timing": {"cold_load_s": 3600.0, "warmup": {"elapsed_s": 60.0}},
+        "items": [{"latency_s": 10.0}, {"latency_s": 5.0}],
+    }
+    _stamp_stage_costs(record, hourly_rate=3.6)
+
+    costs = record["provenance"]["stage_costs"]
+    assert costs["model_load"]["amount_usd"] == 3.6
+    assert costs["scored_inference"]["amount_usd"] == 0.015
+    assert costs["offline_report_scoring"]["status"] == "unknown"
+    assert costs["offline_report_scoring"]["reason"] == "stage duration was not measured"
+
+    unknown_rate_record = {"provenance": {}, "timing": {"warmup": {"elapsed_s": 5.0}}, "items": []}
+    _stamp_stage_costs(unknown_rate_record, hourly_rate=None)
+    assert unknown_rate_record["provenance"]["stage_costs"]["warmup"]["amount_usd"] is None
+    assert (
+        unknown_rate_record["provenance"]["stage_costs"]["warmup"]["reason"]
+        == "operator hourly rate was not supplied"
+    )
+
+
+def test_bakeoff_stamps_run_defining_revision_seed_prompt_and_decoding() -> None:
+    client = BakeoffClient(
+        "http://candidate",
+        model_id="candidate/model",
+        model_revision="sha256:checkpoint",
+        seed=17,
+    )
+    try:
+        provenance = client.run_configuration()
+    finally:
+        client.close()
+
+    assert provenance["model_revision"] == "sha256:checkpoint"
+    assert provenance["model_revision_source"] == "operator_supplied"
+    assert provenance["seed"] == 17
+    assert provenance["prompt_version"] == "v1"
+    assert len(provenance["prompt_sha256"]) == 64
+    assert provenance["task_version"] == "alt-text-v1"
+    assert provenance["decoding_contract"]["temperature"] == 0
+    assert provenance["decoding_contract"]["seed"] == 17
+
+
+def test_bakeoff_report_surfaces_durable_stage_costs() -> None:
+    formatted = _format_durable_stage_costs(
+        {
+            "candidate": {
+                "stage_costs": {
+                    "model_load": {"status": "estimated", "amount_usd": 0.25},
+                    "inference": {"status": "unknown", "amount_usd": None},
+                }
+            }
+        }
+    )
+
+    assert formatted == "candidate [inference=unknown, model_load=$0.250000]"
 
 
 def test_live_score_stamps_mapping_corpus_coverage_audit() -> None:

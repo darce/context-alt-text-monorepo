@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 require_once __DIR__ . '/class-media-detail-controller.php';
 require_once __DIR__ . '/class-gpu-control-controller.php';
 require_once __DIR__ . '/class-public-demo-describe-controller.php';
@@ -411,7 +415,7 @@ class Api {
 	}
 
 	public function can_view_media_queue(): bool {
-		return current_user_can( 'upload_files' );
+		return current_user_can( 'manage_options' );
 	}
 
 	public function can_manage_roster(): bool {

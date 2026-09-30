@@ -49,6 +49,7 @@ def test_v3_loader_refuses_unstamped_annotation_mode(tmp_path: Path) -> None:
 
 
 def test_default_flag_loads_mismatch_as_non_exhaustive() -> None:
+    """TEST-15: the bench seam loads the boxed v3 fixture through the v3 contract."""
     manifest = load_bench_manifest(
         FIXTURE,
         None,
@@ -57,6 +58,8 @@ def test_default_flag_loads_mismatch_as_non_exhaustive() -> None:
         skip_hash_verification=True,
         hash_skip_reason="detection-exhaustiveness check is metadata-only",
     )
+    # A switch to the legacy v2 loader must not silently route this bench path.
+    assert manifest.manifest_version == 3
     assert 3 in non_exhaustive_ids(manifest)
     mismatch = next(e for e in manifest.entries if e.media_id == 3)
     assert stranger_faces_for(mismatch) == 0

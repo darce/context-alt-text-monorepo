@@ -23,7 +23,7 @@ from scripts.eval_harness.manifest import (
     GoldenEntry,
     GoldenManifest,
     ManifestError,
-    load_manifest,
+    load_manifest as load_v3_manifest,
     resolve_image_path,
 )
 
@@ -123,7 +123,8 @@ def load_bench_manifest(
     # Do not infer metadata_only from skip + images_dir=None (rg-015).
     # Callers that never open image bytes must pass metadata_only=True
     # and a hash_skip_reason; pixel paths leave both at defaults.
-    manifest = load_manifest(
+    # Bench manifests use the current v3 contract; frozen v2 data has no path here.
+    manifest = load_v3_manifest(
         str(path),
         images_dir=images,
         skip_hash_verification=skip_hash_verification,

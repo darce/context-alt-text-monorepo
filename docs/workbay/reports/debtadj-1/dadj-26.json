@@ -11,7 +11,7 @@
       "evidence": "scripts/_guard_wrap.py:40-42 says VS Code/Codex use relative paths because runners start at workspace root; scripts/_guard_wrap.py:67 emits that unanchored relative wrapper path when there is no recognized anchor.",
       "severity": "high",
       "fix_files": ["scripts/_guard_wrap.py"],
-      "test_file": "",
+      "test_file": "scripts/test_guard_wrap.py",
       "size": "S",
       "related": [],
       "fix_hint": "Make the shared renderer emit a workspace-anchored wrapper path and ensure a missing handler cannot silently skip the guard."

@@ -3030,8 +3030,10 @@ def ensure_matview(op) -> None:
             SELECT
                 im.cluster_id,
                 mi.tenant_id,
+                mi.media_id,
                 mi.embedding,
                 mi.embedding_model,
+                mi.quality_score,
                 mi.updated_at
             FROM identity_members im
             JOIN media_identities mi ON mi.id = im.identity_id
@@ -3060,23 +3062,53 @@ def ensure_matview(op) -> None:
             SELECT
                 mr.cluster_id,
                 mr.tenant_id,
+                mr.media_id,
                 l2_normalize(mr.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                GREATEST(0.0, LEAST(1.0, COALESCE(mr.quality_score, 1.0)))::double precision
+                    AS quality_weight,
                 mr.updated_at
             FROM member_rows mr
             JOIN chosen_model cm
               ON cm.cluster_id = mr.cluster_id
              AND cm.embedding_model = mr.embedding_model
         ),
+        -- One source media item contributes at most one quality-weighted
+        -- representative, so repeated detections from that item cannot
+        -- outvote representatives from other media items.
+        media_embeddings AS (
+            SELECT
+                cluster_id,
+                tenant_id,
+                media_id,
+                CASE
+                    WHEN SUM(quality_weight) > 0 THEN
+                        (
+                            SUM(unit_embedding * quality_weight) / SUM(quality_weight)
+                        )::vector({EMBEDDING_DIMENSION})
+                    ELSE NULL
+                END AS media_embedding
+            FROM normalized_embeddings
+            GROUP BY cluster_id, tenant_id, media_id
+        ),
+        cluster_member_stats AS (
+            SELECT
+                cluster_id,
+                COUNT(unit_embedding) AS identity_count,
+                MAX(updated_at) AS refreshed_at
+            FROM normalized_embeddings
+            GROUP BY cluster_id
+        ),
         cluster_embeddings AS (
             SELECT
                 c.id AS cluster_id,
                 c.tenant_id,
-                COUNT(ne.unit_embedding) AS identity_count,
-                AVG(ne.unit_embedding)::vector({EMBEDDING_DIMENSION}) AS avg_embedding,
-                COALESCE(MAX(ne.updated_at), c.updated_at) AS refreshed_at
+                cms.identity_count,
+                AVG(me.media_embedding)::vector({EMBEDDING_DIMENSION}) AS avg_embedding,
+                COALESCE(cms.refreshed_at, c.updated_at) AS refreshed_at
             FROM identity_clusters c
-            JOIN normalized_embeddings ne ON ne.cluster_id = c.id
-            GROUP BY c.id, c.tenant_id, c.updated_at
+            JOIN media_embeddings me ON me.cluster_id = c.id AND me.tenant_id = c.tenant_id
+            JOIN cluster_member_stats cms ON cms.cluster_id = c.id
+            GROUP BY c.id, c.tenant_id, c.updated_at, cms.identity_count, cms.refreshed_at
         )
         SELECT
             cluster_id,

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from io import BytesIO
+
+from PIL import Image
+
+from scripts.bench.corpus import decode_image_dimensions
 from scripts.bench.export_map import match_detection_boxes
 from scripts.eval_harness.face_assignment import IOU_MATCH_THRESHOLD
 from scripts.eval_harness.face_metrics import ImageDetection, detection_pr
@@ -39,6 +44,17 @@ GT = [
     )
 ]
 W = H = 1000
+
+
+def test_exif_orientation_dimensions_stay_in_inference_pixel_frame() -> None:
+    image_bytes = BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6  # Rotate 90 degrees for viewers that honor EXIF orientation.
+    Image.new("RGB", (640, 480), color=(10, 20, 30)).save(image_bytes, format="JPEG", exif=exif)
+
+    # Runtime adapters do not transpose EXIF orientation before inference.
+    # Keep stamped dimensions in the same stored-pixel frame as their boxes.
+    assert decode_image_dimensions(image_bytes.getvalue()) == (640, 480)
 
 
 def test_green_exact_overlap_matches() -> None:

@@ -715,7 +715,15 @@ _W1_PUBLIC_NAME = "Barack Obama"
 _W1_INTERNAL_BASE_URL = "https://acx-backend.internal.example.ts.net"
 
 
-def _write_score_manifest(tmp_path, entries, roster, name="golden.json", *, annotation_mode="roster_only"):
+def _write_score_manifest(
+    tmp_path,
+    entries,
+    roster,
+    name="golden.json",
+    *,
+    annotation_mode="roster_only",
+    iou_threshold: float | None = 0.5,
+):
     """Write a v3 golden manifest and return (path, real score-time sha256).
 
     Fills the v3-only requirements (``annotation_mode``, per-entry
@@ -760,6 +768,8 @@ def _write_score_manifest(tmp_path, entries, roster, name="golden.json", *, anno
         "roster": roster,
         "entries": normalized_entries,
     }
+    if iou_threshold is not None:
+        payload["iou_threshold"] = iou_threshold
     manifest_path.write_text(json.dumps(payload))
     # Metadata-only: computes score-time sha from roster/entries; never opens image bytes.
     return manifest_path, _manifest_sha(
@@ -1251,7 +1261,12 @@ _CLEAN_SCORE_PERSONS = (
 )
 
 
-def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
+def _clean_score_manifest_and_record(
+    tmp_path,
+    *,
+    stem: str = "run-det",
+    iou_threshold: float | None = 0.5,
+):
     """Minimal clean caption run-record + manifest for score green-path tests.
 
     Includes face_boxes + spatial_facts + reference_facts trap + asserted
@@ -1319,7 +1334,13 @@ def _clean_score_manifest_and_record(tmp_path, *, stem: str = "run-det"):
     # roster_only would structurally refuse detection and leave
     # face_detection.precision/recall permanently None -> category-vacuity
     # (not_ready), contradicting this helper's "clean pass" contract.
-    manifest_path, manifest_sha = _write_score_manifest(tmp_path, entries, roster, annotation_mode="exhaustive")
+    manifest_path, manifest_sha = _write_score_manifest(
+        tmp_path,
+        entries,
+        roster,
+        annotation_mode="exhaustive",
+        iou_threshold=iou_threshold,
+    )
     record_path = tmp_path / f"{stem}.json"
     record_path.write_text(
         json.dumps(
@@ -1358,6 +1379,23 @@ def test_cmd_score_exits_zero_when_no_wrong_names_and_no_failures(tmp_path, monk
     assert report["faces"]["identification"]["positional"]["compared_images"] >= 1
     assert report["placement"]["claims"] >= 1
     assert report["counts"]["scored"] >= SCORE_PASS_MIN_SCORED_IMAGES
+
+
+def test_cmd_score_requires_ratified_iou_threshold(tmp_path, monkeypatch):
+    manifest_path, record_path = _clean_score_manifest_and_record(
+        tmp_path,
+        stem="run-unratified-iou",
+        iou_threshold=None,
+    )
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["annotation_mode"] == "exhaustive"
+    assert "iou_threshold" not in manifest
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    assert "detection_requires_ratified_iou_threshold" in str(excinfo.value)
 
 
 def test_cmd_score_quality_floor_breach_exits_nonzero(tmp_path, monkeypatch):
@@ -1541,6 +1579,7 @@ def test_cli_score_determinism_seed_failed_not_anchor_mismatch(tmp_path, monkeyp
         entries,
         score_manifest_sha256=cli_mod._manifest_sha(man),
         manifest_roster=sorted(set(getattr(man, "roster", []) or [])),
+        run_manifest=man.model_dump(),
         audience=Audience.LOCAL,
         rubric_gate="enforce",
     )
@@ -1815,6 +1854,7 @@ def test_cli_score_determinism_guard_ignores_stdout_prefix_banner(tmp_path, monk
         ignore_list=ignore_list,
         score_manifest_sha256=cli_mod._manifest_sha(manifest),
         manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+        run_manifest=manifest.model_dump(),
     )
     reports_file = build_reports.__code__.co_filename
 
@@ -1989,6 +2029,7 @@ def test_cli_score_determinism_guard_errors_on_build_reports_provenance_mismatch
         ignore_list=ignore_list,
         score_manifest_sha256=cli_mod._manifest_sha(manifest),
         manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+        run_manifest=manifest.model_dump(),
     )
     decoy_path = str((tmp_path / "decoy" / "scripts" / "eval_harness" / "report.py").resolve())
 
@@ -2049,7 +2090,12 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
     sha = cli_mod._manifest_sha(manifest)
     roster = sorted(set(getattr(manifest, "roster", []) or []))
     default_json, _ = build_reports(
-        record, entries, ignore_list=ignore, score_manifest_sha256=sha, manifest_roster=roster
+        record,
+        entries,
+        ignore_list=ignore,
+        score_manifest_sha256=sha,
+        manifest_roster=roster,
+        run_manifest=manifest.model_dump(),
     )
     skip_json, _ = build_reports(
         record,
@@ -2057,6 +2103,7 @@ def test_cli_score_determinism_certifies_written_rubric_gate(tmp_path, monkeypat
         ignore_list=ignore,
         score_manifest_sha256=sha,
         manifest_roster=roster,
+        run_manifest=manifest.model_dump(),
         audience=Audience.LOCAL,
         rubric_gate="skip",
     )
@@ -4159,7 +4206,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
                 out.append(v / np.linalg.norm(v))
             return np.stack(out, axis=0)
 
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (_Det(), FivePointAligner(), _Emb()))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (_Det(), FivePointAligner(), _Emb()))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -4232,7 +4279,7 @@ def test_face_bakeoff_passes_images_dir_not_skip(tmp_path, monkeypatch):
     images = tmp_path / "images"
     images.mkdir()
     leg = _FusedFakeLeg()
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, _NoopAligner(), leg))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (leg, _NoopAligner(), leg))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
 
@@ -4387,7 +4434,11 @@ def test_cli_face_bakeoff_dispatches_buffalo_leg(tmp_path, monkeypatch):
         cache_detector=None,
     )
     monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: bundle)
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo"))
+    monkeypatch.setattr(
+        cli_mod,
+        "build_candidate_leg",
+        lambda **_kw: pytest.fail("candidate leg built for --leg buffalo"),
+    )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -4407,7 +4458,7 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
 
     man_path = _leg_dispatch_manifest(tmp_path)
     leg = _FusedFakeLeg()  # shape-compatible mock; leg identity comes from dispatch args
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, FivePointAligner(), leg))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (leg, FivePointAligner(), leg))
     monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate"))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
@@ -4418,6 +4469,56 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
     assert prov["leg"] == "candidate"
     assert prov["model_id"] == "ort-yunet-sface"
     assert "leg_mode" not in prov
+
+
+@pytest.mark.parametrize(
+    ("threshold_args", "expected"),
+    [([], None), (["--score-threshold", "0.42"], 0.42)],
+)
+def test_cli_face_bakeoff_forwards_score_threshold(tmp_path, monkeypatch, threshold_args, expected):
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()
+    received = []
+
+    def _build_candidate(**kwargs):
+        received.append(kwargs)
+        return leg, _NoopAligner(), leg
+
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", _build_candidate)
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for candidate"))
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), *threshold_args])
+
+    assert received == [{"score_threshold": expected}]
+
+
+@pytest.mark.parametrize("value", ["0", "1", "abc", "nan", "inf"])
+def test_cli_face_bakeoff_score_threshold_rejects_invalid_values(value, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--score-threshold", value])
+
+    assert exc.value.code == 2
+    assert "argument --score-threshold" in capsys.readouterr().err
+
+
+def test_cli_face_bakeoff_buffalo_rejects_score_threshold_before_building_leg(monkeypatch):
+    from scripts.eval_harness import cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built despite threshold"))
+    monkeypatch.setattr(
+        cli_mod,
+        "build_candidate_leg",
+        lambda **_kw: pytest.fail("candidate leg built for --leg buffalo"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo", "--score-threshold", "0.42"])
+
+    assert "only to the candidate YuNet detector" in str(exc.value)
 
 
 # --- VLM6-lc2 residual gates (A-02, F2A-01, R2-08, B-10) ---
@@ -5439,6 +5540,7 @@ def _certified_caption_expect(manifest_path, record_path, expect_path, *, rubric
         ignore_list=_load_ignore_list(Path(record_path).parent),
         score_manifest_sha256=_manifest_sha(manifest),
         manifest_roster=sorted(set(getattr(manifest, "roster", []) or [])),
+        run_manifest=manifest.model_dump(),
         audience=Audience.LOCAL,
         rubric_gate=rubric_gate,
     )

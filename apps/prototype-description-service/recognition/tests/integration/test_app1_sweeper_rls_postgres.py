@@ -168,6 +168,26 @@ async def _cleanup_stale_reservations(session_factory: async_sessionmaker[AsyncS
         await session.commit()
 
 
+async def _release_seeded_reservations(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded: list[SeededReservation],
+) -> None:
+    tenant_ids = dict.fromkeys(row.tenant_id for row in seeded)
+    for tenant_id in tenant_ids:
+        async with session_factory() as session:
+            await set_tenant_context(session, tenant_id)
+            for row in seeded:
+                if row.tenant_id != tenant_id:
+                    continue
+                result = await UsageSettlementService(session).recover_job(
+                    tenant_id=row.tenant_id,
+                    job_id=row.job_id,
+                    allow_missing_job_release=True,
+                )
+                assert result.outcome is SettlementOutcome.RELEASED, result
+            await session.commit()
+
+
 def _counter_delta(
     before: tuple[int, int, int, int],
     *,
@@ -217,6 +237,7 @@ async def test_background_sweep_recovers_across_tenants_and_commits_under_forced
     engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
+        # The sweeper under test scans every tenant, so its exact counts need no stale rows left by earlier tests; reservations stale past the threshold are abandoned under the sweeper's own contract.
         await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
@@ -271,6 +292,7 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
     engine = create_async_engine(_async_url(pg_migrated_engine), pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
+        # The sweeper under test scans every tenant, so its exact counts need no stale rows left by earlier tests; reservations stale past the threshold are abandoned under the sweeper's own contract.
         await _cleanup_stale_reservations(session_factory)
         counters_before = await _read_global_counters(session_factory)
         tenant_ids = await _prepare_tenants(session_factory)
@@ -320,7 +342,7 @@ async def test_sweep_failure_resets_bypass_and_caller_rollback_discards_prior_se
             expected_status=UsageReservationStatus.RESERVED,
         )
         assert await _read_global_counters(session_factory) == counters_reserved
-        await _cleanup_stale_reservations(session_factory)
+        await _release_seeded_reservations(session_factory, seeded)
         await _assert_tenant_rows(
             session_factory,
             tenant_ids,

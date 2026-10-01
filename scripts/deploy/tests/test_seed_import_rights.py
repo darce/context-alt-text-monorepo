@@ -19,6 +19,10 @@ def _run_import(
     *,
     wrong_header: str | None = None,
     missing_ledger: str | None = None,
+    raw_rows: Sequence[str] = (),
+    guided_rows: Sequence[str] = (),
+    fail_meta_id: str | None = None,
+    import_id_override: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     demo_dir = tmp_path / "demo"
     (demo_dir / "secrets").mkdir(parents=True)
@@ -36,11 +40,12 @@ def _run_import(
         for filename, basis, source in rights_rows
         for notice in ["attribution_required"]
     ]
+    rows.extend(raw_rows)
     for ledger_name in ("clustering-rights.tsv", "guided-rights.tsv"):
         if ledger_name == missing_ledger:
             continue
         header = "bad\theader" if ledger_name == wrong_header else RIGHTS_HEADER
-        ledger_rows = rows if ledger_name == "clustering-rights.tsv" else []
+        ledger_rows = rows if ledger_name == "clustering-rights.tsv" else list(guided_rows)
         (rights_dir / ledger_name).write_text("\n".join([header, *ledger_rows]) + "\n", encoding="utf-8")
 
     bin_dir = tmp_path / "bin"
@@ -52,7 +57,9 @@ def _run_import(
         "#!/usr/bin/env bash\n"
         "set -e\n"
         "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+        "if [[ -n \"$FAIL_META_ID\" ]] && [[ \" $* \" == *\" wp post meta update $FAIL_META_ID \"* ]]; then exit 29; fi\n"
         "if [[ \" $* \" == *\" wp media import \"* ]]; then\n"
+        "  if [[ -n \"$IMPORT_ID_OVERRIDE\" ]]; then printf '%s\\n' \"$IMPORT_ID_OVERRIDE\"; exit 0; fi\n"
         "  count=0\n"
         "  if [[ -f \"$DOCKER_COUNT\" ]]; then read -r count < \"$DOCKER_COUNT\"; fi\n"
         "  count=$((count + 1))\n"
@@ -71,6 +78,8 @@ def _run_import(
             "SEED_RIGHTS_DIR": str(rights_dir),
             "DOCKER_LOG": str(docker_log),
             "DOCKER_COUNT": str(docker_count),
+            "FAIL_META_ID": fail_meta_id or "",
+            "IMPORT_ID_OVERRIDE": import_id_override or "",
             "PATH": f"{bin_dir}:{env['PATH']}",
         }
     )
@@ -137,18 +146,125 @@ def test_unrecorded_basis_is_named_and_refused_while_other_media_imports(tmp_pat
     assert "imported=1 refused=1" in result.stdout
 
 
-def test_empty_basis_is_refused(tmp_path: Path) -> None:
+def test_empty_basis_fails_validation_before_import(tmp_path: Path) -> None:
     result, commands = _run_import(
         tmp_path,
         ["alpha.jpg"],
         [("alpha.jpg", "", "Wikimedia source alpha")],
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 2
     assert not _media_imports(commands)
     assert "alpha.jpg" in result.stderr
-    assert "unrecognised rights basis ''" in result.stderr
-    assert "imported=0 refused=1" in result.stdout
+    assert "empty basis field" in result.stderr
+
+
+def test_five_field_row_fails_validation_before_import(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=["alpha.jpg\tTest subject\tcc_by\tSource\tattribution_required"],
+    )
+
+    assert result.returncode == 2
+    assert "alpha.jpg" in result.stderr
+    assert "exactly six tab-separated fields" in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_empty_source_fails_validation_before_import(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=["alpha.jpg\tTest subject\tcc_by\t\tattribution_required\t2026-09-01"],
+    )
+
+    assert result.returncode == 2
+    assert "alpha.jpg" in result.stderr
+    assert "empty source field" in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_unknown_notice_fails_validation_before_import(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=["alpha.jpg\tTest subject\tcc_by\tSource\tunknown\t2026-09-01"],
+    )
+
+    assert result.returncode == 2
+    assert "alpha.jpg" in result.stderr
+    assert "unrecognised notice 'unknown'" in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_bad_added_date_fails_validation_before_import(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=["alpha.jpg\tTest subject\tcc_by\tSource\tattribution_required\t2026-9-01"],
+    )
+
+    assert result.returncode == 2
+    assert "alpha.jpg" in result.stderr
+    assert "invalid added date" in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_same_file_in_both_ledgers_fails_validation_before_import(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [("alpha.jpg", "cc_by", "Wikimedia source alpha")],
+        guided_rows=["alpha.jpg\tTest subject\tcc_by\tOther source\tnone\t2026-09-01"],
+    )
+
+    assert result.returncode == 2
+    assert "alpha.jpg" in result.stderr
+    assert "exactly one rights ledger row" in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_metadata_failure_deletes_attachment_and_stops_importing(tmp_path: Path) -> None:
+    rows = [
+        ("alpha.jpg", "cc_by", "Wikimedia source alpha"),
+        ("beta.webp", "public_domain", "Wikimedia source beta"),
+    ]
+    result, commands = _run_import(tmp_path, ["alpha.jpg", "beta.webp"], rows, fail_meta_id="7001")
+
+    assert result.returncode == 1
+    assert "alpha.jpg" in result.stderr
+    imports = _media_imports(commands)
+    assert len(imports) == 1
+    failed_update_index = next(
+        index for index, command in enumerate(commands)
+        if "wp post meta update 7001" in command
+    )
+    delete_index = next(
+        index for index, command in enumerate(commands)
+        if "wp post delete 7001 --force" in command
+    )
+    assert failed_update_index < delete_index
+    assert all("wp media import" not in command for command in commands[delete_index + 1 :])
+
+
+def test_non_numeric_attachment_id_stops_with_file_name(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [("alpha.jpg", "cc_by", "Wikimedia source alpha")],
+        import_id_override="not-a-number",
+    )
+
+    assert result.returncode == 1
+    assert "alpha.jpg" in result.stderr
+    assert "invalid attachment id" in result.stderr
+    assert len(_media_imports(commands)) == 1
+    assert not _meta_updates(commands)
 
 
 def test_missing_media_row_exits_before_importing_any_file(tmp_path: Path) -> None:

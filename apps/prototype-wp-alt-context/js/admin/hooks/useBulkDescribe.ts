@@ -9,6 +9,7 @@ import {
   resolveDescribeErrorDataField,
   submitBulkDescribeRun,
 } from '../api/describeApi';
+import { createDescribeIdempotencyKey } from '../api/describeIdempotencyKey';
 import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import {
@@ -108,10 +109,33 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     emptyTenantSnapshot,
   );
   const { runId: storedRunId } = useActiveDescribeRun();
-  const submit = useMutation<DescribeRunSubmitResponse, Error, number[]>({
-    mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
+  const submitIdempotencyKeysRef = useRef<WeakMap<number[], string>>(new WeakMap());
+  const submitMutation = useMutation<DescribeRunSubmitResponse, Error, number[]>({
+    mutationFn: (mediaIds) => {
+      const idempotencyKey = submitIdempotencyKeysRef.current.get(mediaIds);
+      if (idempotencyKey === undefined) {
+        throw new Error('Describe run submit is missing its action idempotency key.');
+      }
+      return submitBulkDescribeRun(mediaIds, idempotencyKey);
+    },
     onSuccess: persistRunContext,
+    onSettled: (_data, _error, mediaIds) => {
+      submitIdempotencyKeysRef.current.delete(mediaIds);
+    },
   });
+  const createSubmitActionMediaIds = (mediaIds: number[]): number[] => {
+    const actionMediaIds = [...mediaIds];
+    submitIdempotencyKeysRef.current.set(actionMediaIds, createDescribeIdempotencyKey());
+    return actionMediaIds;
+  };
+  const submit: UseBulkDescribeResult['submit'] = {
+    ...submitMutation,
+    mutate: (mediaIds, options) => {
+      submitMutation.mutate(createSubmitActionMediaIds(mediaIds), options);
+    },
+    mutateAsync: (mediaIds, options) =>
+      submitMutation.mutateAsync(createSubmitActionMediaIds(mediaIds), options),
+  };
   const cancel = useMutation<DescribeRunResponse, Error, string>({
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
   });

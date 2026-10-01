@@ -13,6 +13,7 @@ import { GUIDED_LIVE_WARM_CEILING_SECONDS, useGuidedLiveDescription } from './us
 import type { GuidedLiveDescriptionClient, UseGuidedLiveDescriptionResult } from './useGuidedLiveDescription';
 
 const MEDIA_ID = 4211;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 
 const runResponse = (over: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'demo',
@@ -109,7 +110,10 @@ describe('useGuidedLiveDescription', () => {
 
       await press(() => result.current.request());
 
-      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
+      expect(client.submit).toHaveBeenCalledWith(
+        MEDIA_ID,
+        expect.stringMatching(IDEMPOTENCY_KEY_PATTERN),
+      );
     });
 
     it('stays unavailable without a media id, because there is nothing live to describe', () => {
@@ -133,13 +137,16 @@ describe('useGuidedLiveDescription', () => {
   });
 
   describe('a run that works', () => {
-    it('submits the media id alone and reports the phases it is told', async () => {
+    it('submits the media id with an action key and reports the phases it is told', async () => {
       const client = stubClient();
       const { result } = mount(client);
 
       await press(() => result.current.request());
 
-      expect(client.submit).toHaveBeenCalledWith(MEDIA_ID);
+      expect(client.submit).toHaveBeenCalledWith(
+        MEDIA_ID,
+        expect.stringMatching(IDEMPOTENCY_KEY_PATTERN),
+      );
       expect(result.current.state.runId).toBe('run-1');
 
       await settle(600);
@@ -869,6 +876,10 @@ describe('useGuidedLiveDescription', () => {
       // the first may still be on a GPU is the one-live-run rule breaking.
       expect(client.cancel).toHaveBeenCalledWith('run-1');
       expect(client.submit).toHaveBeenCalledTimes(2);
+      const firstActionKey = client.submit.mock.calls[0]?.[1];
+      expect(firstActionKey).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).toMatch(IDEMPOTENCY_KEY_PATTERN);
+      expect(client.submit.mock.calls[1]?.[1]).not.toBe(firstActionKey);
     });
   });
 

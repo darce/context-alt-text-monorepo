@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../sovereign/repositories/class-description-usage-re
 require_once __DIR__ . '/class-description-budget-service.php';
 require_once __DIR__ . '/../../sovereign/repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../class-alt-style.php';
+require_once __DIR__ . '/../class-context-category-policy.php';
 require_once __DIR__ . '/../class-alt-text-write-status.php';
 require_once __DIR__ . '/../class-description-write-status.php';
 require_once __DIR__ . '/class-description-history-service.php';
@@ -18,6 +19,7 @@ require_once __DIR__ . '/../../settings/class-recognition-policy.php';
 
 use AltContext\Api\AltStyle;
 use AltContext\Api\AltTextWriteStatus;
+use AltContext\Api\ContextCategoryPolicy;
 use AltContext\Api\DescriptionWriteStatus;
 use AltContext\Api\DescribeHostInterface;
 use AltContext\Settings\RecognitionPolicy;
@@ -90,14 +92,6 @@ class DescribeMediaService {
 	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
-	/**
-	 * Outbound metadata categories. The default policy permits all four; product
-	 * context is limited to its descriptive name and never includes SKU or price.
-	 *
-	 * @var string[]
-	 */
-	private const CONTEXT_CATEGORIES = array( 'attachment', 'post', 'taxonomy_terms', 'product' );
-
 	/**
 	 * The 17 provenance-bearing fields the backend contract guarantees
 	 * (packages/shared-contracts/schemas/image-description-response.schema.json).
@@ -1003,15 +997,15 @@ class DescribeMediaService {
 	 */
 	private function allowed_context_categories( int $media_id ): array {
 		$option_missing         = new \stdClass();
-		$configured_categories = get_option( 'acx_description_context_categories', $option_missing );
+		$configured_categories = get_option( ContextCategoryPolicy::OPTION_NAME, $option_missing );
 		if ( $option_missing === $configured_categories ) {
-			return self::CONTEXT_CATEGORIES;
+			return ContextCategoryPolicy::ALL;
 		}
 
 		if ( is_array( $configured_categories ) ) {
 			$valid_categories = true;
 			foreach ( $configured_categories as $category ) {
-				if ( ! is_string( $category ) || ! in_array( $category, self::CONTEXT_CATEGORIES, true ) ) {
+				if ( ! is_string( $category ) || ! in_array( $category, ContextCategoryPolicy::ALL, true ) ) {
 					$valid_categories = false;
 					break;
 				}
@@ -1030,7 +1024,7 @@ class DescribeMediaService {
 			)
 		);
 
-		return array( 'attachment' );
+		return array( ContextCategoryPolicy::ATTACHMENT );
 	}
 
 	private function get_public_parent_post( mixed $attachment ): ?object {

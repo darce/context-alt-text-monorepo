@@ -2,7 +2,7 @@
 
 **Task ref:** FIR23-STACK · **Branch:** feature/fir23-stack · **Status:** in_progress
 
-> Rev 2 — incorporates planning-review fixes for findings FIR23-STACK-BR-01..08.
+> Rev 3 — incorporates the shared runtime-fingerprint provenance contract; retains planning-review fixes for findings FIR23-STACK-BR-01..08.
 
 > **Superseded auth choice (AUTHPIPE-1, 2026-09-22):** `fir.dev.api.altcontext.com` is a public
 > vhost, so `acx-dev-fir` runs `RECOGNITION_AUTH_ENABLED=true` and the fir site needs a tenant
@@ -29,7 +29,7 @@ Supersedes the dropped per-request header design (decision #2947).
 - One parameterized compose `apps/prototype-description-service/docker-compose.env.yml`; per-env
   `.env`; **each stack owns its own postgres container, volume, AND network** (per-stack external
   nets on the VM: `acx-dev-net`, `acx-prod-net`, `acx-staging-net`, `acx-demo-net`).
-- **OpenCV runtime version is part of the provenance pin, not an implementation detail** <span>(QA v8 re-gate, 2026-07-28)</span>. An SFace embedding computed under OpenCV 4.x is not comparable to one computed under 5.x — CVUP-1 moves the stack — so the `cv2` major version must be recorded alongside the ONNX sha256 on every run row, and two runs that differ only in `cv2` version must **not** compare. This lane is on QA v8's critical path precisely because it is what makes the FIRTRAIN-05 re-run **under 5.x** possible as a recorded artifact; without the version pin the artifact cannot prove which stack produced it.
+- **Persist the canonical numeric runtime fingerprint with each comparable run** <span>(QA v8 re-gate, updated 2026-10-01)</span>. Call the shared `recognition.infrastructure.face_pipeline.numeric_runtime_fingerprint()` producer (exported by the `face_pipeline` package) and persist its full object as `numeric_runtime_fingerprint` beside the ONNX sha256 in run provenance: `opencv_version`, `opencv_major`, `onnxruntime_version`, and `numpy_version`. `/health/detailed` exposes the same serialized object in `model_cache.detail` for remote consumers. Do not create a private `cv2_major` or `cv_runtime_version` field. Runs with different fingerprint objects must **not** compare; the OpenCV major alone cannot identify the producing runtime. This pin records which stack produced the FIRTRAIN-05 re-run **under 5.x**.
 - **Provision a candidate-detector lane alongside the 512d/128d embedder split.** The current design is an embedder-dimension split only. QA v8 leaves the detector-vs-embedder question **undecided** — which leg wins is not known — so building only the embedder lane presupposes the answer.
 - SFace model_id `opencv-sface@128d/l2/cosine` (`provenance.py:86-99`). ONNX fetched + sha256-verified by
   `scripts/fetch_face_pipeline_models.py`. **Not baked into the `dev` image** (Dockerfile:44-45; `*.onnx`

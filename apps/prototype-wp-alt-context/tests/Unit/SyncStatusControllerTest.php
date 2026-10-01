@@ -310,10 +310,12 @@ class SyncStatusControllerTest extends TestCase
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/reset-mirror');
-        $request->set_body_params(['confirm' => true]);
+        $request->set_header('Content-Type', 'application/json');
+        $request->set_body('{"confirm":true}');
         $response = $controller->reset_mirror($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
         $this->assertSame([$tenantId], $syncRepo->resetProjectionCalls);
         $this->assertSame($tenantId, $capturedTenantId);
         $this->assertSame(['acx_clusters', 'acx_identity_members', 'acx_sync_outbox'], $capturedTables);

@@ -70,9 +70,10 @@ done <<< "$ROWS"
 [ "$missing" -eq 0 ] || exit 2
 
 mkdir -p "$OUT"
-tmp_rows="$(mktemp)"; tmp_rights_rows="$(mktemp)"; tmp_manifest="$(mktemp)"; tmp_readme="$(mktemp)"
+tmp_rows="$(mktemp)"; tmp_rights_rows="$(mktemp)"; tmp_manifest_rows="$(mktemp)"; tmp_readme="$(mktemp)"
+tmp_manifest="$(mktemp "${MANIFEST}.XXXXXX")"
 tmp_rights="$(mktemp "${RIGHTS}.XXXXXX")"
-trap 'rm -f "$tmp_rows" "$tmp_rights_rows" "$tmp_manifest" "$tmp_readme" "$tmp_rights"' EXIT
+trap 'rm -f "$tmp_rows" "$tmp_rights_rows" "$tmp_manifest_rows" "$tmp_manifest" "$tmp_readme" "$tmp_rights"' EXIT
 
 # Remove exactly slug_1..slug_count in OUT. Never glob slug_* (GR-01).
 # Portable: no find(1) (GR-06). Do not swallow rm failures.
@@ -131,7 +132,7 @@ prev=""; n=0
 while IFS='|' read -r src slug label lic basis notice; do
   [ -n "${src:-}" ] || continue
   if [ "$slug" != "$prev" ]; then
-    [ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest"
+    [ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest_rows"
     prev="$slug"; n=0
   fi
   n=$((n + 1)); total=$((total + 1))
@@ -141,12 +142,15 @@ while IFS='|' read -r src slug label lic basis notice; do
   printf '| %s | %s | %s | %s |\n' "${slug}_${n}.${ext}" "$label" "$lic" "$ADDED" >> "$tmp_rows"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$target" "$label" "$basis" "$lic" "$notice" "$ADDED" >> "$tmp_rights_rows"
 done <<< "$ROWS"
-[ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest"
-sort "$tmp_manifest" > "$MANIFEST"
+[ -n "$prev" ] && printf '%s %s\n' "$prev" "$n" >> "$tmp_manifest_rows"
+sort "$tmp_manifest_rows" > "$tmp_manifest"
+chmod 0644 "$tmp_manifest"
+mv "$tmp_manifest" "$MANIFEST"
 {
   printf 'file\tsubject\tbasis\tsource\tnotice\tadded\n'
   LC_ALL=C sort "$tmp_rights_rows"
 } > "$tmp_rights"
+chmod 0644 "$tmp_rights"
 mv "$tmp_rights" "$RIGHTS"
 
 echo "==> Copied $total guided images into $OUT ($(wc -l < "$MANIFEST" | tr -d ' ') persons in $MANIFEST)"
@@ -161,6 +165,7 @@ if [ -f "$README" ] && grep -q 'GUIDED-PROVENANCE:START' "$README" && grep -q 'G
     cat "$tmp_rows"
     tail -n +"$end_line" "$README"
   } > "$tmp_readme"
+  chmod 0644 "$tmp_readme"
   mv "$tmp_readme" "$README"
   echo "==> Regenerated guided provenance table in $README ($total rows)"
 else

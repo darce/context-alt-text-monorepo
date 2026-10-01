@@ -85,7 +85,7 @@ FIR23_STACK_ALLOWLIST: dict[str, dict[str, Any]] = {
         "role": "face_pipeline_candidate",
         "expected_profile": "face_pipeline",
         "expected_pgvector_dim": 128,
-        "hosts": frozenset({"fir.api.altcontext.com"}),
+        "hosts": frozenset({"fir.dev.api.altcontext.com"}),
     },
 }
 
@@ -320,8 +320,8 @@ def _parse_stack(entry: Any) -> StackEndpoint:
 
 def _normalize_base_url(url: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise BenchError("base_url_invalid", f"base_url {url!r} must be absolute http(s)")
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise BenchError("base_url_invalid", f"base_url {url!r} must be absolute https")
     if parsed.query or parsed.fragment:
         raise BenchError("base_url_invalid", f"base_url {url!r} must not include query or fragment")
     path = parsed.path or ""

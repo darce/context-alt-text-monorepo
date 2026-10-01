@@ -220,8 +220,15 @@ def _census_client(admission: _FakeAdmission | None, monkeypatch, *, install_adm
             os.unlink(path)
 
 
-def _multipart(operation_id=_UNSET, *, body: bytes = PNG, decorative: bool = False, media_id: int = 42):
-    envelope = {"tenant_id": str(TENANT_ID), "media_id": media_id}
+def _multipart(
+    operation_id=_UNSET,
+    *,
+    body: bytes = PNG,
+    decorative: bool = False,
+    media_id: int = 42,
+    tenant_id: UUID = TENANT_ID,
+):
+    envelope = {"tenant_id": str(tenant_id), "media_id": media_id}
     if decorative:
         envelope["decorative"] = True
     data = {"request": json.dumps(envelope)}

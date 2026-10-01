@@ -104,6 +104,7 @@ validate_rights_row() {
   local row="$2"
   local row_without_tabs
   local invalid=0
+  local year month day days_in_month
 
   row_without_tabs="${row//$'\t'/}"
   if ((${#row} - ${#row_without_tabs} != 5)); then
@@ -138,6 +139,34 @@ validate_rights_row() {
   elif [[ ! "$rights_row_added" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     echo "ERROR: seed rights ledger row for $filename has invalid added date '$rights_row_added'" >&2
     invalid=1
+  else
+    year=$((10#${rights_row_added:0:4}))
+    month=$((10#${rights_row_added:5:2}))
+    day=$((10#${rights_row_added:8:2}))
+
+    case "$month" in
+      1|3|5|7|8|10|12)
+        days_in_month=31
+        ;;
+      4|6|9|11)
+        days_in_month=30
+        ;;
+      2)
+        if ((year % 400 == 0 || (year % 4 == 0 && year % 100 != 0))); then
+          days_in_month=29
+        else
+          days_in_month=28
+        fi
+        ;;
+      *)
+        days_in_month=0
+        ;;
+    esac
+
+    if ((month < 1 || month > 12 || day < 1 || day > days_in_month)); then
+      echo "ERROR: seed rights ledger row for $filename has invalid added date '$rights_row_added'" >&2
+      invalid=1
+    fi
   fi
 
   return "$invalid"

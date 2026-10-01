@@ -360,6 +360,7 @@ def run_pair(
     clients: dict[str, Any] | None = None,
     skip_preflight: bool = False,
     preflight_transports: dict[str, Any] | None = None,
+    pre_run_reset_by_stack: dict[str, Any] | None = None,
 ) -> Path:
     # Load without images_dir first so floor/superset fail before any media I/O.
     # Deliberate metadata-only load (VLM6-PANEL6L-rvM-01 / OBS-04): only
@@ -386,14 +387,30 @@ def run_pair(
             {e.media_id for e in manifest.entries},
             {e.media_id for e in baseline.entries},
         )
+    from scripts.bench.preflight import (
+        load_pre_run_reset_evidence,
+        preflight_pair,
+        validate_pre_run_reset_evidence,
+    )
+
+    # This gate is independent of the optional health preflight switch: skipping
+    # health checks must never permit ingest against an unattested scratch tenant.
+    reset_evidence = (
+        validate_pre_run_reset_evidence(pair, pre_run_reset_by_stack)
+        if pre_run_reset_by_stack is not None
+        else load_pre_run_reset_evidence(pair)
+    )
     preflight_results = None
     if not skip_preflight:
-        from scripts.bench.preflight import preflight_pair
-
         keys = {s.stack_id: os.environ.get(s.api_key_env, "") for s in pair.stacks}
         # Abort before any media/run-dir writes; persist after init.
-        preflight_results = preflight_pair(pair, transports=preflight_transports, api_keys=keys)
+        preflight_results = preflight_pair(
+            pair,
+            transports=preflight_transports,
+            api_keys=keys,
+        )
     root = init_run_dir(out_dir, pair, manifest_path)
+    _stamp_run_field(root, "pre_run_reset_by_stack", reset_evidence)
     if preflight_results is not None:
         from scripts.bench.preflight import write_preflight_json
 

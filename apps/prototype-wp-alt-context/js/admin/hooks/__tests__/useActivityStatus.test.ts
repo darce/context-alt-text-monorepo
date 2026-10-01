@@ -703,9 +703,9 @@ describe('useActivityStatus', () => {
 
   it('reuses the key across a mutation retry and mints a new key for another Retry action', async () => {
     seedWarmupTimeoutRun('run-1');
-    fetchDescribeRunItemsMock.mockResolvedValue(
-      itemsResponse('run-1', [describeItem(51, 'failed')]),
-    );
+    fetchDescribeRunItemsMock
+      .mockResolvedValueOnce(itemsResponse('run-1', [describeItem(51, 'failed')]))
+      .mockResolvedValueOnce(itemsResponse('run-1', [describeItem(52, 'pending')]));
     submitBulkDescribeRunMock
       .mockRejectedValueOnce(new Error('temporary submit failure'))
       .mockRejectedValueOnce(new Error('temporary submit failure'))
@@ -725,6 +725,9 @@ describe('useActivityStatus', () => {
     });
 
     await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(2));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(1);
+    expect(submitBulkDescribeRunMock.mock.calls[0]?.[0]).toEqual([51]);
+    expect(submitBulkDescribeRunMock.mock.calls[1]?.[0]).toEqual([51]);
     const firstActionKey = submitBulkDescribeRunMock.mock.calls[0]?.[1];
     expect(firstActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
     expect(submitBulkDescribeRunMock.mock.calls[1]?.[1]).toBe(firstActionKey);
@@ -738,6 +741,8 @@ describe('useActivityStatus', () => {
     });
 
     await waitFor(() => expect(submitBulkDescribeRunMock).toHaveBeenCalledTimes(3));
+    expect(fetchDescribeRunItemsMock).toHaveBeenCalledTimes(2);
+    expect(submitBulkDescribeRunMock.mock.calls[2]?.[0]).toEqual([52]);
     const nextActionKey = submitBulkDescribeRunMock.mock.calls[2]?.[1];
     expect(nextActionKey).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
     expect(nextActionKey).not.toBe(firstActionKey);

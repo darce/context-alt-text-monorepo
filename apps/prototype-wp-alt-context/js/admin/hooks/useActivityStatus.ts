@@ -408,10 +408,26 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
     mutationFn: cancelBulkDescribeRun,
   });
   const resubmitInFlightRef = useRef(false);
+  const resubmitMediaIdsByKeyRef = useRef(new Map<string, Promise<number[]>>());
   const resubmitMutation = useMutation<WarmupResubmitResult, Error, WarmupResubmitAction>({
     mutationFn: async ({ runId, idempotencyKey }) => {
-      const itemsResponse = await fetchDescribeRunItems(runId);
-      const unfinishedIds = unfinishedMediaIdsFromItems(itemsResponse.items);
+      let unfinishedIdsPromise = resubmitMediaIdsByKeyRef.current.get(idempotencyKey);
+      if (unfinishedIdsPromise === undefined) {
+        unfinishedIdsPromise = fetchDescribeRunItems(runId).then(({ items }) =>
+          unfinishedMediaIdsFromItems(items),
+        );
+        resubmitMediaIdsByKeyRef.current.set(idempotencyKey, unfinishedIdsPromise);
+      }
+      let unfinishedIds: number[];
+      try {
+        unfinishedIds = await unfinishedIdsPromise;
+      } catch (error) {
+        // A failed item fetch sent no submit request, so a mutation retry may fetch again.
+        if (resubmitMediaIdsByKeyRef.current.get(idempotencyKey) === unfinishedIdsPromise) {
+          resubmitMediaIdsByKeyRef.current.delete(idempotencyKey);
+        }
+        throw error;
+      }
       if (unfinishedIds.length === 0) {
         return { kind: 'exhausted' };
       }
@@ -423,7 +439,8 @@ export const useActivityStatus = (params: UseActivityStatusParams = {}): UseActi
         persistRunContext(result.response);
       }
     },
-    onSettled: () => {
+    onSettled: (_result, _error, variables) => {
+      resubmitMediaIdsByKeyRef.current.delete(variables.idempotencyKey);
       resubmitInFlightRef.current = false;
     },
   });

@@ -75,6 +75,12 @@ PROV01_PREFLIGHT_KEYS = (
 )
 
 _RUNTIME_FINGERPRINT_TOKEN = re.compile(r"(?:^|;\s*)numeric_runtime_fingerprint=(\{.*\})$")
+_RUNTIME_FINGERPRINT_FIELDS = (
+    "opencv_version",
+    "opencv_major",
+    "onnxruntime_version",
+    "numpy_version",
+)
 
 
 class CrossbenchTier(StrEnum):
@@ -394,17 +400,14 @@ def _terminal_ingest_ok(
     records: list[dict[str, Any]], media_id: int, *, entry: GoldenEntry | None = None
 ) -> bool:
     ingest = _latest_by_phase(records, media_id, "ingest")
-    analyze = _latest_by_phase(records, media_id, "analyze")
-    # Condition (i) is the explicit terminal ingest field. Prefer the ingest
-    # row so an analyze-phase error cannot invert ingest provenance.
-    rec = ingest or analyze
-    if rec is None:
+    # Ingest provenance must come from the durable ingest phase. Analyze rows
+    # describe a later operation and cannot substitute for missing ingest
+    # evidence, even when older writers copied the terminal outcome there.
+    if ingest is None:
         return False
-    if ingest is None and analyze is not None and analyze.get("outcome") != "ok":
+    if entry is not None and not _record_matches_manifest_entry(ingest, entry):
         return False
-    if entry is not None and not _record_matches_manifest_entry(rec, entry):
-        return False
-    outcome = rec.get("terminal_ingest_outcome")
+    outcome = ingest.get("terminal_ingest_outcome")
     if outcome is None:
         return False
     return outcome == "success"
@@ -987,7 +990,7 @@ def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
             + ", ".join(missing)
             + "; score refuses a run-dir without PROV-01",
         )
-    opencv_versions: list[str] = []
+    runtime_fingerprints: list[dict[str, Any]] = []
     for stack_id in stacks:
         path = root / "legs" / stack_id / "preflight.json"
         try:
@@ -1009,10 +1012,30 @@ def _require_prov01_preflights(root: Path, stacks: list[str]) -> bool:
                 f"{stack_id} preflight.json missing PROV-01 keys: " + ", ".join(absent),
             )
         _validate_preflight_provenance(doc, stack_id)
-        opencv_versions.append(_preflight_opencv_version(doc, stack_id))
-    if len(set(opencv_versions)) > 1:
-        raise BenchError("preflight_invalid", "OpenCV versions differ between benchmark legs")
+        runtime_fingerprints.append(_preflight_runtime_fingerprint(doc, stack_id))
+    if runtime_fingerprints:
+        reference = runtime_fingerprints[0]
+        for candidate in runtime_fingerprints[1:]:
+            differing = _first_runtime_fingerprint_difference(
+                reference,
+                candidate,
+            )
+            if differing is not None:
+                raise BenchError(
+                    "preflight_invalid",
+                    f"runtime fingerprint field {differing} differs between benchmark legs",
+                )
     return True
+
+
+def _first_runtime_fingerprint_difference(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    *,
+    fields: tuple[str, ...] = _RUNTIME_FINGERPRINT_FIELDS,
+) -> str | None:
+    """Return the first persisted runtime field that differs between legs."""
+    return next((field for field in fields if left[field] != right[field]), None)
 
 
 def _validate_preflight_provenance(doc: dict[str, Any], stack_id: str) -> None:
@@ -1042,7 +1065,7 @@ def _validate_preflight_provenance(doc: dict[str, Any], stack_id: str) -> None:
         raise BenchError("preflight_invalid", f"{stack_id} detailed health profile differs from preflight")
 
 
-def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
+def _preflight_runtime_fingerprint(doc: dict[str, Any], stack_id: str) -> dict[str, Any]:
     health = doc.get("health_detailed_excerpt")
     cache = health.get("model_cache") if isinstance(health, dict) else None
     detail = cache.get("detail") if isinstance(cache, dict) else None
@@ -1057,7 +1080,7 @@ def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint is invalid JSON") from exc
     if not isinstance(fingerprint, dict):
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint must be an object")
-    required = ("opencv_version", "opencv_major", "onnxruntime_version", "numpy_version")
+    required = _RUNTIME_FINGERPRINT_FIELDS
     if any(key not in fingerprint for key in required):
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint is incomplete")
     if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in required if key != "opencv_major"):
@@ -1069,7 +1092,12 @@ def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
     major_token = version.split(".", 1)[0]
     if not major_token.isdecimal() or int(major_token) != major:
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint OpenCV version is inconsistent")
-    return version
+    return {key: fingerprint[key] for key in required}
+
+
+def _preflight_opencv_version(doc: dict[str, Any], stack_id: str) -> str:
+    """Compatibility accessor for the OpenCV component of the runtime pin."""
+    return str(_preflight_runtime_fingerprint(doc, stack_id)["opencv_version"])
 
 
 def score_head_to_head(run_dir: Path | str) -> Path:

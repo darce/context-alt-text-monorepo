@@ -198,11 +198,12 @@ def test_completed_with_errors_is_not_ok(tmp_path: Path) -> None:
     assert analyze
     assert analyze[-1]["outcome"] == "failed"
     assert analyze[-1]["error_code"] == "analyze_completed_with_errors"
-    assert analyze[-1]["terminal_ingest_outcome"] == "success"
+    assert "terminal_ingest_outcome" not in analyze[-1]
     assert "stack_media_id" in analyze[-1]
     assert analyze[-1]["stack_media_id"] is None
     ingest = [r for r in store.read_all() if r.get("phase") == "ingest"]
     assert ingest
+    assert ingest[-1]["terminal_ingest_outcome"] == "success"
     assert "stack_media_id" in ingest[-1]
     assert ingest[-1]["stack_media_id"] is None
 

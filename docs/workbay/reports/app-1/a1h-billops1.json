@@ -1,0 +1,158 @@
+{
+  "lane": "a1h-billops1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "lane-root .venv Python import-origin check: import recognition as module; print(module.__file__)",
+      "result": "pass",
+      "detail": "Passed before tests and after the final report edit; recognition resolved to apps/prototype-description-service/recognition/__init__.py in this lane."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_reconcile.py recognition/tests/unit/test_app1_billing_reconcile_fixwave.py recognition/tests/unit/test_app1_billing_reconcile_recovery.py recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py",
+      "result": "not_run",
+      "detail": "uv failed before pytest: error: failed to remove file /home/gate/workbay-sandbox/.venv-lane-feature-app-1-a1h-billops1-0c20aa23/lib/python3.12/site-packages/../../../bin/alembic: Read-only file system (os error 30); reran with --no-sync."
+    },
+    {
+      "command": "env -u VIRTUAL_ENV uv run --no-sync --directory apps/prototype-description-service --locked --extra dev pytest -p no:cacheprovider -q -o timeout=300 -o timeout_method=signal recognition/tests/unit/test_app1_billing_reconcile.py recognition/tests/unit/test_app1_billing_reconcile_fixwave.py recognition/tests/unit/test_app1_billing_reconcile_recovery.py recognition/tests/unit/test_app1_billing_reconcile_retry_fixwave.py",
+      "result": "pass",
+      "detail": "60 passed in 4.19s."
+    },
+    {
+      "command": "pytest -p no:cacheprovider -q recognition/tests/integration/test_app1_billing_reconcile_postgres.py recognition/tests/integration/test_app1_billing_reconcile_fixwave_postgres.py",
+      "result": "not_run",
+      "detail": "The PostgreSQL integration tests use the pg_empty_engine fixture and require PostgreSQL, which this sandbox lacks; reviewed their assertions for TEST-15."
+    }
+  ],
+  "rechecked": [
+    {
+      "db_id": 16077,
+      "finding_id": "APP1-RECONCILE-RV08",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1337 - `if event_position is None` quarantines the item before projection upsert; test asserts repeated runs do not upsert or apply entitlement.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv08_orphan_missing_event_position_is_quarantined_not_synthesized"
+    },
+    {
+      "db_id": 16076,
+      "finding_id": "APP1-RECONCILE-RV07",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1608-1610 - fallback projection lookup is followed by `await self._rollback()` before state retrieval; test checks checkout and state provider calls see no open transaction.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv07_checkout_customer_lookup_does_not_hold_transaction_during_provider_get"
+    },
+    {
+      "db_id": 16074,
+      "finding_id": "APP1-RECONCILE-RV05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:2443-2446 - requested customer and subscription identities are checked before returning state; both customer and subscription mismatch tests assert no upsert or entitlement write.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv05_known_projection_rejects_returned_customer_mismatch"
+    },
+    {
+      "db_id": 15551,
+      "finding_id": "GXPLAN-e71025f7c0c5b190-H-d6838899f90e42edc160ed05",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:2148-2153 - absent injected dependencies cause `_build_runtime` to run; CLI guard test supplies that runtime and asserts success without the old injection error.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_documented_cli_path_builds_runtime_without_injection_error"
+    },
+    {
+      "db_id": 15520,
+      "finding_id": "APP1-HG-02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:790-794 - tenant context is set before the entitlement write and cleared in `finally`; tests assert both calls on success and failure.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_entitlement_context_is_released_after_success"
+    },
+    {
+      "db_id": 15485,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-db18d4f2a91a8742d7257c38",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:682-686 - changed state is applied before the inbox row is marked processed; test checks both the active entitlement and processed marker.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_h1_success_applies_billing_state_before_acknowledging_event"
+    },
+    {
+      "db_id": 15477,
+      "finding_id": "W2RECO-a759eea27bcc891d-H-30a70eb7f36e48c18d1c14ec",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:622-623 rejects provider customer mismatch and :894-896 rejects mismatch against the stored projection; guard tests assert no provider call or projection write for stale identity and no upsert for a mismatched response.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_h9_projection_customer_mismatch_fails_closed_before_provider_call"
+    },
+    {
+      "db_id": 16073,
+      "finding_id": "APP1-RECONCILE-RV04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1484-1490 - a full attempt page stores a cursor from its last `(updated_at, id)` key; test proves the next run reaches the third attempt.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv04_ambiguous_checkout_cursor_advances_past_first_bounded_page"
+    },
+    {
+      "db_id": 16072,
+      "finding_id": "APP1-RECONCILE-RV03",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1187-1195 - known-projection exceptions increment `report.failed`; run records phase failures as unresolved; tests assert exit code 1 both with an advancing inbox and without recovery.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv03_known_projection_failure_is_unhealthy_even_when_inbox_advances"
+    },
+    {
+      "db_id": 16071,
+      "finding_id": "APP1-RECONCILE-RV02",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1232-1250 - malformed remote identity is caught and quarantined inside the item loop, which continues to later items; test asserts the valid item is applied.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv02_malformed_orphan_is_quarantined_and_later_valid_item_applies"
+    },
+    {
+      "db_id": 16070,
+      "finding_id": "APP1-RECONCILE-RV01",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:1101 bounds projection pages per run and :1135 marks a full bounded scan as failed; test asserts four calls at a two-page limit and nonzero exit.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile_fixwave.py::test_rv01_known_projections_are_page_bounded_and_non_healthy_when_more_remain"
+    },
+    {
+      "db_id": 15585,
+      "finding_id": "HG-59",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:871-879 treats `external_customer_id` as the tenant reference while :882-888 derives the provider customer separately; the guard checks the persisted customer remains `cus-nested`.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_external_customer_id_names_the_tenant_not_the_provider_customer"
+    },
+    {
+      "db_id": 15583,
+      "finding_id": "HG-57",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:898-906 accepts `data.id` only for `subscription.*` events; refund test asserts `rfnd_abc` is absent from provider calls and upserts.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_refund_payload_id_never_overwrites_the_subscription_pointer"
+    },
+    {
+      "db_id": 15522,
+      "finding_id": "APP1-HG-04",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:2148-2153 - `run()` builds runtime dependencies when repository or provider is absent; the CLI guard asserts a successful invocation with neither injected.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_documented_cli_path_builds_runtime_without_injection_error"
+    },
+    {
+      "db_id": 15492,
+      "finding_id": "W2RECO-a759eea27bcc891d-M-a7b99fdb89e04436a11af9b8",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:730-741 sends dry-run errors to `_dry_run_failure`, which rolls back and reports `would_fail` without `_mark_failure`; test asserts no marks and the row remains received.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_m15_dry_run_provider_failure_does_not_update_retry_state"
+    },
+    {
+      "db_id": 15491,
+      "finding_id": "W2RECO-a759eea27bcc891d-M-9ff7156c768dc6ca4dc88afb",
+      "was": "fixed",
+      "verdict": "HOLDS",
+      "evidence": "apps/prototype-description-service/scripts/billing_reconcile.py:613-619 commits the database transaction before provider state retrieval; guard asserts provider sees no transaction and the inbox path uses claim, lock, and finish fencing.",
+      "guard_test": "apps/prototype-description-service/recognition/tests/unit/test_app1_billing_reconcile.py::test_inbox_path_uses_n1_claim_lock_finish_and_releases_txn_before_get"
+    }
+  ],
+  "new_findings": [],
+  "summary": "Rechecked all 16 assigned findings: every correction is present and guarded, with no new finding; all 60 lane unit tests pass, while PostgreSQL integration tests were not run because this sandbox lacks PostgreSQL."
+}

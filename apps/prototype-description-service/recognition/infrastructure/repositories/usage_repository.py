@@ -439,8 +439,8 @@ class SqlAlchemyUsageRepository:
             # A stale RESERVED retry can be returned here, but _settle applies
             # this same lease before charging it, so replay cannot extend it.
             return self._replay_or_conflict(existing, normalized_fingerprint)
-        now = datetime.now(tz=UTC)
         global_state = await self._lock_global_state()
+        now = datetime.now(tz=UTC)
         self._roll_global_period_if_needed(global_state, now)
 
         existing = await self._get_by_operation_id(tenant_id, normalized_operation)
@@ -543,6 +543,7 @@ class SqlAlchemyUsageRepository:
             queue_bytes=queue_bytes,
             status=UsageReservationStatus.RESERVED,
             cost_units=cost_units,
+            reserved_at=now,
         )
         try:
             async with self._session.begin_nested():

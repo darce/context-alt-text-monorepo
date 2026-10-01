@@ -345,6 +345,11 @@ def write_stub_preflight(run_dir: Path, stack_id: str) -> Path:
         "opencv_major": 5,
         "onnxruntime_version": "1.28.0",
         "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
     }
     dest.write_text(
         json.dumps(

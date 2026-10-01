@@ -389,6 +389,11 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
         "opencv_major": 5,
         "onnxruntime_version": "1.24.1",
         "numpy_version": "2.5.1",
+        "scipy_version": "1.18.0",
+        "pillow_version": "12.3.0",
+        "hdbscan_version": "0.8.44",
+        "pgvector_version": "0.5.0",
+        "comparison_token": "0" * 64,
     }
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     entries = {entry["media_id"]: entry for entry in manifest["entries"]}

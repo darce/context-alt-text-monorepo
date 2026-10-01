@@ -80,6 +80,11 @@ _RUNTIME_FINGERPRINT_FIELDS = (
     "opencv_major",
     "onnxruntime_version",
     "numpy_version",
+    "scipy_version",
+    "pillow_version",
+    "hdbscan_version",
+    "pgvector_version",
+    "comparison_token",
 )
 
 
@@ -1083,8 +1088,12 @@ def _preflight_runtime_fingerprint(doc: dict[str, Any], stack_id: str) -> dict[s
     required = _RUNTIME_FINGERPRINT_FIELDS
     if any(key not in fingerprint for key in required):
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint is incomplete")
-    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in required if key != "opencv_major"):
+    version_fields = tuple(key for key in required if key not in {"opencv_major", "comparison_token"})
+    if any(not isinstance(fingerprint[key], str) or not fingerprint[key] for key in version_fields):
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint has an invalid version")
+    token = fingerprint["comparison_token"]
+    if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{64}", token) is None:
+        raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint has an invalid comparison token")
     major = fingerprint["opencv_major"]
     if type(major) is not int or major != doc["opencv_major"]:
         raise BenchError("preflight_invalid", f"{stack_id} runtime fingerprint OpenCV major is inconsistent")

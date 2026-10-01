@@ -383,6 +383,9 @@ class IncrementalClusteringRunner:
             "hdbscan": version("hdbscan"),
             "scipy": version("scipy"),
         }
+        from recognition.infrastructure.face_pipeline.provenance import numeric_runtime_fingerprint
+
+        settings_snapshot["numeric_runtime_fingerprint"] = numeric_runtime_fingerprint().as_payload()
         return await create_recognition_run(
             self._session,
             tenant_id=tenant_uuid,

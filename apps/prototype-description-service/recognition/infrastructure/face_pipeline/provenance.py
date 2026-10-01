@@ -350,10 +350,9 @@ def verify_face_pipeline_models(*, models_dir: Path | None = None) -> dict[str, 
 # Canonical symbol for consumers (fir-7, fir-8, fir-9, fir23-stack):
 #   ``numeric_runtime_fingerprint``  →  NumericRuntimeFingerprint
 #
-# Not named cv_runtime_version: the stamp covers OpenCV + onnxruntime + numpy
-# (all three move embedding / clustering comparability on this upgrade).
-# OpenCV full version + onnxruntime major.minor are folded into the SFace
-# model_id space identity (see ``space_token`` for WHY that granularity).
+# The stamp covers the resolved inference, numeric, image, and clustering
+# distributions so run comparisons cannot silently cross dependency upgrades.
+# The SFace space token below partitions on the runtimes that determine vectors.
 # ---------------------------------------------------------------------------
 
 
@@ -378,6 +377,29 @@ def _numpy_version() -> str:
     return str(numpy.__version__)
 
 
+def _distribution_version(distribution: str) -> str:
+    """Read an installed distribution version without importing its runtime."""
+    from importlib.metadata import version
+
+    return str(version(distribution))
+
+
+def _scipy_version() -> str:
+    return _distribution_version("scipy")
+
+
+def _pillow_version() -> str:
+    return _distribution_version("pillow")
+
+
+def _hdbscan_version() -> str:
+    return _distribution_version("hdbscan")
+
+
+def _pgvector_version() -> str:
+    return _distribution_version("pgvector")
+
+
 def _version_major_minor(version: str) -> str:
     """Return ``major.minor`` from a dotted version, or the raw string if short."""
     parts = str(version).split(".")
@@ -388,18 +410,48 @@ def _version_major_minor(version: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class NumericRuntimeFingerprint:
-    """Installed-package fingerprint for numeric-relevant face-pipeline runtimes.
+    """Installed-package fingerprint for comparable embedding/clustering runs.
 
-    Field coverage (minimum CVUP-1 findings HARM-01/HARM-02 surface):
-    - opencv_version / opencv_major — warpAffine + cv2 surface
-    - onnxruntime_version — YuNet + SFace inference runtime
-    - numpy_version — array math under both adapters and clustering
+    Exact resolved versions cover OpenCV, ONNX Runtime, NumPy, SciPy, Pillow,
+    HDBSCAN, and pgvector. This captures both image/numeric processing and
+    clustering/storage behavior when two runs are compared.
     """
 
     opencv_version: str
     opencv_major: int
     onnxruntime_version: str
     numpy_version: str
+    scipy_version: str
+    pillow_version: str
+    hdbscan_version: str
+    pgvector_version: str
+
+    @property
+    def resolved_versions(self) -> dict[str, str]:
+        """Exact resolved dependency versions, keyed by distribution name."""
+        return {
+            "hdbscan": self.hdbscan_version,
+            "numpy": self.numpy_version,
+            "onnxruntime": self.onnxruntime_version,
+            "opencv-python": self.opencv_version,
+            "pgvector": self.pgvector_version,
+            "pillow": self.pillow_version,
+            "scipy": self.scipy_version,
+        }
+
+    @property
+    def comparability_token(self) -> str:
+        """Stable digest for equality checks across comparable run snapshots."""
+        versions = self.resolved_versions
+        encoded = "\n".join(f"{name}={versions[name]}" for name in sorted(versions))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def as_payload(self) -> dict[str, object]:
+        """JSON-ready versions plus a token that is directly comparable."""
+        return {
+            "versions": self.resolved_versions,
+            "comparison_token": self.comparability_token,
+        }
 
     @property
     def space_token(self) -> str:
@@ -419,11 +471,16 @@ class NumericRuntimeFingerprint:
           embedding space and orphan persisted rows. A minor bump
           (1.28→1.29) still partitions.
 
-        Either component alone must change the token (discrimination).
-        Numpy is recorded on the fingerprint but not in the space key.
+        - NumPy: **full version**. Array math is part of the inference path and
+          there is no patch-equivalence evidence that justifies reusing an
+          embedding space across NumPy upgrades.
+
+        Any space-defining component alone must change the token. Clustering
+        dependency versions remain in ``comparability_token`` even though they
+        do not define the embedding vector space.
         """
         ort_mm = _version_major_minor(self.onnxruntime_version)
-        return f"cv{self.opencv_version}/ort{ort_mm}"
+        return f"cv{self.opencv_version}/ort{ort_mm}/np{self.numpy_version}"
 
     @property
     def compact(self) -> str:
@@ -432,7 +489,11 @@ class NumericRuntimeFingerprint:
             f"opencv={self.opencv_version};"
             f"opencv_major={self.opencv_major};"
             f"onnxruntime={self.onnxruntime_version};"
-            f"numpy={self.numpy_version}"
+            f"numpy={self.numpy_version};"
+            f"scipy={self.scipy_version};"
+            f"pillow={self.pillow_version};"
+            f"hdbscan={self.hdbscan_version};"
+            f"pgvector={self.pgvector_version}"
         )
 
 
@@ -440,9 +501,8 @@ def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
     """Return the live numeric-relevant runtime fingerprint (never hardcoded).
 
     Canonical accessor for CVUP-1 finding HARM-01 consumers. Read versions
-    from the installed packages at call time so monkeypatching
-    ``_opencv_version`` / ``_onnxruntime_version`` / ``_numpy_version`` in
-    tests is sufficient.
+    from the installed packages at call time so monkeypatching the version
+    accessors in tests is sufficient.
     """
     opencv_version = _opencv_version()
     major_token = opencv_version.split(".", 1)[0]
@@ -455,6 +515,10 @@ def numeric_runtime_fingerprint() -> NumericRuntimeFingerprint:
         opencv_major=opencv_major,
         onnxruntime_version=_onnxruntime_version(),
         numpy_version=_numpy_version(),
+        scipy_version=_scipy_version(),
+        pillow_version=_pillow_version(),
+        hdbscan_version=_hdbscan_version(),
+        pgvector_version=_pgvector_version(),
     )
 
 

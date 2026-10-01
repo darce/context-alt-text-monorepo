@@ -159,25 +159,11 @@ benchmarks/results/crossbench-*/       # gitignored run outputs (run-dir layout)
 **Operator flow**
 
 1. Confirm FIR23-STACK has `acx-dev-fir` healthy next to dev.
-2. From the repository root, copy the redacted example stack-pair file to an operator-local path, set `BENCH_STACK_PAIR_CONFIG` to that absolute path, set the credential variables named in it, and set `BENCH_IMAGES_DIR` to the Golden corpus root. The default config path below is the checked-in example; replace it for a live run.
-3. Copy-paste the following from the repository root. The manifest and config paths name existing files; the UTC stamp is generated for each run.
-
-```sh
-cd apps/prototype-description-service
-config_path="${BENCH_STACK_PAIR_CONFIG:-scripts/bench/tests/fixtures/stack-pair.example.yaml}"
-manifest_path="../../benchmarks/manifests/corpus-manifest-v3.json"
-images_dir="${BENCH_IMAGES_DIR:?Set BENCH_IMAGES_DIR to the Golden corpus root}"
-run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-run_dir="../../benchmarks/results/crossbench-${run_stamp}"
-
-uv run --extra dev python -m scripts.bench.cross_stack_bench preflight --config "$config_path" --out "$run_dir"
-uv run --extra dev python -m scripts.bench.cross_stack_bench run --config "$config_path" --manifest "$manifest_path" --images-dir "$images_dir" --out "$run_dir"
-uv run --extra dev python -m scripts.bench.cross_stack_bench status --run-dir "$run_dir"
-uv run --extra dev python -m scripts.bench.cross_stack_bench score --run-dir "$run_dir"
-```
+2. From the repository root, copy the redacted example stack-pair file to an operator-local path, set `BENCH_STACK_PAIR_CONFIG` to that absolute path, set the credential variables named in it, and set `BENCH_IMAGES_DIR` to the Golden corpus root as an absolute path. The default config path below is the checked-in example; replace it for a live run.
+3. Run the gated four-block sequence (a) through (d) under [Slice 3: Runbook + teardown](#slice-3-runbook--teardown) in order. Do not run `run` until the (b) fresh-state gate passes.
 
 4. Preflight must pass on both stacks before ingest. The run persists append-only `items.jsonl`; status reports per-leg progress and phase; score reads only the run-dir and aborts if the cluster phase is missing or failed.
-5. Teardown: FIR23-STACK stack-scoped DB reset for the FIR stack (and optional dev-bench tenant wipe per runbook) — **not** a new recognition purge phase.
+5. Teardown: FIR23-STACK stack-scoped DB reset for the FIR stack (and optional dev-bench tenant wipe per runbook) — **not** a new recognition purge phase. The stack-scoped reset is also required before each run; complete the (b) fresh-state gate in Slice 3 before invoking `run`.
 
 ---
 

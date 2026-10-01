@@ -24,7 +24,7 @@ export type PortalUsageApiError = {
 export type PortalUsageClient = { read(): Promise<PortalUsageResponse> };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const USAGE_STATUSES = new Set(['beta_active', 'paid_active', 'past_due', 'expired', 'revoked']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,7 +40,30 @@ function parseRequiredString(value: unknown): string | null {
 }
 
 function parseIsoDateTime(value: unknown): string | null {
-  if (typeof value !== 'string' || !ISO_DATE_TIME_RE.test(value)) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const parts = ISO_DATE_TIME_RE.exec(value);
+  if (!parts) {
+    return null;
+  }
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const hour = Number(parts[4]);
+  const minute = Number(parts[5]);
+  const second = Number(parts[6]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = month === 2 ? (leapYear ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31;
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
     return null;
   }
   const ms = Date.parse(value);
@@ -59,7 +82,7 @@ function parseNullableInt(value: unknown): number | null | undefined {
   if (value === null) {
     return null;
   }
-  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     return undefined;
   }
   return value;

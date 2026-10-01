@@ -82,10 +82,17 @@ There is no committed `apps/app-portal` in this tree. Do **not** generate a
 placeholder `index.html`. `--apply` refuses a missing dist, empty `index.html`,
 or empty `assets/`.
 
+Before applying, install `/usr/local/bin/app-portal-health-check` as a regular
+executable. It must return zero only when the live frontend at
+`https://app.altcontext.com/` and the production API readiness endpoint at
+`https://api.altcontext.com/ready` both return successful HTTP responses; it
+must return nonzero if either check fails.
+
 ```bash
 FRONTEND_DIST=/absolute/path/to/real/dist \
 APP_UPSTREAM=prod-api:8000 \
 CADDYFILE=/opt/acx-backend/Caddyfile \
+APP_HEALTH_CMD=/usr/local/bin/app-portal-health-check \
 scripts/deploy/app-portal.sh --apply
 ```
 
@@ -109,8 +116,8 @@ sandbox; tests inject fake `caddy` / `APP_RELOAD_CMD` / `APP_HEALTH_CMD`.
    - www: atomic rename of the staged directory onto `APP_WWW`.
    - overlay: atomic rename onto `${APP_ROOT}/docker-compose.app.yml`.
 7. Reload (`APP_RELOAD_CMD` or `caddy reload --config "$CADDYFILE"`).
-8. Health (`APP_HEALTH_CMD` or local artifact checks: hostname in Caddyfile,
-   `APP_WWW/index.html`, overlay contains `APP_WWW`).
+8. Verifies the promoted Caddyfile, frontend, and overlay, then runs the
+   required `APP_HEALTH_CMD` against the live frontend and production API.
 9. Any failure at write/move/copy/reload/health restores the three rollback
    artifacts, attempts a rollback reload, and **does not** print `applied:`.
 
@@ -118,9 +125,9 @@ Protected hostnames (`api.altcontext.com` and the other live vhosts) cannot be
 used as `APP_HOSTNAME`. The shared repo file
 `apps/prototype-description-service/Caddyfile` is refused as `CADDYFILE`.
 
-If reload is skipped because neither `caddy` nor `APP_RELOAD_CMD` is present,
-stdout says so and does **not** claim the edge process picked up the new
-inode. Host files may still be activated; follow the operator sequence below.
+`--apply` refuses to proceed if neither `caddy` nor `APP_RELOAD_CMD` provides a
+reload mechanism. A reload failure during activation restores the rollback
+artifacts and prevents the `applied:` message.
 
 ## Later integration (mounts + edge reload)
 

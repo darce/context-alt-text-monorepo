@@ -734,9 +734,26 @@ run_health() {
 reclaim_rollback_snapshots() {
   # Called only after the activation journal is cleared; keep the current set
   # and leave operator files alone. Never prune recovery's active snapshots.
-  local _snapshot _stamp
+  local _snapshot _snapshot_name _stamp
   for _snapshot in "$ROLLBACK_DIR"/Caddyfile.* "$ROLLBACK_DIR"/www.* "$ROLLBACK_DIR"/docker-compose.app.yml.*; do
-    _stamp="${_snapshot##*.}"
+    _snapshot_name="${_snapshot##*/}"
+    case "$_snapshot_name" in
+      Caddyfile.*)
+        _stamp="${_snapshot_name#Caddyfile.}"
+        [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
+        ;;
+      www.*)
+        _stamp="${_snapshot_name#www.}"
+        [ -d "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
+        ;;
+      docker-compose.app.yml.*)
+        _stamp="${_snapshot_name#docker-compose.app.yml.}"
+        [ -f "$_snapshot" ] && [ ! -L "$_snapshot" ] || continue
+        ;;
+      *)
+        continue
+        ;;
+    esac
     case "$_stamp" in ''|*[!0-9]*) continue ;; esac
     [ "$_stamp" != "$ts" ] || continue
     rm -rf -- "$_snapshot" || return 1

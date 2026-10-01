@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.eval_harness.face_metrics import ImageDetection, detection_pr_strict
 from scripts.eval_harness.manifest import (
     AnnotationMode,
     HashVerificationSkippedWarning,
@@ -448,6 +449,45 @@ def test_corpus646_retag_loads_as_roster_only() -> None:
             assert box.lineage is not None
             assert box.lineage.label_source.value == "legacy_import"
             assert box.lineage.capture_session_id == LEGACY_IMPORT_CAPTURE_SESSION_ID
+
+
+@pytest.mark.parametrize("source", ["detector", "workbench"])
+def test_historical_face_box_sources_load_but_strict_scoring_rejects_them(
+    tmp_path: Path, source: str
+) -> None:
+    """Legacy region lineage round-trips without qualifying as independent GT."""
+    doc = _load_json(PROVENANCED)
+    doc["entries"][0]["face_boxes"][0]["source"] = source
+    path = _write_manifest(tmp_path, doc, f"{source}.json")
+
+    with pytest.warns(HashVerificationSkippedWarning, match="hash verification skipped"):
+        manifest = load_manifest(str(path), skip_hash_verification=True)
+
+    entry = manifest.entries[0]
+    box = entry.face_boxes[0]
+    assert box.source.value == source
+
+    row = ImageDetection(
+        image=entry.path,
+        pred_faces=1,
+        labeled_faces=1,
+        gt_boxes=(box,),
+    )
+    with pytest.raises(ManifestError, match="independent supported source"):
+        detection_pr_strict(
+            [row],
+            annotation_mode=AnnotationMode.EXHAUSTIVE,
+            run_manifest={"iou_threshold": 0.5},
+        )
+
+
+def test_unknown_face_box_source_still_fails_with_field_name(tmp_path: Path) -> None:
+    doc = _load_json(PROVENANCED)
+    doc["entries"][0]["face_boxes"][0]["source"] = "guess"
+    path = _write_manifest(tmp_path, doc)
+
+    with pytest.raises(ManifestError, match=r"entries\.0\.face_boxes\.0\.source"):
+        load_manifest(str(path), skip_hash_verification=True)
 
 
 def test_legacy_import_lineage_carries_unknown_session() -> None:

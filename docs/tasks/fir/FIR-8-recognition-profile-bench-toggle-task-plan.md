@@ -1197,7 +1197,7 @@ uv run --extra dev pytest scene/tests/test_eval_harness_face_metrics.py
 9. **Failure routing** — stack health / dim wrong in compose → FIR23-STACK; CLI logic / scoring → FIR-8; embedding-export needs → optional upstream task (not FIR-8).
 10. **Verification checklist** — both preflights green; report path exists; both frames present; license_notice present; both stacks were reset before ingest and are reset again during teardown.
 
-Run the following four blocks in order from the repository root, in the same shell. The first block changes to `apps/prototype-description-service`; if a block fails, stop and do not run the later blocks. Do not run the `run` block until the separate fresh-state gate block has passed.
+From the repository root, first start a dedicated child shell (for example, run `bash`). Run the following four blocks in order in that shell, then leave it with `exit`. The first block changes to `apps/prototype-description-service`; if a block fails, `exit 1` ends the child shell and stops the sequence. Do not run the `run` block until the separate fresh-state gate block has passed.
 
 **(a) Variables and preflight**
 
@@ -1239,6 +1239,7 @@ if [ ! -f "$evidence_file" ]; then
   printf '%s\n' "Reset evidence file does not exist: $evidence_file" >&2
   exit 1
 fi
+export ACX_BENCH_PRE_RUN_RESET_EVIDENCE_FILE="$evidence_file"
 printf '%s\n' "Reset evidence file exists: $evidence_file"
 ```
 

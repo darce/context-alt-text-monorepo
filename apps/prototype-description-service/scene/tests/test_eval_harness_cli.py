@@ -4159,7 +4159,7 @@ def test_face_bakeoff_wires_synthetic_occlusion_twins_end_to_end(tmp_path, monke
                 out.append(v / np.linalg.norm(v))
             return np.stack(out, axis=0)
 
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (_Det(), FivePointAligner(), _Emb()))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (_Det(), FivePointAligner(), _Emb()))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -4232,7 +4232,7 @@ def test_face_bakeoff_passes_images_dir_not_skip(tmp_path, monkeypatch):
     images = tmp_path / "images"
     images.mkdir()
     leg = _FusedFakeLeg()
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, _NoopAligner(), leg))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (leg, _NoopAligner(), leg))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(images))
 
@@ -4387,7 +4387,11 @@ def test_cli_face_bakeoff_dispatches_buffalo_leg(tmp_path, monkeypatch):
         cache_detector=None,
     )
     monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: bundle)
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: pytest.fail("candidate leg built for --leg buffalo"))
+    monkeypatch.setattr(
+        cli_mod,
+        "build_candidate_leg",
+        lambda **_kw: pytest.fail("candidate leg built for --leg buffalo"),
+    )
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
 
@@ -4407,7 +4411,7 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
 
     man_path = _leg_dispatch_manifest(tmp_path)
     leg = _FusedFakeLeg()  # shape-compatible mock; leg identity comes from dispatch args
-    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda: (leg, FivePointAligner(), leg))
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", lambda **_kw: (leg, FivePointAligner(), leg))
     monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for --leg candidate"))
     monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
@@ -4418,6 +4422,56 @@ def test_cli_face_bakeoff_candidate_leg_never_touches_buffalo(tmp_path, monkeypa
     assert prov["leg"] == "candidate"
     assert prov["model_id"] == "ort-yunet-sface"
     assert "leg_mode" not in prov
+
+
+@pytest.mark.parametrize(
+    ("threshold_args", "expected"),
+    [([], None), (["--score-threshold", "0.42"], 0.42)],
+)
+def test_cli_face_bakeoff_forwards_score_threshold(tmp_path, monkeypatch, threshold_args, expected):
+    from scripts.eval_harness import cli as cli_mod
+
+    man_path = _leg_dispatch_manifest(tmp_path)
+    leg = _FusedFakeLeg()
+    received = []
+
+    def _build_candidate(**kwargs):
+        received.append(kwargs)
+        return leg, _NoopAligner(), leg
+
+    monkeypatch.setattr(cli_mod, "build_candidate_leg", _build_candidate)
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built for candidate"))
+    monkeypatch.setattr(cli_mod, "OUT_DIR", tmp_path / "out")
+    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(tmp_path / "images"))
+
+    cli_mod.main(["face-bakeoff", "--manifest", str(man_path), *threshold_args])
+
+    assert received == [{"score_threshold": expected}]
+
+
+@pytest.mark.parametrize("value", ["0", "1", "abc", "nan", "inf"])
+def test_cli_face_bakeoff_score_threshold_rejects_invalid_values(value, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--score-threshold", value])
+
+    assert exc.value.code == 2
+    assert "argument --score-threshold" in capsys.readouterr().err
+
+
+def test_cli_face_bakeoff_buffalo_rejects_score_threshold_before_building_leg(monkeypatch):
+    from scripts.eval_harness import cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "_build_buffalo_leg", lambda: pytest.fail("buffalo leg built despite threshold"))
+    monkeypatch.setattr(
+        cli_mod,
+        "build_candidate_leg",
+        lambda **_kw: pytest.fail("candidate leg built for --leg buffalo"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main(["face-bakeoff", "--leg", "buffalo", "--score-threshold", "0.42"])
+
+    assert "only to the candidate YuNet detector" in str(exc.value)
 
 
 # --- VLM6-lc2 residual gates (A-02, F2A-01, R2-08, B-10) ---

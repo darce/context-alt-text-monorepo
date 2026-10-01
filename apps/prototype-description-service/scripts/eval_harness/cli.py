@@ -25,6 +25,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -400,6 +401,17 @@ def _limit_arg(raw: str) -> int:
     value = int(raw)
     if value < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
+    return value
+
+
+def _score_threshold_arg(raw: str) -> float:
+    """argparse type for the candidate face detector's score threshold."""
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a finite number with 0 < value < 1") from None
+    if not math.isfinite(value) or not 0 < value < 1:
+        raise argparse.ArgumentTypeError("must be a finite number with 0 < value < 1")
     return value
 
 
@@ -2152,10 +2164,12 @@ def _build_buffalo_leg() -> _FaceLegBundle:
     )
 
 
-def _build_face_leg(leg: str) -> _FaceLegBundle:
+def _build_face_leg(leg: str, *, score_threshold: float | None = None) -> _FaceLegBundle:
     if leg == "buffalo":
+        if score_threshold is not None:
+            sys.exit("--score-threshold applies only to the candidate YuNet detector; omit it with --leg buffalo")
         return _build_buffalo_leg()
-    detector, aligner, embedder = build_candidate_leg()
+    detector, aligner, embedder = build_candidate_leg(score_threshold=score_threshold)
     return _FaceLegBundle(
         detector=detector,
         aligner=aligner,
@@ -2170,7 +2184,7 @@ def _cmd_face_bakeoff(args: argparse.Namespace) -> None:
     """Offline leg walk → face_run_record JSON in out/ (no tenant writes)."""
     # Leg preflight first: --leg buffalo failures (env flag / [bench] extra) must
     # surface before unrelated GOLDEN_IMAGES_DIR / manifest errors.
-    leg = _build_face_leg(args.leg)
+    leg = _build_face_leg(args.leg, score_threshold=args.score_threshold)
     images_dir = _images_dir()
     # Pixel path: walk_face_run_record / build_occlusion_twin_pairs read image bytes.
     manifest = load_manifest(args.manifest, images_dir=images_dir)
@@ -3271,6 +3285,15 @@ def main(argv: list[str] | None = None) -> None:
     face_bo.add_argument("--limit", type=_limit_arg, default=None)
     face_bo.add_argument("--stall-limit", type=int, default=DEFAULT_STALL_LIMIT)
     face_bo.add_argument("--keep", type=_keep_arg, default=DEFAULT_KEEP)
+    face_bo.add_argument(
+        "--score-threshold",
+        type=_score_threshold_arg,
+        default=None,
+        help=(
+            "score threshold for the candidate YuNet detector (must be > 0 and < 1; "
+            "default: detector default 0.9)"
+        ),
+    )
     face_bo.add_argument(
         "--leg",
         choices=("candidate", "buffalo"),

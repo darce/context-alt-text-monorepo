@@ -809,6 +809,55 @@ def test_any_parametrized_instance_failure_blocks_declared_base_node(tmp_path: P
     assert evidence["release_gate_results"]["beta"]["status"] == "failed"
 
 
+@pytest.mark.parametrize(
+    ("failed_nodes", "expected_status", "expected_exit"),
+    [
+        ((), "passed", 0),
+        (("recognition/tests/test_param.py::test_case[small]",), "failed", 1),
+    ],
+)
+def test_overlapping_parametrized_junit_selectors_match_without_consuming_rows(
+    tmp_path: Path,
+    failed_nodes: tuple[str, ...],
+    expected_status: str,
+    expected_exit: int,
+) -> None:
+    payload = _manifest_payload(tmp_path)
+    base_node = "recognition/tests/test_param.py::test_case"
+    specific_node = f"{base_node}[small]"
+    payload["cases"][0]["test"] = base_node
+    payload["cases"].append(
+        {**payload["cases"][0], "id": "SC-2", "criterion": "criterion 2", "test": specific_node}
+    )
+    for gate in payload["release_gates"].values():
+        gate["required_cases"] = ["SC-1", "SC-2"]
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(
+            command,
+            xml_path,
+            xml_text=_junit_for_nodes(
+                [specific_node, f"{base_node}[large]"],
+                failed=failed_nodes,
+            ),
+        )
+        kwargs["stdout"].write("overlapping selectors\n")
+        return SimpleNamespace(returncode=expected_exit, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == expected_exit
+    group = _last_evidence(tmp_path)["groups"][0]
+    ledger = group["case_ledger"]
+    assert [entry["status"] for entry in ledger] == [expected_status, expected_status]
+    assert [entry["test_status"] for entry in ledger] == [expected_status, expected_status]
+    assert "test_case[small]" in ledger[0]["junit_identity"]
+    assert "test_case[large]" in ledger[0]["junit_identity"]
+    assert "test_case[small]" in ledger[1]["junit_identity"]
+
+
 def test_unsuffixed_release_gate_node_still_passes(tmp_path: Path) -> None:
     payload = _manifest_payload(tmp_path)
     payload["cases"][0]["test"] = "recognition/tests/test_param.py::test_case"

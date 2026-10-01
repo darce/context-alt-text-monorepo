@@ -129,6 +129,8 @@ def _run(
         )
     if include_docker:
         _write_executable(bin_dir / "docker", _docker_stub(log_path))
+    health = bin_dir / "health-check"
+    _write_executable(health, "#!/usr/bin/env bash\nexit 0\n")
     if fail_mv_dest is not None:
         dest = shlex.quote(str(fail_mv_dest))
         _write_executable(
@@ -186,6 +188,8 @@ def _run(
     env["APP_SNIPPET"] = str(SNIPPET)
     env["APP_OVERLAY"] = str(OVERLAY)
     env["APP_APPROVED_ROOTS"] = str(backend_root)
+    env["APP_RELOAD_CMD"] = ""
+    env["APP_HEALTH_CMD"] = str(health)
     if extra_env:
         env.update(extra_env)
 
@@ -603,6 +607,100 @@ def test_apply_failed_reload_restores_caddy_www_and_overlay(tmp_path: Path) -> N
         assert host in live.read_text(encoding="utf-8")
 
 
+def test_apply_without_reload_mechanism_refuses_before_promotion(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    www = _prior_www(tmp_path)
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, include_caddy=False)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "reload" in output.lower(), output
+    assert "applied:" not in output
+    assert live.read_bytes() == before
+    assert (www / "keep.txt").read_text() == "active\n"
+    assert not (www / "index.html").exists()
+
+
+def test_apply_requires_explicit_live_health_check(tmp_path: Path) -> None:
+    live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+    _write_live_caddy(live)
+    before = live.read_bytes()
+    result = _run(tmp_path, args=["--apply"], live_caddy=live, extra_env={"APP_HEALTH_CMD": ""})
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "APP_HEALTH_CMD" in output
+    assert "applied:" not in output
+    assert live.read_bytes() == before
+
+
+def test_docker_validation_with_explicit_reload_succeeds(tmp_path: Path) -> None:
+    reload_cmd = tmp_path / "reload-edge"
+    marker = tmp_path / "reloaded"
+    _write_executable(reload_cmd, f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    result = _run(
+        tmp_path, args=["--apply"], include_caddy=False,
+        extra_env={"APP_RELOAD_CMD": str(reload_cmd)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "docker run" in _log(tmp_path)
+    assert marker.exists()
+
+
+def test_successful_applies_reclaim_old_snapshot_sets(tmp_path: Path) -> None:
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    rollback = app_root / "rollback"
+    rollback.mkdir(parents=True)
+    for stamp in (1, 2, 3):
+        (rollback / f"Caddyfile.{stamp}").write_text("old config")
+        (rollback / f"www.{stamp}").mkdir()
+        (rollback / f"www.{stamp}" / "index.html").write_text("old frontend")
+        (rollback / f"docker-compose.app.yml.{stamp}").write_text("old overlay")
+    unrelated = rollback / "operator-notes"
+    unrelated.write_text("keep")
+    _prior_www(tmp_path)
+    (app_root / "docker-compose.app.yml").write_text("services: {}\n")
+    for _ in range(3):
+        # Freeze the clock to exercise back-to-back snapshot names as well.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        _write_executable(bin_dir / "date", "#!/bin/sh\nprintf '100\\n'\n")
+        live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
+        if not live.exists():
+            _write_live_caddy(live)
+        before = live.read_bytes()
+        prior_index = app_root / "www" / "index.html"
+        prior_contents = prior_index.read_bytes() if prior_index.exists() else None
+        result = _run(tmp_path, args=["--apply"], live_caddy=live)
+        assert result.returncode == 0, result.stdout + result.stderr
+        caddy_backups = list(rollback.glob("Caddyfile.*"))
+        assert len(caddy_backups) == 1
+        stamp = caddy_backups[0].name.split(".")[-1]
+        assert caddy_backups[0].read_bytes() == before
+        assert {p.name for p in rollback.iterdir()} == {
+            f"Caddyfile.{stamp}", f"www.{stamp}", f"docker-compose.app.yml.{stamp}", "operator-notes"
+        }
+        if prior_contents is not None:
+            assert (rollback / f"www.{stamp}" / "index.html").read_bytes() == prior_contents
+        assert unrelated.read_text() == "keep"
+        assert not (app_root / "activation.journal").exists()
+
+
+def test_apply_refuses_symlink_rollback_directory(tmp_path: Path) -> None:
+    app_root = tmp_path / "opt" / "acx-backend" / "app"
+    app_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    snapshot = outside / "Caddyfile.1"
+    snapshot.write_text("do not delete")
+    (app_root / "rollback").symlink_to(outside, target_is_directory=True)
+    result = _run(tmp_path, args=["--apply"])
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "symlink" in (result.stdout + result.stderr).lower()
+    assert {p.name for p in outside.iterdir()} == {"Caddyfile.1"}
+    assert snapshot.read_text() == "do not delete"
+
+
 def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> None:
     live = tmp_path / "opt" / "acx-backend" / "Caddyfile"
     _write_live_caddy(live)
@@ -610,6 +708,10 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     www = _prior_www(tmp_path)
     overlay_dest = tmp_path / "opt" / "acx-backend" / "app" / "docker-compose.app.yml"
     overlay_dest.write_text("services: {}\n", encoding="utf-8")
+    rollback = overlay_dest.parent / "rollback"
+    rollback.mkdir()
+    old_snapshot = rollback / "Caddyfile.1"
+    old_snapshot.write_text("previous recovery config")
     health = tmp_path / "opt" / "acx-backend" / "health-fail"
     _write_executable(health, "#!/usr/bin/env bash\nexit 1\n")
     result = _run(
@@ -626,6 +728,10 @@ def test_apply_failed_health_restores_caddy_www_and_overlay(tmp_path: Path) -> N
     assert (www / "keep.txt").read_text(encoding="utf-8") == "active\n"
     assert not (www / "index.html").exists()
     assert overlay_dest.read_text(encoding="utf-8") == "services: {}\n"
+    assert old_snapshot.read_text() == "previous recovery config"
+    current_backups = [p for p in rollback.glob("Caddyfile.*") if p != old_snapshot]
+    assert len(current_backups) == 1
+    assert current_backups[0].read_text() == before
 
 
 def test_apply_failed_www_move_restores_caddyfile(tmp_path: Path) -> None:

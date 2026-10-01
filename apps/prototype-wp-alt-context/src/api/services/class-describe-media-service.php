@@ -43,6 +43,7 @@ use function get_post;
 use function get_site_url;
 use function gmdate;
 use function hash;
+use function in_array;
 use function is_array;
 use function is_numeric;
 use function is_object;
@@ -61,6 +62,7 @@ use function trim;
 use function update_post_meta;
 use function sanitize_text_field;
 use function sanitize_textarea_field;
+use function var_export;
 use function wp_get_object_terms;
 use function wp_json_encode;
 use function wp_unslash;
@@ -88,6 +90,13 @@ class DescribeMediaService {
 	private const ALT_TEXT_META_KEY = '_wp_attachment_image_alt';
 	private const PROVENANCE_META_KEY = '_acx_description_provenance';
 	private const PROVENANCE_PENDING_META_KEY = '_acx_description_provenance_pending';
+	/**
+	 * Outbound metadata categories. The default policy permits all four; product
+	 * context is limited to its descriptive name and never includes SKU or price.
+	 *
+	 * @var string[]
+	 */
+	private const CONTEXT_CATEGORIES = array( 'attachment', 'post', 'taxonomy_terms', 'product' );
 
 	/**
 	 * The 17 provenance-bearing fields the backend contract guarantees
@@ -929,10 +938,12 @@ class DescribeMediaService {
 	 * @return array<string,mixed>
 	 */
 	private function build_context_pack( int $media_id, string $path ): array {
-		$attachment = get_post( $media_id );
-		$parent     = $this->get_public_parent_post( $attachment );
-		$context    = array(
-			'attachment' => $this->non_empty_fields(
+		$attachment         = get_post( $media_id );
+		$allowed_categories = $this->allowed_context_categories( $media_id );
+		$context            = array();
+
+		if ( in_array( 'attachment', $allowed_categories, true ) ) {
+			$context['attachment'] = $this->non_empty_fields(
 				array(
 					'title'       => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_title ) ? $attachment->post_title : null, 160 ),
 					'caption'     => $this->bounded_string( is_object( $attachment ) && isset( $attachment->post_excerpt ) ? $attachment->post_excerpt : null, 500 ),
@@ -940,32 +951,38 @@ class DescribeMediaService {
 					'alt_text'    => $this->bounded_string( get_post_meta( $media_id, '_wp_attachment_image_alt', true ), 500 ),
 					'filename'    => $this->bounded_string( basename( $path ), 255 ),
 				)
-			),
-			'identity'   => $this->build_identity_context( $media_id ),
-		);
+			);
+		}
+
+		// Identity naming has its own tenant-bound policy and is not controlled by
+		// the metadata category allowlist.
+		$context['identity'] = $this->build_identity_context( $media_id );
+		$parent              = $this->get_public_parent_post( $attachment );
 
 		if ( null !== $parent ) {
-			$context['post'] = $this->non_empty_fields(
-				array(
-					'title'     => $this->bounded_string( $parent->post_title ?? null, 200 ),
-					'excerpt'   => $this->bounded_string( $parent->post_excerpt ?? null, 1000 ),
-					'post_type' => $this->bounded_string( $parent->post_type ?? null, 64 ),
-					'status'    => $this->bounded_string( $parent->post_status ?? null, 32 ),
-				)
-			);
+			if ( in_array( 'post', $allowed_categories, true ) ) {
+				$context['post'] = $this->non_empty_fields(
+					array(
+						'title'     => $this->bounded_string( $parent->post_title ?? null, 200 ),
+						'excerpt'   => $this->bounded_string( $parent->post_excerpt ?? null, 1000 ),
+						'post_type' => $this->bounded_string( $parent->post_type ?? null, 64 ),
+						'status'    => $this->bounded_string( $parent->post_status ?? null, 32 ),
+					)
+				);
+			}
 
 			if ( isset( $parent->ID ) ) {
-				$terms = $this->collect_taxonomy_terms( (int) $parent->ID );
-				if ( array() !== $terms ) {
-					$context['taxonomy_terms'] = $terms;
+				if ( in_array( 'taxonomy_terms', $allowed_categories, true ) ) {
+					$terms = $this->collect_taxonomy_terms( (int) $parent->ID );
+					if ( array() !== $terms ) {
+						$context['taxonomy_terms'] = $terms;
+					}
 				}
 
-				if ( 'product' === (string) ( $parent->post_type ?? '' ) ) {
+				if ( in_array( 'product', $allowed_categories, true ) && 'product' === (string) ( $parent->post_type ?? '' ) ) {
 					$context['product'] = $this->non_empty_fields(
 						array(
-							'name'  => $this->bounded_string( $parent->post_title ?? null, 200 ),
-							'sku'   => $this->bounded_string( get_post_meta( (int) $parent->ID, '_sku', true ), 120 ),
-							'price' => $this->bounded_string( get_post_meta( (int) $parent->ID, '_price', true ), 64 ),
+							'name' => $this->bounded_string( $parent->post_title ?? null, 200 ),
 						)
 					);
 				}
@@ -976,6 +993,44 @@ class DescribeMediaService {
 			$context,
 			static fn ( array $value ): bool => array() !== $value
 		);
+	}
+
+	/**
+	 * Resolve the tenant's outbound context policy. An absent option defaults to
+	 * all supported categories; malformed values fail closed to attachment only.
+	 *
+	 * @return string[]
+	 */
+	private function allowed_context_categories( int $media_id ): array {
+		$option_missing         = new \stdClass();
+		$configured_categories = get_option( 'acx_description_context_categories', $option_missing );
+		if ( $option_missing === $configured_categories ) {
+			return self::CONTEXT_CATEGORIES;
+		}
+
+		if ( is_array( $configured_categories ) ) {
+			$valid_categories = true;
+			foreach ( $configured_categories as $category ) {
+				if ( ! is_string( $category ) || ! in_array( $category, self::CONTEXT_CATEGORIES, true ) ) {
+					$valid_categories = false;
+					break;
+				}
+			}
+
+			if ( $valid_categories ) {
+				return $configured_categories;
+			}
+		}
+
+		Telemetry::log_line(
+			sprintf(
+				'[acx] describe media_id=%d rejected acx_description_context_categories value=%s; using attachment only',
+				$media_id,
+				var_export( $configured_categories, true )
+			)
+		);
+
+		return array( 'attachment' );
 	}
 
 	private function get_public_parent_post( mixed $attachment ): ?object {

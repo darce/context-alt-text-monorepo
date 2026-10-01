@@ -213,7 +213,7 @@ async def test_absent_service_does_not_call_anything() -> None:
 
 
 @pytest.mark.asyncio
-async def test_identical_payloads_without_operation_id_are_independently_chargeable(
+async def test_identical_payloads_with_distinct_operation_ids_are_independently_chargeable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     admission = _FakeAdmission()
@@ -221,8 +221,8 @@ async def test_identical_payloads_without_operation_id_are_independently_chargea
     transport = httpx.ASGITransport(app=app)
     payload = {"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]}
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        first = await client.post("/recognition/analyze", json=payload)
-        second = await client.post("/recognition/analyze", json=payload)
+        first = await client.post("/recognition/analyze", json=payload, headers={"Idempotency-Key": "action-1"})
+        second = await client.post("/recognition/analyze", json=payload, headers={"Idempotency-Key": "action-2"})
 
     assert first.status_code == 202
     assert second.status_code == 202
@@ -305,6 +305,7 @@ async def test_exhausted_analyze_request_returns_402(monkeypatch: pytest.MonkeyP
         response = await client.post(
             "/recognition/analyze",
             json={"tenant_id": str(TENANT_ID), "media_ids": [MEDIA_ID]},
+            headers={"Idempotency-Key": "exhausted-action"},
         )
 
     assert response.status_code == 402

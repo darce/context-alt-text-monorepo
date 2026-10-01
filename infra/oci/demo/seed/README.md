@@ -7,6 +7,19 @@ Deterministic seed images for the public demo walkthrough. Every face file in
 
 - Prefer **generated** or **public-domain** faces. Anything else needs a documented
   license/rights basis recorded per row before the demo goes public.
+
+### Rights ledgers
+
+`clustering-rights.tsv` and `guided-rights.tsv` record the rights for each media file
+as tab-separated rows. Both use the header
+`file<TAB>subject<TAB>basis<TAB>source<TAB>notice<TAB>added`, followed by one row per
+file. Recognised `basis` values are `editorial_fair_use`, `cc_by`, `cc_by_sa`,
+`public_domain`, `eu_reuse`, and `generated`; `notice` is `takedown_on_request`,
+`attribution_required`, or `none`. `import.sh` refuses unrecognised bases (including
+`unrecorded`) and stops before importing if a media file has no ledger row. To
+enumerate a withdrawal, use `grep -F` on the ledger for the file and check the
+matching attachment's `acx_seed_rights_basis` post meta.
+
 - **E15-29 disposition:** the demo seeds 100 `celebs01` images (>=5 per person, to
   showcase clustering) under a documented **editorial/fair-use demo** basis
   (non-commercial product demonstration, attributed, **takedown on request**).
@@ -152,6 +165,8 @@ infra/oci/demo/seed/
   README.md          this file
   import.sh          wp-cli import (synced to the VM by scripts/deploy/sync-demo.sh)
   media/             JPEG/PNG inputs (not committed until licensed)
+  clustering-rights.tsv rights for clustering seed media
+  guided-rights.tsv     rights for guided-prototype seed media
   clustering-manifest.txt   `<slug> <count>` written by select-clustering-seed.sh
   guided-manifest.txt       `<slug> <count>` written by select-guided-seed.sh
   select-clustering-seed.sh celebs01 top-N selection (SEED-PROVENANCE block)

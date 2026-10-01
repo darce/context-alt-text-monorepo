@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
@@ -26,6 +27,7 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.tasks.scan import (
     chain_populate_and_process,
     extract_media_id,
+    process_scan_job_inline,
 )
 from recognition.domain.job import TERMINAL_JOB_STATUSES, Job, JobPhase, JobStatus, JobType
 from recognition.domain.portal_contracts import UsageTicket
@@ -418,6 +420,57 @@ async def _prepare_tenant_context(
     return tenant_uuid
 
 
+async def _dispatch_persisted_analysis(**kwargs) -> None:
+    """Serialize dispatch and atomically populate a committed, empty job.
+
+    Both the original request and replays use this guard: a retry can arrive
+    before the original background task starts. Queue population must commit
+    as one transaction so another dispatcher cannot repeat a partial batch.
+    """
+    from db.models import IdentityScanJob, IdentityScanJobItem
+    from db.tenant_context import set_tenant_context
+    from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+    session_factory = kwargs.get("session_factory")
+    if session_factory is None:
+        from db.session import async_session_factory
+
+        session_factory = async_session_factory
+    job_id = uuid.UUID(kwargs["job_id"])
+    tenant_id = uuid.UUID(kwargs["tenant_id"])
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        job = await session.scalar(
+            select(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id, IdentityScanJob.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if job is None or job.status != JobStatus.PENDING:
+            return
+        existing_item = await session.scalar(
+            select(IdentityScanJobItem.id).where(IdentityScanJobItem.job_id == job_id).limit(1)
+        )
+        if existing_item is not None:
+            return
+        queue = ScanQueueService(SqlAlchemyScanQueueRepository(session))
+        await queue.populate_scan_job_items(
+            job_id=job_id,
+            tenant_id=tenant_id,
+            media_items=kwargs["media_items"],
+            correlation_id=kwargs.get("correlation_id"),
+        )
+        await session.commit()
+    if kwargs["inline_processing"]:
+        await process_scan_job_inline(
+            tenant_id=kwargs["tenant_id"],
+            job_id=kwargs["job_id"],
+            media_ids=kwargs["media_ids"],
+            media_sources=kwargs["media_sources"],
+            session_factory=session_factory,
+            adapter_provider=kwargs["adapter_provider"],
+        )
+
+
 async def _schedule_analysis(
     *,
     background_tasks: BackgroundTasks,
@@ -430,6 +483,7 @@ async def _schedule_analysis(
     inline_processing: bool,
     auth,
     job_id: uuid.UUID | None = None,
+    existing_job: bool = False,
 ) -> JobStatusResponse:
     """Create the scan job, schedule background work, and build the initial response."""
     if scan_queue is None:
@@ -447,7 +501,7 @@ async def _schedule_analysis(
     }
     if job_id is not None:
         create_kwargs["job_id"] = job_id
-    persisted_job_id = await scan_queue.create_scan_job_record(**create_kwargs)
+    persisted_job_id = job_id if existing_job else await scan_queue.create_scan_job_record(**create_kwargs)
 
     if session is not None:
         await session.commit()
@@ -459,7 +513,7 @@ async def _schedule_analysis(
     try:
         correlation_id = get_correlation_id()
         background_tasks.add_task(
-            chain_populate_and_process,
+            _dispatch_persisted_analysis if isinstance(scan_queue, ScanQueueService) else chain_populate_and_process,
             tenant_id=str(tenant_uuid),
             job_id=str(persisted_job_id),
             media_items=media_items,
@@ -528,21 +582,19 @@ async def analyze_media(
             request_fingerprint=fingerprint,
         ) as ticket:
             bound_job_id = bound_job_uuid(ticket, generated_job_id)
-            if is_usage_replay(ticket, generated_job_id):
-                response = queued_analyze_job_response(bound_job_id, total_media_items)
-            else:
-                response = await _schedule_analysis(
-                    background_tasks=background_tasks,
-                    session=session,
-                    scan_queue=scan_queue,
-                    tenant_uuid=tenant_uuid,
-                    media_items=media_items,
-                    media_ids=media_ids,
-                    media_sources=media_sources,
-                    inline_processing=inline_processing,
-                    auth=auth,
-                    job_id=bound_job_id,
-                )
+            response = await _schedule_analysis(
+                background_tasks=background_tasks,
+                session=session,
+                scan_queue=scan_queue,
+                tenant_uuid=tenant_uuid,
+                media_items=media_items,
+                media_ids=media_ids,
+                media_sources=media_sources,
+                inline_processing=inline_processing,
+                auth=auth,
+                job_id=bound_job_id,
+                existing_job=is_usage_replay(ticket, generated_job_id),
+            )
         outcome = "queued"
         return response
     except ProgrammingError as exc:

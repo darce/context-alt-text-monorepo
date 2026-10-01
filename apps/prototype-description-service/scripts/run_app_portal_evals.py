@@ -529,17 +529,6 @@ def _junit_case_outcome(testcase: ET.Element) -> CaseLedgerStatus:
     return CaseLedgerStatus.PASSED
 
 
-def _junit_testcase_identity(node_id: str) -> tuple[str, str] | None:
-    parts = node_id.split("::")
-    if len(parts) < 2 or not parts[0] or not parts[-1]:
-        return None
-    module = parts[0].replace("/", ".")
-    if module.endswith(".py"):
-        module = module[:-3]
-    classname = ".".join([module, *parts[1:-1]])
-    return classname, parts[-1]
-
-
 def _read_junit(path: Path) -> JunitCounts:
     if not path.is_file():
         return JunitCounts(
@@ -1067,12 +1056,15 @@ def _run_group(
         matched = _match_junit_cases(case.test, unmatched) if case.test and usable_junit else []
         needs_artifact = case.additional_evidence_required or case.artifact is not None
         if case.test is None:
+            test_status = CaseLedgerStatus.NOT_RUN
             ledger_status = CaseLedgerStatus.NOT_RUN
         elif not matched:
+            test_status = CaseLedgerStatus.NOT_RUN
             ledger_status = CaseLedgerStatus.NOT_RUN
             reasons.append(f"{label} {case.case_id} was not executed (declared test {case.test} missing from JUnit)")
         else:
-            ledger_status = _aggregate_junit_outcomes(matched)
+            test_status = _aggregate_junit_outcomes(matched)
+            ledger_status = test_status
             if ledger_status == CaseLedgerStatus.SKIPPED:
                 reasons.append(f"{label} {case.case_id} was skipped")
             elif ledger_status == CaseLedgerStatus.FAILED:
@@ -1109,6 +1101,7 @@ def _run_group(
                 "artifact": case.artifact,
                 "required": required,
                 "status": str(ledger_status),
+                "test_status": str(test_status),
                 "junit_identity": None if not matched else ",".join(item.node_id for item in matched),
                 "additional_evidence_required": case.additional_evidence_required,
                 "additional_evidence_present": artifact.present if needs_artifact else True,
@@ -1247,12 +1240,10 @@ def run_evals(
         group_results.append(result)
         worst_status = max(worst_status, int(result["exit_status"]))
 
-    group_passed_testcases = {
-        result["group"]: {
-            (testcase["classname"], testcase["name"])
-            for testcase in result["passed_testcases"]
-        }
+    group_case_test_statuses = {
+        ledger["id"]: ledger["test_status"]
         for result in group_results
+        for ledger in result["case_ledger"]
     }
     case_results: dict[str, dict[str, Any]] = {}
     release_gate_failures: list[str] = []
@@ -1260,12 +1251,9 @@ def run_evals(
     for case in manifest.cases:
         artifact_path = _case_artifact_path(case)
         artifact_present = _artifact_is_present(artifact_path)
-        testcase_identity = (
-            _junit_testcase_identity(case.test) if case.test is not None else None
-        )
         test_passed = (
-            testcase_identity is not None
-            and testcase_identity in group_passed_testcases.get(case.group, set())
+            case.test is not None
+            and group_case_test_statuses.get(case.case_id) == str(CaseLedgerStatus.PASSED)
         )
         if case.test is not None:
             execution_status = "passed" if test_passed else "not_executed_or_failed"

@@ -766,11 +766,14 @@ def test_parametrized_junit_instances_match_declared_base_node(tmp_path: Path) -
     status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
 
     assert status == 0
-    ledger = _last_evidence(tmp_path)["groups"][0]["case_ledger"][0]
+    evidence = _last_evidence(tmp_path)
+    ledger = evidence["groups"][0]["case_ledger"][0]
     assert ledger["status"] == "passed"
     assert ledger["junit_identity"] is not None
     assert "test_case[small]" in ledger["junit_identity"]
     assert "test_case[large]" in ledger["junit_identity"]
+    assert evidence["case_results"][0]["execution_status"] == "passed"
+    assert evidence["release_gate_results"]["beta"]["status"] == "passed"
 
 
 def test_any_parametrized_instance_failure_blocks_declared_base_node(tmp_path: Path) -> None:
@@ -798,9 +801,35 @@ def test_any_parametrized_instance_failure_blocks_declared_base_node(tmp_path: P
     status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
 
     assert status == 1
-    group = _last_evidence(tmp_path)["groups"][0]
+    evidence = _last_evidence(tmp_path)
+    group = evidence["groups"][0]
     assert group["case_ledger"][0]["status"] == "failed"
     assert any("SC-1" in reason and "failed" in reason for reason in group["failure_reasons"])
+    assert evidence["case_results"][0]["execution_status"] == "not_executed_or_failed"
+    assert evidence["release_gate_results"]["beta"]["status"] == "failed"
+
+
+def test_unsuffixed_release_gate_node_still_passes(tmp_path: Path) -> None:
+    payload = _manifest_payload(tmp_path)
+    payload["cases"][0]["test"] = "recognition/tests/test_param.py::test_case"
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    def handler(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        xml_path = Path(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--junitxml=")))
+        _write_command_junit(
+            command,
+            xml_path,
+            xml_text=_junit_for_nodes(["recognition/tests/test_param.py::test_case"]),
+        )
+        kwargs["stdout"].write("unsuffixed pass\n")
+        return SimpleNamespace(returncode=0, stdout=None, stderr=None)
+
+    status = runner.run_evals(manifest_path, out_dir=tmp_path / "out", command_runner=_git_ok_then(handler))
+
+    assert status == 0
+    evidence = _last_evidence(tmp_path)
+    assert evidence["case_results"][0]["execution_status"] == "passed"
+    assert evidence["release_gate_results"]["beta"]["status"] == "passed"
 
 
 def test_missing_required_artifact_demotes_passing_ledger_status(tmp_path: Path) -> None:

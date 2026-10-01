@@ -16,6 +16,7 @@ from scripts.bench.preflight import (
     PRE_RUN_RESET_EVIDENCE_ENV,
     PRE_RUN_RESET_EVIDENCE_MAX_AGE,
     PreflightError,
+    _parse_numeric_runtime_fingerprint,
     preflight_stack,
     pre_run_reset_evidence_sha256,
     validate_pre_run_reset_evidence,
@@ -76,6 +77,11 @@ def _health(profile: str, *, opencv_version: str = "5.0.0.93", include_runtime: 
             "opencv_major": version_major,
             "onnxruntime_version": "1.28.0",
             "numpy_version": "2.5.1",
+            "scipy_version": "1.18.0",
+            "pillow_version": "12.3.0",
+            "hdbscan_version": "0.8.44",
+            "pgvector_version": "0.5.0",
+            "comparison_token": "0" * 64,
         }
         detail += "; numeric_runtime_fingerprint=" + json.dumps(
             fingerprint,
@@ -95,6 +101,26 @@ def _health(profile: str, *, opencv_version: str = "5.0.0.93", include_runtime: 
             "profile": profile,
         },
     }
+
+
+def _rewrite_runtime_fingerprint(
+    health: dict,
+    *,
+    remove: tuple[str, ...] = (),
+    updates: dict[str, object] | None = None,
+) -> dict:
+    detail = health["model_cache"]["detail"]
+    prefix, separator, serialized = detail.partition("numeric_runtime_fingerprint=")
+    fingerprint = json.loads(serialized)
+    for key in remove:
+        fingerprint.pop(key)
+    fingerprint.update(updates or {})
+    health["model_cache"]["detail"] = prefix + separator + json.dumps(
+        fingerprint,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return health
 
 
 def _transport(ready: dict | int, health: dict | int) -> httpx.MockTransport:
@@ -194,6 +220,69 @@ def test_preflight_refuses_missing_service_runtime_fingerprint() -> None:
     assert exc.value.code == "opencv_runtime_unreported"
 
 
+@pytest.mark.parametrize(
+    "missing_key",
+    ("scipy_version", "pillow_version", "hdbscan_version", "pgvector_version"),
+)
+def test_preflight_refuses_missing_new_runtime_version(missing_key: str) -> None:
+    health = _rewrite_runtime_fingerprint(_health("insightface"), remove=(missing_key,))
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+def test_preflight_refuses_empty_scipy_version() -> None:
+    health = _rewrite_runtime_fingerprint(_health("insightface"), updates={"scipy_version": ""})
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+@pytest.mark.parametrize("comparison_token", ("0" * 63, "A" * 64))
+def test_preflight_refuses_invalid_comparison_token(comparison_token: str) -> None:
+    health = _rewrite_runtime_fingerprint(
+        _health("insightface"), updates={"comparison_token": comparison_token}
+    )
+
+    with pytest.raises(PreflightError) as exc:
+        preflight_stack(
+            _insightface_endpoint(),
+            transport=_transport(_ready(512), health),
+            api_key="k",
+        )
+
+    assert exc.value.code == "opencv_runtime_unreported"
+
+
+def test_preflight_parses_complete_runtime_fingerprint_with_comparison_token() -> None:
+    parsed = _parse_numeric_runtime_fingerprint(_health("insightface"))
+
+    assert parsed["comparison_token"] == "0" * 64
+    assert set(parsed) == {
+        "opencv_version",
+        "opencv_major",
+        "onnxruntime_version",
+        "numpy_version",
+        "scipy_version",
+        "pillow_version",
+        "hdbscan_version",
+        "pgvector_version",
+        "comparison_token",
+    }
+
+
 def test_preflight_refuses_unhashed_model_bundle() -> None:
     health = _health("insightface")
     del health["model_cache"]["bundle_sha256"]
@@ -239,6 +328,11 @@ def test_health_check_exposes_the_shared_runtime_fingerprint(monkeypatch: pytest
             opencv_major=5,
             onnxruntime_version="1.28.0",
             numpy_version="2.5.1",
+            scipy_version="1.18.0",
+            pillow_version="12.3.0",
+            hdbscan_version="0.8.44",
+            pgvector_version="0.5.0",
+            comparability_token="0" * 64,
         ),
     )
     result = health._with_numeric_runtime_fingerprint(

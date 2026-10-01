@@ -230,3 +230,39 @@ async def test_multipart_body_with_progress_can_exceed_idle_timeout(
         assert form.get("request") == "{}"
     finally:
         await form.close()
+
+
+@pytest.mark.asyncio
+async def test_multipart_body_progressing_past_total_timeout_returns_request_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(analyze_multipart, "_MULTIPART_IDLE_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(analyze_multipart, "_MULTIPART_TOTAL_TIMEOUT_S", 0.05)
+    body = b'--test\r\nContent-Disposition: form-data; name="request"\r\n\r\n{}\r\n--test--\r\n'
+    chunks = [body[index : index + 8] for index in range(0, len(body), 8)]
+
+    async def _progressing_receive() -> dict[str, object]:
+        await asyncio.sleep(0.02)
+        chunk = chunks.pop(0)
+        return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", b"multipart/form-data; boundary=test")],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "scheme": "http",
+            "http_version": "1.1",
+        },
+        receive=_progressing_receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await asyncio.wait_for(analyze_multipart._parse_multipart_form(request), timeout=1)
+
+    assert exc_info.value.status_code == 408
+    assert exc_info.value.detail == "multipart upload timed out"

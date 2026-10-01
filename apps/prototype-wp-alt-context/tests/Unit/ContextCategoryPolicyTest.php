@@ -34,6 +34,22 @@ class ContextCategoryPolicyTest extends TestCase {
 		$this->assertFalse( ContextCategoryPolicy::is_valid_list( array( 'primary' => 'attachment' ) ) );
 	}
 
+	public function testIsValidListRejectsStringKeysAndKeyGaps(): void {
+		$this->assertFalse(
+			ContextCategoryPolicy::is_valid_list(
+				array( 'primary' => ContextCategoryPolicy::ATTACHMENT )
+			)
+		);
+		$this->assertFalse(
+			ContextCategoryPolicy::is_valid_list(
+				array(
+					0 => ContextCategoryPolicy::ATTACHMENT,
+					2 => ContextCategoryPolicy::POST,
+				)
+			)
+		);
+	}
+
 	public function testIsValidListRejectsNonArray(): void {
 		$this->assertFalse( ContextCategoryPolicy::is_valid_list( 'attachment' ) );
 	}

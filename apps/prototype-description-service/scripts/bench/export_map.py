@@ -485,6 +485,8 @@ def to_face_metric_inputs(
     join: dict[int, dict[str, Any]],
     label_map: str,
     frame: Literal["native", "e2e"],
+    *,
+    localization_counts: dict[str, int] | None = None,
 ) -> tuple[list[ImageDetection], list[ImageIdentities]]:
     roster = list(manifest.roster)
     if "optimistic" in label_map:
@@ -520,6 +522,10 @@ def to_face_metric_inputs(
             image_width=width,
             image_height=height,
         )
+        if localization_counts is not None:
+            localization_counts["degenerate_box_dropped"] = (
+                localization_counts.get("degenerate_box_dropped", 0) + match.degenerate_box_dropped
+            )
         detections.append(
             ImageDetection(
                 image=entry.path,

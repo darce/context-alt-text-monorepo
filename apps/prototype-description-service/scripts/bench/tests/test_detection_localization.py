@@ -201,7 +201,16 @@ def test_degenerate_leading_gt_indices_stay_on_original_list() -> None:
         "cluster_members": [],
     }
     join = {1: {"stack_media_id": 10, "image_width": W, "image_height": H}}
-    _det, id_n = to_face_metric_inputs(export, manifest, join, "primary", frame="native")
+    localization_counts: dict[str, int] = {}
+    _det, id_n = to_face_metric_inputs(
+        export,
+        manifest,
+        join,
+        "primary",
+        frame="native",
+        localization_counts=localization_counts,
+    )
     native = identification_pr(id_n)
     assert id_n[0].labeled == ["Alice Q"]
     assert native.true_positives == 1
+    assert localization_counts["degenerate_box_dropped"] == 1

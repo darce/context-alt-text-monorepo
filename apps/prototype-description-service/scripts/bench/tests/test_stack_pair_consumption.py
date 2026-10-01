@@ -24,10 +24,7 @@ PRIMARY = "detection_recall@frame_e2e/label_map_primary"
 
 
 def valid_pair_dict(**overrides: object):
-    payload = _valid_pair_dict(**overrides)
-    if "stacks" not in overrides:
-        payload["stacks"][1]["base_url"] = "https://fir.dev.api.altcontext.com"
-    return payload
+    return _valid_pair_dict(**overrides)
 
 
 def _load(tmp_path: Path, **overrides: object):
@@ -38,6 +35,12 @@ def test_valid_pair_loads(tmp_path: Path) -> None:
     pair = _load(tmp_path)
     assert {s.stack_id for s in pair.stacks} == {"acx-dev-insightface", "acx-dev-fir"}
     assert pair.stacks[1].base_url == "https://fir.dev.api.altcontext.com"
+
+
+def test_shared_fir_fixture_passes_production_allowlist(tmp_path: Path) -> None:
+    pair = load_stack_pair(write_pair(tmp_path / "shared-fixture.yaml", _valid_pair_dict()))
+    fir = next(stack for stack in pair.stacks if stack.stack_id == FIR_STACK["stack_id"])
+    assert fir.base_url == FIR_STACK["base_url"] == "https://fir.dev.api.altcontext.com"
 
 
 def test_example_pair_uses_current_fir_ingress() -> None:
@@ -73,9 +76,23 @@ def test_http_base_url_rejected(tmp_path: Path) -> None:
 
 def test_old_fir_ingress_is_not_allowlisted(tmp_path: Path) -> None:
     stacks = [dict(INSIGHTFACE_STACK), dict(FIR_STACK)]
+    stacks[1]["base_url"] = "https://fir.api.altcontext.com"
     with pytest.raises(BenchError) as exc:
         _load(tmp_path, stacks=stacks)
     assert exc.value.code == "base_url_not_allowlisted"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "detection_recall@frame_e2e/label_map_optimistic",
+        "detection_precision@frame_fir5_native/label_map_optimistic",
+    ],
+)
+def test_detection_label_map_aliases_are_rejected(tmp_path: Path, endpoint: str) -> None:
+    with pytest.raises(BenchError) as exc:
+        _load(tmp_path, secondary_endpoints=[endpoint])
+    assert exc.value.code == "config_endpoint_invalid"
 
 
 @pytest.mark.parametrize("key", sorted(DEPLOY_OWNERSHIP_KEYS))

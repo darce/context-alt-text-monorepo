@@ -26,7 +26,16 @@ LEGAL_ENDPOINTS: frozenset[str] = frozenset(
     for metric in LEGAL_METRICS
     for frame in LEGAL_FRAMES
     for label in LEGAL_LABEL_MAPS
+    # Detection precision/recall do not consume cluster-name mapping. Keep
+    # one canonical label-map spelling for those endpoint identifiers.
+    if not (metric.startswith("detection_") and label == "label_map_optimistic")
 )
+PERMANENTLY_DIRECTIONAL_ENDPOINTS: frozenset[str] = frozenset(
+    endpoint
+    for endpoint in LEGAL_ENDPOINTS
+    if "frame_fir5_native" in endpoint or "label_map_optimistic" in endpoint
+)
+HOLM_FAMILY_ENDPOINTS: frozenset[str] = LEGAL_ENDPOINTS - PERMANENTLY_DIRECTIONAL_ENDPOINTS
 
 ROOT_KEYS = frozenset(
     {

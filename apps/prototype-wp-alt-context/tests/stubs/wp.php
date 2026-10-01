@@ -1881,6 +1881,14 @@ if (!function_exists('add_option')) {
     }
 }
 
+if (!function_exists('wp_salt')) {
+    function wp_salt($scheme = 'auth')
+    {
+        $scheme = (string) $scheme;
+        return $GLOBALS['__ac_wp_salt'][$scheme] ?? 'test-salt-' . $scheme;
+    }
+}
+
 if (!function_exists('get_option')) {
     /**
      * Core lookup order from wp-includes/option.php: notoptions, then

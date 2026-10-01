@@ -751,6 +751,8 @@ export const parseVisualFactsResponse = (payload: unknown): VisualFactsResponse 
 export interface DescribeMediaWriteOptions {
   writeAlt?: boolean;
   force?: boolean;
+  /** Originator-minted key reused for retries of the same user action. */
+  idempotencyKey?: string;
   /** Opaque service-minted id; omit on first attempt (REBASE-M-02). */
   operationId?: string;
 }
@@ -1129,7 +1131,13 @@ export const describeMedia = async (
   mediaId: number,
   options: DescribeMediaWriteOptions = {},
 ): Promise<VisualFactsResponse> => {
-  const body: { media_id: number; write_alt?: boolean; force?: boolean; operation_id?: string } = {
+  const body: {
+    media_id: number;
+    write_alt?: boolean;
+    force?: boolean;
+    idempotency_key?: string;
+    operation_id?: string;
+  } = {
     media_id: mediaId,
   };
   if (options.writeAlt !== undefined) {
@@ -1137,6 +1145,9 @@ export const describeMedia = async (
   }
   if (options.force !== undefined) {
     body.force = options.force;
+  }
+  if (options.idempotencyKey !== undefined) {
+    body.idempotency_key = options.idempotencyKey;
   }
   if (options.operationId !== undefined) {
     body.operation_id = options.operationId;
@@ -1431,10 +1442,16 @@ export const parseDescribeRunResponse = (payload: unknown): DescribeRunResponse 
   return payload;
 };
 
-export const submitBulkDescribeRun = async (mediaIds: number[]): Promise<DescribeRunSubmitResponse> => {
+export const submitBulkDescribeRun = async (
+  mediaIds: number[],
+  idempotencyKey?: string,
+): Promise<DescribeRunSubmitResponse> => {
   const payload = await fetchRequiredApi<unknown>(getEndpoint('recognitionDescribeRuns'), {
     method: 'POST',
-    body: { media_ids: mediaIds },
+    body: {
+      media_ids: mediaIds,
+      ...(idempotencyKey !== undefined ? { idempotency_key: idempotencyKey } : {}),
+    },
     restNonce: getConfig().nonce,
     // WP loads attachment bytes and forwards a multipart body under the proxy's
     // 180s 'description' budget; the browser timeout must exceed it so a slow

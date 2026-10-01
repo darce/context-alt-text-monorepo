@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts.bench.driver import init_run_dir, run_pair
 from scripts.bench.score_report import LICENSE_BANNER, score_head_to_head
 from scripts.bench.stack_pair import load_stack_pair
 from scripts.bench.tests.conftest import FakeClient, write_hashed_manifest, write_pair
+
+
+def _fresh_reset_evidence() -> dict[str, dict[str, object]]:
+    completed_at = datetime.now(UTC).isoformat()
+    return {
+        stack_id: {
+            "reset_attested_by": "bench test operator",
+            "reset_reference": "FIR23-STACK runbook reset",
+            "reset_completed_at": completed_at,
+            "prior_run_identity_rows_empty": True,
+        }
+        for stack_id in ("acx-dev-insightface", "acx-dev-fir")
+    }
 
 
 def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
@@ -27,6 +41,7 @@ def test_mocked_e2e_writes_full_report_dir(tmp_path: Path) -> None:
         out_dir=out,
         clients=clients,
         skip_preflight=True,
+        pre_run_reset_by_stack=_fresh_reset_evidence(),
     )
     from scripts.bench.tests.conftest import write_stub_preflight
 

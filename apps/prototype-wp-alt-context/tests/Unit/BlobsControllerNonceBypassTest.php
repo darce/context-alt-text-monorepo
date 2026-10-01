@@ -2,20 +2,34 @@
 
 declare(strict_types=1);
 
-namespace AltContext\Tests\Unit;
+namespace {
+    if (!function_exists('wp_set_current_user')) {
+        function wp_set_current_user($user_id, $user = '')
+        {
+            $GLOBALS['__ac_current_user_id'] = (int) $user_id;
+            return (object) ['ID' => (int) $user_id];
+        }
+    }
+}
 
+namespace AltContext\Tests\Unit {
+
+use AltContext\Api\BlobUrlRewriter;
 use AltContext\Api\BlobsController;
 use AltContext\Tests\TestCase;
 use WP_Error;
+use WP_REST_Request;
 
 /**
  * @covers \AltContext\Api\BlobsController::maybe_bypass_nonce_for_blob_route
+ * @covers \AltContext\Api\BlobsController::remember_blob_viewer_before_cookie_check
  */
 class BlobsControllerNonceBypassTest extends TestCase
 {
     protected function tearDown(): void
     {
         unset($_SERVER['REQUEST_URI']);
+        unset($GLOBALS['__ac_current_user_id']);
         parent::tearDown();
     }
 
@@ -27,6 +41,36 @@ class BlobsControllerNonceBypassTest extends TestCase
         $result = BlobsController::maybe_bypass_nonce_for_blob_route($error);
 
         $this->assertNull($result);
+    }
+
+    public function testCookieAuthWithoutNonceRestoresViewerBeforeBlobTokenCheck(): void
+    {
+        $GLOBALS['__ac_current_user_id'] = 17;
+        $_SERVER['REQUEST_URI'] = '/wp-json/acx/v1/recognition/blobs/job-x/private-media?expires=1&token=abc';
+        $expires = time() + 300;
+        $token = BlobUrlRewriter::sign('job-x', 'private-media', $expires);
+        $controller = new BlobsController();
+        $controller->register_routes();
+
+        // Model rest_cookie_check_errors()'s cookie-authenticated, no-nonce
+        // branch: it clears the current user and returns true.
+        add_filter('rest_authentication_errors', static function ($authResult) {
+            $GLOBALS['__ac_current_user_id'] = 0;
+            return true;
+        }, 100);
+
+        $authResult = apply_filters('rest_authentication_errors', null);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/blobs/job-x/private-media', [
+            'job_id' => 'job-x',
+            'media_id' => 'private-media',
+            'expires' => $expires,
+            'token' => $token,
+        ]);
+        $result = $controller->verify_blob_token($request);
+
+        $this->assertTrue($authResult);
+        $this->assertSame(17, get_current_user_id());
+        $this->assertTrue($result);
     }
 
     public function testReturnsNullWhenNonceErrorAndUriMatchesFaceThumbRoute(): void
@@ -96,4 +140,5 @@ class BlobsControllerNonceBypassTest extends TestCase
 
         $this->assertSame($error, $result);
     }
+}
 }

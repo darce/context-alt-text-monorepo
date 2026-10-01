@@ -94,6 +94,60 @@ def _well_formed_item(*, dim: int | None = None) -> dict[str, Any]:
     )
 
 
+def test_build_candidate_leg_passes_optional_score_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detector_kwargs: list[dict[str, Any]] = []
+    embedder_kwargs: list[dict[str, Any]] = []
+
+    class RecordingDetector:
+        def __init__(self, **kwargs: Any) -> None:
+            detector_kwargs.append(kwargs)
+
+    class RecordingEmbedder:
+        def __init__(self, **kwargs: Any) -> None:
+            embedder_kwargs.append(kwargs)
+
+    monkeypatch.setattr(face_bakeoff_module, "OrtYuNetDetector", RecordingDetector)
+    monkeypatch.setattr(face_bakeoff_module, "OrtSFaceEmbedder", RecordingEmbedder)
+
+    face_bakeoff_module.build_candidate_leg(score_threshold=None)
+    assert detector_kwargs == [{"models_dir": None}]
+    assert embedder_kwargs == [{"models_dir": None}]
+
+    detector_kwargs.clear()
+    embedder_kwargs.clear()
+    face_bakeoff_module.build_candidate_leg(score_threshold=0.6)
+    assert detector_kwargs == [{"models_dir": None, "score_threshold": 0.6}]
+    assert embedder_kwargs == [{"models_dir": None}]
+
+
+@pytest.mark.parametrize("score_threshold", [0, 1, 1.5, float("nan")])
+def test_build_candidate_leg_rejects_invalid_score_threshold_before_detector(
+    monkeypatch: pytest.MonkeyPatch, score_threshold: float
+) -> None:
+    detector_kwargs: list[dict[str, Any]] = []
+    embedder_kwargs: list[dict[str, Any]] = []
+
+    class RecordingDetector:
+        def __init__(self, **kwargs: Any) -> None:
+            detector_kwargs.append(kwargs)
+
+    class RecordingEmbedder:
+        def __init__(self, **kwargs: Any) -> None:
+            embedder_kwargs.append(kwargs)
+
+    monkeypatch.setattr(face_bakeoff_module, "OrtYuNetDetector", RecordingDetector)
+    monkeypatch.setattr(face_bakeoff_module, "OrtSFaceEmbedder", RecordingEmbedder)
+
+    with pytest.raises(ValueError, match="score_threshold") as exc_info:
+        face_bakeoff_module.build_candidate_leg(score_threshold=score_threshold)
+
+    assert repr(score_threshold) in str(exc_info.value)
+    assert detector_kwargs == []
+    assert embedder_kwargs == []
+
+
 # ---------------------------------------------------------------------------
 # §B run-record validation
 # ---------------------------------------------------------------------------

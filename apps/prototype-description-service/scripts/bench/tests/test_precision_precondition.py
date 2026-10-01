@@ -454,6 +454,7 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
 
     from scripts.bench import score_report
     from scripts.bench.driver import init_run_dir
+    from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES
     from scripts.bench.stack_pair import load_stack_pair
     from scripts.bench.tests.conftest import golden_entry, valid_pair_dict, write_pair
     from scripts.bench.tests.test_score_head_to_head import (
@@ -539,6 +540,13 @@ def test_score_uses_full_manifest_occasions_and_caps_golden150_tiers(
                 row for row in cluster["members"] if row["media_id"] not in {5, 6}
             ]
         members_path.write_text(json.dumps(members), encoding="utf-8")
+        digests = {
+            name: hashlib.sha256((exports_path / name).read_bytes()).hexdigest()
+            for name in LEG_EXPORT_PAYLOAD_FILES
+        }
+        (exports_path / "export_sha256.json").write_text(
+            json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
     observed_calls: list[dict[str, object]] = []
     original_bootstrap = score_report.bootstrap_paired_delta

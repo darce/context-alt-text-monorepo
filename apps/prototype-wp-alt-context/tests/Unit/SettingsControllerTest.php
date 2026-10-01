@@ -18,14 +18,28 @@ use WP_REST_Request;
 class SettingsControllerTest extends TestCase
 {
     private SettingsController $controller;
+    private string|false $originalRecognitionApiKeyEnvironment;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->originalRecognitionApiKeyEnvironment = getenv('ACX_RECOGNITION_API_KEY');
+        putenv('ACX_RECOGNITION_API_KEY');
         // Opt-in update_option failure map is not cleared by TestCase::resetGlobalState;
         // drop it here so R23-BR-14 fail pins cannot leak into later tests.
         $GLOBALS['__ac_update_option_fail'] = [];
         $this->controller = new SettingsController();
+    }
+
+    protected function tearDown(): void
+    {
+        if (false === $this->originalRecognitionApiKeyEnvironment) {
+            putenv('ACX_RECOGNITION_API_KEY');
+        } else {
+            putenv('ACX_RECOGNITION_API_KEY=' . $this->originalRecognitionApiKeyEnvironment);
+        }
+
+        parent::tearDown();
     }
 
     public function testRegisterRoutesIncludesSettingsEndpoints(): void
@@ -39,6 +53,7 @@ class SettingsControllerTest extends TestCase
 
         $this->assertContains('/settings', $routes);
         $this->assertContains('/settings/test', $routes);
+        $this->assertArrayHasKey('rest_pre_dispatch', $GLOBALS['__ac_filters']);
     }
 
     // --- GET /settings ---
@@ -71,6 +86,7 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
+        $this->assertSame(DescriptionBudgetService::DEFAULT_MAX_ATTEMPTS, $data['description_budget']['max_attempts']);
         $this->assertSame(TenantIdentity::resolve()['value'], $data['tenant_id']);
         $this->assertSame('derived', $data['tenant_id_source']);
         $this->assertFalse($data['tenant_paired']);
@@ -244,9 +260,25 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('****1234', $data['api_key_last4']);
         $this->assertSame('option', $data['key_source']);
         $this->assertStringContainsString(
-            'stored in the WordPress options database',
+            'plaintext WordPress options compatibility fallback',
             $data['api_key_storage_notice']
         );
+    }
+
+    public function testGetSettingsPrefersEnvironmentApiKeyOverPlaintextOption(): void
+    {
+        putenv('ACX_RECOGNITION_API_KEY=environment-key-12345678');
+        $this->setOption('acx_recognition_api_key', 'legacy-plain-key-9999');
+
+        $this->assertSame('environment-key-12345678', apply_filters('acx_recognition_api_key', ''));
+
+        $data = $this->controller
+            ->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'))
+            ->get_data();
+
+        $this->assertSame('constant', $data['key_source']);
+        $this->assertSame('****5678', $data['api_key_last4']);
+        $this->assertNull($data['api_key_storage_notice']);
     }
 
     public function testGetSettingsReturnsPersistedTenantFields(): void
@@ -459,6 +491,48 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_recognition_source', false));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
         $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
+    }
+
+    public function testSaveSettingsDoesNotStorePlaintextShadowOfEnvironmentKey(): void
+    {
+        putenv('ACX_RECOGNITION_API_KEY=environment-managed-key');
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_api_key', 'legacy-plain-key');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['api_key' => 'submitted-shadow-key']);
+
+        $data = $this->controller->save_settings($request)->get_data();
+
+        $this->assertSame('error', $data['result']);
+        $this->assertContains('api_key', $data['failed']);
+        $this->assertSame('legacy-plain-key', get_option('acx_recognition_api_key'));
+    }
+
+    public function testRateLimitsDescribeAnalyzeAndBulkRunRequestsTogether(): void
+    {
+        $this->controller->register_routes();
+        $this->setUserCapability('manage_options', true);
+        $GLOBALS['wpdb']->mockVar = '1';
+
+        $routes = [
+            '/acx/v1/recognition/describe',
+            '/acx/v1/recognition/analyze',
+            '/acx/v1/recognition/describe/runs',
+        ];
+        for ($attempt = 0; $attempt < 30; ++$attempt) {
+            $request = new WP_REST_Request('POST', $routes[$attempt % count($routes)]);
+            $this->assertNull(apply_filters('rest_pre_dispatch', null, null, $request));
+        }
+
+        $blocked = apply_filters(
+            'rest_pre_dispatch',
+            null,
+            null,
+            new WP_REST_Request('POST', '/acx/v1/recognition/analyze')
+        );
+        $this->assertInstanceOf(\WP_Error::class, $blocked);
+        $this->assertSame('recognition_rate_limit_exceeded', $blocked->get_error_code());
     }
 
     public function testSaveSettingsSynchronizesAllowPersonNamesWithRecognitionService(): void

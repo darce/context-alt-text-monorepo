@@ -90,4 +90,30 @@ class DescriptionBudgetServiceTest extends TestCase
         $this->assertSame(1, $gate['limit']);
         $this->assertSame(1, $gate['used']);
     }
+
+    public function testBudgetGateUsesFiniteDefaultAttemptLimit(): void
+    {
+        $gate = (new DescriptionBudgetService())->check_budget();
+
+        $this->assertTrue($gate['allowed']);
+        $this->assertSame(DescriptionBudgetService::DEFAULT_MAX_ATTEMPTS, $gate['limit']);
+        $this->assertSame(0, $gate['used']);
+    }
+
+    public function testRequestRateLimitBoundsSpendRoutesPerUser(): void
+    {
+        $GLOBALS['wpdb']->mockVar = '1';
+        $service = new DescriptionBudgetService();
+
+        for ($attempt = 0; $attempt < 30; ++$attempt) {
+            $this->assertTrue($service->check_request_rate_limit(17)['allowed']);
+        }
+
+        $denied = $service->check_request_rate_limit(17);
+        $this->assertFalse($denied['allowed']);
+        $this->assertSame('recognition_rate_limit_exceeded', $denied['code']);
+        $this->assertSame(30, $denied['limit']);
+        $this->assertGreaterThanOrEqual(1, $denied['retry_after']);
+        $this->assertTrue($service->check_request_rate_limit(18)['allowed']);
+    }
 }

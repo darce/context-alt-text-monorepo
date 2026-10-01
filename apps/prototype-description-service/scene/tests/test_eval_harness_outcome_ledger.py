@@ -9,12 +9,23 @@ from typing import Any
 
 from scripts.bench.corpus import ItemOutcomeStore
 from scripts.bench.driver import init_run_dir
+from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES
 from scripts.bench.score_report import compute_accepted_set
 from scripts.bench.stack_pair import load_stack_pair
 from scripts.bench.tests.conftest import valid_pair_dict, write_manifest, write_pair
 from scripts.eval_harness import outcome_ledger
 
 STACKS = ("acx-dev-insightface", "acx-dev-fir")
+
+
+def _write_export_digest(export_dir: Path) -> None:
+    digests = {
+        name: hashlib.sha256((export_dir / name).read_bytes()).hexdigest()
+        for name in LEG_EXPORT_PAYLOAD_FILES
+    }
+    (export_dir / "export_sha256.json").write_text(
+        json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 def _run_fixture(tmp_path: Path) -> Path:
@@ -85,21 +96,27 @@ def _run_fixture(tmp_path: Path) -> Path:
             ]
         )
 
-        # An analyze-ok row without an ingest roster row exercises the
-        # existing join-attrition branch without inventing a new denominator.
+        # A failed identity query exercises join attrition without changing
+        # the valid ingest/analyze roster.
         entry = entries[4]
+        ingest = {
+            "manifest_media_id": 4,
+            "manifest_path": entry["path"],
+            "content_sha256": entry["sha256"],
+            "stack_media_id": None,
+            "image_width": 10,
+            "image_height": 10,
+            "phase": "ingest",
+            "outcome": "ok",
+            "terminal_ingest_outcome": "success",
+            "attempt": 1,
+        }
+        records.append(ingest)
         records.append(
             {
-                "manifest_media_id": 4,
-                "manifest_path": entry["path"],
-                "content_sha256": entry["sha256"],
-                "stack_media_id": stack_media_id + 4,
-                "image_width": 10,
-                "image_height": 10,
+                **ingest,
                 "phase": "analyze",
-                "outcome": "ok",
-                "terminal_ingest_outcome": "success",
-                "attempt": 1,
+                "stack_media_id": stack_media_id + 4,
             }
         )
         (leg / "items.jsonl").write_text(
@@ -109,23 +126,34 @@ def _run_fixture(tmp_path: Path) -> Path:
         (leg / "cluster_job.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
         # Media 1 has a prediction; media 2 is an accepted zero-detection
         # observation and must remain in the denominator.
+        identities = [
+            {
+                "identity_id": f"id-{stack_id}-1",
+                "media_id": stack_media_id + 1,
+                "cluster_id": "cluster-1",
+                "cluster_label": "Alice Q",
+                "is_auto_label": False,
+                "bbox": {"x": 1, "y": 1, "width": 2, "height": 2},
+            }
+        ]
         (export_dir / "media_identities.json").write_text(
-            json.dumps(
-                [
-                    {
-                        "identity_id": f"id-{stack_id}-1",
-                        "media_id": stack_media_id + 1,
-                        "cluster_id": "cluster-1",
-                        "cluster_label": "Alice Q",
-                        "is_auto_label": False,
-                        "bbox": {"x": 1, "y": 1, "width": 2, "height": 2},
-                    }
-                ]
-            ),
-            encoding="utf-8",
+            json.dumps(identities), encoding="utf-8"
+        )
+        identity_results = [
+            {
+                "media_id": stack_media_id + 1,
+                "query_succeeded": True,
+                "rows": identities,
+            },
+            {"media_id": stack_media_id + 2, "query_succeeded": True, "rows": []},
+            {"media_id": stack_media_id + 4, "query_succeeded": False, "rows": []},
+        ]
+        (export_dir / "media_identity_results.json").write_text(
+            json.dumps(identity_results), encoding="utf-8"
         )
         (export_dir / "clusters.json").write_text(json.dumps([{"id": "cluster-1"}]), encoding="utf-8")
         (export_dir / "cluster_members.json").write_text(json.dumps([]), encoding="utf-8")
+        _write_export_digest(export_dir)
     return run_dir
 
 

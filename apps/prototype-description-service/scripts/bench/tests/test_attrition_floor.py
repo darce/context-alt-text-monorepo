@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
 
 import pytest
 
-from scripts.bench.export_map import export_leg
+from scripts.bench.export_map import LEG_EXPORT_PAYLOAD_FILES, export_leg
 from scripts.bench.score_report import (
     compute_accepted_set,
     resolve_floor_count,
@@ -16,6 +17,16 @@ from scripts.bench.score_report import (
 )
 from scripts.bench.stack_pair import BenchError, load_stack_pair
 from scripts.bench.tests.conftest import valid_pair_dict, write_pair
+
+
+def _refresh_export_digest(export_dir: Path) -> None:
+    digests = {
+        name: hashlib.sha256((export_dir / name).read_bytes()).hexdigest()
+        for name in LEG_EXPORT_PAYLOAD_FILES
+    }
+    (export_dir / "export_sha256.json").write_text(
+        json.dumps(digests, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 def test_fractional_floor_resolution() -> None:
@@ -104,6 +115,7 @@ def test_unqueried_media_id_is_join_attrition(tmp_path: Path) -> None:
         json.dumps([result for result in results if result["media_id"] != 2]),
         encoding="utf-8",
     )
+    _refresh_export_digest(results_path.parent)
 
     accepted = compute_accepted_set(run_dir)
 
@@ -130,6 +142,7 @@ def test_attrition_keeps_all_failed_conditions_by_leg(tmp_path: Path) -> None:
         json.dumps([row for row in export_rows_a if row.get("media_id") != 2]),
         encoding="utf-8",
     )
+    _refresh_export_digest(export_a.parent)
 
     stack_b = "acx-dev-fir"
     path_b = run_dir / "legs" / stack_b / "items.jsonl"
@@ -238,6 +251,7 @@ def test_analyze_failure_is_not_ingest_attrition(tmp_path: Path) -> None:
         export_path = run_dir / "legs" / stack / "exports" / "media_identities.json"
         rows = [r for r in json.loads(export_path.read_text()) if r.get("media_id") != 2]
         export_path.write_text(json.dumps(rows), encoding="utf-8")
+        _refresh_export_digest(export_path.parent)
     accepted = compute_accepted_set(run_dir)
     assert 2 not in accepted.manifest_media_ids
     assert accepted.attrition_ingest_analyze >= 1
@@ -325,6 +339,7 @@ def test_export_media_not_in_roster_fail_closed(tmp_path: Path) -> None:
     rows = json.loads(path.read_text())
     rows.append(foreign)
     path.write_text(json.dumps(rows), encoding="utf-8")
+    _refresh_export_digest(path.parent)
     with pytest.raises(BenchError) as exc:
         compute_accepted_set(run_dir)
     assert exc.value.code == "export_media_not_in_roster"
@@ -359,6 +374,7 @@ def test_manifest_id_echo_export_row_is_refused(tmp_path: Path) -> None:
             }
         )
         export_path.write_text(json.dumps(rows), encoding="utf-8")
+        _refresh_export_digest(export_path.parent)
     with pytest.raises(BenchError) as exc:
         compute_accepted_set(run_dir)
     assert exc.value.code == "export_media_not_in_roster"
@@ -446,6 +462,7 @@ def _write_leg(run_dir: Path, stack_id: str, ok_ids: list[int], *, zero_export: 
         json.dumps([{"cluster_id": "c1", "members": [{"media_id": m} for m in ok_ids if m not in zero_export]}]),
         encoding="utf-8",
     )
+    _refresh_export_digest(leg / "exports")
     (leg / "preflight.json").write_text(
         json.dumps(
             {

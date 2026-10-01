@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 IMPORT_SCRIPT = REPO_ROOT / "infra" / "oci" / "demo" / "seed" / "import.sh"
 RIGHTS_HEADER = "file\tsubject\tbasis\tsource\tnotice\tadded"
@@ -213,6 +215,42 @@ def test_bad_added_date_fails_validation_before_import(tmp_path: Path) -> None:
     assert "alpha.jpg" in result.stderr
     assert "invalid added date" in result.stderr
     assert not _media_imports(commands)
+
+
+@pytest.mark.parametrize(
+    "added_date",
+    ["2026-02-31", "2026-13-01", "2026-00-10", "2026-04-31", "2025-02-29"],
+)
+def test_impossible_added_date_fails_validation_before_import(
+    tmp_path: Path, added_date: str
+) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=[
+            f"alpha.jpg\tTest subject\tcc_by\tSource\tattribution_required\t{added_date}"
+        ],
+    )
+
+    assert result.returncode == 2
+    assert "invalid added date" in result.stderr
+    assert added_date in result.stderr
+    assert not _media_imports(commands)
+
+
+def test_gregorian_leap_day_is_accepted(tmp_path: Path) -> None:
+    result, commands = _run_import(
+        tmp_path,
+        ["alpha.jpg"],
+        [],
+        raw_rows=[
+            "alpha.jpg\tTest subject\tcc_by\tSource\tattribution_required\t2024-02-29"
+        ],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(_media_imports(commands)) == 1
 
 
 def test_same_file_in_both_ledgers_fails_validation_before_import(tmp_path: Path) -> None:

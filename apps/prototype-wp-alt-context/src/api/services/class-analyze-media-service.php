@@ -54,6 +54,11 @@ class AnalyzeMediaService {
 	 * @param callable $validate_media_ids bool|WP_Error validate_media_ids(mixed, WP_REST_Request, string)
 	 */
 	public function analyze_media( WP_REST_Request $request, callable $validate_media_ids ): WP_REST_Response|WP_Error {
+		$idempotency_key = $this->validate_idempotency_key( $request );
+		if ( is_wp_error( $idempotency_key ) ) {
+			return $idempotency_key;
+		}
+
 		$batch_context       = $this->batch_run_service->extract_batch_run_context( $request );
 		$media_items_param   = $request->get_param( 'media_items' );
 		$media_ids           = $request->get_param( 'media_ids' );
@@ -104,7 +109,7 @@ class AnalyzeMediaService {
 		}
 
 		if ( 'multipart' === $transport ) {
-			$multipart_result = $this->analyze_media_multipart( $media_items, $unreadable_media_ids );
+			$multipart_result = $this->analyze_media_multipart( $media_items, $idempotency_key, $unreadable_media_ids );
 			if ( is_wp_error( $multipart_result ) ) {
 				$this->batch_run_service->record_batch_run_failure( $batch_context, $requested_media_ids, $multipart_result, $unreadable_media_ids );
 				Telemetry::log_line(
@@ -121,6 +126,7 @@ class AnalyzeMediaService {
 		}
 
 		$payload = array(
+			'idempotency_key' => $idempotency_key,
 			'tenant_id'   => $this->host->get_tenant_id(),
 			'site_url'    => get_site_url(),
 			'media_items' => $media_items,
@@ -145,7 +151,7 @@ class AnalyzeMediaService {
 	 * @param array<int,array<string,mixed>> $media_items
 	 * @param int[] $unreadable_media_ids
 	 */
-	private function analyze_media_multipart( array $media_items, array &$unreadable_media_ids = array() ): WP_REST_Response|WP_Error {
+	private function analyze_media_multipart( array $media_items, string $idempotency_key, array &$unreadable_media_ids = array() ): WP_REST_Response|WP_Error {
 		$tier_limit          = $this->host->get_current_tier_batch_limit();
 		$effective_max_count = min( $tier_limit, self::MULTIPART_MAX_IMAGES );
 		if ( count( $media_items ) > $effective_max_count ) {
@@ -161,6 +167,7 @@ class AnalyzeMediaService {
 		}
 
 		$multipart_body = array(
+			'idempotency_key' => $idempotency_key,
 			'request' => wp_json_encode(
 				array(
 					'tenant_id' => $this->host->get_tenant_id(),
@@ -241,6 +248,33 @@ class AnalyzeMediaService {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Mirror describe's 16-128 character alphabet, without rewriting the originator's key.
+	 */
+	private function validate_idempotency_key( WP_REST_Request $request ): string|WP_Error {
+		$key = $request->get_param( 'idempotency_key' );
+		if ( null === $key ) {
+			$key = $request->get_header( 'Idempotency-Key' );
+			if ( null === $key || '' === $key ) {
+				return new WP_Error(
+					'idempotency_key_required',
+					'An originator-supplied idempotency_key is required.',
+					array( 'status' => 400, 'field' => 'idempotency_key' )
+				);
+			}
+		}
+
+		if ( ! is_string( $key ) || strlen( $key ) < 16 || strlen( $key ) > 128 || 1 !== preg_match( '/\A[A-Za-z0-9_-]+\z/', $key ) ) {
+			return new WP_Error(
+				'invalid_idempotency_key',
+				'idempotency_key must be 16-128 characters and allows only [A-Za-z0-9_-].',
+				array( 'status' => 400, 'field' => 'idempotency_key' )
+			);
+		}
+
+		return $key;
 	}
 
 	private function resolve_image_mime_type( string $path, int $media_id ): string {

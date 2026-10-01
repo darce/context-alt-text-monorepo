@@ -1,0 +1,37 @@
+{
+  "lane": "a1h-runbook1",
+  "base": "6b0d5b3e493ec27ba0f59c81d5741286ffb169ca",
+  "executed": [
+    {
+      "command": "LC_ALL=C /home/gate/workbay-sandbox/feature-app-1-a1h-runbook1-127427f0/.venv/bin/python -m pytest -p no:cacheprovider -q scripts/deploy/tests/test_app_portal_deploy.py",
+      "result": "pass",
+      "detail": "33 passed in 3.25s"
+    }
+  ],
+  "rechecked": [],
+  "new_findings": [
+    {
+      "severity": "medium",
+      "file": "docs/runbooks/app-portal-deploy.md",
+      "line": 85,
+      "title": "Portal apply health check has no checked-in implementation",
+      "defect": "The runbook requires installing /usr/local/bin/app-portal-health-check, but no implementation or installation procedure is present in the checkout. The deploy script requires APP_HEALTH_CMD to be executable before it can activate the portal.",
+      "failure_scenario": "An operator follows the runbook on a host without a separately provisioned helper and runs its --apply example; the deploy script rejects the missing health command, so the documented deployment cannot complete.",
+      "fix": "Add a versioned executable that checks both documented HTTPS endpoints and give the exact installation step, or identify a checked-in operator artifact and its installation source.",
+      "test_file": "scripts/deploy/tests/test_app_portal_deploy.py",
+      "urgency": "before_merge"
+    },
+    {
+      "severity": "medium",
+      "file": "docs/runbooks/app1-billing-namespace-upgrade.md",
+      "line": 93,
+      "title": "Standalone drain GUC does not reach the documented schema heal",
+      "defect": "The runbook calls a standalone transaction-local set_config statement equivalent to ACX_BILLING_NAMESPACE_WRITERS_DRAINED=1, but sync_identity_schema opens its own database transaction. A GUC set in a separate SQL session is not visible to that heal; the migration only drops legacy global uniques when its own transaction GUC or the environment variable is set.",
+      "failure_scenario": "An operator runs the SQL snippet in one psql transaction and then invokes python -m scripts.sync_identity_schema in another connection without the environment variable. The heal can return successfully while leaving the legacy global uniques in place, so same IDs across billing namespaces remain rejected.",
+      "fix": "Remove the standalone SQL alternative or provide a supported schema-heal option that sets app.billing_namespace_writers_drained in the same transaction used by migration.heal, and show that exact invocation.",
+      "test_file": "apps/prototype-description-service/recognition/tests/integration/test_app1_billing_namespace_postgres.py",
+      "urgency": "before_merge"
+    }
+  ],
+  "summary": "The portal deploy contract suite passed; the runbooks have two medium integration gaps involving the missing portal health-check helper and a detached billing drain GUC."
+}

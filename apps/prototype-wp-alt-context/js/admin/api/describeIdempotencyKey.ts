@@ -7,5 +7,5 @@ export const createDescribeIdempotencyKey = (): string => {
     return globalThis.crypto.randomUUID();
   }
 
-  return `batch-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  return `describe-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 };

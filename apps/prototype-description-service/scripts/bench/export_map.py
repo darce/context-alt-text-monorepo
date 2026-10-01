@@ -119,15 +119,16 @@ def export_leg(client: Any, run_dir: Path | str, stack_id: str) -> LegExport:
 
 def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
     export_dir = Path(run_dir) / "legs" / stack_id / "exports"
+    payloads = _read_verified_export_payloads(export_dir)
     identity_results_path = export_dir / "media_identity_results.json"
     identity_results = None
     if not identity_results_path.is_symlink() and identity_results_path.is_file():
-        identity_results = json.loads(identity_results_path.read_text(encoding="utf-8"))
+        identity_results = json.loads(payloads["media_identity_results.json"])
     return LegExport(
         stack_id=stack_id,
-        media_identities=json.loads((export_dir / "media_identities.json").read_text(encoding="utf-8")),
-        clusters=json.loads((export_dir / "clusters.json").read_text(encoding="utf-8")),
-        cluster_members=json.loads((export_dir / "cluster_members.json").read_text(encoding="utf-8")),
+        media_identities=json.loads(payloads["media_identities.json"]),
+        clusters=json.loads(payloads["clusters.json"]),
+        cluster_members=json.loads(payloads["cluster_members.json"]),
         media_identity_results=identity_results,
         paths={
             "media_identities": export_dir / "media_identities.json",
@@ -137,6 +138,31 @@ def load_leg_exports(run_dir: Path | str, stack_id: str) -> LegExport:
             "export_sha256": export_dir / "export_sha256.json",
         },
     )
+
+
+def _read_verified_export_payloads(export_dir: Path) -> dict[str, bytes]:
+    digest_path = export_dir / "export_sha256.json"
+    try:
+        digests = json.loads(digest_path.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BenchError("export_digest_invalid", f"cannot read {digest_path.name}") from exc
+    if not isinstance(digests, dict):
+        raise BenchError("export_digest_invalid", f"{digest_path.name} must contain an object")
+
+    payloads: dict[str, bytes] = {}
+    for name in LEG_EXPORT_PAYLOAD_FILES:
+        expected_digest = digests.get(name)
+        if not isinstance(expected_digest, str) or not expected_digest:
+            raise BenchError("export_digest_missing", f"missing digest for {name}")
+        try:
+            payload = (export_dir / name).read_bytes()
+        except OSError as exc:
+            raise BenchError("export_payload_missing", f"cannot read {name}") from exc
+        actual_digest = hashlib.sha256(payload).hexdigest()
+        if actual_digest != expected_digest:
+            raise BenchError("export_digest_mismatch", f"sha256 mismatch for {name}")
+        payloads[name] = payload
+    return payloads
 
 
 def _write_preserved(path: Path, payload: Any) -> None:

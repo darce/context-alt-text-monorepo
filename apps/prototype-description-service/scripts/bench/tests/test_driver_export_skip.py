@@ -68,3 +68,8 @@ def test_legacy_exports_are_rebuilt_with_identity_results_and_digests(tmp_path: 
     for name, expected_digest in digests.items():
         assert hashlib.sha256((exports_dir / name).read_bytes()).hexdigest() == expected_digest
     assert _leg_complete(run_dir, endpoint.stack_id)
+
+    original_digests = digest_path.read_bytes()
+    (exports_dir / "media_identities.json").write_text("[]", encoding="utf-8")
+    assert digest_path.read_bytes() == original_digests
+    assert not _leg_complete(run_dir, endpoint.stack_id)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -102,6 +103,20 @@ def _write_leg(run_dir: Path, stack_id: str, identities: list[dict], media_ids: 
     )
     (leg / "exports" / "cluster_members.json").write_text(
         json.dumps([{"cluster_id": "c1", "members": [{"media_id": r["media_id"]} for r in identities]}]),
+        encoding="utf-8",
+    )
+    export_dir = leg / "exports"
+    digests = {
+        name: hashlib.sha256((export_dir / name).read_bytes()).hexdigest()
+        for name in (
+            "media_identities.json",
+            "media_identity_results.json",
+            "clusters.json",
+            "cluster_members.json",
+        )
+    }
+    (export_dir / "export_sha256.json").write_text(
+        json.dumps(digests, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     write_stub_preflight(run_dir, stack_id)

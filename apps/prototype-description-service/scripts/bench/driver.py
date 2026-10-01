@@ -19,7 +19,7 @@ from scripts.bench.corpus import (
     load_bench_manifest,
     resolve_media_bytes,
 )
-from scripts.bench.export_map import LEG_EXPORT_REQUIRED_FILES, export_leg
+from scripts.bench.export_map import LEG_EXPORT_REQUIRED_FILES, export_leg, load_leg_exports
 from scripts.bench.production_shaped_guard import assert_named_bench_stack
 from scripts.bench.stack_pair import FIR23_STACK_ALLOWLIST, BenchError, StackEndpoint, StackPairConfig
 from scripts.bench.status import (
@@ -568,7 +568,15 @@ def _leg_complete(run_dir: Path, stack_id: str) -> bool:
         return False
     exports = leg / "exports"
     needed = LEG_EXPORT_REQUIRED_FILES
-    return _cluster_status_ok(leg / "cluster_job.json") and all((exports / name).is_file() for name in needed)
+    if not _cluster_status_ok(leg / "cluster_job.json") or not all(
+        (exports / name).is_file() for name in needed
+    ):
+        return False
+    try:
+        load_leg_exports(run_dir, stack_id)
+    except (BenchError, OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return True
 
 
 def _terminal_leg_refusal(path: Path) -> bool:

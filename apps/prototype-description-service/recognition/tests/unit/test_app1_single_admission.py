@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -9,6 +10,8 @@ from uuid import UUID
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.deps import (
@@ -22,10 +25,12 @@ from recognition.interface_adapters.http.deps.object_store import get_object_sto
 from recognition.interface_adapters.http.deps import portal_composition
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.usage_admission import (
+    admit_usage,
     get_usage_admission_service as get_handler_usage_admission_service,
 )
 from recognition.interface_adapters.http.routers import analyze, analyze_multipart
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+from recognition.infrastructure.repositories.usage_repository import ExpiredUsageReservationError
 
 TENANT_ID = UUID("11111111-1111-1111-1111-111111111111")
 MEDIA_ID = "22222222-2222-2222-2222-222222222222"
@@ -134,3 +139,54 @@ async def test_beta_admission_reserves_once_per_analyze_request(
 
     assert response.status_code == 202, response.text
     assert len(admission.reservations) == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_usage_reservation_maps_to_conflict() -> None:
+    class _ExpiredReservationService(_AdmissionStub):
+        async def reserve(self, _tenant_id: UUID, **_kwargs: object) -> object:
+            raise ExpiredUsageReservationError("expired key")
+
+    service = _ExpiredReservationService()
+    with pytest.raises(HTTPException) as exc_info:
+        async with admit_usage(
+            service,
+            tenant_id=TENANT_ID,
+            idempotency_key="expired-key",
+            job_id=None,
+            cost_units=1,
+        ):
+            pytest.fail("an expired reservation must not reach dispatch")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {"error": "usage_reservation_expired"}
+
+
+@pytest.mark.asyncio
+async def test_stalled_multipart_body_returns_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(analyze_multipart, "_MULTIPART_PARSE_TIMEOUT_S", 0.01)
+
+    async def _stalled_receive() -> dict[str, object]:
+        await asyncio.Event().wait()
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", b"multipart/form-data; boundary=test")],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 123),
+            "scheme": "http",
+            "http_version": "1.1",
+        },
+        receive=_stalled_receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await asyncio.wait_for(analyze_multipart._parse_multipart_form(request), timeout=1)
+
+    assert exc_info.value.status_code == 408
+    assert exc_info.value.detail == "multipart upload timed out"

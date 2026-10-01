@@ -47,7 +47,10 @@ from recognition.domain.portal_contracts import UsageAdmissionService as UsageAd
 from recognition.infrastructure.repositories.tenant_entitlement_repository import (
     SqlAlchemyTenantEntitlementRepository,
 )
-from recognition.infrastructure.repositories.usage_repository import SqlAlchemyUsageRepository
+from recognition.infrastructure.repositories.usage_repository import (
+    ExpiredUsageReservationError,
+    SqlAlchemyUsageRepository,
+)
 
 
 class _AsyncSessionAdapter:
@@ -803,6 +806,42 @@ async def test_expired_same_key_retry_is_rejected_after_sweep(database) -> None:
                 idempotency_key=first_ticket.idempotency_key,
                 job_id="retry-job",
                 cost_units=1,
+            )
+
+
+@pytest.mark.asyncio
+async def test_expired_operation_id_retry_with_fresh_key_is_rejected(database) -> None:
+    session_factory, tenant_id, period_start = database
+    operation_id = "expired-operation"
+    fingerprint = "expired-operation-fingerprint"
+    async with session_factory() as session:
+        session.add(
+            UsageReservation(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                period_start=period_start,
+                idempotency_key="original-idempotency-key",
+                operation_id=operation_id,
+                request_fingerprint=fingerprint,
+                job_id="original-job",
+                fence_token=f"{DEFAULT_GLOBAL_FENCE_EPOCH}:{uuid4()}",
+                queue_bytes=0,
+                status=UsageReservationStatus.EXPIRED,
+                cost_units=1,
+                reserved_at=datetime.now(tz=UTC) - timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(ExpiredUsageReservationError, match="expired"):
+            await UsageAdmissionService(session).reserve(
+                tenant_id,
+                idempotency_key="fresh-idempotency-key",
+                job_id="replacement-job",
+                cost_units=1,
+                operation_id=operation_id,
+                request_fingerprint=fingerprint,
             )
 
 

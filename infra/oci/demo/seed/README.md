@@ -18,7 +18,9 @@ file. Recognised `basis` values are `editorial_fair_use`, `cc_by`, `cc_by_sa`,
 `attribution_required`, or `none`. `import.sh` refuses unrecognised bases (including
 `unrecorded`) and stops before importing if a media file has no ledger row. To
 enumerate a withdrawal, use `grep -F` on the ledger for the file and check the
-matching attachment's `acx_seed_rights_basis` post meta.
+matching attachment's `acx_seed_rights_basis` post meta. If a run stops on a
+metadata failure, it removes the attachment it just created; files imported
+earlier in that run keep their metadata, and a rerun imports those files again.
 
 - **E15-29 disposition:** the demo seeds 100 `celebs01` images (>=5 per person, to
   showcase clustering) under a documented **editorial/fair-use demo** basis

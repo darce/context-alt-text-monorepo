@@ -60,25 +60,107 @@ for ledger in "${rights_files[@]}"; do
   valid_rights_count=$((valid_rights_count + 1))
 done
 
-find_rights_row() {
+find_rights_rows() {
   local wanted="$1"
-  local ledger
-  local row
 
-  for ledger in "${valid_rights_files[@]}"; do
-    if row="$(awk -F '\t' -v wanted="$wanted" '$1 == wanted { print $3 "\t" $4; found = 1; exit } END { if (!found) exit 1 }' "$ledger")"; then
-      printf '%s\n' "$row"
-      return 0
-    fi
-  done
+  if ((valid_rights_count == 0)); then
+    printf '0\n'
+    return 0
+  fi
 
-  return 1
+  awk -F '\t' -v wanted="$wanted" '
+    $1 == wanted {
+      matches++
+      if (matches == 1) {
+        row = $0
+      }
+    }
+    END {
+      print matches + 0
+      if (matches == 1) {
+        print row
+      }
+    }
+  ' "${valid_rights_files[@]}"
+}
+
+parse_rights_row() {
+  local remaining="$1"
+
+  rights_row_file="${remaining%%$'\t'*}"
+  remaining="${remaining#*$'\t'}"
+  rights_row_subject="${remaining%%$'\t'*}"
+  remaining="${remaining#*$'\t'}"
+  rights_row_basis="${remaining%%$'\t'*}"
+  remaining="${remaining#*$'\t'}"
+  rights_row_source="${remaining%%$'\t'*}"
+  remaining="${remaining#*$'\t'}"
+  rights_row_notice="${remaining%%$'\t'*}"
+  rights_row_added="${remaining#*$'\t'}"
+}
+
+validate_rights_row() {
+  local filename="$1"
+  local row="$2"
+  local row_without_tabs
+  local invalid=0
+
+  row_without_tabs="${row//$'\t'/}"
+  if ((${#row} - ${#row_without_tabs} != 5)); then
+    echo "ERROR: seed rights ledger row for $filename must have exactly six tab-separated fields" >&2
+    return 1
+  fi
+
+  parse_rights_row "$row"
+  if [[ -z "$rights_row_subject" ]]; then
+    echo "ERROR: seed rights ledger row for $filename has an empty subject field" >&2
+    invalid=1
+  fi
+  if [[ -z "$rights_row_basis" ]]; then
+    echo "ERROR: seed rights ledger row for $filename has an empty basis field" >&2
+    invalid=1
+  fi
+  if [[ -z "$rights_row_source" ]]; then
+    echo "ERROR: seed rights ledger row for $filename has an empty source field" >&2
+    invalid=1
+  fi
+  case "$rights_row_notice" in
+    takedown_on_request|attribution_required|none)
+      ;;
+    *)
+      echo "ERROR: seed rights ledger row for $filename has unrecognised notice '$rights_row_notice'" >&2
+      invalid=1
+      ;;
+  esac
+  if [[ -z "$rights_row_added" ]]; then
+    echo "ERROR: seed rights ledger row for $filename has an empty added field" >&2
+    invalid=1
+  elif [[ ! "$rights_row_added" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "ERROR: seed rights ledger row for $filename has invalid added date '$rights_row_added'" >&2
+    invalid=1
+  fi
+
+  return "$invalid"
 }
 
 for path in "${media_files[@]}"; do
   filename="${path##*/}"
-  if ((valid_rights_count == 0)) || ! find_rights_row "$filename" >/dev/null; then
-    echo "ERROR: seed media file has no rights ledger row: $filename" >&2
+  rights_result="$(find_rights_rows "$filename")"
+  rights_match_count="${rights_result%%$'\n'*}"
+  if [[ "$rights_result" == *$'\n'* ]]; then
+    rights_row="${rights_result#*$'\n'}"
+  else
+    rights_row=""
+  fi
+
+  if [[ "$rights_match_count" != "1" ]]; then
+    if [[ "$rights_match_count" == "0" ]]; then
+      echo "ERROR: seed media file has no rights ledger row: $filename" >&2
+    else
+      echo "ERROR: seed media file must match exactly one rights ledger row: $filename (found $rights_match_count)" >&2
+    fi
+    validation_failed=1
+  elif ! validate_rights_row "$filename" "$rights_row"; then
     validation_failed=1
   fi
 done
@@ -92,9 +174,11 @@ imported_count=0
 refused_count=0
 for path in "${media_files[@]}"; do
   filename="${path##*/}"
-  rights_row="$(find_rights_row "$filename")"
-  rights_basis="${rights_row%%$'\t'*}"
-  rights_source="${rights_row#*$'\t'}"
+  rights_result="$(find_rights_rows "$filename")"
+  rights_row="${rights_result#*$'\n'}"
+  parse_rights_row "$rights_row"
+  rights_basis="$rights_row_basis"
+  rights_source="$rights_row_source"
 
   case "$rights_basis" in
     editorial_fair_use|cc_by|cc_by_sa|public_domain|eu_reuse|generated)
@@ -106,13 +190,35 @@ for path in "${media_files[@]}"; do
       ;;
   esac
 
-  attachment_id="$(docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+  if ! attachment_id="$(docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
     -v "${SEED_MEDIA_DIR}:/seed:ro" \
-    wpcli wp media import "/seed/${filename}" --porcelain)"
-  docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
-    wpcli wp post meta update "$attachment_id" acx_seed_rights_basis "$rights_basis"
-  docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
-    wpcli wp post meta update "$attachment_id" acx_seed_rights_source "$rights_source"
+    wpcli wp media import "/seed/${filename}" --porcelain)"; then
+    echo "ERROR: failed to import seed media file: $filename" >&2
+    exit 1
+  fi
+  if [[ ! "$attachment_id" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: seed media import returned an invalid attachment id for $filename" >&2
+    exit 1
+  fi
+
+  if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+    wpcli wp post meta update "$attachment_id" acx_seed_rights_basis "$rights_basis"; then
+    if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+      wpcli wp post delete "$attachment_id" --force; then
+      echo "ERROR: failed to remove attachment $attachment_id after a rights metadata failure for $filename" >&2
+    fi
+    echo "ERROR: failed to write rights metadata for seed media file: $filename" >&2
+    exit 1
+  fi
+  if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+    wpcli wp post meta update "$attachment_id" acx_seed_rights_source "$rights_source"; then
+    if ! docker compose -f "$COMPOSE_FILE" run --rm --no-deps \
+      wpcli wp post delete "$attachment_id" --force; then
+      echo "ERROR: failed to remove attachment $attachment_id after a rights metadata failure for $filename" >&2
+    fi
+    echo "ERROR: failed to write rights metadata for seed media file: $filename" >&2
+    exit 1
+  fi
   imported_count=$((imported_count + 1))
 done
 

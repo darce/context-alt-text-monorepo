@@ -1,0 +1,126 @@
+{
+  "lane": "dadj-15",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 5678,
+      "finding_id": "CDX-P-01",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:367 - FIR-7's baseline is still “re-drawn on the post-Slice-2 manifest”; the Slice-3 de-novo pass and evidence follow later (line 572).",
+      "severity": "high",
+      "fix_files": [
+        "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Move FIR-7's baseline re-draw to post-Slice-3 evidence or mark the Slice-2 redraw provisional and require a post-Slice-3 refresh before the irreversible seal."
+    },
+    {
+      "db_id": 5680,
+      "finding_id": "CDX-P-03",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:245 - the primary endpoint uses “identical detected inputs”; line 625 only says “detector-supplied inputs” and does not name the selecting detector.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Name the detector that selects the primary-endpoint input set and justify that choice against favoring either comparison leg."
+    },
+    {
+      "db_id": 5681,
+      "finding_id": "CDX-P-04",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:544 - Slice 4 builds a provisional occasion key from EXIF/source-directory evidence, while final capture_session_id remeasurement is owned by Slice 5 after Slice 3.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No fix needed; the plan now defines a pre-label provisional key and schedules the final capture_session_id measurement after Slice 3."
+    },
+    {
+      "db_id": 5682,
+      "finding_id": "CDX-P-05",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:573 - gold references must use operator camera-roll reference_facts or fresh arbitration by a second labeler and an independent adjudicator; line 572 requires the de-novo labeler not to have seen the original adjudication.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No fix needed; gold reference independence and the separate de-novo labeling path are specified, with the measured effect rescoped away from a ground-truth circularity claim."
+    },
+    {
+      "db_id": 5683,
+      "finding_id": "CDX-P-06",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:545 - Slice 4 asks for “within-occasion correlation ρ” from the embedding store, but does not define it on the paired-correctness endpoint or name its estimator/interval.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Define ρ on the paired-correctness or discordance endpoint and name its estimator and interval, or remove it from sizing and reporting."
+    },
+    {
+      "db_id": 5734,
+      "finding_id": "HARM-05",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-11-gate-corpus-remediation-and-fir-rebaseline-task-plan.md:609 - the added A1″ arm isolates the OpenCV toolchain delta; line 615 defines a separate pre-CVUP-1 branch with its confound stated.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No fix needed; the plan now isolates the toolchain delta when both runtimes are available and discloses the pre-CVUP-1 branch limitation."
+    },
+    {
+      "db_id": 5738,
+      "finding_id": "HARM-09",
+      "task": "MAINT-fir-review-parallel-20260729",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": ".gitignore:187 - `!/benchmarks/manifests/` permits the manifest tree; `git ls-files` lists `benchmarks/manifests/corpus-manifest-v3.json` as tracked.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No fix needed; the benchmark manifest is tracked and the ignore rules now allow manifest artifacts."
+    },
+    {
+      "db_id": 5235,
+      "finding_id": "FIRTRAIN-09",
+      "task": "MAINT-fir-training-feasibility-20260727",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "docs/tasks/fir/FIR-6-calibration-quality-switchover-task-plan.md:245 - S6 still flips “profile + dimension + images together”; line 148 specifies PGVECTOR_DIM 512→128 in that switch-over.",
+      "severity": "medium",
+      "fix_files": [
+        "docs/tasks/fir/FIR-6-calibration-quality-switchover-task-plan.md"
+      ],
+      "test_file": "",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Split the profile change from the PGVECTOR_DIM migration and delay the dimension change until the final embedder size is decided."
+    }
+  ]
+}

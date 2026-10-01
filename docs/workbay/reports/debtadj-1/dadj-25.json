@@ -1,0 +1,238 @@
+{
+  "lane": "dadj-25",
+  "base": "ec4f0bb0500cb6b0c154a83204fb1d0cf8121381",
+  "results": [
+    {
+      "db_id": 11303,
+      "finding_id": "D2-RR-01",
+      "task": "MAINT-branch-landing-20260904",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:1846 - the recovered-contract test asserts APP_LINK_PARAMS, the missing review phrases, both component pointers, and NAV-11; apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md:4 - source fixture now points to WorkbenchPage.tsx.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json",
+        "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.md"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: the recovered operator details and valid source fixture are present and regression-checked."
+    },
+    {
+      "db_id": 11304,
+      "finding_id": "D2-RR-02",
+      "task": "MAINT-branch-landing-20260904",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts:200 - the parser accepts a wp_page table column, but the screen projection type at :15-22 retains only route, title, purpose, url_params, states, and zones; the generated-map equality test at apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts:1015 compares only that incomplete projection.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts",
+        "apps/prototype-wp-alt-context/docs/ux-maps/render_ux_maps.py"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Extend the parser and parity projection to compare every rendered screen metadata field, including wp_page, job_entry, deep_link, primary_action_id, and code_ref, with mutations that prove those fields are covered."
+    },
+    {
+      "db_id": 15172,
+      "finding_id": "REL0024-M-05",
+      "task": "MAINT-RELEASE-0024-20260918",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/jobMachine.ts:213-229 - warming stall timing follows the startup budget while processing stays on 30 seconds; apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobMachine.test.ts:811 - a warming run remains running after 30 seconds of quiet with a 510-second budget.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/hooks/jobMachine.ts"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/jobMachine.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: phase-aware thresholds suppress false stall warnings during the configured GPU warm-up window."
+    },
+    {
+      "db_id": 1289,
+      "finding_id": "BND-1",
+      "task": "MAINT-wpac-defect-review-20260614",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineEffects.ts:116-118 - isScanSuccessStatus handles completed_with_errors as a terminal partial success and refreshes findings; apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobStateMachineEffects.test.ts:116-141 asserts all three query invalidations for that status.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/api/generated/recognition-job.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineEffects.ts",
+        "apps/prototype-wp-alt-context/js/admin/hooks/jobStateMachineUtils.ts"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobStateMachineEffects.test.ts",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: completed_with_errors is typed and triggers the same identity, cluster, and suggestion refresh as completed."
+    },
+    {
+      "db_id": 15177,
+      "finding_id": "REL0024-L-10",
+      "task": "MAINT-RELEASE-0024-20260918",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-describe-controller.php:544-545 - describe-run items receive WordPress thumbnail_url/srcset; apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx:172-183 renders the image beside the draft, and its test at apps/prototype-wp-alt-context/js/admin/pages/__tests__/DescribeRunApplyView.test.tsx:347-381 asserts both appear in the same row.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-describe-controller.php",
+        "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/pages/__tests__/DescribeRunApplyView.test.tsx",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: thumbnails are supplied by the WordPress passthrough and shown beside ready drafts."
+    },
+    {
+      "db_id": 15199,
+      "finding_id": "TRIAGE0918-M-11",
+      "task": "MAINT-demo-identity-gpu-triage-20260918",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx:128 - the compact scan panel mounts ActivityStatusStrip; apps/prototype-wp-alt-context/js/admin/pages/workbench/ActivityStatusStrip.tsx:112 - it uses the shared activity authority for scan, warm-up, and describe status; apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/Panels.test.tsx:368 checks the strip and Cancel control.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/hooks/useActivityStatus.ts",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/ActivityStatusStrip.tsx",
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/Panels.test.tsx",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: scan, GPU warm-up, describe progress, and cancellation now share the Control-pane status strip."
+    },
+    {
+      "db_id": 15178,
+      "finding_id": "REL0024-M-11",
+      "task": "MAINT-RELEASE-0024-20260918",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx:419-432 - the test asserts face-group counts are absent from the daily card and the split action sits under the Not the same person? affordance.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/IdentityClusterItem.test.tsx",
+      "size": "M",
+      "related": [],
+      "fix_hint": "No follow-up remains: daily cards hide topology counts and expose splitting through the exception affordance."
+    },
+    {
+      "db_id": 2733,
+      "finding_id": "SECREV-F08",
+      "task": "SECREV-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/admin/class-admin.php:7 - the source file begins by requiring another class without an ABSPATH exit guard; the same top-level guard is absent in src/api/class-api.php and src/settings/class-recognition-policy.php.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/admin/class-admin.php",
+        "apps/prototype-wp-alt-context/src/api/class-api.php",
+        "apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/DirectAccessGuardTest.php",
+      "size": "L",
+      "related": [],
+      "fix_hint": "Add a defined(ABSPATH) early exit to every directly reachable PHP source file, or demonstrate the packaged layout blocks direct requests to src."
+    },
+    {
+      "db_id": 2738,
+      "finding_id": "SECREV-F13",
+      "task": "SECREV-1",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/admin/class-admin.php:200 - the dev-server path returns unless wp_get_environment_type() is development; the TLS-skipping probe is inside that guarded path at :228.",
+      "severity": "low",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/admin/class-admin.php"
+      ],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up remains: sslverify=false is reachable only in the WordPress development environment."
+    },
+    {
+      "db_id": 1294,
+      "finding_id": "CON-5",
+      "task": "MAINT-wpac-defect-review-20260614",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php:841-843 - a GET_LOCK timeout explicitly falls through to unguarded transient read-modify-write; apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php:1026-1054 verifies that fallback.",
+      "severity": "medium",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/ProxyRequestTest.php",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Keep failure increments atomic when the named lock times out or is unavailable instead of falling back to the racy transient read-modify-write."
+    },
+    {
+      "db_id": 2728,
+      "finding_id": "SECREV-F03",
+      "task": "SECREV-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-api.php:223-227 - both workbench media GET routes use can_view_media_queue; :414 allows upload_files, while :426-441 queries all image attachments without an author/edit-capability filter; the admin menu at apps/prototype-wp-alt-context/src/admin/class-menu.php:76-78 requires manage_options.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-api.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/WorkbenchMediaListPermissionTest.php",
+      "size": "S",
+      "related": [],
+      "fix_hint": "Align the read permission with manage_options or restrict results to attachments the current user may edit."
+    },
+    {
+      "db_id": 2727,
+      "finding_id": "SECREV-F02",
+      "task": "SECREV-1",
+      "verdict": "LIVE",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php:45 - bearer URL TTL remains 3600 seconds; apps/prototype-wp-alt-context/src/api/class-blobs-controller.php:151-152 - the HMAC token is the sole authorization and no session check is required.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/api/class-blob-url-rewriter.php",
+        "apps/prototype-wp-alt-context/src/api/class-blobs-controller.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/BlobsControllerTest.php",
+      "size": "M",
+      "related": [],
+      "fix_hint": "Shorten token expiry and bind face/blob access to an authenticated viewer context while retaining private no-store response headers."
+    },
+    {
+      "db_id": 2735,
+      "finding_id": "SECREV-F10",
+      "task": "SECREV-1",
+      "verdict": "NOT_DEFECT",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/docs/portable-packaging-runbook.md:54-57 - it documents the URL filter in the endpoint precedence; docs/adrs/ADR-011-retire-on-device-recognition-remote-only.md:58 - endpoint overrides are marked advanced/internal, not a user-facing setting.",
+      "severity": "low",
+      "fix_files": [],
+      "test_file": "",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No code change is indicated: WordPress filter callbacks are trusted installed plugin/theme code, and the override precedence is documented."
+    },
+    {
+      "db_id": 15201,
+      "finding_id": "TRIAGE0918-M-13",
+      "task": "MAINT-demo-identity-gpu-triage-20260918",
+      "verdict": "FIXED",
+      "duplicate_of": null,
+      "evidence": "apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php:23-28 - the setting documents Default OFF and sets DEFAULT=false; apps/prototype-wp-alt-context/tests/Unit/Settings/RecognitionPolicyTest.php:15-18 asserts new installs default to false.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-wp-alt-context/src/settings/class-recognition-policy.php"
+      ],
+      "test_file": "apps/prototype-wp-alt-context/tests/Unit/Settings/RecognitionPolicyTest.php",
+      "size": "S",
+      "related": [],
+      "fix_hint": "No follow-up remains: face recognition is off on a fresh install until an operator opts in."
+    }
+  ]
+}

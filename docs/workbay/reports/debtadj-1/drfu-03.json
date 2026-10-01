@@ -1,0 +1,89 @@
+{
+  "lane": "drfu-03",
+  "base": "df2b8d08d6b5b2d8b7c6067ef0bf9acd16db7059",
+  "results": [
+    {
+      "db_id": 5962,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:1033 requires stack opencv_major with opencv_major_unattested on absence; lines 828 and 1193 include the red-proof and checklist, and line 1063 makes S1/S2 floor ownership explicit.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_preflight.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the OpenCV attestation, its red-proof, and the floor-policy slice ownership are explicit in the current plan."
+    },
+    {
+      "db_id": 5965,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:868,872,899 writes accepted-set and attrition artifacts before raising the differential gate; apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py:199-200 asserts both artifacts survive refusal.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the abort persists both promised diagnostics before refusing to emit scored cells."
+    },
+    {
+      "db_id": 6078,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:404-405 rejects analyze records without an integer stack_media_id; lines 579,581,583,586,591-592 require successful ingest/analyze and roster presence on both legs before appending.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the accepted-set implementation enforces all three membership conditions on both legs."
+    },
+    {
+      "db_id": 6079,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py:486-499 keeps the zero-export image at zero predictions with its labeled face in both frame denominators and counts a false negative on each.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the dual-frame regression test covers the whole-image zero-export miss."
+    },
+    {
+      "db_id": 6090,
+      "outcome": "REFUTED",
+      "evidence": "apps/prototype-description-service/scripts/bench/score_report.py:1085 calls bootstrap_paired_delta without occasion_ids or occasion_full_size; helper lines 156,176 then default to image units. apps/prototype-description-service/scripts/eval_harness/manifest.py:850 documents capture_session_id as the occasion key, but score never passes it.",
+      "severity": "high",
+      "fix_files": [
+        "apps/prototype-description-service/scripts/bench/score_report.py",
+        "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py"
+      ],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py",
+      "size": "M",
+      "fix_hint": "Pass manifest occasion ids and full group sizes into each paired bootstrap and add a scorer-level partial-occasion regression test."
+    },
+    {
+      "db_id": 6092,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:190 calls Hungarian matching with IOU_MATCH_THRESHOLD only; apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:91,98-102 asserts the center-in-box containment case at IoU 0.0625 produces zero matches.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the discriminating containment red-proof fails if detection matching accepts a center-in-box fallback."
+    },
+    {
+      "db_id": 6098,
+      "outcome": "CONFIRMED",
+      "evidence": "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md:678,682,1021-1022 states manifest-superset implies accepted-superset with no S2 re-assert and defines both config paths; apps/prototype-description-service/scripts/bench/stack_pair.py:41-42,139-140,250-251 accepts them, and apps/prototype-description-service/scripts/bench/driver.py:233,379,386 consumes them. The superset refusal-before-write case is covered by apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py:34,50,52.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_corpus_superset.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the config schema supplies the baseline path and the run-start assertion is exercised before media writes."
+    },
+    {
+      "db_id": 6225,
+      "outcome": "CONFIRMED",
+      "evidence": "apps/prototype-description-service/scripts/bench/export_map.py:120,174-175 accepts exactly x/y/width/height and converts width/height; apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py:44-48 exercises that public export shape.",
+      "severity": "high",
+      "fix_files": [],
+      "test_file": "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py",
+      "size": "S",
+      "fix_hint": "Closure stands: the mapper and regression fixture use the public width/height bbox envelope."
+    }
+  ]
+}

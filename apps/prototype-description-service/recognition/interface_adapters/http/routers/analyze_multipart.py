@@ -83,6 +83,7 @@ _IMAGE_KEY_PREFIX = "image_"
 _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
 _MULTIPART_IDLE_TIMEOUT_S = 10.0
+_MULTIPART_TOTAL_TIMEOUT_S = 300.0
 _TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
 _INVALID_MULTIPART_DETAIL = "invalid multipart form"
 
@@ -155,7 +156,8 @@ async def _parse_multipart_form(request: Request) -> FormData:
         max_files=_MAX_MULTIPART_FILES,
     )
     try:
-        return await parser.parse()
+        async with asyncio.timeout(_MULTIPART_TOTAL_TIMEOUT_S):
+            return await parser.parse()
     except TimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
